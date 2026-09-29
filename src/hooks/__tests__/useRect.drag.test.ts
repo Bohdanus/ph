@@ -256,6 +256,90 @@ describe('useRect mask drawing', () => {
   });
 });
 
+/**
+ * The overlay canvas is shared and long-lived: `Main.tsx:239-284` renders both overlay canvases
+ * unconditionally and only toggles `display`, which never touches a backing store. So an area that
+ * goes away has to clear the canvas itself.
+ *
+ * It cannot lean on the effect at `useRect.ts:58-70` seeing `initialRect` turn null. `goToTool`
+ * (`src/hooks/useApp.ts:167-196`) appends the selection clear and dispatches `SET_TOOL_NAME` from
+ * one function body, React batches them, and the marquee's component unmounts in the same commit
+ * that nulls the selection — and an unmounted component's effects do not run. That is what left the
+ * `#007bff` outline, the four handles and the `rgba(0, 0, 0, 0.7)` blend on the next tool's
+ * document.
+ *
+ * Every case here passes an `imageSize` that is NOT the canvas's size, so an assertion that the
+ * clear covers the backing store also fails a clear that read the render-scope `imageSize` — the
+ * mistake a cleanup closing over it makes, freezing the first render's value and under-clearing
+ * after a document resize.
+ */
+describe('useRect overlay teardown', () => {
+  beforeEach(resetPointerMock);
+
+  it('clears the whole backing store on unmount, so a marquee cannot outlive the tool switch', () => {
+    const { ctx, unmount } = setup({ imageSize: { width: 320, height: 240 }, initialRect: RECT });
+    // The mount paint is cleared from the record so the assertion can only be about the teardown.
+    vi.mocked(ctx.clearRect).mockClear();
+
+    unmount();
+
+    // 800x600 is the CANVAS, and `imageSize` above is 320x240.
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+  });
+
+  it('clears the whole backing store on unmount even when nothing was ever painted', () => {
+    // Unconditional on purpose. A teardown gated on "did this instance paint something" is a
+    // landmine, and the abandoned-drag case is precisely the one where the content was painted by
+    // a frame that never became `initialRect`.
+    const { ctx, unmount } = setup({ imageSize: { width: 320, height: 240 }, initialRect: null });
+    expect(ctx.clearRect).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+  });
+
+  it('drops a queued repaint rather than letting it repaint the marquee over the teardown clear', () => {
+    const { ctx, result, event, flushFrame, unmount } = setup({
+      imageSize: { width: 320, height: 240 },
+      initialRect: RECT,
+    });
+    pointer.data.isMouseDown.current = true;
+    act(() => {
+      result.current.onPointerMove(event(200, 175));
+    });
+    // A frame is queued and not fired, so the repaint is still pending.
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.strokeRect).mockClear();
+
+    unmount();
+    flushFrame();
+
+    // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
+    expect(ctx.strokeRect).not.toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+  });
+
+  it('does not throw on unmount when the overlay canvas has no 2d context', () => {
+    // The supported null-context state the guard exists for. Without it the teardown throws while
+    // React is already unmounting, which is a crash the user cannot act on.
+    const canvas = document.createElement('canvas');
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    const { unmount } = renderHook(() =>
+      useRect({
+        imageSize: { width: 800, height: 600 },
+        initialRect: RECT,
+        containerRef: { current: document.createElement('div') },
+        overlayRef: { current: canvas },
+        onChangeEnd: vi.fn(),
+      })
+    );
+
+    expect(() => unmount()).not.toThrow();
+  });
+});
+
 describe('useRect handle detection', () => {
   beforeEach(resetPointerMock);
 
@@ -798,5 +882,125 @@ describe('useRect pointer up and move tool', () => {
     });
 
     expect(onRepaint).toHaveBeenCalledWith(RECT);
+  });
+});
+
+/**
+ * Photoshop's rectangular marquee modifiers: Shift holds the drag to a square, Alt grows the
+ * rectangle out from the press point, and both at once is a square centred on it.
+ *
+ * They are per-consumer props rather than a behaviour of the hook, because `useRect` is shared
+ * with crop and the Move tool and neither of them constrains a drag. The first case below is
+ * the regression guard for that: the same gesture with neither prop set is the pre-existing
+ * `adjustFreePoint` path, byte for byte.
+ */
+describe('useRect fresh-drag modifiers', () => {
+  beforeEach(resetPointerMock);
+
+  function dragFrom(
+    {
+      from,
+      to,
+      down,
+      move,
+    }: {
+      from: { x: number; y: number };
+      to: { x: number; y: number };
+      down?: Record<string, unknown>;
+      move?: Record<string, unknown>;
+    },
+    props: Partial<UseRectProps> = {}
+  ) {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ ...props, onChange });
+
+    act(() => {
+      result.current.onPointerDown(event(from.x, from.y, down));
+    });
+    pointer.data.isMouseDown.current = true;
+    act(() => {
+      result.current.onPointerMove(event(to.x, to.y, move));
+    });
+    flushFrame();
+
+    return onChange;
+  }
+
+  it.each([
+    ['neither modifier leaves the drag a plain 200x50 rectangle', {}, {}, { x1: 100, y1: 100, x2: 300, y2: 150 }],
+    [
+      'shift grows the short side into a square anchored on the press point',
+      { shiftKey: true },
+      { shiftKey: true },
+      { x1: 100, y1: 100, x2: 300, y2: 300 },
+    ],
+    [
+      'alt mirrors the drag through the press point',
+      { altKey: true },
+      { altKey: true },
+      { x1: -100, y1: 50, x2: 300, y2: 150 },
+    ],
+    [
+      'shift and alt together are a square centred on the press point',
+      { shiftKey: true, altKey: true },
+      { shiftKey: true, altKey: true },
+      { x1: -100, y1: -100, x2: 300, y2: 300 },
+    ],
+  ] as const)('%s', (_name, down, move, expected) => {
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 300, y: 150 }, down, move },
+      {
+        constrainToSquare: true,
+        fromCentre: true,
+      }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+
+  it('mirrors a drag that runs up and to the left as well as down and right', () => {
+    const onChange = dragFrom(
+      { from: { x: 400, y: 300 }, to: { x: 250, y: 250 }, down: { altKey: true }, move: { altKey: true } },
+      { fromCentre: true }
+    );
+
+    // 150x50 from the press point, mirrored, so (400,300) is the centre of a 300x100 rect.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 250, y1: 250, x2: 550, y2: 350 });
+  });
+
+  it('leaves a consumer that opts out of both modifiers completely alone', () => {
+    const onChange = dragFrom({
+      from: { x: 100, y: 100 },
+      to: { x: 300, y: 150 },
+      down: { altKey: true, shiftKey: true },
+      move: { altKey: true, shiftKey: true },
+    });
+
+    // Crop and the Move tool: the modifiers are pressed and nothing about the rect changes.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 150 });
+  });
+
+  it('prefers the square over the ratio an existing selection implies', () => {
+    // A fresh drag that lands outside an existing 2:1 selection. `getEdgeAtPoint` still reads
+    // the pressed shift and records the selection's own ratio, which would otherwise win.
+    const onChange = dragFrom(
+      { from: { x: 500, y: 500 }, to: { x: 700, y: 550 }, down: { shiftKey: true }, move: { shiftKey: true } },
+      { initialRect: RATIO_RECT, constrainToSquare: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 500, y1: 500, x2: 700, y2: 700 });
+  });
+
+  it('leaves a corner-handle resize on its own aspect lock, square or not', () => {
+    // Resizing the existing 2:1 selection by its top-left corner with shift held keeps the
+    // ratio `getEdgeAtPoint` captured, because this is a resize and not a fresh drag.
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 50, y: 75 }, down: { shiftKey: true }, move: { shiftKey: true } },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    // A 2:1 rect dragged by its top-left corner is still 2:1, measured from the shared
+    // opposite corner the handle anchored it to: 250 wide, 125 tall.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 75, x2: 300, y2: 200 });
   });
 });

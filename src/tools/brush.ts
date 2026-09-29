@@ -5,8 +5,16 @@ import type { Point } from '../contexts/general-types.ts';
  *
  * `draw` is deliberately absent: it is the legacy vector pen and keeps its own
  * `Pen Type` bar (`src/components/ToolbarsRight/Draw/Draw.tsx`).
+ *
+ * `color-replacement` was a member of this union and is not any more. It is a SUBSTITUTION,
+ * not a stamp: it samples a colour on click and then offsets luminance across a drag, so it
+ * has a different args type (`src/tools/colorReplacement.ts`), a different processor and a
+ * different options bar. Sharing the union is what let its processor force a `'spray'`
+ * `penType` onto `PaintToolArgs` and ignore every other control, which is how Tolerance and
+ * Limits ended up with nowhere to live. A tool whose settings do not fit the paint bar must
+ * not be in the paint bar's union — see `src/tools/draw.ts:48-62`.
  */
-export type PaintToolName = 'brush' | 'pencil' | 'color-replacement';
+export type PaintToolName = 'brush' | 'pencil';
 
 /**
  * The blend modes a canvas can actually composite a layer with, in the order

@@ -30,8 +30,11 @@
  * This is the same rule on both sides of the gate. `lint:check` walks every
  * tracked file of these types; `.husky/pre-commit` lints the staged subset of
  * exactly these types through lint-staged. Files outside them — the tracked
- * images, the one `.txt`, the dotfiles — are not linted, and that is intended,
- * not a gap.
+ * images, the one `.txt`, `index.html`, and dotfiles with no linted extension
+ * (`.gitattributes`, `.gitignore`, `.nvmrc`, `.prettierrc`) — are not linted,
+ * and that is intended, not a gap. "The dotfiles" is not the whole truth and
+ * should not be written as though it were: tracked Markdown dotfiles are linted
+ * because they match `*.md`.
  *
  * `.husky/pre-commit` and `.husky/pre-push` are in that set for a reason worth
  * writing down, because they are the two files that ARE the gate and their

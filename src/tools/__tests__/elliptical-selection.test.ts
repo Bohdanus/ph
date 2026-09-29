@@ -114,6 +114,27 @@ describe('ellipticalSelection type contract', () => {
     expect(isMarqueeStyle('fixed-size')).toBe(true);
     expect(isMarqueeStyle('rectangle')).toBe(false);
   });
+
+  it('hands a creator-param call no source bitmap, and yields the undefined that throws', () => {
+    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true` processor as
+    // `imageProcessor({ size })(args)`, with no `bitmap` at all. The processor reads that member
+    // straight out of the params and returns it, so on the creator path it yields `undefined`.
+    //
+    // `undefined` is a LATENT THROW, not a handled case: `materialization.ts:172` rejects it with
+    // `Source tool … produced no raster`. So this is pinned so the `creator: true` registry
+    // entry and the `ProcessorToolParams` the processor declares stay VISIBLE as a mismatch —
+    // the assertion records the current behaviour and does not claim it is correct.
+    expect(toolProcessors['elliptical-selection'].creator).toBe(true);
+
+    const result = toolProcessors['elliptical-selection'].imageProcessor({ size: { width: 40, height: 24 } })(
+      defaultSettings['elliptical-selection'] as never
+    );
+
+    expect(result).toEqual([undefined]);
+    // The pass-through must not quietly acquire a canvas: a creator that rasterized here
+    // would be a rasterizer `commit: 'selection'` has nowhere to commit.
+    expect(RecordingOffscreenCanvas.instances).toEqual([]);
+  });
 });
 
 describe('resolveEllipseRect', () => {

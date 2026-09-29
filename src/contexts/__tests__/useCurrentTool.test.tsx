@@ -287,46 +287,6 @@ describe('useCurrentTool', () => {
     });
   });
 
-  describe('resetToLastSavedArgs', () => {
-    it('resets current tool to the args the tool itself saved', () => {
-      const { result } = renderWithProviders();
-      act(() => {
-        result.current.setToolArgs({
-          toolName: 'draw',
-          penType: 'spray',
-          lineWidth: 20,
-          alpha: 0.5,
-          color: '#ff0000',
-          lineDash: null,
-        });
-      });
-      expect(lastSavedSettings.draw).toMatchObject({ penType: 'spray', lineWidth: 20, color: '#ff0000' });
-      act(() => {
-        result.current.resetToLastSavedArgs();
-      });
-
-      expect(result.current.getToolArgs('draw')).toMatchObject({ penType: 'spray', lineWidth: 20, color: '#ff0000' });
-    });
-
-    it('resets specified tool to the args saved for that tool', () => {
-      const { result } = renderForShape();
-      act(() => {
-        result.current.tool.setToolArgs({ ...shapeArgs, figure: 'oval', hasFill: true, lineWidth: 10 });
-      });
-      expect(lastSavedSettings.shape).toMatchObject({ figure: 'oval', hasFill: true, lineWidth: 10 });
-
-      act(() => {
-        result.current.tool.resetToLastSavedArgs('shape');
-      });
-
-      expect(result.current.tool.getToolArgs('shape')).toMatchObject({
-        figure: 'oval',
-        hasFill: true,
-        lineWidth: 10,
-      });
-    });
-  });
-
   describe('tool switching', () => {
     it('loads saved settings when tool changes via store', () => {
       const { result } = renderWithStore();

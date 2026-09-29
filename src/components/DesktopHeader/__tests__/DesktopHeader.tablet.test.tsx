@@ -35,7 +35,6 @@ const history = vi.hoisted(() => ({
 }));
 const currentTool = vi.hoisted(() => ({
   isToolDirty: false,
-  resetToLastSavedArgs: vi.fn(),
   patchToolArgs: vi.fn(),
 }));
 const themeState = vi.hoisted(() => ({ theme: 'light' as 'light' | 'dark', toggleTheme: vi.fn() }));

@@ -1,5 +1,5 @@
 /**
- * The parsing half of `board import`: the three hand-maintained Markdown
+ * The parsing half of `swarm import`: the three hand-maintained Markdown
  * handoff documents in, a list of board items out.
  *
  * WHY THE DOCUMENTS STAY THE SOURCE OF TRUTH
@@ -106,8 +106,75 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * alternation is deliberately the seven words the documents actually use. A
  * looser net (a bare `dead`, or `close`) would swallow live entries — one real
  * heading ends in the word "dead" and means it as prose.
+ *
+ * The word must be the LAST one in the heading, which is what makes it a marker
+ * rather than a mention. It cannot be an anywhere-match: at `eba42f8` the loose
+ * net `/deleted|closed|done|resolved|fixed|landed|superseded/i` matched six of
+ * the 111 real headings, of which exactly one was a retirement and five were
+ * live prose. **Two** of those five said the word inside a hyphenated compound
+ * (`dialog-closed`, twice) — not three, which is what an earlier revision of
+ * this comment claimed from the same tree, because its third example,
+ * `"3 FIXED"`, is not hyphenated at all.
+ *
+ * The three documents' own headings, as measured on the corpus rather than
+ * remembered: **on `main` at `0d64d75` the corpus is 97 headings, the loose net
+ * matches five of them, and the narrow one matches exactly one** — the genuine
+ * retirement, `### Items 5, 7, 9, … — deleted`. The tree is named because the
+ * number is a property of a moment, not of this rule: the **92** an earlier
+ * revision of this comment quoted was the merge-base figure, and it is the whole
+ * defect the other counts here are dated to avoid. This branch's own new entry
+ * takes the corpus to 98 on the merged tree without moving a single verdict.
+ * The four live ones are
+ * `### The self-anchored move: a converter defect, deliberately not fixed here`
+ * (`HANDOFF.md:368`), `## 69. An eraser gesture abandoned by switching tools …`
+ * (`HANDOFF.md:1508`), `## 76. A closure check reported "3 FIXED" …`
+ * (`HANDOFF.md:1788`) and `## 77. … and a suffixed retirement retires its
+ * PARENT` (`HANDOFF.md:1821`). §69 and §77 are the cases with no boundary at
+ * all — `abandoned` contains `done` and `suffixed` contains `fixed`, both
+ * inside an ordinary word rather than after a hyphen — and they are the two the
+ * corpus actually has. The hyphenated severities that motivated the rule were
+ * moved out of the corpus by `77c3663`, so a count taken from that tree is
+ * history and the counts above are not.
+ *
+ * §76 cost a whole item as well, and it is the reason the anchoring is worth an
+ * argument at all: the loose net found `fixed`, `retiredNumbersIn` then
+ * harvested the `3` out of `"3 FIXED"`, the section was marked retired, and the
+ * entry was never opened as an item at all — a real defect dropped out of the
+ * import with nothing in the output saying so.
+ *
+ * THE RESIDUAL RISK IS TWO-SIDED, AND THIS RULE DOES NOT MAKE IT ONE-SIDED
+ * -----------------------------------------------------------------------
+ * An earlier revision of this comment argued that under-matching is loud
+ * (a false LIVE row a reader sees on `swarm ready`) while over-matching is
+ * always a silent loss, and concluded the risk was "deliberately one-sided and
+ * deliberately loud". **That was false, and it was false for the very headings
+ * the rule is about.** `assemble` consumes a dead heading with `continue` and
+ * never opens it as an item, so a NUMBERED heading this rule retires vanishes
+ * from `items` exactly the way one it fails to recognise becomes a visible row.
+ * Measured, both directions, both silent for a numbered heading:
+ *
+ *     ## 31. The dialog-closed assertion is fixed   ->  dead=[31]  items=[]
+ *     ## 9.  — deleted .                           ->  dead=[]   items=[#9]
+ *
+ * The first is a live entry retired with nothing in the parse result to say so.
+ * The second is the visible false row. The only difference is which way the
+ * heading points, and a NUMBERED heading that genuinely ends in a status word —
+ * `## 5. Whatever — resolved` — is indistinguishable from one that merely does.
+ * Narrowing trades one silent class for a smaller one; it does not remove it.
+ *
+ * What anchoring does buy is the empirical half, which is the half that holds:
+ * over all 97 real headings on `main` at `0d64d75` the narrow rule matches exactly
+ * the one heading the
+ * loose one also reads as a retirement, so the loose rule's other four are the
+ * wrong verdicts and none of them is a retirement this rule has lost. It is
+ * also brittle at the punctuation boundary in a way worth knowing about — the
+ * tolerated trailing set is a fixed, named list, so `— deleted.` retires and
+ * `— deleted .` (one space) does not, and a tab, an asterisk or a second space
+ * all read as LIVE. `scripts/__tests__/handoff-import.test.mjs` pins each of
+ * those, so the asymmetry is on the record rather than discovered by a heading
+ * somebody happened to write.
  */
-const DEAD_HEADING = /deleted|closed|done|resolved|fixed|landed|superseded/i;
+const DEAD_HEADING = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed|landed|superseded)\b[)\].,;:!?'"’”]*$/i;
 
 /**
  * A leading item number, with or without its dot and with or without the `Item`
@@ -540,9 +607,25 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
  */
 export function planImport(results, known) {
   const documents = Array.isArray(results) ? results : results ? [results] : [];
-  const already = new Set(known instanceof Set ? known : Array.isArray(known) ? known : []);
+  /**
+   * `known` may be a Set/array of origins, or a Map/Record of origin → title.
+   * The title is what separates "this document's item 2 is the item I already
+   * have" from "this document's item 2 is a DIFFERENT item and mine is stale" —
+   * and `origin` is a number, so an upstream renumbering or replacement leaves
+   * the board holding the right-looking key beside the wrong defect, in `ready`,
+   * claimable. Classifying on the origin alone made that indistinguishable from
+   * an ordinary re-run, and the drift check downstream never ran.
+   */
+  const titles =
+    known instanceof Map
+      ? known
+      : known && typeof known === 'object' && !Array.isArray(known) && !(known instanceof Set)
+        ? new Map(Object.entries(known))
+        : null;
+  const already = new Set(known instanceof Set ? known : Array.isArray(known) ? known : titles ? titles.keys() : []);
   const create = [];
   const skip = [];
+  const drift = [];
   const planned = new Set();
 
   for (const document of documents) {
@@ -551,8 +634,14 @@ export function planImport(results, known) {
     for (const item of document?.items ?? []) {
       const number = /#(\d+)$/.exec(String(item.origin));
       if (number && dead.has(Number(number[1]))) continue;
-      if (already.has(item.origin) || planned.has(item.origin)) {
+      if (planned.has(item.origin)) {
         skip.push(item.origin);
+        continue;
+      }
+      if (already.has(item.origin)) {
+        const knownTitle = titles?.get(item.origin);
+        if (knownTitle !== undefined && knownTitle !== item.title) drift.push(item.origin);
+        else skip.push(item.origin);
         continue;
       }
       planned.add(item.origin);
@@ -560,5 +649,5 @@ export function planImport(results, known) {
     }
   }
 
-  return { create, skip };
+  return { create, skip, drift };
 }

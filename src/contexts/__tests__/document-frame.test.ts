@@ -155,11 +155,13 @@ describe('isValidDocumentFrame', () => {
     expect(isValidDocumentFrame(frame({ x: -10, y: -10, width: 5, height: -5 }))).toBe(false);
   });
 
-  it('rejects a positive fractional extent below one pixel', () => {
+  it('accepts a positive fractional extent below one pixel, because the rule is positivity and not a minimum size', () => {
     expect(isValidDocumentFrame(frame({ width: 0.5, height: 0.5 }))).toBe(true);
   });
 
-  it('rejects a Date instance that happens to have numeric fields', () => {
+  it('rejects a Date instance, which carries none of the four frame fields', () => {
+    // `isValidDocumentFrame` is purely structural, so this passes because a Date has no
+    // x/y/width/height at all — not because dates are recognised and refused.
     expect(isValidDocumentFrame(new Date(0))).toBe(false);
   });
 });
@@ -363,7 +365,7 @@ describe('documentFrameEquals', () => {
     expect(documentFrameEquals(frame({ height: 10 }), frame({ height: 11 }))).toBe(false);
   });
 
-  it('is not fooled by an object with equal fields plus extras', () => {
+  it('ignores extra keys, so an object with equal fields plus extras is still equal', () => {
     const decorated = { ...frame(), extra: 1 } as unknown as DocumentFrame;
 
     expect(documentFrameEquals(frame(), decorated)).toBe(true);

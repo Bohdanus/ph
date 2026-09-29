@@ -42,6 +42,13 @@ const mockContext = {
 describe('copyRectToClipboard', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // `mockContext` is one module-level object and `{ ...mockContext }` copies the SAME
+    // `vi.fn()` references into every canvas context, so the whole file shares one call
+    // history. `clearAllMocks`, not `restoreAllMocks`: restoring only reinstates spies, and
+    // a bare `vi.fn()` keeps every call it was ever given. This is stated rather than
+    // inherited — it is also what Vitest 5's `clearMocks: true` default does, and this
+    // config never says so, so nothing here should depend on a default that is not written down.
+    vi.clearAllMocks();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
       return { ...mockContext, canvas: this } as unknown as CanvasRenderingContext2D;
     });
@@ -142,6 +149,37 @@ describe('copyRectToClipboard', () => {
 
     expect(writeMock).toHaveBeenCalledTimes(1);
     expect(result).toBe(true);
+    // The whole function is this crop. `trimRect` is covered on its own in rect.test.ts,
+    // but the COMPOSITION is not covered anywhere: the source rect, the destination rect
+    // and their order are all arguments of one `drawImage` call, and passing the untrimmed
+    // rect, swapping x/y, or ignoring `trimRect` entirely would still return `true` here.
+    // `rect {5,5,15,15}` in a 100x100 image trims to x 5, y 5, 10x10.
+    expect(mockContext.drawImage).toHaveBeenCalledExactlyOnceWith(canvas, 5, 5, 10, 10, 0, 0, 10, 10);
+  });
+
+  it('draws the trimmed region, not the rect it was given', async () => {
+    const canvas = makeSourceCanvas(100, 100);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (
+      this: HTMLCanvasElement,
+      cb: (b: Blob | null) => void
+    ) {
+      cb(makeBlob());
+    });
+
+    await copyRectToClipboard({
+      sourceCanvas: canvas,
+      // Overhangs the document on the left, and x/y/width/height are four different
+      // numbers, so an untrimmed origin, a swapped x/y pair, or a rect copied through
+      // whole each produce a different argument list than the correct one.
+      rect: { x1: -10, y1: 20, x2: 45, y2: 90 },
+      imageSize: { width: 100, height: 100 },
+      clipboard: { write: vi.fn().mockResolvedValue(undefined) },
+      ClipboardItemCtor: vi.fn() as unknown as typeof ClipboardItem,
+    });
+
+    // -10 clamps to 0; 20, 45 and 90 all survive, and the extent is derived from the
+    // rounded edges, so the source rect is 45x70 at 0,20 and lands 1:1 at the origin.
+    expect(mockContext.drawImage).toHaveBeenCalledExactlyOnceWith(canvas, 0, 20, 45, 70, 0, 0, 45, 70);
   });
 
   it('returns false when clipboard.write throws', async () => {

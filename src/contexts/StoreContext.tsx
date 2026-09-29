@@ -202,6 +202,16 @@ type Action =
    * by the time this runs, so the transition publishes nothing; it exists so the
    * presentation scope learns about them and the scope's completeness guarantee
    * covers every bitmap the store holds rather than only the ones it materialized.
+   *
+   * Publishing state from adoption would be a bug, not a missing feature: the
+   * writer has already published the layer records these rasters live in, so a
+   * reducer that moved state here would either re-publish that same record or
+   * invent a transition no writer asked for. The action is therefore a
+   * deliberate no-op rather than a forgotten arm — but the reducer has no
+   * `ADOPT_LAYER_BITMAPS` case, because the dispatcher registers the bitmaps and
+   * returns without ever forwarding the action, so `default: return state` is
+   * what covers it. An arm here would be unreachable code describing a path that
+   * does not exist.
    */
   | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
   /**
@@ -517,15 +527,6 @@ function reducer(state: StoreData, action: Action): StoreData {
       }
       return published === state.layers ? state : { ...state, layers: published };
     }
-    case 'ADOPT_LAYER_BITMAPS':
-      // Ownership bookkeeping, and nothing else. The bitmaps are already in the
-      // layer records by the time this action is dispatched, so there is no
-      // state to publish and nothing to invalidate. The dispatcher registers
-      // them with the presentation scope and returns WITHOUT reaching this arm,
-      // so it is the typed landing place for the action rather than a live
-      // path — which is why the dispatcher's comment, not this one, is the one
-      // that has to stay true.
-      return state;
     case 'BATCH_UPDATES':
       // Metadata-only in production (the sole writer passes `fileName` and
       // `hasUnsavedChanges`). The wider legacy payload type still admits
@@ -751,7 +752,11 @@ function retireDepartedPresentationBitmaps(
   documentId: string,
   state: StoreData
 ): void {
-  presentationScope.retireUnreferenced(documentId, collectLivePresentationBitmaps(state.layers, state.history));
+  // The thunk is the cost control, not a style choice: `state` is the post-transition
+  // record, and a document the scope has published nothing for has nothing to
+  // retire, so walking the unbounded history to answer a question that cannot change
+  // the outcome is the regression this defers behind the scope's ownership check.
+  presentationScope.retireUnreferenced(documentId, () => collectLivePresentationBitmaps(state.layers, state.history));
 }
 
 /** Ids whose candidate record is not the stored record, added or removed ids included. */
@@ -830,11 +835,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     if (action.type === 'ADOPT_LAYER_BITMAPS') {
       // Registration is ownership bookkeeping, not a transition: the layer
-      // records that reference these rasters are already published, so the
-      // reducer arm is a no-op and the state is deliberately left alone. The
-      // writer dispatches this AFTER the edit that published the layer, so a
-      // registration is never filed under the document that has just been
-      // replaced.
+      // records that reference these rasters are already published, so there is
+      // nothing for the reducer to do and the action is deliberately not
+      // forwarded to it. The writer dispatches this AFTER the edit that published
+      // the layer, so a registration is never filed under the document that has
+      // just been replaced.
       for (const bitmap of action.payload.bitmaps) {
         presentationScope.trackPublished(currentState.documentId, bitmap);
       }

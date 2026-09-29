@@ -232,7 +232,7 @@ differ from the input, and that `tmpCanvas` is `null`.
 
 **Problem:** `saveLastSettings` is mocked as a bare `vi.fn()`, so the singleton
 `tools/settings.ts:lastSavedSettings` is never written. The test _"resets current tool to last saved
-settings"_ therefore asserts the pristine seed values and would pass if `useCurrentTool.tsx:71`
+settings"_ therefore asserts the pristine seed values and would pass if `useCurrentTool.tsx:62`
 deleted its `saveLastSettings(nextArgs)` call entirely. The sibling
 `useCurrentTool.legacy-figure.test.tsx:21-33` already shows the correct
 `importOriginal` + delegate pattern.

@@ -16,6 +16,11 @@ import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } f
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
 import type { EraserToolArgs } from './eraser.ts';
 import type { FillToolArgs } from './fill.ts';
+import {
+  COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
+  COLOR_REPLACEMENT_TOLERANCE_DEFAULT,
+  type ColorReplacementToolArgs,
+} from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
 import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from './quickSelection.ts';
@@ -119,6 +124,7 @@ export const defaultSettings = {
   'magic-wand': {
     tolerance: 28,
     smoothing: 1.5,
+    contiguous: true,
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
@@ -157,22 +163,23 @@ export const defaultSettings = {
     toolName: 'pencil',
   } satisfies PaintToolArgs,
   'color-replacement': {
-    alpha: 0.55,
-    color: '#000000',
-    penType: 'spray',
+    alpha: 1,
     lineWidth: 18,
+    color: '#000000',
+    tolerance: COLOR_REPLACEMENT_TOLERANCE_DEFAULT,
+    limits: 'contiguous',
+    sampling: 'current-layer',
+    smoothness: COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
+    sampleColor: null,
     points: [],
-    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. `Mode`
-    // defaults to Normal, so it composites exactly as the `draw`-backed brush did before the
-    // panel existed. `smoothing` does NOT: it defaults to 10, Photoshop's own default, so a
-    // brush stroke is now smoothed by 10% where it used to be unsmoothed. That is the
-    // intended behaviour, not an identity — `smoothStrokePoints` returns the same array
-    // instance at 0, which is what keeps the legacy `draw` tool's recorded baselines exact,
-    // and `draw` has no `smoothing` key at all so it reads `?? 0` and is untouched.
-    smoothing: PAINT_SMOOTHING_DEFAULT,
-    blendMode: 'source-over',
+    // No `smoothing` and no `blendMode` here, and their absence is the narrowing rather than an
+    // omission. The paint panel owns both, and this tool has left that panel: its `smoothness`
+    // above is a different control (the softening of the brush's coverage rim), it never
+    // rasterizes through `drawPen`, and it substitutes pixels inside the ACTIVE layer rather than
+    // compositing a new one, so there is nothing for a per-stroke blend mode to composite. Both
+    // keys arrived here by merge from the paint tranche, which still listed this tool as a paint.
     toolName: 'color-replacement',
-  } satisfies PaintToolArgs,
+  } satisfies ColorReplacementToolArgs,
   eraser: {
     mode: 'pencil',
     lineWidth: 40,

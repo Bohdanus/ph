@@ -20,7 +20,6 @@ const previewLayers = vi.hoisted(() => ({ current: {} as Record<string, unknown>
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
-const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
@@ -34,7 +33,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
@@ -83,7 +81,6 @@ describe('Levels toolbar', () => {
     mockTempUpdateLayer.mockClear();
     mockCancelLayerPreview.mockClear();
     mockSetToolArgs.mockClear();
-    mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
     setActiveLayerId('layer-1');
     previewLayers.current = {};
@@ -115,13 +112,13 @@ describe('Levels toolbar', () => {
 
     expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
     // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
-    // A `resetToLastSavedArgs` reset would publish 70/-20 here.
+    // A baseline read from the stored settings would publish 70/-20 here: the slider
+    // write overwrites that copy on the same tick.
     expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
       toolName: 'levels',
       brightness: 0,
       contrast: 0,
     });
-    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
     // The click removes an uncommitted preview. A committed adjustment is a
     // document operation, and `undo()` — which the panel does not call — is the
     // route out of one, so a fall-through to document-level undo stays pinned here.
@@ -493,7 +490,6 @@ describe('Levels toolbar', () => {
         brightness: 0,
         contrast: 0,
       });
-      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
       expect(mockUndo).not.toHaveBeenCalled();
     });
 

@@ -17,14 +17,17 @@ const toolArgs = vi.hoisted(() => ({
   text: 'Hello',
   fontSize: 64,
   lineHeight: 1.1,
-  rect: { x: 0, y: 0, width: 100, height: 50 } as { x: number; y: number; width: number; height: number } | null,
+  // A real `RectXYSorted`. This used to be a `Pos` (`{x, y, width, height}`), which made
+  // `rect.x1` undefined, every rect `calculateNewRect` recomputed came back all-`NaN`,
+  // and `expect.any(Number)` happily matched the `NaN` — so the recompute assertions in
+  // this file could not fail.
+  rect: { x1: 0, y1: 0, x2: 100, y2: 50 } as { x1: number; y1: number; x2: number; y2: number } | null,
   bold: false,
   italic: false,
   fontFamily: 'Arial',
   align: 'left',
-  // `defaultSettings.text` carries a colour (src/tools/settings.ts:69-80), so the fixture must
-  // too. Without it `Text.tsx:17` sees `toolArgs.color === undefined`, republishes the args on
-  // every mount and every one of the call-count assertions below is off by one.
+  // `defaultSettings.text` carries a colour (src/tools/settings.ts:82-94), so the fixture must too:
+  // the swatch renders `toolArgs.color` directly, and a missing one leaves the input valueless.
   color: '#000000',
 }));
 
@@ -65,7 +68,7 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
     text: 'Hello',
     fontSize: 64,
     lineHeight: 1.1,
-    rect: { x: 0, y: 0, width: 100, height: 50 },
+    rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
     bold: false,
     italic: false,
     fontFamily: 'Arial',
@@ -156,6 +159,39 @@ describe('Text toolbar', () => {
     expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
   });
 
+  it('keeps Apply disabled for typed text with no rect, instead of growing one at the origin', () => {
+    // This is the regression. `calculateNewRect` used to substitute
+    // `{x1:0,y1:0,x2:0,y2:0}` for a null rect, so typing without a drag published a real
+    // rect, `disabled={!text || !rect}` stopped being a dead half, and Apply committed a
+    // `text 2` layer whose ink landed at the document origin (drawing starts at
+    // `rect.x1 + TEXT_PADDING`, `text.ts:32,49`).
+    resetToolArgs({ text: '', rect: null });
+    const { rerender } = renderWithProvider(<Text />);
+
+    fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Hi' } });
+
+    // The keystroke itself must leave the rect null — that is the whole fix, and the only
+    // thing here that fails against the old substitution.
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hi', rect: null }));
+
+    // And the button must still be disabled once those published args come back, which is
+    // what the `!rect` half of the gate exists for. The mock store hands back the same
+    // object until something republishes it, so the rerender is what makes this a real
+    // assertion rather than one about the pre-typing state.
+    const published = mockSetToolArgs.mock.lastCall?.[0] as { text: string; rect: unknown };
+    resetToolArgs({ text: published.text, rect: published.rect as typeof toolArgs.rect });
+    rerender(
+      <KeyboardEventsProvider>
+        <Text />
+      </KeyboardEventsProvider>
+    );
+
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+    // Typing something to place is a canvas action, so the toolbar has to say so.
+    expect(screen.getByLabelText('Text')).toHaveAttribute('placeholder', 'Drag on the canvas to place text...');
+  });
+
   it('enables Apply and Clear when text and rect are present', () => {
     renderWithProvider(<Text />);
 
@@ -204,7 +240,14 @@ describe('Text toolbar', () => {
       expect(lastToolArgs()).toMatchObject({ fontFamily: 'Impact', text: 'Hello', fontSize: 64, lineHeight: 1.1 });
       // `handleFontFamilyChange` recomputes the rect through `calculateNewRect` instead of
       // publishing the args unchanged, otherwise the layer would keep the old metrics.
-      expect(lastToolArgs().rect).toEqual(expect.objectContaining({ x1: expect.any(Number), y2: expect.any(Number) }));
+      // `canvasRef.current` is null here, so the width-widening branch cannot run and only
+      // the height branch does: the fixture's 50px-tall box becomes tall enough for one
+      // 64px/1.1 line plus padding. Pinned to real numbers because `expect.any(Number)`
+      // also matches the all-`NaN` rect the old `Pos`-shaped fixture produced.
+      const rect = lastToolArgs().rect as { x1: number; y1: number; x2: number; y2: number };
+      expect(Object.keys(rect).sort()).toEqual(['x1', 'x2', 'y1', 'y2']);
+      expect(rect).toMatchObject({ x1: 0, y1: 0, x2: 100 });
+      expect(rect.y2).toBeCloseTo(64 * 1.1 + 2 * 5, 10);
     });
 
     it('keeps the align choice when the family changes', () => {
@@ -218,35 +261,66 @@ describe('Text toolbar', () => {
     });
 
     it('recomputes a non-null rect for an empty draft', () => {
-      resetToolArgs({ text: '', rect: { x: 0, y: 0, width: 10, height: 10 } });
+      resetToolArgs({ text: '', rect: { x1: 0, y1: 0, x2: 10, y2: 10 } });
       renderWithProvider(<Text />);
 
       fireEvent.click(screen.getByLabelText('Font'));
       fireEvent.click(screen.getByRole('button', { name: 'Georgia' }));
 
-      // `calculateNewRect` widens a zero-text rect rather than collapsing it, so Apply can
-      // still become reachable once the user types.
-      expect(lastToolArgs().rect).toEqual(expect.objectContaining({ x1: expect.any(Number), y2: expect.any(Number) }));
+      // A non-null rect with no text is a drag made before anything was typed, and
+      // `TextToolArea` hits it on every such drag. `calculateNewRect` widens the degenerate
+      // box rather than collapsing it, so the overlay mask is visible pre-typing. This is a
+      // different branch from the null-rect guard, which used to sit in the same place: the
+      // substitution that manufactured a rect at the origin is gone, and what remains is the
+      // `!text` early return, which is load-bearing for exactly this case.
+      const rect = lastToolArgs().rect as { x1: number; y1: number; x2: number; y2: number };
+      expect(Object.keys(rect).sort()).toEqual(['x1', 'x2', 'y1', 'y2']);
+      expect(rect).toMatchObject({ x1: -1, y1: 0, x2: 11 });
+      expect(rect.y2).toBeCloseTo(64 * 1.1 + 2 * 5, 10);
     });
   });
 
-  describe('colour synchronisation', () => {
+  describe('text colour', () => {
     const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
 
-    it('adopts the store colour when it diverges from the tool args colour', () => {
-      resetStoreState({ color: '#ff0000' });
+    it('renders a Color swatch bound to the tool args colour', () => {
+      resetToolArgs({ color: '#3366ff' });
       renderWithProvider(<Text />);
 
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ color: '#ff0000', text: 'Hello' })
-      );
-      expect(lastToolArgs().color).toBe('#ff0000');
+      const swatch = screen.getByLabelText('Color') as HTMLInputElement;
+      expect(swatch).toHaveAttribute('type', 'color');
+      expect(swatch).toHaveValue('#3366ff');
     });
 
-    it('does not publish anything when the tool args already match the store colour', () => {
+    it('publishes the chosen colour to the tool args, and only that', () => {
+      renderWithProvider(<Text />);
+
+      fireEvent.change(screen.getByLabelText('Color'), { target: { value: '#ff8800' } });
+
+      // The tool OWNS its colour now. The bar used to mirror the store's foreground into
+      // `toolArgs.color` on every render, so a user who picked a colour here watched it change
+      // under their hands the moment anything touched the foreground.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ color: '#ff8800' }));
+      expect(lastToolArgs()).toMatchObject({ color: '#ff8800', text: 'Hello', fontSize: 64, lineHeight: 1.1 });
+    });
+
+    it('does not adopt the store foreground, which is not the tool colour any more', () => {
+      resetStoreState({ color: '#ff0000' });
+      resetToolArgs({ color: '#0000ff' });
       renderWithProvider(<Text />);
 
       expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Color')).toHaveValue('#0000ff');
+    });
+
+    it('keeps the tool colour across an unrelated publish', () => {
+      resetStoreState({ color: '#00ff00' });
+      resetToolArgs({ color: '#0000ff' });
+      renderWithProvider(<Text />);
+
+      fireEvent.change(screen.getByLabelText(/Font Size/), { target: { value: '48' } });
+
+      expect(lastToolArgs()).toMatchObject({ color: '#0000ff', fontSize: 48 });
     });
   });
 
@@ -299,6 +373,7 @@ describe('Text toolbar', () => {
       const fontSelect = screen.getByLabelText('Font');
       const fontSizeSlider = screen.getByLabelText(/Font Size/);
       const lineHeightSlider = screen.getByLabelText(/Line Height/);
+      const colorSwatch = screen.getByLabelText('Color');
       const alignSelect = screen.getByLabelText('Align');
       const boldButton = screen.getByRole('button', { name: 'B' });
       const italicButton = screen.getByRole('button', { name: 'I' });
@@ -316,6 +391,11 @@ describe('Text toolbar', () => {
 
       await user.tab();
       expect(lineHeightSlider).toHaveFocus();
+
+      // The colour swatch sits where Photoshop puts it, immediately after the size group and
+      // before the paragraph controls, so the tab order is the bar's own left-to-right order.
+      await user.tab();
+      expect(colorSwatch).toHaveFocus();
 
       await user.tab();
       expect(alignSelect).toHaveFocus();

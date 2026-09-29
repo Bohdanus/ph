@@ -439,6 +439,7 @@ describe('tool image processors', () => {
       const result = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 28,
         smoothing: 1.5,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -451,11 +452,13 @@ describe('tool image processors', () => {
       const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 0,
         smoothing: 0,
+        contiguous: true,
         toolName: 'magic-wand',
       });
       const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 255,
         smoothing: 100,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -468,6 +471,7 @@ describe('tool image processors', () => {
         acceptsArgs<MagicWandToolArgs>(magicWand(params))({
           tolerance: Number.NaN,
           smoothing: Number.NaN,
+          contiguous: true,
           toolName: 'magic-wand',
         })
       ).not.toThrow();
@@ -543,11 +547,13 @@ describe('tool image processors', () => {
       const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 0,
         smoothing: 0,
+        contiguous: true,
         toolName: 'magic-wand',
       });
       const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 255,
         smoothing: 100,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -857,11 +863,24 @@ describe('tool image processors', () => {
       });
     });
 
-    it('never squares a line, because lines have no aspect ratio', () => {
-      expect(normalizeShapeGeometry(anchor, { x: 30, y: 12 }, 'line', { shiftKey: true, altKey: false })).toEqual({
-        start: anchor,
-        end: { x: 30, y: 12 },
+    it('snaps a shifted line to 45 degrees, keeping its length, not squaring it', () => {
+      // A drag to (30, 12) from (10, 10) is 5.7 degrees, so Shift quantises the
+      // direction to 0 degrees while preserving hypot(20, 2) = 20.0998. The old
+      // assertion was that Shift does nothing at all for a line, which is not
+      // what Photoshop's Line tool does: it constrains to 45 degree multiples.
+      const geometry = normalizeShapeGeometry(anchor, { x: 30, y: 12 }, 'line', {
+        shiftKey: true,
+        altKey: false,
       });
+
+      expect(geometry.start).toEqual(anchor);
+      expect(geometry.end.x).toBeCloseTo(30.09975124224178, 9);
+      expect(geometry.end.y).toBeCloseTo(10, 9);
+      // The point of the test: the LINE is not squared, only its direction quantized.
+      expect(Math.abs(geometry.end.x - geometry.start.x)).not.toBeCloseTo(
+        Math.abs(geometry.end.y - geometry.start.y),
+        6
+      );
     });
   });
 

@@ -266,7 +266,7 @@ describe('saveLastSettings', () => {
   });
 
   it('stores magic-wand settings verbatim', () => {
-    const args = { tolerance: 30, smoothing: 1.5, toolName: 'magic-wand' as const };
+    const args = { contiguous: true, tolerance: 30, smoothing: 1.5, toolName: 'magic-wand' as const };
     saveLastSettings(args);
     expect(lastSavedSettings['magic-wand']).toMatchObject(args);
   });
@@ -371,7 +371,7 @@ describe('saveLastSettings across a tool switch', () => {
 
 /**
  * The Photoshop paint bar publishes every control through `setToolArgs`, which lands
- * in `saveLastSettings` on the same tick (`src/contexts/useCurrentTool.tsx:71`). The
+ * in `saveLastSettings` on the same tick (`src/contexts/useCurrentTool.tsx:62`). The
  * paint tools used to share the arm that persists a bare `{ toolName }` with the pen
  * and shape families, so a brush Size change was written and then thrown away before
  * the next tool switch, and the bar re-seeded with every control at `undefined`.

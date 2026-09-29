@@ -6,7 +6,7 @@
  * WHY SQLITE IN THE COMMON GIT DIRECTORY
  * --------------------------------------
  * `git rev-parse --git-common-dir` is the one path every worktree of a
- * repository agrees on: 137 of them share `.git/`, and each resolves to it, so
+ * repository agrees on: they all share `.git/`, and each resolves to it, so
  * a single database file is visible from all of them without a symlink, a
  * server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
  * for a board that should outlive a reclone.
@@ -17,7 +17,7 @@
  * to coordinate. SQLite in WAL mode with a busy timeout is a library, not a
  * service: every command opens the file, does its work inside a transaction
  * and exits. Nothing needs to be running for a claim to be atomic, and nothing
- * needs restarting after a crash. `board watch` polls; it is a reader, never a
+ * needs restarting after a crash. `swarm watch` polls; it is a reader, never a
  * required participant.
  *
  * WHY CLAIMS AND LOCKS EXPIRE
@@ -34,7 +34,7 @@ import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * Default lease. Long enough that an agent mid-refactor does not lose its
@@ -43,10 +43,56 @@ const SCHEMA_VERSION = 1;
  */
 export const DEFAULT_LEASE_MS = 45 * 60 * 1000;
 
+/**
+ * How long a live finding can go untouched before `health` calls it idle.
+ *
+ * Long enough to span an overnight gap in a swarm that is genuinely paused, and
+ * short enough that a finding nobody came back for is visible before it is
+ * forgotten. It only ever REPORTS such a finding.
+ */
+export const IDLE_LIVE_MS = 6 * 60 * 60 * 1000;
+
+/** "No cap" for an internal aggregation, as opposed to a displayed page. */
+export const NO_LIMIT = Number.MAX_SAFE_INTEGER;
+
 const PRIORITY_ORDER = { critical: 0, high: 1, normal: 2, low: 3 };
 export const PRIORITIES = Object.keys(PRIORITY_ORDER);
+
+/**
+ * How urgent a priority is, lowest first. An unrecognised value sorts last
+ * rather than first, so a typo in a flag cannot promote itself to the head of
+ * the queue — the failure mode of a lookup that defaulted to zero.
+ */
+export const priorityRank = (priority) => PRIORITY_ORDER[priority] ?? 9;
 export const SCOPES = ['history', 'test', 'e2e', 'prod'];
 export const STATUSES = ['open', 'claimed', 'resolved', 'closed', 'deferred'];
+
+/**
+ * An origin that names one item of a handoff document — `HANDOFF.md#12`.
+ *
+ * Only the importer writes this shape. A live swarm finding is filed with no
+ * origin at all, or with a free-text one recording where it came from
+ * (`main: 2026-09-28 operator request`), and `handoff-import.mjs` keys
+ * idempotency on this exact grammar.
+ *
+ * The path characters are in there for a reason. The importer writes the bare
+ * filename (`OPEN_PROBLEMS.md#p3-…`, the scope map is what knows the `e2e/`
+ * part), so a stricter pattern would match everything real — and would then
+ * quietly call a path-qualified origin `live`, which is the one answer that
+ * promotes a mirror to the top of the work queue. A pattern that fails open here
+ * is worse than one that fails closed: the cost of a false negative is a row
+ * sorted slightly low, and the cost of a false positive is a queue that lies.
+ *
+ * Telling the two apart is the difference between a work queue and a mirror.
+ * Fifty-four imported rows and two live ones are not fifty-six pieces of work:
+ * the durable record already owns the prose, `AGENTS.md` says so in as many
+ * words, and a queue that cannot say which is which looks authoritative while
+ * being ninety-six percent noise.
+ */
+const IMPORTED_ORIGIN = /^[\w./-]+\.md#(?:\d+|[a-z0-9-]+)$/;
+
+/** True when this issue was imported from a handoff document rather than filed live. */
+export const isImportedOrigin = (origin) => IMPORTED_ORIGIN.test(String(origin ?? ''));
 
 /** Claimable states. A resolved, closed or deferred issue is not up for grabs. */
 const CLAIMABLE = new Set(['open', 'deferred']);
@@ -137,16 +183,39 @@ CREATE TABLE IF NOT EXISTS claims (
   released_at TEXT
 );
 
+-- A file lock: one row per (path, agent), and NOTHING about which issue it
+-- belongs to.
+--
+-- That separation is the point of this table's shape, and its absence was the
+-- source of two blockers in review. The lock used to carry an issue_id, so
+-- "release the locks of issue X" was a WHERE on that column -- and an agent
+-- working two issues at once had the second issue's file freed by releasing the
+-- first. Whoever held that file afterwards was told, truthfully, that nobody
+-- had it. One column could only hold one answer, so two different questions
+-- ("who is in this file" and "which issues is this agent using it for") were
+-- forced to share it. issue_locks below is the second question's own table, and
+-- one lock may appear in as many of those rows as there are issues it is
+-- legitimately being used for.
 CREATE TABLE IF NOT EXISTS file_locks (
   path        TEXT NOT NULL,
   agent_id    TEXT NOT NULL,
-  issue_id    TEXT,
   worktree    TEXT,
   acquired_at TEXT NOT NULL,
   expires_at  TEXT NOT NULL,
   released_at TEXT,
   PRIMARY KEY (path, agent_id)
 );
+
+/** "Issue X is being worked on using file Y." Many rows may name one lock. */
+CREATE TABLE IF NOT EXISTS issue_locks (
+  issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  path       TEXT NOT NULL,
+  agent_id   TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (issue_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS issue_locks_path_idx ON issue_locks(path);
 
 CREATE TABLE IF NOT EXISTS events (
   seq      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,7 +413,8 @@ export class Board {
   }
 
   /**
-   * Creates the schema, and refuses to write over a newer one.
+   * Creates the schema, migrates it forward, and refuses to write over a newer
+   * one.
    *
    * The version row is written with a plain conditional insert rather than a
    * read followed by an insert. The read-then-insert was outside any
@@ -354,16 +424,116 @@ export class Board {
    * constraint that has nothing to do with what the user asked for.
    */
   migrate() {
-    this.db.exec(SCHEMA);
-    this.db
-      .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
-      .run('schema_version', String(SCHEMA_VERSION));
-    const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version');
-    if (Number(row.value) > SCHEMA_VERSION) {
+    const existing = this.currentSchemaVersion();
+    // BEFORE `exec(SCHEMA)`, not after. A board written by a NEWER script threw
+    // here — correctly — but only after CREATE TABLE IF NOT EXISTS had already
+    // re-created whatever the newer version had, which is the worst way to lose
+    // a board: it half-adopts a schema it is about to refuse.
+    if (existing > SCHEMA_VERSION) {
       throw new BoardError(
-        `board schema is v${row.value}, this script writes v${SCHEMA_VERSION}; update the board script, not the database`,
+        `board schema is v${existing}, this script writes v${SCHEMA_VERSION}; update the board script, not the database`,
         { code: 1 }
       );
+    }
+    this.db.exec(SCHEMA);
+    const migrated = existing > 0 && existing < SCHEMA_VERSION ? this.runMigrations(existing) : false;
+    if (existing === 0) {
+      this.db
+        .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
+        .run('schema_version', String(SCHEMA_VERSION));
+    } else if (migrated) {
+      /**
+       * The version advances ONLY when a migration actually ran.
+       *
+       * An unconditional `UPDATE … WHERE value < 2` looked harmless and was a
+       * trap: `currentSchemaVersion()` returns 0 when the read fails for ANY
+       * reason, the migration is then skipped, and the stamp lands anyway — so
+       * the board announces v2 with every lock's attribution still sitting in a
+       * column nothing reads, and there is no error to send anyone back.
+       */
+      this.db
+        .prepare('UPDATE meta SET value = ? WHERE key = ? AND CAST(value AS INTEGER) < ?')
+        .run(String(SCHEMA_VERSION), 'schema_version', SCHEMA_VERSION);
+    }
+  }
+
+  /**
+   * Migrations in order, each from the version it actually follows.
+   *
+   * Returns whether a migration actually ran, and that return value is load
+   * bearing: it is the ONLY thing that permits the version row to advance. A
+   * version that advances without a migration is a board that claims to be
+   * current while its data is not, and there is no error to send anyone back.
+   */
+  runMigrations(fromVersion) {
+    const steps = { 1: () => this.migrateFileLockAttribution() };
+    const step = steps[fromVersion];
+    // RETURNED, not just called: `if (step) step();` discarded it, the version
+    // row never advanced, and every open re-ran the migration.
+    return step ? step() : false;
+  }
+
+  currentSchemaVersion() {
+    try {
+      const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version');
+      return row ? Number(row.value) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * v1 → v2: a lock's `issue_id` became a row in `issue_locks`.
+   *
+   * Best-effort by necessity, and safe by construction, because a v1 board
+   * could only record ONE issue per lock: an agent working two issues with one
+   * file had the second silently dropped, and the most that was ever written
+   * down is what can be carried forward.
+   *
+   * Two things make this survivable on a board nobody can inspect first. v1's
+   * `file_locks.issue_id` had NO foreign key and `holdFiles` never validated
+   * it, so `swarm hold x --issue ph-404` was accepted; v2 turns foreign keys on
+   * before this runs, and a straight `INSERT … SELECT` then aborts the whole
+   * migration on the first dangling id — leaving a board that cannot be opened
+   * by any command, with no repair path, because you cannot open it to fix it.
+   * Hence: JOIN the issues table, and count what was dropped.
+   */
+  migrateFileLockAttribution() {
+    const columns = this.db.prepare('PRAGMA table_info(file_locks)').all();
+    if (!columns.some((column) => column.name === 'issue_id')) return true;
+    this.db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      const result = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO issue_locks (issue_id, path, agent_id, created_at)
+           SELECT f.issue_id, f.path, f.agent_id, f.acquired_at
+           FROM file_locks f
+           JOIN issues i ON i.id = f.issue_id
+           WHERE f.issue_id IS NOT NULL AND f.released_at IS NULL`
+        )
+        .run();
+      const dangling = this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM file_locks f
+           WHERE f.issue_id IS NOT NULL AND f.released_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.id = f.issue_id)`
+        )
+        .get();
+      this.addEvent('board.migrate', {
+        message: `v1 → v2: ${result.changes} file-lock attribution(s) moved to issue_locks`,
+        data: {
+          from: 1,
+          to: 2,
+          moved: Number(result.changes),
+          // Named rather than dropped silently: these were locks on files whose
+          // issue no longer exists, and the operator is the only one who can say
+          // whether the lock or the issue was the mistake.
+          dropped_dangling_issue: Number(dangling?.n ?? 0),
+        },
+      });
+      return true;
+    } finally {
+      this.db.exec('PRAGMA foreign_keys = ON');
     }
   }
 
@@ -433,7 +603,15 @@ export class Board {
 
   // --- agents -------------------------------------------------------------
 
-  /** Records that an agent exists and refreshes its liveness. */
+  /**
+   * Records that an agent exists and refreshes its liveness.
+   *
+   * `session_id` is written on INSERT and never updated: a branch outlives the
+   * sessions that work in it, and overwriting the column on every touch kept
+   * only the most recent run — which is the opposite of what the column is for.
+   * A branch worked from three sessions wants to be findable from all three, so
+   * the FIRST is kept and the live one is visible in `agents` via `last_seen`.
+   */
   touchAgent(identity = this.identity) {
     if (!identity?.agentId) return;
     const ts = this.iso();
@@ -444,7 +622,6 @@ export class Board {
          ON CONFLICT(agent_id) DO UPDATE SET
            worktree = COALESCE(excluded.worktree, agents.worktree),
            branch = COALESCE(excluded.branch, agents.branch),
-           session_id = COALESCE(excluded.session_id, agents.session_id),
            last_seen = excluded.last_seen,
            last_pid = excluded.last_pid`
       )
@@ -514,8 +691,29 @@ export class Board {
     }
     return this.transaction(() => {
       if (origin) {
-        const existing = this.db.prepare('SELECT id FROM issues WHERE origin = ?').get(origin);
-        if (existing) return { id: existing.id, created: false };
+        const existing = this.db.prepare('SELECT id, title FROM issues WHERE origin = ?').get(origin);
+        if (existing) {
+          /**
+           * DRIFT. `origin` is a NUMBER, so an item that is renumbered upstream
+           * keeps an origin the board already knows while the document's item
+           * under that number is a different defect — and the board would then
+           * show a correct-looking origin beside a stale title, claimable work
+           * for a defect the document no longer contains.
+           *
+           * Recorded, never corrected. Only an agent reading both documents
+           * knows whether item 2 was renumbered, re-titled, or replaced.
+           */
+          if (foldTitle(existing.title) !== foldTitle(title)) {
+            this.recordDrift(existing.id, {
+              origin,
+              boardTitle: existing.title,
+              docTitle: String(title).trim(),
+              agent: createdBy,
+            });
+            return { id: existing.id, created: false, drift: true };
+          }
+          return { id: existing.id, created: false, drift: false };
+        }
       }
       const id = this.nextIssueId();
       const ts = this.iso();
@@ -628,9 +826,9 @@ export class Board {
 
   /**
    * Lists issues, most urgent first. `only` narrows to a set of statuses; the
-   * default is the whole board because `board list` is also a status report.
+   * default is the whole board because `swarm list` is also a status report.
    */
-  listIssues({ status = null, scope = null, files = null, claimedBy = null, origin = null, limit = 200 } = {}) {
+  listIssues({ status = null, scope = null, files = null, claimedBy = null, origin = null, limit = NO_LIMIT } = {}) {
     const where = [];
     const params = [];
     if (status) {
@@ -658,7 +856,7 @@ export class Board {
     if (claimedBy) {
       // The lease, not just the row: an issue whose claim expired a
       // millisecond ago is not being worked on by anybody, and
-      // `board list --claimed-by` saying otherwise sends the next agent round
+      // `swarm list --claimed-by` saying otherwise sends the next agent round
       // the loop to find work that is already free.
       where.push(
         `EXISTS (SELECT 1 FROM claims c WHERE c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL AND c.lease_until > ?)`
@@ -673,22 +871,19 @@ export class Board {
       const wanted = this.canonicalPaths(files);
       if (wanted.length > 0) {
         where.push(
-          `EXISTS (SELECT 1 FROM file_locks f WHERE f.issue_id = issues.id AND f.agent_id = ? AND f.released_at IS NULL AND f.expires_at > ? AND f.path IN (${wanted
+          `EXISTS (SELECT 1 FROM issue_locks l WHERE l.issue_id = issues.id AND l.agent_id = ? AND l.path IN (${wanted
             .map(() => '?')
-            .join(',')}))`
+            .join(',')})
+            AND EXISTS (SELECT 1 FROM file_locks f WHERE f.path = l.path AND f.agent_id = l.agent_id AND f.released_at IS NULL AND f.expires_at > ?))`
         );
-        params.push(claimedBy ?? this.identity?.agentId ?? 'unknown', this.iso(), ...wanted);
+        params.push(claimedBy ?? this.identity?.agentId ?? 'unknown', ...wanted, this.iso());
       }
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     return this.db
       .prepare(`SELECT * FROM issues ${clause}`)
       .all(...params)
-      .sort(
-        (a, b) =>
-          (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9) ||
-          a.created_at.localeCompare(b.created_at)
-      )
+      .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || a.created_at.localeCompare(b.created_at))
       .slice(0, limit);
   }
 
@@ -700,9 +895,9 @@ export class Board {
    * still a lease nobody can hold past, and there is no process that would have
    * to be responsible for sweeping it.
    */
-  readyIssues({ limit = 50 } = {}) {
+  readyIssues({ limit = NO_LIMIT } = {}) {
     const at = this.now();
-    return this.listIssues({})
+    return this.listIssues({ limit: NO_LIMIT })
       .filter((issue) => READY_STATUSES.has(issue.status))
       .filter((issue) => {
         // A `claimed` issue whose lease ran out is back on offer: the status
@@ -719,7 +914,7 @@ export class Board {
 
   /** Issues whose open deps are not yet closed, whatever their own status. */
   blockedIssues() {
-    return this.listIssues({}).filter(
+    return this.listIssues({ limit: NO_LIMIT }).filter(
       (issue) =>
         issue.status !== 'closed' &&
         this.deps(issue.id).some(({ depends_on }) => {
@@ -849,9 +1044,10 @@ export class Board {
       this.db
         .prepare('UPDATE claims SET released_at = ?, lease_until = ? WHERE issue_id = ?')
         .run(this.iso(), this.iso(), id);
-      this.db
-        .prepare('UPDATE file_locks SET released_at = ? WHERE issue_id = ? AND agent_id = ? AND released_at IS NULL')
-        .run(this.iso(), id, claim.agent_id);
+      // The locks go through the pairing table, so a file this agent is still
+      // using for ANOTHER live claim survives. Dropping them by `issue_id` is
+      // what told the next agent a file was free while it was being edited.
+      const freed = this.releaseIssueLocksInTransaction(id, at);
       if (['claimed'].includes(currentStatus(this.db, id))) {
         this.db.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?').run('open', this.iso(), id);
       }
@@ -859,9 +1055,9 @@ export class Board {
         issue: id,
         agent: claim.agent_id,
         message: reason ?? 'released',
-        data: { by: who, forced: Boolean(force) },
+        data: { by: who, forced: Boolean(force), files_released: freed },
       });
-      return { id, released: true };
+      return { id, released: true, files_released: freed };
     });
   }
 
@@ -878,17 +1074,17 @@ export class Board {
    * The locks still holding on an issue, expired ones excluded.
    *
    * Filtering only on `released_at` reads a lock whose lease has run out as a
-   * live one, which is how `board show` and the FILES column of `board ready`
-   * came to advertise a file that `board check`, in the same breath, called
+   * live one, which is how `swarm show` and the FILES column of `swarm ready`
+   * came to advertise a file that `swarm check`, in the same breath, called
    * free. Anything that renders a lock to a human goes through here or through
    * `liveLocks`; anything that decides a conflict ALWAYS goes through
    * `liveLocks`, and never through this.
    */
   locksFor(issueId, at = this.now()) {
-    return this.db
-      .prepare('SELECT * FROM file_locks WHERE issue_id = ? AND released_at IS NULL')
-      .all(issueId)
-      .filter((lock) => Date.parse(lock.expires_at) > at);
+    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path} ${lock.agent_id}`, lock]));
+    return this.issueLocks(issueId, at)
+      .map((pairing) => live.get(`${pairing.path} ${pairing.agent_id}`))
+      .filter(Boolean);
   }
 
   locksHeldBy(agent, at = this.now()) {
@@ -906,6 +1102,21 @@ export class Board {
     if (!who) throw new BoardError('no agent identity to hold with', { code: 1 });
     const list = this.canonicalPaths(paths);
     if (list.length === 0) throw new BoardError('no file paths given', { code: 1 });
+    // A path outside every worktree of this repository cannot be compared with
+    // any lock, so holding it would create a row nothing can ever collide with —
+    // a lock that protects nothing while looking like protection. `check`
+    // refuses the same path for the same reason, and the two must agree.
+    // Both ways of naming a file outside this repository: an absolute path that
+    // no worktree prefix matched, and a relative one that climbs out of the
+    // worktree root. Either way there is no lock it could ever collide with.
+    const outside = list.filter((path) => path.startsWith('/') || path.startsWith('..'));
+    if (outside.length > 0) {
+      throw new BoardError(
+        `not inside this repository: ${outside.join(', ')}. Locks cover this repository's files; ` +
+          'pass a path relative to the worktree you are in.',
+        { code: 1 }
+      );
+    }
     try {
       return this.transaction(() => {
         // The clock is sampled inside the transaction, not before it. A claim
@@ -973,32 +1184,96 @@ export class Board {
   }
 
   /**
-   * Writes one file lock. Callers must check `liveLocks` for a conflict first:
-   * this function is unconditional by design, so that a re-hold extends a lease.
+   * Writes one file lock, and — when the lock is for an issue — records the
+   * pairing. Callers must check `liveLocks` for a conflict first: this function
+   * is unconditional by design, so that a re-hold extends a lease.
    *
-   * It does NOT re-point `issue_id` on a lock the agent already holds. The
-   * attribution belongs to the issue that first took the file, and the one case
-   * where re-pointing looked useful is exactly the case where it lies: `claim
-   * --files` holds the files BEFORE it claims the issue, so a claim that is then
-   * refused still walked the attribution of a file the agent had held for some
-   * other issue all along. A second issue that needs the same file waits for the
-   * lock to lapse, which is the truth, rather than inheriting a pointer to work
-   * its holder never accepted.
+   * The lock and the pairing are two rows because they are two facts. "This
+   * agent is in this file" outlives any single issue, and "this issue is being
+   * worked on with this file" is what a release has to undo. Forcing the second
+   * into a column on the first is what let releasing one issue free a file
+   * another live issue was using.
    */
   holdFileInTransaction(path, { issueId = null, agent, leaseMs = DEFAULT_LEASE_MS, at = this.now() } = {}) {
     const who = agent ?? this.identity?.agentId ?? 'unknown';
     this.db
       .prepare(
-        `INSERT INTO file_locks (path, agent_id, issue_id, worktree, acquired_at, expires_at, released_at)
-         VALUES (?, ?, ?, ?, ?, ?, NULL)
+        `INSERT INTO file_locks (path, agent_id, worktree, acquired_at, expires_at, released_at)
+         VALUES (?, ?, ?, ?, ?, NULL)
          ON CONFLICT(path, agent_id) DO UPDATE SET
            worktree = COALESCE(excluded.worktree, file_locks.worktree),
            acquired_at = excluded.acquired_at,
            expires_at = excluded.expires_at,
            released_at = NULL`
       )
-      .run(path, who, issueId, this.identity?.worktree ?? null, this.iso(), msFromNow(leaseMs, at));
+      .run(path, who, this.identity?.worktree ?? null, this.iso(), msFromNow(leaseMs, at));
+    if (issueId) {
+      // Resolved BEFORE the write, and not by the foreign key: a claim naming
+      // an issue that does not exist is "not found", and the raw constraint
+      // error that used to come out of here was neither that nor a message an
+      // agent could act on — it was a stack trace, with the wrong exit code.
+      this.getIssue(issueId);
+      this.db
+        .prepare(
+          `INSERT INTO issue_locks (issue_id, path, agent_id, created_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(issue_id, path) DO NOTHING`
+        )
+        .run(issueId, path, who, this.iso());
+    }
     return path;
+  }
+
+  /** The live file locks an issue is being worked on with. */
+  issueLocks(issueId, at = this.now()) {
+    return this.db
+      .prepare('SELECT * FROM issue_locks WHERE issue_id = ?')
+      .all(issueId)
+      .filter((row) => this.liveLocks(at).some((lock) => lock.path === row.path && lock.agent_id === row.agent_id));
+  }
+
+  /**
+   * Undoes one issue's hold on its files — and releases the underlying lock
+   * ONLY when no other pairing still needs it.
+   *
+   * A lock exists because an agent is IN a file. A pairing says which issues
+   * that is for, and the lock outlives any one of them.
+   *
+   * "Still in use" therefore means a surviving pairing whose issue is not
+   * CLOSED — not one that happens to hold a live claim. The claim-based version
+   * looked right and was wrong in normal use: `swarm hold src/x.ts --issue ph-2`
+   * on an issue the agent has not claimed yet is a documented workflow, and a
+   * predicate that only counts claimed issues let `release ph-1` free a file the
+   * agent was still in, with no error anywhere. An unclaimed issue is precisely
+   * the common case for a file an agent has just reserved.
+   *
+   * Closed is the right cut-off because closing releases the pairings itself:
+   * verified, finished work is the one state in which nobody is editing.
+   */
+  releaseIssueLocksInTransaction(issueId) {
+    const pairings = this.db.prepare('SELECT * FROM issue_locks WHERE issue_id = ?').all(issueId);
+    const freed = [];
+    for (const pairing of pairings) {
+      this.db.prepare('DELETE FROM issue_locks WHERE issue_id = ? AND path = ?').run(issueId, pairing.path);
+      const stillInUse = this.db
+        .prepare(
+          `SELECT l.issue_id FROM issue_locks l
+           JOIN issues i ON i.id = l.issue_id
+           WHERE l.path = ? AND l.agent_id = ? AND i.status != 'closed'`
+        )
+        .all(pairing.path, pairing.agent_id);
+      if (stillInUse.length > 0) continue;
+      this.db
+        .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ? AND released_at IS NULL')
+        .run(this.iso(), pairing.path, pairing.agent_id);
+      freed.push(pairing.path);
+      this.addEvent('lock.release', {
+        issue: issueId,
+        agent: pairing.agent_id,
+        path: pairing.path,
+        message: 'released with the issue that held it',
+      });
+    }
+    return freed;
   }
 
   releaseFiles(paths, { agent, force = false } = {}) {
@@ -1013,14 +1288,35 @@ export class Board {
           this.db
             .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ?')
             .run(this.iso(), path, row.agent_id);
+          /**
+           * The pairings go with the lock. Leaving them is not a harmless leak:
+           * the "still in use" predicate counts a surviving pairing on a
+           * non-closed issue, so an orphan pairing would keep this agent's lock
+           * alive for ever with no lock row to explain it — the file would be
+           * un-takeable and no command would say why.
+           */
+          const pairings = this.db
+            .prepare('SELECT issue_id FROM issue_locks WHERE path = ? AND agent_id = ?')
+            .all(path, row.agent_id);
+          this.db.prepare('DELETE FROM issue_locks WHERE path = ? AND agent_id = ?').run(path, row.agent_id);
           released.push(path);
-          this.addEvent('lock.release', {
-            issue: row.issue_id,
-            agent: row.agent_id,
-            path,
-            message: 'released',
-            data: { by: who, forced: Boolean(force) },
-          });
+          for (const pairing of pairings) {
+            this.addEvent('lock.release', {
+              issue: pairing.issue_id,
+              agent: row.agent_id,
+              path,
+              message: 'released',
+              data: { by: who, forced: Boolean(force) },
+            });
+          }
+          if (pairings.length === 0) {
+            this.addEvent('lock.release', {
+              agent: row.agent_id,
+              path,
+              message: 'released',
+              data: { by: who, forced: Boolean(force) },
+            });
+          }
         }
       }
       return { released: [...new Set(released)] };
@@ -1046,12 +1342,35 @@ export class Board {
     if (this._pathRoots) return this._pathRoots;
     const roots = new Set();
     if (this.identity?.worktree) roots.add(this.identity.worktree);
+    /**
+     * From GIT, not from the `agents` table. Worktrees are a property of the
+     * repository — `git worktree list` names all of them, including any that has
+     * never run a command — and learning the roots from who has spoken last
+     * left a window exactly where it does damage: agent A holds
+     * `<worktree-B>/src/x.ts` by absolute path, agent B has never run a board
+     * command, so B's `src/x.ts` matched no root, B's hold was GRANTED, and one
+     * file ended up with two live locks and each agent told the other was not
+     * in it. The agents table stays as a fallback for a board used with `--dir`
+     * outside a repository, where git has nothing to enumerate.
+     */
+    try {
+      const listed = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+        cwd: this.identity?.worktree ?? process.cwd(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      for (const line of listed.split('\n')) {
+        if (line.startsWith('worktree ')) roots.add(line.slice('worktree '.length).trim());
+      }
+    } catch {
+      // Not a repository, or git refused: what is left is enough.
+    }
     try {
       for (const row of this.db.prepare('SELECT DISTINCT worktree FROM agents WHERE worktree IS NOT NULL').all()) {
         roots.add(row.worktree);
       }
     } catch {
-      // No agents table yet, or no row: the caller's own worktree is enough.
+      // No agents table yet, or no row.
     }
     this._pathRoots = [...roots]
       .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
@@ -1067,7 +1386,7 @@ export class Board {
    * `/private/tmp`, `git rev-parse --show-toplevel` returns the RESOLVED path,
    * and a path typed by an agent or pasted from a shell keeps the symlink. So
    * `<wt>/src/x.ts` and `/tmp/<wt>/src/x.ts` are the same file and one of them
-   * matched no root — and this function's caller is `board check`, whose entire
+   * matched no root — and this function's caller is `swarm check`, whose entire
    * job is to answer "may I edit this". It answered FREE.
    *
    * Only the deepest EXISTING ancestor is resolved, because the file a caller
@@ -1075,7 +1394,13 @@ export class Board {
    * does not.
    */
   toRepoPath(path) {
+    const typed = String(path ?? '').trim();
     const direct = normalizePaths([path], { roots: this.pathRoots() })[0];
+    // A path that WAS given and normalised to nothing — the empty string, or a
+    // worktree root with a trailing slash — is not a free file. It is a path
+    // this board does not cover, and `check` answering "free" there is the
+    // disagreement with `hold`, which refuses it.
+    if (direct === undefined && typed !== '') return typed;
     // Only an ABSOLUTE path can be a symlinked spelling of a relative one. A
     // path that is already repo-relative is the canonical form, and resolving
     // it against the process's directory would turn the stored answer into an
@@ -1108,7 +1433,66 @@ export class Board {
   }
 
   /**
-   * `board check <path>`: exit 0 free, 1 held. Scriptable on its own, and the
+   * The files an issue is ABOUT, as recorded when it was filed.
+   *
+   * Not the locks. Those are a different question — who is IN a file right now —
+   * and the import deliberately takes none, so a table that reported locks
+   * showed `-` for all fifty-four imported items and told an agent nothing about
+   * the work in front of it. The file list itself lives in the issue's own
+   * `issue.create` event, which is where both filing paths (`swarm new` and
+   * `swarm import`) put it, so it is there for every issue that exists.
+   */
+  /**
+   * Records that a document's numbering and the board no longer agree.
+   *
+   * `origin` is a NUMBER, so a renumbered, re-titled or replaced item upstream
+   * leaves the board holding a correct-looking origin beside a stale title — in
+   * `ready`, claimable, while the document describes something else entirely.
+   * That is the one way this board can be confidently wrong, and it is
+   * detectable with one comparison because both sides are already here.
+   *
+   * Recorded and never corrected. Only an agent reading both documents knows
+   * whether item 2 was renumbered, re-titled, or replaced — and correcting it
+   * automatically would overwrite the board's copy of a defect with a title the
+   * board has never seen. An event, so it survives the command that saw it.
+   */
+  recordDrift(issueId, { origin, boardTitle, docTitle, agent } = {}) {
+    /**
+     * Idempotent for an unchanged disagreement. Otherwise a single reworded
+     * heading appends one `origin.drift` row to every import that ever runs,
+     * for ever — an unbounded log entry about a thing nobody is acting on, which
+     * is how a signal stops being read.
+     */
+    const data = { origin, board_title: boardTitle, doc_title: docTitle };
+    const already = this.db
+      .prepare("SELECT 1 FROM events WHERE kind = 'origin.drift' AND data = ? LIMIT 1")
+      .get(JSON.stringify(data));
+    if (already) return { issue: issueId, origin, boardTitle, docTitle, recorded: false };
+    this.addEvent('origin.drift', {
+      issue: issueId,
+      agent: agent ?? this.identity?.agentId ?? 'unknown',
+      message: `the document's ${origin} is now "${docTitle}"; the board has "${boardTitle}"`,
+      data,
+    });
+    return { issue: issueId, origin, boardTitle, docTitle, recorded: true };
+  }
+
+  issueFiles(issueId) {
+    const row = this.db
+      .prepare("SELECT data FROM events WHERE issue_id = ? AND kind = 'issue.create' ORDER BY seq ASC LIMIT 1")
+      .get(issueId);
+    if (!row?.data) return [];
+    try {
+      const files = JSON.parse(row.data)?.files;
+      return Array.isArray(files) ? this.canonicalPaths(files) : [];
+    } catch {
+      // A malformed event is a missing file list, not a crash in a listing.
+      return [];
+    }
+  }
+
+  /**
+   * `swarm check <path>`: exit 0 free, 1 held. Scriptable on its own, and the
    * one query an agent or a shell is most likely to trust.
    *
    * It normalises its input with the SAME function `holdFiles` normalises with,
@@ -1120,8 +1504,20 @@ export class Board {
    */
   checkPath(path, { agent, at = this.now() } = {}) {
     const who = agent ?? this.identity?.agentId;
+    const typed = String(path ?? '').trim();
+    // Nothing was asked about. "Free" is an answer about a FILE, and a command
+    // that checked no file must not hand back the exit code that means it did.
+    if (typed === '') return { path, free: false, holders: [], outside: true, nothing: true };
     const normalized = this.toRepoPath(path);
     if (normalized === undefined) return { path, free: true, holders: [] };
+    // An absolute path that survived the prefix strip is OUTSIDE every worktree
+    // of this repository, so the board has no lock on it and cannot say it is
+    // free — `hold` refuses such a path outright, and `check` answering "free"
+    // where `hold` answers "no" is the disagreement that lets a shell gate on
+    // the wrong one.
+    if (normalized.startsWith('/') || normalized.startsWith('..')) {
+      return { path: normalized, free: false, holders: [], outside: true };
+    }
     const holders = this.liveLocks(at).filter((lock) => lock.path === normalized && lock.agent_id !== who);
     return { path: normalized, free: holders.length === 0, holders };
   }
@@ -1203,6 +1599,20 @@ export class Board {
       this.db
         .prepare('UPDATE issues SET status = ?, verified_by = ?, verified_at = ?, updated_at = ? WHERE id = ?')
         .run('closed', verifier, this.iso(), this.iso(), id);
+      /**
+       * A closed issue is finished and VERIFIED, so nobody is editing its files
+       * any more — and holding them until the lease runs out reserves work that
+       * is already done for up to 45 minutes, after which `doctor` has to be
+       * run to give the files back. Closing is the right place to release: not
+       * at `resolve`, where the fixer may still be running tests, and not later.
+       */
+      const claim = this.liveClaimOrNull(id);
+      if (claim) {
+        this.db
+          .prepare('UPDATE claims SET released_at = ?, lease_until = ? WHERE issue_id = ?')
+          .run(this.iso(), this.iso(), id);
+      }
+      this.releaseIssueLocksInTransaction(id);
       this.addEvent('issue.close', {
         issue: id,
         agent: who,
@@ -1236,6 +1646,10 @@ export class Board {
       }
       if (claim) {
         this.db.prepare('UPDATE claims SET released_at = ? WHERE issue_id = ?').run(this.iso(), id);
+        // A reopened issue is advertised as ready while its own file locks stay
+        // live for the rest of the lease, so the next agent reads "ready", takes
+        // it, and is then refused its own file by the agent who reopened it.
+        this.releaseIssueLocksInTransaction(id);
       }
       this.db
         .prepare(
@@ -1255,7 +1669,8 @@ export class Board {
    */
   status({ at = this.now() } = {}) {
     const byStatus = Object.fromEntries(STATUSES.map((s) => [s, 0]));
-    for (const issue of this.listIssues({})) byStatus[issue.status] = (byStatus[issue.status] ?? 0) + 1;
+    for (const issue of this.listIssues({ limit: NO_LIMIT }))
+      byStatus[issue.status] = (byStatus[issue.status] ?? 0) + 1;
     const locks = this.liveLocks(at);
     const unreleased = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     const claims = unreleased.filter((claim) => Date.parse(claim.lease_until) > at);
@@ -1266,8 +1681,8 @@ export class Board {
       blocked: this.blockedIssues().length,
       agents: this.agents().length,
       claims,
-      // Reported rather than fixed: `board status` is a read, and the one
-      // command that releases an abandoned claim is `board doctor`.
+      // Reported rather than fixed: `swarm status` is a read, and the one
+      // command that releases an abandoned claim is `swarm doctor`.
       expiredClaims: unreleased.length - claims.length,
       locks,
       myClaims: mine,
@@ -1283,7 +1698,7 @@ export class Board {
    * release is recorded — so `doctor` is safe to run at any time and explains
    * itself in the log rather than mutating the board silently.
    */
-  doctor({ at = this.now(), dryRun = false } = {}) {
+  doctor({ at = this.now(), dryRun = false, record = true } = {}) {
     const findings = [];
     const claims = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     for (const claim of claims) {
@@ -1304,6 +1719,19 @@ export class Board {
       if (Date.parse(lock.expires_at) > at2) continue;
       findings.push({ kind: 'expired-lock', path: lock.path, agent: lock.agent_id, releaseable: true });
     }
+    // A sweep is a fact about the swarm and the log is the only place it can be
+    // seen from another session. But it is recorded ONLY when it released
+    // something, because the sweep now runs on every command: an event per
+    // invocation turned a six-event board into one that was two-thirds sweep
+    // noise, which is the same flood the tailing fix was written for, and it
+    // made `health` inflate the very number it was reporting.
+    if (record && findings.length > 0) {
+      this.addEvent('doctor.run', {
+        message: findings.length
+          ? `${findings.length} stale holding(s) ${dryRun ? 'would be released' : 'released'}`
+          : 'nothing stale',
+      });
+    }
     if (!dryRun) {
       for (const finding of findings) {
         if (finding.issue) this.releaseClaim(finding.issue, { agent: finding.agent, force: true });
@@ -1311,6 +1739,160 @@ export class Board {
       }
     }
     return findings;
+  }
+
+  /**
+   * Keeps this agent's own claims alive, using the only liveness signal nobody
+   * has to remember to send.
+   *
+   * The lease was a promise the holder had to keep by hand: `claim.renew` fired
+   * ONCE in 238 events, and 4 of 5 unreleased claims ended up expired while
+   * their holders were very likely still working. A heartbeat nobody sends is
+   * not a liveness signal, it is a countdown that always runs out.
+   *
+   * What an agent cannot forget is existing: it has a worktree on disk, and
+   * that directory is here long after the session that made it has stopped
+   * caring. So the worktree IS the heartbeat, and this renews while it stands.
+   *
+   * The event is written only when the lease actually needed it — otherwise
+   * every command an agent runs writes a `claim.renew`, which turns the log
+   * into the thing `watch` already had to be fixed for once: a few hundred
+   * events re-printed on every poll.
+   */
+  renewOwnClaims({ at = this.now(), leaseMs = DEFAULT_LEASE_MS } = {}) {
+    const agentId = this.identity?.agentId;
+    if (!agentId) return [];
+    // An agent with no worktree has no way to prove it is alive, so it keeps
+    // the manual contract. That is the outside-a-worktree case, and it is the
+    // one where `claim.renew` still means something.
+    const worktree = this.identity?.worktree;
+    if (!worktree || !existsDir(worktree)) return [];
+    const until = new Date(at + leaseMs).toISOString();
+    const mine = this.db
+      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ?')
+      .all(agentId)
+      .filter((claim) => Date.parse(claim.lease_until) - at < leaseMs / 2);
+    for (const claim of mine) {
+      this.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(until, claim.issue_id);
+      this.addEvent('claim.renew', { issue: claim.issue_id, message: 'lease extended by presence' });
+    }
+    return mine.map((claim) => claim.issue_id);
+  }
+
+  /**
+   * The maintenance a board should never need a human to run: keep my own
+   * claims alive because I exist, then release the ones whose holder does not.
+   *
+   * Order matters and is the whole reason this is safe. Renewing first means a
+   * working agent's lease is never the thing that gets swept, so the sweep can
+   * only ever reclaim a claim whose worktree is gone — which is precisely when
+   * reclaiming it is correct. Sweeping first, as a bare `doctor` on every open
+   * would, hands a 45-minute timer the power to strip a lock off an agent in
+   * the middle of an edit.
+   */
+  autoSweep({ at = this.now(), dryRun = false } = {}) {
+    const renewed = dryRun ? [] : this.renewOwnClaims({ at });
+    const released = this.doctor({ at, dryRun, record: !dryRun });
+    return { renewed, released };
+  }
+
+  /**
+   * Is this board being used, or only carried? One command, because the
+   * question was previously answered by hand-writing SQL against a schema, and
+   * an instrument nobody can read is the same as no instrument.
+   */
+  health({ at = this.now() } = {}) {
+    const byKind = new Map();
+    for (const event of this.db.prepare('SELECT kind, COUNT(*) n FROM events GROUP BY kind').all()) {
+      byKind.set(event.kind, event.n);
+    }
+    const total = [...byKind.values()].reduce((a, b) => a + b, 0);
+    const count = (kind) => byKind.get(kind) ?? 0;
+    /**
+     * The unit of a row, read off the row rather than off a list kept beside it.
+     *
+     * Summing these into one total is what produced a published, wrong number.
+     * `lock.hold` is ONE event for a command that took any number of files (its
+     * message says so: "14 file(s)"), `lock.release` is ONE event PER FILE, and
+     * a good share of the holds took no files at all ("filed about 2 file(s),
+     * no locks taken" — the filer was refused). So an agent that holds fourteen
+     * files and later releases them writes 1 row and 14, and a share computed
+     * over the sum describes the ENCODING rather than the swarm: it reported
+     * that 66% of locking traffic was `lock.release`, which was an artifact, and
+     * that number reached AGENTS.md before anyone noticed.
+     *
+     * A row that names a path is about one file; a row that does not is about
+     * one command. That is derivable from the data, so it is derived, and the
+     * two are reported as two numbers rather than added into a third.
+     */
+    const perFile = new Map();
+    const perCommand = new Map();
+    for (const row of this.db
+      .prepare(
+        `SELECT kind, CASE WHEN path IS NULL THEN 0 ELSE 1 END AS is_file, COUNT(*) n
+         FROM events GROUP BY kind, is_file`
+      )
+      .all()) {
+      (row.is_file ? perFile : perCommand).set(row.kind, row.n);
+    }
+    const summed = (map) => [...map.values()].reduce((a, b) => a + b, 0);
+
+    /**
+     * The lock truth, from the table rather than from the log: one row per lock
+     * actually taken, which is the only count that answers "how much of this
+     * repository is under a lock right now".
+     */
+    const lockRows = this.db
+      .prepare('SELECT COUNT(*) taken, SUM(CASE WHEN released_at IS NULL THEN 1 ELSE 0 END) live FROM file_locks')
+      .get();
+    const taken = lockRows.taken ?? 0;
+    const liveLocks = lockRows.live ?? 0;
+    const unreleased = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
+    const live = unreleased.filter((claim) => Date.parse(claim.lease_until) > at);
+    const open = this.listIssues({ status: ['open', 'deferred'], limit: NO_LIMIT });
+    const liveIssues = open.filter((issue) => !isImportedOrigin(issue.origin));
+    return {
+      total,
+      byKind: Object.fromEntries([...byKind].sort((a, b) => b[1] - a[1])),
+      /**
+       * Split by unit, because the two are not additive and never were. Read
+       * these as two separate measures of activity, never as two halves of one
+       * number.
+       */
+      activity: {
+        perCommand: Object.fromEntries([...perCommand].sort((a, b) => b[1] - a[1])),
+        perFile: Object.fromEntries([...perFile].sort((a, b) => b[1] - a[1])),
+        perCommandTotal: summed(perCommand),
+        perFileTotal: summed(perFile),
+      },
+      locks: { taken, live: liveLocks, released: taken - liveLocks },
+      claims: { total: unreleased.length, live: live.length, expired: unreleased.length - live.length },
+      // Reclaims the board has made by itself, which is the number that says
+      // whether maintenance is running — and it stays 0 on a healthy board,
+      // because a sweep that found nothing is not an event.
+      sweeps: count('doctor.run'),
+      deps: this.db.prepare('SELECT COUNT(*) n FROM deps').get().n,
+      issues: { open: open.length, live: liveIssues.length, imported: open.length - liveIssues.length },
+      /**
+       * Live findings nobody has touched, because a finding with no activity is
+       * a finding whose reader has gone away.
+       *
+       * REPORTED, never expired. The durable record for a defect is
+       * HANDOFF.md, and this board says so itself: a finding that goes idle
+       * here is one that has not been moved somewhere it will still be read.
+       * Deleting it would destroy a real observation because nobody happened to
+       * be looking, which is the opposite of what a coordination tool is for.
+       * What this number is for is telling a human which findings are about to
+       * fall out of the conversation.
+       */
+      idleLive: liveIssues
+        .filter((issue) => at - Date.parse(issue.created_at) > IDLE_LIVE_MS)
+        .map((issue) => ({
+          id: issue.id,
+          title: issue.title,
+          idleMs: at - Date.parse(issue.created_at),
+        })),
+    };
   }
 }
 
@@ -1324,6 +1906,71 @@ function existsDir(path) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Collapses `.` and `..` segments lexically.
+ *
+ * `src/../src/held.ts` and `src/held.ts` are the same file, and a lock that
+ * treats them as two lets the second agent take a file the first is in. This is
+ * lexical on purpose — `resolve` would touch the filesystem, and the point of
+ * comparing paths is that the file may not exist yet.
+ */
+/**
+ * A title, folded to the form two spellings of the same sentence share.
+ *
+ * Drift is a comparison of titles, so anything a word processor or a later hand
+ * changes incidentally — an em-dash for a hyphen, a curly quote, a trailing
+ * period, a re-wrapped heading — turns a routine rewording into "the document's
+ * item 2 is a different defect", permanently, reported on every import. The
+ * comparison has to see through typography or it will cry wolf until an agent
+ * stops reading it.
+ */
+export function foldTitle(title) {
+  return String(title ?? '')
+    .replace(/[‐-―−]/g, '-')
+    .replace(/[‘’‛]/g, "'")
+    .replace(/[“”‟]/g, '"')
+    .replace(/[.]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The priority a title states for itself, if any.
+ *
+ * The handoff documents label their entries `P0`–`P3`, and the board has four
+ * levels, so the mapping is direct. It lives here rather than in the import
+ * because it is a property of a TITLE, not of where the title came from: when
+ * `swarm new` and `swarm import` disagreed about `P0 — …`, the same defect had
+ * two urgencies depending on which command filed it.
+ */
+const SEVERITY_HEADING = /^P(\d{1,3})\b/i;
+const SEVERITY_TO_PRIORITY = { 0: 'critical', 1: 'high', 2: 'normal', 3: 'low' };
+
+export function priorityFromTitle(title) {
+  const match = SEVERITY_HEADING.exec(String(title ?? '').trim());
+  if (!match) return null;
+  return SEVERITY_TO_PRIORITY[Number(match[1])] ?? null;
+}
+
+function collapseSegments(path) {
+  const segments = [];
+  for (const segment of path.split('/')) {
+    if (segment === '.' || segment === '') {
+      if (segments.length === 0 && segment === '') segments.push('');
+      continue;
+    }
+    if (segment === '..') {
+      if (segments.length > 0 && segments.at(-1) !== '..') segments.pop();
+      else segments.push('..');
+      continue;
+    }
+    segments.push(segment);
+  }
+  const collapsed = segments.join('/');
+  return collapsed === '' ? '.' : collapsed;
 }
 
 /**
@@ -1358,9 +2005,14 @@ export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
         break;
       }
     }
-    // A bare worktree path normalises to nothing, and a lock on the empty string
-    // is a lock on a file no agent can name — so it is dropped, not stored.
-    if (normalized === '') continue;
+    // AFTER the prefix strip, so `a/b/../b/c` inside a worktree collapses too.
+    // Skipping this let `check src/../src/held.ts` report a held file as FREE,
+    // which is the one answer this board must never get wrong.
+    normalized = collapseSegments(normalized);
+    // A bare worktree path collapses to nothing, and a lock on `.` — or on the
+    // empty string — is a lock on a file no agent can name, so both are dropped
+    // rather than stored.
+    if (normalized === '' || normalized === '.') continue;
     if (!out.includes(normalized)) out.push(normalized);
   }
   return out;

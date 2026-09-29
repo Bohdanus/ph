@@ -27,9 +27,15 @@ const createToolArgsState = vi.hoisted(() => () => ({
 }));
 const createStoreMocks = vi.hoisted(() => () => {
   const canvas = document.createElement('canvas');
-  canvas.width = 800;
-  canvas.height = 600;
+  // Deliberately NOT the store's `totalSize` (800x600) below. The teardown clears the whole
+  // backing store, and a clear sized off a render-scope value would cover a different region than
+  // the one the preview is painted on, so the two must be distinguishable in the assertions. The
+  // container's rect stays 800x600 because that is what `getLocalCoords` reads and therefore what
+  // fixes the dragged geometry.
+  canvas.width = 640;
+  canvas.height = 480;
   const ctx = {
+    canvas,
     clearRect: vi.fn(),
     fillRect: vi.fn(),
     strokeRect: vi.fn(),
@@ -707,7 +713,7 @@ describe('ShapeToolArea', () => {
       });
     });
 
-    it('ignores the shift square constraint for the line figure at commit time', () => {
+    it('snaps the line figure to 45 degrees under shift at commit time', () => {
       toolArgsState.toolArgs.figure = 'line';
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
@@ -724,8 +730,10 @@ describe('ShapeToolArea', () => {
 
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
 
-      // Free angle preserved: no square clamping, no ellipse recomputation.
-      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 44, height: 64 });
+      // The drag is 56.3 degrees, so Shift quantises it to 45 while keeping
+      // hypot(40, 60) = 72.111: the line then runs 50.990 along each axis, and
+      // the committed box is that plus the 4 px the free-angle 44 x 64 also had.
+      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 55, height: 55 });
       expect(fullArgs.args.figure).toBe('line');
     });
 
@@ -1075,6 +1083,98 @@ describe('ShapeToolArea', () => {
     });
   });
 
+  /**
+   * The overlay canvas is shared, long-lived and only ever `display`-toggled
+   * (`Main.tsx:239-284`), and toggling `display` never touches a backing store. This area never
+   * clears it on pointer up at all — the last `flushDrawingFrame` in `handlePointerUp` REDRAWS the
+   * shape and the commit leaves it there — so the unmount teardown is the only thing that ever
+   * removes the preview. Without it the shape stays painted over the next tool's document.
+   */
+  describe('overlay teardown', () => {
+    it('clears the whole backing store on unmount', () => {
+      vi.useFakeTimers();
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      expect(drawShapeMock).toHaveBeenCalled();
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      view.unmount();
+
+      // 640x480 is the CANVAS, and totalSize is 800x600: this asserts the backing store was read at
+      // call time, which a closure over a render-scope size could not do after a document resize.
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+    });
+
+    it('cancels a queued preview frame so it cannot repaint over the teardown clear', () => {
+      vi.useFakeTimers();
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      // The frame is queued and NOT fired, so the preview is still pending.
+      expect(drawShapeMock).not.toHaveBeenCalled();
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      view.unmount();
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      // Cancel first, then clear: a frame that survived would have repainted after the clear.
+      expect(drawShapeMock).not.toHaveBeenCalled();
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
+    });
+
+    it('clears the preview a committed shape leaves painted, which nothing else removes', () => {
+      vi.useFakeTimers();
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+
+      // The commit ran and left the preview on the overlay: `handlePointerUp`'s last
+      // `flushDrawingFrame` redraws it and `createLayerFromTool` does not clear it. The shape is
+      // now a layer AND is painted twice, and the overlay keeps painting over the next tool's
+      // document because toggling `display` never touches a backing store.
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(drawShapeMock).toHaveBeenCalled();
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      view.unmount();
+
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+    });
+
+    it('clears nothing on mount, so the clear is unambiguously a teardown', () => {
+      const { view } = renderToolArea();
+      expect(storeMocks.ctx.clearRect).not.toHaveBeenCalled();
+      view.unmount();
+    });
+  });
+
   describe('shared shape geometry wiring', () => {
     it('derives a plain drag from normalizeShapeGeometry without constraints', () => {
       const { view, toolArea } = renderToolArea();
@@ -1112,7 +1212,7 @@ describe('ShapeToolArea', () => {
       }
     );
 
-    it('leaves the line figure unconstrained when shift is held', () => {
+    it('constrains a shifted line to 45 degrees and keeps its length', () => {
       toolArgsState.toolArgs.figure = 'line';
       const { view, toolArea } = renderToolArea();
       const anchor = { x: 10, y: 20 };
@@ -1124,10 +1224,14 @@ describe('ShapeToolArea', () => {
       expect(geometry).toEqual(
         toDocumentShape(normalizeShapeGeometry(anchor, pointer, 'line', { shiftKey: true, altKey: false }))
       );
-      expect(geometry).toEqual(toDocumentShape({ start: { x: 10, y: 20 }, end: { x: 50, y: 80 } }));
-      // A free angle must survive Shift: clamping it to 60x60 would be a square.
-      expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(40);
-      expect(Math.abs(geometry.end.y - geometry.start.y)).toBe(60);
+      // 56.3 degrees snaps to 45, with the original hypot(40, 60) = 72.111 kept, so
+      // each axis runs 50.990 of it. Measured off `start` because `geometry` is
+      // already in the document frame and `anchor` is not.
+      expect(geometry.end.x - geometry.start.x).toBeCloseTo(50.99019513592784, 6);
+      expect(geometry.end.y - geometry.start.y).toBeCloseTo(50.99019513592784, 6);
+      // The 45 degree snap is what makes the two runs equal; the free angle's
+      // 40 and 60 are not the assertion any more.
+      expect(Math.abs(geometry.end.x - geometry.start.x)).toBeCloseTo(Math.abs(geometry.end.y - geometry.start.y), 6);
       view.unmount();
     });
 
@@ -1364,6 +1468,75 @@ describe('ShapeToolArea', () => {
       expect(nextGeometry).toEqual(toDocumentShape({ start: { x: 100, y: 100 }, end: { x: 200, y: 260 } }));
       expect(nextArgs.pos).toEqual(shapeGeometryBounds(nextGeometry, toolArgsState.toolArgs.lineWidth));
       view.unmount();
+    });
+  });
+
+  describe('a frame pending across an unmount', () => {
+    // The overlay is ONE 2D context for the whole session, handed to whichever tool is active, and
+    // it stays mounted while only its `display` is toggled. So a repaint that survives this
+    // component's unmount does not draw into a dead canvas — it draws into the one the NEXT tool is
+    // about to paint into, with a shape this component never released.
+    it('cancels the pending frame on unmount, so no shape is painted afterwards', () => {
+      vi.useFakeTimers();
+      const { container, unmount } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
+
+      unmount();
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(cancelSpy).toHaveBeenCalled();
+      expect(drawShapeMock).not.toHaveBeenCalled();
+    });
+
+    it('leaves the frame slot released, so a later mount previews on the shared overlay again', () => {
+      // The same shape as the "frozen for the component's lifetime" bug this file already pins for
+      // pointer up: a slot left non-null makes every later move short-circuit. Here the consequence
+      // is visible on the OTHER side of the unmount, because the queue is shared.
+      vi.useFakeTimers();
+      const first = renderToolArea();
+      act(() => {
+        fireEvent.pointerDown(first.toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(first.toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      first.view.unmount();
+      // The pointer double is module-level and only a release the validator accepts clears it,
+      // which an unmount is not: switching tools mid-drag aborts the gesture, and the next press has
+      // to be a first press or the second area's anchor is never set.
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
+
+      // A fresh area over the same context: what switching tools mid-drag actually is.
+      const second = renderToolArea();
+      act(() => {
+        fireEvent.pointerDown(second.toolArea, { button: 0, clientX: 200, clientY: 200 });
+      });
+      act(() => {
+        fireEvent.pointerMove(second.toolArea, { button: 0, clientX: 260, clientY: 240 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      // One paint, and it is the new drag's. A repaint carried over from the unmounted area lands
+      // on the same context and reads here as a second, wrong paint.
+      expect(drawShapeMock).toHaveBeenCalledTimes(1);
+      expect(drawShapeMock).toHaveBeenCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ start: { x: 200, y: 200 }, end: { x: 260, y: 240 } })
+      );
+      second.view.unmount();
     });
   });
 
