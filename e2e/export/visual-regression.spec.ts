@@ -247,7 +247,16 @@ test.describe('Export harness commands', () => {
     return script;
   }
 
-  test('the re-record command passes the snapshot mode the record branch requires', async (_fixtures, testInfo) => {
+  test('the re-record command passes the snapshot mode the record branch requires', async () => {
+    // `test.info()` rather than a `testInfo` fixture argument. Playwright requires the
+    // FIRST test argument to be an object destructuring pattern, and the two shapes that
+    // satisfy it are `({ page }, testInfo)` -- which spins up a browser neither of these
+    // hermetic tests uses -- and `({}, testInfo)`, which ESLint's `no-empty-pattern`
+    // rejects. `test.info()` is the same object with no fixture declared at all, so the
+    // test keeps taking no browser and neither linter objects. The previous spelling
+    // (`async (_fixtures, testInfo)`) was rejected by Playwright before the first test
+    // ran, which is why the whole suite failed to start.
+    const testInfo = test.info();
     const script = await packageScript(testInfo, 'test:e2e:update-baselines');
 
     expect(
@@ -258,7 +267,8 @@ test.describe('Export harness commands', () => {
     ).toContain(`--update-snapshots=${BASELINE_RECORD_MODE}`);
   });
 
-  test('the clean command removes generated run output and keeps the reporter result', async (_fixtures, testInfo) => {
+  test('the clean command removes generated run output and keeps the reporter result', async () => {
+    const testInfo = test.info();
     const root = repositoryRoot(testInfo);
     const clean = await packageScript(testInfo, 'test:e2e:clean');
 

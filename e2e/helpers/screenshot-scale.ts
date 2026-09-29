@@ -28,8 +28,14 @@
  * the others and the compiler was happy with all three. `canvas-helpers.ts` re-exports
  * `CssBox` under the name `BoundingBox` because that is the name the specs import, so
  * no caller outside this directory had to change; `cdp-helpers.ts` imports both shapes
- * directly. Do not re-declare them: `__tests__/screenshot-scale.unit.test.ts` fails if a
- * second copy appears anywhere under `e2e/helpers/`.
+ * directly. Do not re-declare them: `__tests__/screenshot-scale.unit.test.ts` scans every
+ * module in this directory and fails on a second copy under any of the four names OR
+ * under a new name with the same fields -- the rename is the one a name-matching guard
+ * misses, and it is the same drift.
+ *
+ * The `imageBoundsToCss` convention below is the one place where a caller can be right
+ * about the mapping and still be wrong about the data, so its real consumers are named
+ * where the arithmetic lives rather than here.
  */
 
 export interface Point {
@@ -136,8 +142,8 @@ export function cssPointToImage(image: ImageSize, box: CssBox, point: Point): Po
  * convention is the caller's, not the arithmetic's.
  *
  * `left` / `top` / `right` / `bottom` are INCLUSIVE image pixel indices -- the shape
- * `screenshotBoundsToCss` in canvas-helpers.ts produces, and what `select-move.spec.ts`
- * and `viewport-drawing.spec.ts` feed in. `right` and `bottom` are still converted as
+ * `screenshotBoundsToCss` in canvas-helpers.ts produces, and what
+ * `viewport-drawing.spec.ts` and `text-tool.spec.ts` feed in. `right` and `bottom` are still converted as
  * points, so they land on the CENTRE of the last covered pixel rather than on its outer
  * edge.
  *

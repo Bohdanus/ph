@@ -11,18 +11,26 @@ spec helpers themselves. The application under test is `src/` in this repository
 
 ```
 e2e/
-├── *.spec.ts            # 22 top-level specs: canvas redraw, colour, document
-│                        #   dialogs, eraser / fill / eyedropper, adjustment
-│                        #   tools, history panel, keyboard shortcuts, layers,
+├── *.spec.ts            # 26 top-level specs: adjustments, colour, document
+│                        #   dialogs, eraser / fill / eyedropper, file roundtrip,
+│                        #   filter tools, history panel, keyboard shortcuts, layers,
 │                        #   layers panel, levels, mobile shell, paint options,
 │                        #   paint tools, pen types, responsive shell, select/move,
 │                        #   selection tools, shape tools, sidebar flyout /
-│                        #   keyboard / layout, viewport drawing
+│                        #   keyboard / layout, text tool, undo/redo, viewport
+│                        #   drawing, and the `example` placeholder
 ├── export/              # 6 export-format specs + committed visual-regression baselines
 ├── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
-└── helpers/             # 8 shared helper modules
+└── helpers/             # 9 shared helper modules
     └── __tests__/       # Node-environment unit tests for those helpers
 ```
+
+Both counts are `ls` output, and they are the kind of number that goes stale the
+moment a spec lands: this file previously said 22 and 8, which were main's counts
+carried forward after a deletion and a new module, so they were wrong in both
+directions while the table below named specs the list above omitted. The two lists
+here are the authoritative statement of what exists; re-derive them with
+`ls e2e/*.spec.ts | wc -l` and `ls e2e/helpers/*.ts | grep -v '\.spec\.ts$' | wc -l`.
 
 ### What the top-level specs are organised by
 
@@ -34,11 +42,13 @@ purpose:
 | ----------------------------- | --------------------------------------------------------------------------------------------------- |
 | Keyboard                      | `keyboard-shortcuts`, `sidebar-keyboard`                                                            |
 | The left rail and its flyouts | `sidebar-flyout`, `sidebar-keyboard`, `sidebar-layout`                                              |
-| Layers and the panel          | `layers`, `layers-panel`                                                                            |
-| History and its panel         | `keyboard-shortcuts`, `history-panel`                                                               |
-| Dialogs and the document      | `document-dialogs`, `select-move` (crop)                                                            |
+| Layers and the panel          | `layers`, `layers-panel`, `undo-redo`                                                               |
+| History and its panel         | `keyboard-shortcuts`, `history-panel`, `undo-redo`                                                  |
+| Dialogs and the document      | `document-dialogs`, `select-move` (crop), `file-roundtrip`                                          |
+| Adjustments and filters       | `adjustments`, `filter-tools`, `levels`                                                             |
 | Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
 | Selections                    | `selection-tools`, `select-move`                                                                    |
+| Text                          | `text-tool`                                                                                         |
 | Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`                                              |
 
 `layers.spec.ts` and `layers-panel.spec.ts` overlap deliberately: the first is

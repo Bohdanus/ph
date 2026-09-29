@@ -110,6 +110,11 @@ for (const { label, test: testTitle, value, name, y, expect: exp, wait } of PEN_
       if ('segments' in exp) expect.soft(analysis!.segments).toBe(exp.segments);
       if ('segmentsMin' in exp) expect.soft(analysis!.segments).toBeGreaterThanOrEqual(exp.segmentsMin);
       if ('verticalSpreadMin' in exp)
+        // `verticalSpread` is the one field `getStrokeAnalysis` returns RAW rather than
+        // scale-corrected, so this is a floor on a capture-pixel count and a 2x capture
+        // can only raise it. It cannot false-pass; it can only be looser than intended
+        // on a HiDPI host. `segments` and `type` beside it ARE corrected, which is why
+        // they are the load-bearing assertions here and this is a floor.
         expect.soft(analysis!.verticalSpread).toBeGreaterThanOrEqual(exp.verticalSpreadMin);
       expect.soft(analysis!.type).toBe(exp.type);
     });

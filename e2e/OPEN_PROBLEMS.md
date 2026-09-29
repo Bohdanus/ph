@@ -59,8 +59,8 @@ must not drift back into:
 | was failing                           | was                                     | now                                            |
 | ------------------------------------- | --------------------------------------- | ---------------------------------------------- |
 | `e2e/helpers/cdp-helpers.spec.ts`     | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
-| `e2e/sidebar-keyboard.spec.ts:76, 88` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
-| `e2e/levels.spec.ts:64, 109`          | 2, both modes                           | canvas found by test id, not document order    |
+| `e2e/sidebar-keyboard.spec.ts:69, 80` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
+| `e2e/levels.spec.ts:203, 274`         | 2, both modes                           | canvas found by test id, not document order    |
 
 All of these were introduced with the specs and were independent of how they were
 moved into this repository: each was reproducible with no changes to the specs or
@@ -89,7 +89,7 @@ then get recorded as "flaky" and neither gets fixed.
 **This is a preventive rule, and it is worth being precise about the evidence.** No
 operator-input-caused failure has been reproduced in this suite: the one
 intermittent failure on record before headless became the default
-(`sidebar-keyboard.spec.ts:88`) turned out to be a real race that fires in headless
+(`sidebar-keyboard.spec.ts:80`) turned out to be a real race that fires in headless
 runs with no operator input at all; the mechanism is recorded at
 `sidebar-keyboard.spec.ts:5-10`. The hazard is
 reported as recurring across this project's test work generally, which is why the
@@ -101,8 +101,8 @@ failure sets are disjoint per mode and deterministic across repeats:
 
 | specs                                                                                         | headed | headless |
 | --------------------------------------------------------------------------------------------- | ------ | -------- |
-| CDP, deriving expected size from `getDevicePixelRatio()` (`:113` `:129` `:146` `:163` `:195`) | 5 fail | pass     |
-| CDP, explicit `deviceScaleFactor: 2` block (`:220` `:239`)                                    | pass   | 2 fail   |
+| CDP, deriving expected size from `getDevicePixelRatio()` (`:128` `:142` `:157` `:179` `:208`) | 5 fail | pass     |
+| CDP, explicit `deviceScaleFactor: 2` block (`:272` `:287`)                                    | pass   | 2 fail   |
 
 So headless was the better mode even then, and both sets have since been fixed
 (below).
@@ -121,13 +121,13 @@ a real window, because that is what they are for. The rule applies to
 
 ## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
 
-`e2e/helpers/canvas-helpers.ts:426-436`
+`e2e/helpers/canvas-helpers.ts:458-475`
 
 A spec must not drift into the assumption that `drawLine`'s arguments are
 document coordinates. They are not. `drawLine` computes
 `{ x: box.x + startX, y: box.y + startY }` and nothing else, while the document it
 addresses is **contained** in that box (`object-contain`,
-`src/components/Main/Main.tsx:241`): the CSS origin of document `(0,0)` is
+`src/components/Main/Main.tsx:242-246`): the CSS origin of document `(0,0)` is
 
 ```text
 scale    = min(boxWidth / 800, boxHeight / 600)
@@ -159,7 +159,7 @@ breaks all of them at once.
 
 ## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
 
-`e2e/helpers/screenshot-scale.ts:46-68`, `e2e/helpers/cdp-helpers.ts:55-74`
+`e2e/helpers/screenshot-scale.ts:87-109`, `e2e/helpers/cdp-helpers.ts:45-64`
 
 The hazard, for whoever refactors this next. The app is taller than Playwright's
 720px window, so the window scrolls. `Locator.boundingBox()` measures against the
@@ -178,13 +178,13 @@ capture bug rather than a coordinate bug.
 
 **The helper-level fix is done, and it is recorded here so a refactor does not
 undo it.** The conversion is the pure function `viewportRectToPageRect`
-(`screenshot-scale.ts:69-76`), it is applied **at the CDP site only**
-(`cdp-helpers.ts:66-74`) and not in the callers, the scroll offset is read per
-capture rather than cached (`getPageScroll`, `canvas-helpers.ts:207-209`, because
+(`screenshot-scale.ts:110-117`), it is applied **at the CDP site only**
+(`cdp-helpers.ts:56-64`) and not in the callers, the scroll offset is read per
+capture rather than cached (`getPageScroll`, `canvas-helpers.ts:309`, because
 the window scrolls between captures — `clickToolButton` alone scrolls 440px, which
-is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,150`),
+is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,161`),
 and the rule is unit-tested for a non-zero offset at
-`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:306-323`.
+`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:404-427`.
 
 What is left is a rule for new code: a spec that mixes `boundingBox()` with a CDP
 capture must not assume the two agree, and must not introduce a second conversion
@@ -192,7 +192,7 @@ somewhere that already has one.
 
 ## P2 — an empty CDP capture is reported as a successful capture
 
-`e2e/helpers/cdp-helpers.ts:64-66`
+`e2e/helpers/cdp-helpers.ts:71`
 
 `Buffer.from(data, 'base64')` is never length-checked, so a response whose `data`
 is `''` decodes to a zero-byte buffer that the helper writes to
@@ -209,12 +209,12 @@ failure is the one the caller sees. Test the decoded length, not just the field:
 a `typeof data === 'string'` guard alone still lets it through.
 
 Pinned by `reports success for an empty capture, writing and attaching a zero-byte
-file` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:340`. A fix removes that
+file` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:403`. A fix removes that
 pin in the same change.
 
 ## P2 — a failing detach replaces the capture error and destroys the cause
 
-`e2e/helpers/cdp-helpers.ts:68-70`
+`e2e/helpers/cdp-helpers.ts:75-77`
 
 `finally { await cdp.detach() }` runs on the way out whether or not the capture
 threw, and a rejection from it becomes the rejection the caller sees. When the
@@ -230,12 +230,12 @@ something is already failing. Do not swallow a detach failure on the success pat
 a session that cannot be closed is the leak this helper exists to avoid.
 
 Pinned by `reports a detach failure in place of the capture failure when both fail`
-in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:371`. A fix removes that pin in
+in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:434`. A fix removes that pin in
 the same change.
 
 ## P2 — a CDP response without `data` surfaces as a raw `TypeError` from `Buffer`
 
-`e2e/helpers/cdp-helpers.ts:60, 64`
+`e2e/helpers/cdp-helpers.ts:67, 71`
 
 A `Page.captureScreenshot` response that omits `data` reaches
 `Buffer.from(undefined, 'base64')`, which throws `The first argument must be of
@@ -243,7 +243,7 @@ type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like
 Object. Received undefined` (Node 24). The message names neither CDP, nor this
 helper, nor the test, so the reader has to find the call site before they can tell
 what failed. The sibling helper in the same directory checks its inputs and names
-itself (`canvas-helpers.ts:207-209`); this one does not.
+itself (`canvas-helpers.ts:345-348`); this one does not.
 
 Fix: validate the response before decoding — `typeof data === 'string'`, and
 non-empty — with an error that names `captureCanvasScreenshot` and the CDP request
@@ -251,21 +251,33 @@ it came from. Merge this with the length check above rather than adding a second
 guard on the same two lines.
 
 Pinned by `rejects with a raw TypeError when the CDP response omits data, and
-detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:322`. A fix removes that
+detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:385`. A fix removes that
 pin in the same change.
 
 ## P2 — the Text toolbar supplies the rectangle Apply's gate asks for, so text typed without a drag commits at the document origin
 
 `src/components/ToolbarsRight/Text/Text.tsx:37-42`, `:83`, `:210` and
-`src/util/rect.ts:117-166`
+`src/util/rect.ts:116-173`
+
+**The premise this entry rests on is no longer in the tree, and the citations below
+have been re-derived against the current file.** `calculateNewRect` no longer
+substitutes a placeholder when `args.rect` is null — it returns `null`
+(`rect.ts:129`), and the comment above that line (`rect.ts:122-128`) records the old
+`newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` and says why it went. So the
+measurement further down is the record of the defect as it was, not a claim about
+today's `src/`, and the one citation that named the placeholder line now names the
+comment that replaced it. The entry is kept rather than deleted: this file's own
+lifecycle rule is that a fixer does not delete its own finding — verification is
+another agent's, a reviewer's, or a test's.
 
 `Apply` is gated on `disabled={!text || !rect}` (`Text.tsx:210`) and `applyText`
 re-checks `if (text && rect)` (`:83`), so the control states that a rectangle is a
 precondition for committing a text layer. The toolbar's own text input satisfies that
 precondition by itself: `handleTextChange` passes every keystroke through
 `calculateNewRect`, which manufactures a rectangle from the `{ x1: 0, y1: 0, x2: 0,
-y2: 0 }` placeholder it substitutes when `args.rect` is null (`rect.ts:123`), then
-widens it to the measured text (`rect.ts:133-166`). Typing the first character
+y2: 0 }` placeholder it substitutes when `args.rect` is null (`rect.ts:122-129`, where
+the substitution now survives only as a comment), then widens it to the measured text
+(`rect.ts:139-172`). Typing the first character
 therefore produces a real rectangle, `!rect` is false, and Apply enables with no canvas
 interaction at all — so the `!rect` half of the gate is unreachable from the toolbar.
 
@@ -296,7 +308,7 @@ The drag-then-type path instead commits inside the dragged rectangle
 / top / right / bottom), so the two ways of enabling Apply place the text in
 different places. What the UI does about it is the part an earlier version of this
 entry got wrong: **the placement is visible before the commit.** The tool overlay
-repaints the draft on every keystroke (`TextToolArea.tsx:46-50` -> `redrawText` ->
+repaints the draft on every keystroke (`TextToolArea.tsx:45-49` -> `redrawText` ->
 `renderText`), and the row above is that read taken _before_ `Apply` is clicked, so
 a user who types without dragging watches the glyphs appear in the document's
 top-left corner and can see that this is not where their other work is. The defect
@@ -324,7 +336,7 @@ nowhere else.
 
 ## P3 — zero-sized image yields `NaN` edges
 
-`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:30`) and
+`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:31`) and
 `imagePointToCss` / `cssPointToImage` (`e2e/helpers/screenshot-scale.ts`)
 divide by the image or box dimension, so a zero-sized input produces `NaN` or
 `Infinity` instead of throwing. Deliberate — the modules stay branch-free and
@@ -333,16 +345,16 @@ opaque. Callers must reject empty images first.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
-`e2e/helpers/canvas-helpers.ts:231` and `:507` **[pinned]**
+`e2e/helpers/canvas-helpers.ts:362` and `:659` **[pinned]**
 
 `dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
 invisible pixel counts at full weight. A weighting concern rather than a
 correctness bug, and the only helper that reports the colour back to the caller.
 They are the two places the distinction bites hardest, because the other two
-`alpha === 0` filters, in `hasDarkPixels` (`:254`) and `hasRedPixels` (`:274`),
+`alpha === 0` filters, in `hasDarkPixels` (`:387`) and `hasRedPixels` (`:407`),
 answer a yes/no question where one nearly-invisible pixel is the same as one
-opaque one. The other half of the file, `getDarkPixelBounds` (`:401`) and
-`getSelectionBounds` (`:457`), filters on `a !== 0` instead — a different question
+opaque one. The other half of the file, `getDarkPixelBounds` (`:555`) and
+`getSelectionBounds` (`:614`), filters on `a !== 0` instead — a different question
 asked with a boolean rather than a weight.
 
 ## P3 — 10 orphaned committed baselines (2.1 MB)
@@ -366,7 +378,7 @@ were left in place because deleting committed baselines was not authorized.
 
 ## P3 — the artifact name is interpolated into a path unsanitised
 
-`e2e/helpers/cdp-helpers.ts:36-37`
+`e2e/helpers/cdp-helpers.ts:19-20`
 
 Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
 name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
@@ -382,27 +394,27 @@ silently rewriting it would attach the report under a name the test never asked
 for. Sanitising would also let two distinct names collide into one artifact.
 
 Pinned by `treats a name containing a path separator as a path, not a filename`
-(`:454`) and `writes outside the output directory when the name traverses out of it`
-(`:468`) in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
+(`:517`) and `writes outside the output directory when the name traverses out of it`
+(`:531`) in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
 pins in the same change; the first one's own comment names sanitisation as the
 shape a fix must not take.
 
 ## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
 
-`e2e/helpers/cdp-helpers.ts:33-35`
+`e2e/helpers/cdp-helpers.ts:15-18`
 
-The guard exists and is the same shape as `canvas-helpers.ts:207-209`, but it is
+The guard exists and is the same shape as `canvas-helpers.ts:345-348`, but it is
 the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
-`cdp-helpers.ts` at 93.75% statements and 93.33% lines with line 34 — the `throw` —
-uncovered, against 100% of its functions. The sibling guard is pinned
-(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:192-216`), so nothing fails
+`cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — now line
+17 — uncovered, against 100% of its functions. The sibling guard is pinned
+(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:205-229`), so nothing fails
 if this one is deleted, and the raw V8 failure it exists to replace
 (`The "path" argument must be of type string. Received undefined`) returns with it.
 
 Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
 `TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
 own message and that no CDP session was opened. `createTestInfoMock()`
-(`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:121`) already makes `outputDir`
+(`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:268`) already makes `outputDir`
 optional, so the double needs no change.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
@@ -424,12 +436,12 @@ against the `<select>`, which carries no `disabled` attribute. The result is
 
 This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
 cannot render, would still be reported as correct. It is also invisible in jsdom —
-`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:89` asserts
+`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:90` asserts
 `expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
 because that matcher reads the DOM property directly and has no retarget step. A
 jsdom pass is therefore not evidence that the browser assertion works.
 
-Workaround used in `e2e/erase-fill-eyedropper.spec.ts:326`: assert the attribute and
+Workaround used in `e2e/erase-fill-eyedropper.spec.ts:327`: assert the attribute and
 the enabled set, both read straight off the DOM.
 
 ```ts
@@ -477,10 +489,10 @@ alongside the capture it took would make the mistake harder to make.
 
 Two specs are `test.skip` by declaration:
 
-- `e2e/export/photopea.spec.ts:6` — `exports to PSD and verifies in Photopea`.
+- `e2e/export/photopea.spec.ts:12` — `exports to PSD and verifies in Photopea`.
   Round-trips through the external photopea.com, so it cannot run offline or in
   a sandboxed CI.
-- `e2e/sidebar-flyout.spec.ts:157` — `right-click does not open flyout for
+- `e2e/sidebar-flyout.spec.ts:162` — `right-click does not open flyout for
 single-tool groups`.
 
 ## Verified and still unverified
@@ -490,11 +502,13 @@ single-tool groups`.
 - The 7 comparison formats matched the committed baselines, before the toolbar
   grew. `e2e/export/visual-regression.spec.ts` passed, so every baseline the spec
   reads decoded and matched its committed pixels on this host. The ICO spec passes
-  in-browser against the source canvas. They no longer match — see the P1 entry
-  above for the one layout change that moved them and the three ways out.
+  in-browser against the source canvas. They no longer match; the one layout change
+  that moved them and the three ways out are recorded under **Checked here and
+  rejected** below, which is where a re-derived claim about them belongs.
 
-  **This was not true until the `updateSnapshots` guard was fixed — see that entry
-  above.** The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
+  **This was not true until the `updateSnapshots` guard was fixed** — see the
+  transferred-findings section, whose deleted P1 recorded it. The check that produced
+  this claim was `if (testInfo.config.updateSnapshots)`,
   and Playwright's default for that option is the string `'missing'`, so the branch was
   always taken: every run re-recorded the baseline and returned before
   `compareScreenshots`. The comparison below it was unreachable, so "matches the
@@ -505,10 +519,10 @@ single-tool groups`.
   were silently overwritten and the spec passed.
 
 - The CDP failing set used to be deterministic per browser mode with disjoint sets:
-  headed failed `:113 :129 :146 :163 :195`, headless failed `:220 :239`,
+  headed failed `:128 :142 :157 :179 :208`, headless failed `:272 :287`,
   reproduced identically across repeats. Both sets are now empty, and the new
   assertions are mode-independent by construction rather than by observation.
-- `levels.spec.ts:64` and `:109` used to fail in both modes, 2/2 each, which is
+- `levels.spec.ts:203` and `:274` used to fail in both modes, 2/2 each, which is
   what established the `getWorkspaceCanvas` index shift as a real defect rather
   than a mode artifact. Both pass now that the canvas is found by test id.
 
@@ -628,13 +642,32 @@ project, which is not the same thing — no touch, no mobile UA, no HiDPI.
 
 This was raised against the review with a precondition attached: enabling a 2x project
 before `getStrokeAnalysis` was DPI-relative "trades a coverage gain for three new failure
-modes". **That precondition is now met** — the stroke thresholds are CSS-pixel counts, the
-captured region is a required argument of `getStrokeAnalysis`, and no call site can be
-DPI-blind, so a HiDPI project is no longer a trap.
+modes". **That precondition is now met for the stroke classifier** — its thresholds are
+CSS-pixel counts, the captured region is a required argument, and no call site can be
+DPI-blind. Two point-sampling specs that were in exactly that class (`levels.spec.ts`,
+`adjustments.spec.ts`) were CSS-pixel samples over a device-scaled capture, and are fixed
+here.
 
-What remains is a coverage decision rather than a defect, which is why it is still open:
-adding a project multiplies every run's cost, and the mobile/HiDPI specs this would
-exercise do not exist yet. It is not a one-line change to `playwright.config.ts`.
+**The suite as a whole is still not 2x-clean, and an earlier version of this entry
+claimed it was.** Measured by running the whole suite with `projects[].use.deviceScaleFactor`
+forced to 2 (the project-level `use` overrides the top-level one, so setting it at the top
+does nothing — verified by printing `window.devicePixelRatio`): **256 pass, 6 fail, 2
+skipped.** The failures are
+
+- `e2e/helpers/cdp-helpers.spec.ts:235` — the expected one. `playwright.config.ts` already
+  records that a `deviceScaleFactor: 2` block fails differently from the default mode, and
+  this is that block.
+- `e2e/helpers/color-helpers.spec.ts:18` — the swatch `toHaveCSS` is compared against a
+  literal CSS colour on a 2x surface.
+- `e2e/erase-fill-eyedropper.spec.ts:604` — an eyedropper block average over a fixed-size
+  sample, in image pixels.
+- `e2e/keyboard-shortcuts.spec.ts:164` and `e2e/responsive-shell.spec.ts:232` (two tests).
+
+So the honest statement is: the classifier and the specs this change touched are now
+resolution-independent, and four other specs are not. What remains is a coverage decision
+rather than a single defect, which is why it is still open: adding a project multiplies
+every run's cost, and the mobile/HiDPI specs this would exercise do not exist yet. It is
+not a one-line change to `playwright.config.ts`.
 
 ---
 
@@ -649,7 +682,7 @@ and **is not a defect here**:
   case-insensitive. A case-sensitive `grep` for the capitalised form is what produced
   the false report.
 - **The workspace-canvas helper resolves a union and detonates the suite when the
-  testid lands.** `canvas-helpers.ts:330` is testid-only, no `.or()`, and
+  testid lands.** `canvas-helpers.ts:326` is testid-only, no `.or()`, and
   `resolveFakeMatches` returns the whole match list so the fake can model a union.
   All three parts landed together.
 - **CI-parallelism has no per-test isolation against a shared app.** Playwright's

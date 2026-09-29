@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   cssPointToImage,
   imageBoundsToCss,
@@ -471,28 +473,136 @@ describe('the coordinate shapes have exactly one declaration', () => {
    * re-exports `CssBox` as `BoundingBox` because that is the name the specs import -- a
    * re-export is not a second declaration, which is what these assertions check.
    */
-  const HELPER_SOURCES = ['canvas-helpers.ts', 'cdp-helpers.ts', 'screenshot-scale.ts'] as const;
+  const HELPER_DIR = fileURLToPath(new URL('../', import.meta.url));
+  const OWNER = 'screenshot-scale.ts';
 
+  /**
+   * Every module in `e2e/helpers/`, read from the directory rather than from a literal
+   * list. A hand-written list is a list that rots: it is correct the day it is written
+   * and silently stops covering each module added afterwards, which is exactly the
+   * "a field added to one copy did not reach the others" drift this guard exists to
+   * prevent -- the new copy is in a file the list does not mention.
+   */
+  const HELPER_SOURCES = readdirSync(HELPER_DIR)
+    .filter((entry) => entry.endsWith('.ts'))
+    .sort();
+
+  /**
+   * Declared type names, from BOTH declaration forms. `interface` alone is not enough:
+   * a copy written as `type CaptureRect = { x, y, width, height }` is the same drift
+   * under a different keyword and a different name, and it matches an interface-only
+   * pattern not at all.
+   */
   function declarationsIn(file: string): string[] {
-    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-    return [...source.matchAll(/^\s*(?:export\s+)?interface\s+(\w+)/gm)].map((match) => match[1]);
+    const source = readFileSync(join(HELPER_DIR, file), 'utf8');
+    return [
+      ...[...source.matchAll(/^\s*(?:export\s+)?(?:declare\s+)?interface\s+(\w+)/gm)].map((match) => match[1]),
+      ...[...source.matchAll(/^\s*(?:export\s+)?type\s+(\w+)\s*=/gm)].map((match) => match[1]),
+    ];
   }
 
   function ownersOf(name: string): string[] {
     return HELPER_SOURCES.filter((file) => declarationsIn(file).includes(name));
   }
 
+  /**
+   * A declaration's field list, normalised for comparison, or `null` when the
+   * declaration is not an object shape (a union, a function, a type over another type).
+   *
+   * Comparison is on the FIELD SET, which is the property that makes a second copy
+   * interchangeable: two declarations with the same fields are the same type to the
+   * compiler, so a field added to one and not the other is exactly the silent drift.
+   * Normalisation strips the `?` optional marker and whitespace, so `ClipOptions`'s
+   * `x?: number` and a copy's `x: number` compare equal — that is deliberate, because
+   * optionality is not what makes two types interchangeable in the direction that
+   * hurts (a required field where the original had an optional one is the strict
+   * direction and fails at compile time; the reverse is caught here).
+   */
+  function shapeOf(file: string, name: string): string[] | null {
+    const source = readFileSync(join(HELPER_DIR, file), 'utf8');
+    // Both declaration forms, and both body layouts: a declaration written across lines
+    // (closed by `}` at the start of a line) and one written on a single line. Only
+    // handling the first is how a real copy slips past: `type CaptureRect = { x: number;
+    // y: number; width: number; height: number }` is exactly the line a hurried author
+    // writes, and a multi-line-only parser reads it as "not a shape" and reports nothing.
+    const multiLine = new RegExp(
+      String.raw`^[ \t]*(?:export\s+)?(?:declare\s+)?(?:interface\s+${name}\s*\{|type\s+${name}\s*=\s*\{)` +
+        String.raw`([\s\S]*?)^\}`,
+      'm'
+    );
+    const singleLine = new RegExp(
+      String.raw`(?:export\s+)?(?:declare\s+)?(?:interface\s+${name}\s*\{|type\s+${name}\s*=\s*\{)([^}]*)\}`
+    );
+    const body = multiLine.exec(source)?.[1] ?? singleLine.exec(source)?.[1];
+    if (body === undefined) return null;
+    // A field is a name and a colon, at the start of the body, after a `;`, or after a
+    // newline — the three positions a field can sit at in either layout.
+    const fields = [...body.matchAll(/(?:^|[;\n{])\s*(\w+)\??\s*:/g)].map((match) => match[1]);
+    // A body with no field syntax at all is a union or a function, not a shape.
+    return fields.length > 0 ? [...new Set(fields)].sort() : null;
+  }
+
+  /** Every object-shaped type declaration in a module, by name. */
+  function shapeNamesIn(file: string): string[] {
+    return declarationsIn(file).filter((name) => shapeOf(file, name) !== null);
+  }
+
+  function sameShape(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((field, index) => field === b[index]);
+  }
+
   it.each(['CssBox', 'CssBounds', 'ClipOptions'])('declares %s only here', (name) => {
-    expect(ownersOf(name)).toEqual(['screenshot-scale.ts']);
+    expect(ownersOf(name)).toEqual([OWNER]);
   });
 
   it('leaves no helper module with a private BoundingBox of its own', () => {
     // The name specs import stays a re-export of `CssBox`; a declaration anywhere else
     // is the drift this replaces, whatever the file calls it.
-    const local = HELPER_SOURCES.filter(
-      (file) => file !== 'screenshot-scale.ts' && declarationsIn(file).includes('BoundingBox')
-    );
+    const local = HELPER_SOURCES.filter((file) => file !== OWNER && declarationsIn(file).includes('BoundingBox'));
     expect(local).toEqual([]);
+  });
+
+  it('scans every helper module, not a list of the three that existed when it was written', () => {
+    // The guard above is only as good as its input. A guard that reads a hardcoded
+    // three-file list passes while the copy it exists to catch sits in a fourth file,
+    // and the failure mode is silent: the suite is green and the drift is back. This
+    // fails when the directory and the scanned set disagree, and it names what is
+    // missing, because "the guard is stale" is otherwise indistinguishable from "there
+    // is nothing to find".
+    const onDisk = readdirSync(HELPER_DIR)
+      .filter((entry) => entry.endsWith('.ts') && !entry.endsWith('.spec.ts'))
+      .sort();
+    expect(HELPER_SOURCES.filter((file) => !file.endsWith('.spec.ts'))).toEqual(onDisk);
+    expect(HELPER_SOURCES).toContain('toolbar-helpers.ts');
+  });
+
+  it('leaves no module declaring a SECOND copy of a coordinate shape under a different name', () => {
+    // Name matching alone is not the invariant, and this is the case that proves it: a
+    // copy written as `type CaptureRect = { x; y; width; height }` in `toolbar-helpers.ts`
+    // is byte-for-byte the drift this guard exists for — structural typing makes it
+    // interchangeable with `CssBox`, so a field added to one copy silently does not
+    // reach the other — and it matches neither `CssBox` nor `BoundingBox` by name. A
+    // guard that only greps for the four known names passes while the problem is
+    // completely present.
+    //
+    // So this compares SHAPES. Every object-shaped type declaration in the directory is
+    // normalised to its sorted field list, and any field set equal to one of the owned
+    // shapes must be declared exactly once, in the owner. The four names are still
+    // checked separately above; this is the half that a rename defeats.
+    const ownedShapes = ['CssBox', 'CssBounds', 'ClipOptions']
+      .map((name) => shapeOf(OWNER, name))
+      .filter((shape): shape is string[] => shape !== null);
+
+    const duplicates = HELPER_SOURCES.filter((file) => file !== OWNER).flatMap((file) =>
+      shapeNamesIn(file)
+        .filter((name) => {
+          const shape = shapeOf(file, name);
+          return shape !== null && ownedShapes.some((owned) => sameShape(owned, shape));
+        })
+        .map((name) => `${file}: ${name}`)
+    );
+
+    expect(duplicates, 'a coordinate shape is declared outside screenshot-scale.ts').toEqual([]);
   });
 
   it('wires canvas-helpers to the shared declaration instead of shadowing it', () => {

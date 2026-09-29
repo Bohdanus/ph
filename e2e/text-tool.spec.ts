@@ -270,11 +270,14 @@ test.describe('Text tool', () => {
     // the requested rect at one integral scale shared by both axes. It is deliberately
     // NOT `image.width === box.width * devicePixelRatio`. CDP's `Page.captureScreenshot`
     // bypasses Playwright's device emulation and captures at Chrome's own surface
-    // scale — measured in `cdp-helpers.spec.ts`, a 240x160 CSS clip decodes to 480x320
-    // while `window.devicePixelRatio` reports 1, and sweeping `deviceScaleFactor` over
-    // 1, 2 and 3 produced the same 480. So the DPR form failed in one mode and passed
-    // in the other for byte-identical code, which is what `getDevicePixelRatio` was
-    // deleted for.
+    // scale, so the emulated ratio and the capture scale are not the same quantity.
+    // The two modes that expose it are named here because "it is wrong" is not
+    // reproducible without them: at an emulated `deviceScaleFactor: 2` CDP stayed at 1x
+    // while `window.devicePixelRatio` reported 2, and headed on a HiDPI host CDP was 2x
+    // while the ratio reported 1. Both make the DPR form red for a capture that is
+    // correct, which is what `getDevicePixelRatio` was deleted for. See
+    // `cdp-helpers.spec.ts` for the same measurement and `playwright.config.ts` for the
+    // headed/headless split.
     const captureScaleX = image.width / box.width;
     expect(
       Math.abs(image.height / box.height - captureScaleX),

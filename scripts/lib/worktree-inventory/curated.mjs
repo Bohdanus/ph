@@ -608,11 +608,12 @@ export const CURATED = {
     // So: this entry is rewritten to describe the work actually in this worktree,
     // and `landed` is not claimed until the branch really is an ancestor of main.
     summary:
-      'Implements the 33 transferred e2e findings: the DPI-relative stroke thresholds, the baseline re-record mode, the assertions that could not fail, and the pins that resisted their own fix.',
+      'Implements the transferred e2e findings: the DPI-relative stroke thresholds, the baseline re-record mode, the assertions that could not fail, and the pins that resisted their own fix.',
     issues: [
       {
-        ref: 'e2e/OPEN_PROBLEMS.md#transferred',
-        title: 'the 33 findings transferred in 4d47904, now fixed and deleted from the ledger',
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the 33 findings transferred in 4d47904: 31 fixed and deleted from the ledger, 2 re-recorded and still open',
       },
     ],
   },

@@ -20,9 +20,18 @@ function specFiles(dir: string): string[] {
  * paying for, so the budget cannot be judged against the work, and there was no way to
  * find the 52 of them other than grepping for three literals. They are named now, in
  * `../timeouts.ts`, and this test is what keeps the next one from being written inline.
+ *
+ * No `g` flag, and that is load-bearing rather than incidental. `RegExp.prototype.test`
+ * with `g` starts each call at `lastIndex` and resets it to 0 only on a MISS, so driving
+ * it with `.test()` across a list of files makes the result depend on the byte offset of
+ * the previous match: a file whose match ends before the previous offender's does is
+ * never scanned at all, and `readdirSync` order is filesystem-dependent, so the same
+ * tree passes on one machine and fails on another. With two agents re-introducing a
+ * literal at the same time, exactly one offender would be caught. `.match()` on a
+ * non-global regex has no such state.
  */
 const INLINE_TIMEOUT =
-  /test\.setTimeout\(\s*[\d_]+\s*\)|test\.describe\.configure\(\s*\{\s*timeout:\s*[\d_]+\s*\}\s*\)/g;
+  /test\.setTimeout\(\s*[\d_]+\s*\)|test\.describe\.configure\(\s*\{\s*timeout:\s*[\d_]+\s*\}\s*\)/;
 
 describe('per-test timeouts are named, not inlined', () => {
   const offenders = specFiles(E2E_DIR).filter((file) => INLINE_TIMEOUT.test(readFileSync(file, 'utf8')));

@@ -9,6 +9,9 @@ import {
   getWorkspaceCanvas,
   hasDarkPixels,
   hasRedPixels,
+  isBuffer,
+  type ImageDataResult,
+  loadImageData,
   LINE_END_X,
   LINE_END_Y,
   LINE_START_X,
@@ -16,6 +19,7 @@ import {
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { cssPointToImage } from './helpers/screenshot-scale';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
@@ -51,6 +55,44 @@ const STROKE_MIDDLE = STROKE_SAMPLES[1];
  * spread and reads as a spray where it is solid.
  */
 const LINE_CAPTURE_REGION = { width: DEFAULT_LINE_CLIP.width, height: DEFAULT_LINE_CLIP.height };
+
+/**
+ * Samples a point given in CSS pixels within the line capture.
+ *
+ * `STROKE_SAMPLES` is authored in CSS pixels — it is derived from where the line is
+ * drawn, and `DEFAULT_LINE_CLIP` is a CSS-pixel rect — while `getColorAtPoint` takes
+ * IMAGE pixels. At the suite's default 1x the two are the same number and the mismatch
+ * is invisible. At `deviceScaleFactor: 2` `page.screenshot` returns a 520x160 image of
+ * a 260x80 clip, so image row 30 is CSS row 15, which is above the stroke entirely:
+ * every sample lands on white, `ignoreNearWhite` discards them all, and the helper
+ * returns `null`. The result is four tests failing on a suite that is correct — and it
+ * is the same class of defect `getStrokeAnalysis` was given a required `region` to
+ * fix, in the same file, one commit apart.
+ *
+ * The conversion is the inverse of the mapping the capture performed, so it is derived
+ * from the DECODED image rather than from the emulated ratio: CDP and
+ * `page.screenshot` disagree about what ratio means, and the image is the only thing
+ * both of them are describing.
+ */
+async function sampleCssPoint(
+  screenshot: Buffer | ImageDataResult,
+  cssX: number,
+  cssY: number,
+  radius: number,
+  options?: Parameters<typeof getColorAtPoint>[4]
+) {
+  const image = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
+  const point = cssPointToImage(
+    { width: image.width, height: image.height },
+    { x: 0, y: 0, ...LINE_CAPTURE_REGION },
+    { x: cssX, y: cssY }
+  );
+  // `getColorAtPoint` rejects a non-integer coordinate outright, and `cssPointToImage`
+  // returns a float by construction. Rounding is right here and truncation would be
+  // wrong: the point is a location, not a pixel index, so a fractional answer is
+  // expected and nearest is the honest mapping.
+  return getColorAtPoint(image, Math.round(point.x), Math.round(point.y), radius, options);
+}
 
 /** `#cc0000`, the colour the two Colors tests stroke with: saturated, so a greyscale
  *  or a desaturation of it is a visible change rather than a rounding difference. */
@@ -152,7 +194,7 @@ test.describe('Colors adjustment', () => {
     // come out equal, not merely close.
     const samples = await Promise.all(
       STROKE_SAMPLES.map(async ({ name, x, y }) => {
-        const sampled = await getColorAtPoint(after, x, y, 5, { ignoreNearWhite: true });
+        const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
         expect(sampled, `grayscale(100%) left no ink at the ${name} of the stroke`).not.toBeNull();
         return { name, ...sampled! };
       })
@@ -215,7 +257,7 @@ test.describe('Colors adjustment', () => {
     // saturation is a mix with the pixel's own luminance, so all three channels have to
     // come out equal.
     for (const { name, x, y } of STROKE_SAMPLES) {
-      const sampled = await getColorAtPoint(after, x, y, 5, { ignoreNearWhite: true });
+      const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
       expect(sampled, `saturate(0%) left no ink at the ${name} of the stroke`).not.toBeNull();
       expect(sampled!.red, `saturate(0%) must neutralise the ${name} of the stroke`).toBe(sampled!.green);
       expect(sampled!.blue, `saturate(0%) must neutralise the ${name} of the stroke`).toBe(sampled!.red);
@@ -247,7 +289,7 @@ test.describe('Blur adjustment', () => {
     const beforeAnalysis = await getStrokeAnalysis(before, LINE_CAPTURE_REGION);
     expect(beforeAnalysis, 'The stroke should be visible to stroke analysis').not.toBeNull();
     expect(beforeAnalysis!.type, 'The unblurred stroke should read as solid').toBe('solid');
-    const beforeMiddle = await getColorAtPoint(before, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, {
+    const beforeMiddle = await sampleCssPoint(before, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, {
       ignoreNearWhite: true,
     });
     expect(beforeMiddle, 'The stroke should be inked at its middle before the adjustment').not.toBeNull();
@@ -296,11 +338,11 @@ test.describe('Blur adjustment', () => {
     // A blur cannot add ink, so the stroke's value rises towards - never above - the
     // white of the document behind it.
     for (const { name, x, y } of STROKE_SAMPLES) {
-      const sampled = await getColorAtPoint(after, x, y, 5, { ignoreNearWhite: true });
+      const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
       expect(sampled, `The blur erased the stroke at the ${name} of it`).not.toBeNull();
       expect(sampled!.red, `A blur lifts the stroke's value towards the background, not above it`).toBeLessThan(WHITE);
     }
-    const afterMiddle = await getColorAtPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, { ignoreNearWhite: true });
+    const afterMiddle = await sampleCssPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, { ignoreNearWhite: true });
     expect(
       afterMiddle!.red,
       `The middle of the stroke read ${beforeMiddle!.red} before the blur, and a blur can only disperse its ink outwards`
