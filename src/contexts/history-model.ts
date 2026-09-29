@@ -112,11 +112,11 @@ export type DurableOperation =
 /** Compatibility alias used by the initial history-model scaffolding. */
 export type HistoryOperation = DurableOperation;
 
-export type DurableHistoryEntry = Readonly<{
+export type DurableHistoryEntry<Op extends DurableOperation = DurableOperation> = Readonly<{
   id: string;
   schemaVersion: number;
   enabled: boolean;
-  operation: DurableOperation;
+  operation: Op;
 }>;
 
 export type HistoryEntry = DurableHistoryEntry;

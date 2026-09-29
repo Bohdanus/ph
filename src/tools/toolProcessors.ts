@@ -1,16 +1,26 @@
 import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { blur } from './blur.ts';
+import { cloneStamp } from './cloneStamp.ts';
 import { colors } from './colors.ts';
+import { colorReplacement } from './colorReplacement.ts';
 import { crop } from './crop.ts';
+import { burn, dodge } from './dodgeBurn.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
+import { ellipticalSelection } from './ellipticalSelection.ts';
+import { eraser } from './eraser.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
+import { gradient } from './gradient.ts';
 import { levels } from './levels.ts';
+import { magicEraser, paintBucket } from './fill.ts';
 import { magicWand } from './magicWand.ts';
+import { quickSelection } from './quickSelection.ts';
 import { rectangularSelection } from './rectangularSelection.ts';
 import { reposition } from './reposition.ts';
 import { selection } from './selection.ts';
 import { shape } from './shape.ts';
+import { sharpen } from './sharpen.ts';
+import { smudge } from './smudge.ts';
 import { text } from './text.ts';
 import { transform } from './transform.ts';
 
@@ -47,7 +57,6 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
-  flattenRequired?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;
@@ -57,6 +66,32 @@ export type ToolProcessorDefinition = {
   }>;
   imageProcessor: (param: ProcessorToolParams | CreatorToolParams) => (args: ToolArgs) => ToolResult;
 };
+
+/**
+ * Tools that rasterize nothing, commit no pixels and record no history state.
+ *
+ * The eyedropper belongs here and not under `commit: 'unimplemented'`: it is a working tool, not a
+ * dead button. Adobe's rule is that a history state comes from a change to pixels, and sampling
+ * changes only the app's foreground colour, so it has no `commit` kind, no `replay()` descriptor,
+ * no `HistoryItem` and no durable operation. `unimplemented` cannot express that — it means "this
+ * tool does not work yet", and it is read as exactly that by `src/components/Main/Main.tsx`'s tool
+ * dispatch. Naming the set is also what lets a consumer of `toolProcessors` distinguish "this tool
+ * has no processor" from "this tool name does not exist".
+ */
+export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[];
+
+/** The tools that do have a processor, which is the registry's key set. */
+export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;
+
+/**
+ * The one place a `ToolName` is looked up by name, because the registry is keyed by
+ * `PixelToolName` and a name from outside the registry is a real possibility: a history item or a
+ * layer source can name any tool, and a pixel-free tool resolves to nothing. Every caller that
+ * indexes `toolProcessors` with a dynamic name goes through here rather than casting at the
+ * call site, so the one cast in the codebase for this is visible.
+ */
+export const findToolProcessor = (toolName: ToolName): ToolProcessorDefinition | undefined =>
+  (toolProcessors as Partial<Record<ToolName, ToolProcessorDefinition>>)[toolName];
 
 const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: number): DrawToolArgs =>
   ({
@@ -74,7 +109,7 @@ const DEFAULT_PENCIL_LINE_WIDTH = 3;
 
 const unimplemented = () => () => [null as never] as ToolResult;
 
-export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
+export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   reposition: {
     commit: 'geometry',
     replay: replay('geometry', false),
@@ -162,6 +197,62 @@ export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
+  // The Photoshop focus family below, plus the tonal tools, are all `commit: 'raster'`
+  // and therefore all get durable shadow support with no durable code of their own:
+  // `history-adapter.ts:416-424` converts ANY `commit: 'raster'` tool into an
+  // `apply-raster-processor` operation keyed on `args.toolName`, with no allowlist to
+  // extend. A new raster tool is replayable in the shadow document the day it is
+  // registered here.
+  'elliptical-selection': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: ellipticalSelection,
+  },
+  'quick-selection': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: quickSelection,
+  },
+  gradient: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: gradient,
+  },
+  sharpen: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: sharpen,
+  },
+  smudge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: smudge,
+  },
+  dodge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: dodge,
+  },
+  burn: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: burn,
+  },
+  'clone-stamp': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: cloneStamp,
+  },
   brush: {
     commit: 'raster',
     replay: replay('raster-processor', true),
@@ -186,10 +277,25 @@ export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
   'color-replacement': {
     commit: 'raster',
     replay: replay('raster-processor', true),
-    imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'spray'));
-      return [canvas];
-    },
+    // No `@ts-expect-error` here, unlike the entries above it: `colorReplacement` narrows its
+    // params to the registry's own union and its args to the registry's own `ToolArgs`, so the
+    // signature already matches without a cast. That is what a real processor looks like.
+    imageProcessor: colorReplacement,
+  },
+  eraser: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    imageProcessor: (params) => (args) => eraser(params)(args),
+  },
+  'magic-eraser': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    imageProcessor: (params) => (args) => magicEraser(params)(args),
+  },
+  'paint-bucket': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    imageProcessor: (params) => (args) => paintBucket(params)(args),
   },
   pen: { commit: 'unimplemented', replay: replay('unimplemented', false, false), imageProcessor: unimplemented },
   'freeform-pen': {

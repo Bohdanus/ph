@@ -1,18 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { defaultSettings, savedArgsPerFigure } from '../settings.ts';
+import { defaultSettings, savedArgsPerFigure, savedDrawPerPen } from '../settings.ts';
 import { toolProcessors } from '../toolProcessors.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { drawShape } from '../shape.ts';
 import { createLayerSource } from '../../contexts/layer-utils.ts';
+import { drawSpray } from '../../util/draw.ts';
+import { hexToRgb } from '../../util/rect.ts';
 import { toolbarMap } from '../../../toolbar-mapping.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
-import type { PaintToolArgs, PaintToolName } from '../draw.ts';
+import type { DrawToolArgs, PaintToolArgs, PaintToolName } from '../draw.ts';
 import type { FigureType } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 
-const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+/**
+ * The two tools that stamp the foreground colour. `color-replacement` is NOT in this family and
+ * is deliberately absent: it substitutes a colour, which is a different operation with a different
+ * args type (`src/tools/colorReplacement.ts`) and a different test file.
+ */
+const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil'];
 
 /** Every member of the narrowed `FigureType` union, in toolbar order. */
 const figureTypes: readonly FigureType[] = ['rectangle', 'oval', 'line', 'triangle', 'polygon'];
@@ -83,7 +90,7 @@ const runProcessor = (toolName: keyof typeof toolProcessors, args: unknown) => {
 };
 
 describe('paint tools', () => {
-  it('exposes real draw-like behavior for brush, pencil, and color replacement tools', () => {
+  it('exposes real draw-like behavior for brush and pencil', () => {
     for (const toolName of paintToolNames) {
       const args = paintToolArgs(toolName);
 
@@ -215,37 +222,17 @@ describe('paint tool rasterization', () => {
   it.each(paintToolNames)('strokes %s with the pen renderer, whatever penType the args carry', (toolName) => {
     const canvas = runProcessor(toolName, { ...paintToolArgs(toolName), penType: 'spray', points: stroke });
 
-    // brush/pencil force `pen`; color-replacement forces `spray`. Only the latter paints
-    // a radial gradient per point instead of stroking a smoothed path.
-    if (toolName === 'color-replacement') {
-      expect(canvas.ctx.stroke).not.toHaveBeenCalled();
-      expect(canvas.ctx.createRadialGradient).toHaveBeenCalledTimes(stroke.length);
-      return;
-    }
-
+    // Both force `pen`, so a `spray` the args carry is overridden rather than honoured.
+    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
     expect(canvas.ctx.lineCap).toBe('round');
     expect(canvas.ctx.beginPath).toHaveBeenCalledTimes(1);
     expect(canvas.ctx.moveTo).toHaveBeenCalledWith(stroke[0].x, stroke[0].y);
-    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
   });
 
   it('applies the default alpha and line width of each paint tool to its context', () => {
     for (const toolName of paintToolNames) {
       const canvas = runProcessor(toolName, paintToolArgsWithPoints(toolName, stroke));
       const defaults = defaultSettings[toolName];
-
-      if (toolName === 'color-replacement') {
-        // `setupDrawCtx` bails out early for the forced spray pen, so the pen-only
-        // assignments never happen. Assert the absence of the seeded values rather than
-        // the mock's starting numbers, which would pass for any input.
-        expect(canvas.ctx.lineWidth, toolName).not.toBe(defaults.lineWidth);
-        expect(canvas.ctx.globalAlpha, toolName).not.toBe(defaults.alpha);
-        expect(canvas.ctx.strokeStyle, toolName).not.toBe(defaults.color);
-        // The spray path still spends lineWidth as the radial-gradient radius.
-        const gradientCall = (canvas.ctx.createRadialGradient.mock.calls as unknown as number[][])[0];
-        expect(gradientCall[5], toolName).toBe(defaults.lineWidth);
-        continue;
-      }
 
       expect(canvas.ctx.lineWidth, toolName).toBe(defaults.lineWidth);
       expect(canvas.ctx.globalAlpha, toolName).toBe(defaults.alpha);
@@ -321,6 +308,401 @@ describe('paint tool rasterization', () => {
     for (const toolName of ['rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const) {
       expect(toolsMap[toolName].imageProcessor, toolName).toBe(toolsMap.shape.imageProcessor);
     }
+  });
+});
+
+/**
+ * The spray pen's dab contract, pinned on `drawSpray` itself rather than through a tool
+ * registry entry.
+ *
+ * Two reasons it is driven directly instead of through `toolProcessors`. First, the dab's
+ * shape is `drawSpray`'s business and no registry entry owns it. Second, the tool that
+ * currently forces the spray pen is `color-replacement`, which stops being a spray tool;
+ * a pin reached through the registry would delete itself the moment that stops being true.
+ *
+ * Each of the three numbers below was wrong before, in a way that compounded: the peak was
+ * `alpha / 4` (0.125 at the spray preset's own Opacity 0.5), the ramp started at the centre
+ * and fell to nothing across the whole radius, and that radius was the whole `lineWidth` —
+ * a diameter everywhere else. So one dab was a nearly invisible full-width blur, and the
+ * ground it covered was twice the size the user asked for.
+ */
+describe('spray pen dab', () => {
+  const dabAt = (overrides: Partial<DrawToolArgs> = {}) => {
+    const ctx = createMockCanvasContext();
+
+    drawSpray({
+      args: {
+        toolName: 'draw',
+        penType: 'spray',
+        color: '#ff0000',
+        alpha: 0.8,
+        lineWidth: 10,
+        points: [{ x: 5, y: 5 }],
+        ...overrides,
+      },
+      ctx: ctx as unknown as Ctx2D,
+    });
+
+    // The mock builds a fresh gradient object per call, so the stops are only reachable
+    // through the recorded result, not through the return value.
+    const gradient = vi.mocked(ctx.createRadialGradient).mock.results[0]?.value as
+      { addColorStop: ReturnType<typeof vi.fn> } | undefined;
+
+    expect(gradient, 'the dab must have created a gradient').toBeDefined();
+
+    return { ctx, gradient: gradient! };
+  };
+
+  const stopsOf = (gradient: { addColorStop: ReturnType<typeof vi.fn> }) =>
+    gradient.addColorStop.mock.calls as [number, string][];
+
+  const rgb = hexToRgb('#ff0000');
+
+  it('peaks at 0.4 of the Opacity setting, not a quarter of it', () => {
+    const { gradient } = dabAt({ alpha: 0.8 });
+
+    // 0.8 x 0.4 = 0.32, rounded to four places because the raw product carries
+    // binary-float noise (0.32000000000000006) into the colour string.
+    expect(stopsOf(gradient)[0]).toEqual([0, `rgba(${rgb}, 0.32)`]);
+
+    // The campaign's concrete failure: the preset's own Opacity 0.5 under the old `/4`
+    // peaked at 0.125, which measured rgb(223,223,223) for a single tap on white.
+    const preset = dabAt({ ...savedDrawPerPen.spray });
+    expect(stopsOf(preset.gradient)[0]).toEqual([0, `rgba(${rgb}, 0.2)`]);
+  });
+
+  it('holds the peak over the inner quarter of the radius instead of ramping from the centre', () => {
+    const { gradient } = dabAt({ alpha: 0.8 });
+
+    // Exactly three stops, in this order. A dab with a body has a plateau and a rim; the
+    // pre-fix two-stop ramp (0 then 1) spent the entire dab as falloff, which is a blur
+    // and is what made repeated passes accumulate haze instead of building a stroke.
+    expect(stopsOf(gradient)).toEqual([
+      [0, `rgba(${rgb}, 0.32)`],
+      [0.25, `rgba(${rgb}, 0.32)`],
+      [1, `rgba(${rgb}, 0)`],
+    ]);
+  });
+
+  it('spends half the lineWidth as the gradient radius, because Size is a diameter', () => {
+    const { ctx } = dabAt({ lineWidth: 10 });
+
+    // The pre-fix radius was the whole `lineWidth`, painting a 200px blot at Size 100 and
+    // overflowing the `lineWidth` padding `pointsBoundingPos` reserves for the layer crop.
+    expect(ctx.createRadialGradient).toHaveBeenCalledWith(5, 5, 0, 5, 5, 5);
+    // The arc has to use the same radius, or the gradient is clipped by a larger disc and
+    // the outermost three quarters of every dab is cut off rather than falling off.
+    expect(ctx.arc).toHaveBeenCalledWith(5, 5, 5, 0, Math.PI * 2);
+  });
+
+  it('still draws one dab per sample, and nothing at all without samples', () => {
+    const two = dabAt({
+      points: [
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+      ],
+    });
+    expect(two.ctx.createRadialGradient).toHaveBeenCalledTimes(2);
+    expect(two.ctx.fill).toHaveBeenCalledTimes(2);
+
+    // Driven through a bare context rather than `dabAt`, which asserts a gradient exists
+    // and so cannot express the case where none should.
+    const empty = createMockCanvasContext();
+    drawSpray({
+      args: { toolName: 'draw', penType: 'spray', color: '#ff0000', alpha: 0.8, lineWidth: 10, points: [] },
+      ctx: empty as unknown as Ctx2D,
+    });
+
+    expect(empty.createRadialGradient).not.toHaveBeenCalled();
+    expect(empty.fill).not.toHaveBeenCalled();
+    expect(empty.beginPath).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A paint stroke's Photoshop `Smoothing` control is a filter over the sampled path,
+ * applied once at the `drawLine` seam (src/util/draw.ts:95-97) so the live overlay,
+ * the committed stroke and every replay of it all smooth identically.
+ *
+ * What makes it easy to regress: `drawPen` issues exactly ONE `beginPath`, ONE
+ * `moveTo` and ONE `stroke()` for a whole stroke (src/util/draw.ts:106-114), and the
+ * committed export baselines in `e2e/` were recorded against that single-path call
+ * pattern. Smoothing therefore had to stay a point-space filter instead of becoming a
+ * loop of stamped tips, so the invariants pinned below are the ones that break first:
+ * the call counts, the pinned endpoints, and the bezier control points.
+ */
+describe('paint tool stroke smoothing', () => {
+  /** The options-bar values worth pinning: off, mid-scale, and the maximum. */
+  const smoothingLevels = [0, 50, 100] as const;
+
+  /**
+   * Five deliberately non-collinear samples, so the filter has more than one interior
+   * point to move and its 0% and 100% renders cannot coincide. No interior coordinate
+   * already sits on its neighbours' midpoint, and neither endpoint does either, so an
+   * endpoint that stopped being pinned would visibly move.
+   */
+  const curvedStroke: Point[] = [
+    { x: 1, y: 2 },
+    { x: 5, y: 9 },
+    { x: 11, y: 3 },
+    { x: 15, y: 12 },
+    { x: 18, y: 4 },
+  ];
+
+  /**
+   * Collinear and evenly spaced, so every interior sample is already its neighbours'
+   * midpoint and the filter has to be a fixed point here.
+   */
+  const collinearStroke: Point[] = [
+    { x: 1, y: 1 },
+    { x: 2, y: 2 },
+    { x: 3, y: 3 },
+    { x: 4, y: 4 },
+    { x: 5, y: 5 },
+  ];
+
+  /**
+   * Both paint tools force the pen renderer, so this suite has a single family. It was
+   * `paintToolNames.filter((name) => name !== 'color-replacement')` while the Color Replacement
+   * was still a member of `PaintToolName` and forced the spray pen instead; the narrowing in
+   * `src/tools/brush.ts` made the filter the identity, and a filter that filters nothing is a
+   * lie about what this suite covers.
+   */
+  const penToolNames = paintToolNames;
+
+  const smoothingArgs = (toolName: PaintToolName, points: Point[], smoothing: number): PaintToolArgs => ({
+    ...paintToolArgsWithPoints(toolName, points),
+    smoothing,
+  });
+
+  const numericCalls = (spy: { mock: { calls: unknown } }): number[][] => spy.mock.calls as number[][];
+
+  /**
+   * Both renderers issue six-coordinate calls: `bezierCurveTo(cp1x, cp1y, cp2x,
+   * cp2y, x, y)` and `createRadialGradient(x0, y0, r0, x1, y1, r1)`
+   * (src/util/draw.ts:39,127). Pinning the arity keeps a signature change from turning
+   * the coordinate assertions below into `undefined` comparisons that pass anything.
+   */
+  const sixArgCalls = (spy: { mock: { calls: unknown } }): number[][] =>
+    numericCalls(spy).map((call) => {
+      expect(call).toHaveLength(6);
+      return call;
+    });
+
+  /**
+   * The two `bezierCurveTo` triples `bezierSmoothedLine` issues for a 5-point path -
+   * `points[j], points[j+1], points[j+2]` for j = 0 and j = 2, with nothing left over
+   * for its trailing `lineTo` branch (src/util/draw.ts:30-46) - flattened to one number
+   * per axis so two runs can be compared axis by axis.
+   */
+  const bezierTrace = (path: Point[]): number[] =>
+    [0, 2].flatMap((j) => [path[j].x, path[j].y, path[j + 1].x, path[j + 1].y, path[j + 2].x, path[j + 2].y]);
+
+  /** `smoothStrokePoints` at 100: every interior sample on its neighbours' midpoint (src/tools/brush.ts:105-118). */
+  const midpointedPath = (path: Point[]): Point[] =>
+    path.map((point, i) =>
+      i === 0 || i === path.length - 1
+        ? point
+        : { x: (path[i - 1].x + path[i + 1].x) / 2, y: (path[i - 1].y + path[i + 1].y) / 2 }
+    );
+
+  /** The filter's proportional pull, restated from src/tools/brush.ts:111-115 so the expectation is derived rather than literal. */
+  const pulledPath = (path: Point[], level: number): Point[] => {
+    const target = midpointedPath(path);
+    const pull = level / 100;
+
+    return path.map((point, i) => ({
+      x: point.x + pull * (target[i].x - point.x),
+      y: point.y + pull * (target[i].y - point.y),
+    }));
+  };
+
+  const expectBezierPath = (ctx: MockCtx, path: Point[]) => {
+    const calls = sixArgCalls(ctx.bezierCurveTo);
+    expect(calls).toHaveLength(2);
+    const expected = bezierTrace(path);
+
+    calls.flat().forEach((value, axis) => expect(value, `axis ${axis}`).toBeCloseTo(expected[axis]));
+  };
+
+  /** A comparable record of everything a stroke drew, so two runs compare call-for-call instead of field-by-field. */
+  const drawTrace = (ctx: MockCtx) => ({
+    beginPath: ctx.beginPath.mock.calls,
+    moveTo: ctx.moveTo.mock.calls,
+    lineTo: ctx.lineTo.mock.calls,
+    bezierCurveTo: ctx.bezierCurveTo.mock.calls,
+    arc: ctx.arc.mock.calls,
+    stroke: ctx.stroke.mock.calls,
+    fill: ctx.fill.mock.calls,
+    createRadialGradient: ctx.createRadialGradient.mock.calls,
+  });
+
+  it.each(paintToolNames)('issues one path and one stroke for %s at every smoothing value', (toolName) => {
+    for (const smoothing of smoothingLevels) {
+      const canvas = runProcessor(toolName, smoothingArgs(toolName, curvedStroke, smoothing));
+      const label = `${toolName} at ${smoothing}%`;
+
+      // Smoothing filters the path in point space, so it cannot change how many
+      // paths a stroke opens or how many samples the renderer walks. A stamp loop
+      // would raise both counts and break the committed export baselines.
+      expect(canvas.ctx.beginPath, label).toHaveBeenCalledTimes(1);
+      expect(canvas.ctx.moveTo, label).toHaveBeenCalledTimes(1);
+      expect(canvas.ctx.stroke, label).toHaveBeenCalledTimes(1);
+      expect(canvas.ctx.createRadialGradient, label).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(paintToolNames)('starts the %s stroke on the first raw sample at every smoothing value', (toolName) => {
+    for (const smoothing of smoothingLevels) {
+      const canvas = runProcessor(toolName, smoothingArgs(toolName, curvedStroke, smoothing));
+      const label = `${toolName} at ${smoothing}%`;
+
+      // `smoothStrokePoints` copies the first sample through untouched
+      // (src/tools/brush.ts:105), so the path still begins under the pointer. In
+      // `curvedStroke` that head sits far off its neighbours' midpoint, so a filter
+      // that smoothed it would move the stroke's start rather than blur it.
+      expect(canvas.ctx.moveTo, label).toHaveBeenCalledTimes(1);
+      expect(canvas.ctx.moveTo, label).toHaveBeenCalledWith(curvedStroke[0].x, curvedStroke[0].y);
+    }
+  });
+
+  it('feeds the raw neighbouring samples to the pen bezier control points at zero smoothing', () => {
+    for (const toolName of penToolNames) {
+      const canvas = runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 0));
+
+      // `bezierSmoothedLine` passes p1 = points[j], p2 = points[j+1] and p3 = points[j+2]
+      // as the two control points and the endpoint (src/util/draw.ts:36-39), so at 0%
+      // the whole path must still be the untouched samples. Compared exactly rather
+      // than approximately: 0% is the identity pass-through that keeps every stroke
+      // recorded before smoothing, and the export baselines with it, unchanged.
+      expect(sixArgCalls(canvas.ctx.bezierCurveTo)).toEqual([
+        [
+          curvedStroke[0].x,
+          curvedStroke[0].y,
+          curvedStroke[1].x,
+          curvedStroke[1].y,
+          curvedStroke[2].x,
+          curvedStroke[2].y,
+        ],
+        [
+          curvedStroke[2].x,
+          curvedStroke[2].y,
+          curvedStroke[3].x,
+          curvedStroke[3].y,
+          curvedStroke[4].x,
+          curvedStroke[4].y,
+        ],
+      ]);
+    }
+  });
+
+  it('pulls the pen bezier control points toward the neighbour midpoints in proportion to smoothing', () => {
+    const halfway = bezierTrace(pulledPath(curvedStroke, 50));
+
+    for (const toolName of penToolNames) {
+      const atZero = sixArgCalls(
+        runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 0)).ctx.bezierCurveTo
+      ).flat();
+      const atHalf = sixArgCalls(
+        runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 50)).ctx.bezierCurveTo
+      ).flat();
+      const atFull = sixArgCalls(
+        runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 100)).ctx.bezierCurveTo
+      ).flat();
+
+      // Axes 0-1 and 10-11 are the two pinned endpoints; the eight interior axes are
+      // the only ones the filter is allowed to move, and at 50% each must land on the
+      // proportional pull - strictly between 0% and 100%, never on either extreme.
+      for (const axis of [2, 3, 4, 5, 6, 7, 8, 9]) {
+        expect(atHalf[axis], `${toolName} axis ${axis}`).toBeCloseTo(halfway[axis]);
+        expect(atHalf[axis], `${toolName} axis ${axis}`).not.toBeCloseTo(atZero[axis]);
+        expect(atHalf[axis], `${toolName} axis ${axis}`).not.toBeCloseTo(atFull[axis]);
+      }
+
+      for (const axis of [0, 1, 10, 11]) {
+        expect(atHalf[axis], `${toolName} pinned axis ${axis}`).toBe(atZero[axis]);
+        expect(atFull[axis], `${toolName} pinned axis ${axis}`).toBe(atZero[axis]);
+      }
+    }
+  });
+
+  it('snaps the interior pen bezier control points onto the neighbour midpoints at full smoothing', () => {
+    const target = midpointedPath(curvedStroke);
+
+    for (const toolName of penToolNames) {
+      const atFull = runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 100));
+      const atZero = runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 0));
+
+      expectBezierPath(atFull.ctx, target);
+      // A non-collinear stroke must look different at 100% than at 0%, or the control
+      // point assertions above would be passing against an identity filter.
+      expect(sixArgCalls(atFull.ctx.bezierCurveTo)).not.toEqual(sixArgCalls(atZero.ctx.bezierCurveTo));
+    }
+  });
+
+  it('leaves an evenly spaced collinear stroke geometrically identical at full smoothing', () => {
+    for (const toolName of penToolNames) {
+      const atFull = runProcessor(toolName, smoothingArgs(toolName, collinearStroke, 100));
+      const atZero = runProcessor(toolName, smoothingArgs(toolName, collinearStroke, 0));
+
+      // Every interior sample already sits on its neighbours' midpoint, so the filter
+      // is a fixed point here. The explicit numbers keep the comparison from being two
+      // empty records, and pin the collinear fixture as the test calls it.
+      expect(sixArgCalls(atFull.ctx.bezierCurveTo).flat()).toEqual(bezierTrace(collinearStroke));
+      expect(sixArgCalls(atFull.ctx.bezierCurveTo)).toEqual(sixArgCalls(atZero.ctx.bezierCurveTo));
+    }
+  });
+
+  it('applies the smoothing the options bar seeded, at the level it seeded', () => {
+    for (const toolName of paintToolNames) {
+      // The seeded options-bar state, read from `defaultSettings` rather than a
+      // literal, so a change to `PAINT_SMOOTHING_DEFAULT` moves the expectation with
+      // it and a stroke the user never touched is the one under test.
+      const seeded = runProcessor(toolName, paintToolArgsWithPoints(toolName, curvedStroke));
+      const atZero = runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 0));
+      const expected = pulledPath(curvedStroke, defaultSettings[toolName].smoothing);
+
+      expectBezierPath(seeded.ctx, expected);
+
+      // The seeded level is not 0, so the default render must differ from an
+      // explicitly unsmoothed one.
+      expect(defaultSettings[toolName].smoothing).toBeGreaterThan(0);
+      expect(drawTrace(seeded.ctx)).not.toEqual(drawTrace(atZero.ctx));
+    }
+  });
+
+  /**
+   * `gives the color replacement spray renderer the smoothed path, not the raw samples` used to
+   * sit here. Its subject does not exist: the Color Replacement has left `PaintToolName`, so it
+   * reaches neither `drawSpray` nor the paint bar's path filter, and `smoothStrokePoints` is not
+   * called anywhere in `src/tools/colorReplacement.ts`. Its own `smoothness` is a different
+   * control — the softening of the brush's coverage rim — and the ground it stood on (a drag
+   * sweeps a segment rather than its endpoints, and the rim softens) is pinned in
+   * `src/tools/__tests__/color-replacement.test.ts` under `createStrokeCoverage` and
+   * `createColorReplacementPlan — Smoothness and Size`.
+   */
+
+  it('renders the legacy draw tool identically whether smoothing is absent or zero', () => {
+    const absent = { ...defaultSettings.draw, points: curvedStroke };
+    const zero = { ...absent, smoothing: 0 };
+    const full = { ...absent, smoothing: 100 };
+
+    // `draw` predates the paint bar and its per-pen presets carry no `smoothing`
+    // (src/tools/settings.ts:53-59), so an absent value has to mean no smoothing. That
+    // is the contract the committed export baselines were recorded under.
+    expect('smoothing' in absent).toBe(false);
+
+    const absentTrace = drawTrace(runProcessor('draw', absent).ctx);
+    const zeroTrace = drawTrace(runProcessor('draw', zero).ctx);
+    const fullTrace = drawTrace(runProcessor('draw', full).ctx);
+
+    // A stroke-shaped comparison, so the equality below is not two empty records.
+    expect(absentTrace.bezierCurveTo).toHaveLength(2);
+    expect(absentTrace.stroke).toHaveLength(1);
+    expect(zeroTrace).toEqual(absentTrace);
+    // ...and the legacy path is genuinely smoothed when asked, so the equality above
+    // is the absent-means-zero contract and not a filter that never runs.
+    expect(fullTrace).not.toEqual(absentTrace);
   });
 });
 

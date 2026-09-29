@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import type { CssBox, ImageSize, Point } from './helpers/screenshot-scale';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 // The three anchors of the polygon every test in this file commits, in the ants
 // canvas's own backing-store pixels. The canvas is sized to `totalSize`
@@ -164,7 +165,7 @@ test.describe('Selection Marching Ants', () => {
 
   // the dash pattern advances
   test('moves the border of a committed polygon selection', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await selectPolygonalLassoTool(page);
     const geometry = await readDocumentGeometry(page);
@@ -188,7 +189,7 @@ test.describe('Selection Marching Ants', () => {
 
   // the control: the same read, repeated, must not move on its own
   test('reads identical pixels every time with no selection committed', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await selectPolygonalLassoTool(page);
 
@@ -201,7 +202,7 @@ test.describe('Selection Marching Ants', () => {
 
   // the border exists, and leaving the polygon mode stops the loop
   test('stops animating when a non-polygon tool is selected', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await selectPolygonalLassoTool(page);
     const geometry = await readDocumentGeometry(page);

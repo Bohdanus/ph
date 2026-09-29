@@ -1,4 +1,5 @@
 import { TEXT_PADDING } from '../util/constants.ts';
+import { resetOverlayAlpha } from '../util/canvas.ts';
 import type { CreatorToolParams } from './toolProcessors.ts';
 import type { Ctx2D, RectXYSorted } from '../contexts/general-types.ts';
 
@@ -16,11 +17,19 @@ export type TextToolArgs = {
   toolName: 'text';
 };
 
-export type TextToolSettings = Omit<TextToolArgs, 'color' | 'text' | 'rect'>;
+/**
+ * `color` is a setting, not a derivation. It used to be omitted because the bar mirrored the store's
+ * foreground into the args on every render, so the value was never the tool's to keep; it is the
+ * tool's own swatch now, and `saveLastSettings` already persists it (`src/util/settings.ts` omits
+ * only `text` and `rect`), so this type has to say the same thing.
+ */
+export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect'>;
 
 export function renderText(ctx: Ctx2D, args: TextToolArgs) {
   const { text, fontSize, lineHeight, fontFamily, color, rect, align, bold, italic } = args;
   if (!text || !rect) return;
+
+  resetOverlayAlpha(ctx);
 
   const { x1, y1, x2 } = rect;
   let x;

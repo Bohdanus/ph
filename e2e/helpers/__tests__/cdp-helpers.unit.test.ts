@@ -1,9 +1,9 @@
 import { afterEach, describe, it, expect, vi, type Mock } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { BrowserContext, CDPSession, Page } from '@playwright/test';
-import { captureCanvasScreenshot, getDevicePixelRatio } from '../cdp-helpers';
+import { captureCanvasScreenshot } from '../cdp-helpers';
 import {
   cleanupTempDirs,
   createPageMock,
@@ -29,6 +29,12 @@ const PNG_BASE64 = PNG_BYTES.toString('base64');
 interface CaptureParams {
   format: string;
   clip: { x: number; y: number; width: number; height: number; scale: number };
+  /**
+   * The capture scope, declared explicitly. Present here because the helper now sends it and
+   * the payload assertions pin it, not because it was ever optional on the helper's part —
+   * CDP's own default is to capture beyond the viewport.
+   */
+  captureBeyondViewport: boolean;
 }
 
 type SendSpy = Mock<(method: string, params: CaptureParams) => Promise<{ data?: string }>>;
@@ -40,6 +46,8 @@ interface HarnessOptions {
   response?: { data?: string };
   sendError?: Error;
   detachError?: Error;
+  /** The window offset `captureCanvasScreenshot` reads before it builds its clip. */
+  scroll?: { x: number; y: number };
 }
 
 interface CdpHarness {
@@ -78,25 +86,17 @@ function createCdpHarness(outputDir: string, options: HarnessOptions = {}): CdpH
     return { send, detach } as unknown as CDPSession;
   });
   const context = vi.fn<() => BrowserContext>().mockReturnValue({ newCDPSession } as unknown as BrowserContext);
+  const scroll = options.scroll ?? { x: 0, y: 0 };
+  const evaluate = vi.fn(async (pageFunction: () => unknown) => pageFunction()) as unknown as Mock<Page['evaluate']>;
+  vi.stubGlobal('window', { scrollX: scroll.x, scrollY: scroll.y });
 
   return {
-    page: createPageMock({ context }),
+    page: createPageMock({ context, evaluate }),
     send,
     detach,
     newCDPSession,
     outputDirExistedAtSession: () => outputDirExistedAtSession,
   };
-}
-
-/**
- * Runs the page function the helper hands to `page.evaluate`, against a stubbed
- * global `window`. The assertions below are therefore made on the helper's own
- * callback, not on a value the double chose to return — a helper that read a
- * hardcoded ratio, or a different global, fails these tests.
- */
-function createRunningEvaluate(devicePixelRatio: unknown): Mock<Page['evaluate']> {
-  vi.stubGlobal('window', { devicePixelRatio });
-  return vi.fn(async (pageFunction: () => number) => pageFunction()) as unknown as Mock<Page['evaluate']>;
 }
 
 describe('CDP Helpers', () => {
@@ -105,64 +105,63 @@ describe('CDP Helpers', () => {
     vi.restoreAllMocks();
   });
 
-  describe('getDevicePixelRatio', () => {
-    it('returns the ratio the page reports, read from window inside a page function', async () => {
-      const evaluate = createRunningEvaluate(2);
+  /**
+   * PINS for the module's own contract. Two of the three transferred findings in this
+   * file group are a comment and a deletion, so neither is visible to any assertion made
+   * *through* the helper: a wrong comment and a re-added export both pass the whole
+   * `captureCanvasScreenshot` suite. These read the module the way the next agent will —
+   * its text and its exported surface — so a regression fails as a named test instead of
+   * as a silently wrong file.
+   */
+  describe('the capture scale contract as written down', () => {
+    const SOURCE = readFileSync(new URL('../cdp-helpers.ts', import.meta.url), 'utf8');
+    const COMMENTS = SOURCE.split('\n')
+      .filter((line) => /^\s*\/\//.test(line))
+      .join('\n');
 
-      await expect(getDevicePixelRatio(createPageMock({ evaluate }))).resolves.toBe(2);
-
-      expect(evaluate).toHaveBeenCalledTimes(1);
-      expect(evaluate.mock.calls[0][0]).toBeTypeOf('function');
+    it('does not restate the deviceScaleFactor multiplication the sibling spec disproved', () => {
+      // FINDING, pinned: the comment used to assert that a capture comes back at the clip
+      // extent x clip scale x deviceScaleFactor, that this is "the same as
+      // `page.screenshot()`", and that a 120x80 CSS clip decodes to 240x160 at
+      // deviceScaleFactor 2. `cdp-helpers.spec.ts` measured all three false: CDP captures
+      // at Chrome's surface scale, which the emulated ratio does not change, while
+      // `page.screenshot({clip})` does scale with it. None of the three is reproduced in
+      // the corrected comment even in order to refute it, so a re-introduction cannot hide
+      // inside its own negation.
+      expect(SOURCE).not.toMatch(/clip[ _]size\s*[x×]\s*clip\.scale\s*[x×]\s*deviceScaleFactor/i);
+      expect(SOURCE).not.toMatch(/same as\s+`?page\.screenshot\(\)`?/i);
+      expect(SOURCE).not.toMatch(/120x80[\s\S]{0,120}240x160/);
     });
 
-    it('falls back to 1 when the page reports no devicePixelRatio at all', async () => {
-      // The missing-field case: the page function runs for real, so the `|| 1`
-      // fallback is exercised rather than a hardcoded 1 in the double.
-      const evaluate = createRunningEvaluate(undefined);
-
-      await expect(getDevicePixelRatio(createPageMock({ evaluate }))).resolves.toBe(1);
+    it('states the mechanism the sibling spec measured instead', () => {
+      // The replacement has to be assertable too, or the test above only forbids the old
+      // wording and says nothing about the new. `surface scale` is Chrome's own capture
+      // scale; the second assertion is the part a reword is most likely to drop — that the
+      // emulated ratio is not what determines the capture.
+      expect(COMMENTS).toMatch(/surface scale/i);
+      expect(COMMENTS).toMatch(/deviceScaleFactor` does not change it/i);
     });
 
-    it('treats a falsy ratio as missing, so 0 and NaN both become 1', async () => {
-      // PIN: the fallback is `||`, not `??`, so a reported 0 reads as "no ratio" and
-      // is reported as 1. Real browsers never report 0, so this is harmless — but a
-      // fix that switches the guard to `??` breaks this test, which is the point.
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(0) }))).resolves.toBe(1);
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(Number.NaN) }))).resolves.toBe(
-        1
-      );
+    it('does not export getDevicePixelRatio', async () => {
+      // FINDING, pinned: the export had no caller outside this file and its spec, and
+      // existed only to keep "divide by devicePixelRatio" one import away — the strategy
+      // `screenshot-scale.ts` rejects by design. Asserted on the runtime surface rather
+      // than on the text, so a re-export under any spelling of the source fails.
+      const exported = await import('../cdp-helpers');
+      expect(Object.keys(exported).sort()).toEqual(['captureCanvasScreenshot']);
+      expect(exported).not.toHaveProperty('getDevicePixelRatio');
     });
 
-    it('returns a fractional ratio verbatim, without rounding or truncating it', async () => {
-      // A DPR of 1.5 or 2.75 is legal. Rounding it here would corrupt every
-      // pixel-to-CSS conversion downstream.
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(1.5) }))).resolves.toBe(1.5);
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(2.75) }))).resolves.toBe(2.75);
-    });
-
-    it('returns a negative ratio verbatim instead of clamping it to the 1 fallback', async () => {
-      // The `|| 1` fallback is a floor for a *missing* value only. A helper that
-      // clamped to `Math.max(1, ratio)` would hide a nonsense ratio behind a
-      // plausible one, and every caller would treat it as real.
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(-2) }))).resolves.toBe(-2);
-    });
-
-    it('propagates an evaluate failure instead of reporting the 1 fallback', async () => {
-      // The fallback belongs to a page that answered `undefined`. A failed evaluate
-      // means the page is gone or the context destroyed, and reporting 1 there would
-      // turn a hard error into a plausible-looking number.
-      const evaluate = vi.fn<Page['evaluate']>().mockRejectedValue(new Error('Execution context was destroyed'));
-      const page = createPageMock({ evaluate });
-
-      await expect(getDevicePixelRatio(page)).rejects.toThrow('Execution context was destroyed');
-      expect(evaluate).toHaveBeenCalledTimes(1);
-    });
-
-    it('propagates a non-Error rejection from evaluate unchanged', async () => {
-      const rejection = { reason: 'cdp target gone' };
-      const evaluate = vi.fn<Page['evaluate']>().mockRejectedValue(rejection);
-
-      await expect(getDevicePixelRatio(createPageMock({ evaluate }))).rejects.toBe(rejection);
+    it('does not name getDevicePixelRatio in the helper or its spec', () => {
+      // Complements the surface check, and catches the other half of a re-invitation:
+      // re-declaring the identifier in the helper (unexported, or exported by re-export),
+      // or importing it into the spec again. Deliberately scoped to the two files this
+      // finding names — `canvas-helpers.ts` and `.skills/photoshop-tool-creation.md` also
+      // mention the identifier in prose under other owners, and widening the scope would
+      // make this test permanently red for something it cannot fix.
+      for (const file of ['../cdp-helpers.ts', '../cdp-helpers.spec.ts']) {
+        expect(readFileSync(new URL(file, import.meta.url), 'utf8'), file).not.toMatch(/getDevicePixelRatio/);
+      }
     });
   });
 
@@ -186,8 +185,31 @@ describe('CDP Helpers', () => {
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { ...BOX, scale: 1 },
       });
+    });
+
+    it('declares the capture scope explicitly, rather than inheriting Chrome’s default', async () => {
+      const outputDir = await makeOutputDir('capture-scope');
+      const { page, send } = createCdpHarness(outputDir);
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'scope');
+
+      // The seven payload assertions above already carry it, so this is not a new claim —
+      // it is a claim that the flag is a DECISION rather than a field that happens to be in
+      // the object, and the difference matters because the drift this addresses is still
+      // open (`e2e/OPEN_PROBLEMS.md`, the 87px capture). A later edit that drops the flag to
+      // "tidy up" passes every other test here, because `toHaveBeenCalledWith` with an exact
+      // object would fail loudly — so this one exists to say the flag is load-bearing even
+      // though the failure it was added for is not fixed.
+      const [, params] = send.mock.calls[0];
+      expect(params).toMatchObject({ captureBeyondViewport: false });
+      // Not merely present: `true` is the value that captures beyond the viewport, and a
+      // future reader who reads it as "capture more" would be right about the API and wrong
+      // about the intent.
+      expect(params.captureBeyondViewport).toBe(false);
     });
 
     it('decodes the base64 payload, returns those bytes, and writes them to outputDir/<name>.png', async () => {
@@ -242,6 +264,7 @@ describe('CDP Helpers', () => {
       // pass a complete clip, would not notice.
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: 10, y: BOX.y, width: BOX.width, height: BOX.height, scale: 1 },
       });
     });
@@ -258,13 +281,16 @@ describe('CDP Helpers', () => {
 
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: 0, y: 0, width: 0, height: 0, scale: 1 },
       });
     });
 
     it('forwards a negative clip origin to CDP unchanged instead of clamping it', async () => {
       // A canvas scrolled partly out of the viewport has a negative origin. Clamping
-      // it to 0 would capture a different region than the caller measured.
+      // it to 0 would capture a different region than the caller measured. At scroll 0
+      // a negative origin is already a document origin, so the translation below is the
+      // identity and this still holds.
       const outputDir = await makeOutputDir('negative-clip');
       const { page, send } = createCdpHarness(outputDir);
       const { testInfo } = createTestInfoMock(outputDir);
@@ -273,7 +299,79 @@ describe('CDP Helpers', () => {
 
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: -20, y: -10, width: 30, height: 40, scale: 1 },
+      });
+    });
+
+    // The regression this translation exists for. `Page.captureScreenshot` is called
+    // directly here, so Playwright never gets to apply the window offset that
+    // `page.screenshot({ clip })` applies on the caller's behalf: measured on a marker at
+    // document y=600 with the window scrolled to 440, a viewport-relative clip captures
+    // nothing and the page-relative one captures the marker. Sending `box`/`clip` raw
+    // therefore put every CDP read 440px from the region the caller measured, which reads
+    // as a wrong answer rather than an error.
+    it('translates a viewport-relative clip into the page coordinates CDP wants', async () => {
+      const outputDir = await makeOutputDir('scrolled-clip');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, { ...BOX, y: -340 }, testInfo, 'scrolled');
+
+      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
+        format: 'png',
+        captureBeyondViewport: false,
+        clip: { x: BOX.x, y: 100, width: BOX.width, height: BOX.height, scale: 1 },
+      });
+    });
+
+    it('translates an explicit clip, not just the fallback box', async () => {
+      const outputDir = await makeOutputDir('scrolled-explicit-clip');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 30, y: 440 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'scrolled-clip', {
+        x: BOX.x + 20,
+        y: -190,
+        width: 100,
+        height: 60,
+      });
+
+      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
+        format: 'png',
+        captureBeyondViewport: false,
+        clip: { x: BOX.x + 50, y: 250, width: 100, height: 60, scale: 1 },
+      });
+    });
+
+    it('reads the window offset once per capture, not once per module', async () => {
+      // The offset is read at the call site on purpose: `clickToolButton` scrolls the
+      // window, so an offset cached at import time is a different number before and after
+      // any tool click.
+      const outputDir = await makeOutputDir('scroll-read-per-capture');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'first');
+      await captureCanvasScreenshot(page, BOX, testInfo, 'second');
+
+      expect((page.evaluate as unknown as Mock).mock.calls.length).toBe(2);
+      for (const call of send.mock.calls) {
+        expect(call[1].clip.y).toBe(BOX.y + 440);
+      }
+    });
+
+    it('sends the untranslated clip at scroll 0, so nothing moves when the page does not', async () => {
+      const outputDir = await makeOutputDir('unscrolled-clip');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 0 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'unscrolled', { x: 10, y: 20, width: 30, height: 40 });
+
+      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
+        format: 'png',
+        captureBeyondViewport: false,
+        clip: { x: 10, y: 20, width: 30, height: 40, scale: 1 },
       });
     });
 

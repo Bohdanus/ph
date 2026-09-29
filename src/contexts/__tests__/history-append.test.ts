@@ -5,22 +5,41 @@ import {
   createMockHistoryItem,
   createSelectionHistoryItem,
 } from '../../__tests__/fixtures/history.ts';
+import { AssetRegistry } from '../asset-registry.ts';
 import {
   decideDurableAppend,
+  deriveReorderLayersEntry,
   durableAppendDiagnostic,
   planHistoryAppend,
+  type AppendBoundaryResult,
   type DurableAppendInput,
 } from '../history-append.ts';
-import { deriveSetDocumentFrameEntry } from '../history-adapter.ts';
+import {
+  deriveSetDocumentFrameEntry,
+  deriveSetLayerPropertiesEntry,
+  legacyHistoryToDurable,
+} from '../history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
   type DurableDocument,
   type DurableHistoryEntry,
+  type DurableLayerPropertyPatch,
   type SelectionSnapshot,
 } from '../history-model.ts';
-import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  HIDE_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
+  RENAME_LAYER_ACTION,
+  REORDER_ACTION,
+  SELECTION_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SHOW_LAYER_ACTION,
+  TOOL_ACTION,
+  type ActionType,
+} from '../../util/constants.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import type { Selection } from '../general-types.ts';
+import type { LayerId } from '../layer-types.ts';
 import type { HistoryTimeline } from '../history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from '../history-types.ts';
 
@@ -63,6 +82,41 @@ function cropItem(nextFrame: DocumentFrame = croppedFrame): NewHistoryItem {
     actionName: SET_DOCUMENT_FRAME_ACTION,
     args: { previousFrame: baselineFrame, nextFrame },
   };
+}
+
+function propertyItem(actionName: ActionType, args?: unknown, layerId = 'layer-1'): NewHistoryItem {
+  // `unknown` because the malformed shapes under test include a primitive, which
+  // the writer's typed signature excludes but a live caller can still produce.
+  return { layerId, actionName, ...(args === undefined ? {} : { args: args as object }) };
+}
+
+/**
+ * The conversion the plan must agree with. The baseline carries no layer, so a
+ * property entry is recorded for an unknown layer: the operation is derived from
+ * the item alone, which is exactly the equality under test. The plan's own id is
+ * used, so the two entries are comparable without restating it.
+ */
+function convertedEntryFor(item: HistoryItem): DurableHistoryEntry | undefined {
+  const registry = new AssetRegistry();
+  try {
+    const converted = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId: 'layer-1',
+          documentSource: { layers: {}, size: { width: 800, height: 600 }, frame: baselineFrame },
+        },
+        item,
+      ],
+      { documentId: 'parity-doc', registry }
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    return converted.document.history.find((candidate) => candidate.id === item.id);
+  } finally {
+    registry.shutdown();
+  }
 }
 
 describe('planHistoryAppend: one entry per append', () => {
@@ -248,6 +302,190 @@ describe('planHistoryAppend: selection translation', () => {
   });
 });
 
+describe('planHistoryAppend: layer-property translation', () => {
+  const plan = (item: NewHistoryItem) =>
+    planHistoryAppend({
+      item,
+      timeline: timeline(createMockHistory(1)),
+      currentFrame: baselineFrame,
+    });
+
+  it.each([
+    { label: 'a show', actionName: SHOW_LAYER_ACTION, args: undefined, patch: { visible: true } },
+    { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
+    { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
+    { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    actionName: ActionType;
+    args?: object;
+    patch: DurableLayerPropertyPatch;
+  }>)('returns for $label the entry the adapter itself would derive', ({ actionName, args, patch }) => {
+    const result = plan(propertyItem(actionName, args));
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry).toEqual(deriveSetLayerPropertiesEntry(result.entry));
+    expect(result.durableEntry).toEqual({
+      id: result.entry.id,
+      schemaVersion: DURABLE_SCHEMA_VERSION,
+      enabled: true,
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch },
+    });
+    const operation = result.durableEntry?.operation;
+    const derivedPatch = operation?.kind === 'set-layer-properties' ? operation.patch : null;
+    // Frozen at the derivation, so a publisher and the runtime layer that adopts
+    // the patch cannot mutate the entry the other one is holding.
+    expect(Object.isFrozen(operation)).toBe(true);
+    expect(Object.isFrozen(derivedPatch)).toBe(true);
+  });
+
+  it('preserves a caller-supplied id so the durable entry can share it', () => {
+    const result = planHistoryAppend({
+      item: propertyItem(RENAME_LAYER_ACTION, { name: 'Renamed' }),
+      timeline: timeline(createMockHistory(1)),
+      currentFrame: baselineFrame,
+      id: 'stable-rename',
+    });
+
+    expect(result.entry.id).toBe('stable-rename');
+    expect(result.durableEntry?.id).toBe('stable-rename');
+  });
+
+  it.each([
+    {
+      label: 'a rename',
+      actionName: RENAME_LAYER_ACTION,
+      args: { name: 'Renamed', visible: false, opacity: 0.25, locked: true },
+      patch: { name: 'Renamed' },
+    },
+    {
+      label: 'a hide',
+      actionName: HIDE_LAYER_ACTION,
+      args: { name: 'Renamed', opacity: 0.25, toolName: 'blur' },
+      patch: { visible: false },
+    },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    actionName: ActionType;
+    args: object;
+    patch: DurableLayerPropertyPatch;
+  }>)(
+    'derives only the action-owned property for $label, never the rest of the args',
+    ({ actionName, args, patch }) => {
+      const result = plan(propertyItem(actionName, args));
+
+      // A live writer hands the boundary a `Partial<Layer>`, and the runtime layer
+      // adopts this patch. Only the property the action owns may survive, or a
+      // rename would carry `visible: false` into the durable document and the
+      // runtime layer alike.
+      const operation = result.durableEntry?.operation;
+      expect(operation?.kind === 'set-layer-properties' ? operation.patch : null).toEqual(patch);
+      // The legacy entry is the authority for the rest: it keeps every argument.
+      expect(result.entry.args).toEqual(args);
+    }
+  );
+
+  it('derives a patch that cannot be changed through the arguments it was planned from', () => {
+    const args = { name: 'Renamed' };
+    const result = plan(propertyItem(RENAME_LAYER_ACTION, args));
+
+    args.name = 'Rewritten';
+
+    const operation = result.durableEntry?.operation;
+    expect(operation?.kind === 'set-layer-properties' && operation.patch).toEqual({ name: 'Renamed' });
+  });
+
+  it.each([
+    { label: 'a hide whose args are absent', actionName: HIDE_LAYER_ACTION, args: undefined },
+    { label: 'a show whose args are absent', actionName: SHOW_LAYER_ACTION, args: undefined },
+    { label: 'a show whose args carry a name', actionName: SHOW_LAYER_ACTION, args: { name: 'Renamed' } },
+    { label: 'a hide whose args are a primitive', actionName: HIDE_LAYER_ACTION, args: 42 },
+  ] satisfies ReadonlyArray<{ label: string; actionName: ActionType; args?: unknown }>)(
+    'translates $label, which never reads a name',
+    ({ actionName, args }) => {
+      const result = plan(propertyItem(actionName, args));
+
+      expect(result.diagnostics).toEqual([]);
+      expect(result.durableEntry).not.toBeNull();
+    }
+  );
+
+  it.each([
+    { label: 'a numeric name', args: { name: 42 } },
+    { label: 'a null name', args: { name: null } },
+    { label: 'an undefined name', args: { name: undefined } },
+    { label: 'a name that is an object', args: { name: { text: 'Renamed' } } },
+    { label: 'a name that is an array', args: { name: ['Renamed'] } },
+    { label: 'args that carry no name', args: { opacity: 0.5 } },
+    { label: 'args that are absent', args: undefined },
+    { label: 'args that are a primitive', args: 42 },
+  ] satisfies ReadonlyArray<{ label: string; args?: unknown }>)(
+    'reports durable-unavailable for a rename with $label instead of deriving a patch',
+    ({ args }) => {
+      const result = plan(propertyItem(RENAME_LAYER_ACTION, args));
+
+      expect(result.durableEntry).toBeNull();
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]).toMatchObject({
+        code: 'invalid-history-entry',
+        severity: 'warning',
+        historyId: result.entry.id,
+        actionName: RENAME_LAYER_ACTION,
+      });
+      expect(result.diagnostics[0].message).toContain(RENAME_LAYER_ACTION);
+      expect(result.diagnostics[0].message).toContain('layer-property');
+      // The legacy edit still stands: a durable failure never rejects the append.
+      expect(result.entry.actionName).toBe(RENAME_LAYER_ACTION);
+      expect(result.entry.args).toEqual(args);
+    }
+  );
+
+  it.each([
+    { label: 'a show', actionName: SHOW_LAYER_ACTION, args: undefined, patch: { visible: true } },
+    { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
+    { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
+    { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+    {
+      label: 'a rename carrying other layer fields',
+      actionName: RENAME_LAYER_ACTION,
+      args: { name: 'Renamed', visible: false, opacity: 0.25 },
+      patch: { name: 'Renamed' },
+    },
+    {
+      label: 'a hide for a layer the document does not have',
+      actionName: HIDE_LAYER_ACTION,
+      args: undefined,
+      patch: { visible: false },
+    },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    actionName: ActionType;
+    args?: object;
+    patch: DurableLayerPropertyPatch;
+  }>)('plans the same entry the conversion records for $label', ({ actionName, args, patch }) => {
+    const result = plan(propertyItem(actionName, args, 'ghost'));
+
+    expect(convertedEntryFor(result.entry)).toEqual(result.durableEntry);
+    const operation = result.durableEntry?.operation;
+    expect(operation?.kind === 'set-layer-properties' ? operation.patch : null).toEqual(patch);
+  });
+
+  it.each([
+    { label: 'a numeric name', args: { name: 42 } },
+    { label: 'a name that is an object', args: { name: { text: 'Renamed' } } },
+    { label: 'args that carry no name', args: { opacity: 0.5 } },
+    { label: 'args that are absent', args: undefined },
+  ] satisfies ReadonlyArray<{ label: string; args?: object }>)(
+    'refuses a rename with $label exactly where the conversion records nothing',
+    ({ args }) => {
+      const result = plan(propertyItem(RENAME_LAYER_ACTION, args));
+
+      expect(result.durableEntry).toBeNull();
+      expect(convertedEntryFor(result.entry)).toBeUndefined();
+    }
+  );
+});
+
 describe('planHistoryAppend: append-point validation', () => {
   it('reports a duplicate entry id without changing the entry', () => {
     const existing = createMockHistoryItem({ id: 'duplicate-id' });
@@ -372,16 +610,29 @@ describe('decideDurableAppend', () => {
   });
 
   it.each([
-    ['a foreign id', { ...cropEntry, id: 'elsewhere' }],
-    ['a different schema version', { ...planned, schemaVersion: 99 }],
-    ['a flipped enabled state', { ...planned, enabled: false }],
-    ['a different operation kind', { ...planned, operation: { kind: 'set-selection' } as never }],
+    [
+      'a foreign id',
+      { ...planned, id: 'elsewhere' },
+      'durable entry id elsewhere does not match the legacy entry id crop-1',
+    ],
+    ['a different schema version', { ...planned, schemaVersion: 99 }, 'durable schema version 99'],
+    [
+      'a flipped enabled state',
+      { ...planned, enabled: false },
+      'the durable enabled state does not match the legacy entry',
+    ],
+    [
+      'a different operation kind',
+      { ...planned, operation: { kind: 'set-selection' } as never },
+      'a document frame change produced a "set-selection" operation',
+    ],
     [
       'a rewritten next frame',
       {
         ...planned,
         operation: { kind: 'set-document-frame', previous: baselineFrame, next: { ...croppedFrame, width: 1 } },
       },
+      'the durable next frame does not match the legacy entry',
     ],
     [
       'a rewritten previous frame',
@@ -389,12 +640,15 @@ describe('decideDurableAppend', () => {
         ...planned,
         operation: { kind: 'set-document-frame', previous: { ...baselineFrame, x: 7 }, next: croppedFrame },
       },
+      'the durable previous frame does not match the legacy entry',
     ],
-  ])('reports a mismatch for %s', (_label, candidate) => {
+  ] as const)('reports a mismatch for %s', (_label, candidate, reason) => {
     const decision = decide({ planned: candidate as DurableHistoryEntry });
 
     expect(decision.outcome).toBe('mismatch');
-    if (decision.outcome === 'mismatch') expect(decision.reason).toBeTruthy();
+    // The reason is the reported contract, so each drift keeps its own string: a
+    // converter that answered all six alike would be reporting nothing.
+    if (decision.outcome === 'mismatch') expect(decision.reason).toBe(reason);
   });
 
   it('reports a mismatch for an action with no published translation', () => {
@@ -538,5 +792,294 @@ describe('decideDurableAppend', () => {
 
     expect(decision.outcome).toBe('mismatch');
     if (decision.outcome === 'mismatch') expect(decision.reason).toBe('a selection change has no next selection state');
+  });
+});
+
+describe('decideDurableAppend: layer-property entries', () => {
+  const priorEntries = [createMockHistoryItem({ id: 'baseline' })];
+  const prior = { entries: priorEntries, cursor: 0, branchRevision: 0 };
+  const base = {
+    documentId: 'doc-1',
+    documentRevision: 4,
+    branchRevision: 0,
+    durableRevision: 7,
+    baseline: {
+      frame: baselineFrame,
+      layers: [],
+      selections: { selections: [], activeSelectionId: null },
+      activeLayerId: null,
+    },
+    history: [createFrameEntry('baseline')],
+    cursor: 0,
+  } as unknown as DurableDocument;
+
+  const decide = (entry: HistoryItem, planned: DurableHistoryEntry | null) =>
+    decideDurableAppend({
+      documentId: 'doc-1',
+      base,
+      prior,
+      next: { entries: [...priorEntries, entry], cursor: 1, branchRevision: 0 },
+      entry,
+      planned,
+      documentRevision: 4,
+    });
+
+  const decidePlan = (plan: AppendBoundaryResult, replacement?: Partial<DurableHistoryEntry>) =>
+    decide(
+      plan.entry,
+      replacement ? { ...(plan.durableEntry as DurableHistoryEntry), ...replacement } : plan.durableEntry
+    );
+
+  const renamePlan = planHistoryAppend({
+    item: propertyItem(RENAME_LAYER_ACTION, { name: 'Renamed' }),
+    timeline: prior,
+    currentFrame: baselineFrame,
+  });
+  const disabledRenameEntry = createMockHistoryItem({
+    id: 'rename-disabled',
+    actionName: RENAME_LAYER_ACTION,
+    layerId: 'layer-1',
+    args: { name: 'Renamed' },
+    disabled: true,
+  });
+
+  it.each([
+    { label: 'a show', actionName: SHOW_LAYER_ACTION, args: undefined, patch: { visible: true } },
+    { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
+    { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    actionName: ActionType;
+    args?: object;
+    patch: DurableLayerPropertyPatch;
+  }>)('publishes the planned entry the boundary itself derived for $label', ({ actionName, args, patch }) => {
+    const plan = planHistoryAppend({
+      item: propertyItem(actionName, args),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    const decision = decidePlan(plan);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history).toHaveLength(2);
+    expect(decision.document.history[1]).toEqual(plan.durableEntry);
+    expect(decision.document.history[1].operation).toEqual({
+      kind: 'set-layer-properties',
+      layerId: 'layer-1',
+      patch,
+    });
+    expect(decision.document.cursor).toBe(1);
+    expect(decision.document.durableRevision).toBe(8);
+  });
+
+  it('publishes a disabled planned entry for a disabled legacy rename', () => {
+    const planned = deriveSetLayerPropertiesEntry(disabledRenameEntry);
+
+    expect(planned?.enabled).toBe(false);
+    expect(decide(disabledRenameEntry, planned).outcome).toBe('published');
+  });
+
+  it('reports a mismatch when a planned entry claims to be enabled for a disabled legacy rename', () => {
+    const decision = decide(disabledRenameEntry, {
+      ...(deriveSetLayerPropertiesEntry(disabledRenameEntry) as DurableHistoryEntry),
+      enabled: true,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable enabled state does not match the legacy entry');
+    }
+  });
+
+  it.each([
+    [
+      'a rewritten name',
+      { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Other' } } },
+      'the durable layer name does not match the legacy entry',
+    ],
+    [
+      'a second property in a rename patch',
+      {
+        operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed', visible: false } },
+      },
+      'the durable layer-property operation does not match the legacy entry',
+    ],
+    [
+      'a retargeted layer',
+      { operation: { kind: 'set-layer-properties', layerId: 'other', patch: { name: 'Renamed' } } },
+      'the durable layer id does not match the legacy entry',
+    ],
+    [
+      'a document frame operation',
+      { operation: { kind: 'set-document-frame', previous: baselineFrame, next: croppedFrame } },
+      'a layer-property change produced a "set-document-frame" operation',
+    ],
+    [
+      'a no-op patch',
+      { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: {} } },
+      'the durable layer-property operation does not match the legacy entry',
+    ],
+  ] as const)('reports a mismatch for a planned rename carrying %s', (_label, replacement, reason) => {
+    const decision = decidePlan(renamePlan, replacement);
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe(reason);
+    }
+  });
+
+  it('reports a mismatch for a published entry whose legacy rename carries no usable name', () => {
+    const plan = planHistoryAppend({
+      item: propertyItem(RENAME_LAYER_ACTION, { name: 42 }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    // The boundary plans nothing here, so only a foreign publisher reaches the
+    // guard that refuses a patch the legacy item never described.
+    expect(plan.durableEntry).toBeNull();
+    const decision = decide(plan.entry, {
+      id: plan.entry.id,
+      schemaVersion: DURABLE_SCHEMA_VERSION,
+      enabled: true,
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') expect(decision.reason).toBe('the layer-property value is invalid');
+  });
+
+  it('falls back without publishing when nothing was planned for the append', () => {
+    const plan = planHistoryAppend({
+      item: propertyItem(RENAME_LAYER_ACTION, { name: 42 }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    expect(decidePlan(plan).outcome).toBe('preconditions');
+  });
+});
+
+/**
+ * The reorder decisions. A reorder is the only published action whose
+ * correctness depends on the whole layer set rather than on one property of one
+ * layer, so it is also the only one the decision has to prove something extra
+ * about before it publishes. The store-level behaviour is covered in
+ * `StoreContext.reorder.test.tsx`; what is pinned here is that each refusal is
+ * reachable, and is a `preconditions` outcome rather than a reported error.
+ */
+describe('decideDurableAppend: reorder entries', () => {
+  const preOrder: LayerId[] = ['bottom', 'middle', 'top'];
+  const priorEntries = [createMockHistoryItem({ id: 'baseline' })];
+  const base = {
+    documentId: 'doc-1',
+    documentRevision: 4,
+    branchRevision: 0,
+    durableRevision: 7,
+    baseline: {
+      frame: baselineFrame,
+      layers: [],
+      selections: { selections: [], activeSelectionId: null },
+      activeLayerId: null,
+    },
+    history: [createFrameEntry('baseline')],
+    cursor: 0,
+  } as unknown as DurableDocument;
+
+  const reorderEntry = (overrides: { id?: string; afterWhichLayerId?: LayerId | null } = {}) => {
+    const args: { layerToMoveId: LayerId; afterWhichLayerId?: LayerId | null } =
+      'afterWhichLayerId' in overrides
+        ? { layerToMoveId: 'bottom', afterWhichLayerId: overrides.afterWhichLayerId }
+        : { layerToMoveId: 'bottom', afterWhichLayerId: 'top' };
+    return createMockHistoryItem({
+      id: overrides.id ?? 'reorder-1',
+      actionName: REORDER_ACTION,
+      layerId: 'bottom',
+      args,
+    });
+  };
+
+  const decide = (entry: ReturnType<typeof reorderEntry>, overrides: Partial<DurableAppendInput> = {}) => {
+    const next = { entries: [...priorEntries, entry], cursor: 1, branchRevision: 0 };
+    return decideDurableAppend({
+      documentId: 'doc-1',
+      base,
+      prior: { entries: priorEntries, cursor: 0, branchRevision: 0 },
+      next,
+      entry,
+      planned: deriveReorderLayersEntry(entry, preOrder),
+      documentRevision: 4,
+      preLayerOrder: preOrder,
+      durableLayerOrder: [...preOrder],
+      ...overrides,
+    });
+  };
+
+  it('publishes a reorder planned from the store order', () => {
+    const entry = reorderEntry();
+    const decision = decide(entry);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history).toHaveLength(2);
+    expect(decision.document.history[1]!.operation).toEqual({
+      kind: 'reorder-layers',
+      orderByLayerId: { middle: 0, top: 1, bottom: 2 },
+    });
+    expect(decision.document.history[1]!.id).toBe(entry.id);
+    expect(decision.document.durableRevision).toBe(8);
+  });
+
+  it.each([
+    ['no store order at all', { preLayerOrder: null }],
+    ['a durable order that is not supplied', { durableLayerOrder: null }],
+    ['a durable order of the wrong length', { durableLayerOrder: ['bottom', 'middle'] }],
+    ['a durable order with a layer the store does not hold', { durableLayerOrder: [...preOrder, 'ghost'] }],
+    ['a durable order missing a layer the store holds', { durableLayerOrder: ['bottom', 'top'] }],
+    // Same length, same members, different sequence. This is the case a
+    // membership check cannot see, and it is the one that matters: a published
+    // map is a fresh normalisation of the order, so publishing while the models
+    // disagree about the order launders the disagreement into a document no
+    // reconversion will reproduce.
+    [
+      'a durable order that is the same set in a different sequence',
+      { durableLayerOrder: ['top', 'middle', 'bottom'] },
+    ],
+  ] as const)('refuses to publish for %s', (_label, overrides) => {
+    const decision = decide(reorderEntry(), overrides as Partial<DurableAppendInput>);
+
+    expect(decision.outcome).toBe('preconditions');
+  });
+
+  it('refuses a plan whose map disagrees with the store order', () => {
+    const entry = reorderEntry();
+
+    // A map that is a valid reorder, of a different reorder. Only the store's
+    // own order can tell them apart, which is the whole reason it is supplied.
+    const decision = decide(entry, {
+      planned: {
+        id: entry.id,
+        schemaVersion: DURABLE_SCHEMA_VERSION,
+        enabled: true,
+        operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, middle: 1, top: 2 } },
+      } as DurableHistoryEntry,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') expect(decision.reason).toContain('order');
+  });
+
+  it.each([
+    ['no anchor', undefined, { bottom: 0, middle: 1, top: 2 }],
+    ['an explicit null anchor', null, { bottom: 0, middle: 1, top: 2 }],
+  ] as const)('plans a move to the bottom for %s', (_label, afterWhichLayerId, expected) => {
+    const entry = reorderEntry({ afterWhichLayerId });
+    const decision = decide(entry);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history[1]!.operation).toEqual({ kind: 'reorder-layers', orderByLayerId: expected });
   });
 });

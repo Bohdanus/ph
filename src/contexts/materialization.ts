@@ -11,7 +11,7 @@ import { AssetRegistry, type MaterializationLease } from './asset-registry.ts';
 import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import type { ToolArgs } from './tool-types.ts';
-import { exp1_1 } from '../tools/functions.ts';
+import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 
 export type MaterializationRequest = Readonly<{
   documentId: string;
@@ -75,9 +75,16 @@ function filterForOperation(filter: DurableFilter): string {
     case 'blur':
       return `blur(${Number(filter.args.radius ?? 0)}px)`;
     case 'color':
-      return `grayscale(${Number(filter.args.grayscale ?? 0)}%) sepia(${Number(filter.args.sepia ?? 0)}%) saturate(${exp1_1(Number(filter.args.saturation ?? 0), 2.1)})`;
+      return buildColorsFilter({
+        grayscale: Number(filter.args.grayscale ?? 0),
+        sepia: Number(filter.args.sepia ?? 0),
+        saturation: Number(filter.args.saturation ?? 0),
+      });
     case 'levels':
-      return `brightness(${exp1_1(Number(filter.args.brightness ?? 0), 1.9)}) contrast(${exp1_1(Number(filter.args.contrast ?? 0), 2.2)})`;
+      return buildLevelsFilter({
+        brightness: Number(filter.args.brightness ?? 0),
+        contrast: Number(filter.args.contrast ?? 0),
+      });
   }
 }
 

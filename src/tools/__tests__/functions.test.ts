@@ -1,24 +1,89 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { exp1_1, writeImageToCanvas } from '../functions.ts';
+import { buildColorsFilter, buildLevelsFilter, expAdjustment, writeImageToCanvas } from '../functions.ts';
 
-describe('exp1_1', () => {
-  it('calculates exp(k * val/100) with default k=2', () => {
-    expect(exp1_1(0)).toBe(Math.exp(0));
-    expect(exp1_1(100)).toBeCloseTo(Math.exp(2), 5);
+/**
+ * These are the load-bearing literals of the whole filter contract. All four emission
+ * sites — `colors.ts`, `levels.ts`, `layer-renderer.ts` (preview) and `materialization.ts`
+ * (durable) — build their strings from these two functions, so pinning the strings here
+ * pins all four at once. The defect this replaced was four independent copies of the same
+ * template drifting apart; a site that stopped routing through here would fail its own
+ * file's literal expectation instead of silently disagreeing with the other three.
+ */
+describe('buildColorsFilter', () => {
+  it('emits the neutral as a 100% saturate, so the default args are a visual no-op', () => {
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: 0 })).toBe('grayscale(0%) sepia(0%) saturate(100%)');
   });
 
-  it('returns 1 when val is 0', () => {
-    expect(exp1_1(0)).toBe(1);
+  it('desaturates: -100 emits saturate(0%), a genuinely grey image', () => {
+    expect(buildColorsFilter({ grayscale: 0, sepia: 0, saturation: -100 })).toBe(
+      'grayscale(0%) sepia(0%) saturate(0%)'
+    );
   });
 
-  it('supports a custom k parameter', () => {
-    expect(exp1_1(100, 3)).toBeCloseTo(Math.exp(3), 5);
-    expect(exp1_1(50, 1)).toBeCloseTo(Math.exp(0.5), 5);
+  it('keeps the % on grayscale and sepia, the two arms that were already correct', () => {
+    expect(buildColorsFilter({ grayscale: 30, sepia: 80, saturation: 0 })).toBe(
+      'grayscale(30%) sepia(80%) saturate(100%)'
+    );
+  });
+});
+
+describe('buildLevelsFilter', () => {
+  it('emits the neutral as brightness(100%) contrast(100%)', () => {
+    expect(buildLevelsFilter({ brightness: 0, contrast: 0 })).toBe('brightness(100%) contrast(100%)');
   });
 
-  it('returns values greater than 1 for positive inputs', () => {
-    expect(exp1_1(10)).toBeGreaterThan(1);
-    expect(exp1_1(100)).toBeGreaterThan(exp1_1(10));
+  it('reaches black: -100 brightness emits brightness(0%)', () => {
+    expect(buildLevelsFilter({ brightness: -100, contrast: 0 })).toBe('brightness(0%) contrast(100%)');
+  });
+
+  it('drops contrast to its mid-grey 0% floor at -100', () => {
+    expect(buildLevelsFilter({ brightness: 0, contrast: -100 })).toBe('brightness(100%) contrast(0%)');
+  });
+});
+
+describe('expAdjustment', () => {
+  it('anchors the neutral at exactly 1, so a zero adjustment is a visual no-op', () => {
+    // The default Colors and Levels args are all zero (`settings.ts:37-38`). If zero did
+    // not map to a factor of exactly 1, every freshly opened document would open
+    // colour-shifted.
+    expect(expAdjustment(0)).toBe(1);
+    expect(expAdjustment(0, 2.1)).toBe(1);
+    expect(expAdjustment(0, 1.9)).toBe(1);
+    expect(expAdjustment(0, 2.2)).toBe(1);
+  });
+
+  it('reaches exactly 0 at the -100 end, so brightness can reach black and saturation can desaturate', () => {
+    // `Math.exp` is strictly positive, so the un-re-anchored `exp(k * val / 100)` bottoms
+    // out at `exp(-k)` — about 15% brightness at k=1.9, a dark grey that never reaches
+    // black. These are exact zeros, not approximations of one.
+    expect(expAdjustment(-100, 1.9)).toBe(0);
+    expect(expAdjustment(-100, 2.1)).toBe(0);
+    expect(expAdjustment(-100, 2.2)).toBe(0);
+  });
+
+  it('rises above 1 across the positive travel', () => {
+    expect(expAdjustment(50, 2.1)).toBeGreaterThan(1);
+    expect(expAdjustment(100, 2.1)).toBeGreaterThan(expAdjustment(50, 2.1));
+  });
+
+  it('is strictly increasing over the whole -100..100 travel, for every exponent in use', () => {
+    for (const k of [1.9, 2.1, 2.2]) {
+      for (let val = -100; val < 100; val += 1) {
+        expect(expAdjustment(val + 1, k)).toBeGreaterThan(expAdjustment(val, k));
+      }
+    }
+  });
+
+  it('keeps the three exponents distinct, so the adjustments do not share one curve', () => {
+    expect(expAdjustment(50, 2.1)).not.toBe(expAdjustment(50, 1.9));
+    expect(expAdjustment(50, 1.9)).not.toBe(expAdjustment(50, 2.2));
+  });
+
+  it('propagates a non-finite input rather than silently sanitising it', () => {
+    // Pin: nothing clamps here. The `it.fails` sanitiser declarations in
+    // image-processors.test.ts assert that a non-finite adjustment survives all the way
+    // into the composed CSS filter string, so this must stay `NaN`.
+    expect(expAdjustment(Number.NaN, 1.9)).toBeNaN();
   });
 });
 

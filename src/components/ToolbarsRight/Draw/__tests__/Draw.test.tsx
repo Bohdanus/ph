@@ -245,7 +245,8 @@ describe('Draw toolbar', () => {
 
       selectPenType('pen-dashed');
 
-      // `handleChange({ ...args, ...savedDrawPerPen[penType], penType })` (Draw.tsx:66-69)
+      // `handlePenTypeChange` (Draw.tsx:66-80) keys the dash off the pen type and falls back to
+      // the preset for `pen-dashed`, so the dashed pen still restores its own stored pattern.
       expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
       expect(lastToolArgs()).toEqual({
         toolName: 'draw',
@@ -262,7 +263,7 @@ describe('Draw toolbar', () => {
       expect(getGapSlider()).toHaveValue('30');
     });
 
-    it('publishes the saved spray settings and clears the dash readout for the spray branch', () => {
+    it('publishes the saved spray settings and drops the dashed pen dash for the spray branch', () => {
       resetToolArgs({ penType: 'pen-dashed', lineWidth: 10, alpha: 0.9, lineDash: [5, 30] });
       render(<Draw />);
 
@@ -270,20 +271,49 @@ describe('Draw toolbar', () => {
 
       selectPenType('spray');
 
-      // `savedDrawPerPen.spray` declares neither `lineDash` nor a dash, so the previously
-      // active dash pair is carried through by the leading `...args` spread (Draw.tsx:68).
+      // `handlePenTypeChange` (Draw.tsx:66-80) keys the dash off the pen type rather than
+      // letting the leading `...args` spread carry it, so a `pen` or `spray` record can never
+      // inherit a dash. `setupDrawCtx` early-returns for spray anyway (`src/tools/draw.ts:51`), before it
+      // writes any stroke or alpha state.
       expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
       expect(lastToolArgs()).toEqual({
         toolName: 'draw',
         penType: 'spray',
         lineWidth: 100,
         alpha: 0.5,
-        lineDash: [5, 30],
+        lineDash: null,
         color: '#000000',
       });
       expect(getPenTypeSelect()).toHaveValue('spray');
       expect(screen.queryByLabelText(/Dash/)).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/Gap/)).not.toBeInTheDocument();
+    });
+
+    it('drops the dashed pen dash when switching back to the solid pen', () => {
+      render(<Draw />);
+
+      selectPenType('pen-dashed');
+      expect(lastToolArgs()).toMatchObject({ penType: 'pen-dashed', lineDash: [5, 30] });
+
+      selectPenType('pen');
+
+      expect(lastToolArgs()).toMatchObject({ penType: 'pen', lineDash: null });
+      // `handleChange` re-derives the record from the published args, so the poisoned entry
+      // is repaired on the same switch rather than on some later one.
+      expect(savedDrawPerPen.pen).toEqual({ alpha: 0.9, lineWidth: 10, lineDash: null });
+      // The Dash/Gap sliders are hidden for a solid pen, so a surviving dash could not be cleared.
+      expect(screen.queryByLabelText(/Dash/)).not.toBeInTheDocument();
+    });
+
+    it('repairs a pen record a dashed session already poisoned with the dash', () => {
+      savedDrawPerPen.pen = { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] };
+      resetToolArgs({ penType: 'pen-dashed', lineWidth: 10, alpha: 0.9, lineDash: [5, 30] });
+      render(<Draw />);
+
+      selectPenType('pen');
+
+      expect(lastToolArgs()).toMatchObject({ penType: 'pen', lineDash: null });
+      expect(savedDrawPerPen.pen).toEqual({ alpha: 0.9, lineWidth: 10, lineDash: null });
     });
 
     it('remembers the per-pen size, alpha and dash and restores them on the way back', () => {

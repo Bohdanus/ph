@@ -10,6 +10,7 @@ import type {
 } from '../contexts/general-types.ts';
 import { pointsBoundingPos } from './draw.ts';
 import { posToSortedRect, sortRect, trimRect } from './rect.ts';
+import { resetOverlayAlpha } from './canvas.ts';
 import type { DocumentFrame } from '../contexts/document-frame.ts';
 import { documentToCanvasPoint } from '../contexts/document-frame.ts';
 
@@ -124,6 +125,68 @@ export function getSelectionAbsolutePoints(selection: Selection): Point[] {
   }));
 }
 
+export function drawClosedSelectionPath(ctx: CanvasRenderingContext2D, points: Point[]): void {
+  if (points.length < 2) return;
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+
+/**
+ * The full static border plus handles, for the polygon-selection tools that do NOT get
+ * the animated outline.
+ *
+ * `Main.tsx`'s `POLYGON_SELECTION_MODES` covers the lasso, the feather magnetic lasso and
+ * the magic wand, and the other two polygon tools — elliptical and quick selection — are
+ * deliberately absent from it, so they have no ants canvas to defer to and this is the
+ * only thing that draws their border. `drawSelectionAnchors` cannot serve them: both of
+ * those tools commit with `sourceTool: 'magic-wand'`
+ * (`ELLIPTICAL_SELECTION_SOURCE_TOOL` at `ellipticalSelection.ts:48`,
+ * `QUICK_SELECTION_SOURCE_TOOL` at `quickSelection.ts:43`), and the anchors skip that
+ * source, so asking for anchors alone leaves them with no border at all.
+ */
+export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: Selection, frame?: DocumentFrame): void {
+  if (!selection.isActive) return;
+
+  const points = getSelectionAbsolutePoints(selection).map((point) =>
+    frame ? documentToCanvasPoint(point, frame) : point
+  );
+  if (points.length < 3) return;
+
+  ctx.save();
+  // The tool overlay is one 2D context for the whole session and every tool area is handed the
+  // same object, so an outline drawn with no `globalAlpha` of its own renders at whatever the last
+  // painting tool left behind. Resetting HERE rather than at the call sites is what makes the
+  // outline correct for every tool that draws one; the per-caller resets this retires were added
+  // one tool at a time and were missing the magic wand's.
+  resetOverlayAlpha(ctx);
+  ctx.strokeStyle = 'rgba(0,123,255,0.95)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  drawClosedSelectionPath(ctx, points);
+
+  if (selection.sourceTool !== 'freehand-lasso' && selection.sourceTool !== 'magic-wand') {
+    ctx.setLineDash([]);
+    points.forEach((point, index) => {
+      ctx.beginPath();
+      ctx.fillStyle = 'white';
+      ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
+      ctx.lineWidth = 2;
+      ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
+
+  ctx.restore();
+}
+
 /**
  * The draggable vertices of a committed selection, drawn on the tool overlay.
  *
@@ -143,6 +206,14 @@ export function drawSelectionAnchors(ctx: CanvasRenderingContext2D, selection: S
   if (points.length < 3) return;
 
   ctx.save();
+  // The tool overlay is one 2D context for the whole session and every tool area is handed the
+  // same object, so an anchor drawn with no `globalAlpha` of its own renders at whatever the last
+  // painting tool left behind. Resetting HERE rather than at the call sites is what makes the
+  // anchors correct for every tool that draws one; the per-caller resets this retires were added
+  // one tool at a time and were missing the magic wand's. The anchors inherited this from
+  // `drawSelectionOutline`, which carried the same reset when it drew the border and the handles
+  // together; splitting the border out to the ants canvas must not lose it.
+  resetOverlayAlpha(ctx);
   ctx.setLineDash([]);
 
   points.forEach((point, index) => {

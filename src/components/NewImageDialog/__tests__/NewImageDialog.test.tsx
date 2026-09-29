@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { KeyboardEventsProvider, useKeyDownShortcut } from '../../../hooks/useKeyboardEvents.tsx';
 import NewImageDialog from '../NewImageDialog.tsx';
 
 afterEach(() => {
@@ -408,5 +410,297 @@ describe('NewImageDialog close paths', () => {
 
     expect(onCreate).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+const FOCUSABLE = 'select, input, textarea, button, [tabindex]:not([tabindex="-1"])';
+
+function dialogFocusables() {
+  return Array.from(screen.getByTestId('new-image-dialog').querySelectorAll<HTMLElement>(FOCUSABLE));
+}
+
+const UndoProbe = ({ onKeyDown }: { onKeyDown: () => void }) => {
+  useKeyDownShortcut({ key: 'z', mod: true, preventDefault: true, onKeyDown });
+  return null;
+};
+
+function DialogHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" data-testid="file-new-trigger" onClick={() => setOpen(true)}>
+        New
+      </button>
+      {open && <NewImageDialog onClose={() => setOpen(false)} onCreate={vi.fn()} />}
+    </>
+  );
+}
+
+describe('NewImageDialog focus ownership', () => {
+  it('focuses the preset select on mount, because a button would leave the shortcut layer live', () => {
+    renderDialog();
+
+    expect(document.activeElement).toBe(presetSelect());
+  });
+
+  it('wraps Tab from the last control back to the first', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    expect(first).toBe(screen.getByTestId('new-image-dialog-close-button'));
+    expect(last).toBe(screen.getByTestId('new-image-dialog-submit-button'));
+
+    last.focus();
+    fireEvent.keyDown(last, { key: 'Tab' });
+
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('wraps Shift+Tab from the first control to the last', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    first.focus();
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
+
+    expect(document.activeElement).toBe(last);
+  });
+
+  it('leaves a Tab in the middle of the order to the browser', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const middle = focusables[1];
+
+    middle.focus();
+    fireEvent.keyDown(middle, { key: 'Tab' });
+
+    expect(document.activeElement).toBe(middle);
+  });
+
+  it('closes on Escape without letting the keydown reach document', () => {
+    const { onClose } = renderDialog();
+    const documentListener = vi.fn();
+    document.addEventListener('keydown', documentListener);
+
+    try {
+      fireEvent.keyDown(presetSelect(), { key: 'Escape' });
+    } finally {
+      document.removeEventListener('keydown', documentListener);
+    }
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(documentListener).not.toHaveBeenCalled();
+  });
+
+  it('does not preventDefault Escape, so nothing else is starved of the key', () => {
+    renderDialog();
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+    presetSelect().dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('closes on a <body>-targeted Escape, which the panel handler never sees', () => {
+    const { onClose } = renderDialog();
+
+    // A re-render can unmount the focused control, which drops focus on <body> without
+    // dispatching focusout or focusin, so no containment arm sees it, and a keydown on
+    // <body> never reaches the panel's React onKeyDown at all. The document capture-phase
+    // arm is therefore the only listener that ever sees this key, and it has to dispatch
+    // the close itself: a listener that merely swallowed the key left a dialog that could
+    // not be closed by keyboard at all, which is a trap.
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('never mounts focus on the header close button, which is first in document order', () => {
+    renderDialog();
+
+    // The first focusable in document order is the header close button, so a mount that
+    // focused "the first control" would autofocus a button, which is not text-like and so
+    // re-opens the shortcut hole the focus move is there to close. SaveDialog pins this
+    // for the same reason; both dialogs now take it from one hook, so both hold it.
+    expect(dialogFocusables()[0]).toBe(screen.getByTestId('new-image-dialog-close-button'));
+    expect(document.activeElement).toBe(presetSelect());
+    expect(document.activeElement).not.toBe(dialogFocusables()[0]);
+  });
+
+  it('restores focus to the element that opened it once it closes', () => {
+    render(<DialogHarness />);
+    const trigger = screen.getByTestId('file-new-trigger');
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.click(trigger);
+    expect(document.activeElement).toBe(presetSelect());
+
+    fireEvent.click(screen.getByTestId('new-image-dialog-cancel-button'));
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('never lets the app shortcut layer fire from a text-like control inside the dialog', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(presetSelect(), { key: 'z', metaKey: true });
+    fireEvent.keyDown(widthInput(), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('never lets the app shortcut layer fire from a button inside the dialog either', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(screen.getByTestId('new-image-dialog-cancel-button'), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('still delivers the app shortcut layer from outside the dialog, so the probe is not vacuous', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <UndoProbe onKeyDown={onKeyDown} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(screen.getByTestId('outside-control'), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers the focus a click on its own non-interactive text drops on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('new-image-dialog');
+    const width = widthInput();
+    width.focus();
+    expect(document.activeElement).toBe(width);
+
+    // Clicking the "New Image" title or the "Opacity:" label focuses nothing, so the
+    // browser blurs the control and leaves focus on <body> without firing focusin.
+    (document.activeElement as HTMLElement).blur();
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(width);
+  });
+
+  it('recovers the mount focus rather than the first control when focus is dropped on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('new-image-dialog');
+    expect(document.activeElement).toBe(presetSelect());
+
+    (document.activeElement as HTMLElement).blur();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(presetSelect());
+  });
+
+  it('keeps Tab and the app shortcut layer inside the panel after focus is driven outside it', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+    const panel = screen.getByTestId('new-image-dialog');
+
+    (document.activeElement as HTMLElement).blur();
+    expect(panel.contains(document.activeElement)).toBe(true);
+
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Tab' });
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('refuses the tab and the shortcut layer when the focused control is removed and no focus event fires', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+    const panel = screen.getByTestId('new-image-dialog');
+
+    // A re-render can unmount the focused control, which drops focus on <body> without
+    // dispatching focusout or focusin, so no containment guard can see it coming.
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    document.body.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.body, { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('brings focus back when a tab arrives at the panel itself while focus is on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('new-image-dialog');
+
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    panel.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('takes focus back when something outside the dialog focuses itself', () => {
+    render(
+      <>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </>
+    );
+    const panel = screen.getByTestId('new-image-dialog');
+
+    screen.getByTestId('outside-control').focus();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('is announced as a modal dialog labelled by its title', () => {
+    renderDialog();
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleName('New Image');
   });
 });

@@ -1,14 +1,29 @@
+/**
+ * The Magic Wand is the polygon layer over a region fill, and it is the only thing left here.
+ * The fill itself -- the tolerance mapping, the colour metric, and the 4-neighbour and global
+ * mask builders -- moved to `./flood-fill.ts`, because a Paint Bucket needs the mask with no
+ * outline at all and a Quick Selection needs to re-seed the same growth along a stroke, and
+ * neither can be served by a traced polygon. What follows turns a mask into a single closed
+ * point path, which is the part that was always specific to the wand.
+ */
 import type { Point, Pos } from '../contexts/general-types.ts';
+import {
+  createAllMatchingMask,
+  createContiguousMask,
+  getIndex,
+  getMagicWandColorDistance,
+  getPixelColor,
+  getToleranceDistance,
+  type RgbaColor,
+} from './flood-fill.ts';
 import { simplifyPath } from './magneticLasso.ts';
 
-const MAX_COLOR_DISTANCE = Math.sqrt(255 * 255 * 4);
-
-export type RgbaColor = {
-  r: number;
-  g: number;
-  b: number;
-  a: number;
-};
+// The colour metric and its colour type now live in `flood-fill.ts` alongside the fill that
+// consumes them, so that a Paint Bucket or a Quick Selection can reach them without importing
+// the polygon tracer. Re-exported here because `getMagicWandColorDistance` and `RgbaColor`
+// have been part of this module's public surface, and its consumers -- the existing test
+// suite included -- import them by this name.
+export { getMagicWandColorDistance, type RgbaColor };
 
 export type MagicWandSelectionOptions = {
   tolerance?: number;
@@ -23,156 +38,11 @@ export type MagicWandSelectionResult = {
   bounds: Pos;
 };
 
-type MaskResult = {
-  mask: Uint8Array;
-  selectedPixelCount: number;
-  sampleColor: RgbaColor;
-  bounds: Pos;
-};
-
 type DirectedEdge = {
   start: Point;
   end: Point;
   key: string;
 };
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function getIndex(x: number, y: number, width: number): number {
-  return y * width + x;
-}
-
-function getPixelColor(data: Uint8ClampedArray, pixelIndex: number): RgbaColor {
-  const dataIndex = pixelIndex * 4;
-
-  return {
-    r: data[dataIndex],
-    g: data[dataIndex + 1],
-    b: data[dataIndex + 2],
-    a: data[dataIndex + 3],
-  };
-}
-
-export function getMagicWandColorDistance(a: RgbaColor, b: RgbaColor): number {
-  const dr = a.r - b.r;
-  const dg = a.g - b.g;
-  const db = a.b - b.b;
-  const da = a.a - b.a;
-
-  return Math.sqrt(dr * dr + dg * dg + db * db + da * da);
-}
-
-function getToleranceDistance(tolerance: number): number {
-  return (clamp(tolerance, 0, 100) / 100) * MAX_COLOR_DISTANCE;
-}
-
-function isPixelWithinTolerance(
-  data: Uint8ClampedArray,
-  pixelIndex: number,
-  sampleColor: RgbaColor,
-  tolerance: number
-) {
-  return getMagicWandColorDistance(getPixelColor(data, pixelIndex), sampleColor) <= tolerance;
-}
-
-function createEmptyBounds(): Pos {
-  return { x: 0, y: 0, width: 0, height: 0 };
-}
-
-function finalizeBounds(minX: number, minY: number, maxX: number, maxY: number): Pos {
-  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-    return createEmptyBounds();
-  }
-
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX + 1,
-    height: maxY - minY + 1,
-  };
-}
-
-function createAllMatchingMask(imageData: ImageData, sampleColor: RgbaColor, tolerance: number): MaskResult {
-  const { data, width, height } = imageData;
-  const mask = new Uint8Array(width * height);
-  let selectedPixelCount = 0;
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const index = getIndex(x, y, width);
-      if (!isPixelWithinTolerance(data, index, sampleColor, tolerance)) continue;
-
-      mask[index] = 1;
-      selectedPixelCount += 1;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-  }
-
-  return { mask, selectedPixelCount, sampleColor, bounds: finalizeBounds(minX, minY, maxX, maxY) };
-}
-
-function createContiguousMask(
-  imageData: ImageData,
-  seedX: number,
-  seedY: number,
-  sampleColor: RgbaColor,
-  tolerance: number
-): MaskResult {
-  const { data, width, height } = imageData;
-  const pixelCount = width * height;
-  const mask = new Uint8Array(pixelCount);
-  const visited = new Uint8Array(pixelCount);
-  const queue = new Int32Array(pixelCount);
-  let queueStart = 0;
-  let queueEnd = 0;
-  let selectedPixelCount = 0;
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  const seedIndex = getIndex(seedX, seedY, width);
-
-  queue[queueEnd++] = seedIndex;
-  visited[seedIndex] = 1;
-
-  while (queueStart < queueEnd) {
-    const index = queue[queueStart++];
-    if (!isPixelWithinTolerance(data, index, sampleColor, tolerance)) continue;
-
-    const x = index % width;
-    const y = Math.floor(index / width);
-    mask[index] = 1;
-    selectedPixelCount += 1;
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-
-    if (x > 0) queueEnd = enqueuePixel(index - 1, visited, queue, queueEnd);
-    if (x < width - 1) queueEnd = enqueuePixel(index + 1, visited, queue, queueEnd);
-    if (y > 0) queueEnd = enqueuePixel(index - width, visited, queue, queueEnd);
-    if (y < height - 1) queueEnd = enqueuePixel(index + width, visited, queue, queueEnd);
-  }
-
-  return { mask, selectedPixelCount, sampleColor, bounds: finalizeBounds(minX, minY, maxX, maxY) };
-}
-
-function enqueuePixel(index: number, visited: Uint8Array, queue: Int32Array, queueEnd: number): number {
-  if (visited[index]) return queueEnd;
-
-  visited[index] = 1;
-  queue[queueEnd] = index;
-  return queueEnd + 1;
-}
 
 function getVertexKey(point: Point): string {
   return `${point.x},${point.y}`;
@@ -269,6 +139,27 @@ function createBoundaryLoops(mask: Uint8Array, width: number, height: number, bo
   return traceBoundaryLoops(edges, startMap);
 }
 
+type ClassifiedBoundaryLoops = {
+  outer: Point[][];
+  holes: Point[][];
+};
+
+/**
+ * Splits traced loops by winding direction, which is the only signal distinguishing an enclosed
+ * hole from a disjoint sibling region. `createBoundaryLoops` emits a directed edge for every
+ * selected/unselected adjacency (top->right, right->down, bottom->left, left->up), so an outer
+ * contour and the hole it encloses come out with opposite signed areas, while two disjoint
+ * regions are two independent outer contours and share a sign. Discarding the sign is what let a
+ * hole's loop lose to the outer loop on magnitude and then get dropped on the floor.
+ */
+function classifyBoundaryLoops(loops: Point[][]): ClassifiedBoundaryLoops {
+  const signed = loops.map((loop) => ({ loop, area: getPolygonArea(loop) }));
+  const outer = signed.filter((entry) => entry.area > 0);
+  const holes = signed.filter((entry) => entry.area <= 0);
+
+  return { outer: outer.map((entry) => entry.loop), holes: holes.map((entry) => entry.loop) };
+}
+
 function selectLargestBoundaryLoop(loops: Point[][]): Point[] {
   let bestLoop: Point[] = [];
   let bestArea = 0;
@@ -317,8 +208,14 @@ export function createMagicWandSelectionFromImageData(
   if (maskResult.selectedPixelCount === 0) return null;
 
   const loops = createBoundaryLoops(maskResult.mask, width, height, maskResult.bounds);
-  const boundaryPoints = selectLargestBoundaryLoop(loops);
+  const { outer, holes } = classifyBoundaryLoops(loops);
+  const boundaryPoints = selectLargestBoundaryLoop(outer);
   if (boundaryPoints.length < 3) return null;
+  // `Selection` carries a single point path, so an enclosed hole cannot be represented: committing
+  // the outer contour alone would cover pixels this mask reported as unselected, and would make
+  // `selectedPixelCount` under-report the committed polygon's area. Refuse the selection instead,
+  // which the caller already handles as a cancelled selection draft.
+  if (holes.length > 0) return null;
 
   const points = simplifyClosedPath(boundaryPoints, options.smoothing ?? 0);
   if (points.length < 3) return null;

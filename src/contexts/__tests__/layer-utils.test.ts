@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   getSortedLayersArray,
   layersArrayToRecord,
@@ -6,10 +6,8 @@ import {
   maxLayerOrder,
   getLayerIdByPoint,
   reorderLayers,
-  saveLayerCanvas,
 } from '../layer-utils.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
-import type { BitmapSource } from '../general-types.ts';
 
 function makeLayer(overrides: Partial<Layer> & { id: string; order: number }): Layer {
   return {
@@ -169,6 +167,32 @@ describe('reorderLayers', () => {
     expect(layers.b.order).toBe(2);
   });
 
+  it('leaves the sorted sequence unchanged for a self-anchored move, moving only the order value', () => {
+    // `history-append.ts:204-213` refuses a self-anchored reorder on the claim that
+    // `reorderLayers` anchors on the mover's own order, shifts everything above it,
+    // and re-assigns the layer — so the resulting SEQUENCE is unchanged and only the
+    // sparse order values move. It calls that "executed, not assumed". The converter
+    // half is pinned in `history-append.reorder.test.ts`; this is the `reorderLayers`
+    // half, which nothing was pinning.
+    const layers: LayersRecord = {
+      a: makeLayer({ id: 'a', order: 0 }),
+      b: makeLayer({ id: 'b', order: 1 }),
+      c: makeLayer({ id: 'c', order: 2 }),
+    };
+
+    reorderLayers({ layers, layerToMoveId: 'c', afterWhichLayerId: 'c' });
+
+    // `c` is the anchor, so `targetOrder` is `c`'s own order (2). The shift loop
+    // only moves layers strictly above it and there are none, so the only write is
+    // the mover's own: `layer.order = targetOrder + 1` (`layer-utils.ts:288`).
+    expect(layers.c.order).toBe(3);
+    expect(layers.a.order).toBe(0);
+    expect(layers.b.order).toBe(1);
+    // The document still reads bottom-first as a, b, c — which is the half of the
+    // claim the converter half disagrees with.
+    expect(getSortedLayersArray(layers).map((layer) => layer.id)).toEqual(['a', 'b', 'c']);
+  });
+
   it('does nothing when the layer to move does not exist', () => {
     const layers: LayersRecord = {
       a: makeLayer({ id: 'a', order: 1 }),
@@ -185,107 +209,5 @@ describe('reorderLayers', () => {
     const original = { ...layers.a };
     reorderLayers({ layers, layerToMoveId: 'a', afterWhichLayerId: 'nonexistent' });
     expect(layers.a).toEqual(original);
-  });
-});
-
-describe('saveLayerCanvas', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  function makeBitmap(overrides: Partial<ImageBitmap> = {}): ImageBitmap {
-    return { width: 20, height: 10, close: vi.fn(), ...overrides } as unknown as ImageBitmap;
-  }
-
-  it('returns undefined and never materializes a layer without a staged canvas', () => {
-    const createImageBitmapStub = vi.fn();
-    vi.stubGlobal('createImageBitmap', createImageBitmapStub);
-    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: null });
-
-    expect(saveLayerCanvas(layer)).toBeUndefined();
-    expect(createImageBitmapStub).not.toHaveBeenCalled();
-    expect(layer.bitmap).toBeNull();
-  });
-
-  it('materializes the staged canvas without touching the record', async () => {
-    // A published layer is owned by the store, so this function only materializes.
-    // Promotion is a reducer publication (`PROMOTE_LAYER_PRESENTATIONS`), which is
-    // covered in StoreContext.presentation.test.tsx.
-    const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
-    const bitmap = makeBitmap();
-    const createImageBitmapStub = vi.fn(async () => bitmap);
-    vi.stubGlobal('createImageBitmap', createImageBitmapStub);
-    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas });
-
-    await expect(saveLayerCanvas(layer)).resolves.toBe(bitmap);
-    expect(createImageBitmapStub).toHaveBeenCalledWith(canvas);
-    expect(layer.bitmap).toBeNull();
-    expect(layer.tmpCanvas).toBe(canvas);
-  });
-
-  it('leaves the race check and the close to the store, returning the raw materialization', async () => {
-    // The superseded-canvas guard now lives at the store boundary: the promotion
-    // is refused and closed there, because only the store can tell whether the
-    // requesting canvas is still the layer's canvas.
-    const staged = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
-    const newer = new OffscreenCanvas(30, 15) as unknown as BitmapSource;
-    let resolveBitmap: (bitmap: ImageBitmap) => void = () => undefined;
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(
-        () =>
-          new Promise<ImageBitmap>((resolve) => {
-            resolveBitmap = resolve;
-          })
-      )
-    );
-    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: staged });
-
-    const pending = saveLayerCanvas(layer);
-    layer.tmpCanvas = newer;
-    const materialized = makeBitmap();
-    resolveBitmap(materialized);
-
-    await expect(pending).resolves.toBe(materialized);
-    expect(materialized.close).not.toHaveBeenCalled();
-    expect(layer.bitmap).toBeNull();
-    expect(layer.tmpCanvas).toBe(newer);
-  });
-
-  it('resolves undefined and keeps the staged canvas when materialization rejects', async () => {
-    const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
-    const failure = new Error('bitmap materialization failed');
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => {
-        throw failure;
-      })
-    );
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas, bitmap: null });
-
-    await expect(saveLayerCanvas(layer)).resolves.toBeUndefined();
-    expect(consoleError).toHaveBeenCalledWith('Unable to materialize layer presentation cache', failure);
-    expect(layer.bitmap).toBeNull();
-    expect(layer.tmpCanvas).toBe(canvas);
-  });
-
-  it('rejects when the platform cannot materialize a canvas', async () => {
-    // A missing createImageBitmap is a capability failure, not a contained
-    // cache miss: the promise rejects so the caller can keep the layer on its
-    // canvas and report it.
-    const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
-    const original = globalThis.createImageBitmap;
-    // @ts-expect-error deliberately removing the global for the negative path
-    delete globalThis.createImageBitmap;
-    try {
-      const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas });
-      await expect(saveLayerCanvas(layer)).rejects.toThrow(/createImageBitmap/);
-      expect(layer.bitmap).toBeNull();
-      expect(layer.tmpCanvas).toBe(canvas);
-    } finally {
-      globalThis.createImageBitmap = original;
-    }
   });
 });

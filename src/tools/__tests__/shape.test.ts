@@ -1,14 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   drawShape,
   isFigureType,
   normalizeFigure,
   normalizeShapeGeometry,
   setShapeCtx,
+  shape,
   shapeGeometryBounds,
   type ShapeToolArgs,
 } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
+import type { CreatorToolParams } from '../toolProcessors.ts';
 
 const baseArgs: ShapeToolArgs = {
   toolName: 'shape',
@@ -201,20 +203,78 @@ describe('normalizeShapeGeometry', () => {
   });
 
   describe('line', () => {
-    it('ignores the square constraint', () => {
+    it('returns the raw drag without shift', () => {
       const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
-        shiftKey: true,
+        shiftKey: false,
         altKey: false,
       });
       expect(result).toEqual({ start: { x: 10, y: 20 }, end: { x: 90, y: 45 } });
     });
 
-    it('keeps its free angle with shift and alt together', () => {
+    it('mirrors through the anchor without shift when alt is held', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
+        shiftKey: false,
+        altKey: true,
+      });
+      expect(result).toEqual({ start: { x: -70, y: -5 }, end: { x: 90, y: 45 } });
+    });
+
+    it('snaps the angle to a 45 degree multiple while preserving the length', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      // length = hypot(80, 25); angle = atan2(25, 80) rounds to 0
+      const length = Math.hypot(80, 25);
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.x).toBeCloseTo(10 + length, 5);
+      expect(result.end.y).toBeCloseTo(20, 5);
+      expect(result.end).not.toEqual({ x: 90, y: 45 });
+    });
+
+    it('snaps a steep drag up to 45 degrees', () => {
+      const result = normalizeShapeGeometry({ x: 0, y: 0 }, { x: 30, y: 40 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      const length = Math.hypot(30, 40);
+      const snapped = length / Math.SQRT2;
+      expect(result.end.x).toBeCloseTo(snapped, 5);
+      expect(result.end.y).toBeCloseTo(snapped, 5);
+    });
+
+    it('snaps a vertical drag onto the vertical axis', () => {
+      const result = normalizeShapeGeometry({ x: 0, y: 0 }, { x: 3, y: 40 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      const length = Math.hypot(3, 40);
+      expect(result.end.x).toBeCloseTo(0, 5);
+      expect(result.end.y).toBeCloseTo(length, 5);
+    });
+
+    it('mirrors through the anchor before snapping when shift and alt are held', () => {
       const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
         shiftKey: true,
         altKey: true,
       });
-      expect(result).toEqual({ start: { x: -70, y: -5 }, end: { x: 90, y: 45 } });
+
+      // The mirror yields dx = -80, dy = -25, which quantizes to -pi.
+      const length = Math.hypot(80, 25);
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.x).toBeCloseTo(10 - length, 5);
+      expect(result.end.y).toBeCloseTo(20, 5);
+    });
+
+    it('keeps a zero-length snap degenerate instead of calling atan2(0, 0)', () => {
+      const result = normalizeShapeGeometry({ x: 12, y: 34 }, { x: 12, y: 34 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+      expect(result).toEqual({ start: { x: 12, y: 34 }, end: { x: 12, y: 34 } });
     });
   });
 
@@ -255,21 +315,93 @@ describe('shapeGeometryBounds', () => {
     expect(bounds).toEqual({ x: -6, y: -6, width: 22, height: 22 });
   });
 
-  it('keeps a fractional drag inside a fractional box', () => {
-    // Zoomed drags produce fractional coordinates. The box is the raw padded
-    // extent, so it stays fractional too, and the layer canvas it is paired
-    // with is allocated with new OffscreenCanvas(width, height), which truncates.
+  it('rounds a fractional drag outward to an integral box', () => {
+    // Zoomed drags produce fractional coordinates, and the layer bitmap this box sizes is
+    // allocated with `new OffscreenCanvas(width, height)`, whose constructor truncates. A
+    // fractional box therefore declared an extent its own raster disagreed with by up to a
+    // pixel, clipping the right or bottom edge — half the stroke the padding exists for
+    // included. The box is rounded outward instead, which at an EVEN stroke width is also the
+    // identity, and every exact value pinned elsewhere in this file sits at an even width, so they
+    // are unaffected.
     const bounds = shapeGeometryBounds({ start: { x: 10.4, y: 20.6 }, end: { x: 50.2, y: 80.9 } }, 2);
 
-    // x = 10.4 - 1 - 1, y = 20.6 - 1 - 1, width = 39.8 + 2 + 2, height = 60.3 + 2 + 2
-    expect(bounds.x).toBeCloseTo(8.4, 10);
-    expect(bounds.y).toBeCloseTo(18.6, 10);
-    expect(bounds.width).toBeCloseTo(43.8, 10);
-    expect(bounds.height).toBeCloseTo(64.3, 10);
-    expect(Number.isInteger(bounds.x)).toBe(false);
-    expect(Number.isInteger(bounds.y)).toBe(false);
-    expect(Number.isInteger(bounds.width)).toBe(false);
-    expect(Number.isInteger(bounds.height)).toBe(false);
+    // pad = 2 / 2 + 1 = 2, so the near edge is (8.4, 18.6) floored and the far edge is
+    // (52.2, 82.9) ceiled, and the extent is the difference of the two ceiled/floored edges.
+    expect(bounds).toEqual({ x: 8, y: 18, width: 45, height: 65 });
+    expect(Number.isInteger(bounds.x)).toBe(true);
+    expect(Number.isInteger(bounds.y)).toBe(true);
+    expect(Number.isInteger(bounds.width)).toBe(true);
+    expect(Number.isInteger(bounds.height)).toBe(true);
+  });
+
+  it('rounds outward for every fractional drag, never inward', () => {
+    // A sweep, because the guarantee that matters is the direction of the rounding: inward
+    // rounding would clip a stroke the geometry genuinely covers, and that only shows up on
+    // the axis whose fraction happens to round the wrong way.
+    for (const lineWidth of [1, 2, 3, 3.5, 7, 7.5]) {
+      for (const start of [
+        { x: 10.4, y: 20.6 },
+        { x: -3.7, y: -1.2 },
+        { x: 0.5, y: 0.5 },
+        { x: 99.9, y: 12.05 },
+      ]) {
+        for (const end of [
+          { x: 50.2, y: 80.9 },
+          { x: -8.25, y: 44.6 },
+          { x: 0.5, y: 0.5 },
+        ]) {
+          const pad = lineWidth / 2 + 1;
+          const bounds = shapeGeometryBounds({ start, end }, lineWidth);
+          const label = `lw=${lineWidth} ${start.x},${start.y} -> ${end.x},${end.y}`;
+
+          expect(bounds.x, label).toBeLessThanOrEqual(Math.min(start.x, end.x) - pad);
+          expect(bounds.y, label).toBeLessThanOrEqual(Math.min(start.y, end.y) - pad);
+          expect(bounds.x + bounds.width, label).toBeGreaterThanOrEqual(Math.max(start.x, end.x) + pad);
+          expect(bounds.y + bounds.height, label).toBeGreaterThanOrEqual(Math.max(start.y, end.y) + pad);
+          expect(Number.isInteger(bounds.x), label).toBe(true);
+          expect(Number.isInteger(bounds.y), label).toBe(true);
+          expect(Number.isInteger(bounds.width), label).toBe(true);
+          expect(Number.isInteger(bounds.height), label).toBe(true);
+          // And it is a valid `OffscreenCanvas` size, which is the whole point: the
+          // constructor truncates, so a fractional box and a fractional bitmap cannot agree.
+          expect(Math.ceil(bounds.width), label).toBe(bounds.width);
+          expect(Math.ceil(bounds.height), label).toBe(bounds.height);
+        }
+      }
+    }
+  });
+
+  it('is the identity on integer geometry with an integral pad, so integral extents are not grown', () => {
+    // An EVEN line width pads by a whole number, which is the case every other test in this file
+    // sits in and the one that has to stay untouched: a `Math.ceil` alone would add a pixel to
+    // every shape at an even stroke width.
+    for (const lineWidth of [2, 4, 10]) {
+      const bounds = shapeGeometryBounds({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } }, lineWidth);
+      const halfLineWidth = lineWidth / 2;
+
+      expect(bounds).toEqual({
+        x: 10 - halfLineWidth - 1,
+        y: 20 - halfLineWidth - 1,
+        width: 40 + lineWidth + 2,
+        height: 40 + lineWidth + 2,
+      });
+    }
+  });
+
+  it('grows the box wherever the padding is not integral, which is every odd stroke width', () => {
+    // The reachable case the identity above does not cover, and the reason the doc comment no
+    // longer claims identity for integer geometry in general: the Size slider is `min="0.5"
+    // step="0.5"` and every figure preset seeds `5`, so `pad = lineWidth / 2 + 1` is a half-integer
+    // and the rounded box is wider than the exact padded box. Width 1 rounds to the same 44-wide
+    // box as width 2, and width 0.5 — the slider's minimum — pads to 42.5 and rounds to 44 too.
+    // It only ever grows, which is why the containment above still holds at these widths.
+    const geometry = { start: { x: 10, y: 20 }, end: { x: 50, y: 60 } };
+
+    expect(shapeGeometryBounds(geometry, 1)).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+    expect(shapeGeometryBounds(geometry, 0.5)).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+    // And the two that ARE the identity, so the growth above is the only difference.
+    expect(shapeGeometryBounds(geometry, 2)).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+    expect(shapeGeometryBounds(geometry, 4)).toEqual({ x: 7, y: 17, width: 46, height: 46 });
   });
 
   it.each([
@@ -521,5 +653,170 @@ describe('setShapeCtx', () => {
     setShapeCtx(ctx, { ...baseArgs, lineDash: null });
     expect(ctx.setLineDash).toHaveBeenCalledWith([]);
     expect(ctx.lineCap).toBe('butt');
+  });
+});
+
+/**
+ * A context that models the parts of the real 2D state machine that matter for a leak: the
+ * properties `setShapeCtx` writes, and a `save()`/`restore()` stack that actually puts them back.
+ * A `vi.fn()` context cannot show a state escape, so the leak this guards against is invisible to
+ * every other test in this file.
+ */
+function createBracketedCtx() {
+  type State = {
+    globalAlpha: number;
+    strokeStyle: string;
+    fillStyle: string;
+    lineWidth: number;
+    lineCap: CanvasLineCap;
+    dash: number[];
+  };
+
+  const state: State = {
+    globalAlpha: 1,
+    strokeStyle: '',
+    fillStyle: '',
+    lineWidth: 1,
+    lineCap: 'butt',
+    dash: [],
+  };
+  const stack: State[] = [];
+  /**
+   * The writer state in effect at the moment a paint op ran. A bracket bounds the state without
+   * neutralising the paint, so the alpha a stroke was committed at can only be read here — after
+   * the call the context holds the caller's value whether or not anything was written.
+   */
+  const observedAtPaint: { globalAlpha: number } = { globalAlpha: 1 };
+  const recordPaint = () => {
+    observedAtPaint.globalAlpha = state.globalAlpha;
+  };
+
+  const ctx = {
+    canvas: document.createElement('canvas'),
+    get globalAlpha() {
+      return state.globalAlpha;
+    },
+    set globalAlpha(value: number) {
+      state.globalAlpha = value;
+    },
+    get strokeStyle() {
+      return state.strokeStyle;
+    },
+    set strokeStyle(value: string) {
+      state.strokeStyle = value;
+    },
+    get fillStyle() {
+      return state.fillStyle;
+    },
+    set fillStyle(value: string) {
+      state.fillStyle = value;
+    },
+    get lineWidth() {
+      return state.lineWidth;
+    },
+    set lineWidth(value: number) {
+      state.lineWidth = value;
+    },
+    get lineCap() {
+      return state.lineCap;
+    },
+    set lineCap(value: CanvasLineCap) {
+      state.lineCap = value;
+    },
+    setLineDash: vi.fn((dash: number[]) => {
+      state.dash = dash;
+    }),
+    save: vi.fn(() => {
+      stack.push({ ...state, dash: [...state.dash] });
+    }),
+    restore: vi.fn(() => {
+      Object.assign(state, stack.pop() ?? {});
+    }),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    quadraticCurveTo: vi.fn(),
+    closePath: vi.fn(),
+    ellipse: vi.fn(),
+    fill: vi.fn(recordPaint),
+    stroke: vi.fn(recordPaint),
+    fillRect: vi.fn(recordPaint),
+    strokeRect: vi.fn(recordPaint),
+    clearRect: vi.fn(),
+  } as unknown as Ctx2D & { globalAlpha: number; save: ReturnType<typeof vi.fn>; restore: ReturnType<typeof vi.fn> };
+
+  return { ctx, state, observedAtPaint };
+}
+
+describe('shape processor', () => {
+  const creatorParams = { size: { width: 40, height: 40 } } as CreatorToolParams;
+
+  /**
+   * The canvas `shape()` allocates, handing back the supplied context. The globally installed mock
+   * context has `save`/`restore` as inert `vi.fn()`s, so routing the real processor through it
+   * cannot observe a state escape at all — which is why this exists rather than reaching for the
+   * global, the same way `EraserToolArea.test.tsx` stubs the same constructor for its eraser.
+   */
+  const stubOffscreenCanvas = (ctx: unknown) => {
+    class StubbedOffscreenCanvas {
+      width: number;
+      height: number;
+
+      constructor(width: number, height: number) {
+        this.width = width;
+        this.height = height;
+      }
+
+      getContext() {
+        return ctx;
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', StubbedOffscreenCanvas as unknown as typeof OffscreenCanvas);
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('brackets the context, so the writer state cannot outlive the paint', () => {
+    const getContext = vi.spyOn(OffscreenCanvas.prototype, 'getContext');
+    const args = { ...baseArgs, alpha: 0.4, start: { x: 4, y: 6 }, end: { x: 30, y: 28 } } as ShapeToolArgs;
+
+    shape(creatorParams)(args);
+
+    const ctx = getContext.mock.results[0].value as unknown as {
+      save: ReturnType<typeof vi.fn>;
+      restore: ReturnType<typeof vi.fn>;
+    };
+    expect(ctx.save).toHaveBeenCalledTimes(1);
+    expect(ctx.restore).toHaveBeenCalledTimes(1);
+    getContext.mockRestore();
+  });
+
+  it('leaves the committed context at full opacity whatever alpha the tool asks for', () => {
+    // The dangerous "fix" for the shared-overlay leak is to write `ctx.globalAlpha = 1` at the
+    // top of the writer, which flattens every committed stroke. The bracket is the fix, and this
+    // is the property that distinguishes the two: the paint happens AT the tool's alpha, and only
+    // the state that survives the call is neutral.
+    //
+    // It runs the real `shape()` rather than hand-rolling a `save`/`try`/`finally` around
+    // `setShapeCtx` + `drawShape`, because with its own bracket in the test the second half asserts
+    // nothing about the tool: the hand-rolled bracket passed this test with `shape()`'s own
+    // bracket deleted, and also at the commit before the bracket existed.
+    const { ctx, state, observedAtPaint } = createBracketedCtx();
+    stubOffscreenCanvas(ctx);
+    const args = { ...baseArgs, alpha: 0.4, start: { x: 4, y: 6 }, end: { x: 30, y: 28 } } as ShapeToolArgs;
+
+    shape(creatorParams)(args);
+
+    // The one contribution this test makes over the `setShapeCtx` unit test above: the alpha is
+    // read where the paint happened, because a `globalAlpha = 1` at the top of the writer would
+    // still leave the context at 1 after the call and pass a post-hoc assertion.
+    expect(observedAtPaint.globalAlpha).toBe(0.4);
+    // And the state that survives the call is the context `shape()` found, not the tool's.
+    expect(state.globalAlpha).toBe(1);
+    expect(state.strokeStyle).toBe('');
+    expect(state.lineWidth).toBe(1);
+    expect(state.dash).toEqual([]);
   });
 });

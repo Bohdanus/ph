@@ -48,9 +48,30 @@ describe('trimRect', () => {
     expect(trimRect(rect, imageSize)).toEqual({ x: 0, y: 0, width: 30, height: 40, isTrimmed: true });
   });
 
-  it('marks isTrimmed even when fully outside after clamping', () => {
+  it('collapses a rect fully outside the image to an empty rect and still marks isTrimmed', () => {
     const rect: RectXY = { x1: -5, y1: -5, x2: -1, y2: -1 };
-    expect(trimRect(rect, imageSize)).toEqual({ x: -1, y: -1, width: 1, height: 1, isTrimmed: true });
+    expect(trimRect(rect, imageSize)).toEqual({ x: 0, y: 0, width: 0, height: 0, isTrimmed: true });
+  });
+
+  it('collapses a rect fully outside on the far side to an empty rect', () => {
+    const rect: RectXY = { x1: 120, y1: 130, x2: 150, y2: 160 };
+    expect(trimRect(rect, imageSize)).toEqual({ x: 100, y: 100, width: 0, height: 0, isTrimmed: true });
+  });
+
+  it('keeps a partially overlapping rect as the non-empty intersection', () => {
+    const wide: Size = { width: 800, height: 800 };
+    const rect: RectXY = { x1: 700, y1: 700, x2: 850, y2: 850 };
+    expect(trimRect(rect, wide)).toEqual({ x: 700, y: 700, width: 100, height: 100, isTrimmed: true });
+  });
+
+  it('normalises an unsorted rect before clamping', () => {
+    const rect: RectXY = { x1: 50, y1: 60, x2: 10, y2: 20 };
+    expect(trimRect(rect, imageSize)).toEqual({ x: 10, y: 20, width: 40, height: 40, isTrimmed: false });
+  });
+
+  it('reports isTrimmed for an unsorted rect whose far edge leaves the image', () => {
+    const rect: RectXY = { x1: 200, y1: 10, x2: 50, y2: 20 };
+    expect(trimRect(rect, imageSize)).toEqual({ x: 50, y: 10, width: 50, height: 10, isTrimmed: true });
   });
 
   it('rounds the resulting coordinates', () => {
@@ -60,6 +81,16 @@ describe('trimRect', () => {
     expect(result.y).toBe(21);
     expect(result.width).toBe(40);
     expect(result.height).toBe(40);
+  });
+
+  it('derives the extent from the rounded edges, not the unrounded span', () => {
+    // 20.4 - 10.6 = 9.8 rounds to 10, which would put the right edge at 21.
+    const rect = { x1: 10.6, y1: 20.6, x2: 20.4, y2: 60.4 };
+    const result = trimRect(rect, imageSize);
+    expect(result.x).toBe(11);
+    expect(result.width).toBe(9);
+    expect(result.x + result.width).toBe(20);
+    expect(result.y + result.height).toBe(Math.round(60.4));
   });
 });
 
@@ -74,6 +105,27 @@ describe('trimRect2', () => {
   it('does not modify coordinates that are already within bounds', () => {
     const rect = { x1: 10, y1: 20, x2: 50, y2: 60 };
     expect(trimRect2(rect, imageSize)).toEqual(rect);
+  });
+
+  it('collapses a rect fully outside the image instead of inverting it', () => {
+    const rect: RectXY = { x1: -5, y1: -5, x2: -1, y2: -1 };
+    expect(trimRect2(rect, imageSize)).toEqual({ x1: 0, y1: 0, x2: 0, y2: 0 });
+  });
+
+  it('collapses a rect fully beyond the far edge', () => {
+    const rect: RectXY = { x1: 120, y1: 130, x2: 150, y2: 160 };
+    expect(trimRect2(rect, imageSize)).toEqual({ x1: 100, y1: 100, x2: 100, y2: 100 });
+  });
+
+  it('normalises an unsorted rect before clamping', () => {
+    const rect: RectXY = { x1: 50, y1: 60, x2: 10, y2: 20 };
+    expect(trimRect2(rect, imageSize)).toEqual({ x1: 10, y1: 20, x2: 50, y2: 60 });
+  });
+
+  it('keeps a partially overlapping rect as the non-empty intersection', () => {
+    const wide: Size = { width: 800, height: 800 };
+    const rect: RectXY = { x1: 700, y1: 700, x2: 850, y2: 850 };
+    expect(trimRect2(rect, wide)).toEqual({ x1: 700, y1: 700, x2: 800, y2: 800 });
   });
 });
 
@@ -122,6 +174,17 @@ describe('hexToRgb', () => {
 
   it('handles mixed-case hex digits', () => {
     expect(hexToRgb('#FfFfFf')).toBe('255, 255, 255');
+  });
+
+  it('expands 3-digit hex instead of parsing a short string as channels', () => {
+    expect(hexToRgb('#fff')).toBe('255, 255, 255');
+    expect(hexToRgb('#000')).toBe('0, 0, 0');
+    expect(hexToRgb('#abc')).toBe('170, 187, 204');
+  });
+
+  it('parses 3-digit hex identically to its 6-digit equivalent', () => {
+    expect(hexToRgb('#f00')).toBe(hexToRgb('#ff0000'));
+    expect(hexToRgb('fff')).toBe('255, 255, 255');
   });
 });
 
@@ -228,5 +291,43 @@ describe('calculateNewRect', () => {
       imageSize
     );
     expect(result!.y2).toBe(3 * 16 * 1.2 + 2 * 5);
+  });
+
+  it('returns null when there is no rect, instead of growing one at the document origin', () => {
+    const canvasRef = makeCanvasRef(50);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hi',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: null,
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result).toBeNull();
+  });
+
+  it('returns null for an empty draft with no rect too, so the guard precedes the !text branch', () => {
+    // The `!text` branch turns a zero-area drag into a non-degenerate rect so the overlay
+    // mask is visible pre-typing. That is load-bearing for `TextToolArea`, which always
+    // has a rect. Without a rect there is no drag to keep visible, and the old
+    // substitution produced a 2px box at (0,0) for a user who had placed nothing.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: null,
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result).toBeNull();
   });
 });

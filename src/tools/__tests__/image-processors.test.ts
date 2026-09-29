@@ -78,7 +78,7 @@ const acceptsArgs =
   (args: TArgs): ToolResult =>
     (processor as unknown as (a: TArgs) => ToolResult)(args);
 
-/** Pulls the numeric operands out of a composed CSS filter, e.g. `brightness(1.2)`. */
+/** Pulls the numeric operands out of a composed CSS filter, e.g. `brightness(120%)`. */
 const parseFilter = (filter: string, names: string[]): number[] =>
   names.map((name) => {
     const match = new RegExp(`${name}\\(([^)]+)\\)`).exec(filter);
@@ -165,7 +165,8 @@ describe('tool image processors', () => {
       const [grayscale, sepia, saturate] = parseFilter(canvas.ctx.filter as string, ['grayscale', 'sepia', 'saturate']);
       expect(grayscale).toBe(40);
       expect(sepia).toBe(25);
-      expect(saturate).toBeCloseTo(Math.exp(2.1 * (50 / 100)), 10);
+      // (exp(2.1 * 0.5) - exp(-2.1)) / (1 - exp(-2.1)) = 3.116876, emitted as a percentage.
+      expect(saturate).toBeCloseTo(311.69, 2);
       expect(canvas.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
       expect(canvas.width).toBe(size.width);
       expect(result).toBe(canvas as unknown as OffscreenCanvas);
@@ -174,24 +175,44 @@ describe('tool image processors', () => {
     it('is a visual no-op at the default settings', () => {
       const [result] = colors(params)({ grayscale: 0, sepia: 0, saturation: 0, toolName: 'color' });
 
-      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(1)');
+      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(100%)');
       expect(result).toBeTruthy();
     });
 
     it('maps saturation through the exp curve at both extremes', () => {
       const [low] = colors(params)({ grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' });
-      expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(Math.exp(2.1), 10);
+      // (exp(2.1) - exp(-2.1)) / (1 - exp(-2.1)) = 9.166170.
+      expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(916.62, 2);
       expect(low).toBeTruthy();
 
       const [high] = colors(params)({ grayscale: 0, sepia: 0, saturation: 200, toolName: 'color' });
-      expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(Math.exp(4.2), 10);
+      expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(7585.25, 2);
       expect(high).toBeTruthy();
+    });
+
+    it('desaturates: the -100 end of the Saturation slider emits saturate(0%)', () => {
+      // The acceptance endpoint. `Color.tsx` ranges Saturation over -100..100 precisely so
+      // this position is reachable, and `saturate(0%)` is a genuinely grey image. Before the
+      // filter contract was re-anchored, `exp1_1` was >= 1 for every val >= 0, so no slider
+      // position could produce less colour than the source had.
+      colors(params)({ grayscale: 0, sepia: 0, saturation: -100, toolName: 'color' });
+
+      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(0%)');
+      expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBe(0);
+    });
+
+    it('emits a saturate amount below 100% across the whole negative travel', () => {
+      for (const saturation of [-100, -75, -50, -25, -1]) {
+        colors(params)({ grayscale: 0, sepia: 0, saturation, toolName: 'color' });
+
+        expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeLessThan(100);
+      }
     });
 
     it('propagates a non-finite saturation into the filter string', () => {
       const [result] = colors(params)({ grayscale: 0, sepia: 0, saturation: Number.NaN, toolName: 'color' });
 
-      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(NaN)');
+      expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(NaN%)');
       expect(result).toBeTruthy();
     });
 
@@ -216,8 +237,10 @@ describe('tool image processors', () => {
 
       const canvas = lastCanvas();
       const [brightness, contrast] = parseFilter(canvas.ctx.filter as string, ['brightness', 'contrast']);
-      expect(brightness).toBeCloseTo(Math.exp(1.9 * (20 / 100)), 10);
-      expect(contrast).toBeCloseTo(Math.exp(2.2 * (40 / 100)), 10);
+      // (exp(1.9 * 0.2) - exp(-1.9)) / (1 - exp(-1.9)) = 1.543588.
+      expect(brightness).toBeCloseTo(154.36, 2);
+      // (exp(2.2 * 0.4) - exp(-2.2)) / (1 - exp(-2.2)) = 2.586712.
+      expect(contrast).toBeCloseTo(258.67, 2);
       expect(canvas.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
       expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
@@ -225,7 +248,7 @@ describe('tool image processors', () => {
     it('is a visual no-op at the default settings', () => {
       const [result] = levels(params)({ brightness: 0, contrast: 0, toolName: 'levels' });
 
-      expect(lastCanvas().ctx.filter).toBe('brightness(1) contrast(1)');
+      expect(lastCanvas().ctx.filter).toBe('brightness(100%) contrast(100%)');
       expect(result).toBeTruthy();
     });
 
@@ -233,18 +256,37 @@ describe('tool image processors', () => {
       const [result] = levels(params)({ brightness: -100, contrast: -100, toolName: 'levels' });
 
       const [brightness, contrast] = parseFilter(lastCanvas().ctx.filter as string, ['brightness', 'contrast']);
-      expect(brightness).toBeCloseTo(Math.exp(-1.9), 10);
-      expect(contrast).toBeCloseTo(Math.exp(-2.2), 10);
-      expect(brightness).toBeLessThan(1);
-      expect(contrast).toBeLessThan(1);
+      expect(brightness).toBe(0);
+      expect(contrast).toBe(0);
+      expect(brightness).toBeLessThan(100);
+      expect(contrast).toBeLessThan(100);
       expect(result).toBeTruthy();
     });
 
+    it('reaches black: the -100 end of the Brightness slider emits brightness(0%)', () => {
+      // The acceptance endpoint. `exp1_1` bottoms out at exp(-1.9) = 14.96%, so the old
+      // contract could only ever produce a dark grey at the far end of the travel — a
+      // Brightness slider labelled -100% that could not reach black. An emitted
+      // `brightness(0%)` is a real black.
+      levels(params)({ brightness: -100, contrast: 0, toolName: 'levels' });
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(0%) contrast(100%)');
+      expect(parseFilter(lastCanvas().ctx.filter as string, ['brightness'])[0]).toBe(0);
+    });
+
+    it('emits a brightness amount below 100% across the whole negative travel', () => {
+      for (const brightness of [-100, -75, -50, -25, -1]) {
+        levels(params)({ brightness, contrast: 0, toolName: 'levels' });
+
+        expect(parseFilter(lastCanvas().ctx.filter as string, ['brightness'])[0]).toBeLessThan(100);
+      }
+    });
+
     it('passes a NaN brightness/contrast straight into the filter string (src/tools/levels.ts:12)', () => {
-      // `exp1_1` has no guard, so non-finite inputs survive into the composed CSS filter.
+      // `expAdjustment` has no guard, so non-finite inputs survive into the composed CSS filter.
       const [result] = levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
 
-      expect(lastCanvas().ctx.filter).toBe('brightness(NaN) contrast(NaN)');
+      expect(lastCanvas().ctx.filter).toBe('brightness(NaN%) contrast(NaN%)');
       expect(result).toBeTruthy();
     });
 
@@ -397,6 +439,7 @@ describe('tool image processors', () => {
       const result = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 28,
         smoothing: 1.5,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -409,11 +452,13 @@ describe('tool image processors', () => {
       const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 0,
         smoothing: 0,
+        contiguous: true,
         toolName: 'magic-wand',
       });
       const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 255,
         smoothing: 100,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -426,6 +471,7 @@ describe('tool image processors', () => {
         acceptsArgs<MagicWandToolArgs>(magicWand(params))({
           tolerance: Number.NaN,
           smoothing: Number.NaN,
+          contiguous: true,
           toolName: 'magic-wand',
         })
       ).not.toThrow();
@@ -501,11 +547,13 @@ describe('tool image processors', () => {
       const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 0,
         smoothing: 0,
+        contiguous: true,
         toolName: 'magic-wand',
       });
       const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 255,
         smoothing: 100,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -635,7 +683,22 @@ describe('tool image processors', () => {
     it('clears the dash pattern for an undashed pen', () => {
       const [result] = draw({ size })({ ...defaultSettings.draw, lineDash: null, points: stroke });
 
-      expect(lastCanvas().ctx.setLineDash).not.toHaveBeenCalled();
+      // The context is shared between strokes, so the reset has to happen unconditionally.
+      expect(lastCanvas().ctx.setLineDash).toHaveBeenCalledWith([]);
+      expect(result).toBeTruthy();
+    });
+
+    it('ignores a dash pair a solid pen still carries and resets the pattern instead', () => {
+      const [result] = draw({ size })({
+        ...defaultSettings.draw,
+        penType: 'pen',
+        lineDash: [5, 30],
+        points: stroke,
+      });
+
+      const canvas = lastCanvas();
+      expect(canvas.ctx.setLineDash).not.toHaveBeenCalledWith([5, 30]);
+      expect(canvas.ctx.setLineDash).toHaveBeenCalledWith([]);
       expect(result).toBeTruthy();
     });
 
@@ -800,11 +863,24 @@ describe('tool image processors', () => {
       });
     });
 
-    it('never squares a line, because lines have no aspect ratio', () => {
-      expect(normalizeShapeGeometry(anchor, { x: 30, y: 12 }, 'line', { shiftKey: true, altKey: false })).toEqual({
-        start: anchor,
-        end: { x: 30, y: 12 },
+    it('snaps a shifted line to 45 degrees, keeping its length, not squaring it', () => {
+      // A drag to (30, 12) from (10, 10) is 5.7 degrees, so Shift quantises the
+      // direction to 0 degrees while preserving hypot(20, 2) = 20.0998. The old
+      // assertion was that Shift does nothing at all for a line, which is not
+      // what Photoshop's Line tool does: it constrains to 45 degree multiples.
+      const geometry = normalizeShapeGeometry(anchor, { x: 30, y: 12 }, 'line', {
+        shiftKey: true,
+        altKey: false,
       });
+
+      expect(geometry.start).toEqual(anchor);
+      expect(geometry.end.x).toBeCloseTo(30.09975124224178, 9);
+      expect(geometry.end.y).toBeCloseTo(10, 9);
+      // The point of the test: the LINE is not squared, only its direction quantized.
+      expect(Math.abs(geometry.end.x - geometry.start.x)).not.toBeCloseTo(
+        Math.abs(geometry.end.y - geometry.start.y),
+        6
+      );
     });
   });
 

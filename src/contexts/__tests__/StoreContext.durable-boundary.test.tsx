@@ -487,36 +487,6 @@ describe('StoreContext store mutation coverage', () => {
   const baseline = baselineItem();
   const blur = toolItem('blur-edit', 'blur', { radius: 4 });
 
-  it('UPDATE_LAYERS does not recompute durable content (runtime-only transient)', () => {
-    const { getProbe, dispatch } = renderWithProbe();
-
-    act(() => {
-      dispatch()({
-        type: 'REPLACE_DOCUMENT',
-        payload: {
-          documentId: 'doc-mut',
-          history: [baseline, blur],
-          historyIndex: 1,
-          updates: { totalSize: initialSize },
-        },
-      });
-    });
-
-    const priorDocument = getProbe().store.durableDocument;
-    const priorDiagnostics = getProbe().store.durableDiagnostics;
-
-    act(() => {
-      dispatch()({
-        type: 'UPDATE_LAYERS',
-        payload: {},
-      });
-    });
-
-    const after = getProbe().store;
-    expect(after.durableDocument).toBe(priorDocument);
-    expect(after.durableDiagnostics).toBe(priorDiagnostics);
-  });
-
   it('BATCH_UPDATES does not recompute durable content (runtime-only transient)', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
@@ -633,13 +603,13 @@ describe('StoreContext removed durable replay publication surface', () => {
 });
 
 describe('StoreContext DurableDocumentStatus contract', () => {
-  const statuses = ['current', 'stale', 'unavailable'] satisfies DurableDocumentStatus[];
-
-  it('covers every DurableConversionStatus member plus stale', () => {
-    expect(statuses).toEqual(['current', 'stale', 'unavailable']);
-    const stale: DurableDocumentStatus = 'stale';
-    expect(stale).toBe('stale');
-  });
+  // A `Record` keyed by the union, not `satisfies DurableDocumentStatus[]`. The array form is a
+  // ONE-WAY check: it rejects a member that is not in the union, but adding a fourth member to the
+  // union leaves this suite silently non-exhaustive and green. Keying by the union makes that a
+  // COMPILE error, which is the property the deleted exhaustiveness test only promised — and unlike
+  // a `toEqual` on this object, it cannot be satisfied by editing the expectation to match.
+  const ALL_STATUSES: Record<DurableDocumentStatus, true> = { current: true, stale: true, unavailable: true };
+  const statuses = Object.keys(ALL_STATUSES) as DurableDocumentStatus[];
 
   it.each(statuses)('stores structured diagnostics for the %s status', (status) => {
     const { getProbe, dispatch } = renderWithProbe();
@@ -685,7 +655,7 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     // the sidecar stale because runtime state moved past the conversion.
     const durableDocument = getProbe().store.durableDocument;
     act(() => {
-      dispatch()({ type: 'UPDATE_LAYERS', payload: {} });
+      dispatch()({ type: 'BATCH_UPDATES', payload: { toolName: 'draw' } });
     });
 
     const store = getProbe().store;

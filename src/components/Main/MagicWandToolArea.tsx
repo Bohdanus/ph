@@ -56,6 +56,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     const result = createMagicWandSelectionFromCanvas(canvasRef.current, seed, {
       smoothing: args.smoothing,
       tolerance: args.tolerance,
+      contiguous: args.contiguous,
     });
 
     if (!result) {

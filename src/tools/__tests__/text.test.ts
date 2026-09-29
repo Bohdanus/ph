@@ -160,6 +160,30 @@ describe('renderText', () => {
 
     expect(ctx.fillText).toHaveBeenCalledWith('Photoshop', undefined, TEXT_PADDING);
   });
+
+  it('fills at full opacity when the shared overlay was left at another tool alpha', () => {
+    const ctx = createTextCtx();
+    const alphaAtFill: number[] = [];
+    vi.mocked(ctx.fillText).mockImplementation(() => {
+      alphaAtFill.push(ctx.globalAlpha);
+    });
+    ctx.globalAlpha = 0.2;
+
+    renderText(ctx as unknown as Ctx2D, baseArgs);
+
+    expect(alphaAtFill).toEqual([1]);
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it('does not resurrect a leaked alpha for a draft with nothing to draw', () => {
+    const ctx = createTextCtx();
+    ctx.globalAlpha = 0.2;
+
+    renderText(ctx as unknown as Ctx2D, { ...baseArgs, text: '' });
+
+    expect(ctx.fillText).not.toHaveBeenCalled();
+    expect(ctx.globalAlpha).toBe(0.2);
+  });
 });
 
 describe('getTextWidth', () => {

@@ -2,6 +2,7 @@ import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Point, Selection } from '../contexts/general-types.ts';
 import { type DocumentFrame, documentToCanvasPoint } from '../contexts/document-frame.ts';
 import { getSelectionAbsolutePoints } from '../util/selection.ts';
+import { resetOverlayAlpha } from '../util/canvas.ts';
 import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
 
 /**
@@ -102,6 +103,12 @@ export function useSelectionMarchingAnts({
       const offset = dashOffsetRef.current;
 
       ctx.save();
+      // This canvas is its own 2D context, but nothing else in this repository skips the reset
+      // before painting an overlay: `useAnts.ts` resets for the layer outline it draws on the
+      // tool overlay, and `drawSelectionAnchors` resets for the anchors that share the canvas with
+      // it. A stroke with no `globalAlpha` of its own renders at whatever the last painter left
+      // behind, and the ants are two thin strokes — the first thing that would show it.
+      resetOverlayAlpha(ctx);
       ctx.lineWidth = LINE_WIDTH;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'butt';

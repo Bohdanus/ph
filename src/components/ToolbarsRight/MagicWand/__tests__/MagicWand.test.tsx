@@ -9,7 +9,7 @@ const dispatchMock = vi.hoisted(() => vi.fn());
 const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 
-const toolArgs = vi.hoisted(() => ({ smoothing: 1.5, tolerance: 28, toolName: 'magic-wand' }));
+const toolArgs = vi.hoisted(() => ({ contiguous: true, smoothing: 1.5, tolerance: 28, toolName: 'magic-wand' }));
 
 /** `getToolArgs` returns `null` when the tool is not the active one (MagicWand.tsx:16-17). */
 const toolArgsAvailable = vi.hoisted(() => ({ current: true }));
@@ -55,6 +55,18 @@ const storeState = vi.hoisted(() => ({
   // Explicit element type: an inferred `never[]` makes `resetStoreState` reject
   // any real selection, and the Clear pin has to seed one.
   selections: [] as Selection[],
+  // An empty timeline at cursor -1 is what a store with nothing appended yet
+  // actually looks like, and it is what puts the Clear writer on the append
+  // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
+  // planner's `timeline`, `validateTimeline` reports the out-of-range cursor as a
+  // diagnostic instead of throwing on `undefined`, and the writer dispatches the
+  // plan it made. Without them the writer's `catch` produces a byte-identical
+  // dispatch with no `durableEntry`, and every pin below would pass on that
+  // fallback instead. `branchRevision` is the hook's own default, included for
+  // shape parity.
+  history: [] as unknown[],
+  historyIndex: -1,
+  branchRevision: 0,
 }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
@@ -88,6 +100,7 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
 }
 
 function resetToolArgs() {
+  toolArgs.contiguous = true;
   toolArgs.smoothing = 1.5;
   toolArgs.tolerance = 28;
   toolArgs.toolName = 'magic-wand';
@@ -111,11 +124,19 @@ function withActivePolygonSelection() {
  * `COMMIT_DOCUMENT_EDIT` carrying both the history item and the resulting
  * selection state.
  *
- * `durableEntry` is deliberately not matched. The store publishes the planned
- * entry only when its durable document still describes the timeline the plan was
- * made against, and the boundary's failure fallback omits it entirely; both are
- * correct, so the pin asserts the contract the two paths share. `id` is a fresh
- * uuid per call, hence `expect.any(String)`.
+ * The component's contract is to PLAN the append and DISPATCH the plan. Whether
+ * the planned `durableEntry` is published is the STORE's decision, made in
+ * `StoreContext` against a durable document this mocked store does not have, so
+ * it is not asserted here. `id` is a fresh uuid per call, hence
+ * `expect.any(String)`.
+ *
+ * The store mock below carries `history`/`historyIndex` so the writer reaches the
+ * SUCCESS branch of the append boundary: without them `planHistoryAppend`'s
+ * `validateTimeline` evaluates `timeline.entries.some(...)` on `undefined` and
+ * THROWS, the writer's `catch` converts that into a fallback dispatch that omits
+ * `durableEntry` entirely, and the two dispatches are byte-identical apart from
+ * that field — so this pin would keep passing on the failure path and a
+ * regression that made the planner throw would leave the file green.
  */
 const CLEAR_SELECTION_EDIT = expect.objectContaining({
   type: 'COMMIT_DOCUMENT_EDIT',
@@ -155,6 +176,37 @@ describe('MagicWand toolbar', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { tolerance: 44 });
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { smoothing: 3 });
+  });
+
+  /**
+   * Adobe: "Uncheck Contiguous if you want to select nonadjacent areas of similar color."
+   *
+   * The control was absent while the branch behind it already existed, so `Contiguous` was
+   * permanently on and unreachable. `MagicWandToolArea.test.tsx` pins what the flag reaches.
+   */
+  describe('contiguous', () => {
+    it('is on by default, as Adobe ships it', () => {
+      render(<MagicWand />);
+
+      expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toBeChecked();
+    });
+
+    it('unchecking it patches the setting the tool area reads', () => {
+      render(<MagicWand />);
+
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Contiguous' }));
+
+      expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { contiguous: false });
+    });
+
+    it('re-checking it patches the setting back', () => {
+      toolArgs.contiguous = false;
+      render(<MagicWand />);
+
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Contiguous' }));
+
+      expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { contiguous: true });
+    });
   });
 
   it('renders when activeSelectionId is set', () => {
@@ -353,6 +405,7 @@ describe('MagicWand toolbar', () => {
       render(<MagicWand />);
 
       const toleranceSlider = screen.getByLabelText(/Tolerance/);
+      const contiguousCheckbox = screen.getByRole('checkbox', { name: 'Contiguous' });
       const smoothingSlider = screen.getByLabelText(/Smooth/);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
@@ -364,6 +417,9 @@ describe('MagicWand toolbar', () => {
 
       toleranceSlider.focus();
       expect(toleranceSlider).toHaveFocus();
+
+      await user.tab();
+      expect(contiguousCheckbox).toHaveFocus();
 
       await user.tab();
       expect(smoothingSlider).toHaveFocus();
@@ -410,6 +466,9 @@ describe('MagicWand toolbar', () => {
 
       toleranceSlider.focus();
       expect(toleranceSlider).toHaveFocus();
+
+      await user.tab();
+      expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toHaveFocus();
 
       await user.tab();
       expect(smoothingSlider).toHaveFocus();

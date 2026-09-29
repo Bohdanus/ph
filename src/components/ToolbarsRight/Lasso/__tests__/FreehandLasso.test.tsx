@@ -14,6 +14,18 @@ const mockDispatch = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   selections: [] as Selection[],
+  // An empty timeline at cursor -1 is what a store with nothing appended yet
+  // actually looks like, and it is what puts the Clear writer on the append
+  // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
+  // planner's `timeline`, `validateTimeline` reports the out-of-range cursor as a
+  // diagnostic instead of throwing on `undefined`, and the writer dispatches the
+  // plan it made. Without them the writer's `catch` produces a byte-identical
+  // dispatch with no `durableEntry`, and every pin below would pass on that
+  // fallback instead. `branchRevision` is the hook's own default, included for
+  // shape parity.
+  history: [] as unknown[],
+  historyIndex: -1,
+  branchRevision: 0,
 }));
 
 const clipboardState = vi.hoisted(() => ({
@@ -77,11 +89,19 @@ const LASSO_SELECTION: Selection = {
  * to carry a live selection for the writer to read — an already-empty document
  * makes Clear a deliberate no-op, which is a different test.
  *
- * `durableEntry` is deliberately not matched. The store publishes the planned
- * entry only when its durable document still describes the timeline the plan was
- * made against, and the boundary's failure fallback omits it entirely; both are
- * correct, so the pin asserts the contract the two paths share. `id` is a fresh
- * uuid per call, hence `expect.any(String)`.
+ * The component's contract is to PLAN the append and DISPATCH the plan. Whether
+ * the planned `durableEntry` is published is the STORE's decision, made in
+ * `StoreContext` against a durable document this mocked store does not have, so
+ * it is not asserted here. `id` is a fresh uuid per call, hence
+ * `expect.any(String)`.
+ *
+ * The store mock carries `history`/`historyIndex` so the writer reaches the
+ * SUCCESS branch of the append boundary: without them `planHistoryAppend`'s
+ * `validateTimeline` evaluates `timeline.entries.some(...)` on `undefined` and
+ * THROWS, the writer's `catch` converts that into a fallback dispatch that omits
+ * `durableEntry` entirely, and the two dispatches are byte-identical apart from
+ * that field — so this pin would keep passing on the failure path and a
+ * regression that made the planner throw would leave the file green.
  */
 const CLEAR_SELECTION_EDIT = expect.objectContaining({
   type: 'COMMIT_DOCUMENT_EDIT',
@@ -199,39 +219,54 @@ describe('FreehandLasso toolbar', () => {
   it('copies the active polygon selection and reports success without alerting', () => {
     const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const activeSelection = { id: 'sel-1', geometry: 'polygon' };
-    setSelectionState({ activeSelection });
-    render(<FreehandLasso />);
 
-    fireEvent.click(getCopyButton());
+    // `restoreMocks` is off, and the only global `afterEach` is `cleanup()` plus
+    // `useRealTimers()`, so a red assertion here used to leave `window.alert` and
+    // `console.error` mocked for every test after it in the file.
+    try {
+      const activeSelection = { id: 'sel-1', geometry: 'polygon' };
+      setSelectionState({ activeSelection });
+      render(<FreehandLasso />);
 
-    expect(clipboardMocks.copyActiveSelection).toHaveBeenCalledWith(activeSelection);
-    expect(alertSpy).not.toHaveBeenCalled();
-    expect(errorSpy).not.toHaveBeenCalled();
+      fireEvent.click(getCopyButton());
 
-    alertSpy.mockRestore();
-    errorSpy.mockRestore();
+      expect(clipboardMocks.copyActiveSelection).toHaveBeenCalledWith(activeSelection);
+      expect(alertSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      alertSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it('surfaces a copy failure to the user and keeps the toolbar usable', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
-    setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
-    clipboardMocks.copyActiveSelection.mockImplementationOnce(() => {
-      throw new Error('clipboard unavailable');
-    });
-    render(<FreehandLasso />);
 
-    fireEvent.click(getCopyButton());
+    // Same reason as the test above: the restore has to run whatever the assertions do. The
+    // `mockReset` is the part the two spies alone do not cover — `beforeEach` and the global
+    // `clearMocks` both use `mockClear`, which clears call history but leaves the `once` queue
+    // intact, so a `render` or `fireEvent` that threw before the click below would leave a
+    // throwing implementation armed for the next test that copies.
+    try {
+      setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
+      clipboardMocks.copyActiveSelection.mockImplementationOnce(() => {
+        throw new Error('clipboard unavailable');
+      });
+      render(<FreehandLasso />);
 
-    expect(errorSpy).toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.any(Error));
-    expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
-    // The transient copying state must be released even when the copy throws.
-    expect(getCopyButton()).toBeEnabled();
-    expect(getCopyButton()).toHaveTextContent('Copy');
+      fireEvent.click(getCopyButton());
 
-    alertSpy.mockRestore();
-    errorSpy.mockRestore();
+      expect(errorSpy).toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.any(Error));
+      expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
+      // The transient copying state must be released even when the copy throws.
+      expect(getCopyButton()).toBeEnabled();
+      expect(getCopyButton()).toHaveTextContent('Copy');
+    } finally {
+      clipboardMocks.copyActiveSelection.mockReset();
+      alertSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it('pastes the selection clipboard', () => {
@@ -252,6 +287,34 @@ describe('FreehandLasso toolbar', () => {
     fireEvent.click(getClearButton());
 
     expect(mockDispatch).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
+  });
+
+  it("dispatches the planned durable entry, not the writer's failure fallback", () => {
+    // The one assertion that makes this file's silence elsewhere mean something.
+    // `CLEAR_SELECTION_EDIT` above deliberately never matches `durableEntry`,
+    // because whether the plan is PUBLISHED is the store's decision — but the
+    // plan being DISPATCHED is the writer's, and only the success branch carries
+    // one. The two dispatches are byte-identical apart from this field, so
+    // without this assertion a regression that made `planHistoryAppend` throw
+    // would leave every Clear pin in this file green while the durable shadow
+    // silently stopped being patched.
+    setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
+    setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);
+    render(<FreehandLasso />);
+
+    fireEvent.click(getClearButton());
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: expect.objectContaining({
+          durableEntry: expect.objectContaining({
+            id: expect.any(String),
+            operation: expect.objectContaining({ kind: 'set-selection' }),
+          }),
+        }),
+      })
+    );
   });
 
   it('documents the draw interaction for the user', () => {

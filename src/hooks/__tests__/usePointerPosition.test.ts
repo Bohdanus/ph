@@ -280,6 +280,59 @@ describe('usePointerPosition', () => {
 
       expect(getBoundingClientRect).toHaveBeenCalled();
     });
+
+    it('re-notifies onResize on every call, and does so for identical coordinates too', () => {
+      // `getLocalCoords` is NOT a pure coordinate transform: its first statement is
+      // `calculateDimensions()`, which ends unconditionally in `onResizeRef.current?.(…)`.
+      // There is no change detection anywhere on that path, so the notify fires on every
+      // call — including a second call at the very same coordinates, which is the case a
+      // change-detecting implementation would skip. Pinning "it measured" is not the same
+      // as pinning "it notified", and this pins the second.
+      //
+      // No production caller currently depends on the redundancy — `useRect.ts:117` feeds
+      // `drawMask()`, a pure function of the rect, and `Draw.tsx:24`, `Paint.tsx:54` and
+      // `Shape.tsx:29` call `setBrushScale(scale)`, which React bails on when the value is
+      // unchanged — so this is a pin on observed behaviour, not a required contract. Making
+      // the notify conditional is a legitimate change; it would just have to update this
+      // test in the same commit.
+      //
+      // Payload, derived from `calculateDimensions` over these fixtures:
+      //   container 400x200 at (50, 25), image 100x100
+      //   scaleX = 400/100 = 4, scaleY = 200/100 = 2  =>  scale = min(4, 2) = 2
+      //   innerWidth  = 100 * 2 = 200      innerHeight = 100 * 2 = 200
+      //   offsetX = (400 - 200) / 2 = 100  offsetY   = (200 - 200) / 2 = 0
+      const { el } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
+      const onResize = vi.fn();
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
+
+      // The mount effect already notified once; that is not what this test is about.
+      expect(onResize).toHaveBeenCalledTimes(1);
+      onResize.mockClear();
+
+      const event = pointerEvent(el, { clientX: 70, clientY: 45 });
+
+      act(() => {
+        result.current.getLocalCoords(event);
+      });
+      expect(onResize).toHaveBeenCalledTimes(1);
+
+      // The SAME event object, so the coordinates are provably identical.
+      act(() => {
+        result.current.getLocalCoords(event);
+      });
+
+      // Not deduplicated: the unconditional notify means the count tracks the calls.
+      expect(onResize).toHaveBeenCalledTimes(2);
+      expect(onResize).toHaveBeenLastCalledWith({
+        innerWidth: 200,
+        innerHeight: 200,
+        outerWidth: 400,
+        outerHeight: 200,
+        offsetX: 100,
+        offsetY: 0,
+        scale: 2,
+      });
+    });
   });
 
   describe('pointer capture lifecycle', () => {
@@ -370,6 +423,33 @@ describe('usePointerPosition', () => {
       expect(el.releasePointerCapture).toHaveBeenCalledWith(5);
       expect(result.current.pointerIdRef.current).toBeNull();
       expect(result.current.isMouseDown.current).toBe(false);
+    });
+
+    it('refuses a non-primary release and leaves the captured pointer active', () => {
+      // The symmetric half of `isPointerDownValid`'s `button !== 0` refusal. Without it a
+      // right-button release mid left-drag is accepted on pointerId alone, so a tool area's
+      // release path — commit, claim release, all of it — runs for a release the press never
+      // made, and the tool areas' test doubles, which DO check `button`, pin behaviour the
+      // product does not have.
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      act(() => {
+        result.current.isPointerDownValid(pointerEvent(el, { button: 0, pointerId: 5 }));
+      });
+      expect(result.current.isMouseDown.current).toBe(true);
+
+      let handled: boolean | undefined;
+      act(() => {
+        handled = result.current.isPointerUpValid(pointerEvent(el, { button: 2, pointerId: 5 }));
+      });
+
+      // Refused, so it neither ends the gesture nor tears its tracking down: the real left
+      // release still arrives and is the one that ends it.
+      expect(handled).toBe(false);
+      expect(el.releasePointerCapture).not.toHaveBeenCalled();
+      expect(result.current.pointerIdRef.current).toBe(5);
+      expect(result.current.isMouseDown.current).toBe(true);
     });
 
     it('leaves state untouched on pointerup from a different pointer id', () => {

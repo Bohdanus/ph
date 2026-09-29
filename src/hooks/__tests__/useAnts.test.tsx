@@ -152,4 +152,23 @@ describe('useMarchingAnts', () => {
     expect(rafMocks.frames.size).toBe(0);
     unmount();
   });
+
+  it('strokes at full opacity when the shared overlay was left at a tool alpha', () => {
+    const { result, ctx } = setup();
+    const alphaAtStroke: number[] = [];
+    vi.mocked(ctx.stroke).mockImplementation(() => {
+      alphaAtStroke.push(ctx.globalAlpha);
+    });
+    ctx.globalAlpha = 0.2;
+
+    act(() =>
+      result.current.drawPoints([
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+      ])
+    );
+    frame();
+
+    expect(alphaAtStroke).toEqual([1, 1]);
+  });
 });

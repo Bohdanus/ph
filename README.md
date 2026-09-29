@@ -119,11 +119,16 @@ The project uses GitHub Actions for continuous integration:
   Job's `tsc -b` already builds `tsconfig.e2e.json`. This is the **blocking** gate
   for `e2e/`, kept as a separate job so a break in the app pipeline cannot
   silently skip the only coverage of that code.
-- **E2E Job**: Playwright specs in Chrome. Currently **informational**
-  (`continue-on-error`). That was justified by documented failures, and those are now
-  fixed — the suite is green headless — so the job is eligible to become a real gate;
-  flipping it is the operator's call. See
+- **E2E Job**: Playwright specs in Chrome. A **blocking** gate. It was
+  `continue-on-error` on the stated grounds that five specs failed; those failures
+  were fixed, so the comment justifying it stopped describing the suite and the job
+  went on reporting a state the suite no longer had. Chrome is installed through the
+  OS package manager, so there is nothing here to cache. See
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
+- **Dependency licences**: the allow/deny list and the high-severity advisory
+  threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing
+  enforces them. `npm audit --audit-level=high` is a real step on every push, and
+  it is the vulnerability half of that policy.
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
 

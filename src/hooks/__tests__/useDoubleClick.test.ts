@@ -18,6 +18,11 @@ describe('useDoubleClick', () => {
       current: Array.from({ length: count }, (_, i) => ({ x: i, y: i })),
     }) as React.RefObject<Point[]>;
 
+  const createNullPointsRef = () =>
+    ({
+      current: null,
+    }) as unknown as React.RefObject<Point[]>;
+
   it('detects a valid double click', () => {
     const onDoubleClick = vi.fn();
 
@@ -48,6 +53,44 @@ describe('useDoubleClick', () => {
     expect(result.current.handleClick({ x: 11, y: 11 }, pointsRef)).toBe(false);
 
     expect(onDoubleClick).not.toHaveBeenCalled();
+  });
+
+  it('does not detect a double click when the points ref is null', () => {
+    const onDoubleClick = vi.fn();
+
+    const { result } = renderHook(() => useDoubleClick(onDoubleClick));
+
+    const pointsRef = createNullPointsRef();
+
+    expect(result.current.handleClick({ x: 10, y: 10 }, pointsRef)).toBe(false);
+
+    vi.advanceTimersByTime(100);
+
+    expect(result.current.handleClick({ x: 12, y: 11 }, pointsRef)).toBe(false);
+
+    expect(onDoubleClick).not.toHaveBeenCalled();
+  });
+
+  it('detects a double click only above minPointsForDetection, not at it', () => {
+    const onDoubleClick = vi.fn();
+
+    const { result } = renderHook(() => useDoubleClick(onDoubleClick, { minPointsForDetection: 3 }));
+
+    const atThreshold = createPointsRef(3);
+
+    expect(result.current.handleClick({ x: 10, y: 10 }, atThreshold)).toBe(false);
+
+    vi.advanceTimersByTime(100);
+
+    expect(result.current.handleClick({ x: 11, y: 11 }, atThreshold)).toBe(false);
+
+    expect(onDoubleClick).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(10);
+
+    expect(result.current.handleClick({ x: 12, y: 12 }, createPointsRef(4))).toBe(true);
+
+    expect(onDoubleClick).toHaveBeenCalledTimes(1);
   });
 
   it('does not detect a double click when clicks are too far apart', () => {

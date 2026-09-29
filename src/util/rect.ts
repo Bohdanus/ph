@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import { getTextWidth, type TextToolArgs } from '../tools/text.ts';
+import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
 import type { Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
@@ -24,40 +25,51 @@ export function sortRect(rect: RectXY): RectXY {
 
 type TrimmedRect = Pos & { isTrimmed: boolean };
 
+// Every edge goes through the same monotonic map. A one-sided clamp moves only
+// the far edge of a rect lying outside the image, leaving an inverted pair that a
+// later sort re-forms into a phantom rect of non-zero width outside the document;
+// clamping both sides collapses that rect onto a point instead.
+function clampEdge(value: number, imageLength: number): number {
+  return Math.min(Math.max(0, value), imageLength);
+}
+
 export function trimRect(rectSorted: RectXY, imageSize: Size): TrimmedRect {
-  let { x1, y1, x2, y2 } = rectSorted;
+  const { x1: rawX1, y1: rawY1, x2: rawX2, y2: rawY2 } = rectSorted;
+  // Normalise before clamping, never after: `src/tools/crop.ts:17` is the one
+  // caller that passes its rect with no `sortRect` of its own.
+  const { x1, y1, x2, y2 } = sortRect({ x1: rawX1, y1: rawY1, x2: rawX2, y2: rawY2 });
   const { width: imageWidth, height: imageHeight } = imageSize;
-  const isTrimmed = x1 < 0 || y1 < 0 || x2 > imageWidth || y2 > imageHeight; // && x1 !== x2 && y1 !== y2;
 
-  if (isTrimmed) {
-    x1 = Math.max(0, x1);
-    y1 = Math.max(0, y1);
-    x2 = Math.min(imageWidth, x2);
-    y2 = Math.min(imageHeight, y2);
-  }
+  // A declaration about the input, not the output: it stays true for a rect that
+  // lay entirely outside, whose clamped extent below is empty.
+  const isTrimmed = x1 < 0 || y1 < 0 || x2 > imageWidth || y2 > imageHeight;
 
-  // Ensure coordinates are in correct order (handle inverted coordinates)
-  if (x1 > x2) [x1, x2] = [x2, x1];
-  if (y1 > y2) [y1, y2] = [y2, y1];
+  const left = clampEdge(x1, imageWidth);
+  const top = clampEdge(y1, imageHeight);
+  const right = clampEdge(x2, imageWidth);
+  const bottom = clampEdge(y2, imageHeight);
 
-  const x = Math.round(x1);
-  const y = Math.round(y1);
-  const width = Math.round(x2 - x1);
-  const height = Math.round(y2 - y1);
+  // Round each edge once and derive the extent from the rounded edges, so
+  // x + width === Math.round(x2) holds by construction for every consumer.
+  const x = Math.round(left);
+  const y = Math.round(top);
+  const width = Math.round(right) - x;
+  const height = Math.round(bottom) - y;
 
   return { x, y, width, height, isTrimmed };
 }
 
 export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
-  let { x1, y1, x2, y2 } = rectSorted;
+  const { x1: rawX1, y1: rawY1, x2: rawX2, y2: rawY2 } = rectSorted;
+  const { x1, y1, x2, y2 } = sortRect({ x1: rawX1, y1: rawY1, x2: rawX2, y2: rawY2 });
   const { width: imageWidth, height: imageHeight } = imageSize;
 
-  x1 = Math.max(0, x1);
-  y1 = Math.max(0, y1);
-  x2 = Math.min(imageWidth, x2);
-  y2 = Math.min(imageHeight, y2);
-
-  return { x1, y1, x2, y2 };
+  return {
+    x1: clampEdge(x1, imageWidth),
+    y1: clampEdge(y1, imageHeight),
+    x2: clampEdge(x2, imageWidth),
+    y2: clampEdge(y2, imageHeight),
+  };
 }
 
 export function sortedRectToPos(rectSorted: RectXYSorted): Pos {
@@ -92,10 +104,8 @@ export function posToSortedRect(rect: Pos): RectXYSorted {
 }
 
 export function hexToRgb(hex: string): string {
-  // Remove the #
-  hex = hex.replace('#', '');
-
   // Parse the hex values
+  hex = normalizeHex(hex);
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);
   const b = parseInt(hex.substring(4, 6), 16);
@@ -108,8 +118,15 @@ export const calculateNewRect = (
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  const { align, text, fontSize, lineHeight } = newArgs;
-  const rect = newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 };
+  const { align, text, fontSize, lineHeight, rect } = newArgs;
+  // No rect means the text has not been placed on the canvas yet, and there is nothing to
+  // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
+  // document origin, which no caller wanted: the only path that can reach here with a null
+  // rect is a toolbar keystroke (`Text.tsx`), and that made `Apply` reachable for text drawn
+  // at 0,0 -- `disabled={!text || !rect}` was a dead half that the substitution kept dead.
+  // `TextToolArea.tsx:32` passes the rect `useRect`'s `onChangeEnd` hands it, non-null by
+  // type, so it can never hit this.
+  if (!rect) return null;
 
   if (!text)
     return {

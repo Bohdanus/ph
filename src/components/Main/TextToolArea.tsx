@@ -8,12 +8,11 @@ import type { RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
 type TextToolAreaProps = {
   className?: string;
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
-  const [{ containerRef, textareaRef, toolOverlayRef, color, totalSize }] = useStore();
+  const [{ containerRef, textareaRef, toolOverlayRef, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as TextToolArgs;
@@ -32,7 +31,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
       const newRect = calculateNewRect({ ...args, rect }, toolOverlayRef, totalSize);
       if (!newRect) return;
 
-      const newArgs = { ...args, color, rect: newRect };
+      const newArgs = { ...args, rect: newRect };
       setToolArgs(newArgs);
 
       textareaRef.current?.focus();
@@ -56,9 +55,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
-    const _args = { ...currentArgs, color, rect };
-
-    renderText(ctx, _args);
+    renderText(ctx, { ...currentArgs, rect });
   }
 
   // function handleBeforeInput(e: React.FormEvent<HTMLDivElement>) {

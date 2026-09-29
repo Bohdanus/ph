@@ -24,6 +24,18 @@
   --color-blue-800: #1e40af;
   --color-blue-900: #1e3a8a;
   --color-blue-950: #172554;
+
+  // Pin the responsive boundaries in px, not the Tailwind default of `rem`.
+  //
+  // `max-md:` and `max-lg:` are what the desktop shell's visibility rules are built from,
+  // and `MOBILE_MEDIA_QUERY` / `TABLET_MEDIA_QUERY` in `src/hooks/useMediaQuery.ts` decide
+  // which chrome to mount. Those two must agree exactly, and a `rem` boundary resolves
+  // against the *user's* default font size, so at a 20px default `48rem` is 960px while
+  // the JS still reads 768 — a window where CSS hides every desktop region but the JS has
+  // mounted the desktop tree, leaving a bare canvas with no way back. Declaring the
+  // boundaries here in px makes that divergence impossible.
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -58,11 +70,71 @@ body {
   cursor: grabbing !important;
 }
 
-// Global styles for mobile
+// Scroll a container without painting a scrollbar on it: the `scrollbar-none` utility
+// ships with Tailwind (`scrollbar-width: none`), and is applied to the left tool rail and
+// the mobile bottom bar.
+//
+// That is the only way to reconcile the two requirements the shell carries at once: a
+// region that must stay reachable when it does not fit, and a chrome that shows no
+// scrollbars. `overflow: hidden` satisfies the second and breaks the first — see the note
+// below on why that rule is not on `html`/`body`/`#root`. `scrollbar-none` keeps the
+// container a real scroll container (wheel, trackpad, arrow keys once a control inside it
+// has focus, touch panning and `scrollIntoViewIfNeeded` all still work) and removes only
+// the scrollbar *chrome*.
+
+// Dynamic viewport units, and only below the mobile boundary.
+//
+// `100dvh` tracks mobile browser chrome as it collapses and expands; on desktop it is
+// identical to `100vh`, so it is scoped to the band that needs it rather than applied
+// globally, to keep the desktop shell's computed box untouched.
+//
+// Deliberately NOT set here: `overflow: hidden` and `touch-action: none`.
+//
+// `overflow: hidden` at any width converts the left toolbar's overflow from
+// page-scrollable to permanently clipped, because the toolbar's min-content height
+// floors the `1fr` grid row it sits in. Every desktop window shorter than that loses
+// the bottom of its tool rail with no scrollbar and no way to reach it. The grid items
+// that need to own their scrolling now do (`min-h-0 overflow-y-auto`), and the rail
+// additionally carries `.scrollbar-none` so that owning the scroll never paints one.
+//
+// `touch-action: none` is the intersection of every ancestor's value, so putting it on
+// `body` silently disabled touch panning in the layers list, the history list, the new
+// image dialog, the save dialog and the lasso help panel. Canvas gestures get it from
+// `.zoom-container` and `<main>`, which is the only place that needs it.
 @media (max-width: 767.98px) {
-  body {
-    padding-bottom: 60px; // space for bottom toolbar
+  html,
+  body,
+  #root {
+    height: 100dvh;
   }
+
+  body {
+    overscroll-behavior: none;
+  }
+
+  // The mobile bar and tool sheet are `position: fixed`, so they overlay the canvas instead
+  // of occupying the grid's `bottom` area — that row resolves to zero because an
+  // out-of-flow element is removed from its grid area entirely. `<main>` is `overflow-y-auto`
+  // (a scroll container, so its automatic minimum size is zero) and the rule below reserves
+  // the bar's height as padding. Without that reservation the bottom 64px of the image sits
+  // under the bar with no way to pan it into view on a phone.
+  //
+  // Selected by class, and deliberately not by `[grid-area='main']`. The grid area is a
+  // Tailwind *class* on the element, not an HTML attribute, so an attribute selector for it
+  // matches nothing at all: the rule compiles, ships, and silently reserves no space. That
+  // is exactly what this rule did for one revision. `mobile-safe-bottom` is a real class on
+  // the element, so it is greppable from the stylesheet and assertable from a test.
+  .mobile-safe-bottom {
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .chessboard-light {

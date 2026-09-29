@@ -314,7 +314,7 @@ describe('materialization retained filter rendering', () => {
     {
       toolName: 'levels' as const,
       args: { brightness: 0, contrast: 0 } as Record<string, number>,
-      expected: /^brightness\(1\) contrast\(1\)$/,
+      expected: /^brightness\(100%\) contrast\(100%\)$/,
     },
   ])('renders a $toolName filter through the canvas filter string', async ({ toolName, args, expected }) => {
     const registry = new AssetRegistry();
@@ -342,8 +342,8 @@ describe('materialization retained filter rendering', () => {
 
     const filters = recordedContexts.map((ctx) => ctx.filter);
     expect(filters.some((filter) => filter.startsWith('blur(0px)'))).toBe(true);
-    expect(filters.some((filter) => filter.includes('grayscale(0%) sepia(0%) saturate(1)'))).toBe(true);
-    expect(filters.some((filter) => filter.includes('brightness(1) contrast(1)'))).toBe(true);
+    expect(filters.some((filter) => filter.includes('grayscale(0%) sepia(0%) saturate(100%)'))).toBe(true);
+    expect(filters.some((filter) => filter.includes('brightness(100%) contrast(100%)'))).toBe(true);
     result.lease.release();
     registry.shutdown();
   });
@@ -403,14 +403,82 @@ describe('materialization source kinds', () => {
     registry.shutdown();
   });
 
-  it('renders a vector source through its deterministic creator', async () => {
+  // The `figure` each tool must reach `drawShape` with, and the drawing call that proves it
+  // got there. `normalizeFigure` (`src/tools/shape.ts:23-27`) falls back to `'rectangle'` for
+  // anything unrecognised, so a table of tool names alone would pass with every row drawing a
+  // rectangle -- `expect(bitmap).toBeDefined()` cannot tell two figures apart. Each expectation
+  // below is therefore the primitive `drawShape` uses for that figure, and the `lineTo` counts
+  // are the side counts (triangle 3, polygon 5, line 2 points) the loop at `shape.ts:169-177`
+  // produces, so a figure that silently degraded to a rectangle fails its row. Every row also
+  // asserts the fill calls did NOT happen: these args carry no `hasFill` and no `toolMode`, so
+  // `hasFill` is falsy at `shape.ts:152` and no branch may reach a fill.
+  it.each([
+    [
+      'shape',
+      'rectangle',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.strokeRect).toHaveBeenCalledOnce();
+        expect(ctx.fillRect).not.toHaveBeenCalled();
+        expect(ctx.ellipse).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'rectangle',
+      'rectangle',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.strokeRect).toHaveBeenCalledOnce();
+        expect(ctx.fillRect).not.toHaveBeenCalled();
+        expect(ctx.ellipse).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'ellipse',
+      'oval',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.ellipse).toHaveBeenCalledOnce();
+        expect(ctx.strokeRect).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'triangle',
+      'triangle',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.closePath).toHaveBeenCalledOnce();
+        expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'polygon',
+      'polygon',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.closePath).toHaveBeenCalledOnce();
+        expect(ctx.lineTo).toHaveBeenCalledTimes(4);
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'line',
+      'line',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.lineTo).toHaveBeenCalledOnce();
+        expect(ctx.closePath).not.toHaveBeenCalled();
+        expect(ctx.ellipse).not.toHaveBeenCalled();
+        expect(ctx.strokeRect).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+  ] as const)('renders a %s vector source through its deterministic creator', async (toolName, figure, drawn) => {
     const registry = new AssetRegistry();
     const layer = makeLayer(
       'layer-1',
       Object.freeze({
         kind: 'vector' as const,
-        toolName: 'shape',
-        args: Object.freeze({ toolName: 'shape', figure: 'rectangle', start: { x: 0, y: 0 }, end: { x: 4, y: 4 } }),
+        toolName,
+        args: Object.freeze({ toolName, figure, start: { x: 0, y: 0 }, end: { x: 4, y: 4 } }),
         size: { width: 10, height: 10 },
         sourcePos: Object.freeze({ x: 0, y: 0, width: 10, height: 10 }),
       }),
@@ -419,7 +487,11 @@ describe('materialization source kinds', () => {
 
     const result = await materializeLayer(layer, makeRequest(registry));
 
-    expect(result.bitmap).toBeDefined();
+    expect(result.bitmap).toMatchObject({ width: 10, height: 10 });
+    // `shape` allocates and draws its own canvas (`src/tools/shape.ts:225-232`), which is the
+    // first one `materializeLayer` reaches; anything after it is the staging canvas the
+    // materializer composites onto. Assert on the source canvas, not the last one.
+    drawn(recordedContexts[0]);
     result.lease.release();
     registry.shutdown();
   });
@@ -702,6 +774,52 @@ describe('materialization ownership of borrowed rasters', () => {
   });
 });
 
+describe('materialization affine composition', () => {
+  // `operationAffine` (`src/contexts/materialization.ts:109-116`) folds every retained
+  // affine into ONE matrix with `multiplyAffineTransforms(operation.transform, transform)`
+  // — the newest premultiplied onto the accumulated one. This is the only test in the tree
+  // that composes two affines, and the order is the whole point: it is the difference
+  // between folding newest-first (translate, then scale → e=20, f=40) and folding
+  // oldest-first (scale, then translate → e=10, f=20). A `toEqual` on the transform alone
+  // would separate them; a count of transform calls would not, because both orders emit
+  // exactly one `ctx.transform` call.
+  //
+  // The numbers below are derived from `multiplyAffineTransforms` (`affine-transform.ts:59-68`):
+  //   step 1: op = T(1,0,0,1,e=10,f=20) * I            = (1,0,0,1,e=10,f=20)
+  //   step 2: op = S(2,0,0,2,e=0,f=0)  * T             = (2,0,0,2, e=2·10+0·20+0 = 20, f=0·10+2·20+0 = 40)
+  // and from `getAffineBounds` (`affine-transform.ts:101-123`) over a 10x10 size, whose four
+  // transformed corners are (20,40) (40,40) (40,60) (20,60) → x 20..40, y 40..60.
+  it('composes two retained affine operations newest-premultiplied into a single transform', async () => {
+    const registry = new AssetRegistry();
+    const affine = (transform: { a: number; b: number; c: number; d: number; e: number; f: number }) =>
+      ({
+        kind: 'apply-affine-transform',
+        layerId: 'layer-1',
+        transform: Object.freeze(transform),
+      }) as DurableOperation;
+
+    const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [
+      // translate(10, 20)
+      affine({ a: 1, b: 0, c: 0, d: 1, e: 10, f: 20 }),
+      // scale(2, 2)
+      affine({ a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 }),
+    ]);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+
+    // One composed matrix, and it is the newest-premultiplied one. The oldest-first
+    // ordering (A·B) would read [2, 0, 0, 2, 10, 20] here.
+    const transformCalls = recordedContexts.flatMap((ctx) => vi.mocked(ctx.transform).mock.calls);
+    expect(transformCalls).toEqual([[2, 0, 0, 2, 20, 40]]);
+
+    // The presentation bounds follow the composed matrix, offset from the layer origin.
+    expect(result.bounds).toEqual({ x: 20, y: 40, width: 20, height: 20 });
+
+    result.lease.release();
+    registry.shutdown();
+  });
+});
+
 describe('materialization document frame presentation', () => {
   it('frames the presentation into the requested document frame bounds', async () => {
     const registry = new AssetRegistry();
@@ -768,8 +886,20 @@ describe('staging before publication', () => {
 
     await expect(materializeDocument(replay, makeRequest(registry))).rejects.toThrow(/Unknown or disposed asset/);
 
-    // Nothing is left leased, so a retry of the good layer re-runs its producer
-    // instead of being served a cache entry from the failed attempt.
+    // The all-or-nothing part is what `materializeDocument` already pins in
+    // `materialization.ordering.test.ts:367` ("releases already-materialized
+    // layer leases when a later layer fails"): delete the rollback there and the
+    // contexts suite goes red. It is NOT pinned here, and this comment used to
+    // claim it was.
+    //
+    // What this test actually shows is narrower, and measured: the rollback in
+    // `materializeDocument` drops the good layer's cache entry to `retainCount`
+    // 0 after the rejection, and without the rollback the entry is still at
+    // `retainCount` 1. `producerRuns` is 1 either way, because
+    // `AssetRegistry.materialize` serves a cached entry whenever one exists
+    // (`asset-registry.ts:305-310`) and never consults `retainCount` — so the
+    // assertion below cannot detect the lease leak it was written to detect, and
+    // is kept only as a regression guard on the retry succeeding at all.
     const producerRuns = vi.fn();
     const originalMaterialize = registry.materialize.bind(registry);
     vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {

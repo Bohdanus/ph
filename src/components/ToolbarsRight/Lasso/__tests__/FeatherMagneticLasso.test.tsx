@@ -22,6 +22,18 @@ const storeState = vi.hoisted(() => ({
   canvasRef: { current: document.createElement('canvas') },
   selections: [] as Selection[],
   totalSize: { width: 800, height: 600 },
+  // An empty timeline at cursor -1 is what a store with nothing appended yet
+  // actually looks like, and it is what puts the Clear writer on the append
+  // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
+  // planner's `timeline`, `validateTimeline` reports the out-of-range cursor as a
+  // diagnostic instead of throwing on `undefined`, and the writer dispatches the
+  // plan it made. Without them the writer's `catch` produces a byte-identical
+  // dispatch with no `durableEntry`, and every pin below would pass on that
+  // fallback instead. `branchRevision` is the hook's own default, included for
+  // shape parity.
+  history: [] as unknown[],
+  historyIndex: -1,
+  branchRevision: 0,
 }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
@@ -92,11 +104,19 @@ const LASSO_SELECTION: Selection = {
  * to carry a live selection for the writer to read — an already-empty document
  * makes Clear a deliberate no-op, which is a different test.
  *
- * `durableEntry` is deliberately not matched. The store publishes the planned
- * entry only when its durable document still describes the timeline the plan was
- * made against, and the boundary's failure fallback omits it entirely; both are
- * correct, so the pin asserts the contract the two paths share. `id` is a fresh
- * uuid per call, hence `expect.any(String)`.
+ * The component's contract is to PLAN the append and DISPATCH the plan. Whether
+ * the planned `durableEntry` is published is the STORE's decision, made in
+ * `StoreContext` against a durable document this mocked store does not have, so
+ * it is not asserted here. `id` is a fresh uuid per call, hence
+ * `expect.any(String)`.
+ *
+ * The store mock carries `history`/`historyIndex` so the writer reaches the
+ * SUCCESS branch of the append boundary: without them `planHistoryAppend`'s
+ * `validateTimeline` evaluates `timeline.entries.some(...)` on `undefined` and
+ * THROWS, the writer's `catch` converts that into a fallback dispatch that omits
+ * `durableEntry` entirely, and the two dispatches are byte-identical apart from
+ * that field — so this pin would keep passing on the failure path and a
+ * regression that made the planner throw would leave the file green.
  */
 const CLEAR_SELECTION_EDIT = expect.objectContaining({
   type: 'COMMIT_DOCUMENT_EDIT',
@@ -172,6 +192,36 @@ describe('FeatherMagneticLasso toolbar', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('tooltip').textContent).toContain('copy output uses a feathered alpha mask');
+    });
+  });
+
+  /**
+   * Adobe: "the rate at which the lasso sets fastening points … between 0 and 100. A higher
+   * value anchors the selection border in place more quickly."
+   *
+   * The control was a maximum path LENGTH in pixels, so a lower value added more anchors —
+   * the opposite of the documented sense — and the `px` suffix said so on screen. The sense
+   * itself is pinned at the call site in `FeatherMagneticLassoToolArea.test.tsx`.
+   */
+  describe('frequency', () => {
+    it('is the 0-100 control Adobe documents, not a path length in pixels', () => {
+      render(<FeatherMagneticLasso />);
+
+      const frequency = getSlider(/^Frequency/);
+      expect(frequency).toHaveAttribute('min', '0');
+      expect(frequency).toHaveAttribute('max', '100');
+      expect(frequency).toHaveAttribute('step', '1');
+      // The readout is the setting itself, so it carries no unit the setting does not have.
+      expect(frequency.closest('label')?.textContent).toBe('Frequency 40');
+    });
+
+    it('explains the direction the control actually moves in', async () => {
+      render(<FeatherMagneticLasso />);
+
+      fireEvent.click(getInfoButton());
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(tooltip.textContent).toContain('Higher values anchor the selection border in place more quickly');
     });
   });
 
