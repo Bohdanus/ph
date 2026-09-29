@@ -1323,7 +1323,7 @@ them to exist.** `ToolName = keyof ToolArgsByName`, and `ToolArgsByName` declare
 one with a narrowed figure (`src/contexts/tool-types.ts:48-61`, e.g.
 `figure: Extract<FigureType, 'rectangle'>`). From there the requirement cascades
 through `toolProcessors: Record<ToolName, ToolProcessorDefinition>`
-(`src/tools/toolProcessors.ts:105`), `toolsMap: ToolsMap` (`toolsMap.ts:45`),
+(`src/tools/toolProcessors.ts:105`), `toolsMap: ToolsMap` (`toolsMap.ts:47`),
 `defaultSettings … satisfies ToolArgsByName` (`settings.ts:51,314`) and the `never`
 sentinel in `saveLastSettings` (`src/util/settings.ts:97`). Add a member to
 `ToolArgsByName` and every one of those fails to compile until it is handled.
@@ -1383,7 +1383,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
 Two things that will fail you if you skip them. The union is **hand-copied into the
 test** at `src/components/SidebarLeft/__tests__/toolIcons.test.tsx:25-64` — extend
 that copy too, or the test fails on a union the typecheck accepts. And the
-`icon: string` field on each `toolsMap` entry (`toolsMap.ts:40`) is a separate string
+`icon: string` field on each `toolsMap` entry (`toolsMap.ts:50`) is a separate string
 that **no production code reads**; `SidebarLeft` resolves the glyph through
 `toolIcons[tool.name]` (`SidebarLeft.tsx:550`) with an unchecked index that typechecks
 only because `ToolName ⊂ ToolIconName` today. Set both, or neither. Selected / hover
@@ -1546,7 +1546,7 @@ Every `file:line` below was read in `main` on 2026-09-28. Re-read them before yo
 
 An operator who says "strip the undoable requirement" is not asking you to delete undo.
 They are asking you **not to spend their task migrating the history system**. They have
-read `HANDOFF.md:55-96` ("P0 — the durable replay path has no production caller") and
+read `HANDOFF.md:137-192` ("P0 — the durable replay path has no production caller") and
 they do not want their tool to be the reason that file grows.
 
 > **The reframe.** You are not removing undo. You are **choosing a `commit` kind whose
@@ -2159,14 +2159,20 @@ hard-edged — not an oversight."
 #### `**Fix — needs a call, not a patch.**`
 
 Use that exact label when the change would break an existing pin and the choice belongs to
-the operator. Verified at `brush-toolbar:HANDOFF.md:1265` (item 41), where the seeded brush
-opacity is pinned by a unit test and either fix is defensible:
+the operator. The one live instance is `HANDOFF.md:1143`, where the six path tools are
+selectable but `unimplemented`, and either hiding them from `toolbarMap` or making the
+processor throw is defensible:
 
-> **Fix — needs a call, not a patch.** Either raise the seeded `alpha` to 1 and re-derive
-> that pin, or add a preset matching the seeded defaults exactly and rename `Hard Round` to
-> something that does not promise a 100%-opaque hard edge. The first is closer to
-> Photoshop and changes every committed document's default stroke; the second changes
-> nothing outside the bar.
+> **Fix — needs a call, not a patch.** Two honest options, and the choice is the
+> operator's. Either hide the six from `toolbarMap` until they work, or make
+> `unimplemented` throw a named error at `toolProcessors.ts:110` so selecting one
+> fails loudly instead of silently doing nothing. Throwing is the smaller diff and
+> converts a silent no-op into a visible one, but it changes seven existing tools'
+> behaviour, which is a product decision rather than a cleanup.
+
+(An earlier instance about the seeded brush `alpha` was quoted here and is gone: the
+options bar landed in `bf96b728` and took the entry with it. A block quote in this file
+is not evidence that the words are still in the handoff — re-read the entry.)
 
 Three triggers, all of which you will meet: the fix would remove or re-derive a committed
 test pin (`AGENTS.md`: "a pin is a tripwire that fails the moment the defect is fixed, so a
@@ -3644,23 +3650,28 @@ prescribe the answer — that is the operator's decision, not a subagent's.
 **`**Why it is not a wiring bug.**`** the field that makes a tool-parity finding survive a review
 that starts by trying to wire it.
 
-**The worked example** is items 36–41 of the shipped paint handoff (`brush-toolbar:HANDOFF.md`, a
-**not-yet-merged reference**): six entries, all tool-parity problems the e2e spec and the unit
-tests could not catch because they are _about_ the renderer's shape rather than any one control.
-Item 36 carries the four-part form plus the tripwire field:
+**The worked example** is items 36–41 of the paint handoff `brush-toolbar:HANDOFF.md`, which
+shipped in `bf96b728` and were deleted from `HANDOFF.md` when their fixes landed. Six
+entries, all tool-parity problems the e2e spec and the unit tests could not catch because
+they are _about_ the renderer's shape rather than any one control. **The entries are quoted
+from that commit, not from the current handoff** — `HANDOFF.md` is now numbered 0–95 with
+gaps, and no longer contains them, and their fixes are real:
+`src/components/ToolbarsRight/Brush/Brush.tsx` is three lines that delegate to a shared
+`createPaintToolbar`, which is exactly the representation item 36 said was missing. Item 36
+carried the four-part form plus the tripwire field:
 
 > **## 36. The Brush Settings panel has no representation in the renderer**
 >
-> **Problem.** `drawPen` (`src/util/draw.ts:147-155`) issues one `beginPath`, one `moveTo` and one
+> **Problem.** `drawPen` (`src/util/draw.ts:142`) issues one `beginPath`, one `moveTo` and one
 > `stroke()` for a whole stroke: the pen nib travels continuously along a path, and there is no dab
 > loop and no per-dab compositing to modulate. Every remaining Photoshop paint control is defined in
 > terms of a stamped tip, so none of them can be reached by wiring a field into the args — Hardness
 > needs a radial edge-falloff kernel, Spacing needs arc-length resampling between stamps, Flow needs
 > per-dab accumulation, and none of those exist on a single path.
 >
-> **Why it is not a wiring bug.** `buildDrawArgs` (`src/tools/toolProcessors.ts:89-95`) narrows
-> `penType` to `'pen' | 'spray'` and both paint tools force `'pen'` (`:197`, `:210`), so the one
-> per-point painter in the tree, `drawSpray` (`src/util/draw.ts:147-168`), is unreachable from a
+> **Why it is not a wiring bug.** `buildDrawArgs` (`src/tools/toolProcessors.ts:96`) narrows
+> `penType` to `'pen' | 'spray'` and both paint tools force `'pen'` (`:260`, `:273`), so the one
+> per-point painter in the tree, `drawSpray` (`src/util/draw.ts:190`), is unreachable from a
 > brush or a pencil. That is deliberate — it is the adapter that makes the tools hard-edged — not an
 > oversight.
 >
@@ -3676,7 +3687,7 @@ Item 36 carries the four-part form plus the tripwire field:
 > `e2e/export/visual-regression.spec.ts` baselines were recorded through the `draw` tool and are
 > unaffected as long as `draw` is left alone.
 >
-> **Files.** `src/util/draw.ts:84-168`, `src/tools/toolProcessors.ts:89-95,193-221`,
+> **Files.** `src/util/draw.ts:85-213`, `src/tools/toolProcessors.ts:96,260,273`,
 > `src/tools/__tests__/paint-tools.test.ts` (the three call-count pins)
 
 Item 41 carries the **needs-a-call** variant. Note what it does: it identifies the pin, says the
@@ -3920,7 +3931,7 @@ paints. `brush` and `pencil` **left this set** — they now have real options ba
 
 **The structural finding — why an audit walking the registry cannot see a missing tool.**
 `toolsMap` is typed `Record<ToolName, Partial<ToolProcessorDefinition> & { icon; toolboxComponent }>`
-(`src/tools/toolsMap.ts:46-52`, declared at `:54`). The registry is still _total_ over `ToolName`
+(`src/tools/toolsMap.ts:47-54`, declared at `:55`). The registry is still _total_ over `ToolName`
 and still requires `icon` and `toolboxComponent` on every row, so it has no way to say "this
 Photoshop slot is empty", and no way to say "this row is a stub" — `PlaceholderTool` and `Pen`
 are the same `ToolbarRightComponent` to the type. Absence is invisible _from inside the
@@ -4377,7 +4388,7 @@ should recommend:
    behaviour.
 3. **"`triangle` lacks `creator: true` while others have it" → inverted.** `rectangle`, `ellipse`,
    and `line` lack it. Any plan that adds `creator: true` to the triangle is fixing the wrong tool;
-   check `toolProcessors.ts:263-267`, where all five figure rows _do_ have it now.
+   check `toolProcessors.ts:326-330`, where all five figure rows _do_ have it now.
 4. **"Free Transform is a toolbar tool" / "Levels and Hue/Saturation are toolbar tools" → both
    are commands** (⌘T, and Image ▸ Adjustments), not toolbar slots. So the app's `transform`,
    `levels`, and `color` registrations occupy slots Photoshop does not have. That does not make
