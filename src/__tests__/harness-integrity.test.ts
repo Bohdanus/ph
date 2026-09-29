@@ -184,12 +184,36 @@ describe('global canvas environment (src/test/setup.ts)', () => {
   it('answers every unrecognised createImageBitmap source with a fixed 100x100 (MOCK ARTEFACT, not a contract)', async () => {
     // `src/test/setup.ts:243-247` is the fall-through: any source that is neither an
     // OffscreenCanvas nor an HTMLCanvasElement gets 100x100 and its own size is never read.
-    // `src/contexts/useLayer.ts:85` and `src/hooks/useApp.ts:29` both call this on an
-    // already-decoded raster — exactly such a source — so an assertion of the form
-    // `expect(bitmap.width).toBe(<real value>)` on that path can be passing because of this
-    // fall-through rather than because the dimensions are right. The value below is pinned so
-    // the fall-through is VISIBLE instead of invisible; it is the stub's answer, not a promise
-    // about production.
+    //
+    // This branch IS production-reachable, and the route is NOT through `immutableRaster`.
+    // Both `immutableRaster` copies (`src/contexts/useLayer.ts:80-86` and
+    // `src/hooks/useApp.ts:24-30`) open with
+    // `if (typeof bitmap.close === 'function') return bitmap;`, so a decoded raster
+    // early-returns and never reaches `createImageBitmap` — the `transferToImageBitmap()`
+    // shape used below is precisely the shape those two functions refuse to forward.
+    //
+    // The live route is the presentation promotion, which has no such guard:
+    //   `src/contexts/layer-presentation.ts:59` `materializePresentationBitmap` calls
+    //   `createImageBitmap(canvas)` with its `BitmapSource` argument forwarded unchecked
+    //   <- `src/contexts/StoreContext.tsx:1126` `promoteLayerPresentation`, from
+    //   <- `src/contexts/useLayer.ts:158` `requestPresentations`, which forwards
+    //      `layer.tmpCanvas` as-is
+    //   <- `src/contexts/useLayer.ts:587`, where `tmpCanvas` is the FIRST element of
+    //      whatever `processor.imageProcessor(...)(toolArgs)` returned.
+    // Two selection creators return the INPUT bitmap rather than a fresh canvas —
+    // `src/tools/quickSelection.ts:24-28` and `src/tools/ellipticalSelection.ts:28-32` are
+    // both literally `return [bitmap];` — so on a layer that already holds a raster, the
+    // decoded bitmap becomes `tmpCanvas` and is then promoted as though it were a canvas.
+    // That is a close()-bearing, non-canvas source, and the fall-through is what answers it.
+    //
+    // So an assertion of the form `expect(bitmap.width).toBe(<real value>)` on that path can
+    // be passing because of this fall-through rather than because the dimensions are right.
+    // The value below is pinned so the fall-through is VISIBLE instead of invisible; it is
+    // the stub's answer, not a promise about production.
+    //
+    // WHEN THE FALL-THROUGH IS FIXED, UPDATE THIS EXPECTATION IN THE SAME CHANGE. A fixed
+    // branch will read the source's real size, these two lines will go red, and deleting
+    // this test instead of updating it would throw away the only pin on the branch.
     const decoded = new OffscreenCanvas(4, 4).transferToImageBitmap();
     const bitmap = await createImageBitmap(decoded);
 
@@ -384,56 +408,92 @@ describe('shared data fixtures', () => {
 });
 
 /**
- * LAST IN THE FILE, DELIBERATELY.
- *
- * Re-evaluating `src/test/setup.ts` to obtain a genuine re-install is the only way to observe
- * one inside a single test body, but the module also registers its `afterEach` and `beforeEach`
- * as it evaluates. Those land on the suite that owns the running test and would then fire for
- * every test after it in this file, giving those tests a second canvas install that the real
- * harness does not give them — which is the exact "silently different harness" failure this
- * file exists to prevent. Sitting last, the duplicates are registered when no further test in
- * the file remains to receive them. Do not move this block up without re-solving that.
+ * The stub this destroyer captured, published to module scope so the observer below can be
+ * UNFILTERABLE. Two tests are what make this both a real observation and a `-t`-proof one:
+ * merged into a single body, the assertion half proves nothing about re-installation,
+ * because a merged body can re-install the stub by itself; and left as two independent
+ * tests, a `-t` filter can keep the observer and delete the destruction that gives it
+ * meaning. The module-scoped variable closes that gap in the only direction that matters —
+ * run the observer alone and it is `undefined`, so the observer FAILS.
  */
-describe('canvas stub re-installation', () => {
-  it('re-installs the canvas stub after a test destroys it, and cannot be one-shot', async () => {
-    // This scenario used to be two tests: one calling `vi.restoreAllMocks()`, and one asserting
-    // the stub was back "in the following test". A `-t` filter could keep the half with the
-    // assertions and delete the destruction that gave them meaning, and the test still reported
-    // green while proving nothing about re-installation. Both halves are in this body now, so
-    // neither can be filtered away from the other and the two cannot drift apart.
-    //
-    // 1. The state this test was handed. `src/test/setup.ts:361-363` installs the stub from an
-    //    unconditional `beforeEach`, so every test in the repo starts with it no matter what any
-    //    individual test did — and that is what makes the install not one-shot.
-    const installed = HTMLCanvasElement.prototype.getContext;
-    expect(vi.isMockFunction(installed)).toBe(true);
-    const contextBefore = document.createElement('canvas').getContext('2d');
-    expect(contextBefore).not.toBeNull();
+let stubBeforeDestruction: unknown;
 
-    // 2. Destroy it exactly the way a hostile test does.
+describe('canvas stub re-installation', () => {
+  it('destroys the canvas stub the way a hostile test does', () => {
+    // `src/test/setup.ts:361-363` installs the stub from an unconditional `beforeEach`, so
+    // this test is handed one no matter what any earlier test did.
+    stubBeforeDestruction = HTMLCanvasElement.prototype.getContext;
+    expect(vi.isMockFunction(stubBeforeDestruction)).toBe(true);
+
     vi.restoreAllMocks();
 
-    // 3. The intermediate state. Without this the re-install below would pass even if the restore
-    //    had never removed anything, so the test would pin an outcome and not the mechanism.
+    // The intermediate state. Without this the observer would pass even if the restore had
+    // never removed anything, so it would pin an outcome and not the mechanism.
     expect(vi.isMockFunction(HTMLCanvasElement.prototype.getContext)).toBe(false);
-    expect(HTMLCanvasElement.prototype.getContext).not.toBe(installed);
+  });
 
-    // 4. Re-evaluate the harness module itself, so the re-install comes from
-    //    `src/test/setup.ts:353-359` rather than from a copy of the install written in this
-    //    test — a copy would assert only that this file agrees with itself. `vi.resetModules()`
-    //    is what makes the re-import re-execute rather than return the evaluated module.
+  it('re-installs a distinct canvas stub for the next test, so the install is not one-shot', () => {
+    // Observed in the NEXT test, never re-established inside this body: that is the whole
+    // claim, because a body that re-installs for itself proves only that it agrees with
+    // itself. The stub is here because the harness `beforeEach` ran between the two tests.
+    const reinstalled = HTMLCanvasElement.prototype.getContext;
+    expect(vi.isMockFunction(reinstalled)).toBe(true);
+
+    // Unfilterable: without the destroyer above, `stubBeforeDestruction` is `undefined` and
+    // this test FAILS. A `-t` filter therefore cannot keep this test and delete its meaning.
+    expect(stubBeforeDestruction).toBeDefined();
+
+    // A DIFFERENT mock object, which is only possible if the destroyer really removed the
+    // first one — a `beforeEach` that re-ran the same closure would hand back the same spy.
+    expect(reinstalled).not.toBe(stubBeforeDestruction);
+
+    // Discriminating, not tautological. The earlier `expect(contextAfter).not.toBe(contextBefore)`
+    // compared two contexts from two different canvases against a factory that allocates per
+    // call, so it could not fail. What can actually regress is that the re-installed stub hands
+    // back a context LINKED to the canvas that asked for it, and that the context is the
+    // spy-recording mock rather than some object that merely answers `fillRect`.
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d') as unknown as Record<string, unknown> | null;
+    expect(ctx).not.toBeNull();
+    expect(ctx!.canvas).toBe(canvas);
+    (ctx as unknown as CanvasRenderingContext2D).fillRect(0, 0, 1, 1);
+    expect(ctx!.fillRect).toHaveBeenCalledWith(0, 0, 1, 1);
+  });
+});
+
+/**
+ * LAST IN THE FILE, DELIBERATELY.
+ *
+ * The test below re-evaluates `src/test/setup.ts`, and evaluating that module registers a
+ * SECOND `beforeEach`/`afterEach` on the suite that owns the running test. Those would then
+ * run for every test after it in this file, giving each of those tests a second canvas
+ * install the real harness does not give it. Sitting last, the duplicates are registered
+ * when no further test in this file remains to receive them.
+ *
+ * Kept last as a margin, NOT because the duplicate is known to be harmful: installing the
+ * stub twice is behaviourally idempotent, and the whole file still passes with this block
+ * moved to the top. An earlier version of this comment claimed the move would cause a
+ * "silently different harness" failure; that was not measured, and it does not occur.
+ */
+describe('harness module re-evaluation', () => {
+  it('installs the canvas stub from the module body, not only from the beforeEach', async () => {
+    // This is the ONLY test that can pin `src/test/setup.ts:359` — the TOP-LEVEL
+    // `installCanvasContextStub()`. The two tests above reach the stub solely through the
+    // unconditional `beforeEach` at `:361-363`, and deleting the top-level call while
+    // keeping that hook leaves every other test in this file green, because the hook has
+    // already installed a stub before any test body runs. Only a re-evaluation, which
+    // happens INSIDE a body where no hook can fire, distinguishes the two install sites.
+    // It is named for module re-evaluation because that is precisely and only what it
+    // proves: it does not observe the `beforeEach`, and the block above is what does that.
+    vi.restoreAllMocks();
+    expect(vi.isMockFunction(HTMLCanvasElement.prototype.getContext)).toBe(false);
+
+    // `vi.resetModules()` is what makes the re-import re-execute rather than return the
+    // already-evaluated module.
     vi.resetModules();
     await import('../test/setup.ts');
 
-    // 5. A working stub again, and a different mock object — which is only possible if step 2
-    //    really removed the first one.
-    const reinstalled = HTMLCanvasElement.prototype.getContext;
-    expect(vi.isMockFunction(reinstalled)).toBe(true);
-    expect(reinstalled).not.toBe(installed);
-
-    const contextAfter = document.createElement('canvas').getContext('2d');
-    expect(contextAfter).not.toBeNull();
-    expect(contextAfter).not.toBe(contextBefore);
-    expect(() => (contextAfter as unknown as CanvasRenderingContext2D).fillRect(0, 0, 1, 1)).not.toThrow();
+    const fromModuleBody = HTMLCanvasElement.prototype.getContext;
+    expect(vi.isMockFunction(fromModuleBody)).toBe(true);
   });
 });
