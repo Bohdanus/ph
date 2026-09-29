@@ -11,7 +11,7 @@ import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/docume
 import {
   createCommittedPolygonSelection,
   distanceBetweenPoints,
-  drawSelectionOutline,
+  drawSelectionAnchors,
   findSelectionAnchorAtPoint,
   getSelectionAtPoint,
   hasSameSelectionGeometry,
@@ -79,8 +79,11 @@ function drawPolygonOverlay({
 }) {
   const canvas = ctx.canvas;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // `drawSelectionAnchors` resets the alpha itself, but the draft polygon below is drawn by this
+  // function on the same shared context and writes `strokeStyle`/`lineWidth` with no alpha of its
+  // own, so the reset has to happen before both rather than only inside the anchors.
   resetOverlayAlpha(ctx);
-  selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
+  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame));
 
   if (points.length === 0) return;
 

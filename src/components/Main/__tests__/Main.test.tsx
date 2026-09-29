@@ -29,6 +29,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       hasUnsavedChanges: false,
       currentArgs: { current: null },
       layers: {},
+      selections: [],
       toolName: 'zoom',
       totalSize: { width: 800, height: 600 },
     },
@@ -64,10 +65,13 @@ describe('Main with no image open', () => {
     // What the user can reach is the question that matters, and that IS what is asserted.
     expect(stack).toBeInTheDocument();
     expect(stack.style.display).toBe('none');
-    expect(container.querySelectorAll('canvas')).toHaveLength(3);
+    // Four, not three: the marching-ants canvas joins the stack when a polygon selection's border
+    // moved off the tool overlay. It is mounted and hidden for the same reason the other three
+    // are, and the loop below is what keeps it out of reach — so the count is the assertion.
+    expect(container.querySelectorAll('canvas')).toHaveLength(4);
 
     // `toBeVisible` walks the ancestor chain, so the `display: none` on the stack is what makes
-    // every one of these fail — the workspace canvas, the two overlays, and the mounted tool
+    // every one of these fail — the workspace canvas, the three overlays, and the mounted tool
     // area together. A tool area that were VISIBLE here would be a live pointer surface over an
     // empty document, swallowing every drag aimed at nothing; `SharpToolArea` and
     // `DummyToolArea` are inert precisely because they are the other half of this assertion

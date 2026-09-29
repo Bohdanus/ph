@@ -1843,17 +1843,34 @@ describe('the curated table', () => {
     // uncommitted elsewhere. Re-derive these against
     // `git -C <path> status --porcelain` and
     // `git merge-base --is-ancestor <branch> main` before adding a name.
-    const invisibleToGit = ['rail-drop-draw', 'shape-truth', 'text-tool-requirements'];
+    //
+    // Every name here was re-derived with the three helpers below rather than
+    // carried over, and all three of the names this list held before have left
+    // it: `rail-drop-draw` and `shape-truth` were captured by `wip(salvage)`
+    // commits and `text-tool-requirements` was committed and landed, so each is
+    // a branch git can see and each flag was a claim about nothing. They were
+    // not all caught at once — `expect` throws, so the loop below reported the
+    // FIRST name that no longer had the shape and never reached the other two,
+    // which is why the list had to be re-derived whole instead of edited where
+    // it failed.
+    const invisibleToGit = [
+      'agents-audit',
+      'durable-followups',
+      'handoff-remove-layer-assets',
+      'skill-handoff-cites',
+      'history-append-assets',
+      'history-remove-append',
+    ];
     expect(invisibleToGit.length, 'the list went empty, so this guard asserts nothing').toBeGreaterThan(0);
 
     const live = listWorktrees(process.cwd());
     for (const name of invisibleToGit) {
       const w = live.find((x) => x.name === name);
       expect(w, `${name} is not a live worktree, so there is nothing to protect`).toBeTruthy();
-      // Only these three worktrees are asked about. `collectWorktrees` runs
+      // Only the names on this list are asked about. `collectWorktrees` runs
       // `git status` and `git merge-tree` in every worktree in the repository,
       // which is the right cost for a generator that must print all of them and
-      // the wrong cost for a test that needs three facts.
+      // the wrong cost for a test that needs a handful of facts.
       const { ahead } = __testables.aheadBehind(w.path, 'main');
       const held = __testables.workingTreeState(w.path);
       const onMain = __testables.isMergedInto(w.path, 'main');

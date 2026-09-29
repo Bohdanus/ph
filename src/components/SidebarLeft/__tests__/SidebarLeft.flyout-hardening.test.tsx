@@ -181,8 +181,8 @@ const stubTileBoxes = (): ((tile: HTMLElement) => { left: number; top: number })
   });
 
   // The rail is the HORIZONTAL anchor: a flyout hangs off the panel's edge rather than off a
-  // tile's, because the tiles sit on a 108px grid inside a narrower content box and a
-  // second-column tile can start past the rail's own right edge — which would put the flyout
+  // tile's, because on the two-column rail the tile it opened from can be one in the LEFT-hand
+  // column — whose trailing edge is nowhere near the panel's — and a flyout hung there comes
   // back over the rail's first column. jsdom measures the rail as nothing, so it is stubbed
   // here for the same reason the tiles are.
   screen.getByTestId('left-sidebar').getBoundingClientRect = () => tileRect(0, 0, RAIL_WIDTH);
@@ -340,9 +340,9 @@ describe('SidebarLeft flyout hardening', () => {
     expect(screen.getByRole('menuitemradio', { name: 'Rectangle Tool' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitemradio', { name: 'Brush Tool' })).toBeNull();
     // VERTICAL placement is what names the tile. The HORIZONTAL placement is the RAIL's edge
-    // rather than the tile's — a tool flyout hangs off the panel, because the tiles sit on a
-    // 108px grid inside a narrower content box and a second-column tile can start past the
-    // rail's own right edge, which would put the flyout back over the rail's first column. So
+    // rather than the tile's — a tool flyout hangs off the panel, because on the two-column
+    // rail the tile it opened from can be one in the LEFT-hand column, whose trailing edge is
+    // nowhere near the panel's, and a flyout hung there covers the rail's own first column. So
     // `left` is now identical for every group and cannot name one, and asserting it to name a
     // tile would pass for the previous group exactly as readily as for the current one.
     expect(overlayWrapper().style.left).toBe(`${RAIL_WIDTH + FLYOUT_GAP}px`);

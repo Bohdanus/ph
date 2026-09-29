@@ -36,7 +36,7 @@ export const quickSelection =
  * boundary — the same representation the wand produces — and it is the borrowed value
  * whose behaviour is also correct: `drawSelectionOutline` skips the per-vertex anchor
  * dots for it and `findSelectionAnchorAtPoint` returns `null` for it
- * (`src/util/selection.ts:155` and `:178`), and a staircase boundary hundreds of
+ * (`src/util/selection.ts:201` and `:239`), and a staircase boundary hundreds of
  * vertices long must carry neither. Adding the real member, plus the two `selection.ts`
  * exclusions, is the whole follow-up.
  */

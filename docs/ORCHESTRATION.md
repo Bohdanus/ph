@@ -69,6 +69,47 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
 - **Stage only your own paths, everywhere.** The main worktree is not stable
   while you work — other sessions commit into it concurrently. Re-read `git
 status` and `git diff` before staging.
+- **`git add -A` in a worktree is not a neutral staging step when the root
+  checkout is dirty.** The root is a _different checkout_ of a _different HEAD_,
+  so a file the branch never touched can be sitting in the worktree's working
+  tree with the root's older content, and `-A` commits it as a deliberate
+  reverting of whatever main has since done to that file. A merge of
+  `feature/polygon-marching-ants` shipped 17 such reverts — `AGENTS.md`,
+  `docs/CODE-REVIEW.md`, and every file main had gained in the e2e-own-server
+  work, 1,835 lines — and **not one of them was a conflict**, so the merge was
+  clean and the revert was invisible in the diff. The tell is a file that gained
+  or lost lines for no reason the branch explains.
+  **The check, by computation rather than by reading the merge diff:**
+  ```sh
+  comm -13 \
+    <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
+    <(git diff --name-only main..HEAD | sort)
+  ```
+  Anything that set difference is main content the merge had no business
+  touching. The legitimate exceptions are the files the merge deliberately edits
+  and a regenerated `WORKTREES.json`; anything else gets restored from main with
+  `git checkout main -- <path>` before the merge lands. Run it _before_ the
+  review, because a reviewer only catches the files its brief happened to
+  mention.
+- **A red `tsc` in the main worktree may be someone else's work in progress, not
+  a broken `main`.** The main worktree is shared, so it is routinely holding an
+  agent's half-written change: tests that import a symbol their branch has not
+  written yet will fail `tsc` while `main` itself is perfectly green. That state
+  blocks every commit made from the main worktree, because the commit hook runs
+  `gate:verify` there — and the tempting "fix" is to commit the broken files.
+  **Do not.** Read `git status --porcelain` first: a path you have not touched is
+  not yours to stage, and its type error is not yours to resolve. Check whether
+  the _committed_ state is green instead, in a throwaway worktree, and report the
+  block:
+  ```sh
+  git worktree add --detach /tmp/verify-main main
+  ln -s "$PWD/node_modules" /tmp/verify-main/node_modules
+  (cd /tmp/verify-main && npx tsc -b && npx vitest run <suite>)
+  git worktree remove --force /tmp/verify-main
+  ```
+  This happened on the commit that followed the fix above, and the same `git add
+-A` also tried to sweep a third agent's in-flight tests into the commit — which
+  is the previous bullet, one hour later, in the same worktree.
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
 MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,

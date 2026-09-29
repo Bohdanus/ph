@@ -687,7 +687,61 @@ not something to close by re-running until green.
 `test-results/` is the only artefact that can say whether the ink was absent, mis-thresholded
 or mislocated. Until a failing run is captured, a fix here would be a guess.
 
-## 13. Files
+## 13. A spec that loads the page many times loses on Playwright's 30s default, not on its own assertions
+
+Section 9 is the cold-Vite one: the FIRST page loads of a run lose to a transform
+the warm-up has not paid for yet. This is the other half and it looks exactly the
+same in the report, which is the trap. Observed twice, in two different runs, on a
+branch whose only e2e change was a header comment and a viewport ladder:
+
+- `e2e/sidebar-flyout.spec.ts:508` — `Test timeout of 30000ms exceeded while
+running "beforeEach" hook`, `page.goto` never returning. 35.1s elapsed.
+- `e2e/toolbar-fit.spec.ts:188` — the same signature, 35.1s elapsed, inside
+  `open(page, height)`.
+
+Both passed in isolation, in the same tree, with no code change in between: 1.8s
+and 6.1s against those 30s budgets. Both runs had another agent's e2e run holding
+the queue, so the dev server was warm and 39 tests had already passed when the
+first one failed — which is what rules section 9's mechanism out, since nothing
+cold was left to lose to.
+
+The part that is named rather than observed: `e2e/toolbar-fit.spec.ts:188` makes
+EIGHT `open()` calls, one per height per layout, and it never calls
+`test.setTimeout`. Its sibling at `:142` does, for the same file. So a test whose
+whole job is a sweep pays Playwright's 30s default for the whole sweep, and under
+CPU contention from a concurrent run that default is what it runs out of — the
+assertions inside never execute, which is why the report names a navigation and
+not a tool. Whether the other specs in the failing run would have held their own
+budgets is not something the two runs show, and is not claimed here.
+
+Whether the fix is the timeout or a fresh page per height is a call for whoever
+owns the spec. What is not a call: the failure is a budget, and diagnosing it as
+a layout or a product defect wastes a run.
+
+## 14. The lock and queue suites fail inside a full-suite run and never in isolation
+
+Observed four times across two branches: `scripts/__tests__/e2e-run.test.mjs` and
+`scripts/__tests__/agent-board.test.mjs` contribute failures to `npm test` while
+the fleet is active, and every one of them passes when the same file is run on
+its own (158 tests, twice). The named failures are the ones that depend on
+another agent's state rather than on a fixture: _reclaims the queue from a holder
+whose process is gone_, _never reclaims a holder that this wrapper did not
+create_, _is per run, so two runs on one branch are two holders_, and _gives back
+only its own locks when a claim fails_. A run where `npm run swarm -- doctor`
+says "every claim and lock is live" is a run where these are competing with real
+holders.
+
+The distinction that matters when reading the report: a failing test in
+`agent-board.test.mjs` looks like a regression in the board's locking, and a
+failing test in `e2e-run.test.mjs` looks like a regression in the e2e queue. Both
+are the fleet talking to itself. Re-run the file alone before believing either.
+
+NOT ESTABLISHED: which shared read or liveness probe is the one that loses. The
+obvious candidates — the board database and the queue lock file, both shared by
+every agent in the repository — are where to look, but no single mechanism was
+isolated, so this entry records the pattern and the reproduction, not a cause.
+
+## 15. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -736,3 +790,10 @@ or mislocated. Until a failing run is captured, a fix here would be a guess.
   `toBeLessThan(25)` soft assertions section 12 measures
 - `e2e/viewport-drawing.spec.ts:1-15` — the `{ name, width, height }` list whose cases
   section 12 observed moving between runs
+- `e2e/toolbar-fit.spec.ts:188` — the eight-`open()` sweep that never raises its own
+  budget, which is what section 13 observed losing
+- `e2e/toolbar-fit.spec.ts:142` — the same file's other test, which does set one
+- `scripts/__tests__/e2e-run.test.mjs`, `scripts/__tests__/agent-board.test.mjs` — the two
+  suites section 14 saw fail only inside a full run, and pass alone
+- `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees
+  whose shape has to be re-derived when they commit or land

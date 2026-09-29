@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
+import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
@@ -26,13 +27,6 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
     getLocalCoords: (event: ReactPointerEvent<HTMLElement>) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: { current: true },
-  }),
-}));
-
-vi.mock('../../../hooks/usePolylineAnts.ts', () => ({
-  useMarchingPath: () => ({
-    draw: vi.fn(),
-    clear: vi.fn(),
   }),
 }));
 
@@ -338,7 +332,7 @@ describe('PolygonClickToolArea', () => {
     });
   });
 
-  it('draws active committed selections from store state so the lasso stays visible after finishing', () => {
+  it('draws the anchors of an active committed selection from store state so it stays visible after finishing', () => {
     storeState.selections = [
       {
         id: 'selection-1',
@@ -356,11 +350,16 @@ describe('PolygonClickToolArea', () => {
 
     render(<PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />);
 
-    expect(mockCtx.moveTo).toHaveBeenCalledWith(10, 10);
-    expect(mockCtx.lineTo).toHaveBeenCalledWith(100, 10);
-    expect(mockCtx.lineTo).toHaveBeenCalledWith(100, 100);
-    expect(mockCtx.closePath).toHaveBeenCalled();
-    expect(mockCtx.stroke).toHaveBeenCalled();
+    // A selection with no `sourceTool` is not one of the two anchorless tools, so
+    // its handles are drawn — at the absolute vertices, `pos` plus the points.
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(1, 10, 10, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(2, 100, 10, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(3, 100, 100, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    // The border is the marching-ants canvas's, so the tool overlay strokes no path
+    // of its own for a committed selection.
+    expect(mockCtx.moveTo).not.toHaveBeenCalled();
+    expect(mockCtx.lineTo).not.toHaveBeenCalled();
+    expect(mockCtx.closePath).not.toHaveBeenCalled();
   });
 
   it('commits a reshape when an individual anchor is dragged and the pointer is released', () => {
@@ -479,13 +478,24 @@ describe('PolygonClickToolArea', () => {
 
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 80, clientY: 40 });
     fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
-    vi.mocked(mockCtx.moveTo).mockClear();
+    // Everything on the overlay so far is the dragged preview, so the repaint that
+    // follows the abort can only be read against a cleared mock. The handles are read
+    // through `arc` rather than through `moveTo`: the border moved to the
+    // marching-ants canvas, so a path here would be a second outline and no longer exists.
+    vi.mocked(mockCtx.arc).mockClear();
 
     fireEvent.pointerLeave(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
 
     // The leave is not the end of the gesture, so nothing is written yet — the
     // drag is still running and the preview still stands.
     expect(selectionEdits()).toHaveLength(0);
+    // Nothing is repainted on the leave either, and that is the point rather than a gap: the
+    // drag took the surface's pointer capture on `pointerdown`, so leaving is an interruption the
+    // browser follows with a release rather than an abort. This assertion used to demand an
+    // anchor repaint here, which was true while the leave still aborted the drag; the guard it
+    // stood for — a `clearOverlay` wipe cannot be the last word about a committed selection — is
+    // kept where the wipe actually happens, in PolygonClickToolArea.test.tsx's
+    // 'repaints the committed selection after a reset that had no drag to abort'.
 
     fireEvent.pointerUp(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
 

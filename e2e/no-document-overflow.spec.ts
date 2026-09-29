@@ -39,19 +39,28 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *
  * ## The one place the numbers live
  *
- * The left tool rail's geometry, measured in this browser at `deviceScaleFactor: 1` with a
- * 16px default font in en-US: **16** tool groups in **5** sections, **40** tool entries;
- * content **612px** tall in the two-column layout and **1014px** in one column, against an
- * available height of `viewportHeight - 137` — the shell's three `auto` grid rows. It
- * therefore overflows below a **749px** window in two columns and **1151px** in one, and two
- * columns overflows at *more* viewport heights than one column does.
+ * The left tool rail's tool grid, measured in this browser at `deviceScaleFactor: 1` with a
+ * 16px default font in en-US: **16** tool groups in **5** sections, **40** tool entries.
+ * The rendered grid is **822px** tall in one column — 16 rows of a 44px tile at a 6px row gap
+ * with 4 section rules, which is what `e2e/toolbar-fit.spec.ts` prints at its tallest height
+ * and what its `tile`/`gap`/`sep` non-vacuity assertions pin between them. Two columns is
+ * 8 rows with no section rules, so **394px** by that same arithmetic; nothing prints or
+ * asserts that one, because `toolbar-fit.spec.ts` only measures the one-column layout.
  *
- * These are **font-metric dependent** and are asserted by no test, because CI runs
- * `ubuntu-latest` with Linux Chrome's fonts and none of them will hold there. This header
- * is the canonical copy; `AGENTS.md`, `SidebarLeft.tsx`, `responsive-shell.spec.ts` and
- * `SidebarLeft.tablet.test.tsx` each carry a short summary and point back here rather than
- * a second full set, because a number written in four places is a number that is wrong in
- * four places. The previous generation of those comments was wrong in exactly that way —
+ * THIS USED TO PUBLISH THE WINDOW HEIGHTS AT WHICH THE RAIL OVERFLOWED, derived from a
+ * `viewportHeight - 137` figure and a pair of content heights that were both wrong (1014px
+ * and 612px against a grid that has never been either). No test asserted them, so they sat
+ * here being plausible. The fit owns that question now: it collapses tiles into the
+ * three-dots entry and asserts the rendered grid stays inside the budget at every height it
+ * sweeps, and the height at which even that is impossible is DISCOVERED, not named — see the
+ * degenerate-band ladder in the last test in this file. So the numbers here are either
+ * measured by something or derived from what something measures.
+ *
+ * The content heights are **font-metric dependent**. This header is the canonical copy;
+ * `AGENTS.md`, `SidebarLeft.tsx`, `responsive-shell.spec.ts`
+ * and `SidebarLeft.tablet.test.tsx` each carry a short summary and point back here rather
+ * than a second full set, because a number written in four places is a number that is wrong
+ * in four places. The previous generation of those comments was wrong in exactly that way —
  * `"12 tool groups"`, `"~840px"` and `"177–377px"`, all three describing a layout that no
  * longer exists.
  */
@@ -330,11 +339,11 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     // This test used to assert that the rail OVERFLOWS at iPad 10.2 portrait and that scrolling
     // it keeps the last control reachable, and it even carried the message "if it no longer
     // does, update this test". It no longer does, and that is the point of the change rather
-    // than a regression: the rail is 1014px of tool tiles and 943px of rail, and instead of
-    // demanding the difference the tiles are fitted to the space they have and the rows that
-    // do not fit move into the three-dots tile. The premise, not the claim, went stale — so
-    // both halves are now stated against what is actually true, and the suppression is
-    // asserted where it can now be exercised.
+    // than a regression: the rail's grid does not fit, and instead of demanding the difference
+    // the tiles are fitted to the space they have and the rows that do not fit move into the
+    // three-dots tile. The premise, not the claim, went stale — so both halves are now stated
+    // against what is actually true, and the suppression is asserted where it can now be
+    // exercised.
     const viewport = VIEWPORTS.find((v) => v.name.startsWith('iPad 10.2'))!;
     await open(page, viewport.width, viewport.height);
 
@@ -356,13 +365,47 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     // short that the budget cannot hold even the three-dots tile's row — so that is where the
     // suppression is exercised. The previous version of this test asserted suppression on an
     // element that can no longer overflow, which is asserting nothing.
-    await open(page, 1280, 380);
+    //
+    // THE BAND IS DISCOVERED, NOT NAMED. It used to be reached at a hardcoded 380px, and that
+    // number is a property of the rail's chrome — its padding, its rules, the height of its
+    // colour cluster — rather than of the behaviour under test. Flattening the rail took 69px
+    // of fixed chrome out of the column (`py-4`→`py-2` 16, `mb-2`→`mb-1` 4, `my-3`→`my-2` 8,
+    // the dead `<hr>` 25, `mt-4` 16) and 14px more out of the tools box, the band moved down
+    // with it, and the assertion failed on a rail that was behaving correctly. A test that
+    // names a magic height is a test that the next spacing change fails.
+    //
+    // The ladder walks DOWN from a height known to fit, so the first rung that degenerates is
+    // the TALLEST one that does — the most informative of the band. Each rung re-reads the
+    // viewport FROM THE PAGE: `page.viewportSize()` returns the value `setViewportSize` stored
+    // on the object, so asserting against it compares the request with itself and cannot
+    // observe a resize that did not apply, which is the one thing this rung is for.
     const slot = page.getByTestId('left-toolbar-slot');
-    const slotOverflow = await slot.evaluate((el) => el.scrollHeight - el.clientHeight);
-    expect(slotOverflow, 'a 380px window is inside the degenerate band, so the slot must overflow').toBeGreaterThan(0);
+    const DEGENERATE_LADDER = [380, 300, 240, 190, 150, 120];
+    let degenerateAt: number | null = null;
+    for (const height of DEGENERATE_LADDER) {
+      await open(page, 1280, height);
+      expect(
+        await page.evaluate(() => window.innerHeight),
+        `the ladder's ${height}px rung must actually be the viewport, or nothing below measures what it claims`
+      ).toBe(height);
+      const slotOverflow = await slot.evaluate((el) => el.scrollHeight - el.clientHeight);
+      if (slotOverflow > 0) {
+        degenerateAt = height;
+        break;
+      }
+    }
+    // Two states, two messages. `null` after the whole ladder means the rail no longer
+    // degenerates ANYWHERE the ladder reaches — the ladder ran out, which is this test's
+    // premise failing and not a product defect. It is not evidence that the rail cannot
+    // degenerate, so it must not be reported as though it were.
+    expect(
+      degenerateAt,
+      `the slot must still degenerate somewhere in the ${DEGENERATE_LADDER.at(-1)}..${DEGENERATE_LADDER[0]}px ladder — either the rail can no longer degenerate at any height (extend the ladder) or it is broken, and those are not the same defect`
+    ).not.toBeNull();
+    const degenerateHeight = degenerateAt!;
     expect(
       await slot.evaluate((el) => getComputedStyle(el).scrollbarWidth),
-      'and it must suppress the scrollbar itself, not merely stop overflowing'
+      'and the degenerate slot must suppress the scrollbar itself, not merely stop overflowing'
     ).toBe('none');
 
     // The thing suppression is allowed to cost: reachability. A scrollable slot with hidden
@@ -371,6 +414,6 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     await overflowTile.scrollIntoViewIfNeeded();
     await expect(overflowTile, 'the one reachable tile is still reachable inside the scrolling slot').toBeVisible();
     const box = await overflowTile.boundingBox();
-    expect(box!.y + box!.height, 'and it ends up inside the window').toBeLessThanOrEqual(380);
+    expect(box!.y + box!.height, 'and it ends up inside the window').toBeLessThanOrEqual(degenerateHeight);
   });
 });
