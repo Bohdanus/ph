@@ -27,7 +27,15 @@ import {
   type FlyoutItem,
 } from '../toolbar-helpers';
 
-const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeChecks, pollClock } = vi.hoisted(() => {
+const {
+  playwrightExpect,
+  visibilityChecks,
+  hiddenChecks,
+  textChecks,
+  accessibleNameChecks,
+  attributeChecks,
+  pollClock,
+} = vi.hoisted(() => {
   type Target = {
     __elements: Array<{
       visible: boolean;
@@ -45,6 +53,7 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeC
   const recordedVisibilityChecks: Check[] = [];
   const recordedHiddenChecks: Check[] = [];
   const recordedTextChecks: Array<{ target: Target; expected: string }> = [];
+  const recordedAccessibleNameChecks: Array<{ target: Target; expected: string }> = [];
   const recordedAttributeChecks: Array<{
     target: Target;
     name: string;
@@ -87,6 +96,18 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeC
         throw timedOut('toContainText', target);
       }
     }),
+    // The accessible name, which for every tool tile in this app is its `aria-label` and NOT
+    // its text: a tile draws an icon, so there is no text in it to match. Recorded separately
+    // from `textChecks` so a test can prove which of the two a helper asked for — a helper that
+    // silently downgrades to a text check against a collapsed tool fails with `Received string: ""`,
+    // which reads as an empty button rather than as a tool with no tile of its own.
+    toHaveAccessibleName: vi.fn(async (expected: string) => {
+      recordedAccessibleNameChecks.push({ target, expected });
+      const name = (element: (typeof target.__elements)[number]) => element.attributes['aria-label'] ?? element.text;
+      if (!target.__elements.some((element) => name(element) === expected)) {
+        throw timedOut('toHaveAccessibleName', target);
+      }
+    }),
     toBeFocused: vi.fn(async (options?: { timeout?: number }) => {
       // Models browser focus as at most one element, so a stale `focused` flag on a
       // sibling cannot make a stale locator look focused.
@@ -115,6 +136,7 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeC
     visibilityChecks: recordedVisibilityChecks,
     hiddenChecks: recordedHiddenChecks,
     textChecks: recordedTextChecks,
+    accessibleNameChecks: recordedAccessibleNameChecks,
     attributeChecks: recordedAttributeChecks,
     pollClock: poller,
   };
@@ -716,6 +738,10 @@ describe('Toolbar Helpers', () => {
     visibilityChecks.length = 0;
     hiddenChecks.length = 0;
     textChecks.length = 0;
+    // Recorded alongside the text checks and reset with them: they are asserted by COUNT, and a
+    // count left over from the previous test turns "asked for the wrong primitive" into a
+    // number that happens to be non-zero for the wrong reason.
+    accessibleNameChecks.length = 0;
   });
 
   describe('Pure Functions', () => {
@@ -1736,25 +1762,48 @@ describe('Toolbar Helpers', () => {
   });
 
   describe('verifyPrimaryTool', () => {
-    it('resolves when the primary tool label matches the button text', async () => {
+    it("resolves on the tile's ACCESSIBLE NAME, which is its aria-label and not its text", async () => {
+      // A tool tile draws an ICON, so there is no text in it to match: the label is an
+      // `aria-label`. Asserting the text content instead cannot pass on any tile, and on the
+      // three-dots tile it fails with `Received string: ""`, which reads as an empty button
+      // rather than as the thing it is — a tool the rail folded away. So the primitive is the
+      // accessible name, and the check is recorded separately to prove which was asked for.
       const dom = createFakeDom();
       const button = dom.add({
         testId: 'tool-button-reposition',
-        text: 'Reposition',
+        text: '',
+        attributes: { 'aria-label': 'Move Tool' },
       });
 
-      await verifyPrimaryTool(dom.page, 'Select & Move', 'Reposition');
+      await verifyPrimaryTool(dom.page, 'Select & Move', 'Move Tool');
 
-      expect(textChecks).toHaveLength(1);
-      expect(textChecks[0].target.__elements).toEqual([button]);
-      expect(textChecks[0].expected).toBe('Reposition');
+      expect(accessibleNameChecks, 'the accessible name, not the text content').toHaveLength(1);
+      expect(accessibleNameChecks[0].target.__elements).toEqual([button]);
+      expect(accessibleNameChecks[0].expected).toBe('Move Tool');
+      expect(textChecks, 'and never a text check').toHaveLength(0);
     });
 
-    it('fails when the grouped button shows a different primary tool', async () => {
+    it('fails when the tile presents a different name', async () => {
       const dom = createFakeDom();
-      dom.add({ testId: 'tool-button-reposition', text: 'Select & Move' });
+      dom.add({ testId: 'tool-button-reposition', text: '', attributes: { 'aria-label': 'Select & Move' } });
 
-      await expect(verifyPrimaryTool(dom.page, 'Select & Move', 'Reposition')).rejects.toThrow(/toContainText\(\)/);
+      await expect(verifyPrimaryTool(dom.page, 'Select & Move', 'Move Tool')).rejects.toThrow(/toHaveAccessibleName/);
+    });
+
+    it('says so plainly when the rail folded the tool away, instead of matching an empty tile', async () => {
+      // The two e2e failures this replaces were both this one wearing a disguise: a
+      // `toContainText` against the three-dots tile, which reported `Received string: ""` and
+      // read as an empty button. A caller whose subject is a TOOL wants a reachability
+      // assertion; one whose subject is the tile wants the window grown. The message names
+      // which, because "it failed" does not tell the next reader what to do.
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-overflow-tile', text: '', attributes: { 'aria-label': 'More Tools' } });
+
+      await expect(verifyPrimaryTool(dom.page, 'eyedropper', 'Eyedropper Tool')).rejects.toThrow(/no tile of its own/);
+      await expect(verifyPrimaryTool(dom.page, 'eyedropper', 'Eyedropper Tool')).rejects.toThrow(/More Tools/);
+      // And it must not have fallen through to a check it knows cannot pass.
+      expect(textChecks).toHaveLength(0);
+      expect(accessibleNameChecks).toHaveLength(0);
     });
   });
 

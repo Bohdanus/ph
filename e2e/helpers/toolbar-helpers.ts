@@ -469,16 +469,34 @@ export async function toggleToolbarLayout(page: Page): Promise<void> {
 }
 
 /**
- * Verifies the primary tool shown on a grouped button matches the expected label.
+ * Verifies the tile standing for a tool presents that tool's label.
  *
- * Resolved rather than addressed by id, because a collapsed group's primary label is on the
- * three-dots tile and there is no tile of its own to read. A test that says "the brush tile
- * reads Pencil" must be able to say it when the rail is showing the brush tile; a test that
- * says "the tool the user is looking at is Brush" must survive the rail being short.
+ * Asserts the ACCESSIBLE NAME, not the text content, and that is not a stylistic preference.
+ * A tool tile's label is an `aria-label` — the tile draws an icon, so there is no text in it to
+ * match — and the three-dots tile is the same shape: its label lives in `aria-label="More
+ * Tools"` and the element contains only an SVG. A `toContainText` against either can never
+ * pass, and against the three-dots tile it fails with `Received string: ""`, which reads as an
+ * empty button rather than as "this tool has no tile of its own".
+ *
+ * So a tool the rail folded away is reported as what it is. The two questions are separate and
+ * the caller usually wants the second: `resolveToolTile` answers "which tile represents the
+ * tool" and this one answers "is that tile the tool".
  */
 export async function verifyPrimaryTool(page: Page, toolName: string, expectedLabel: string): Promise<void> {
-  const button = await resolveToolTile(page, toolName);
-  await expect(button).toContainText(expectedLabel);
+  const ownTile = getToolButton(page, toolName);
+  if ((await ownTile.count()) === 0) {
+    // Naming the cause beats asserting on a tile that will never carry the label. A caller
+    // whose subject is a TOOL wants a reachability assertion instead; one whose subject is the
+    // tile wants the window grown, and this message says which.
+    const standing = await resolveToolTile(page, toolName);
+    throw new Error(
+      `verifyPrimaryTool: "${toolName}" has no tile of its own at this window — the rail folded it into ` +
+        `the three-dots tile, whose label is "More Tools" and never "${expectedLabel}". ` +
+        `Assert on ${toolName}'s own options-bar control for reachability, or grow the window to test the tile. ` +
+        `Currently represented by: ${standing.toString().slice(0, 120)}`
+    );
+  }
+  await expect(ownTile).toHaveAccessibleName(expectedLabel);
 }
 
 /**
