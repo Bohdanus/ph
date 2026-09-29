@@ -26,9 +26,8 @@ const toolArgs = vi.hoisted(() => ({
   italic: false,
   fontFamily: 'Arial',
   align: 'left',
-  // `defaultSettings.text` carries a colour (src/tools/settings.ts:69-80), so the fixture must
-  // too. Without it `Text.tsx:17` sees `toolArgs.color === undefined`, republishes the args on
-  // every mount and every one of the call-count assertions below is off by one.
+  // `defaultSettings.text` carries a colour (src/tools/settings.ts:82-94), so the fixture must too:
+  // the swatch renders `toolArgs.color` directly, and a missing one leaves the input valueless.
   color: '#000000',
 }));
 
@@ -281,23 +280,47 @@ describe('Text toolbar', () => {
     });
   });
 
-  describe('colour synchronisation', () => {
+  describe('text colour', () => {
     const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
 
-    it('adopts the store colour when it diverges from the tool args colour', () => {
-      resetStoreState({ color: '#ff0000' });
+    it('renders a Color swatch bound to the tool args colour', () => {
+      resetToolArgs({ color: '#3366ff' });
       renderWithProvider(<Text />);
 
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ color: '#ff0000', text: 'Hello' })
-      );
-      expect(lastToolArgs().color).toBe('#ff0000');
+      const swatch = screen.getByLabelText('Color') as HTMLInputElement;
+      expect(swatch).toHaveAttribute('type', 'color');
+      expect(swatch).toHaveValue('#3366ff');
     });
 
-    it('does not publish anything when the tool args already match the store colour', () => {
+    it('publishes the chosen colour to the tool args, and only that', () => {
+      renderWithProvider(<Text />);
+
+      fireEvent.change(screen.getByLabelText('Color'), { target: { value: '#ff8800' } });
+
+      // The tool OWNS its colour now. The bar used to mirror the store's foreground into
+      // `toolArgs.color` on every render, so a user who picked a colour here watched it change
+      // under their hands the moment anything touched the foreground.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ color: '#ff8800' }));
+      expect(lastToolArgs()).toMatchObject({ color: '#ff8800', text: 'Hello', fontSize: 64, lineHeight: 1.1 });
+    });
+
+    it('does not adopt the store foreground, which is not the tool colour any more', () => {
+      resetStoreState({ color: '#ff0000' });
+      resetToolArgs({ color: '#0000ff' });
       renderWithProvider(<Text />);
 
       expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Color')).toHaveValue('#0000ff');
+    });
+
+    it('keeps the tool colour across an unrelated publish', () => {
+      resetStoreState({ color: '#00ff00' });
+      resetToolArgs({ color: '#0000ff' });
+      renderWithProvider(<Text />);
+
+      fireEvent.change(screen.getByLabelText(/Font Size/), { target: { value: '48' } });
+
+      expect(lastToolArgs()).toMatchObject({ color: '#0000ff', fontSize: 48 });
     });
   });
 
@@ -350,6 +373,7 @@ describe('Text toolbar', () => {
       const fontSelect = screen.getByLabelText('Font');
       const fontSizeSlider = screen.getByLabelText(/Font Size/);
       const lineHeightSlider = screen.getByLabelText(/Line Height/);
+      const colorSwatch = screen.getByLabelText('Color');
       const alignSelect = screen.getByLabelText('Align');
       const boldButton = screen.getByRole('button', { name: 'B' });
       const italicButton = screen.getByRole('button', { name: 'I' });
@@ -367,6 +391,11 @@ describe('Text toolbar', () => {
 
       await user.tab();
       expect(lineHeightSlider).toHaveFocus();
+
+      // The colour swatch sits where Photoshop puts it, immediately after the size group and
+      // before the paragraph controls, so the tab order is the bar's own left-to-right order.
+      await user.tab();
+      expect(colorSwatch).toHaveFocus();
 
       await user.tab();
       expect(alignSelect).toHaveFocus();

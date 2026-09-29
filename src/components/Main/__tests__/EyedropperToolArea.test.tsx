@@ -6,6 +6,7 @@ import {
   EyedropperToolArea,
 } from '../EyedropperToolArea.tsx';
 import type { EyedropperToolArgs } from '../../../tools/eyedropper.ts';
+import { EYEDROPPER_SAMPLE_SIZE_OPTIONS } from '../../../tools/eyedropper.ts';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const workspaceCanvas = vi.hoisted(() => document.createElement('canvas'));
@@ -13,7 +14,7 @@ const storeState = vi.hoisted(
   (): { documentFrame: { x: number; y: number; width: number; height: number } | null } => ({ documentFrame: null })
 );
 const toolState = vi.hoisted(
-  (): { toolArgs: { sampleSize: 1 | 3 | 5; sampleAllLayers: boolean; toolName: string } } => ({
+  (): { toolArgs: { sampleSize: 1 | 3 | 5 | 11 | 31 | 51 | 101; sampleAllLayers: boolean; toolName: string } } => ({
     toolArgs: { sampleSize: 1, sampleAllLayers: false, toolName: 'eyedropper' },
   })
 );
@@ -79,6 +80,27 @@ const createCompositedImageData = (width: number, height: number): ImageData => 
   return { data, width, height, colorSpace: 'srgb' } as ImageData;
 };
 
+/**
+ * A 128px square split down the middle — black left of 64, white from 64 — so the mean of a block
+ * centred on the split is a hand-computable grey. A 101 sample needs 101 pixels of room, which a
+ * 4px fixture cannot give, and the seven squares have to land on seven DIFFERENT answers or the
+ * test would only be proving that one large block reads.
+ */
+const createSplitField = (width: number): ImageData => {
+  const data = new Uint8ClampedArray(width * width * 4);
+  for (let y = 0; y < width; y++) {
+    for (let x = 0; x < width; x++) {
+      const value = x < width / 2 ? 0 : 255;
+      const index = (y * width + x) * 4;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
+      data[index + 3] = 255;
+    }
+  }
+  return { data, width, height: width, colorSpace: 'srgb' } as ImageData;
+};
+
 let getContextSpy: ReturnType<typeof vi.spyOn> | null = null;
 
 /**
@@ -86,13 +108,13 @@ let getContextSpy: ReturnType<typeof vi.spyOn> | null = null;
  * an average is identifiable. `getImageData` honours the requested rectangle, which is what makes
  * "the block was clamped to the canvas" observable rather than assumed.
  */
-const COMPOSED = createCompositedImageData(4, 4);
+let composited: ImageData = createCompositedImageData(4, 4);
 
 const readWindow = (x: number, y: number, width: number, height: number): ImageData => {
   const data = new Uint8ClampedArray(Math.max(0, width) * Math.max(0, height) * 4);
   for (let row = 0; row < height; row++) {
-    const source = ((y + row) * 4 + x) * 4;
-    data.set(COMPOSED.data.subarray(source, source + width * 4), row * width * 4);
+    const source = ((y + row) * composited.width + x) * 4;
+    data.set(composited.data.subarray(source, source + width * 4), row * width * 4);
   }
   return { data, width, height, colorSpace: 'srgb' } as ImageData;
 };
@@ -105,12 +127,12 @@ const renderArea = () => {
 const colorActions = () =>
   (dispatchMock.mock.calls as unknown[][])
     .map(([action]) => action as { type: string; payload: string })
-    .filter((action) => action.type === 'SET_COLOR');
+    .filter((action) => action.type === 'SET_COLOR' || action.type === 'SET_BACKGROUND_COLOR');
 
 const historyActions = () =>
   (dispatchMock.mock.calls as unknown[][])
     .map(([action]) => action as { type: string })
-    .filter((action) => action.type !== 'SET_COLOR');
+    .filter((action) => action.type !== 'SET_COLOR' && action.type !== 'SET_BACKGROUND_COLOR');
 
 describe('EyedropperToolArea', () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -119,6 +141,7 @@ describe('EyedropperToolArea', () => {
     dispatchMock.mockClear();
     storeState.documentFrame = null;
     toolState.toolArgs = { sampleSize: 1, sampleAllLayers: false, toolName: 'eyedropper' };
+    composited = createCompositedImageData(4, 4);
     workspaceCanvas.width = 4;
     workspaceCanvas.height = 4;
     // Opt-in pixel read-back: the globally installed context has no `getImageData` by design
@@ -250,7 +273,7 @@ describe('EyedropperToolArea', () => {
     // The foreground is a CSS colour on an `<input type="color">`, which cannot express
     // transparency, so averaging a transparent pixel in silently set the foreground to black.
     // Photoshop shows a crossed-out swatch and changes nothing.
-    const data = COMPOSED.data;
+    const data = composited.data;
     data[3] = 0; // pixel (0,0) alpha
     try {
       const toolArea = renderArea();
@@ -287,20 +310,53 @@ describe('EyedropperToolArea', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
-  it('refuses loudly instead of silently ignoring Sample All Layers', () => {
+  it('refuses loudly instead of silently ignoring a Sample All Layers value', () => {
     toolState.toolArgs = { ...toolState.toolArgs, sampleAllLayers: true };
     const toolArea = renderArea();
 
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 1 });
 
-    // A `true` here must not sample the composite and present it as the whole document's colour,
-    // and it must not quietly do nothing either: the options bar renders the control `disabled`
-    // precisely because this is unimplementable here.
+    // There is no control on the bar for this any more — it was a permanently `disabled` box — but
+    // `settings.ts` still seeds the field, so a `true` can still arrive. It must not sample the
+    // composite and present it as the whole document's colour, and it must not quietly do nothing.
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       EYEDROPPER_ALL_LAYERS_UNSUPPORTED,
       'the eyedropper samples the composited canvas only'
     );
+  });
+
+  it('sets the BACKGROUND colour on an Alt/Option click, and the foreground otherwise', () => {
+    // Adobe: "Alt-click (Windows) / Command-Option-click (Mac) to sample to the background color"
+    // (https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html). The modifier
+    // is `altKey` on both platforms, so there is no platform branch to take.
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0, altKey: true });
+
+    expect(dispatchMock.mock.calls.map(([action]) => action)).toEqual([
+      { type: 'SET_COLOR', payload: '#00ff00' },
+      { type: 'SET_BACKGROUND_COLOR', payload: '#00ff00' },
+    ]);
+  });
+
+  it('records no history for an Alt-click either', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0, altKey: true });
+
+    expect(historyActions()).toEqual([]);
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the foreground alone when an Alt-click lands on a transparent pixel', () => {
+    composited.data[3] = 0;
+
+    const toolArea = renderArea();
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 0, clientY: 0, altKey: true });
+
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 
   it('refuses to sample and writes no history when pixels cannot be read back', () => {
@@ -333,7 +389,7 @@ describe('EyedropperToolArea', () => {
 
   it('accepts every Sample Size the options bar offers', () => {
     const toolArea = renderArea();
-    const sizes: Array<EyedropperToolArgs['sampleSize']> = [1, 3, 5];
+    const sizes: Array<EyedropperToolArgs['sampleSize']> = [1, 3, 5, 11, 31, 51, 101];
 
     for (const sampleSize of sizes) {
       toolState.toolArgs = { ...toolState.toolArgs, sampleSize };
@@ -343,6 +399,41 @@ describe('EyedropperToolArea', () => {
     expect(colorActions()).toHaveLength(sizes.length);
     for (const action of colorActions()) {
       expect(action.payload).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it('averages the square each of the seven Sample Sizes names, not a fixed one', () => {
+    // The readback is generic over the size, so widening the union is only real if a 101 really
+    // reads 101 pixels. A 128px split field gives each square its own answer: the block is
+    // centred on the black/white seam at (64,64) and takes `size` columns of it, so the mean is
+    // `whiteColumns * 255 / size`.
+    expect(EYEDROPPER_SAMPLE_SIZE_OPTIONS.map(({ value }) => value)).toEqual([1, 3, 5, 11, 31, 51, 101]);
+
+    const EXPECTED: { sampleSize: EyedropperToolArgs['sampleSize']; left: number; sampled: string }[] = [
+      { sampleSize: 1, left: 64, sampled: '#ffffff' },
+      { sampleSize: 3, left: 63, sampled: '#aaaaaa' },
+      { sampleSize: 5, left: 62, sampled: '#999999' },
+      { sampleSize: 11, left: 59, sampled: '#8b8b8b' },
+      { sampleSize: 31, left: 49, sampled: '#848484' },
+      { sampleSize: 51, left: 39, sampled: '#828282' },
+      { sampleSize: 101, left: 14, sampled: '#818181' },
+    ];
+
+    composited = createSplitField(128);
+    workspaceCanvas.width = 128;
+    workspaceCanvas.height = 128;
+    const { container, rerender } = render(<EyedropperToolArea className="test-eyedropper-area" />);
+    const ctx = workspaceCanvas.getContext('2d') as unknown as { getImageData: ReturnType<typeof vi.fn> };
+
+    for (const { sampleSize, left, sampled } of EXPECTED) {
+      toolState.toolArgs = { ...toolState.toolArgs, sampleSize };
+      // The tool area reads `sampleSize` off the args the last render gave it, and the mock
+      // hands back the same object until something republishes it, so each size needs its render.
+      rerender(<EyedropperToolArea className="test-eyedropper-area" />);
+      fireEvent.pointerDown(container.firstElementChild as HTMLDivElement, { button: 0, clientX: 64, clientY: 64 });
+
+      expect(ctx.getImageData).toHaveBeenLastCalledWith(left, left, sampleSize, sampleSize);
+      expect(colorActions().at(-1)).toEqual({ type: 'SET_COLOR', payload: sampled });
     }
   });
 
