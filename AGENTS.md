@@ -139,10 +139,12 @@ note` a branch you are about to land, before you start resolving it.
 <worktree> status` / `diff` / `log -1`, then `npm run swarm -- doctor --dry-run`,
   then `npm run swarm -- doctor`. Force-release only a session confirmed dead,
   never a network-lost one.
-- **The worktree list is generated, never written by hand.** Run
-  `node scripts/worktree-inventory.mjs` and read `WORKTREES.json` before deleting
-  a worktree. **0 commits ahead of `main` is not evidence one is disposable** — it
-  can hold uncommitted work on no ref.
+- **The worktree list is generated, never written by hand, and never
+  committed.** Run `node scripts/worktree-inventory.mjs` and read `WORKTREES.json`
+  before deleting a worktree. It is untracked and gitignored — it describes this
+  machine, not the repository — and a test fails if it is re-added or the ignore
+  rule is deleted. **0 commits ahead of `main` is not evidence one is
+  disposable** — it can hold uncommitted work on no ref.
 
 ## Architecture status
 
