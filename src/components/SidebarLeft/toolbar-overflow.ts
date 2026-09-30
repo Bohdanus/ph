@@ -5,9 +5,10 @@
  * This module is deliberately pure: it takes a row of already-measured pixel
  * numbers and returns which rows survive. Everything DOM-shaped — measuring the
  * slot, reading the tile height, reading the grid's row gap — lives in
- * `use-toolbar-fit.ts`, so the arithmetic that decides what a user can reach can be
- * tested in jsdom against numbers chosen to make the boundary visible, which is the
- * only way a "does it fit" rule can be pinned at all.
+ * `toolbar-fit-store.ts`, behind the `useToolbarOverflow` hook in
+ * `use-toolbar-overflow.ts`, so the arithmetic that decides what a user can reach
+ * can be tested in jsdom against numbers chosen to make the boundary visible,
+ * which is the only way a "does it fit" rule can be pinned at all.
  */
 
 /**
