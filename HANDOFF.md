@@ -2928,6 +2928,8 @@ and argues from `AGENTS.md:170-173` that the typo "has no home among the three r
 census is four, the cited lines have drifted, and the "no home" premise is false.
 
 **Verified on `main` (`c23d036e`) by re-deriving, tree-wide — not by reading the cited lines.**
+Re-run it excluding this entry, which quotes the occurrences and would otherwise double the count:
+add `| grep -v '^HANDOFF.md:29'` to the `git grep` below.
 
 ```
 $ git grep -n 'e2e/OPEN-PROBLEMS' main -- .
@@ -2967,7 +2969,7 @@ asserts neither a five-line census nor the `AGENTS.md:170-173` premise. Re-deriv
 line numbers from the prose at the time of the fix: `AGENTS.md` is the file every agent reads
 first, so a citation into it silently rots, and its own rule says as much.
 
-**Not caused by the `docs/subagent-provider` model-policy change**, which touched `AGENTS.md:41-66`
-and moved the two routing lines from `:178`/`:185` to `:199`/`:206` — the numbers above are
-re-derived against the post-change file. Re-derive again when fixing; do not assume they survive
-another edit to `AGENTS.md`.
+**Not caused by the `docs/subagent-provider` model-policy change**, which edited the Model policy
+section and, with `main` merged in, left the two routing lines at `AGENTS.md:201` and `:208` — the
+numbers above are re-derived against that file. Re-derive again when fixing; do not assume they
+survive another edit to `AGENTS.md`.
