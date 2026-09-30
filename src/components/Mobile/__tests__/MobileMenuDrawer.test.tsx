@@ -133,6 +133,33 @@ describe('MobileMenuDrawer', () => {
       expect(window.confirm).toHaveBeenCalled();
       expect(openNewImageDialogMock).not.toHaveBeenCalled();
     });
+
+    it('logs the rejection with the dialog detail and leaves the document alone', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openNewImageDialogMock.mockRejectedValue(new Error('dialog exploded'));
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /New Document/ }));
+
+      // The Error is the second argument, not an interpolation, so the stack reaches the console.
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document:', expect.any(Error));
+      expect(setBlankImageMock).not.toHaveBeenCalled();
+    });
+
+    it('passes a non-Error rejection through to the console unchanged', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openNewImageDialogMock.mockRejectedValue('plain failure');
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /New Document/ }));
+
+      // Stringified, a reason object became `[object Object]` and was lost. Asserting the exact
+      // raw value fails against that and passes only against the two-argument call.
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document:', 'plain failure');
+      expect(setBlankImageMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('Open', () => {
@@ -170,6 +197,30 @@ describe('MobileMenuDrawer', () => {
       expect(openLoadImageDialogMock).toHaveBeenCalledTimes(1);
       expect(setImageFromUploadMock).toHaveBeenCalledTimes(1);
     });
+
+    it('logs the rejection with the picker detail and keeps the current document', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openLoadImageDialogMock.mockRejectedValue(new Error('read failed'));
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Open Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file:', expect.any(Error));
+      expect(setImageFromUploadMock).not.toHaveBeenCalled();
+    });
+
+    it('passes a non-Error rejection through to the console unchanged', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openLoadImageDialogMock.mockRejectedValue({ code: 42 });
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Open Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file:', { code: 42 });
+      expect(setImageFromUploadMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('Export', () => {
@@ -194,6 +245,46 @@ describe('MobileMenuDrawer', () => {
       render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
 
       expect(screen.getByRole('button', { name: /Export \/ Save Image/ })).toBeDisabled();
+    });
+
+    it('logs the rejection with the encoder detail and saves nothing', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openSaveImageDialogMock.mockRejectedValue(new Error('encoder died'));
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image:', expect.any(Error));
+      expect(handleImageSaveMock).not.toHaveBeenCalled();
+    });
+
+    it('logs when the commit throws before the save dialog opens', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      commitDirtyToolMock.mockImplementation(() => {
+        throw new Error('commit failed');
+      });
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
+
+      // Same log as the dialog rejection and the same two-argument shape: the commit runs inside
+      // the same `try`, so a throw before the dialog opens is reported identically.
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image:', expect.any(Error));
+      expect(openSaveImageDialogMock).not.toHaveBeenCalled();
+    });
+
+    it('passes a non-Error rejection through to the console unchanged', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openSaveImageDialogMock.mockRejectedValue('disk offline');
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image:', 'disk offline');
+      expect(handleImageSaveMock).not.toHaveBeenCalled();
     });
   });
 

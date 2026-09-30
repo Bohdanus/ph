@@ -67,6 +67,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   canUndo.mockReturnValue(false);
   canRedo.mockReturnValue(false);
+  // The real hook returns `true` on success (`useSelectionClipboard.ts:61`) and Meta+C now READS
+  // that boolean, so the `undefined` a bare `vi.fn()` returns would be indistinguishable from a
+  // refused copy in every test that presses the key.
+  copyActiveSelection.mockReturnValue(true);
   storeState.hasImage = true;
   storeState.toolName = 'brush';
   toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
@@ -324,6 +328,69 @@ describe('AppKeyboardShortcuts clipboard', () => {
 
     expect(copyActiveSelection).toHaveBeenCalledTimes(1);
     expect(pasteSelectionClipboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a Meta+C copy that returns false instead of dropping the failure', () => {
+    // The one call site with no `try` around it. `copySelection` returns `false` rather than
+    // throwing when no snapshot is possible, so before the boolean was read this press left
+    // nothing at all behind: no log, no UI change, and the key consumed by `preventDefault`.
+    copyActiveSelection.mockReturnValue(false);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('c', { metaKey: true });
+
+      expect(copyActiveSelection).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to copy selection');
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('logs nothing when Meta+C copies successfully', () => {
+    // The other half of the contract, and the one an unconditional `console.error` would pass
+    // while breaking every copy: a successful copy is not a failure.
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('c', { metaKey: true });
+
+      expect(copyActiveSelection).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('does not repeat the copy, or the failure report, while Meta+C is held', () => {
+    // The spam risk the new log could have introduced, pinned in the direction that matters:
+    // the registration does NOT set `repeat`, and `useKeyboardEvents.tsx:154` drops an
+    // `event.repeat` BEFORE `onKeyDown` runs, so a held key never reaches the copy and never
+    // reaches the log. Give this registration `repeat: true` and the refusal below would
+    // repeat at the OS auto-repeat rate, one line per repeat.
+    copyActiveSelection.mockReturnValue(false);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      expect(press('c', { metaKey: true })).toBe(true);
+
+      const repeats = Array.from({ length: 5 }, () => press('c', { metaKey: true, repeat: true }));
+
+      // The key is still claimed for the lifetime of the press, which is what the provider's
+      // own comment at `useKeyboardEvents.tsx:148-153` pins: a repeat cancels the browser
+      // default and then stops.
+      expect(repeats).toEqual([true, true, true, true, true]);
+      expect(copyActiveSelection).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it('duplicates through the clipboard with Meta+J', () => {

@@ -253,6 +253,30 @@ describe('EraserToolArea', () => {
   });
 
   it('coalesces a burst of pointer moves into exactly one live-layer write', () => {
+    // The faked clock does NOT confine itself to this test, and the reason it is
+    // confined is THIS REPO, not Vitest: `src/test/setup.ts:8` has an
+    // `afterEach(() => { cleanup(); vi.useRealTimers(); })`, so the clock is restored
+    // after every test in every file. The runner does not do this — measured both
+    // ways with a two-test probe, one faking the clock and the next reporting
+    // `vi.isFakeTimers()`: with that setup file `false` and both pass, and with a
+    // config that omits it `true` and the second test FAILS. Vitest's own teardown
+    // restores timers per FILE, not per test, and `isolate: true` is what closes the
+    // cross-file direction, not the pool choice.
+    //
+    // So there is deliberately no `afterEach(() => vi.useRealTimers())` here, and
+    // adding one would be noise that reads as a fix. But the guarantee is only as
+    // strong as its owner: if `src/test/setup.ts` loses that line, every test after
+    // this one in this file inherits a faked clock, and the next reader who trusts
+    // this comment instead of the setup file will be wrong. A grep for
+    // `useFakeTimers` without a matching `useRealTimers` in the same file reports
+    // this as a leak; it is not one, and an earlier pass of this file's own audit
+    // reported it as one and wrote a guard for it that could not have failed (it was
+    // reverted before it reached a commit, so nothing shipped).
+    //
+    // Ask with `vi.isFakeTimers()` rather than by waiting on a timer: under a faked
+    // clock a `setTimeout` does not merely run late, it does not run, and a test
+    // that waits for one fails as a TIMEOUT, which reads like a slow machine rather
+    // than like a leak.
     vi.useFakeTimers();
     const { toolArea } = renderArea();
 

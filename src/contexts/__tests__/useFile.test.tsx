@@ -93,7 +93,7 @@ describe('FileProvider PSD integration', () => {
     expect(loadDocumentFile).toHaveBeenCalledWith(file);
   });
 
-  it('resolves PSD encoding failure with null, no download, and alert', async () => {
+  it('resolves PSD encoding failure with null, no download, and a logged error', async () => {
     let finish!: (error: Error) => void;
     vi.mocked(savePsd).mockImplementation(
       () =>
@@ -125,11 +125,29 @@ describe('FileProvider PSD integration', () => {
     });
     expect(downloadBlob).not.toHaveBeenCalled();
     expect(resolved).toHaveBeenCalledWith(null);
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: Encoding failed');
     expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Encoding failed'));
   });
 
-  it('passes JPEG quality through to raster encoding and resolves the save details', async () => {
+  /**
+   * SKIPPED BY DECLARATION, not fixed. Intermittent: one failure in five full
+   * `src/contexts` runs, never in isolation and never on a re-run of the same
+   * tree, and the captured assertion is a Save File As dialog that was OPEN when
+   * it must not be — after the save had already resolved one line above it. See
+   * TEST-FLAKES.md \u00a77, which holds the capture and the narrowed hunt.
+   *
+   * The skip is a gate decision, not a waiver, on the same grounds as
+   * `e2e/viewport-drawing.spec.ts`: a default run is contracted to zero failures,
+   * and a test red one run in five makes unrelated merges look broken, which
+   * trains the response of ignoring the gate. Nothing about the defect is waived
+   * — \u00a77 stays open, the hunt stays un-done, and this is one line to remove.
+   *
+   * Do not "fix" it by loosening an assertion. The save resolves and the details
+   * are right; the only thing that failed is a dialog that should not have been
+   * open, so there is no bound here to widen.
+   *
+   * Operator decision, 2026-09-29.
+   */
+  it.skip('passes JPEG quality through to raster encoding and resolves the save details', async () => {
     vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
     render(
       <FileProvider>
@@ -157,7 +175,7 @@ describe('FileProvider PSD integration', () => {
     expect(screen.queryByText('Save File As...')).toBeNull();
   });
 
-  it('resolves PSD load failure with null, no document, and alert', async () => {
+  it('resolves PSD load failure with null, no document, and a logged error', async () => {
     vi.mocked(loadDocumentFile).mockRejectedValue(new Error('PSD load error'));
     const { container } = render(
       <FileProvider>
@@ -173,7 +191,6 @@ describe('FileProvider PSD integration', () => {
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
     expect(loadDocumentFile).toHaveBeenCalledWith(file);
-    expect(window.alert).toHaveBeenCalledWith('Failed to open file: PSD load error');
     expect(console.error).toHaveBeenCalledWith('Failed to load image:', new Error('PSD load error'));
   });
 
@@ -202,7 +219,6 @@ describe('FileProvider PSD integration', () => {
 describe('FileProvider openNewImageDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -352,7 +368,6 @@ describe('FileProvider openNewImageDialog', () => {
 describe('FileProvider save dialog edge cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -477,7 +492,7 @@ describe('FileProvider save dialog edge cases', () => {
     expect(saveImageToDisk).not.toHaveBeenCalled();
   });
 
-  it('handles save failure with alert and null resolution', async () => {
+  it('handles save failure with a logged error and null resolution', async () => {
     vi.mocked(saveImageToDisk).mockRejectedValue(new Error('Disk full'));
     render(
       <FileProvider>
@@ -496,11 +511,10 @@ describe('FileProvider save dialog edge cases', () => {
     });
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: Disk full');
     expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Disk full'));
   });
 
-  it('handles PSD save failure with alert and null resolution', async () => {
+  it('handles PSD save failure with a logged error and null resolution', async () => {
     let finish!: (error: Error) => void;
     vi.mocked(savePsd).mockImplementation(
       () =>
@@ -534,7 +548,7 @@ describe('FileProvider save dialog edge cases', () => {
     });
     expect(downloadBlob).not.toHaveBeenCalled();
     expect(resolved).toHaveBeenCalledWith(null);
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: PSD encoding failed');
+    expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('PSD encoding failed'));
   });
 
   it('handles multiple sequential saves', async () => {
@@ -597,7 +611,7 @@ describe('FileProvider openLoadImageDialog edge cases', () => {
     const file = new File(['test'], 'document.pdf');
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to open file: Unsupported format');
+    expect(console.error).toHaveBeenCalledWith('Failed to load image:', new Error('Unsupported format'));
   });
 
   it('resets file input value after selection', async () => {
@@ -695,7 +709,6 @@ describe('useFile outside its provider', () => {
 describe('FileProvider document frame and non-Error failures', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -754,7 +767,7 @@ describe('FileProvider document frame and non-Error failures', () => {
     expect(vi.mocked(savePsd).mock.calls[0]).toHaveLength(2);
   });
 
-  it('stringifies a non-Error load failure into the alert message', async () => {
+  it('logs a non-Error load failure verbatim and resolves null', async () => {
     vi.mocked(loadDocumentFile).mockRejectedValue('decoder exploded');
     const { container } = render(
       <FileProvider>
@@ -770,10 +783,12 @@ describe('FileProvider document frame and non-Error failures', () => {
     });
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to open file: decoder exploded');
+    // Nothing stringifies the reason any more, so the log is the only record of it and
+    // a raw rejection has to reach it unchanged.
+    expect(console.error).toHaveBeenCalledWith('Failed to load image:', 'decoder exploded');
   });
 
-  it('stringifies a non-Error save failure into the alert message', async () => {
+  it('logs a non-Error save failure verbatim and resolves null', async () => {
     vi.mocked(saveImageToDisk).mockRejectedValue('encoder exploded');
     render(
       <FileProvider>
@@ -794,7 +809,7 @@ describe('FileProvider document frame and non-Error failures', () => {
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: encoder exploded');
+    expect(console.error).toHaveBeenCalledWith('Failed to save image:', 'encoder exploded');
   });
 
   it('proposes a bare copy name when the requested file name is empty', async () => {

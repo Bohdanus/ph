@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -15,6 +15,60 @@ import {
   run,
   runOutputPaths,
 } from '../e2e-run.mjs';
+
+/**
+ * This file's budget, and the reason it is not Vitest's default 5s.
+ *
+ * These are not unit tests. Almost every one of them builds its state by
+ * `spawnSync`-ing `scripts/agent-board.mjs` and its assertions by reading the
+ * result back out of a child process, so what a test costs here is dominated by
+ * process spawns rather than by anything being computed. A cold board call is
+ * ~60-80ms from a shell, and this file's slowest test spends eight of them.
+ *
+ * The default is not merely tight for that, it is SMALLER THAN THE WORK ALREADY
+ * MEASURED IN THIS FILE. What a span costs here is process spawns, and spawns cost
+ * whatever the machine is doing, so the figure below is an OBSERVATION OF ONE RUN
+ * and not a property of the file: measured across three isolated runs on an
+ * otherwise idle machine, the slowest span here was 7.1s and the slowest in
+ * `agent-board.test.mjs` was 4.5s; measured again on a busier day with 93
+ * worktrees live, the same two were 4.9s and 2.9s. Nothing about the tests
+ * changed. So treat any single number in this paragraph as "this low, sometimes
+ * higher", and read the HEADROOM rather than the figure — 30s against the worst
+ * span this file has been seen to take is between 6x and 4x, and that margin is
+ * the actual property, because it is what has to survive a loaded machine.
+ *
+ * A budget below a test's own measured cost is not a flake waiting to happen; it
+ * is a coin flip. And it loses on a busy machine rather than on a slow test: run
+ * at the pre-fix commit on a loaded machine, the failures were not the five
+ * recorded below but a DIFFERENT test in a sibling file, which is what a
+ * population of marginal tests looks like rather than five specific ones.
+ *
+ * What is deliberately NOT claimed here: any contention factor. A full 266-file
+ * run was measured against these same tests and came out FASTER per test than the
+ * three-file run (median 0.45x, max 1.1x, n=48), so "a full run is N times
+ * slower" is not a claim this suite can support, and a number of that shape would
+ * be a guess wearing a measurement's clothes. The headroom below is stated for
+ * what it is: room for a machine several times more loaded than the one these
+ * figures were taken on, and nothing more.
+ *
+ * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
+ * only decides how long a test may run before the harness reports it, and every
+ * assertion below is unchanged. Its cost is that a genuinely hung test now takes
+ * 30s to be reported instead of 5s, which is bounded and is the price of tests
+ * that are allowed to spawn processes.
+ *
+ * A per-test `it(name, fn, timeout)` argument still wins over this, which is how
+ * the two tests in `worktree-inventory.test.mjs` that read git in every worktree
+ * keep their declared `60_000`. This file declares none of its own, so 30s is
+ * what every test in it gets; a test that ever needs longer should say so on
+ * itself rather than by raising this.
+ *
+ * The budget is scoped to THIS file, which was checked rather than assumed: a 7s
+ * body in a sibling file with no declaration still died at the 5s default while
+ * running in the same run as this one. So raising it here buys nothing outside
+ * here, and cannot be quietly masking a slow test somewhere else.
+ */
+vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * The sentinel is exported by the module rather than repeated here, so a rename in

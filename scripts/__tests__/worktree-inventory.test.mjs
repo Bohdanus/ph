@@ -21,7 +21,7 @@
  * `node:sqlite` is only exercised where a real temporary database is cheap.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
@@ -36,6 +36,50 @@ import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
+
+/**
+ * This file's budget, and the reason it is not Vitest's default 5s.
+ *
+ * The "against a real repository" blocks build a throwaway git repository per
+ * test and then run real `git` against it, so a test here is bounded by process
+ * spawns and git's own startup rather than by anything being computed. The
+ * `curated table` block is worse: it reads git in every worktree in the
+ * repository, so its cost is a function of how many worktrees exist on the
+ * machine — 70-odd when these numbers were first taken, 93 when they were last
+ * checked, and it grows with the fleet.
+ *
+ * The default is not merely tight for that, it is at or above the measured cost
+ * of this file's own slowest test. Spawns and git cost whatever the machine is
+ * doing, so the figure is an OBSERVATION OF ONE RUN and not a property of the
+ * file: 3.0s across three isolated runs on an idle machine, and 2.9s for the same
+ * test when the file was measured again on a busier day with 93 worktrees live.
+ * `reports whether the commit list was cut off at the cap` has been reported
+ * failing at the 5s default with no code change, and at the pre-fix commit on a
+ * loaded machine the failure that appeared instead was a DIFFERENT test in this
+ * file — which is what a population of marginal tests looks like, not five
+ * specific ones.
+ *
+ * What is deliberately NOT claimed here: any contention factor. A full 266-file
+ * run was measured against these same tests and came out FASTER per test than the
+ * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
+ * not a thing this suite can currently support. The headroom below is stated for
+ * what it is: 15s against the worst span this file has been seen to take is 5x,
+ * and is deliberately tighter than the two sibling suites because they spawn a CLI
+ * per assertion and this one does not.
+ *
+ * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
+ * only decides how long a test may run before the harness reports it, and no
+ * assertion below is changed by it.
+ *
+ * A per-test `it(name, fn, timeout)` argument still wins over this. The two tests
+ * that read every worktree keep their declared `60_000`, which is what they
+ * actually need: `gives every non-primary worktree a curated entry` measured
+ * 21.5s on a machine with 70 worktrees and 12.3s on a busier day with 93, and
+ * both of those are a function of how many worktrees exist rather than of this
+ * test. 60s is the one budget here that is sized against a cost that GROWS, so
+ * re-measure it if the worktree count changes by an order of magnitude.
+ */
+vi.setConfig({ testTimeout: 15_000 });
 
 const NOW = 1_790_000_000_000;
 
@@ -2320,6 +2364,12 @@ describe('the generated file is already formatted', () => {
     // --fail-on-changes` refuses and un-stages, and the only ways out are a
     // .prettierignore or dropping .json from the linted set — both of which
     // weaken a gate to accommodate a generator.
+    //
+    // That gate no longer reaches this file: `lint:check` runs over
+    // `git ls-files`, and the inventory is untracked. This test is now the only
+    // thing keeping the output formatted, which is worth more than the check it
+    // replaced — an unformatted generated file is still read by a human deciding
+    // whether to delete a worktree.
     const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
     const inv = buildInventory({
       worktrees: [wt({ name: 'a', issues: [] })],
@@ -2336,5 +2386,74 @@ describe('the generated file is already formatted', () => {
     expect(formatted.endsWith('\n')).toBe(true);
     // Still valid JSON with every field intact after the reflow.
     expect(JSON.parse(formatted).worktrees).toHaveLength(1);
+  });
+});
+
+describe('the generated inventory is untracked, and stays that way', () => {
+  const INVENTORY = 'WORKTREES.json';
+
+  // The worktree root, resolved rather than assumed. This suite is run from a task
+  // worktree as often as from the root checkout, and `check-ignore` resolves its
+  // argument against the cwd: from `scripts/`, the probe path would become
+  // `scripts/WORKTREES.json`, the anchored `/WORKTREES.json` would not match it,
+  // and the assertion below would report a hard rule as broken while the
+  // `ls-files` one stopped describing a file that exists anywhere.
+  //
+  // Resolving it with git also removes a vacuity path. `gitSucceeds` swallows
+  // every throw, so a missing or broken git leaves an assertion that expects
+  // `false` passing without having asked anything; this call throws instead, and
+  // takes all three cases down with it rather than two.
+  const REPO = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+
+  // One fact per `it`, and one gate per fact. `check-ignore` and `ls-files` can
+  // both be satisfied by a file that is tracked AND ignored, so asserting only
+  // the first would let a re-added inventory pass as a rule that still holds.
+  // The two injections that prove which gate is which are recorded with the
+  // change that introduced them.
+  const gitSucceeds = (args) => {
+    try {
+      execFileSync('git', args, { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it('is not tracked, so a regeneration cannot become a commit', () => {
+    // Injection: `git add -f WORKTREES.json` turns this red and leaves the
+    // test below green — this is the gate that decides "untracked", and the
+    // other is not a redundant restatement of it.
+    expect(gitSucceeds(['ls-files', '--error-unmatch', INVENTORY])).toBe(false);
+  });
+
+  it('is ignored by a rule that is still in .gitignore', () => {
+    // `--no-index` or this assertion is worthless: without it git declines to
+    // report a rule for a path the index still tracks, so the same
+    // `git add -f` that reds the test above would decide this one too, and
+    // deleting the .gitignore line would be invisible here.
+    // Injection: removing the `/WORKTREES.json` line from .gitignore turns this
+    // red and leaves the test above green.
+    //
+    // This must not depend on the file existing. A fresh checkout has no
+    // inventory until something generates one, and `check-ignore` reads
+    // patterns rather than the filesystem, so the assertion holds there too.
+    expect(gitSucceeds(['check-ignore', '--no-index', INVENTORY])).toBe(true);
+  });
+
+  it('reaches neither the generator nor the curated table', () => {
+    // The guard is that the rule cannot be broadened into the tracked source it
+    // sits beside. `curated.mjs` is hand-written source that the suite imports,
+    // and losing it to an ignore rule would delete the findings that stop a
+    // worktree being pruned — so `scripts/**` in `.gitignore` is the injection
+    // that reds this alone, with the two above green.
+    //
+    // What this does NOT establish, and an earlier version of this comment
+    // claimed it did: that the leading slash stops the rule reaching a worktree's
+    // own `WORKTREES.json`. `.kilo` already ignores those, so that path is green
+    // with or without the anchor — the anchor has no observable behaviour in this
+    // repository, and there is nothing here to test.
+    for (const source of ['scripts/worktree-inventory.mjs', 'scripts/lib/worktree-inventory/curated.mjs']) {
+      expect(gitSucceeds(['check-ignore', '--no-index', source]), `${source} must stay tracked`).toBe(false);
+    }
   });
 });

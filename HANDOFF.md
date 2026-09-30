@@ -809,9 +809,9 @@ capability loss rather than a latent trap:
 | TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:24`                                   |
 
 So a document between 80 MP and 100 MP **cannot be saved as AVIF at all** — `saveImageToDisk` throws
-with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard it saved
-and then failed to reopen, which is the worse failure, so the change is right; the cost is real and
-the number was not chosen by whoever added the guard.
+with the budget message, and `useFile.tsx:118-136` catches it, logs it and resolves `null`. Before the
+guard it saved and then failed to reopen, which is the worse failure, so the change is right; the cost
+is real and the number was not chosen by whoever added the guard.
 
 **Decided 2026-09-28: the 80 MP ceiling stands.** The operator was asked to choose between raising
 `MAX_AVIF_PIXELS` to TIFF's `MAX_CREATABLE_DOCUMENT_PIXELS` derivation and accepting the export loss,
@@ -2919,3 +2919,173 @@ at `:656`). The `layer-presentation` predicate was the third part, and it has NO
 absent from `main` today, and `fix/unit-tests` remains 2 commits ahead with 13 conflicting files,
 `StoreContext.tsx` and `useLayer.ts` among them. Treat the branch as at-risk salvage, not as a clean
 source, and re-derive from this entry rather than from its copy.
+
+## 96. `docs/LAYERS-PANEL.md` §20 item 6 undercounts a filename defect, by line numbers that no longer point at it
+
+`docs/LAYERS-PANEL.md:825-835` reports the hyphen form `e2e/OPEN-PROBLEMS.md` is "written in
+**only two files, five lines**: `AGENTS.md:15`, `:165`, `:172` and `TEST-FLAKES.md:391`, `:657`",
+and argues from `AGENTS.md:170-173` that the typo "has no home among the three routed files". The
+census is four, the cited lines have drifted, and the "no home" premise is false.
+
+**Verified against `c23d036e` by re-deriving, tree-wide — not by reading the cited lines.** The
+ref is pinned on purpose: `main` moves, and an auditor re-running a bare `main` gets lines that
+have drifted. Once this entry lands, re-run excluding it — it quotes the occurrences, and
+`git grep <ref> -- .` prefixes every line with the ref, so the filter has to match the prefix:
+
+```
+$ git grep -n 'e2e/OPEN-PROBLEMS' c23d036e -- . | grep -vE '^c23d036e:HANDOFF\.md:29'
+c23d036e:AGENTS.md:15:| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect |
+c23d036e:TEST-FLAKES.md:712:(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+c23d036e:docs/LAYERS-PANEL.md:825:6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch — a _docs_ defect with no routed home.** The file
+c23d036e:e2e/viewport-drawing.spec.ts:228:   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
+$ git ls-files e2e/ | grep -i open
+e2e/OPEN_PROBLEMS.md
+$ git show c23d036e:AGENTS.md | sed -n '165p;170p;171p;173p'
+5. **Reviewed by someone else** — a code review subagent on the prompt in
+
+- **A green gate is the floor, not the review** — `gate:commit`/`gate:push` are
+- **Only step 6 writes to `main`** (plus an operator-requested hotfix on `main`).
+```
+
+**Four lines in four files, and most of the citations the source names are not filename references
+at all.** Of the five it enumerates, only `AGENTS.md:15` is one: `AGENTS.md:165` and `:172` are
+Definition-of-Done steps, and `TEST-FLAKES.md:391` and `:657` are a port note and a
+marker-bounding-box note. `HANDOFF.md:593` and `:2471`, cited in the same breath as "uses the
+correct underscore form", are unrelated prose, and `:2471` is blank. The `AGENTS.md:170-173`
+premise is the same drift: the routing rule is at the two `AGENTS.md` lines that already use the
+**underscore** form, so "a cross-scope entry has no home" is argued from a line saying the
+opposite.
+
+**The defect is live on all four, and the two prose ones route differently from the Playwright
+one.** Every one of the four names a path that does not resolve on any platform, case-insensitive
+volumes included. `AGENTS.md:15` and `TEST-FLAKES.md:712` are prose, so this entry is their routed
+home. `e2e/viewport-drawing.spec.ts:228` is a comment inside a Playwright spec, and `AGENTS.md`'s
+own route-by-scope rule sends that one to `e2e/OPEN_PROBLEMS.md` — which is precisely the
+cross-scope gap the source diagnosed, and it is why a fix confined to the two prose files would
+leave half of it standing.
+
+**Fix.** Correct all four to the underscore form, filing the `e2e/viewport-drawing.spec.ts:228`
+occurrence in `e2e/OPEN_PROBLEMS.md` rather than here. Then delete or rewrite §20 item 6 so it
+asserts neither a five-line census nor the `AGENTS.md:170-173` premise. Re-derive the remaining
+line numbers from the prose at the time of the fix: `AGENTS.md` is the file every agent reads
+first, so a citation into it silently rots, and its own rule says as much.
+
+**Not caused by the `docs/subagent-provider` model-policy change**, which edited the Model policy
+section and, with `main` merged in, left the two routing lines at `AGENTS.md:205` and `:212` — the
+numbers above are re-derived against that file. Re-derive again when fixing; do not assume they
+survive another edit to `AGENTS.md`.
+
+---
+
+## 97. The fit charges a section separator it never measured, and the grid overflows its own budget at 703–709px
+
+**Problem.** `readRowMetrics` derives `sectionBreakHeight` from the **previously rendered** DOM, and
+returns `0` when that layout has only one non-empty section
+(`src/components/SidebarLeft/toolbar-fit-store.ts:109-121` — the `between > 0` guard needs a second
+non-empty `<ul>` and finds none). With `sectionBreakHeight` at 0 the planner accepts one row too many
+(`toolbar-overflow.ts:122-149`), that extra row is the first of `toolbarMap` section 1, and the
+section separator is then rendered for real. The plan is short by exactly the separator, which is
+`mt-1.5 border-t pt-1.5` = 13px over the 6px row gap = **7px**.
+
+**Measured in Chrome**, `1280` wide, one page resized 1px at a time, replicating
+`e2e/toolbar-fit.spec.ts`'s own `measure()` verbatim:
+
+```
+H=709 slot=437 budget=349.6 content=351 over=+1.4 tiles=7
+H=707 slot=435 budget=348.0 content=351 over=+3.0 tiles=7
+H=705 slot=433 budget=346.4 content=351 over=+4.6 tiles=7
+H=703 slot=431 budget=344.8 content=351 over=+6.2 tiles=7
+```
+
+Nothing else in `H=1000..380` exceeds the budget, and the degenerate band is never entered.
+
+**The app's own assertion already fails here; the sweep just does not look.** `e2e/toolbar-fit.spec.ts:165`
+is `expect(m.over).toBeLessThanOrEqual(0)`, and the `HEIGHTS` list at `:43` samples twelve heights,
+none of which lands in 703–709. This is the same class the file was written for — its own header
+(`:10-19`) records the previous separator bug as the 16-row rail modelled at 794px and measured
+822px — and the 20% headroom hid it a second time. The non-vacuity check at `:179`,
+`expect(any).toContain('sep=7')`, cannot catch it either: `any` is `rows.find('H=1400')` (`:173`),
+the one height where nothing collapses and every section is non-empty, so the measurement cannot
+read 0 there.
+
+**The documented invariant is false, and the test that claims it cannot see it.**
+`toolbar-fit-store.ts:21-25` states the plan "is a function of the slot and of nothing else".
+`SidebarLeft.overflow.test.tsx:329` pins exactly that. But the plan is a function of the slot **and
+of the previous render**: at `H=705` one run rendered 6 tiles (`content=294`) and another 7
+(`content=351`), same slot height, 433. jsdom cannot observe it — `getBoundingClientRect` is 0 for
+every box and `src/test/setup.ts:28-34` installs a no-op `ResizeObserver`, so the feedback loop is
+stubbed out and the measurement reads "unmeasurable", which `planToolbarOverflow` resolves to
+"show everything" (`toolbar-overflow.ts:116`).
+
+**Confirmed by re-deriving the planner, not by reading it.** At the violating heights the render
+reports `nonEmptySections=2/5` and 7 tiles, which is the plan computed with `sectionBreakHeight=0`
+(7 tiles); the plan computed with `sectionBreakHeight=7` gives 6. At the non-violating neighbours
+the render has `nonEmptySections=1/5` and 6 tiles, matching the `sep=7` plan. The planner therefore
+committed to a row count using a separator it could not see, and the DOM then charged it.
+
+**No user-visible harm, and that is why it is an entry and not a hotfix.** At the worst height the
+grid is 351px in a 433px slot, so nothing is clipped, the rail does not scroll, and every collapsed
+tool is still reachable under the three-dots tile. What is broken is the stated contract and the
+claim that the fit is settled.
+
+**Fix.** Stop deriving the separator from a layout that may not contain one. Either carry it forward
+once measured — the rail knows statically, from `ToolbarSlot.sectionIndex`, which rows open a new
+section, so the separator is needed exactly where the plan says it is and the measurement is only
+missing when the previous render had nothing to measure — or keep a section `<ul>` non-empty so the
+measurement is always available. Measuring it from computed style off a section list is the same fix
+as for `rowGap` and `tileHeight` and needs no new constant.
+
+**Test that fails without the fix.** Add `705` to `HEIGHTS` in `e2e/toolbar-fit.spec.ts:43`; `:165`
+then fails with `the grid overflowed its own budget`. A jsdom test cannot express this at all —
+it is the same reason that file exists, and the reason the rail's own `overflow` unit suite passes
+green over the defect.
+
+**Files.** `src/components/SidebarLeft/toolbar-fit-store.ts:109-121`,
+`src/components/SidebarLeft/toolbar-overflow.ts:122-149`,
+`src/components/SidebarLeft/SidebarLeft.tsx:869-898` (where the three-dots tile is placed in the
+section of the last visible row), `e2e/toolbar-fit.spec.ts:43` and `:165` and `:173-179`.
+
+## 98. The console log is the app's whole error channel, by decision
+
+**Decided 2026-09-30: the app gets no user-facing error surface.** Swallowing a failure is acceptable
+provided the console reports it. Every `alert()` was removed in favour of `console.error`
+(`155ba7b8`), and nothing replaced them: `git grep -iE "toast|snackbar|notif"` over production `src/`
+returns nothing, and `ErrorBoundary` is mounted at only two places (`src/App.tsx:92,96`), catches
+React render throws only, and covers neither `Menu`, `MobileMenuDrawer` nor `MobileHeader`.
+**Do not "fix" a silent failure by adding a dialog or a banner** without asking again — the reasoning
+that removed the alerts applies to whatever would replace them.
+
+**The accepted cost, which is real and deliberate.** A failed file open, save, export or selection
+copy is invisible on screen. Export is the sharpest case: `handleImageSave`'s `finally` closes the
+save dialog unconditionally (`src/contexts/useFile.tsx:133-136`), so a failure closes it exactly as a
+success does, and on desktop the screen is then byte-identical to success — `fileName` is rendered
+only at `src/components/Mobile/MobileMenuDrawer.tsx:110` and `src/components/Mobile/MobileHeader.tsx:107`,
+and `hasUnsavedChanges` is rendered nowhere, appearing in components only inside the three `confirm()`
+guards. This is reachable by decision, not by accident: entry 45 keeps the 80 MP AVIF ceiling, so an
+80–100 MP document is _supposed_ to fail to export.
+
+No data is lost. `useApp.handleImageSave` (`src/hooks/useApp.ts:67-71`) is the only writer of
+`hasUnsavedChanges: false` and of the rename, and it is guarded by `if (data)` at every call site, so
+a failed export leaves the document dirty and intact rather than half-saved.
+
+**What the decision required.** A report is only as good as the channel, so the console gap had to be
+closed for it to hold. `copyActiveSelection` returns `false` without throwing for every null-snapshot
+case (`src/contexts/useSelectionClipboard.ts:41-62`), and seven call sites used to discard that boolean
+in silence — `FreehandLasso.tsx`, `FeatherMagneticLasso.tsx`, `MagicWand.tsx`, `QuickSelection.tsx`,
+`EllipticalSelection.tsx`, `RectangularSelection.tsx` and the `AppKeyboardShortcuts.tsx` copy shortcut.
+All seven now log it, so no failure path is silent. The file and export sites also pass the caught
+value as a second argument instead of stringifying it, so a non-`Error` rejection reaches the log as
+its reason rather than as `[object Object]`.
+
+**What is not covered.** Each report is pinned by a unit test asserting the exact `console.error`
+call, including the non-`Error` cases. There is no e2e coverage: no Playwright spec drives a failed
+open, save, export or copy, and none asserts on `console.error` or `pageerror`. That follows from the
+decision rather than overlooking it, but it does mean the e2e suite cannot distinguish a logged
+failure from a silent one.
+
+**Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
+`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
+`src/components/DesktopHeader/DesktopHeader.tsx` (File > Save handler),
+`src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
+`src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
+`src/util/selection.ts:430-442`.

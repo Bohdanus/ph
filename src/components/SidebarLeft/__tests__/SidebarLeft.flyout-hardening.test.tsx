@@ -373,6 +373,41 @@ describe('SidebarLeft flyout hardening', () => {
    * nothing tall and never binds the clamp. The real geometry is `e2e/sidebar-flyout.spec.ts`;
    * the arithmetic is the subject of `AnchoredOverlay.test.tsx`, which stubs the size.
    */
+  it('keeps the menu at Photoshop density: a row is a 16px icon and py-1, not a rail tile', () => {
+    render(<SidebarLeft />);
+    stubTileBoxes();
+
+    openFlyout(toolbarButtonByName('freehand-lasso'));
+    const menu = screen.getByRole('menu');
+
+    // jsdom has no layout engine, so a row cannot be measured here — only its inputs can be.
+    // That is enough, because the row's height is the icon plus `py-*` and NOTHING else, so
+    // these four classes fully determine it.
+    //
+    // The icon is the load-bearing one and the reason the row cannot be shrunk by padding
+    // alone: `IconShell` is fixed at `h-7 w-7` because a RAIL tile is 44px and its icon has
+    // to fill it, so a menu that kept the 28px icon and only tightened `py-*` would still be
+    // a 36px row. Assert the override, not the intent.
+    const row = screen.getByRole('menuitemradio', { name: 'Lasso Tool' });
+    expect(row).toHaveClass('py-1', 'px-2', 'text-[11px]', '[&_svg]:!h-4', '[&_svg]:!w-4');
+    // And `py-1.5` alongside `py-1` would be a silent regression, because the later
+    // declaration wins and nothing else in the file notices a 4px row getting taller.
+    expect(row).not.toHaveClass('py-1.5', 'text-xs');
+
+    // The menu's own padding, and the minimum width that stops a short menu being a sliver.
+    // `min-w-36` rather than nothing: a two-item menu's natural width is not enough to hold a
+    // label without wrapping, and the menu never wraps (`whitespace-nowrap`).
+    expect(menu).toHaveClass('p-0.5', 'min-w-36');
+    expect(menu).not.toHaveClass('p-1.5', 'min-w-48');
+
+    // What this buys, stated so the next reader can tell a measurement from a design value.
+    // Measured in Chrome at a 1280x900 window: 25px rows, an 80px three-item menu, 2px of
+    // menu padding, an 11px label, and the 8px gap to the rail unchanged. It was 40px rows
+    // and a 134px menu. The 24px row and the 16px icon are the DESIGN — the row is the icon
+    // plus `py-1` — and no document here records Photoshop's own row height, so these are the
+    // operator's target rendered, not a figure measured from Adobe.
+  });
+
   it('places the flyout on the vertical axis of the tile it was opened from, not the rail top', () => {
     render(<SidebarLeft />);
     const boxOf = stubTileBoxes();

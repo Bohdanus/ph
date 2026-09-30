@@ -33,7 +33,7 @@ next session after a bug that does not exist. Every commit cited is real and in 
 
 Not for: a fast-forward, a rebase of a clean branch, a mechanical `git rerere` replay (which this
 repository does not use — [Phase 0](#phase-0--decide-the-tool)), or the ordinary
-`main`-into-branch merge that only conflicts in `WORKTREES.json`.
+`main`-into-branch merge that only conflicts in generated output.
 
 ## The shape of the task
 
@@ -73,8 +73,10 @@ These are the ones that change outcomes. Each is expanded where it is used.
 4. **Re-derive a citation from the sentence, never shift the number.** Every merge moves line
    numbers in every file it touches, and a `grep` sweep does not catch it — the text at the stale
    line still reads plausibly. → [Phase 7](#74-the-citation-sweep)
-5. **A generated file is regenerated, never hand-merged.** `WORKTREES.json` is the standing case;
-   a hand-merge preserves a document no run of the generator would ever produce.
+5. **A generated file is regenerated, never hand-merged.** This repository's standing case,
+   `WORKTREES.json`, is now untracked: the rule was followed far enough to delete the conflict
+   instead of documenting it. For any generated file that is still tracked, a hand-merge preserves
+   a document no run of the generator would ever produce.
 6. **Never resolve in `main`. Never `git stash`.** Both are `AGENTS.md`, and both are stated here
    only because the second one has a failure mode that is silent.
 7. **An agent may propose a resolution. It may never be the judge of one.** On a benchmark of real
@@ -530,7 +532,7 @@ conflict at all, and that is the point of it.
 | **6 — a helper whose signature diverged**               | `leftOf(): number` on one side, `boxOf(): {left,top}` on the other, and callers diverged too  | One shape, and its callers move with it                                                       |
 | **7 — the same import, added twice**                    | Both sides added the identical import line                                                    | Union. The trivial case — and see the warning in class 11                                     |
 | **8 — a document was split on `main`**                  | `AGENTS.md` became a thin root plus three `docs/` files while the branch edited the long form | Take `main`'s split and **port** the edit to where the content now lives                      |
-| **9 — a generated file**                                | `WORKTREES.json`, any snapshot, any lockfile                                                  | **Regenerate. Never hand-merge.**                                                             |
+| **9 — a generated file**                                | any snapshot, any lockfile                                                                    | **Regenerate. Never hand-merge.**                                                             |
 | **10 — a structural union git found by itself**         | Both sides' entries landed in one table and git reported no conflict                          | Still run the sweeps — see class 11 — then leave it alone                                     |
 | **11 — no conflict, and something is still wrong**      | git reported success, and a duplicate key or a whole entry vanished                           | Only the [Phase 7](#phase-7--prove-the-merge-lost-nothing) sweeps find this                   |
 
@@ -744,6 +746,10 @@ Four merges in this repository say this with these words — `ce59ba0d`, `9e190f
 and `08bd4d16` — and Appendix A lists them. It is not a judgement call. A hand-merged generated
 file preserves a document no run of the generator would ever produce, and the next `--check` fails
 on it.
+
+`WORKTREES.json` is the historical instance of that rule and no longer a live one: it stopped
+being committed, and an untracked file cannot reach a merge conflict at all. Read it as the
+worked example of a rule that still binds every generated file you do track.
 
 ### 5. A third design, when neither side is right
 
@@ -1449,9 +1455,11 @@ where the check was not actually run** — the same honesty convention the tool-
     campaign that "passes" and measured nothing. Defence: `npm run test:e2e`, the locked wrapper,
     never `npm run test:e2e:raw` from a worktree.
 
-12. **`WORKTREES.json` in conflict is regenerated, never resolved.** Symptom: a 7,000-line
+12. **A generated file in conflict is regenerated, never resolved.** Symptom: a 7,000-line
     hand-merge that no generator would produce and `--check` immediately rejects. Defence:
-    `node scripts/worktree-inventory.mjs`.
+    `node scripts/worktree-inventory.mjs`. This repository's own instance of the trap is now
+    unreachable, because `WORKTREES.json` is untracked, so the rule is stated for the generated
+    files that are still tracked.
 
 13. **An interrupted merge can leave `AUTO_MERGE` with no `MERGE_HEAD`.** Symptom: `git commit`
     lands a single-parent commit that reads as a resolution. Defence: `git rev-parse -q --verify

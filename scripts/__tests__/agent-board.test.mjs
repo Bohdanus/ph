@@ -19,10 +19,48 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Board, BoardError, IDLE_LIVE_MS, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
+
+/**
+ * This file's budget, and the reason it is not Vitest's default 5s.
+ *
+ * The "the command line" block below drives the real CLI, so each of its tests
+ * costs one or more `execFileSync`/`spawn` of a Node process that loads
+ * `node:sqlite`, and the ones that assert a ranking file a handful of issues
+ * first. A cold CLI call is ~60-80ms from a shell; what a test costs here is
+ * spawn count, not computation.
+ *
+ * The default is not merely tight for that, it is at the measured cost of this
+ * file's own slowest test. What a span costs here is process spawns, and spawns
+ * cost whatever the machine is doing, so the figure is an OBSERVATION OF ONE RUN
+ * and not a property of the file: 4.5s across three isolated runs on an idle
+ * machine, and 2.9s when the same file was measured again on a busier day with 93
+ * worktrees live. Nothing about the tests changed. Read the HEADROOM rather than
+ * the figure — 20s against the worst span this file has been seen to take is 4x
+ * to 7x — because surviving a loaded machine is the property that has to hold. A
+ * budget at the value of the work it is timing has no such property, and
+ * `npm run test` has already reported a test from this block failing with no code
+ * change.
+ *
+ * What is deliberately NOT claimed here: any contention factor. A full 266-file
+ * run was measured against these same tests and came out FASTER per test than the
+ * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
+ * not a thing this suite can currently support. The headroom below is stated for
+ * what it is: room for a machine several times more loaded than the one these
+ * figures were taken on.
+ *
+ * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
+ * only decides how long a test may run before the harness reports it, and no
+ * assertion below is changed by it. Its cost is that a genuinely hung test takes
+ * 20s to be reported instead of 5s.
+ *
+ * A per-test `it(name, fn, timeout)` argument still wins over this, and the six
+ * tests below that already declare one keep it.
+ */
+vi.setConfig({ testTimeout: 20_000 });
 
 /**
  * The CLI as a filesystem path, for spawning.

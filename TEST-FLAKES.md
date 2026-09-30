@@ -179,7 +179,25 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Four recorded full-run failures across three checkouts, and never once in isolation.**
+**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision).
+Five recorded full-run failures across four checkouts, never once in isolation.
+Not fixed. Not a known-failing test; it is intermittent.**
+
+**The skip is a gate decision, not a fix, and it is not a waiver.**
+`src/contexts/__tests__/useFile.test.tsx` carries an `it.skip` on the one test,
+with the reason in the comment above it. It was skipped on §12's grounds, which
+are the same grounds and are not restated here: a default run is contracted to
+zero failures, a test red roughly one run in five makes unrelated merges look
+broken, and that trains the response of ignoring the gate — which costs more
+than this one test buys. A flaky assertion is also worse than no assertion: a
+green result from it carries no information, so it cannot justify a change
+either. **Nothing about the defect is waived; the hunt below is un-done and
+filed, and the skip is one line to remove.**
+
+**Do not "fix" this by loosening anything.** There is no bound here to widen, and
+that is what the capture below establishes: the save resolves, the details are
+correct, and the only thing that failed is a dialog that should not have been
+open. Relaxing the assertion would delete the only statement this test makes.
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -289,11 +307,16 @@ AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
       Tests  1 failed | 1956 passed | 3 expected fail (1960)
 ```
 
-`useFile.test.tsx:157` is the `expect(...).toBeNull()` half of a test whose
-first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)'… })`
-at `:156` — so the save **did** resolve and the pipeline **did** hand back its
+`useFile.test.tsx:176` is the `expect(...).toBeNull()` half of a test whose
+first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
+at `:175` — so the save **did** resolve and the pipeline **did** hand back its
 details. What failed is that a **Save File As dialog was open when it should not
-be**. Read against this entry's own findings that is a real narrowing: the
+be**. (The failure quoted above says `:157`, which is what the reporter printed;
+the file has since grown — the `it.skip` above it, and 19 more lines — so the
+assertion now lives at `:176` and its passing sibling at `:175`. Read the line
+number in the quote as history and these two as the current tree.)
+
+Read against this entry's own findings that is a real narrowing: the
 encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
 so `saveImageToDisk` is a bare `vi.fn()` and `encodeAvif` never runs), so the
 failure is not an encoding refusal and not `retireUnreferenced` — **it is
@@ -332,7 +355,10 @@ Observed 2026-09-28 on `main` at `cc7b647`, in a full headless `npx playwright t
 reporting `182 passed, 1 failed, 2 skipped` (185 total). The line numbers in that
 quote are `cc7b647`'s; on the branch that hardened the failure path the same
 anchors are the test declaration at `:487`, `drawSlab` at `:245` and the pixel
-wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work.
+wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work — though it has
+since moved: the quote's `:536` frame is now the blank line before
+`waitForCanvasPixels` (`:558`), whose timeout throw is at `:579`. So "unchanged by
+that work" was true of the commit range and is no longer true of the file.
 
 **That run was not a clean run, and that is the single most useful thing known
 about it.** It was produced by the e2e orchestrator with six other agents running
@@ -755,30 +781,127 @@ Whether the fix is the timeout or a fresh page per height is a call for whoever
 owns the spec. What is not a call: the failure is a budget, and diagnosing it as
 a layout or a product defect wastes a run.
 
-## 14. The lock and queue suites fail inside a full-suite run and never in isolation
+## 14. The lock and queue suites ran inside a budget smaller than their own work
 
-Observed four times across two branches: `scripts/__tests__/e2e-run.test.mjs` and
-`scripts/__tests__/agent-board.test.mjs` contribute failures to `npm test` while
-the fleet is active, and every one of them passes when the same file is run on
-its own (158 tests, twice). The named failures are the ones that depend on
-another agent's state rather than on a fixture: _reclaims the queue from a holder
-whose process is gone_, _never reclaims a holder that this wrapper did not
-create_, _is per run, so two runs on one branch are two holders_, and _gives back
-only its own locks when a claim fails_. A run where `npm run swarm -- doctor`
-says "every claim and lock is live" is a run where these are competing with real
-holders.
+Observed four times across two branches, and the standing guess about it was
+wrong. The entry used to say these tests fail inside a full-suite run because
+they depend on another agent's state rather than on a fixture, and it named the
+board database and the queue lock file as the shared reads that lose. Neither is
+involved: these suites already isolate the board by pointing `AGENT_BOARD_DIR` at
+a fresh temp directory, and the queue lock lives in that same directory.
 
-The distinction that matters when reading the report: a failing test in
-`agent-board.test.mjs` looks like a regression in the board's locking, and a
-failing test in `e2e-run.test.mjs` looks like a regression in the e2e queue. Both
-are the fleet talking to itself. Re-run the file alone before believing either.
+What they are is not unit tests. Each one builds its state by spawning the real
+board CLI, so its cost is process spawns and not computation — a cold board call
+is ~60-80ms from a shell, and the slowest test in `e2e-run.test.mjs` spends eight
+of them. Vitest's 5s default is therefore not a budget those files can live
+inside. Measured over three isolated runs, the slowest span per file was 7.1s,
+4.5s and 3.0s: a budget at or below the work it is timing, which is why `npm run
+test` reported five of them as `Test timed out in 5000ms` with no code change
+anywhere.
 
-NOT ESTABLISHED: which shared read or liveness probe is the one that loses. The
-obvious candidates — the board database and the queue lock file, both shared by
-every agent in the repository — are where to look, but no single mechanism was
-isolated, so this entry records the pattern and the reproduction, not a cause.
+The tempting explanation is a contention factor, and it is false here. A full
+266-file run was measured against the same tests and came out FASTER per test
+than the three-file run — median 0.45x, max 1.1x, n=48. So "a full run is N times
+more loaded" is not a claim this suite can support, and a number of that shape
+would be a guess wearing a measurement's clothes. Do not reinstate one.
 
-## 15. Files
+Each suite now declares its own budget next to its imports, sized from its own
+measured worst case, and `scripts/__tests__/suite-budgets.test.mjs` is the
+tripwire: it fails if a budget is reverted to the default, lowered below three
+times it, declared twice, or matched by a reader that no longer recognises the
+call it is looking for. It reads the suites' SOURCE, because the budget is a
+`vi.setConfig` side effect that nothing exports and an import can only see the
+default it is guarding. Two properties were checked rather than assumed and are
+worth keeping: the budget is scoped to the file that declares it (a 7s body in an
+undeclared sibling still died at the 5s default in the same run), and a per-test
+`it(name, fn, timeout)` argument still wins over the file budget, which is how the
+two tests that read git in every worktree keep their declared `60_000`.
+
+**Remaining verification:** the code review this change was merged without. Every
+review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
+was not an available substitute, and it was merged on the operator's decision with
+the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
+fixed two false claims in the new comments, but that is not the review.
+
+## 15. The worktree-inventory suite cannot pass in a checkout without this machine's worktrees
+
+**Problem.** `scripts/__tests__/worktree-inventory.test.mjs` reads the LIVE
+worktree list, and the case at `:1874` guards on it:
+`expect(live.length).toBeGreaterThan(1)`. A fresh clone has exactly one — its own
+main worktree — so the case fails with `expected 1 to be greater than 1`.
+`vitest.config.ts` leaves `include` at the Vitest default and excludes only
+`**/.kilo/**` and `e2e/**`, and `.github/workflows/ci.yml` runs
+`npm run test -- --coverage` after a plain `actions/checkout`, so the `ci` job's
+Test step runs this suite against a checkout that has never had a worktree.
+
+**Reproduced twice, deterministically.** A fresh `--no-single-branch` clone of
+`main` fails this suite with 1 of 123 red. A fresh clone of
+`chore/untrack-worktrees-json` fails with the same 1 of 126, and the three extra
+passing tests are that branch's untracked-inventory tripwire, which passes in a
+clone because the inventory is absent there by design. Neither is a regression of
+that branch: the same case is red on `main`.
+
+**Not claimed.** Whether the `ci` job on `main` is red right now was NOT observed
+— there is no `gh` on this machine to read run history — so this rests on two
+local clones, which have the shape `actions/checkout` produces. Two further cases
+in the same file shell out to `git rev-parse main`, so a clone made with
+`--branch <name>` fails those two as well; that is an artefact of that clone, not
+a defect, and it is why the reproduction must use `--no-single-branch`.
+
+**The call is the operator's.** Either the live-tree cases skip when the
+repository holds fewer than two worktrees, or this suite is excluded from the
+`ci` job. Skipping is only honest if the guard is meaningless without the
+worktrees — on a machine that has them it is the thing stopping a preservation
+branch from reading as disposable, so it must not be skipped there.
+
+## 16. The curated-worktree gate is red for as long as any agent's task runs
+
+**Problem.** `scripts/__tests__/worktree-inventory.test.mjs:1870` requires every
+worktree that HOLDS WORK — commits git cannot find on main, edits in no commit,
+or a branch that is not on main — to have an entry in
+`scripts/lib/worktree-inventory/curated.mjs`. A worktree holds work for the
+whole of every task, from the first edit to the merge. So on a machine running
+several agents this case is red from the moment the first one starts until the
+last one lands, and it is red in EVERY OTHER checkout in between, because the
+list it reads is the repository's, not the caller's. A red `npm run test` on
+`main` therefore reports what other processes on the machine are doing, not the
+tree it was run on — which is the one thing a local suite exists to answer.
+
+Observed on this machine, 93 worktrees, re-derived 2026-09-30 while landing
+`fix/swarm-lock-identity`: 9 held work with no entry (`cleanup-sweep`,
+`contexts-suite`, `e2e-harden-harness`, `infra-suite`, `prepush-gate`,
+`skill-handoff-stability`, `subagent-provider-pair`, `swarm-lease-truth`,
+`swarm-lock-identity`), while 84 were clean and correctly absent from the table.
+Eight of the nine belong to other agents' tasks, so the failure is not one
+agent's oversight; it is the rule's shape.
+
+This is the same failure the guard at `:1894-1911` was written to stop, one
+trigger narrower, and that comment records the first round: demanding a summary
+for a worktree holding NOTHING made "main go red within minutes of the derived
+guard landing", and the table was re-derived by hand four times in one session.
+Narrowing the rule from "exists" to "holds work" did not close the class — it
+moved the red from the first minute of a task to every minute of it.
+
+**Not claimed.** That `ci` is red, and that is not what this is about. A fresh
+`actions/checkout` has one worktree, so this case fails there for the opposite
+reason (`expected 1 to be greater than 1`); that half is section 15 and it is
+not re-argued here. What is new is the multi-agent local machine, where the
+guard has something to compare and compares it against live concurrent work.
+
+**The call is the operator's.** Two shapes that stop the result being a function
+of concurrent activity, and the choice between them is a policy one:
+
+- Narrow the trigger to worktrees whose branch is not a main commit AND whose
+  edits are not the only copy of anything — which is a set a FINISHED task
+  leaves behind, rather than one every in-flight task occupies.
+- Or move the obligation to session end. The cost is that a crashed session
+  leaves an uncurated worktree, which is the case the table exists to protect
+  against, so this trades a constant red for an occasional one.
+
+What cannot stand is the current shape, in which the first thing an agent does
+after its first edit is turn every other checkout's test suite red.
+
+## 17. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -804,6 +927,10 @@ isolated, so this entry records the pattern and the reproduction, not a cause.
   records the operator decision with its reason inline
 - `scripts/__tests__/e2e-run.test.mjs` — the only coverage of the lock, including a
   test that reads the board as another agent while a suite is "running"
+- `scripts/__tests__/suite-budgets.test.mjs` — the tripwire behind section 14, which
+  reads the three spawn-heavy suites' SOURCE for their declared `testTimeout` and
+  fails if one is reverted, lowered, or matched by a reader that no longer
+  recognises the call it is looking for
 - `playwright.config.ts` — the `webServer` block, the now opt-in
   `reuseExistingServer` condition behind section 10, and why an explicit `PLAYWRIGHT_PORT`
   disables server reuse
@@ -834,3 +961,9 @@ isolated, so this entry records the pattern and the reproduction, not a cause.
   suites section 14 saw fail only inside a full run, and pass alone
 - `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees
   whose shape has to be re-derived when they commit or land
+- `scripts/__tests__/worktree-inventory.test.mjs:1874` — the `live.length > 1` guard section 15
+  observed failing in a fresh clone, and the suite `ci` runs there without a worktree to find
+- `scripts/__tests__/worktree-inventory.test.mjs:1870` — the curated-entry case whose result is a
+  function of what other agents on this machine are doing, section 16
+- `scripts/lib/worktree-inventory/curated.mjs` — the table section 16 says is red to maintain while
+  a task is in flight, and the file every in-flight agent would have to edit to make it green
