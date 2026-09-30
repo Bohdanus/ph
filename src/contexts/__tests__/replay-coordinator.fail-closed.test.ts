@@ -49,6 +49,19 @@ afterEach(() => {
 });
 
 describe('replayTokensEqual revision identity', () => {
+  // `replayTokensEqual` is TEST-ONLY and deliberately so: it is the `sameToken`
+  // helper exported at the bottom of `replay-coordinator.ts`, and a repo-wide
+  // search finds no importer outside `src/contexts/__tests__/`. Production never
+  // calls it — `isCurrent` delegates the whole freshness question to the
+  // caller's `isStillValid` and defaults to `false` without one (pinned by
+  // "stays fail-closed when no validity callback is supplied at all" and "reports
+  // a pending request as not current without a validity callback" below).
+  //
+  // So these cases pin the ORACLE the fail-closed gate is measured with, not a
+  // rule the coordinator enforces: they are what make `isStillValid` at the top
+  // of this file mean "every component still matches the live document". If a
+  // coordinator ever grows its own identity check, these cases will not notice —
+  // the tests below that measure publication behaviour are the ones that would.
   it.each([
     { field: 'documentId' as const, patch: { documentId: 'document-2' } },
     { field: 'documentRevision' as const, patch: { documentRevision: 5 } },
@@ -136,6 +149,52 @@ describe('ReplayCoordinator fail-closed publication gate', () => {
     expect(outcome.state).toBe('stale');
     expect(publish).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledWith('materialized');
+  });
+
+  it("publishes the caller's own token object, not the snapshot it validated", async () => {
+    // The divergence `request` leaves in place, pinned before a production
+    // caller reads the boolean out of `publish`. `request` stores
+    // `{ ...input.token }` and hands THAT copy to `isCurrent`, but publishes with
+    // the original `input.token` reference — so the token the gate proved fresh
+    // and the token a publisher receives are the same values only for as long as
+    // the caller leaves its object alone. Mutating it during materialization is
+    // what a caller that reuses one token object across requests would do, and
+    // the outcome is: the gate still says fresh, the publisher gets the mutation.
+    const coordinator = new ReplayCoordinator<string>();
+    const materialization = deferred<string>();
+    // The request type declares the token `Readonly`; the cast is what makes this
+    // a real hazard rather than an impossible state, so the test has to be the
+    // one place that builds it.
+    const reusedToken = { ...baseToken } as ReplayRevisionToken;
+    const publishedToken: Array<ReplayRevisionToken> = [];
+    const validated: Array<ReplayRevisionToken> = [];
+
+    const request = coordinator.request({
+      token: reusedToken,
+      materialize: () => materialization.promise,
+      publish: (_result, token) => publishedToken.push(token),
+      isStillValid: (candidate) => {
+        validated.push(candidate);
+        return isStillValid(candidate);
+      },
+    });
+
+    // The caller reuses its token object and moves the cursor before the
+    // materialization lands.
+    (reusedToken as { cursor: number }).cursor = baseToken.cursor + 7;
+
+    materialization.resolve('materialized');
+    const outcome = await request;
+
+    // The gate validated the pre-mutation snapshot, and `liveDocument` is still
+    // the pre-mutation state, so the freshness check legitimately passes.
+    expect(validated).toHaveLength(2);
+    expect(validated.every((token) => token.cursor === baseToken.cursor)).toBe(true);
+    expect(outcome.state).toBe('published');
+    // ...and the publisher received the mutated object by reference.
+    expect(publishedToken).toHaveLength(1);
+    expect(publishedToken[0]).toBe(reusedToken);
+    expect(publishedToken[0].cursor).toBe(baseToken.cursor + 7);
   });
 });
 
@@ -333,5 +392,16 @@ describe('yieldToHost', () => {
     expect(seen).toHaveLength(1);
     expect(raf).toHaveBeenCalled();
     expect(outcome.state).toBe('published');
+  });
+
+  it('restores the host requestAnimationFrame after a test that stubbed one', () => {
+    // The tripwire for the file-level `afterEach`'s `vi.unstubAllGlobals()`. The
+    // two `yieldToHost` tests above `vi.stubGlobal` the global, and `vitest.config.ts`
+    // sets `isolate: true` per FILE without `unstubGlobals`, so a stub that
+    // survived would make every later test in this file — and every other
+    // `vi.fn` expectation on the host — silently run against a mock. A `vi.fn`
+    // reaches this assertion only if an earlier test's stub was never unstuck.
+    expect(vi.isMockFunction(globalThis.requestAnimationFrame)).toBe(false);
+    expect(typeof globalThis.requestAnimationFrame).toBe('function');
   });
 });

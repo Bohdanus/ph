@@ -938,7 +938,12 @@ describe('document asset scope disposal', () => {
     const first = await materializeDocument(replay, makeRequest(registry));
     const batched = Object.values(first.layers);
     expect(batched).toHaveLength(3);
-    for (const layer of batched) expect(closeSpy(layer.bitmap)).toBeDefined();
+    // The PRE-STATE, not the mock's own existence: `closeSpy` just hands back the
+    // `vi.fn` `makeBitmap` built, so a `toBeDefined()` here could only fail if the
+    // fixture broke. Without this, the "not closed after disposal" assertion below
+    // would also pass on a bitmap that had already been closed before the disposal
+    // did anything at all.
+    for (const layer of batched) expect(closeSpy(layer.bitmap)).not.toHaveBeenCalled();
 
     // A committed replacement disposes the document scope while the published
     // layers still hold their leases, so the bitmaps stay alive.
