@@ -362,41 +362,72 @@ nothing to salvage or redo. `active` is never reported abandoned: recency is
 checked before the shape of the last turn, because a live machine's most recent
 turn always ends in a tool call.
 
-### Who wrote here, and who is writing now
+### Who wrote here, who read it, and who is writing now
 
 `chats` is keyed on `session.directory` and is windowed, so it answers "who was
-in this directory recently" and nothing more. `writeHistory` answers a different
-question — **whose work is this** — and it is derived from the `part` table
-instead: every completed `edit`, `write` and `apply_patch` call, with the path it
-named, attributed to the worktree containing that path
-(`scripts/lib/worktree-inventory/writes.mjs`).
+in this directory recently" and nothing more. The call history answers different
+questions, and it is derived from the `part` table instead: the tool, the path it
+named, and the time it happened
+(`scripts/lib/worktree-inventory/writes.mjs`). It is in **three separate
+structures, because they have three different lifetimes**:
 
-Three properties are worth knowing before reading it:
+| Field          | Tools                                           | Permanent?                     |
+| -------------- | ----------------------------------------------- | ------------------------------ |
+| `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **yes** — this is who built it |
+| `readHistory`  | `read`, `grep`, `glob`, `semantic_search`       | **no** — releasable            |
+| `shellHistory` | `bash`, `background_process`                    | no — the size of the gap below |
 
-- **It is unwindowed.** There is no `--window-hours` bound, so a worktree built
-  and abandoned last week still answers. The two views are expected to disagree,
-  and the disagreement is the finding.
-- **A write is a stronger ownership claim than a message.** A chat that edited
-  files here twenty minutes ago owns the directory even if it has been quiet
-  since, so `writeHistory.derivedWriterChatIds` feeds the `in-use` verdict
-  alongside the session and board signals.
-- **A deleted worktree keeps its writers.** The registry loses a removed
-  worktree, but the `.kilo/worktrees/<name>/` segment survives in the recorded
-  path, so its history is reported under `goneWorktrees` at the top level rather
-  than being filed under the main checkout — which is what a prefix match does,
-  because the main checkout contains every worktree. It has to be a top-level
-  list: the per-worktree loop only visits worktrees that still exist.
+Reading a worktree is interest, not authorship: reviewers, explorers and
+debugging agents all read directories they never touched, and a reader list that
+only grows stops answering "who is looking at this" while still claiming to.
+Keeping readers out of `writeHistory` is what makes the release possible — a
+release that preserved writers by filtering a _merged_ list would have to remember
+which entries were which, forever. Two lists need no memory.
 
-`ownership` at the top of the document is the liveness answer, and it carries its
-own provenance. `liveWriterCount` of zero is ambiguous between "nobody is writing"
-and "every writer is dead", so `suppressed` and `reason` say which. Generate with
-`--no-live-writers "<why>"` to declare a hard state — an editor restart takes
-every chat with it, and the recency heuristics keep reporting an owner for half
-an hour afterwards. The override is auditable rather than silent: per worktree,
-`live` is what the file claims, `derivedLive` is what the signals said, and
-`writeHistory.derivedWriterChatIds` names the chats that were overridden. Writes
-that could not be placed are counted in `dataSources.writes.unmappedWriteCalls`
-rather than dropped, so a total never reads as complete when it is not.
+**Releasing readers is a watermark, not an event.** `--release-reads` (optionally
+`=<iso>`) sets `ownership.readsReleasedBefore`; a reader is emitted only when its
+last read is newer than that mark. The mark is read back from the existing file
+and combined with `Math.max`, so it only ever moves forward — a release cannot
+silently undo itself on the next regeneration, and it keeps no record of which
+entries it removed. Writers live in a different structure that nothing filters, so
+a release cannot reach them. On a run with `--release-reads=2026-09-29` on this
+repository: 407 readers became 139, and the 206 writers were unchanged.
+
+**A write is a stronger ownership claim than a message**, so
+`writeHistory.derivedChatIds` feeds the `in-use` verdict alongside the session and
+board signals. A chat that edited files here twenty minutes ago owns the
+directory even if it has been quiet since.
+
+**The write count is not complete, and the file says so.** A shell changes files
+with `sed -i`, a heredoc or `>`, and none of that appears in any tool's
+arguments — 61,795 commands ran with a workdir inside a worktree on this
+repository. `shellHistory.writeCapableCalls` is the size of that gap, not a count
+of writes. Likewise `readHistory.unlocatedCalls`: 4% of greps and 66% of globs
+record no path because they defaulted to the working directory, and they are
+counted rather than dropped. Calls that belong to no known worktree are counted
+**per kind** in `dataSources.calls`; a single mixed counter made the write total
+meaningless the moment a second kind existed. There is deliberately no `sessions`
+field — an earlier version reported every session on the machine, including the
+ones that never wrote, under a key that said `writes`.
+
+**A deleted worktree keeps its writers.** The registry loses a removed worktree,
+but the `.kilo/worktrees/<name>/` segment survives in the recorded path, so its
+history is reported under `goneWorktrees` at the top level rather than being filed
+under the main checkout — which is what a prefix match does, because the main
+checkout contains every worktree. It has to be a top-level list: the per-worktree
+loop only visits worktrees that still exist.
+
+**`ownership` at the top of the document is the liveness answer, and it carries
+its own provenance.** `liveWriterCount` of zero is ambiguous between "nobody is
+writing" and "every writer is dead", so `suppressed` and `reason` say which.
+Generate with `--no-live-writers "<why>"` to declare a hard state — an editor
+restart takes every chat with it, and the recency heuristics keep reporting an
+owner for half an hour afterwards. The override is auditable rather than silent:
+per worktree, `live` is the claim, `derivedLive` is what the signals said, and
+`derivedChatIds` names the chats that were overridden. **No `project_id` filter is
+applied when reading the session table**, deliberately: scoping to one project
+dropped 30 sessions that had made 774 completed writes into this checkout, and a
+writer that is absent is the one failure the structure cannot have.
 
 **`landed: true` is a curator's claim**, printed next to git's answer as
 `claimedLanded` against `mergedIntoMain`. A test re-derives it from

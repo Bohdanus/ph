@@ -170,11 +170,11 @@ export function classify(
   // signal the session-directory audit structurally cannot produce, because the
   // chat that wrote may never have had this worktree as its `directory` at all.
   //
-  // `derivedWriterChatIds`, not `writingNow`: the latter is the signal AFTER a
-  // declared hard state has been applied to it, so reading it here would make
-  // the override erase its own evidence and `derivedLive` would quietly agree
-  // with `live` about a signal nobody ever checked.
-  const writeLive = Boolean(writeHistory?.derivedWriterChatIds?.length);
+  // `derivedChatIds`, not `activeNow`: the latter is the signal AFTER a declared
+  // hard state has been applied to it, so reading it here would make the
+  // override erase its own evidence and `derivedLive` would quietly agree with
+  // `live` about a signal nobody ever checked.
+  const writeLive = Boolean(writeHistory?.derivedChatIds?.length);
   const derivedLive = chatLive || writeLive || Boolean(liveAgent);
 
   // A declared hard state outranks every heuristic above. Both of them are

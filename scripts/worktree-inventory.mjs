@@ -57,6 +57,12 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
                       and record WHY in the file. Overrides the recency
                       heuristics, which keep reporting an owner for half an hour
                       after the process that was writing is gone.
+  --release-reads     release every reader whose last read predates now. A
+                      WATERMARK, not an event: it is carried forward from the
+                      existing file and only ever moves forward, so a released
+                      reader is never emitted again. Writers are untouched.
+  --release-reads=<iso>
+                      the same, with an explicit cut-off.
   --quiet             summary lines only, no per-worktree table
   --help              this message`;
 
@@ -93,6 +99,11 @@ function parseArgs(argv) {
       const { value, next } = takeValue(argv, i, eq === -1 ? undefined : arg.slice(eq + 1));
       i = next;
       opts.noLiveWriters = value ?? 'declared by the operator: no chat is writing to any worktree right now';
+    } else if (arg === '--release-reads' || arg.startsWith('--release-reads=')) {
+      const eq = arg.indexOf('=');
+      const { value, next } = takeValue(argv, i, eq === -1 ? undefined : arg.slice(eq + 1));
+      i = next;
+      opts.releaseReads = value ?? 'now';
     } else throw new Error(`unknown argument: ${arg}`);
   }
   if (!Number.isFinite(opts.windowHours) || opts.windowHours <= 0) {
@@ -148,7 +159,7 @@ function printSummary(inventory, quiet) {
       const w = byName.get(r);
       process.stdout.write(
         `  ${r} looked live at ${own.asOf} and is now reported as unowned` +
-          `${w?.writeHistory?.lastWriterChatId ? ` (last write by ${w.writeHistory.lastWriterChatId})` : ''}\n`
+          `${w?.writeHistory?.lastChatId ? ` (last write by ${w.writeHistory.lastChatId})` : ''}\n`
       );
     }
   }
@@ -156,7 +167,17 @@ function printSummary(inventory, quiet) {
     `WRITE HISTORY — ${t.withWriteHistory} worktree(s) with writers · ` +
       `${t.writtenRecently} written in the last 30m · ` +
       `${t.goneWorktreesWithWrites} DELETED worktree(s) with writers · ` +
-      `${t.totalWriteCalls} write call(s) in total\n`
+      `${t.totalWriteCalls} file-writing call(s)\n` +
+      `READ HISTORY — ${t.withReadHistory} worktree(s) with readers · ` +
+      `${t.totalReadCalls} read call(s)` +
+      (own.readsReleasedBefore
+        ? ` · ${own.readsReleasedChatCount} reader(s) held after the ${own.readsReleasedBefore} release\n`
+        : ' · no release has been applied (pass --release-reads to drop stale readers)\n') +
+      // Not a write count. The size of what the write count cannot see: any of
+      // these commands could have written a file, and the file does not pretend
+      // otherwise.
+      `SHELL TRAFFIC — ${t.withShellHistory} worktree(s) · ${t.totalShellCalls} command(s) with a workdir here, ` +
+      `any of which may have written a file that writeHistory cannot see\n`
   );
 
   // Deleted worktrees are listed before the actionable lists because they are
@@ -247,6 +268,41 @@ function printSummary(inventory, quiet) {
   }
 }
 
+/**
+ * Where the reader release mark sits, as a WATERMARK that only moves forward.
+ *
+ * A release cannot be an event, because this document is rebuilt from the
+ * database on every run: a flag that dropped readers once would be repopulated by
+ * the next run from the very same rows, and the release would silently undo
+ * itself. So the mark lives in the file it filters, is read back out on the next
+ * run, and is combined with `Math.max` — which makes it permanent without keeping
+ * any record of which entries it removed, and makes writers safe by construction
+ * because they live in a different structure that nothing here filters.
+ *
+ * A missing or unreadable previous file is not an error: it means no release has
+ * happened yet, which is the correct state for a first run.
+ */
+export function resolveReadsReleasedBefore(target, requested, nowMs) {
+  let previous = 0;
+  try {
+    const doc = JSON.parse(readFileSync(target, 'utf8'));
+    const stamp = doc?.ownership?.readsReleasedBefore;
+    if (typeof stamp === 'string') previous = Date.parse(stamp) || 0;
+  } catch {
+    previous = 0;
+  }
+
+  if (!requested) return previous;
+  const asked = requested === 'now' ? nowMs : Date.parse(requested);
+  if (!Number.isFinite(asked)) {
+    throw new Error(`--release-reads needs "now" or an ISO timestamp, not ${JSON.stringify(requested)}`);
+  }
+  // Monotone. A release asked for with a cut-off in the past cannot un-release
+  // readers a later release already removed, because those rows are gone from the
+  // document and the mark is the only memory.
+  return Math.max(previous, asked);
+}
+
 function main() {
   let opts;
   try {
@@ -301,6 +357,18 @@ function main() {
   // computed counterpart, and the two views are expected to disagree.
   const readAudit = loadChatAudit();
 
+  // Resolved BEFORE the inventory is built, because the reader watermark is an
+  // INPUT to it, not a post-hoc edit of the output.
+  const target = resolve(process.cwd(), opts.out ?? 'WORKTREES.json');
+  let readsReleasedBeforeMs;
+  try {
+    readsReleasedBeforeMs = resolveReadsReleasedBefore(target, opts.releaseReads, nowMs);
+  } catch (err) {
+    process.stderr.write(`worktree-inventory: ${err.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   const inventory = buildInventory({
     worktrees,
     root,
@@ -314,18 +382,13 @@ function main() {
     chatWindowMs: windowMs,
     liveWindowMs: LIVE_WINDOW_MS,
     liveWritersSuppressed: opts.noLiveWriters,
+    readsReleasedBeforeMs,
   });
 
   if (missing.length > 0) {
     inventory.dataSources.git.missingWorktrees = missing.map((w) => w.name);
   }
 
-  // The OUTPUT goes to the worktree the script was invoked from, never to the
-  // main checkout. `root` is where worktree paths are resolved from, which is a
-  // different question: the main checkout is where `.kilo/worktrees/…` is
-  // meaningful, but writing there from a task worktree would land uncommitted
-  // work in a shared checkout, which is the one thing AGENTS.md forbids.
-  const target = resolve(process.cwd(), opts.out ?? 'WORKTREES.json');
   const next = formatCanonical(serialise(inventory));
 
   // `--check` is honoured BEFORE `--stdout`. They were ordered the other way,
@@ -446,7 +509,7 @@ function describeDrift(currentText, nextText) {
   // changed, which is the honest amount of detail for a nested record.
   const scalar = (v) => (v === null || typeof v !== 'object' ? v : '…');
   const describeField = (name, key, prev, next) => {
-    if (name === 'writeHistory') return `writeHistory.lastWriteAt ${prev?.lastWriteAt} -> ${next?.lastWriteAt}`;
+    if (name === 'writeHistory') return `writeHistory.lastAt ${prev?.lastAt} -> ${next?.lastAt}`;
     return `${key} ${scalar(prev)} -> ${scalar(next)}`;
   };
 
