@@ -1,577 +1,745 @@
 # Text Tool — Requirements
 
-What the Adobe Photoshop Type tool actually does, and what this editor must do instead, given it
-renders type with Canvas 2D rather than a native text engine. Researched 2026-09-28; sources in
-[§18](#18-sources).
+What the Adobe Photoshop Type tool does, and what this editor must do to be faithful to it. This
+is a **requirements** document: it states target behaviour and marks what exists today. It is not
+an implementation plan and it ships no code.
 
-This is a requirements document, not a plan. It states the target behaviour, marks what exists
-today, and separates the parts Photoshop gets from a text engine from the parts it gets from
-Canvas — because that line decides which requirements are cheap, which are approximate, and which
-are not reachable at all in a browser.
+**This document landed; the tool did not.** Nothing here is implemented. Every `GAP` and `PARTIAL`
+row below is still the state of the tree at the commit that added this file. Read it as the
+specification the next session implements against, not as a description of the app.
 
-**Status legend.** `HAVE` — implemented in this repo. `PARTIAL` — implemented, behaviour narrower
-than the requirement. `GAP` — not implemented. `OUT` — deliberately not implemented, with the
-reason.
+Researched 2026-09-30. Sources in [§19](#19-sources). Every claim about this repository was
+re-derived against the tree in this worktree; every claim about Photoshop is either quoted from
+Adobe or labelled third-party.
 
----
-
-## 1. Current state
-
-| Area                       | File                                                                               | Notes                                                                         |
-| -------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Tool arguments / rendering | `src/tools/text.ts`                                                                | `renderText`, `getTextWidth`, `text` OffscreenCanvas processor                |
-| Toolbar UI                 | `src/components/ToolbarsRight/Text/Text.tsx`                                       | 221 lines: textarea, font, size, line height, align, B/I, Apply/Clear         |
-| Font picker                | `src/components/ToolbarsRight/Text/FontSelect.tsx`                                 | Hard-coded 14-font `FONTS` array, hover-preview + Escape/outside-click revert |
-| On-canvas rect + overlay   | `src/components/Main/TextToolArea.tsx`                                             | `useRect` drag-to-size, repaint on text change                                |
-| Auto-sizing rect           | `src/util/rect.ts` `calculateNewRect`                                              | Grows right/left per align; height from `lineCount * fontSize * lineHeight`   |
-| Tests                      | `src/components/ToolbarsRight/Text/__tests__/`, `src/tools/__tests__/text.test.ts` | jsdom only                                                                    |
-
-The whole tool is **one flat `TextToolArgs` record with no per-run formatting and no per-character
-run attributes**. That single fact drives most of §4 and §5.
-
-Deliberately commented out and worth knowing about: `TextToolArea.tsx:63-137` is a
-`beforeinput`/`composition`/`keydown` handler that would have done real on-canvas caret editing with
-`updateLastHistoryItem`. It is dead code, not a plan.
+**Status legend.** `HAVE` — implemented. `PARTIAL` — implemented, narrower than the requirement.
+`GAP` — not implemented. `OUT` — deliberately not implemented, with the reason.
 
 ---
 
-## 2. Type layer kinds
+## 0. Corrections to the previous version of this document
 
-Photoshop has two kinds of type layer, and they are not interchangeable.
+The previous revision of this file (landed `54f2b212`) carried claims that the tree has since
+outgrown. They are recorded here rather than silently corrected, because a stale requirements doc
+is worse than none — it sends the next session to verify a defect that is already gone.
 
-**Point type** — click once, type. One line, no bounding box, no wrapping. Each line you press
-Enter into is a separate paragraph. There is no box to resize, so a point layer cannot be justified
-and cannot be word-wrapped.
+| #   | Stale claim                                                                                                              | The truth                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | "There is no colour control on this bar at all: the type fill is slaved to the global foreground swatch."                | **False.** `Text.tsx:184` renders `<input id="text-color" type="color">`, and `Text.tsx:71-81` documents the reversal deliberately: the bar owns the colour and the store's foreground no longer overwrites it. `Text.test.tsx:286-324` and `TextToolArea.test.tsx:198-230` pin ownership, and `e2e/text-tool.spec.ts:290-307` drives the e2e through `#text-color`. The divergence from Photoshop is narrower: Photoshop also binds `Alt+Backspace` to the foreground colour. |
+| 2   | "the layer renderer re-runs a tool's creator only for the six shape tools … so its retained args are never re-rendered." | **True of the runtime path, false unqualified.** `layer-renderer.ts:32` does list six tool names with `text` absent, so the runtime draws from `layer.bitmap`. But the **durable** materializer re-runs the text creator from the retained args (`materialization.ts:166-171`), pinned at `materialization.assets.test.ts:499-516`. "Never re-rendered" describes one of two engines.                                                                                          |
+| 3   | "Tests … jsdom only"                                                                                                     | **False.** `e2e/text-tool.spec.ts` exists — 557 lines, 4 tests, covering the drag, the Apply gate, the committed layer row, and the committed ink.                                                                                                                                                                                                                                                                                                                             |
+| 4   | "`Text.tsx` … 221 lines"                                                                                                 | It is 241. Several other line references in the old §1 table drifted the same way.                                                                                                                                                                                                                                                                                                                                                                                             |
+| 5   | Hyphenation "Words Longer Than N Letters (default 2)"                                                                    | **Default is 5.** Verified against Adobe's own `HyphenationProperties` reference, which documents `wordsLongerThan: 5`, `range [2, 25]`. The value 2 is a CS-era figure still repeated in third-party tutorials.                                                                                                                                                                                                                                                               |
 
-**Paragraph (box) type** — click-drag to define a bounding box, then type. Text wraps at the box
-edge, the box is resizable, and justification is available. When the text outgrows the box, a
-**small box-with-a-plus overflow icon** replaces the resize handle in the corner of the boundary.
+Item 1's source is `src/tools/descriptions/type-crop.ts:105` (`appNotes`), which is what
+`docs/TOOLS.md` is generated from — so `docs/TOOLS.md` carries the same false sentence. Fixing the
+generated doc means fixing the data file, and a test fails on drift between them.
 
-The two convert into each other: `Type > Convert to Paragraph Text` and `Type > Convert to Point
-Text`. A point layer is a paragraph layer that has not been given a width yet.
+---
 
-- `GAP` — no point/box distinction. Every layer here is box-like: the user always drags a rect via
-  `useRect`, and `renderText` hard-splits on `\n` and never wraps.
-- `GAP` — no overflow indicator.
-- `GAP` — no conversion between kinds.
-- `OUT` — justification on point type, for the same reason Photoshop forbids it: there is no
-  measure to justify against.
+## 1. Current state of the tool
 
-Photoshop's newer **Dynamic Text** (`Type > Convert to Dynamic Text`) reflows font size, spacing
-and layout as the box is dragged. It explicitly does not support right-to-left text.
+| Area             | File                                                        | What it owns                                                       |
+| ---------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
+| Args + rendering | `src/tools/text.ts:6-81`                                    | `TextToolArgs`, `renderText`, `getTextWidth`, the `text` creator   |
+| Registry entry   | `src/tools/toolProcessors.ts:160-166`                       | `commit: 'source'`, `creator: true`                                |
+| Toolbar          | `src/components/ToolbarsRight/Text/Text.tsx:16-241`         | textarea, font, size, line height, colour, align, B/I, Apply/Clear |
+| Font picker      | `src/components/ToolbarsRight/Text/FontSelect.tsx`          | 14 hard-coded families, hover preview, Escape/outside-click revert |
+| Canvas area      | `src/components/Main/TextToolArea.tsx:24-59`                | `useRect` wiring, overlay repaint, textarea focus                  |
+| Rect growth      | `src/util/rect.ts:116-173`                                  | `calculateNewRect` — grows to fit, never wraps, never shrinks      |
+| Commit           | `src/contexts/useLayer.ts:278-321`, `:365-381`              | `createLayerFromTool`, `commitDirtyTool`'s text branch             |
+| Settings         | `src/tools/settings.ts:82-94`, `src/util/settings.ts:30-31` | seed defaults; persistence deliberately omits `text` and `rect`    |
 
-- `OUT` — Dynamic Text. It requires reflowing a _text layout_ during a drag gesture, which is the
-  same machinery a live text editor needs. Revisit when §3 exists.
+The whole tool is **one flat `TextToolArgs` record with no per-run or per-character structure**.
+That single fact drives §4, §5 and §6.
+
+---
+
+## 2. What a click does today — and what Photoshop's click does
+
+This is the behaviour the naive description gets most wrong, so it is worth stating precisely.
+
+**In this app, a click already places a box.** There is no click-versus-drag distinction in the
+code path. `TextToolArea.tsx:137` spreads only `useRect`'s pointer events, and
+`useRect.ts:493-518` computes `onChangeEnd` on every valid release with no minimum-distance check.
+With a press and release at the same point and no existing rect, `calculateMaskRect` (`useRect.ts:331`)
+takes the fresh-point branch and `adjustFreePoint` (`:284-300`) returns a **zero-area rect**. That
+zero-area rect then reaches `calculateNewRect`, whose `!text` branch (`rect.ts:131-137`) _widens_
+it to roughly `2 × (fontSize × lineHeight + 2 × TEXT_PADDING)` px at the click point. So a bare
+click produces a real, non-degenerate draft box and focuses the textarea.
+
+`src/util/__tests__/rect.test.ts:207-223` pins that widening branch as load-bearing.
+
+**No text is ever auto-created.** `args.text` stays `''`, `Apply` stays disabled
+(`Text.tsx:230`), and no layer is created. A repo-wide grep for `lorem`, `placeholder` and
+`Enter text` returns exactly one production hit — the HTML `placeholder` attribute at
+`Text.tsx:120`, which is a DOM hint and never becomes a layer.
+
+**Photoshop behaves differently, and the difference is a requirement** ([creating-type](https://helpx.adobe.com/photoshop/using/creating-type.html), Adobe):
+
+- A **click** places **point type** — a line that expands and shrinks with the text and
+  **never wraps**. A **drag** places **paragraph type** — a bounding box whose lines wrap and
+  reflow on resize. The app has one kind, and its box does not constrain the text at all.
+- **A layer is created immediately**, containing **placeholder text** that previews font, size
+  and colour, and that is **pre-selected so typing replaces it**. This is a real preference:
+  `Fill new type layers with placeholder text` under `Preferences > Type`
+  ([add-edit-text](https://helpx.adobe.com/au/photoshop/using/add-edit-text.html), Adobe — the
+  route moved to `Settings > Type` in 23.0). There is also a `Type > Paste Lorem Ipsum` command.
+- **Clicking again creates a second layer** — unless the click lands inside an existing text
+  flow, which enters that layer instead. `Shift`-click forces a new layer even when close to
+  another (third-party walkthrough of Adobe's own behaviour;
+  `https://jkost.com/blog/2020/09/30-tips-tricks-and-shortcuts-for-working-type-in-photoshop.html`).
+- **Overflow indicator.** When text outgrows a paragraph box, "a small box or circle containing a
+  plus symbol (+) appears in place of a handle in the corner of the boundary"
+  ([creating-type](https://helpx.adobe.com/photoshop/using/creating-type.html), Adobe).
+
+**Requirements**
+
+- `GAP` — **click/drag distinction.** Point type on click, paragraph type on drag. The threshold
+  must be an explicit movement test; `useRect` has none today, and its shared consumers (crop,
+  Move, all selections) must keep their current behaviour.
+- `GAP` — **placeholder text.** A new type layer is born with placeholder text pre-selected, so
+  typing replaces it rather than appending. The preference must gate it.
+- `GAP` — **second click creates a second layer**, and a click inside an existing text flow
+  enters it instead.
+- `GAP` — **overflow indicator** on the box.
+- `PARTIAL` — the box exists and is placed by pointer; it is a growth rect, not a layout box.
+
+**This is the single largest fidelity gap in the tool.** "Click to place type, type to replace it"
+is the tool's primary interaction and the app has none of it.
+
+---
 
 ## 3. Edit mode, commit, cancel
 
-Photoshop has an explicit **edit mode**. Clicking a type layer with the Type tool enters it, and
-the options bar swaps the tool options for a **Commit** and a **Cancel** button. That pair _is_ the
-edit-mode indicator — there is no other visual cue.
+**In this app there is no edit mode.** `Text.tsx:95-102` `applyText` is the commit, and it is a
+one-shot "type into the textarea, press Apply, get a raster layer". There is no way back into a
+placed layer to change a character, and no way to cancel a partially-typed layer — `clear()`
+(`Text.tsx:104-106`) discards the pending draft.
 
-Commit: the Commit button · `Ctrl/Cmd+Return` · numeric-keypad Enter · selecting any other tool ·
-clicking any layer in the Layers panel · clicking away on the canvas · losing application focus.
+One Adobe commit path _is_ already present: switching tools commits the draft implicitly, because
+`goToTool` calls `commitDirtyTool()` first (`src/hooks/useApp.ts:167-169`).
 
-Cancel: the Cancel button · `Esc`, **only if** `Preferences > Type > Use Esc key to commit text` is
-unchecked. That preference is the reason `Esc` is not a hard contract: with the default setting
-`Esc` commits, and to cancel you must first change a preference.
+**What Photoshop does** ([editing-text](https://helpx.adobe.com/photoshop/using/editing-text.html)
+and [creating-type](https://helpx.adobe.com/photoshop/using/creating-type.html), both Adobe):
 
-Also: clicking the `T` thumbnail in the Layers panel enters edit mode **and** selects all the text.
+- Edit mode has **exactly one visual tell**: the options bar shows the **Commit** and **Cancel**
+  pair. "To determine whether a type tool is in edit mode, look in the options bar — if you see
+  the Commit button and the Cancel button, the type tool is in edit mode."
+- **Entry**: click the text flow with a type tool; double-click the layer on canvas with the Move
+  tool; or **double-click the `T` thumbnail in the Layers panel** — that last one enters edit mode
+  **with all characters selected**.
+- **Commit**: the check mark · `Ctrl+Enter` / `Cmd+Return` · numeric-keypad Enter · selecting any
+  other tool · clicking any panel · clicking away on the canvas (watch the cursor become a normal
+  arrow first).
+- **Cancel**: the cancel button. **`Esc` COMMITS by default** — Adobe's own note: "the Esc key is
+  set to commit text by default. You can change this to cancel the changes by … uncheck _Use Esc
+  key to commit text_." Every pre-CC-2017 shortcut sheet and most third-party tutorials still say
+  Esc cancels; the current default is the opposite, and the preference is why.
+- Commit is **not** available by keyboard alone when the default is on: Esc commits, so cancel is
+  reachable only from the button.
 
-- `GAP` — no edit mode. `Text.tsx:82-89` `applyText` is the commit, and it is a one-shot
-  "type into the textarea, press Apply, get a layer". There is no way back into a placed text layer
-  to change a character.
-- `GAP` — no cancel. `clear()` (`Text.tsx:91-93`) discards the pending text and is not a cancel of
-  a partially-typed layer.
-- `OUT` — the `Esc`-commits-by-default preference. It exists to serve a modal transform state we do
-  not have.
+**Requirements**
 
-`Text.tsx:82-89` deserves a specific note. `appliedArgsRef` is compared by **object identity** and
-set before `createLayerFromTool`. It exists to stop a React StrictMode double-invoke from creating
-two layers. That is a workaround for a lifecycle problem, not an idempotency guarantee — and it is
-the only thing standing between a double-`onChange` and a duplicated layer. Any real commit/cancel
-model has to make `createLayerFromTool` itself idempotent on a committed-text id instead.
+- `GAP` — edit mode as a state, with the Commit/Cancel pair appearing only inside it.
+- `GAP` — re-entering an existing type layer to change characters. **This is the blocking
+  requirement for everything in §4 and §6.**
+- `GAP` — cancel of an in-progress edit.
+- `GAP` — `Ctrl/Cmd+Return`, keypad Enter, and Esc bound to commit/cancel. Note the app's own
+  trap: the textarea holds focus as soon as the tool is selected (`TextToolArea.tsx:41-43`), and
+  `useKeyboardEvents.tsx:136` refuses any shortcut without `allowInInput` while a field has
+  focus — so `T` pressed mid-draft types a letter today.
+- `GAP` — the `T` thumbnail and double-click-to-edit in the Layers panel. `LayersTab.tsx` has **no
+  `onDoubleClick`** at all; the only editable field there is the layer _name_.
+- `OUT` — the `Use Esc key to commit text` preference as a user setting. It exists to serve a
+  modal transform state; this app has no need for it. Bind Esc to commit, matching the default.
 
-## 4. Character formatting
+---
 
-Photoshop's Character panel is per-character or per-selection. It is not a document-wide switch.
+## 4. Selection and caret
 
-**Font and style:** family · style (Regular / Bold / Italic / …) · size. Styles are enumerated **per
-family** — a family with no italic has no italic entry, rather than offering a synthetic one.
+**Photoshop's selection ladder inside a text flow**
+([formatting-characters](https://helpx.adobe.com/photoshop/using/formatting-characters.html), Adobe):
 
-**Style attributes:** Faux Bold · Faux Italic · All Caps · Small Caps · Superscript · Subscript ·
-Underline · Strikethrough. Faux styles are the synthetic ones Photoshop generates when the font
-lacks the real cut. Small caps uses the font's real small caps when present and generates faux small
-caps when not. Underline and strikethrough are **always the same colour as the type**, and on
-vertical type underline runs beside the text and strikethrough through it.
+| Gesture                  | Selects                            |
+| ------------------------ | ---------------------------------- |
+| Click                    | The insertion point                |
+| Double-click             | The word                           |
+| Triple-click             | The line                           |
+| Quadruple-click          | The paragraph                      |
+| Quintuple-click          | All characters in the bounding box |
+| Drag / `Shift`-click     | A character range                  |
+| `Shift`+`←`/`→`          | One character at a time            |
+| `Shift`+`↑`/`↓`          | One line at a time                 |
+| `Ctrl/⌘`+`Shift`+`←`/`→` | One word at a time                 |
 
-**Spacing:** Leading · Tracking · Kerning · Baseline shift · Vertical scale · Horizontal scale.
+Adobe states the caret/selection rule that gates two Character-panel fields: "When you click to
+place the insertion point between two letters, **kerning** values appear in the Character panel.
+Similarly, if you select a word or a range of text, the **tracking** values appear"
+([line-character-spacing](https://helpx.adobe.com/photoshop/using/line-character-spacing.html),
+Adobe).
 
-- Leading is Character-panel-only in Photoshop (not on the options bar) and is `Auto` by default;
-  auto-leading is **120% of the type size** and that percentage is itself a setting, in the
-  Paragraph panel menu under Justification. On 30pt type, auto-leading is 36pt.
-- Tracking and manual kerning are **measured in 1/1000 em**, a unit relative to current type size.
-  In a 10pt font 1em = 10pt, so tracking 50 is 0.5pt of extra space. Both are **cumulative**, and
-  both are editable at the same time — you can adjust individual letter pairs and then tighten a
-  block without disturbing them.
-- Kerning has three modes: **Metrics** (the font's own kern pairs, the default), **Optical** (from
-  glyph shapes), and **manual** (a number). Manual kerning is only available with the **insertion
-  point between two characters** — with a range selected, the Kerning field is disabled and you must
-  use tracking instead. When the caret sits between two characters, the Character panel shows
-  _kerning_ values; when a range is selected, it shows _tracking_ values. Tracking and Kerning
-  cannot both show a live value at the same time.
-- Baseline shift is in the same 1/1000 em unit.
-- Vertical/horizontal scale rescale the glyphs.
+**Requirements**
 
-**Colour:** type colour is per-selection, changed from a swatch on the options bar or the Character
-panel.
+- `GAP` — caret placement and character-range selection. There is no caret model in the app.
+- `GAP` — the click-count ladder.
+- `GAP` — the caret-dependent Kerning/Tracking field swap.
+- `GAP` — IME. Any caret model must be composition-aware from the start. The browser owns
+  composition; the caret is real but hidden during it, and `keydown` must not be intercepted for
+  ordinary input. The commented-out scaffolding at `TextToolArea.tsx:61-135` shows the previous
+  approach, and it was wrong for this reason — it is a sketch, not a reference.
 
-- `HAVE` — font family (`Text.tsx:33`), size as a **px** slider 8-500 (`Text.tsx:136-144`), Bold and
-  Italic as booleans (`Text.tsx:70-80`), colour (`Text.tsx:17-20`).
-- `PARTIAL` — Bold/Italic are booleans, not a style axis. Photoshop's model is family + style, and
-  the family determines which styles exist. `FontSelect.tsx:5-20` has a 14-family array and no
-  per-family style list, so `bold` synthesises rather than selecting.
-- `PARTIAL` — size is in **px**, and the label says `px` (`Text.tsx:134`). Photoshop's type size
-  unit is **points**, and points are resolution-dependent (72pt = 1 inch) while CSS px are
-  device-independent (96px = 1 inch). The 4/3 factor matters for export and for any print workflow.
-  See §9.
-- `PARTIAL` — leading. `lineHeight` is a unitless ratio 0.5–2.25 (`Text.tsx:157-163`) applied as
-  `y += fontSize * lineHeight` (`text.ts:49`). Photoshop's default auto-leading is 1.2, so 1.1 is
-  _tighter_ than Photoshop's out-of-the-box setting, and there is no "Auto" mode and no absolute
-  leading in points.
+**A ready-made foundation exists and is currently orphaned.** `src/util/string.ts` already
+provides `charLength`, `deleteCharAt` and `deleteLastChar`, all **grapheme-cluster-safe** via
+`Intl.Segmenter`, and all fully tested (`src/util/__tests__/string.test.ts`). Their **only**
+consumers are the commented-out caret block at `TextToolArea.tsx:102,126`. They were written for
+this work and abandoned with it. Reuse them rather than reaching for `.length` or `.slice()` on a
+code-unit index.
+
+---
+
+## 5. Character formatting
+
+Verified against Adobe's `CharacterStyle` reference, which states every default and range
+explicitly and is the authoritative source for the numbers:
+
+| Control                   | Range                     | Default           |
+| ------------------------- | ------------------------- | ----------------- |
+| Size                      | `0.01..1296` px @72ppi    | —                 |
+| Leading                   | `0..4999.99` px @72ppi    | `null` (Auto)     |
+| Tracking                  | `-1000..1000` (1/1000 em) | —                 |
+| Baseline Shift            | `-1296..1296` px @72ppi   | `0`               |
+| Vertical Scale            | `0..1000` %               | —                 |
+| Horizontal Scale          | `0..1000` %               | —                 |
+| Auto kerning              | —                         | `METRICS`         |
+| Anti-alias                | —                         | `SHARP`           |
+| Faux Bold / Faux Italic   | boolean                   | `false` / `false` |
+| Standard ligatures        | boolean                   | `true`            |
+| Capitalization            | `NORMAL`                  | `NORMAL`          |
+| Underline / StrikeThrough | `NONE` / `STRIKEOFF`      | as listed         |
+
+Load-bearing facts:
+
+- **Tracking is 1/1000 em**, relative to the current type size. Adobe's own example: 100 tracking
+  units in a 10-point font is 1 point. It is not points and not pixels.
+- **Manual kerning requires the insertion point between two characters.** With a range selected
+  it is unavailable and you must use tracking instead. The two are cumulative.
+- **Leading is Character-panel-only**, defaults to Auto, and **auto-leading is 120%** of type
+  size — configured in the Paragraph panel's Justification dialog, not in Preferences.
+- **Underline and strikethrough are always the same colour as the type** (Adobe, verbatim). There
+  is no underline-thickness or offset control in Photoshop — the Underline Options dialog is
+  InDesign-only.
+- **Size sets the em, not the cap height.** The bound is an **input-field clamp, not a rendering
+  clamp** — Free Transform exceeds 1296pt. At 300ppi the maximum becomes `(300/72) × 1296 = 5400`.
+
+**Anti-aliasing.** Five levels — None, Sharp, Crisp, Strong, Smooth — each with a Scripting
+Reference constant. It is **no longer on the type options bar**: it is reached from the Character
+panel, the layer's properties, and the `Type` menu. **The timing of that removal is unconfirmed** —
+one community report says 26.10, and the more commonly reported cause of a "missing" control is
+the Narrow Options Bar preference. Adobe's own documentation still lists all three routes.
+
+**Requirements**
+
+- `HAVE` — font family, size, bold, italic, colour, and a per-layer colour swatch.
+- `PARTIAL` — the font list is **14 hard-coded families** (`FontSelect.tsx:5-20`), not a platform
+  enumeration. The picker does render each entry in its own face (`FontSelect.tsx:203`), which is
+  already Photoshop's WYSIWYG behaviour.
+- `PARTIAL` — size is in **CSS px**, range 8–500, and applied as `${fontSize}px`
+  (`text.ts:49`). Photoshop's unit is **points**. At 72ppi the two are 1:1; the app's canvas has no
+  resolution attached, so points have no denominator.
+- `PARTIAL` — bold/italic are booleans, not a style axis. Photoshop's model is family + style, and
+  the family determines which styles exist. The app synthesises `bold`/`italic` prefixes.
+- `PARTIAL` — leading is a unitless ratio `0.5..2.25` applied as `index * fontSize * lineHeight`
+  (`text.ts:55`). Photoshop's default auto-leading is 1.2, so the app's **default of 1.1 is
+  tighter than Photoshop's out-of-the-box setting**, and there is no Auto mode and no absolute
+  leading.
 - `GAP` — tracking, kerning, baseline shift, vertical/horizontal scale.
-- `GAP` — faux small caps, superscript, subscript, underline, strikethrough.
-- `OUT` — per-character attributes. The document model has no run concept; a text layer has one
-  style for all of it. Every "per character" feature above is blocked on §6.
+- `GAP` — faux small caps, all caps, superscript, subscript, underline, strikethrough.
+- `OUT` — anti-aliasing. Canvas 2D delegates glyph rasterisation to the platform and offers no
+  selectable edge treatment. This is a **renderer limit, not a missing feature** — see §11.
 
-### 4.1 Anti-aliasing
+**Superscript/subscript defaults are unsourced.** No Adobe page states the raise percentage.
+Widely-repeated figures (33.3% raise, 58.3% size) trace to InDesign, which makes them
+configurable, and to a Wikipedia row marked _citation needed_. Photoshop exposes no such
+preference. **Do not treat any percentage as Adobe-documented.**
 
-Photoshop's rendering mode is a **per-character** setting with five levels, in the Character panel
-and under `Type > Anti-Alias`:
+---
 
-| Value    | Behaviour                        | Use for                           |
-| -------- | -------------------------------- | --------------------------------- |
-| `None`   | No anti-aliasing; jagged edges   | Pixel fonts, web that you control |
-| `Sharp`  | Sharpest of the smoothed options | Small sizes, ~9-12pt              |
-| `Crisp`  | Somewhat sharp                   | Small point-sized bitmap text     |
-| `Strong` | Heavier                          | Most graphics work                |
-| `Smooth` | Smoothest                        | Type over 14pt                    |
+## 6. Paragraph formatting
 
-`Smooth` is the current best-practice default for body-size type; `None` is the one that visibly
-breaks.
+From Adobe's `ParagraphStyle` and `JustificationProperties` references:
 
-- `OUT` — the setting. There is no equivalent: Canvas 2D delegates glyph rasterisation to the
-  platform font rasteriser and offers no selectable edge treatment.
-- `OUT` — per-character scope of it. Platform AA cannot be switched per range anyway.
-- **The export consequence is real and is the actual requirement here.** Photoshop's mode is a
-  _document_ property that survives into PSD, TIFF and PDF. Ours would be a _rendering-time_ choice
-  the host browser makes. If pixel-identical export across machines is a goal, the Text tool cannot
-  own glyph rasterisation — see §11.
+| Control                            | Range                   | Default              |
+| ---------------------------------- | ----------------------- | -------------------- |
+| Justification                      | `LEFT`                  | `LEFT`               |
+| Left / Right / First-line indent   | `-1296..1296` px @72ppi | `0`                  |
+| Space before / after               | `-1296..1296` px @72ppi | `0`                  |
+| Hyphenation                        | boolean                 | `false`              |
+| Word spacing min / desired / max   | `0..1000` %             | `80` / `100` / `133` |
+| Letter spacing min / desired / max | `0..500` %              | `0` / `0` / `0`      |
+| Glyph scaling min / desired / max  | `50..200` %             | `100`                |
+| Auto leading amount                | `0..500` %              | `120`                |
 
-## 5. Paragraph formatting
+The Min/Desired/Max triad is Adobe's own design and the semantics matter: **Min and Max bound
+justified paragraphs only, while Desired governs both justified and unjustified.** Auto-leading
+is the 120% default from §5, and it lives here rather than in Preferences.
 
-The Paragraph panel is **per-paragraph**, and applies to one paragraph, a range of paragraphs, or
-the whole layer (via the Layers panel).
+Alignment is **Left / Center / Right** for horizontal type and **Top / Center / Bottom** for
+vertical — and it is **paragraph type only**; point type must be converted first
+([formatting-paragraphs](https://helpx.adobe.com/photoshop/using/formatting-paragraphs.html), Adobe).
 
-**Alignment** — horizontal type: left / center / right, leaving the opposite edge ragged.
-Vertical type: top / center / bottom.
+**Hyphenation** — six settings, all Adobe-documented, all dictionary-driven:
 
-**Justification** — **paragraph type only**, never point type. Four modes: Justify Last Left · Justify
-Last Centered · Justify Last Right · Justify All. Justification stretches word, letter and glyph
-spacing rather than the spaces alone, and its tuning lives in the Paragraph panel menu:
+| Setting                     | Range               | Default |
+| --------------------------- | ------------------- | ------- |
+| Words Longer Than # Letters | `2..25`             | **5**   |
+| After First # Letters       | `1..15`             | 2       |
+| Before Last # Letters       | `1..15`             | 2       |
+| Hyphen Limit                | `2..25`             | 2       |
+| Hyphenation Zone            | `0..8640` px @72ppi | 36      |
+| Hyphenate Capitalized Words | boolean             | `true`  |
 
-- Word spacing, 0–1000%, where 100% adds no extra space.
-- Letter spacing, −100% to 500%, where 100% adds one full space width between letters.
-- Glyph scaling, 50–200% of horizontal glyph width, with 100% meaning height is not scaled.
-- **Auto leading**, default 120%.
+**Requirements**
 
-These spacing options apply to the **entire paragraph**; to tighten a few characters instead, use
-tracking.
-
-**Indents** — left indent · right indent · first-line left indent, all measured from the bounding box
-or containing line.
-
-**Spacing** — space before paragraph · space after paragraph.
-
-**Hyphenation** — off by default, driven by the language dictionary (each dictionary carries
-hundreds of thousands of words with syllable breaks). Advanced options: Words Longer Than N Letters
-(default 2) · After First N Letters (default 2) · Before Last N Letters (default 2) · Hyphen Limit
-(max consecutive hyphenated lines) · Hyphenation Zone (distance from the right edge) ·
-Hyphenate Capitalized Words.
-
-**Asian text options** — `Preferences > Type > Show Asian Text Options` gates a Set Tsume control.
-Justification and kerning/tracking adjustments do **not** apply to double-byte CJK characters.
-
-- `HAVE` — left / center / right alignment (`Text.tsx:64-68`, `text.ts:29-41`).
-- `PARTIAL` — alignment applies to the whole layer, not a paragraph. `renderText` sets a single
-  `ctx.textAlign` and every line follows it.
-- `GAP` — justification, all four modes, with word/letter/glyph spacing and auto-leading
-  percentage.
+- `HAVE` — left / center / right alignment (`text.ts:35-46`).
+- `PARTIAL` — alignment applies to the **whole layer**. `renderText` sets one `ctx.textAlign` and
+  every line follows it; there is no per-paragraph scope.
+- `GAP` — wrapping, which is what makes the box mean anything. `calculateNewRect` measures the
+  widest line and **grows** the box; a line longer than the canvas is clipped at the canvas edge
+  rather than reflowed. It also **never shrinks** — `rect.ts:145` grows on
+  `requiredWidth > currentWidth` and has no shrink branch.
+- `GAP` — justification, all four modes, with the Min/Desired/Max triad.
 - `GAP` — indents, space before/after.
-- `GAP` — hyphenation and all six of its settings.
-- `OUT` — vertical-type top/center/bottom, Set Tsume, CJK-specific justification rules. These need
-  the vertical type orientation that §2 does not have and a CJK dictionary we do not ship.
+- `GAP` — hyphenation and all six settings.
+- `GAP` — point vs paragraph type, and conversion between them. Converting paragraph → point
+  **deletes overflowing characters** (Adobe); a faithful implementation must warn first.
+- `OUT` — Asian text options (Set Tsume, mojikumi, kinsoku). These need CJK dictionaries this app
+  does not ship.
 
-**Note on the dead `util/text.ts`.** All 33 lines are commented out, and they are the only
-justification implementation ever attempted here: `drawJustifiedText` + `justifyLine`, with a
-hard-coded `y += 20` and a division by `words.length - 1` that is `0/0` for a single-word line.
-It is a sketch, not a reference. The `+ 1` in the gap count is the right instinct (trailing spaces
-are not rendered) and the rest needs writing.
+---
 
-## 6. The blocking requirement: a run model
+## 7. The blocking requirement: a live type layer and a run model
 
-Almost everything in §4 and §5 marked `GAP` is blocked on one missing structure, and this is the
-largest single item in this document.
+Everything in §3, §4, §5 and §6 is downstream of this section.
 
-Photoshop stores a type layer as: a character stream plus **style runs** over contiguous ranges of
-it, and **paragraph runs** over the stream. Every per-character and per-paragraph feature is a
-property of a run. Formatting a selection creates or splits a run; the character count, the glyph
-shaping and the layout all follow from `stream + runs`.
+**Photoshop's own architecture** ([TextItem](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem),
+Adobe): a type layer holds `contents` (the character stream), a `characterStyle` and a
+`paragraphStyle`, plus `orientation`, `isPointText`/`isParagraphText` and `warpStyle`. Character
+formatting is applied over **ranges of the stream**, which is why a selection is what makes every
+per-character feature reachable.
 
-Today `TextToolArgs` is `{ text, fontSize, lineHeight, fontFamily, align, bold, italic, color }` —
-one style, applied to all of `text`. There is no way to express "the first three words are bold" and
-no way to express "this paragraph is justified and that one is not", because there is no place in
-the type to put either fact.
+Today `TextToolArgs` is `{ text, fontSize, lineHeight, fontFamily, align, bold, italic, color, rect }`
+— one style for all of `text`. There is nowhere to put "the first three words are bold", because
+no such structure exists.
 
-Minimum viable shape:
+### 7.1 What the repository already gives us, and where it stops
+
+This is the part that makes the requirement landable rather than aspirational:
+
+- **The durable sidecar already has a first-class `kind: 'text'` source** (`history-model.ts:37-43`),
+  distinct from both `'vector'` and `'legacy-tool'`, carrying `args`, `size` and `sourcePos`. The
+  adapter classifies a tool source with `args.toolName === 'text'` into it (`history-adapter.ts:167`).
+- **The durable materializer already re-runs the text creator from the retained args**
+  (`materialization.ts:166-171`), pinned by a test at `materialization.assets.test.ts:499-516`.
+  The characters are therefore already preserved and already re-derivable on one of the two
+  engines.
+- **The characters survive commit** in three places: `layer.source.args.text`, the history entry's
+  deep-cloned `layerSource.args.text`, and the durable snapshot. **No UI reaches any of them.**
+
+What stops it:
+
+- **The runtime renderer excludes it.** `layer-renderer.ts:32` lists six vector tool names;
+  `text` is absent, so `getLayerBitmap` returns the baked `layer.bitmap`. Adding `'text'` to that
+  set routes it through `scaleVectorArgs` (`:38-49`), which requires `start`/`end` — fields text
+  args do not have. **A text-specific scaling rule is needed; it is not a one-line membership
+  change.**
+- **One raster tool destroys the source.** `tempUpdateLayer` sets `source: undefined` for
+  `commit: 'raster'` (`useLayer.ts:616-618`), and replay's `applyRasterTool` does the same
+  (`useHistory.ts:100-101`). Once a text layer is painted on, the retained characters are gone.
+  A live text layer that also permits painting on itself is asking for a re-derivable source the
+  current code deliberately deletes.
+- **Hit-testing is rect-based, not glyph-based.** `isPointInLayer` (`affine-transform.ts:258`) is
+  a bounds test against `layer.pos`. A caret needs a **glyph-level** hit test — the character
+  whose advance contains the click — which does not exist anywhere in the tree.
+- **There is no commit kind that mutates an existing layer's content.** `UPDATE_LAYER_ACTION` is
+  **commented out** in the action union (`constants.ts:27,42`). The only precedents are
+  `commit: 'layer-operation'` (filter stacks) and `commit: 'geometry'` (`layer.pos`), neither of
+  which is text-shaped.
+- **Undo re-simulates the whole timeline from index 0** on every navigation
+  (`history-replay.ts:72`), and every text layer creation re-runs the creator. Per-keystroke
+  history granularity — which a live type layer implies — multiplies the entry count that replay
+  re-executes.
+- **A tripwire already exists**: `src/tools/__tests__/text.test.ts:282` is an `it.fails` asserting
+  that an identical replay reuses the raster instead of re-running `renderText`. Per `AGENTS.md`,
+  fixing that requires removing the pin **in the same change**.
+- **The e2e asserts ink stays inside the dragged rectangle** (`e2e/text-tool.spec.ts:430`, four
+  `expect.soft` assertions). That invariant is the anchor a wrapping implementation must satisfy.
+
+### 7.2 The shape that unblocks it
+
+Minimum viable, in the repo's own vocabulary:
 
 ```ts
-type TextRun = {
-  start: number; // index into the plain-text string, half-open
-  end: number;
-  style: TextStyle; // font, size, weight, italic, color, tracking, kerning, …
-};
-type TextParagraph = {
-  start: number; // index into the plain-text string
-  end: number;
-  style: TextParagraphStyle; // align, justify, indents, spacing, hyphenation
-};
-type TextStyle = {
-  fontFamily: string;
-  fontSize: number; // §4: points, not px
-  fontWeight: number;
-  fontStyle: 'normal' | 'italic';
-  color: string;
-  letterSpacing: number; // 1/1000 em, Photoshop's unit
-  baselineShift: number; // 1/1000 em
-  verticalScale: number;
-  horizontalScale: number;
-  fauxBold: boolean;
-  fauxItalic: boolean;
-  allCaps: boolean;
-  smallCaps: boolean;
-  superscript: boolean;
-  subscript: boolean;
-  underline: boolean;
-  strikethrough: boolean;
-  kerning: { mode: 'none' | 'metrics' | 'optical' | number };
+type TextRun = { start: number; end: number; style: TextCharacterStyle };
+type TextParagraph = { start: number; end: number; style: TextParagraphStyle };
+type TypeLayerContent = {
+  characters: string;
+  characterRuns: TextRun[]; // half-open [start, end) over the string
+  paragraphs: TextParagraph[];
+  kind: 'point' | 'paragraph';
+  orientation: 'horizontal' | 'vertical';
 };
 ```
 
-Consequences that must be designed for, not discovered later:
+Consequences to design for, not discover later:
 
-- **Undo granularity.** Photoshop records text edits in the History panel, and `Edit > Undo` names
-  the action. A run split is a document change. Whatever appends to `HistoryItem[]` must treat
-  "retyped a character" and "split a style run" as first-class entries. This repository's
-  `HistoryItem[]` is the **production replay authority** (see `AGENTS.md` → Architecture status), so
-  getting the granularity wrong here is a replay bug, not a UI bug.
-- **Layer identity.** A text layer is no longer fully described by its pixels. A run change must
-  re-render **and** re-enter history; the layer cannot be treated as an opaque bitmap.
-- **Selection.** Runs make selection ranges meaningful, and selection is what makes every
-  per-character feature reachable. §3's edit mode and a caret/selection model are prerequisites,
-  not parallel work.
+- **Undo granularity is a replay concern.** `HistoryItem[]` is the production replay authority
+  (`AGENTS.md` → Architecture status). "Typed a character" and "split a style run" are first-class
+  history entries, and the durable converter **must** be taught any new commit kind — an
+  unrecognised action does not degrade partially, it **voids the entire durable shadow**
+  (`history-adapter.ts:868-876`).
+- **The converter and the append boundary are two independent implementations** of every durable
+  rule, deliberately kept apart so a bug cannot reproduce itself (`history-append.ts:242-246`).
+  A text-edit commit must be written **twice** and cross-pinned.
+- **Layer identity changes.** A text layer is no longer fully described by its pixels, and the
+  layer cannot be treated as an opaque bitmap.
 
-## 7. Selection and caret
+---
 
-Photoshop's selection semantics inside a text flow, which a canvas text editor must reproduce:
+## 8. Transforms in edit mode
 
-| Gesture                    | Selects                 |
-| -------------------------- | ----------------------- |
-| Click                      | Places caret            |
-| Double-click               | The word                |
-| Triple-click               | The line                |
-| Quadruple-click            | The paragraph           |
-| Quintuple-click            | All text in the box     |
-| `Shift`+click              | Extends                 |
-| `Shift`+`←`/`→`            | One character at a time |
-| `Shift`+`Cmd/Ctrl`+`←`/`→` | One word at a time      |
+**Photoshop** ([creating-type](https://helpx.adobe.com/photoshop/using/creating-type.html), Adobe):
 
-Plus: double-clicking the `T` thumbnail in the Layers panel enters edit mode **with everything
-selected**.
+- **Point type** gains a transformable box **while still editing**: `Ctrl`/`Cmd`-drag shows it,
+  and its handles scale, skew and rotate the type.
+- **Paragraph type** shows its box by default; resizing it **reflows the text**.
+- `Ctrl`/`Cmd`-drag a **corner** handle scales the glyphs; `Ctrl`/`Cmd`-drag a **middle** handle
+  **skews**; drag **outside** the border to **rotate**; `Shift` constrains; `Alt` grows from
+  centre; `Ctrl`/`Cmd`-drag the centre point moves the rotation centre.
+- Edit-menu transforms are allowed **except Perspective and Distort**. Transforming **part** of a
+  type layer requires rasterizing first — Adobe's own note, and a stronger restriction than the
+  exception list.
+- A non-commit move is available: outside the bounding box the cursor becomes the Move tool, so
+  the type can be repositioned without committing first.
 
-- `GAP` — the whole model. There is no caret and no selection; text entry is a `<textarea>` in the
-  toolbar, and the canvas shows an uneditable render of it.
-- `GAP` — the caret-dependent Kerning/Tracking field swap (§4) is impossible without this.
+**In this app**: `useRect` gives resize and an interior move, and `calculateNewRect` re-lays out
+the text on a metric change. There is no scale, skew, rotate, no in-edit-mode `Ctrl`-drag, and no
+edit mode for any of it to happen in.
 
-**IME.** `TextToolArea.tsx:81-87` has the `compositionstart`/`compositionend` scaffolding commented
-out with the note that the browser fires composition events during IME input. Any caret model has to
-be built composition-aware from the start, or CJK and Indic input will corrupt on the first
-composed keystroke. The correct shape is to let the browser own composition and treat the caret as
-hidden-but-real during a composition, rather than intercepting `keydown`.
+- `HAVE` — box resize via `useRect`.
+- `PARTIAL` — resize only. No scale, skew or rotate.
+- `GAP` — reflow on box resize. **The box currently has no typographic effect on the text at
+  all**; it only clips and it grows.
+- `GAP` — the in-edit-mode transform box and its modifier matrix.
 
-## 8. Fonts
+---
 
-- `HAVE` — a font picker with hover-preview, portal-anchored positioning, and Escape / outside-click
-  revert to the pre-open value (`FontSelect.tsx`).
-- `PARTIAL` — the font list is **14 hard-coded families** (`FontSelect.tsx:5-20`).
-- `GAP` — style enumeration per family (§4).
-- `GAP` — variable fonts. Photoshop exposes `wght` and `opsz` axes from the Properties panel;
-  Canvas 2D reaches them only through a CSS `font-variation-settings`-shaped font shorthand that is
-  not part of the canvas font parser in any shipping browser. Treat as a research item.
-- `GAP` — OpenType layout features. `liga`, `calt`, `smcp`, `ss01`-`ss20`, `onum`, `tnum`, `zero`,
-  `sups`, `subs`, `frac` and the rest. Canvas 2D exposes none of them; the shaper is the platform's
-  and takes no feature arguments. The `cv01`-`cv99` and `ss01`-`ss20` families are the user-visible
-  ones, and a workaround is to resolve the alternate glyph through a font parser and address it by
-  glyph id — a real project, not a checkbox.
-- `GAP` — **font fallback on a missing family.** A document saved with a font that is not installed
-  must still open, and Photoshop surfaces this as a first-class problem: `Type > Manage Missing
-Fonts`, a per-layer "font is missing" state in the Layers panel, and a default replacement
-  (Myriad Pro Regular for Roman). A web editor cannot assume the font exists, so this is a
-  first-class requirement, not an error path.
-- `OUT` — Adobe Fonts / Typekit cloud sync, `Type > Match Font` (identify a font from a rasterised
-  selection), and the on-canvas preview of uninstalled cloud fonts. All three require font files
-  this application does not ship and, for Match Font, an image-matching model.
-- `OUT` — the font engine is loaded lazily and only when a document has a type layer, the Type tool
-  is selected, or the Character panel is visible. Interesting for our own perf work, not a
-  requirement.
+## 9. The four tools, and vertical type
 
-## 9. Coordinates, units, and export
+**Photoshop ships four** on the `T` slot, cycled with `Shift+T`
+([keys-selecting-tools](https://helpx.adobe.com/photoshop-elements/using/keys-selecting-tools.html),
+Adobe):
 
-Three units are in play and this tool currently conflates two of them.
+| Tool                 | Creates                                                |
+| -------------------- | ------------------------------------------------------ |
+| Horizontal Type      | A live type layer, point or paragraph, left-to-right   |
+| Vertical Type        | A live type layer, top-to-bottom                       |
+| Horizontal Type Mask | **A selection in the shape of the type** — not a layer |
+| Vertical Type Mask   | The same, vertical                                     |
 
-| Concept          | Photoshop                        | This repo               |
-| ---------------- | -------------------------------- | ----------------------- |
-| Type size        | points (1/72 in)                 | **px** (`Text.tsx:134`) |
-| Body unit        | pixels                           | pixels                  |
-| Inter-line space | points, or % of size (auto 120%) | unitless ratio          |
-| Tracking/kerning | 1/1000 em                        | n/a                     |
+Adobe's own sentence for the mask tools: "When you use the Horizontal Type Mask tool or Vertical
+Type Mask tool, you create a selection in the shape of the type"
+([Adobe teaching resources](https://edex.adobe.com/teaching-resources/photoshop-type-mask-tool)).
 
-- `OUT` — switching the type size unit to points. Our canvas is a fixed pixel raster with no
-  physical resolution attached, so points have no denominator. `ctx.font` parses `px` and a handful
-  of absolute units; a document-level `dpi` would make `pt` meaningful but is a document-model
-  change, not a Text-tool change. **The requirement is that the stored value names its unit**, so
-  a future points migration is a data migration and not an ambiguity.
-- **Export.** Photoshop text stays vector in PSD, PDF and EPS, and uses those outlines on print.
-  Canvas-rendered text is pixels from the moment it is drawn. Anything that leaves this application
-  as a bitmap is final; there is no re-render at a larger size and no "Update All Text Layers"
-  after a font arrives. **This is a hard architectural limit of the renderer, not a missing
-  feature** — record it once here so it is not rediscovered per-export-baseline.
-  - `OUT` — vector text output, PDF/EPS with live text, and the post-save "Update All Text Layers"
-    conversion for legacy bitmap type layers.
+**Vertical type specifics** ([editing-text](https://helpx.adobe.com/photoshop/using/editing-text.html),
+Adobe):
 
-## 10. Transforms
+- Three routes: the options-bar **Text Orientation** button · `Layer > Type > Horizontal|Vertical`
+  · Character panel menu > **Change Text Orientation**.
+- **It flips the whole layer**, not the selection.
+- Adobe warns explicitly: "Don't confuse the orientation of a type layer with the direction of
+  characters in a type line."
+- Alignment becomes **Top / Center / Bottom**; justification renames to **Justify Last Top /
+  Centered / Bottom**.
+- Underline moves beside the text and offers **Underline Left or Underline Right — never both**.
+- Characters can be rotated 90° so they stand upright within vertical lines.
+- The baseline marker changes meaning: for vertical type it marks the **centre axis** of the
+  characters, not a baseline.
 
-**Point type** has a transformable bounding box **even while in edit mode**: `Cmd/Ctrl`-drag shows
-the box, and its handles scale, skew and rotate the type. `Shift` constrains proportions, `Alt`
-keeps the centre fixed, `Cmd/Ctrl` explores skewed angles.
+**In this app**: the type tile holds a **single entry** (`toolbar-mapping.ts:108`), so `Shift+T`
+re-selects the same tool. One entry stands in for a four-tool group.
 
-**Paragraph type** — the box resizes; the type inside reflows. `Cmd/Ctrl`-drag and the bounding-box
-handles work in edit mode. A transform commit applies, and the transformed box persists.
+- `GAP` — the orientation control, on the bar and as a layer property. This is the one item in the
+  naive description that is genuinely absent.
+- `GAP` — vertical rendering. Canvas can rotate the glyph run, but vertical alignment, the
+  underline rule and the centre-axis baseline all follow from the layout model in §7.
+- `OUT` — the two **mask** tools. They produce a selection, not a layer, so they belong to the
+  selection model rather than to the Type tool's layer story.
 
-The full set of Edit-menu transforms except **Perspective** and **Distort** is allowed without
-rasterizing. To transform _part_ of a type layer, it must be rasterized first.
+**The path-type cursor is unsourced.** Third-party descriptions disagree — dotted wavy line, wavy
+line, or I-beam in a dotted square — and no Adobe page documents it. Specify a dotted path-line
+through the I-beam and **label it a reconstruction**.
 
-- `HAVE` — the `useRect` drag in `TextToolArea.tsx:24-39` resizes the layer box, and
-  `calculateNewRect` (`util/rect.ts:116-154`) re-lays-out the text on font/size/family/line-height
-  change. It grows the box in the direction alignment implies, and preserves it when the new text
-  fits.
-- `PARTIAL` — resize only. No scale, skew, rotate, and no `Cmd/Ctrl`-drag transform in edit mode,
-  because there is no edit mode.
-- `GAP` — reflow on box resize. There is no wrapping, so the box currently has no typographic
-  effect on the text at all; it only clips.
+---
 
-## 11. Non-destructive and destructive conversions
+## 10. Fonts
 
-The rasterization boundary, and it is the same one every raster tool in this repo already sits on.
+- `HAVE` — a font picker with hover-preview, portal-anchored positioning, and Escape /
+  outside-click revert (`FontSelect.tsx`).
+- `PARTIAL` — **14 hard-coded families** (`FontSelect.tsx:5-20`). WYSIWYG preview is already
+  correct.
+- `GAP` — per-family style enumeration.
+- `GAP` — **missing fonts are a first-class state, not an error path.** A document from a
+  collaborator must always open. Photoshop surfaces this as `Type > Manage Missing Fonts`, a
+  per-layer indicator in the Layers panel, and a default replacement (**Myriad Pro Regular** for
+  Roman text). A web editor cannot assume the font exists.
+- `OUT` — Adobe Fonts / Typekit sync, and `Type > Match Font` (identify a font from a rasterised
+  selection — an image-matching model this app does not have).
+- `OUT` — OpenType feature toggles and variable-font axes. Canvas 2D exposes neither: the shaper
+  is the platform's and takes no feature arguments. Not a checkbox.
 
-**Editable after** (Photoshop's list): change type orientation · apply anti-aliasing · convert
-between point and paragraph type · create a work path from type · Edit-menu transforms except
-Perspective and Distort · layer styles.
+---
 
-**Destructive**: `Layer > Rasterize > Type` — irreversible, and afterwards the words and the font
-are gone. Applying a brush, eraser, paint bucket, Content-Aware Fill or a filter to a type layer
-prompts to rasterize first. `Type > Convert to Shape` turns text into a **shape** layer: still
-vector, no longer editable as text, and now deformable with the Direct Selection tool. `Type >
-Create Work Path` produces a separate path **and keeps the type layer intact**.
+## 11. Units, coordinates, export — the renderer limits
 
-Adobe's own guidance is to duplicate the layer before rasterizing, because there is no undo past
-it.
+| Concept               | Photoshop                                   | This repo               |
+| --------------------- | ------------------------------------------- | ----------------------- |
+| Type size             | points (1/72 in)                            | **px** (`Text.tsx:147`) |
+| Inter-line space      | points, or % of size (auto 120%)            | unitless ratio          |
+| Tracking / kerning    | 1/1000 em                                   | n/a                     |
+| Resolution dependence | `newVal = (resolution / 72) × referenceVal` | none                    |
 
-- `OUT` — rasterize prompts and the rasterize menu. Once the layer is a bitmap at commit time
-  (`createLayerFromTool`), it is already rasterized and every tool on it works.
-- `GAP` — Create Work Path. Cheap and useful: glyph outlines are reachable via
-  `Path2D`/`TextMetrics` on some platforms and via a font parser everywhere.
-- `OUT` — Convert to Shape. Needs a vector document model this repository does not have.
-- `OUT` — text as a layer mask / clipping mask. Needs the run model plus raster output at an
-  arbitrary alpha threshold.
+The **Size field accepts** `in, cm, mm, pt, px, pica` and converts to the document's default unit.
 
-## 12. Text on paths, warp, and fill
+**Export.** Photoshop type stays vector in PSD, PDF and EPS. Canvas-rendered text is pixels from
+the moment it is drawn. Both save paths flatten: `savePsd` writes each child as a raster canvas
+(`psd-utils.ts:240-271`), and the image path writes a single flattened canvas. The PSD importer
+already warns that text arrives "as a raster preview; editable text is not preserved"
+(`psd-utils.ts:108`) — which is true in both directions today.
 
-- **Text on a path** — click the path with the Type tool (cursor becomes an I-beam with a dotted
-  circle) and type. The Paths-selection tool then drags the text along the path. Baseline shift
-  moves text above or below the path. Dragging a path anchor reshapes the flow live. The text stays
-  fully editable, and the path can be deleted without killing the text.
-- **Text inside a shape** — the same click-to-type on a closed shape's path, flowing around the
-  inside.
-- **Warp Text** — `Type > Warp Text`, ~20 presets (Arc, Arc Lower, Arc Upper, Arch, Bulge, …), each
-  with a **Bend** slider, horizontal and vertical distortion, and H/V orientation. Unlike Free
-  Transform, **warped text stays fully editable** — you can still change the words, font and colour
-  with the warp intact. `None` unwarps. Warp is **unavailable when Faux Bold is applied.**
-- **Fill text with image** — the type layer's fill comes from an image rather than a colour.
+- `OUT` — switching the size unit to points. **The requirement is narrower and is the landable
+  one: the stored value must name its unit**, so a future points migration is a data migration
+  and not an ambiguity.
+- `OUT` — vector text output. **A hard limit of the renderer, not a missing feature.** Record it
+  once here so it is not rediscovered per export baseline.
 
-- `OUT` — all four. Text on a path needs path sampling; warp needs per-glyph placement along a
-  deformed baseline; fill-with-image needs a layer's fill source decoupled from its colour. Each is
-  a project, and warp's editable-after-warping property is the expensive part.
+---
 
-## 13. Spelling, hyphenation, and search
+## 12. Text on paths, warp, and conversions
 
-- **Check Spelling** — per language dictionary, selectable per selection or per layer. Layers that
-  are **hidden or locked are not checked**. A word not in the dictionary is offered Ignore / Ignore
-  All / Change To / Add to Dictionary, and the run is highlighted in the document.
-- **Find And Replace Text** — document-wide, across **visible and unlocked type layers only**, with
-  case and whole-word options.
-- **Hyphenation** — dictionary-driven, see §5.
+- **Text on a path** — click the path, type; text follows the path in the direction of its anchor
+  points and stays fully editable. Needs path sampling.
+- **Text inside a shape** — the same gesture inside a closed path.
+- **Warp Text** — ~20 presets, each with **Bend**, horizontal/vertical distortion, and H/V
+  orientation. **Warped text stays fully editable**, and `None` unwraps it. Warp is unavailable
+  when Faux Bold is applied.
+- **Create Work Path** — produces a path **and leaves the type layer intact**. Cheap and useful.
+- **Convert to Shape** — turns text into a vector shape: no longer editable as type, now
+  deformable per-letter.
+- **Rasterize Type** — irreversible; afterwards the words and the font are gone.
 
-- `GAP` — all three. `Intl.Segmenter` with `granularity: 'word'` gives word boundaries for the
-  double-click selection and for whole-word search; the browser exposes no per-language hyphenation
-  patterns, so hyphenation needs a shipped pattern set.
-- `OUT` — the personal dictionary and the hidden/locked-layer rules as a rule rather than as
-  behaviour. The dictionary is user data with a file format, and it is not this application's job.
+- `OUT` — text on a path and warp. Both need per-glyph placement along a deformed baseline, and
+  warp's editable-after-warping property is the expensive half.
+- `GAP` — Create Work Path. Glyph outlines are reachable via a font parser.
+- `OUT` — Convert to Shape. Needs a vector document model this app does not have.
+- `OUT` — rasterize prompts. A raster text layer is already rasterized.
 
-## 14. Priorities
+---
+
+## 13. Spelling, hyphenation, search
+
+- **Check Spelling** — per-language dictionary, and **hidden and locked layers are not checked**.
+  Offers Ignore / Ignore All / Change To / Add to Dictionary, one misspelling at a time.
+- **Find And Replace Text** — across **visible and unlocked type layers only**, with case and
+  whole-word options.
+
+- `GAP` — all of it. `Intl.Segmenter` gives word boundaries for double-click selection and
+  whole-word search; the browser exposes **no** per-language hyphenation patterns, so hyphenation
+  needs a shipped pattern set.
+- `OUT` — the personal dictionary and the hidden/locked rules as a _rule_ rather than as
+  behaviour. The dictionary is user data with a file format.
+
+---
+
+## 14. Platform constraints
+
+Canvas 2D, and what each Photoshop feature costs there:
+
+| Photoshop feature      | Canvas 2D             | Status                                                                            |
+| ---------------------- | --------------------- | --------------------------------------------------------------------------------- |
+| Kerning                | `ctx.fontKerning`     | Available                                                                         |
+| Tracking               | `ctx.letterSpacing`   | Baseline 2025 — feature-detect                                                    |
+| Word spacing           | `ctx.wordSpacing`     | Baseline 2025 — feature-detect                                                    |
+| Small caps / all caps  | `ctx.fontVariantCaps` | Available                                                                         |
+| Condensed / expanded   | `ctx.fontStretch`     | Available                                                                         |
+| Baseline direction     | `ctx.direction`       | Direction only, not bidi shaping                                                  |
+| Language for shaping   | `ctx.lang`            | Available                                                                         |
+| Ligature control       | `ctx.textRendering`   | Limited availability                                                              |
+| **Auto-leading 120%**  | —                     | Reproduce arithmetically; the default is font-independent, so a constant is exact |
+| **Anti-aliasing mode** | —                     | **Unavailable** (§5)                                                              |
+| **OpenType features**  | —                     | **Unavailable** (§10)                                                             |
+| **Hyphenation**        | —                     | Needs shipped patterns (§13)                                                      |
+
+**Baseline 2025 is not a floor to assume.** `letterSpacing` and `wordSpacing` shipped in March
+2025, and the e2e suite runs system **Chrome** only, so CI will not catch a regression elsewhere.
+Any use of these must be feature-detected at the point of use, with a measured manual fallback,
+and the fallback must be exercised by a unit test that deletes the property.
+
+**The consequence worth stating plainly: the Text tool's glyph rasterisation is the host
+browser's, not ours.** Anti-aliasing, hinting, subpixel positioning and the `textRendering` hint
+all sit below `fillText`. Any requirement that says "render the text the way Photoshop renders
+text" is unreachable, and any export baseline that depends on it is host-dependent rather than a
+property of the code.
+
+---
+
+## 15. Verification
+
+Every requirement above needs a test that fails without the change.
+
+- **jsdom (`npm run test`)** — layout arithmetic, run splitting and merging, selection-range
+  arithmetic, justification distribution, indent maths. jsdom cannot measure glyphs, so
+  `measureText` and the font metrics table must be **injected seams, not globals** —
+  `getTextWidth` currently reaches into a live context via `rect.ts:144`, and that has to change
+  before any of §5 or §6 is testable.
+- **Playwright (`npm run test:e2e`, headless)** — caret placement, the click-count ladder, IME
+  composition, box drag reflow, the overflow indicator. Real input via `page.mouse` /
+  `page.keyboard`.
+- **Rendered output** — a text layer's pixels are the only place wrapping, tracking and
+  justification are observable. These need a **pixel** assertion. jsdom `toBeVisible()` is not
+  evidence about glyphs.
+- **Not pinned by a test** — anti-aliasing and OpenType features. Host behaviour. Say so rather
+  than writing a test that passes for the wrong reason.
+- **Tripwires to remove in the same change as any fix** — `text.test.ts:282` (the `it.fails` on
+  replay re-rasterization), and the `it.fails` on B/I `aria-pressed` at `Text.test.tsx:132`.
+
+---
+
+## 16. Priority order
 
 Ordered by what unblocks the most per unit of work, not by what Photoshop does first.
 
-| #   | Item                                             | Why here                                                              |
-| --- | ------------------------------------------------ | --------------------------------------------------------------------- |
-| 1   | **Run model** (§6)                               | Blocks every per-character and per-paragraph feature                  |
-| 2   | **Edit mode + caret + selection** (§3, §7)       | Blocks commit/cancel, kerning, IME, and §6 usability                  |
-| 3   | **Text wrapping + overflow indicator** (§2)      | Makes the box mean something; currently decorative                    |
-| 4   | **Point vs paragraph type** (§2)                 | Reframes the box from decoration to a type kind                       |
-| 5   | **Tracking, kerning, baseline shift** (§4)       | Highest-frequency typographic control, and `ctx.letterSpacing` exists |
-| 6   | **Character style attributes** (§4)              | Underline, strikethrough, caps, super/subscript                       |
-| 7   | **Justification** (§5)                           | `util/text.ts` is a sketch; needs writing properly                    |
-| 8   | **Font fallback / missing-font state** (§8)      | A document from a collaborator must always open                       |
-| 9   | **Paragraph indents + spacing** (§5)             | Follows the run model, low marginal cost                              |
-| 10  | **Per-family styles, undo granularity** (§4, §6) | Needs §6 and the history model                                        |
+| #   | Item                                               | Why here                                                                              |
+| --- | -------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 1   | **Live type layer + run model** (§7)               | Blocks every per-character and per-paragraph feature, and re-entering a layer at all  |
+| 2   | **Click = point type, drag = paragraph type** (§2) | The tool's primary interaction, entirely absent                                       |
+| 3   | **Placeholder text, pre-selected** (§2)            | What makes "click then type" feel like Photoshop                                      |
+| 4   | **Edit mode + caret + selection** (§3, §4)         | Commit/cancel, kerning, IME, and §7's usability                                       |
+| 5   | **Text wrapping + overflow indicator** (§2, §6)    | Makes the box mean something; currently decorative                                    |
+| 6   | **Tracking, kerning, baseline shift** (§5)         | Highest-frequency typographic control, and `ctx.letterSpacing` exists                 |
+| 7   | **Orientation / vertical type** (§9)               | The one bar control named in the naive description                                    |
+| 8   | **Character style attributes** (§5)                | Underline, strikethrough, caps, super/subscript                                       |
+| 9   | **Justification** (§6)                             | Needs written properly; the commented-out `util/text.ts` is a sketch, not a reference |
+| 10  | **Missing-font state** (§10)                       | A document from a collaborator must always open                                       |
+| 11  | **Indents + paragraph spacing** (§6)               | Follows the run model, low marginal cost                                              |
 
-## 15. Platform constraints
-
-The browser is not Photoshop's text engine, and several requirements above die on that. What Canvas
-2D actually offers, and the fallback cost where it is missing.
-
-| Photoshop feature     | Canvas 2D                                                                              | Status                                                                                                         |
-| --------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Kerning (metrics)     | `ctx.fontKerning` — `auto`/`normal`/`none`                                             | Available                                                                                                      |
-| Tracking              | `ctx.letterSpacing` — CSS `<length>`, default `0px`                                    | **Baseline 2025** (Mar 2025) — needs a feature check and a manual per-glyph fallback                           |
-| Word spacing          | `ctx.wordSpacing` — CSS `<length>`, default `0px`                                      | **Baseline 2025** (Mar 2025), same caveat                                                                      |
-| Small caps / all caps | `ctx.fontVariantCaps`                                                                  | Available                                                                                                      |
-| Condensed / expanded  | `ctx.fontStretch`                                                                      | Available                                                                                                      |
-| Ligature control      | `ctx.textRendering` — `auto`/`optimizeSpeed`/`optimizeLegibility`/`geometricPrecision` | **Limited availability**; only `optimizeSpeed` disables ligatures/kerning, and it is not universally available |
-| Baseline direction    | `ctx.direction` — `ltr`/`rtl`/`inherit`                                                | Available (direction only, not full bidi shaping)                                                              |
-| Language for shaping  | `ctx.lang`                                                                             | Available                                                                                                      |
-| Anti-aliasing mode    | —                                                                                      | **Unavailable** (§4.1)                                                                                         |
-| OpenType features     | —                                                                                      | **Unavailable** (§8)                                                                                           |
-| Variable font axes    | —                                                                                      | **Unavailable** (§8)                                                                                           |
-| Auto-leading 120%     | —                                                                                      | Reproduce arithmetically; the value is a font-independent default, so a constant is exact                      |
-| Indent / space before | —                                                                                      | Reproduce in layout code                                                                                       |
-| Hyphenation           | —                                                                                      | Needs shipped patterns (§13)                                                                                   |
-
-**Baseline 2025 is not a floor to assume.** `letterSpacing` and `wordSpacing` shipped in March 2025.
-The e2e suite runs system **Chrome** only (`playwright.config.ts:93-102`), so CI will not catch a
-regression in Firefox or Safari. Any use of these properties must be feature-detected at the point
-of use, with a measured manual fallback, and the fallback must be exercised by a unit test that
-deletes the property — jsdom will not exercise the real one either way.
-
-The consequence worth stating plainly: **the Text tool's glyph rasterisation is the host browser's,
-not ours.** Anti-aliasing, hinting, subpixel positioning and the `textRendering` hint all sit below
-`fillText`. Any requirement that says "render the text the way Photoshop renders the text" is
-unreachable, and any export baseline that depends on it will be host-dependent rather than a
-property of the code.
-
-## 16. Verification
-
-Per `AGENTS.md` → Definition of Done, every item above needs a test that fails without the change.
-
-- **jsdom (`npm run test`)** — layout arithmetic, run splitting and merging, selection-range
-  arithmetic, justification distribution, indent maths. jsdom cannot measure glyphs, so every
-  measurement input must be injectable: `measureText` and the font metrics table are seams, not
-  globals. The `getTextWidth` call in `util/rect.ts:134` reaches into a live context; that has to
-  become an injected seam before any of §5 or §6 is testable.
-- **Playwright (`npm run test:e2e`, headless, Chrome)** — caret placement, click-to-word/line/
-  paragraph selection, IME composition, box drag reflow, overflow indicator appearance. Real input
-  via `page.mouse` / `page.keyboard`, per the test traps in `AGENTS.md`.
-- **Rendered output** — a text layer's pixels are the only place wrapping, tracking and
-  justification are actually observable. These need a pixel assertion, not a DOM assertion. jsdom
-  `toBeVisible()` is not evidence about glyphs.
-- **Not pinned by a test** — anti-aliasing and OpenType features. They are host behaviour. Say so
-  rather than writing a test that passes for the wrong reason.
+---
 
 ## 17. Open questions
 
-1. **Does a text layer stay editable, or commit once?** Today: commit once, immediately, to a
-   bitmap. Everything in §3 and §6 assumes the layer survives. That is the single decision the rest
-   of this document waits on.
-2. **Where does the run model live?** `HistoryItem[]` is production replay authority. Do runs go
-   into the history entry, or into a layer property the history entry references? The second keeps
-   entries small; the first keeps replay total.
-3. **Is a text layer rasterized at commit or lazily?** Committing immediately means no re-render at
-   export resolution and no missing-font recovery. Lazily means the layer must survive save/load
-   with its text model intact, which is the durable-document question, not the Text-tool question.
-4. **Do we implement wrapping, or ship it as out of scope?** The bounding box is currently
-   decorative. Wrapping is the largest visual-quality jump and the largest test surface.
-5. **Which browser is the floor?** §15's Baseline-2025 properties decide whether tracking and word
+These are judgement calls, not research gaps. Each one blocks work downstream.
+
+1. **Does a text layer stay editable, or commit once?** Today: commit once, to a raster. §3 and
+   §7 assume the layer survives. **This is the decision the rest of the document waits on**, and
+   §7.1 lists the three places in the current code that would have to change.
+2. **Per-keystroke history, or per-edit?** Photoshop records text edits individually. Replay
+   re-simulates the whole timeline from index 0 and re-runs the creator per layer, so per-keystroke
+   granularity has a real cost here. This is a replay decision, not a UI one.
+3. **Should a text layer survive a raster tool applied to it?** The current code deletes the
+   retained source. Preserving it means either re-deriving after the raster (impossible — the
+   pixels changed) or keeping both and choosing. Photoshop prompts to rasterize first.
+4. **Wrapping, or explicitly out of scope?** The bounding box is currently decorative. Wrapping is
+   the largest visual-quality jump and the largest test surface, and `e2e/text-tool.spec.ts:430`
+   already pins an invariant a wrapping implementation must satisfy.
+5. **Which browser is the floor?** §14's Baseline-2025 properties decide whether tracking and word
    spacing are one line or a font-metrics engine. CI is Chrome-only today.
 
 ---
 
-## 18. Sources
+## 18. Test inventory that pins today's behaviour
 
-- [Create type in Photoshop](https://helpx.adobe.com/photoshop/using/creating-type.html) — point vs
-  paragraph, edit mode, commit, what stays editable
+Any implementation that changes the model above will break these. They are listed so the next
+session knows what it is walking into — not as an instruction to weaken any of them.
+
+| File                                                            | Pins                                                                                                                                    | Breaks on                       |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `src/tools/__tests__/text.test.ts`                              | font shorthand, per-line `fillText` spacing, `getTextWidth`, creator canvas size, re-rasterization cost, the `it.fails` replay tripwire | most of the model               |
+| `src/util/__tests__/rect.test.ts:207-334`                       | grow-from-click, grow-on-wider-text, **no shrink**, height arithmetic                                                                   | wrapping and fixed boxes        |
+| `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`     | Apply/Clear gating, the textarea placeholder, three-Applies-one-layer, the colour swatch owning its value, bar tab order                | the whole commit model          |
+| `src/components/Main/__tests__/TextToolArea.test.tsx`           | textarea focus on tool select, the empty rendered div, focus after a committed rect                                                     | focus moving to the canvas      |
+| `src/contexts/__tests__/useLayer.text.test.tsx`                 | commit idempotency in both directions, cleared-draft shape                                                                              | the commit model                |
+| `e2e/text-tool.spec.ts`                                         | drag-then-type order, the Apply gate, the `/^text \d+$/` layer row, **ink stays inside the dragged rectangle**                          | creation gestures, layer naming |
+| `src/contexts/__tests__/materialization.assets.test.ts:499-516` | a durable `kind: 'text'` source **renders through the text creator** at its intrinsic size                                              | nothing — already correct       |
+| `src/util/__tests__/settings.test.ts:85-105`                    | text settings persist **without** `text` and `rect`                                                                                     | nothing — correct by design     |
+
+---
+
+## 19. Sources
+
+### Adobe — behaviour and interaction
+
+- [Create type in Photoshop](https://helpx.adobe.com/photoshop/using/creating-type.html) — point
+  vs paragraph, edit mode, the Commit/Cancel tell, the overflow icon, the editable-without-
+  rasterizing list and its Perspective/Distort exceptions, paragraph→point deleting overflow
 - [Edit text in Photoshop](https://helpx.adobe.com/photoshop/using/editing-text.html) — commit and
-  cancel paths, `Use Esc key to commit text`, spell check, find and replace, rotation
-- [Format characters in Photoshop](https://helpx.adobe.com/photoshop/using/formatting-characters.html)
-  — faux styles, caps, super/subscript, underline and strikethrough colour, style hierarchy,
-  selection by click count
-- [Line and character spacing in Adobe Photoshop](https://helpx.adobe.com/photoshop/using/line-character-spacing.html)
-  — leading and auto-leading, kerning modes, the caret-dependent field swap, 1/1000 em units,
-  cumulative tracking and manual kerning
-- [Format paragraphs in Photoshop](https://helpx.adobe.com/photoshop/using/formatting-paragraphs.html)
-  — alignment, all four justification modes, word/letter/glyph scaling ranges, indents, paragraph
-  spacing
-- [A Comprehensive Introduction to the Type Tool (Tuts+)](https://design.tutsplus.com/tutorials/a-comprehensive-introduction-to-the-type-tool--psd-2905)
-  — the five anti-aliasing levels and their intended use, the six hyphenation settings with
-  defaults
-- [Horizontal and vertical type tool options (Photoshop Help)](http://www.photoshopforphotographers.com/3101-1901/Help_guide/tp/Type_tools.html)
-- [AntiAlias — Photoshop Scripting Reference](https://theiviaxx.github.io/photoshop-docs/Photoshop/AntiAlias.html)
-  — the five `AntiAlias` constants
-- [When to rasterize your type and shape layers (Adobe Learn)](https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer)
-  — the rasterize prompt, what is lost, and the duplicate-first guidance
-- [Convert text to shapes or work paths in Photoshop](https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/convert-text-to-shapes-or-work-paths.html)
-- [Warp and unwarp text in Photoshop](https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/warp-and-unwarp-text.html)
-  — Bend/Distort, and that warped text stays editable
-- [Modify text paths in Photoshop](https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/modify-text-paths.html)
-- [Replace missing fonts in Photoshop](https://helpx.adobe.com/photoshop/desktop/text-typography/select-manage-fonts/replace-missing-fonts.html)
-  — `Type > Manage Missing Fonts`, the default replacement
-- [About fonts (Adobe Help Center)](https://helpx.adobe.com/photoshop/desktop/text-typography/select-manage-fonts/about-fonts.html)
-  — font type icons, the faux-style definition
-- [Use OpenType variable fonts in Photoshop](https://helpx.adobe.com/photoshop/desktop/text-typography/select-manage-fonts/use-opentype-variable-fonts.html)
-- [OpenType font features (Adobe Type)](https://www.adobe.com/products/type/opentype.html)
-- [Registered features, OpenType 1.9.1 (Microsoft Learn)](https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist)
-- [Text Options for Photoshop CC (dummies)](https://www.dummies.com/article/technology/software/adobe-products/photoshop/text-options-for-photoshop-cc-163691)
-  — options-bar contents, hover-to-preview font cycling, selection by click count
+  cancel paths, `Use Esc key to commit text` and its default, spell check, find and replace, the
+  three orientation routes, the default font size
+- [Add or edit text](https://helpx.adobe.com/au/photoshop/using/add-edit-text.html) —
+  `Fill new type layers with placeholder text`, and `Type > Paste Lorem Ipsum`
+- [Format characters](https://helpx.adobe.com/photoshop/using/formatting-characters.html) — the
+  full click-count selection ladder, faux styles, the underline colour rule, Underline Left/Right
+- [Line and character spacing](https://helpx.adobe.com/photoshop/using/line-character-spacing.html)
+  — leading, auto-leading 120% and where it is configured, the kerning/tracking units, the
+  caret-vs-selection field swap, cumulative tracking and manual kerning
+- [Format paragraphs](https://helpx.adobe.com/photoshop/using/formatting-paragraphs.html) —
+  alignment, the four justification modes, Min/Desired/Max semantics, indents, hyphenation
+- [Horizontal and vertical type tool options](https://helpx.adobe.com/photoshop/using/tool-techniques/horizontal-type-tool.html)
+- [Warp and unwarp text](https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/warp-and-unwarp-text.html)
+  — that warped text stays fully editable
+- [Convert text to shapes or work paths](https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/convert-text-to-shapes-or-work-paths.html)
+- [Replace missing fonts](https://helpx.adobe.com/photoshop/desktop/text-typography/select-manage-fonts/replace-missing-fonts.html)
+  — `Manage Missing Fonts`, Myriad Pro Regular as the Roman default, the per-layer indicator
+- [Apply OpenType features](https://helpx.adobe.com/photoshop/desktop/text-typography/select-manage-fonts/apply-opentype-features.html)
+- [When to rasterize type and shape layers](https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer)
+- [Type mask tool](https://edex.adobe.com/teaching-resources/photoshop-type-mask-tool) — Adobe's
+  own teaching page: the mask tools create a selection in the shape of the type
+- [Keyboard shortcuts: selecting tools](https://helpx.adobe.com/photoshop-elements/using/keys-selecting-tools.html)
+  — the four type tools on `T`, and `Shift+T` cycling
+- [Asian type](https://helpx.adobe.com/photoshop/using/asian-type.html) — mojikumi, kinsoku,
+  top-to-top leading, Set Tsume, and that 23.0 removed the need to select the East Asian engine
+
+### Adobe — API reference (authoritative for every default and range in §5 and §6)
+
+- [`CharacterStyle`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle)
+  — every character property with its default and range, in pixels for a 72ppi document
+- [`ParagraphStyle`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/paragraphstyle)
+- [`JustificationProperties`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/objects/options/justificationproperties)
+  — the Min/Desired/Max defaults of 80/100/133, 0/0/0, 100/100/100, and auto-leading 120
+- [`HyphenationProperties`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/objects/options/hyphenationproperties)
+  — all six settings, including `wordsLongerThan` default **5**
+- [`TextItem`](https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem) —
+  `contents`, `isPointText`/`isParagraphText`, `orientation`, the resolution conversion formula,
+  and the conversion methods
+
+### Web platform
+
 - [MDN: `CanvasRenderingContext2D`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D)
-  — the full text-layout property list
 - [MDN: `letterSpacing`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/letterSpacing)
   and [`wordSpacing`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/wordSpacing)
   — Baseline 2025
 - [MDN: `textRendering`](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/textRendering)
   — limited availability
-- [It's always been you, Canvas2D (Chrome for Developers)](https://developer.chrome.com/blog/canvas2d)
-  — the text-modifier set Chrome added
-- [Editable Text Layers (psapi)](https://photoshopapi.readthedocs.io/en/stable/concepts/text-layers.html)
-  — an independent implementation of the style-run/paragraph-run model, including
-  point-vs-box and orientation; the closest available confirmation of the §6 shape
-- [Troubleshoot fonts issues in Adobe Photoshop](https://helpx.adobe.com/in/photoshop/kb/troubleshoot-fonts-photoshop.html)
-  — lazy text-engine loading, font cache
+
+### Third-party, labelled as such
+
+- [Adobe's own anti-aliasing pull-down missing from the type bar](https://community.adobe.com/bug-reports-711/p-bring-back-font-anti-aliasing-pulldown-in-the-type-tool-bar-658044)
+  — a user report, and the **only** source for a 26.10 removal date. Unconfirmed. The Narrow
+  Options Bar preference is the more commonly reported cause
+- [Text shortcut walkthrough](https://jkost.com/blog/2020/09/30-tips-tricks-and-shortcuts-for-working-type-in-photoshop.html)
+  — Adobe's own official blog, used for: placeholder text being pre-selected, `Shift`-click
+  forcing a new layer, and the Move cursor outside the bounding box
+- [AntiAlias — Photoshop Scripting Reference mirror](https://theiviaxx.github.io/photoshop-docs/Photoshop/AntiAlias.html)
+  — the five constants and their one-line descriptions
+- [Photoshop CS3 manual mirror](http://www.underwaterphotography.com/photoshop/photoshop/1_16_2_3.html)
+  — Adobe-authored CS-era text, and the only place found that states the Size field's accepted
+  unit suffixes and the point/pica preference
