@@ -171,6 +171,28 @@ describe('the guard tells a main worktree from a linked one on a real repository
 });
 
 describe('the guard is actually installed', () => {
+  it('registers the post-merge release hook, so a merge clears what it made false', () => {
+    // Two separate things have to be true and neither implies the other: the tracked hook
+    // file has to exist, and `core.hooksPath` has to have a dispatcher for it. A hook file
+    // that is never installed is the silent failure this suite already exists to catch for
+    // `pre-commit`, and it is quieter here — a merge would go on leaving claims behind and
+    // nothing would say so.
+    expect(existsSync(join(REPO_ROOT, '.husky', 'post-merge'))).toBe(true);
+    const commonDir = git(REPO_ROOT, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    expect(commonDir).not.toBeNull();
+    expect(existsSync(join(commonDir, 'hooks-gate', 'post-merge'))).toBe(true);
+  });
+
+  it('does not let the post-merge hook stop a merge that already happened', () => {
+    // A post-merge hook runs after the merge is recorded, so failing could not prevent
+    // anything — it would only leave the operator with a landed merge and an error. The
+    // `||` fallback and the absence of `set -e` are what make that true, and both are
+    // load-bearing, so they are pinned rather than left to a reader's judgement.
+    const hook = readFileSync(join(REPO_ROOT, '.husky', 'post-merge'), 'utf8');
+    expect(hook).not.toMatch(/^\s*set -e\s*$/m);
+    expect(hook).toMatch(/merge-release\.mjs\s*\|\|/);
+  });
+
   it('runs from .husky/pre-commit, before the gate it would otherwise waste', () => {
     // The ordering is a claim the file's own comment makes, and it is worth
     // about nine seconds per refusal: `gate:commit` is lint-staged plus

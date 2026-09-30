@@ -82,6 +82,7 @@ const BUDGETED = [
   'agent-board.test.mjs',
   'e2e-run.test.mjs',
   'main-worktree-guard.test.mjs',
+  'merge-release.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
 ];
