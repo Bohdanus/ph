@@ -1889,8 +1889,11 @@ describe('the command line', () => {
     expect(bare.code).toBe(0);
     expect(bare.out).toContain('the note the agent is looking for');
     // The window is the one fact the reader cannot see from the lines, so it is
-    // said out loud, as a comment a pipeline can drop.
-    expect(bare.out).toMatch(/^# the last \d+ event\(s\) of \d+; everything before: swarm watch --since 0/m);
+    // said out loud, as a comment a pipeline can drop. The line carries the
+    // count SHOWN, the count MATCHED, and the command that reads the rest —
+    // `matched` comes from the query, so a header cannot claim a completeness
+    // the read did not have.
+    expect(bare.out).toMatch(/^# showing the last \d+ of \d+ event\(s\); .*swarm watch --since 0$/m);
     // And it really is the recent end: the first event is not in it.
     expect(bare.out).not.toContain('filler note 0');
 
@@ -1898,8 +1901,10 @@ describe('the command line', () => {
     const whole = await cli(['watch', '--since', '0']);
     expect(whole.out).toContain('filler note 0');
     expect(whole.out).toContain('the note the agent is looking for');
-    // Reading from the start is not a window, so it claims to be neither.
-    expect(whole.out).not.toContain('# the last');
+    // Reading from the start is not a window, so it carries no `#` header at
+    // all. Asserted on the line START, not on a phrase: a suffix read has no
+    // window to describe, and the only `#` this command ever writes is one.
+    expect(whole.out).not.toMatch(/^# /m);
   });
 
   it('exits 2 for an issue that does not exist', async () => {
