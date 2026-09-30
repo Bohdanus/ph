@@ -60,6 +60,70 @@ function openBoard(dbPath) {
 }
 
 /**
+ * The key one lock is identified by across `file_locks` and `issue_locks`: a
+ * path AND the agent in it, because the schema's own key is that pair and
+ * because two agents may hold the same file.
+ *
+ * NUL is the separator rather than a space because a space is legal in both a
+ * path and an agent id, and a key built with one collides: `(a b, c)` and
+ * `(a, b c)` are the same string. `db.mjs` keys its own lock lookups the same
+ * way.
+ */
+function lockKey(path, agentId) {
+  return `${path}\u0000${agentId}`;
+}
+
+/**
+ * Which issues a lock is being used for, keyed by `lockKey`.
+ *
+ * ATTRIBUTION LIVES IN `issue_locks`, NOT ON THE LOCK — and the v1 column this
+ * used to read is a trap, not a legacy detail. `file_locks` has carried no
+ * `issue_id` since schema v2 (the `CREATE TABLE IF NOT EXISTS file_locks` block
+ * in `db.mjs`): a lock says an agent is IN a file,
+ * and a separate row says which issue that is for, because one lock may serve
+ * as many issues as there are legitimate uses of it. Reading `file_locks.issue_id`
+ * therefore selected a column no current board has, and on a FRESH board — a new
+ * clone, a new machine, CI — the query threw `no such column`, unguarded, out of
+ * a command AGENTS.md makes mandatory before deleting a worktree. It never
+ * failed only because the v1 → v2 migration copies the column's contents into
+ * `issue_locks` and never drops the column, so every board this repository has
+ * ever run is carrying a leftover that hides the defect. That is the whole reason
+ * the test fixture that "passed" against it was asserting a schema the product
+ * stopped creating.
+ *
+ * Returns `available: false` rather than throwing when `issue_locks` is absent,
+ * which is a real state and not a hypothetical: this reader opens the database
+ * READ-ONLY and so never migrates it, so a v1 board file that nothing has opened
+ * since the upgrade still has the old column and no `issue_locks` at all. The
+ * caller reports that as a value (`lockIssueAttribution`) instead of an empty
+ * list, because "no lock has an issue" and "no lock's issue could be read" are
+ * different answers and only one of them is true.
+ */
+function readLockIssueAttribution(db) {
+  const present = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'issue_locks'")
+    .get();
+  if (!present) return { available: false, byLock: new Map() };
+  const byLock = new Map();
+  // `created_at` then `issue_id` so the reported set is in a stable order: this
+  // payload is written to a file a human reads, and an unordered result makes
+  // two runs of the same board differ.
+  for (const row of db
+    .prepare('SELECT issue_id, path, agent_id FROM issue_locks ORDER BY created_at, issue_id')
+    .all()) {
+    const key = lockKey(row.path, row.agent_id);
+    const list = byLock.get(key) ?? [];
+    // `issue_locks` is keyed (issue_id, path), so one (path, agent) lock can
+    // pair with MANY issues and the same id cannot repeat — but the lock it
+    // names need not be a live lock, and a set is what "the issues using this
+    // lock" is.
+    if (!list.includes(row.issue_id)) list.push(row.issue_id);
+    byLock.set(key, list);
+  }
+  return { available: true, byLock };
+}
+
+/**
  * Live claims, file locks and issues, keyed for lookup by worktree path.
  *
  * A claim is "live" when it has neither been released nor had its lease run
@@ -83,7 +147,17 @@ function isLive(row, timestampField, nowMs) {
 export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd) } = {}) {
   const db = openBoard(dbPath);
   if (!db) {
-    return { available: false, dbPath, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] };
+    return {
+      available: false,
+      dbPath,
+      // Every key is present in every return, so a caller can read the payload
+      // without knowing which way `readBoard` came out.
+      lockIssueAttribution: 'unavailable',
+      claims: new Map(),
+      fileLocks: new Map(),
+      agents: new Map(),
+      issues: [],
+    };
   }
 
   try {
@@ -94,10 +168,14 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
       .all()
       .filter((c) => isLive(c, 'lease_until', nowMs));
 
+    // The columns of the CURRENT schema, which are not the columns of every
+    // board that exists: `issue_id` is selected from `issue_locks` below, not
+    // from here. See `readLockIssueAttribution`.
     const fileLocks = db
-      .prepare('SELECT path, agent_id, issue_id, worktree, expires_at, released_at FROM file_locks')
+      .prepare('SELECT path, agent_id, worktree, expires_at, released_at FROM file_locks')
       .all()
       .filter((l) => isLive(l, 'expires_at', nowMs));
+    const attribution = readLockIssueAttribution(db);
 
     const agents = db.prepare('SELECT agent_id, kind, worktree, branch, session_id, last_seen FROM agents').all();
 
@@ -113,7 +191,18 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
     for (const l of fileLocks) {
       const key = l.worktree ?? '';
       const list = locksByWorktree.get(key) ?? [];
-      list.push({ path: l.path, agentId: l.agent_id, issueId: l.issue_id, expiresAt: l.expires_at });
+      // A LIST, and the only attribution field on a lock, because `issue_locks`
+      // is keyed (issue_id, path) and one lock can be being used for more than
+      // one issue. A singular field here would have to invent an answer for the
+      // second issue — dropping it silently is the same defect as reporting the
+      // wrong one. Empty means no issue is using this lock, which is the normal
+      // state of `hold <path>` with no `--issue`, the form AGENTS.md prescribes.
+      list.push({
+        path: l.path,
+        agentId: l.agent_id,
+        issueIds: attribution.byLock.get(lockKey(l.path, l.agent_id)) ?? [],
+        expiresAt: l.expires_at,
+      });
       locksByWorktree.set(key, list);
     }
 
@@ -134,6 +223,7 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
     return {
       available: true,
       dbPath,
+      lockIssueAttribution: attribution.available ? 'issue_locks' : 'unavailable',
       claims: claimsByWorktree,
       fileLocks: locksByWorktree,
       agents: agentsByWorktree,
