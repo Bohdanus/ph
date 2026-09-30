@@ -2927,30 +2927,31 @@ source, and re-derive from this entry rather than from its copy.
 and argues from `AGENTS.md:170-173` that the typo "has no home among the three routed files". The
 census is four, the cited lines have drifted, and the "no home" premise is false.
 
-**Verified on `main` (`c23d036e`) by re-deriving, tree-wide — not by reading the cited lines.**
-Re-run it excluding this entry, which quotes the occurrences and would otherwise double the count:
-add `| grep -v '^HANDOFF.md:29'` to the `git grep` below.
+**Verified against `c23d036e` by re-deriving, tree-wide — not by reading the cited lines.** The
+ref is pinned on purpose: `main` moves, and an auditor re-running a bare `main` gets lines that
+have drifted. Once this entry lands, re-run excluding it — it quotes the occurrences, and
+`git grep <ref> -- .` prefixes every line with the ref, so the filter has to match the prefix:
 
 ```
-$ git grep -n 'e2e/OPEN-PROBLEMS' main -- .
-main:AGENTS.md:15:| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect |
-main:TEST-FLAKES.md:712:(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
-main:docs/LAYERS-PANEL.md:825:6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch — a _docs_ defect with no routed home.** The file
-main:e2e/viewport-drawing.spec.ts:228:   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
+$ git grep -n 'e2e/OPEN-PROBLEMS' c23d036e -- . | grep -vE '^c23d036e:HANDOFF\.md:29'
+c23d036e:AGENTS.md:15:| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect |
+c23d036e:TEST-FLAKES.md:712:(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+c23d036e:docs/LAYERS-PANEL.md:825:6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch — a _docs_ defect with no routed home.** The file
+c23d036e:e2e/viewport-drawing.spec.ts:228:   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
 $ git ls-files e2e/ | grep -i open
 e2e/OPEN_PROBLEMS.md
-$ git show main:AGENTS.md | sed -n '165p;170p;172p;173p'
+$ git show c23d036e:AGENTS.md | sed -n '165p;170p;171p;173p'
 5. **Reviewed by someone else** — a code review subagent on the prompt in
 
 - **A green gate is the floor, not the review** — `gate:commit`/`gate:push` are
 - **Only step 6 writes to `main`** (plus an operator-requested hotfix on `main`).
 ```
 
-**Four lines in four files, and two of the four citations the source names are not filename
-references at all.** `AGENTS.md:165` and `:172` are Definition-of-Done steps; `TEST-FLAKES.md:391`
-and `:657` are a port note and a marker-bounding-box note. `HANDOFF.md:593` and `:2471`, cited in
-the same breath as "uses the correct underscore form", are unrelated prose, and `:2471` is blank —
-so the source's own arithmetic is 2 + 4 = 6 against its stated five. The `AGENTS.md:170-173`
+**Four lines in four files, and most of the citations the source names are not filename references
+at all.** Of the five it enumerates, only `AGENTS.md:15` is one: `AGENTS.md:165` and `:172` are
+Definition-of-Done steps, and `TEST-FLAKES.md:391` and `:657` are a port note and a
+marker-bounding-box note. `HANDOFF.md:593` and `:2471`, cited in the same breath as "uses the
+correct underscore form", are unrelated prose, and `:2471` is blank. The `AGENTS.md:170-173`
 premise is the same drift: the routing rule is at the two `AGENTS.md` lines that already use the
 **underscore** form, so "a cross-scope entry has no home" is argued from a line saying the
 opposite.
@@ -2970,6 +2971,6 @@ line numbers from the prose at the time of the fix: `AGENTS.md` is the file ever
 first, so a citation into it silently rots, and its own rule says as much.
 
 **Not caused by the `docs/subagent-provider` model-policy change**, which edited the Model policy
-section and, with `main` merged in, left the two routing lines at `AGENTS.md:201` and `:208` — the
+section and, with `main` merged in, left the two routing lines at `AGENTS.md:205` and `:212` — the
 numbers above are re-derived against that file. Re-derive again when fixing; do not assume they
 survive another edit to `AGENTS.md`.
