@@ -5,10 +5,10 @@
  *
  * WHY SQLITE IN THE COMMON GIT DIRECTORY
  * --------------------------------------
- * `git rev-parse --git-common-dir` is the one path every worktree of a
- * repository agrees on: they all share `.git/`, and each resolves to it, so
- * a single database file is visible from all of them without a symlink, a
- * server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
+ * `git rev-parse --path-format=absolute --git-common-dir` is the one path every
+ * worktree of a repository agrees on: they all share `.git/`, and each resolves
+ * to it, so a single database file is visible from all of them without a symlink,
+ * a server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
  * for a board that should outlive a reclone.
  *
  * WHY THERE IS NO DAEMON
@@ -252,13 +252,10 @@ export function resolveBoardDir({ cwd = process.cwd(), env = process.env } = {})
   try {
     common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd });
   } catch {
-    try {
-      common = join(cwd, git(['rev-parse', '--git-common-dir'], { cwd }));
-    } catch {
-      throw new BoardError('not inside a git repository, and AGENT_BOARD_DIR is unset; the board has no home', {
-        code: 1,
-      });
-    }
+    throw new BoardError(
+      'cannot read the common git directory here, and AGENT_BOARD_DIR is unset; the board has no home',
+      { code: 1 }
+    );
   }
   return join(common, 'agent-board');
 }

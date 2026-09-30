@@ -2709,29 +2709,6 @@ pin at `history-adapter.branches.test.ts:704`; the fix must re-point it.
 
 ---
 
-## 91. A bedrock layer added mid-history never resizes the durable frame
-
-**Problem.** `replayHistory` rewrites the document frame from **any** bedrock source before it
-reaches the action switch (`history-replay.ts:85-89`), so adding a bedrock layer resizes the
-document. The converter's create-layer arm (`history-adapter.ts:604-608`) never touches
-`currentFrame`, and durable replay's create-layer case ignores `isBedrock`
-(`durable-replay.ts:69-75`). The layer IS published — `currentLayers.set` at `:607` and the
-`create-layer` operation at `:608` — so the divergence is the frame alone, at every cursor.
-
-**User-visible failure.** A canvas resized by a background layer, and a durable shadow that still
-describes the pre-add size. Silent: the conversion records no diagnostic, and a frame that does not
-match the canvas is the only evidence.
-
-**Fix.** Two halves, and they belong together. The converter must rewrite `currentFrame` from a
-bedrock source in the create-layer arm, and durable replay must do the same in its `create-layer`
-case — fixing only the converter would leave the shadow correct at conversion and wrong after
-replay, which is the same defect one layer further along. Pinned as a KNOWN-DIVERGENCE pin at
-`history-adapter.branches.test.ts:738`; the fix must re-point it.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/durable-replay.ts`
-
----
-
 ## 92. The converter re-derives a created or merged layer's snapshot, and disagrees with the runtime rule
 
 **Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts:166`),
@@ -3101,3 +3078,103 @@ failure from a silent one.
 `src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
 `src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
 `src/util/selection.ts:430-442`.
+
+---
+
+## 99. Every `history-replay.ts` line citation past `:89` is off by eight
+
+**Problem.** §91's fix wrapped the bedrock-frame assignment in `if (index === 0)` (`history-replay.ts:91-97`),
+which turned a five-line block into a thirteen-line one. Every cited line below 89 still points where it
+did; **every cited line above it is now eight lines early.** The citations were all correct before the fix
+and are all wrong after it, so nothing here is pre-existing rot — it is drift this change introduced.
+
+**Why it matters.** These are references a session follows instead of reading, and `history-replay.ts`
+ends at 215, so an eight-line miss usually lands inside the neighbouring arm rather than past the file:
+`docs/LAYERS-PANEL.md:39` sends the reader to the rename arm when it means the new-layer arm,
+`.skills/photoshop-tool-creation.md` cites the `document-operation` `continue` at `:195` when it is `:203`,
+and `MIGRATION_NEXT_STEPS_SUNDAY.md:457` cites the crop arm at `:91-97` when it is `:99-105`. Entry 96 in
+this file is the same genre of defect for the same reason.
+
+**Fix.** Mechanical: add eight to every cited line above 89, and re-verify each against the file rather
+than by arithmetic — the citations name arms, so `:152` (now `:160`) is the `layer-operation` test and
+`:195` (now `:203`) is the `document-operation` `continue`. Already re-pointed, because §91 made their
+own claims false rather than merely late: `src/contexts/history-adapter.ts:676-688`, and the bedrock-frame
+blocks in both §91 test files. Sites still stale:
+
+- `src/contexts/history-adapter.ts:273` (`:102`) and `:639` (`:127`)
+- `src/contexts/history-append.ts:179` (`:138`) and `:464` (`:102`)
+- `docs/TOOLS.md:2100` and `:2167` (`:152`)
+- `docs/LAYERS-PANEL.md:39` (`:106-141`, `:91`, `:99`)
+- `MIGRATION_NEXT_STEPS_SUNDAY.md:457` (`:91-97`) and `:467` (`:195`)
+- `.skills/photoshop-tool-creation.md:1611,1612,1626,1633,1639,1693,1777,1863,4270`
+- `src/tools/descriptions/transform.ts:406` and `:490` (`:152`)
+- `src/tools/descriptions/transform.notes.md:151` and `:632` (`:152-160`)
+- `HANDOFF.md:1275` (`:146`), `:1299` (`:112-121`), `:1319` (`:112,146`), `:2871` (`:180`)
+
+**Files.** `src/contexts/history-replay.ts`
+
+---
+
+## 100. The main worktree is polluted by `task` subagents, which have no worktree to pollute
+
+**Problem.** `docs/ORCHESTRATION.md:9-15` states the hard rule — 100% of tracked-file changes happen in
+a worktree, the main worktree is for reading and merging only — and nothing enforces it. The measured
+cause is not agent carelessness: **`task` subagents inherit the calling session's working directory,
+so every subagent a main-rooted chat fans out is a writer in main.** Measured 2026-09-30 14:24Z
+against `~/.local/share/kilo/kilo.db`: of the 60 most recently updated sessions, **59 have
+`directory = /Users/bkalynovskyi/ph`**, and the 7-day split is **220 roots and 1398 subagents** at that
+path, 312 of them in the last 24 hours. `task` creates no session and no worktree, and `AGENTS.md`'s
+headline instruction is "LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS" — so the mandated fan-out is
+mechanically a write into whatever checkout the root chat occupies, and the root chat is almost always
+main. The live proof: `ses_f0dc7819` ("Fix save dialog closing on failure", a `@general` subagent of
+root `ses_f0e21021`) wrote `src/contexts/useFile.tsx` at 14:11:32, and the hunk it produced is still
+uncommitted in main at 14:24Z.
+
+Three further doors into the same checkout, all of them ordinary tool use rather than mistakes:
+
+- **`agent_manager` `mode: 'local'`** starts sessions in the caller's directory, which by
+  construction cannot be assigned to a section. `action: "list"` currently reports **22** of them
+  under `local` on branch `main`, and their titles are edit-shaped: "Add `act()` wrappers to LayersTab
+  test clicks", "Fix unsafe casts in paint-tools.test.ts", "Remove global mocking in useAnts tests". A
+  worktree is one `mode: 'worktree'` argument away.
+- **Commits made directly in main.** `main` is 71 commits ahead of `origin/main`, and today's are
+  `155ba7b8`, `c00ad7ff` ("cleaned main"), `ad858367`, `926e8a30` ("fix"), `307b77f7` ("fix provider
+  name"). A commit in main is the end state of a session that treated main as its workspace;
+  `c00ad7ff` is residue swept in bulk rather than prevented.
+- **Main used as a branch switcher.** `git reflog` at 12:41:33 shows `checkout: moving from main to
+fix/rail-overflow-citations` and back at 12:42:13. Uncommitted files follow a checkout across
+  branches, so one session's dirt can be carried onto a feature branch.
+
+**Why the coordination layer does not catch it.** Board identity is the **branch**
+(`scripts/lib/agent-board/identity.mjs:43-47`), so every session in main resolves to the single agent
+id `main`: all 140 all-time `file_locks` rows for `worktree='/Users/bkalynovskyi/ph'` are `agent_id =
+'main'` (the other 35 are the e2e runner's pid-suffixed ids). `holdFiles` refuses only a _foreign_
+lock, so two writers in main are the same agent to the board, both holds are granted, and the file
+reads as uncontended — the mechanism `docs/ORCHESTRATION.md:36-41` already describes. The visible
+consequence at 14:24Z: ten files under active edit (mtimes 14:11-14:23, seconds old) and **zero**
+unreleased, unexpired rows in `file_locks`. The same sharing is why `refs/stash` is a hazard here and
+not a nuisance.
+
+**Fix, part one — landed.** The commit arm is now a program rather than a paragraph.
+`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit` and refuses to record a commit
+made from the main worktree, naming the worktree recipe and the single override `ALLOW_MAIN_COMMIT=1`.
+`kilo.jsonc` cannot express the rule (tool permissions match a path glob and have no term for the
+working directory) and Kilo has no lifecycle hook that could veto a write, so the commit is the last
+point git itself guarantees to run code in. A landing is untouched — `git merge` into `main` runs
+`pre-merge-commit`, and a fast-forward runs no hook. Pinned by
+`scripts/__tests__/main-worktree-guard.test.mjs`: the decision table, the refusal text carrying a
+way forward, the real-repository check that a linked worktree is not reported as the main one, and the
+installation — the guard has to be wired into the hook and the shared dispatcher has to exist, because
+a guard that is written and never invoked does not exist.
+
+**Fix, part two — still open, and it is the larger half.** The guard runs _after_ the edit, so a
+session that writes into the main worktree and never commits is not stopped by it: it converts "71
+rogue commits nobody can attribute" into "a dirty tree the next `git status` names", and the write
+side is still the process rule in `docs/ORCHESTRATION.md`. Isolation has to happen at the root,
+because a `task` subagent cannot create a worktree of its own. What is still missing is a
+mechanism for the two root-level defaults: nothing creates the worktree before the first edit, and
+nothing stops `agent_manager` `mode: 'local'` from putting an editing session in the root checkout.
+Both are defaults in a tool, not a rule in a document, which is the whole of this entry.
+
+**Files.** `scripts/lib/agent-board/identity.mjs:43-47`, `docs/ORCHESTRATION.md:9-22`,
+`AGENTS.md` (delegation section), `kilo.jsonc`, `.git/hooks-gate/pre-commit`

@@ -407,7 +407,14 @@ describe('useHistory undo replay', () => {
       // composited onto the visible canvas.
       expect(drawImageCallsFor(bitmap)).toEqual([[bitmap, 0, 0, 40, 20]]);
       const visibleContext = contextFor(state.canvasRef.current);
-      expect(visibleContext?.clearRect).toHaveBeenCalledWith(0, 0, 40, 20);
+      // The DOCUMENT keeps the frame the initial entry established — 128x64, from
+      // `resetStoreState`'s `totalSize` and `createHistory('layerSource')[0]`'s own
+      // bedrock source. An imported image appended at cursor 1 is a layer commit, not
+      // a document-size authority (`history-replay.ts:85-97`), so replaying past it
+      // must not resize the canvas to the bitmap's 40x20. Only `documentSource` and an
+      // explicit `SET_DOCUMENT_FRAME` may do that, and a replace-document import is
+      // already a single-entry history whose bedrock sits at index 0.
+      expect(visibleContext?.clearRect).toHaveBeenCalledWith(0, 0, 128, 64);
       expect(visibleContext?.drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0);
       // An image source is replayed BY REFERENCE: `createLayerSource` assigns
       // `layer.bitmap = source.bitmap` and never builds a canvas for it

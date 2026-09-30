@@ -78,7 +78,13 @@ const DEFAULT_TIMEOUT = 5000;
 const MINIMUM_FACTOR = 3;
 
 /** The suites this guard knows about, kept so the derived set has something to equal. */
-const BUDGETED = ['agent-board.test.mjs', 'e2e-run.test.mjs', 'tsc-guard.test.mjs', 'worktree-inventory.test.mjs'];
+const BUDGETED = [
+  'agent-board.test.mjs',
+  'e2e-run.test.mjs',
+  'main-worktree-guard.test.mjs',
+  'tsc-guard.test.mjs',
+  'worktree-inventory.test.mjs',
+];
 
 /**
  * What makes a suite here cost spawns rather than computation. Deliberately broad: the

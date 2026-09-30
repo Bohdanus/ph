@@ -6,4 +6,10 @@
 # reporting only the last command's status.
 set -e
 
+# First, and before anything expensive: the main worktree is a landing, not an
+# authoring surface (docs/ORCHESTRATION.md). A refusal here costs a `git status`
+# and a `rev-parse`, where the gate below costs ~9s and would rewrite staged
+# files with lint-staged before the commit was ever called illegitimate.
+node scripts/main-worktree-guard.mjs
+
 npm run gate:commit
