@@ -494,6 +494,15 @@ export async function resolveToolTile(page: Page, toolName: string): Promise<Loc
  *
  * A caller needing to know WHICH of the two it got asks {@link hasOwnToolTile}; this function
  * makes the same choice internally so no caller has to.
+ *
+ * IT IS GROUP-LEVEL FOR A COLLAPSED TOOL, and a caller that needs to name the tool cannot rely on
+ * it alone. The class is `group.some(...)` over the whole collapsed set (SidebarLeft.tsx:636), so
+ * `expectToolSelected(page, 'eraser')` is answered by "is SOME collapsed tool selected". At 1280x720
+ * that is true from page load, because the default tool (`brush`) is itself collapsed. The
+ * `aria-pressed` this replaced was the same predicate on the same tile, so this is not a weakening —
+ * but a test that must prove a SPECIFIC tool is up needs a second, per-tool assertion: that tool's
+ * own options-bar control (`keyboard-shortcuts.spec.ts:173`) or an effect only that tool produces.
+ * See the P2 entry in e2e/OPEN_PROBLEMS.md.
  */
 export async function expectToolSelected(page: Page, toolName: string, selected = true): Promise<void> {
   const ownTile = getToolButton(page, toolName);
