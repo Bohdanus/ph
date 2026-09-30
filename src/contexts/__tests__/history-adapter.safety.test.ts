@@ -797,8 +797,23 @@ describe('plainValue array-argument absence handling (history-adapter)', () => {
     const result = convertSafely([levelsItem({ stops: [0, undefined, 0.5, undefined, 1] })], registry);
 
     // The defect: the absent elements reached the non-plain throw, the throw
-    // became an `error` diagnostic, and the entire document was voided.
-    expect(result.diagnostics).toEqual([]);
+    // became an `error` diagnostic, and the entire document was voided. So the
+    // assertion is that NO `error` remains — not that the diagnostics are empty,
+    // because compacting is not value-preserving in an array and the divergence
+    // from legacy replay is now reported.
+    expect(result.diagnostics.some((diagnostic) => diagnostic.severity === 'error')).toBe(false);
+    // One warning per absent element, so the count is the number of holes: two
+    // here, and not one diagnostic per array or one per compacted value.
+    expect(result.diagnostics).toHaveLength(2);
+    for (const diagnostic of result.diagnostics) {
+      expect(diagnostic).toMatchObject({
+        historyId: 'levels-edit',
+        actionName: TOOL_ACTION,
+        severity: 'warning',
+        code: 'array-arg-compacted',
+      });
+      expect(diagnostic.message).toContain('history:levels-edit.args.stops');
+    }
     expect(result.status).toBe('current');
     // The document is USABLE, not merely non-null: the baseline and the tool
     // entry both survived, so the shadow can actually shadow the replay.
@@ -848,7 +863,7 @@ describe('plainValue array-argument absence handling (history-adapter)', () => {
     const result = convertSafely([levelsItem({ stops: [null, 0.5, null] })], registry);
     const stops = durableStops(result.document);
 
-    // `plainValue:102` admits `null` as a plain value and `:118` filters on
+    // `plainValue:113` admits `null` as a plain value and `:139` filters on
     // `!== undefined` only. A filter written against falsiness rather than
     // absence would swallow every `null` here, and three values would silently
     // become one — so this is the likeliest regression the fix could introduce.
@@ -870,9 +885,20 @@ describe('plainValue array-argument absence handling (history-adapter)', () => {
     expect(empty.status).toBe('current');
     expect(durableStops(empty.document)).toEqual([]);
 
-    expect(onlyAbsence.diagnostics).toEqual([]);
+    // An array of nothing but absence compacts to the same empty array, and it
+    // is reported rather than adopted quietly — the shadow and legacy replay
+    // disagree about the argument, and `status: 'current'` is not on its own a
+    // claim that they agree.
     expect(onlyAbsence.status).toBe('current');
     expect(durableStops(onlyAbsence.document)).toEqual([]);
+    expect(onlyAbsence.diagnostics).toHaveLength(1);
+    expect(onlyAbsence.diagnostics[0]).toMatchObject({
+      historyId: 'only-absence',
+      actionName: TOOL_ACTION,
+      severity: 'warning',
+      code: 'array-arg-compacted',
+    });
+    expect(onlyAbsence.diagnostics[0]?.message).toContain('history:only-absence.args.stops');
   });
 
   it('still rejects a non-plain value nested inside an array and names its index', () => {
@@ -893,12 +919,13 @@ describe('plainValue array-argument absence handling (history-adapter)', () => {
       severity: 'error',
       code: 'invalid-history-entry',
     });
-    // `plainValue` is called with the DURABLE path, so the index has to be the
-    // one a reader can find the value at in the array the shadow actually holds.
+    // The path is built from the LEGACY array, so the index is where the value
+    // sits in the input. Here there is no hole before it, so the legacy and
+    // compacted indices coincide — the shifted case is the test below.
     expect(result.diagnostics[0]?.message).toContain('history:hostile-array.args.stops[1]');
   });
 
-  it('names the compacted index in the path, not the legacy one, so it addresses the durable array', () => {
+  it('names the LEGACY index in the path, so a diagnostic points at the array the author wrote', () => {
     class FakeClass {
       foo = 'bar';
     }
@@ -906,12 +933,15 @@ describe('plainValue array-argument absence handling (history-adapter)', () => {
 
     const result = convert([levelsItem({ stops: [undefined, new FakeClass()] }, 'shifted-array')], registry);
 
-    // The absent element is gone, so index 1 in the legacy array is index 0 in
-    // the compacted one. A path naming the legacy index would point past the end
-    // of the array the shadow holds. (A fix that filtered and then hole-padded
-    // instead of compacting would report `stops[1]` here.)
+    // The absent element is gone from the COMPACTED array, so the hostile value
+    // sits at index 0 there and at index 1 in the array the author wrote. The
+    // diagnostic is raised while converting the LEGACY input, so it addresses
+    // the legacy index: `stops[1]` is where `new FakeClass()` actually is in
+    // `stops`, and it is the only index a reader holding the history item can
+    // use to find it. Naming the compacted index instead would point at
+    // `undefined` — the element the reader does not have.
     expect(result.diagnostics[0]).toMatchObject({ historyId: 'shifted-array', severity: 'error' });
-    expect(result.diagnostics[0]?.message).toContain('history:shifted-array.args.stops[0]');
+    expect(result.diagnostics[0]?.message).toContain('history:shifted-array.args.stops[1]');
   });
 
   it('drops an absent key from an object arg, the handling the array branch was aligned to', () => {

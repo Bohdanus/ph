@@ -477,7 +477,11 @@ export function isEntryEnabled(item: HistoryItem): boolean {
   return !item.disabled && nested?.enabled !== false;
 }
 
-function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): DurableOperation | null {
+function operationForTool(
+  item: HistoryItem,
+  layer: DurableLayerSnapshot,
+  compaction?: ArrayCompaction
+): DurableOperation | null {
   const candidate = item.args as { args?: unknown } | undefined;
   const args = (candidate && candidate.args && typeof candidate.args === 'object' ? candidate.args : item.args) as
     ToolArgs | undefined;
@@ -499,7 +503,7 @@ function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): Durab
         layerId: item.layerId,
         processorId: 'transform',
         version: processor.replay.version,
-        args: plainObject(args, `history:${item.id}.args`),
+        args: plainObject(args, `history:${item.id}.args`, compaction),
       });
     }
     let transform;
@@ -520,7 +524,7 @@ function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): Durab
   }
 
   if (processor.commit === 'layer-operation') {
-    const filterArgs = plainObject(args, `history:${item.id}.args`);
+    const filterArgs = plainObject(args, `history:${item.id}.args`, compaction);
     if (!['blur', 'color', 'levels'].includes(args.toolName)) {
       throw new UnsupportedHistoryFeatureError(`Unsupported filter ${args.toolName}`, item.id);
     }
@@ -550,7 +554,7 @@ function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): Durab
       layerId: item.layerId,
       processorId: args.toolName,
       version: processor.replay.version,
-      args: plainObject(args, `history:${item.id}.args`),
+      args: plainObject(args, `history:${item.id}.args`, compaction),
     });
   }
   if (processor.commit === 'document-operation' || processor.commit === 'selection') return null;
@@ -816,7 +820,29 @@ export function legacyHistoryToDurable(
       } else if (item.actionName === TOOL_ACTION) {
         const layer = currentLayers.get(item.layerId);
         if (!layer) throw new UnsupportedHistoryFeatureError(`Layer ${item.layerId} is unavailable`, item.id);
-        operation = operationForTool(item, layer);
+        const compaction: ArrayCompaction = { paths: [] };
+        operation = operationForTool(item, layer, compaction);
+        // `plainValue` drops an absence from an array, and in an array the INDEX is
+        // the meaning, so the compacted value is not the legacy one: legacy replay
+        // hands the processor the original array. The shadow therefore publishes
+        // `status: 'current'` holding a value the authority does not hold, and the
+        // only thing that keeps that from being silent is this report.
+        //
+        // `warning`, not `error`: an error withholds the ENTIRE durable document
+        // through `convertLegacyHistorySafely`, so refusing to convert over a
+        // compacted array would cost the user every entry in the timeline to
+        // report a divergence the shadow already carries. The divergence is named
+        // instead, so `status: 'current'` is never a claim of faithfulness on its
+        // own.
+        for (const path of compaction.paths) {
+          diagnostics.push({
+            historyId: item.id,
+            actionName: item.actionName,
+            severity: 'warning',
+            code: 'array-arg-compacted',
+            message: `History entry ${item.id} carries an absent element in the array argument at ${path}, which the durable conversion compacted away. Legacy replay hands the processor the original array, so the durable value at that position is not the legacy one.`,
+          });
+        }
         if (operation?.kind === 'reposition-layer') {
           const pos = {
             ...layer.pos,
