@@ -4451,3 +4451,38 @@ commit messages — read them before assuming they belong to this work.
 
 **Files.** `src/tools/descriptions/paint.ts:37,44,170`,
 `src/components/ToolbarHorizontal/` (no `ScrubbableField` on main)
+
+## 135. Symlinking a worktree's `node_modules` to the root's makes `tsc` resolve through the ROOT checkout
+
+**Problem.** The standard shortcut for a worktree with no `node_modules` is
+`ln -s /Users/bkalynovskyi/ph/node_modules .kilo/worktrees/<name>/node_modules`. It appears to work —
+`tsc` and `vitest` both run. It is also how you get a gate that silently tests the wrong tree.
+
+`node_modules/.bin/tsc` is itself a **relative** symlink:
+
+```
+$ readlink node_modules/.bin/tsc
+../../scripts/tsc-guard.mjs
+```
+
+So the resolution is `<root>/node_modules/.bin/../../scripts/tsc-guard.mjs` — and `realpathSync` on it
+lands in the **root checkout's** `scripts/`, not the worktree's. The tsc guard then guards main.
+
+**Observed.** A landing in this worktree failed 3 cases in
+`scripts/__tests__/tsc-guard.test.mjs:392,424` for no reason connected to its change. The cause was
+this symlink, not the work. The fix is a real `npm ci` in the worktree — and the order matters:
+`rm` the symlink **first**, because a real directory at that path makes `npm ci` delete the contents
+of the directory it is pointed at, which is main's `node_modules`.
+
+**Fix / convention.** Either run `npm ci` in the worktree, or accept the symlink and know that
+`tsc-guard`'s three cases are measuring main. If you use the symlink, verify before blaming a change:
+
+```
+ls -l node_modules/.bin/tsc | awk '{print $NF}'     # a relative path means it escapes
+```
+
+`AGENTS.md` already warns that a worktree's missing `node_modules` "is exactly what makes it
+misleading", because `tsc` and `vitest` mostly work by walking up to the parent. This is the sharper
+form of the same trap: they not only work, they work on the wrong files.
+
+**Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
