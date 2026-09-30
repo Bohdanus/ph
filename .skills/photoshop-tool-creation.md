@@ -3568,6 +3568,20 @@ assertion that re-read the registry argument it was supposed to check — a taut
 setup. **A test that passes with the fix reverted is worse than no test: it consumes a maintainer's
 trust.**
 
+### Sometimes reimplementing beats reconciling
+
+When two branches independently implemented the same feature, the cost is rarely the code — it is
+deciding, line by line, which of two sets of intentions was right, in a checkout other sessions are
+committing into. Weigh that against writing the feature once, correctly, against the real
+requirement. **This is a first-class option, not a last resort**, and it is a `hard-merge`
+decision: `.skills/hard-merge.md` Phase 0 is where the tool is chosen, and its Phase 6 gate admits a
+declared reimplementation alongside a union, a graft and a third design.
+
+**If the requirement is genuinely unclear, that cost is not worth paying at all.** Recover the
+requirement first — by meaning, not by id, and from Adobe's own documentation when the transcript
+runs out — and only then choose between reconciling and rebuilding. A reimplementation decided on a
+guessed requirement is a rewrite of the guess.
+
 ### Two failure shapes
 
 **The zero-file idle worker.** A worker dispatched on a four-defect brief went idle having written
@@ -4200,9 +4214,28 @@ options bar and the theme tokens wholesale.
 
 ### Already in flight
 
-**Re-derive this; never trust a table.** Run `git branch --list 'ps/*' 'merge/ps*' 'wip/ps-*'` and
-test each with `git merge-base --is-ancestor <branch> main`. A "0 commits ahead" branch is not a
-safety test — a worktree whose work was never committed is also 0 ahead. What matters:
+**Re-derive this; never trust a table — and derive it with the generator, not by hand.** Run
+`node scripts/worktree-inventory.mjs` to regenerate `WORKTREES.json`, which is **untracked and
+gitignored** on purpose: every value in it describes the machine that produced it, so a tracked copy
+is a diff nobody can review and a collision two agents cannot resolve. **Never hand-edit it, never
+`git add -f` it**, and note that a fresh clone has none — generate one before you read a worktree
+list, and treat any you find as a claim about a moment.
+
+**Read `action` first.** It is the whole answer: `land` merge it · `at-risk` save it, it needs a
+human · `dispose` delete it · `in-use` leave it alone · `keep` never a candidate · `undecided` do
+not remove it. Two things that catch people: a **`land` is a point-in-time answer**, only as fresh as
+`generatedAt`, so re-read `dirty` and `mergeConflict` before acting on one you did not generate; and
+**`mustNotPrune` vetoes `land` as well as `dispose`**, so a branch reading `land` with that flag set
+is a contradiction rather than a clean merge.
+
+Do not hand-roll `git branch --list` plus `merge-base --is-ancestor` when the generator has already
+done it. A "0 commits ahead" branch is not a safety test either way — a worktree whose work was
+never committed is also 0 ahead — and that is what `uncommitted-only` exists to say: never prunable
+whatever the curated table claims, and `worktree-inventory.test.mjs` re-derives that set from the
+live worktrees to keep it true. Keep a judgement you need in
+`scripts/lib/worktree-inventory/curated.mjs`; **an uncurated worktree is not at risk and there is
+deliberately no rule demanding an entry for one**, so write an entry when you have a judgement to
+record and not per worktree. What matters:
 
 - **`ps/tool-expansion` was consolidated onto `merge/ps-tool-expansion`** (tip `ab5f53c`,
   2026-09-28) — and an earlier revision of this bullet said it was **not in `main`**. That was
