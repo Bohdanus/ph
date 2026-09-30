@@ -148,7 +148,7 @@ the editing, preview or commit path for `levels` or `color`.** Both are register
 `src/contexts/useLayer.ts:536-545` handles that kind by appending an operation to the layer's
 `operations` array, nulling `tmpCanvas` and **returning** — the `processor.imageProcessor(...)`
 call is at `:571`, past that return, and nothing in the editing path reaches it. Undo and redo
-take the same route (`src/contexts/history-replay.ts:152-160`, which appends the same operation
+take the same route (`src/contexts/history-replay.ts:172-181`, which appends the same operation
 and continues), so a committed Levels or Colors adjustment is **retained, not destroyed**: the
 layer's own bitmap is never touched, the renderer re-derives the filter from the operations array
 on every frame (`src/contexts/layer-renderer.ts:77`), and no raster of the adjustment is stored
@@ -629,7 +629,7 @@ editable — and **this app is the non-destructive half, not the destructive one
 "research decision D3" said the opposite, and was wrong). A committed adjustment is a retained
 layer operation: `useLayer.ts:536-545` appends it to `layer.operations` and returns before any
 pixel is produced, `useLayer.ts:345` publishes that layer plus one `TOOL_ACTION` history entry, and
-`history-replay.ts:152-160` replays the operation rather than a stored raster, so undo and redo
+`history-replay.ts:172-181` replays the operation rather than a stored raster, so undo and redo
 both work. What the app does not have is the _re-editability_ half: a committed adjustment cannot
 be reopened, so it can only be taken back with undo. That is also what the Reset button is not —
 it is disabled unless an uncommitted preview is live (`Levels.tsx:63`, `:141`) and restores the
