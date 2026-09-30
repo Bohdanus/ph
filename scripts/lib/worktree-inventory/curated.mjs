@@ -990,11 +990,6 @@ export const CURATED = {
     summary:
       'Reviewing the append-boundary validation guard over the remove-append work, on a branch six commits ahead of main with one test file still modified on top of it. The branch is a ref git can see, so it is protected by being a branch and owes no flag.',
   },
-  'untrack-inventory': {
-    summary:
-      'Untracking `WORKTREES.json` — the generated inventory is a machine-local snapshot that goes stale the moment it lands, so it leaves the index along with the ignore rules, the docs and the test that assert on it, and the merge skill that told the reader to consult it.',
-    note: 'Held on no ref: six paths including a staged deletion of `WORKTREES.json`, on a branch whose tip is a main commit, so git calls the branch disposable while the only copy of the change is the working tree.',
-  },
   'narrow-uncategorised': {
     summary:
       'Narrowing the curated-summary rule to the worktrees that actually hold work, so creating a scratch worktree stops turning main red — the same derivation the `mustNotPrune` guard was given, one layer up.',
@@ -1048,6 +1043,11 @@ export const CURATED = {
     summary:
       'Makes a typecheck that checked nothing impossible to mistake for a pass: node_modules/.bin/tsc becomes scripts/tsc-guard.mjs, which refuses any invocation that is not build mode and names the two commands that do work. A tripwire test fails when npm has restored its plain symlink, and kilo.jsonc denies the command at the permission layer.',
     note: 'The guard itself is a symlink inside node_modules, which is gitignored and cannot be committed: the work that matters is the tracked guard, its installer, its tests and the prepare wiring, and npm regenerates the link from those. Losing this branch loses the refusal, and the trap it closes is a zero-file exit 0 that reads as a clean typecheck. It is not flagged: everything here is committed, so the branch is what protects it.',
+  },
+  'untrack-inventory': {
+    summary:
+      'Untracking `WORKTREES.json` — the generated inventory is a machine-local snapshot of session ids, chat ids, absolute worktree paths and a timestamp, so it leaves the index along with the anchored ignore rule, the docs that told agents to commit a regeneration, and the tripwire that fails if it is re-added. The generator and this table stay tracked; only the output does not.',
+    note: 'Two sessions curated this key independently and the merge kept both, where the second silently discarded the first — the `panel-docks` shape again, and the reason this key is one entry rather than two. An earlier version of this note claimed the work was held on no ref, which was true only while the change was uncommitted; it is committed on a branch ahead of main, so the branch is what protects it and no flag is owed.',
   },
 };
 
