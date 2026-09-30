@@ -31,8 +31,16 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-/** The hooks installed here. Each one runs the worktree's own `.husky/<name>`. */
-const HOOKS = ['pre-commit', 'pre-push'];
+/**
+ * The hooks installed here. Each one runs the worktree's own `.husky/<name>`.
+ *
+ * `post-merge` is the odd one out and the asymmetry is deliberate. `pre-commit` and
+ * `pre-push` GATE: they can stop work, and they do. `post-merge` REPORTS: the merge is
+ * already recorded by the time it runs, so a failure in it could not prevent anything and
+ * would only leave the operator with a landed merge and an error. It is here to clear
+ * claims that the merge just made false — see `scripts/merge-release.mjs`.
+ */
+const HOOKS = ['pre-commit', 'pre-push', 'post-merge'];
 
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
