@@ -554,6 +554,21 @@ heartbeat` still exists and is still correct — it is the only thing that can
 -- watch --follow` tails the same log. Every command appends to it, which is the
   replacement for N agents each writing their own account of the same work into a
   document nobody else can see until it is merged.
+- **A bare `swarm watch` is a TAIL of the last 200 events, and it says so on a
+  `#` line. It used to be the first 200 events of the log, and that cost two
+  agents a session.** It read from seq 0, printed one page, and stopped: on a
+  576-event board it showed the first seventeen hours and nothing after, so
+  every `note` just written was absent from the output. An agent grepping the
+  log for its own note text got nothing, concluded the note had not landed, and
+  carried on — it had. The same report blamed ANSI colour, and **the output has
+  no ESC byte in it anywhere**: `swarm watch | grep -c $'\x1b'` answers 0, so
+  "it is coloured" is a diagnosis with nothing behind it and chasing it is the
+  second way this wastes a session. `--since 0` now reads forward to the end of
+  the log rather than stopping at 200, which is the other half: without it, a
+  deliberate full read silently lost everything past the first page. A test
+  drives both halves in `scripts/__tests__/agent-board.test.mjs` — a board with
+  211 events, a note at the end, and an assertion that the first event is
+  _not_ in the bare output.
 - **Exit codes are the interface:** 0 ok · 1 usage or error · 2 not found · 3
   claimed or not claimable · 4 file held by another agent · 5 self-verification
   refused.
