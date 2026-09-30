@@ -3576,3 +3576,837 @@ Appendix F's own argument is that a line number is a property of a moment.
 **Files.** `.skills/hard-merge.md:433`, `:445`, `:829-830`, `:851-853`, `:868-871`, `:1067`,
 `:1129`, `:1426`; `scripts/lib/worktree-inventory/git.mjs:198`,
 `scripts/lib/worktree-inventory/curated.mjs:947`
+
+## 110. `ToolbarsRight/Lasso/Lasso.tsx` has no importer, and it is the only UI for two persisted lasso settings
+
+`src/components/ToolbarsRight/Lasso/Lasso.tsx` (152 lines) is not reachable:
+
+```bash
+git grep -nE "import .*\bLasso\b.* from" -- src e2e   # zero hits
+git grep -n "Lasso/Lasso.tsx" -- src e2e             # zero hits
+```
+
+`src/tools/toolsMap.ts:65-79` wires the three lasso keys to `PolygonalLasso`, `FreehandLasso`
+and `FeatherMagneticLasso`. The component's only consumer is its own test,
+`Lasso/__tests__/Lasso.test.tsx`, which renders a component the app can never reach.
+
+**It is nevertheless the only place `lineWidth` and `alpha` are editable**, and both are
+persisted defaults for two live keys:
+
+- `src/tools/settings.ts:96-111` — `'polygonal-lasso'` and `'freehand-lasso'` each declare
+  `{ alpha: 1, lineWidth: 3, color: '#FF0000', fill: false, points: [] } satisfies LassoToolArgs`.
+- `src/tools/polygonSelection.ts` types all of them, and `PolygonSelectionToolSettings` is
+  `Omit<LassoToolArgs, 'points'>` — so they survive a reload.
+- `PolygonalLasso.tsx` and `FreehandLasso.tsx` render **hint text only**; neither has a control.
+
+So deleting it is not a cleanup, it is a second defect: two persisted settings with no UI
+at all, and a settings bucket that round-trips values a user can no longer change. **The real
+defect is the missing options bar.** `src/tools/descriptions/selection.notes.md:92` already
+records what Photoshop's Polygonal Lasso bar carries — the four combination modes, `Feather`,
+`Style` and `Anti-alias` — and marks them absent here, while `FeatherMagneticLasso` ships
+`featherRadius` / `magneticWidth` / `edgeContrast` / `frequency` (`settings.ts:112-116`).
+
+The component is also wrong if reconnected: `Lasso.tsx:22` hardcodes
+`toolName: 'polygonal-lasso'` into every `setToolArgs`, so wiring it to the freehand key would
+label that tool's panel with the polygonal name.
+
+**Fix.** Do not delete. Port `lineWidth` and `alpha` — and Photoshop's `Feather` and
+`Anti-alias` — into `PolygonalLasso.tsx` and `FreehandLasso.tsx`, which are the components the
+keys actually render, and delete `Lasso.tsx` and `Lasso.test.tsx` **in the same change**. The
+two hints in `Lasso.tsx:145-146` ("Backspace removes anchor • Enter finishes • Esc cancels")
+are behaviour the live panels do not document, so carry them across too.
+
+**Files.** `src/components/ToolbarsRight/Lasso/Lasso.tsx`,
+`src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts:96-111`
+
+## 111. `selection.notes.md` still says Shift-to-square is not implemented, which `7f3b0d19` fixed on 2026-09-29
+
+`src/tools/descriptions/selection.notes.md:119-125` asserts:
+
+> "the rectangle is drawn through `useRect`, and `useRect` reads `event.ctrlKey || event.metaKey
+|| event.shiftKey` in one place only — `src/hooks/useRect.ts:97`, and a whole-file grep for
+> those four properties returns no other line … **Nothing reads Shift during the initial drag,
+> so Shift-to-square is not implemented at all**"
+
+Commit `7f3b0d19` ("the marquee's modifiers, the wand's Contiguous, the lasso's Frequency")
+added `src/hooks/useRect.ts:401-402`:
+
+```ts
+freshDragModifiersRef.current.constrainToSquare = constrainToSquare && event.shiftKey;
+freshDragModifiersRef.current.fromCentre = fromCentre && event.altKey;
+```
+
+and `RectangularSelectionToolArea.tsx:74-75` opts both in. The notes file cites one modifier
+read where there are now four, and its `useRect.ts:97` anchor has moved. `:129` is wrong the
+same way: it cites `toolbar-mapping.ts:144-145` for the marquee tile, which is now an
+`availableTools` entry — the tile is `toolbar-mapping.ts:41-42`.
+
+The surrounding options table at `:108-112` is still correct and should be kept.
+
+**Files.** `src/tools/descriptions/selection.notes.md:119-125`, `:129`;
+`src/hooks/useRect.ts:401-402`
+
+## 112. Freeform Pen and Curvature Pen render the standard Pen's chip list, and a test documents the wrong config as expected
+
+`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23-25` defines:
+
+```ts
+pen:             ['Tool Mode', 'Fill', 'Stroke', 'Make Selection', 'Path Operations', 'Alignment', 'Auto Add/Delete'],
+'freeform-pen':  ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
+'curvature-pen': ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
+```
+
+but `src/tools/toolsMap.ts:132` and `:137` point all three at the **`pen`** key, so
+`freeform-pen` and `curvature-pen` render the standard Pen's seven chips. **Magnetic and Curve
+Fit are the two controls that are the entire reason those two tools exist** — a Freeform Pen
+tool without Magnetic, and a Curvature Pen without Curve Fit, are the Pen under another name
+(`src/tools/descriptions/pen.notes.md`, `docs/TOOLS.md:1656`, `:1716`).
+
+`ToolbarPlaceholder.test.tsx:163-172` asserts the resulting dead config is
+`expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle'])` and the
+comment is explicit that the list is _meant_ to be short. So this test is **half a pin**: it is
+doing its stated job against a growing pile, and it will fail the moment the wiring is fixed.
+The fix and the test must land together, with the list shrinking to `['rectangle']`.
+
+`rectangle` is the third unreachable group and is **correct** to be there: `rectangle` is a
+registry id the rail never names (see §114), so it renders the real `Shape` bar.
+
+**Fix.** Pass `'freeform-pen'` and `'curvature-pen'` as the second argument of their
+`placeholderTool(...)` calls in `toolsMap.ts`, and update the expected array in the same
+change.
+
+**Files.** `src/tools/toolsMap.ts:129-138`,
+`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24-25`,
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:163-172`
+
+## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
+
+`docs/TOOLS-TOO-HARD.md:214-215`:
+
+> "`AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
+> Photoshop grouping and naming are the specification, and the stub bar is the debt."
+
+`grep -rn "grouping and naming are the specification" --include='*.md'` returns exactly two
+hits — `docs/TOOLS-TOO-HARD.md:215` and `docs/PHOTOSHOP-UX.md:65`. `AGENTS.md` is 158 lines
+with no match for _placeholder_, _specification_, _grouping_ or _stub bar_.
+
+The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md:62-66` — _"A tool the
+app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
+because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
+— the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
+specification; the stub bar is the debt."_
+
+**Why this matters beyond a citation.** Six of the seven placeholder tools were audited for
+deletion this week and every one came back "keep" **because of that policy**. An agent
+reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
+conclusion from a missing policy is that no policy was ever written down.
+
+**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md:62-66` in that one sentence.
+
+**Files.** `docs/TOOLS-TOO-HARD.md:214-215`, `docs/PHOTOSHOP-UX.md:62-66`
+
+## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
+
+`toolbar-mapping.ts:110-114` (repo root) gives the toolbox entries
+`name: 'shape'` plus a `figure`, never the key:
+
+```ts
+{ label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
+{ label: 'Ellipse Tool',    name: 'shape', figure: 'oval' },
+{ label: 'Line Tool',       name: 'shape', figure: 'line' },
+{ label: 'Triangle Tool',   name: 'shape', figure: 'triangle' },
+{ label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
+```
+
+All four activation surfaces translate — `SidebarLeft.tsx:580-583`,
+`Mobile/mobile-tools.ts:77-85`, `DesktopHeader.tsx:112-117`,
+`AppKeyboardShortcuts.tsx:109-136` — and `useApp.ts:196` is the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. `DesktopHeader.tsx:67-76` records that dispatching the
+key directly was a **bug they fixed**: it mounted the Shape panel where the
+`toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the colour publish, so the well said
+red and the shape committed black.
+
+So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
+(`src/contexts/tool-types.ts:65-77`), a per-figure settings bucket (`src/tools/settings.ts:278-312`),
+a description record (`src/tools/descriptions/shape.ts:290,318,345,387,423`) and doc sections.
+`docs/PHOTOSHOP-UX.md:46-54` names them as _"registry ids the rail never names"_ and frames the
+rail-naming decision around them.
+
+**What is not stated anywhere is whether they are forward-scaffolding or residue**, and one fact
+would settle it: **can a durable document or a replayed history item carry
+`toolName: 'rectangle'`?** `src/tools/toolProcessors.ts:326-330` registers all five as
+`{ creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape }`,
+so a committed shape carries its tool name into history. The dispatch path is closed in the
+running app, but document import and the durable `ToolArgs` deserialiser were **not** audited
+for a persisted figure-key `toolName`. If one can arrive, these keys are load-bearing for
+existing documents and deleting them is a data-loss change; if none can, they are pure residue
+and the `ToolArgs` union is carrying five variants nothing constructs.
+
+**Fix.** Audit the import and durable-replay path for a persisted figure-key `toolName`, then
+either state in `docs/PHOTOSHOP-UX.md` that the five ids exist to keep historical documents
+replayable, or delete them together with their `ToolArgs` variants, settings buckets and
+descriptions. Whichever it is, `ToolbarPlaceholder.test.tsx:172`'s `rectangle` entry in the
+unreachable-config list changes and that test moves with it.
+
+**Files.** `toolbar-mapping.ts:110-114`, `src/tools/toolsMap.ts:154-159`,
+`src/tools/toolProcessors.ts:326-330`, `src/contexts/tool-types.ts:65-77`,
+`src/tools/settings.ts:278-312`, `docs/PHOTOSHOP-UX.md:46-54`,
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:163-172`
+
+## 115. The rectangular marquee ships no options bar at all, while the elliptical marquee beside it ships four controls
+
+`src/tools/settings.ts:130` declares
+`'rectangular-selection': { toolName: 'rectangular-selection' }` — **no settings whatsoever** —
+while `:220-226` gives `elliptical-selection` `style`, `fixedRatio`, `fixedWidth` and
+`fixedHeight`, implemented in full at `src/tools/ellipticalSelection.ts:9,51-67` down to the
+`MARQUEE_RATIO_MIN/MAX` and `MARQUEE_SIZE_MIN/MAX` bounds.
+
+`RectangularSelection.tsx:36` is, in full, the literal string
+`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
+
+Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
+`Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md:92` already records them
+as absent. Since `docs/PHOTOSHOP-UX.md:62-66` makes the rendered bar the contract, this is debt
+on a **shipped, working, reachable** tool — the rectangular marquee is a rail tile
+(`toolbar-mapping.ts:41`) with the `M` shortcut.
+
+**Fix.** Give `RectangularSelectionToolArgs` the same `MarqueeStyle` field the ellipse uses,
+extract `ellipticalSelection.ts:121-131`'s `applyRatio` as a shared ratio helper, and render
+the four controls.
+
+**Files.** `src/tools/settings.ts:130`, `src/tools/rectangularSelection.ts:4-7`,
+`src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:36-48`,
+`src/tools/descriptions/selection.notes.md:92`
+
+## 116. Three of the six pen tools have no shortcut, no Tools-menu entry, and the Pen's own icon
+
+`AppKeyboardShortcuts.tsx:33` binds `penGroup = ['pen', 'freeform-pen', 'curvature-pen']`, so
+`P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
+`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx:56-58` lists
+only the three pens. They are also visually identical to the Pen in the rail:
+`SidebarLeft/toolIcons.tsx:76-79` maps all three to `PenToolIcon`, where `freeform-pen` alone
+gets its own `FreeformPenIcon` at `:75`.
+
+Recorded in `docs/TOOLS.md:1755`, `:1787`, `:1823`, and in no handoff. It becomes moot the
+moment the family is implemented — and `HANDOFF.md` §53 already carries that open question with
+the operator's answer outstanding — but if the six are ever hidden rather than implemented, this
+is the defect that says the hiding was incomplete.
+
+**Files.** `src/components/Common/AppKeyboardShortcuts.tsx:33`,
+`src/components/DesktopHeader/DesktopHeader.tsx:56-58`, `src/components/SidebarLeft/toolIcons.tsx:74-79`
+
+## 117. `docs/PHOTOSHOP-UX.md` says the rail entries for `color`, `levels` and `transform` do not exist, and they are live tiles
+
+`docs/PHOTOSHOP-UX.md:38-45`, §"Adjustments are not tools":
+
+> "These three are to leave the rail and become menu commands. They have **no replacement
+> tool** … `toolbar-mapping.ts` already exports `extraTools = ['color', 'levels', 'transform']`,
+> so the extraction is half-staged: **the flag exists, the rail entries do not.**"
+
+Both halves of that are now false.
+
+```bash
+sed -n '61,65p' toolbar-mapping.ts
+#     [
+#       { label: 'Colors', name: 'color' },
+#       { label: 'Levels', name: 'levels' },
+#       { label: 'Transform', name: 'transform' },
+#     ],
+git grep -n extraTools -- src e2e '*.ts' '*.tsx'
+# toolbar-mapping.ts:164:export const extraTools = ['color','levels','transform'] as const …
+# src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:2,97,98   <- its own test only
+```
+
+So the three render as a live rail flyout, all three are fully implemented
+(`src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/transform.ts`), and **`extraTools`
+gates nothing in the application** — it is declared and consumed only by the test that checks
+it is disjoint from `shape`. The half-staged extraction it describes was never started, or was
+undone; either way the flag is inert and the doc reads as a completed step.
+
+**Why this is worth filing rather than editing.** The same section orders `draw` **deleted**
+(`:37`: "**It is to be deleted**, not relabelled") and names five ids the app declares that
+Photoshop has no counterpart for. That decision may well still be the operator's intent — it is
+a written product ruling and deleting on the strength of it is not an agent's call. But a
+reader auditing rail compliance against this list will look for four absent tools, find four
+present and working ones, and has to decide for itself whether to delete them. Two of the
+failures that invites are ugly: deleting a working tool, or concluding the doc outranks the
+tree and stopping there.
+
+**Fix.** Restate `:38-45` as _pending_ extraction that names what is actually true — the three
+are live tiles today, `extraTools` exists and gates nothing, and nothing consumes it — and mark
+`:37`'s `draw` ruling with its current state (`draw` is live at `toolbar-mapping.ts:97`, backed
+by a real rasteriser at `toolProcessors.ts:96-102`). Whether to carry out the extraction is the
+operator's decision; the document's job is to stop asserting a false intermediate.
+
+**Files.** `docs/PHOTOSHOP-UX.md:32-45`, `toolbar-mapping.ts:61-65`, `:97`, `:164`
+
+## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
+
+`src/tools/toolProcessors.ts` registers all three against the same rasteriser:
+
+```
+ 96: const buildDrawArgs = (args, penType: 'pen' | 'spray', lineWidth?) => …
+259-262: brush   → draw({…})(buildDrawArgs(args, 'pen'))
+267-275: pencil  → draw({…})(buildDrawArgs(args, 'pen', lineWidth))
+```
+
+So `brush ≡ pencil ≡ draw` at the pixel level. They differ by nothing a user can see except the
+preset list (`src/tools/brush.ts:143-154`) and the tool name carried into history.
+`src/components/ToolbarsRight/Brush/Brush.tsx:3` and `Pencil/Pencil.tsx:3` are both three-line
+`createPaintToolbar('brush' | 'pencil')` calls over one shared bar.
+
+**The constraint that makes this correct rather than a duplication bug exists only on an
+unmerged branch.** `fix/stale-reclaim-skill`'s `AGENTS.md` carries it:
+
+> "`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
+> SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
+> them — sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a
+> tool that left the paint panel must not be widened back for a new bar. Corollary
+> (`HANDOFF.md` §70): a group that persists one key may not absorb a tool that has more than
+> one."
+
+`grep -c PaintToolName AGENTS.md` on `main` returns **0**. `git grep -ln PaintToolName -- '*.md'`
+returns exactly one file, `.skills/photoshop-tool-creation.md`. The type exists and is enforced in
+code (`src/tools/draw.ts`, asserted at `src/tools/__tests__/paint-tools.test.ts:22`), and
+`HANDOFF.md` §70 ("A tool whose settings do not fit a shared arm must not be in that arm") carries
+the corollary — but the sentence that explains _why_ `'brush' | 'pencil'` is a narrowing and not
+an accident is on a branch that has not landed.
+
+**Why it matters for the dead-tool question this surfaced.** Three tools sharing one rasteriser
+is exactly the shape that reads as dead-code duplication, and the correct deletion — merging
+`brush` and `pencil` into `draw`, or deleting `draw` as `docs/PHOTOSHOP-UX.md:37` orders — would
+be a real regression for anyone who has not read the rule. The rule is what stops it. That is
+also the general lesson in `HANDOFF.md` §70, one section earlier.
+
+**Fix.** Move the `PaintToolName` paragraph out of the branch's `AGENTS.md` and into `main`'s
+**Architecture status** section, next to the history-authority paragraph it constrains. It is a
+boundary rule of the same kind, and it is currently only readable by whoever opens a branch that
+was never merged.
+
+**Files.** `src/tools/toolProcessors.ts:96`, `:259-262`, `:267-275`,
+`src/tools/brush.ts:143-154`, `AGENTS.md` §Architecture status, `HANDOFF.md` §70
+
+## 119. The Draw tile and the Brush tile both advertise `B`, and pressing `B` selects the Brush
+
+`toolbar-mapping.ts` declares the same shortcut twice:
+
+```
+ 73: { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
+ 97: [{ label: 'Draw Tool',   name: 'draw',   shortcut: 'B' }],
+```
+
+No key binding routes to `draw`. `src/components/Common/AppKeyboardShortcuts.tsx:347-352` and
+`:354-360` bind **both** `b` and `shift+b` to `selectBrushTool`, which cycles `brushGroup`
+(`:19`). `src/components/SidebarLeft/SidebarLeft.tsx:621` passes `primaryTool.shortcut` into
+`ToolTooltip` — suppressed only for the three-dots overflow tile at `:597` — so the Draw tile
+renders a `B` badge in the rail that no handler honours.
+
+That is a duplicate-shortcut collision in the mapping plus a dead advertised binding. It is
+small, it is user-visible, and it is the kind of thing a `toolbar-mapping` test should catch:
+`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` already asserts shortcut
+properties for other groups but nothing asserts that two tiles do not claim the same letter.
+
+**Fix.** Give `draw` a distinct shortcut or drop `shortcut` from its entry, and add a test that
+no two visible tile identities claim the same letter.
+
+**Files.** `toolbar-mapping.ts:73`, `:97`,
+`src/components/Common/AppKeyboardShortcuts.tsx:19`, `:347-360`,
+`src/components/SidebarLeft/SidebarLeft.tsx:597`, `:621`,
+`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts`
+
+## 120. The Move tool has nine documented missing controls and no entry tracking them as work
+
+`docs/TOOLS.md:2006-2028` gives `reposition` a written `partial` verdict and enumerates what is
+absent: Tool Preset Picker, Auto-Select, Auto-Select: Group, Auto-Select: Layer, Show Transform
+Controls, Align, Distribute, Align to, Width, Height — plus Alt-drag, Shift-constrain,
+Shift-extend and arrow-key nudge. It records Auto-Select as welded on with no control to turn it
+off.
+
+`grep -n reposition HANDOFF.md e2e/OPEN_PROBLEMS.md` returns only `:347`, `:1755` and `:2539`,
+and each is about a different subject. **Nothing tracks the nine as work.**
+
+The tool itself is not parked, which is the reason this is a handoff entry and not a deletion
+candidate. Its _processor_ file was last touched 2026-09-25 by `2e1b6e46` — a config-and-test
+commit whose real content was removing a dead `resize` rasteriser branch — but its live surface,
+`src/components/Main/MoveToolArea.tsx` and the Move panel, was changed on **2026-09-28** by
+`a30c318a` and `f6f54752`, i.e. _newer_ than `transform`'s 2026-09-27. It is the tool that owns
+`Merge all` (`src/components/ToolbarsRight/Reposition/Reposition.tsx:21`), which nothing else has.
+
+The scope decision is written down; the work is not. A documented `partial` verdict with no
+tracked work is how a half-built tool becomes permanently half-built.
+
+**Fix.** Add one `HANDOFF.md` entry carrying the nine controls and the four modifiers as named
+work, referencing the existing verdict rather than restating it.
+
+**Files.** `docs/TOOLS.md:2006-2028`, `src/components/ToolbarsRight/Reposition/Reposition.tsx:21`,
+`src/components/Main/MoveToolArea.tsx`
+
+## 121. The worktree sweep is structurally blind to every branch that has no worktree, and one of those branches is the upstream reference implementation
+
+**Problem.** `scripts/worktree-inventory.mjs` derives its entire model from
+`git worktree list`; the only place any branch name is read is
+`scripts/lib/worktree-inventory/git.mjs:69`, which parses a `branch refs/heads/…` line out of that
+listing. A branch with no worktree is therefore not `land`, not `at-risk`, not `dispose` and not
+`goneWorktrees` — it does not appear in `WORKTREES.json` at all, so no reclaim or harvest run can
+ever reach it. There are **42** such branches in `refs/heads` today, and the one that matters is
+worse than merely unlisted.
+
+**`layers` is not this project's work.** `origin` is
+`https://github.com/drguz69/lightshopy.com.git`, and `main` is a rewrite of it that has diverged
+815 commits. `layers` is an upstream branch of the reference implementation, and it still carries
+**25 patches that are not on `main`**:
+
+```
+git merge-base main layers     # 894ee443b  "layers + history", 2026-03-20
+git cherry main layers         # 25 lines starting with '+'
+git merge-base --is-ancestor layers main   # NO
+```
+
+Its log is the author's original implementation of the areas this repository has since rewritten
+twice — `drag and drop done right`, `try to add back history [WIP]`, `fix Shape tool area
+calculation for square`, `correct circle selection`, `history eye`. `git cherry` therefore reports
+it as unlanded work, and a sweep that trusted that field the way `.skills/worktree-merge-harvest.md`
+step 1 tells a reader to — re-verify, then land — would merge the upstream implementation into the
+rewrite. Its value is as a **reference to read**, not as a branch to land, and nothing in the
+repository says so.
+
+**Reproduce.**
+
+```bash
+git worktree list --porcelain | grep 'branch refs/heads/layers'   # no output: no worktree
+git cherry main layers | grep -c '^+'                            # 25
+git remote get-url origin                                       # .../drguz69/lightshopy.com.git
+```
+
+**Fix.** Two separate problems, and the second is the cheaper one.
+
+1. Record that `layers` is the upstream reference and is not a merge candidate, next to the other
+   branch-state facts in §0, so the next sweep reads it before `git cherry` misleads it.
+2. Teach the inventory to enumerate branch-only refs. `git for-each-ref refs/heads` alongside
+   `git worktree list` is the whole change; a branch with no worktree should surface as an explicit
+   category rather than as silence. The 39 fully-merged branch-only refs
+   (`git merge-base --is-ancestor <b> main` → yes) are pure clutter today that no sweep will ever
+   collect, and the remaining three — `layers`, `ps-integration` (0 unlanded patches, not an
+   ancestor: merge commits only) and `fix-merge` (already on `main`) — are the ones a reader needs
+   warned about.
+
+**Files.** `scripts/lib/worktree-inventory/git.mjs:69`, `scripts/worktree-inventory.mjs`,
+`HANDOFF.md` §0
+
+## 122. No pixel tool honours an active selection — the eraser, the magic eraser, the paint bucket and the clone stamp all ignore it
+
+**Problem.** A selection is a coverage limit on every raster operation. In this app it is a limit on
+none of them. Measured against current `main`:
+
+```
+git show main:src/tools/eraser.ts     | grep -ci selection   # 0
+git show main:src/tools/cloneStamp.ts | grep -ci selection   # 0
+git show main:src/tools/fill.ts       | grep -ci selection   # 0
+git grep -niE "multiplyBySelection|applySelectionMask|selectionAlpha|constrainToSelection" main -- 'src/**'   # 0
+```
+
+There is no shared seam to hang a fix on, and `src/contexts/useLayer.ts`'s commit path never reads
+selection state at all. So selecting a region and painting outside it paints outside it.
+
+**Reproduce.** Make a selection, switch to the Eraser or the Paint Bucket, and stroke well outside
+the selection's bounds. The stroke is not clipped.
+
+**Fix.** Multiply the selection's alpha into the region write, per processor, because each computes
+coverage differently: the eraser has a stroke mask, the flood fills a fill mask, the clone stamp a
+displaced fetch. There is no shared region-write primitive to hang a common helper on, so this is a
+per-processor change and needs its own tests — a "clip the whole result afterwards" approach
+re-reads and re-writes the bounding box on every stroke and is what makes this expensive.
+
+**Where this came from.** The abandoned branch `ps-pixel-tools` (worktree `ps-pixel-tools`, 12k lines,
+now harvested) filed it as handoff items 34/35 of a different numbering. Its code is superseded by a
+different architecture, so this is a rebuild, not a merge. Two of that branch's items are dead: the
+`eraseToHistory` plumbing it described no longer exists on main at all, and its blast-radius note is
+addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs and returns).
+
+**Files.** `src/tools/eraser.ts`, `src/tools/cloneStamp.ts`, `src/tools/fill.ts`,
+`src/contexts/useLayer.ts` (the commit path)
+
+## 123. Every pointer move of a stroke re-rasterizes the stroke's whole bounding box
+
+**Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress, and the
+pointer-move path reads the bitmap from the hook closure rather than from the canvas the previous
+move wrote:
+
+```
+src/contexts/useLayer.ts:584   previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
+src/contexts/useLayer.ts:585   drawAllLayers();
+src/contexts/useLayer.ts:589   const bitmap = layer.tmpCanvas ?? layer.bitmap;
+```
+
+`previewLayersRef.current[id]` is written and never read back as the next invocation's input, so each
+move redoes the work for the entire region the stroke has touched so far. A short stroke is cheap; a
+long drag over a large canvas is quadratic in the distance travelled, and it gets worse the longer
+the stroke runs.
+
+**Reproduce.** Drag one continuous stroke across a large canvas and profile `tempUpdateLayer`. Cost
+per event grows with the bounding box covered SO FAR, not with the delta.
+
+**Fix.** Either accumulate across the stroke, or document the cost as a known limit. A persistent
+canvas handle in the processor contract would work, but it must NOT go in `args`: the durable
+conversion whitelists the tool-arg shape, and a canvas in `args` would either void the document or
+require a migration. Put it outside `args`.
+
+**Files.** `src/contexts/useLayer.ts:583-612`
+
+## 124. An ordinary tool commit can move the document's size, and a mid-document bedrock blank layer is the production trigger
+
+**Problem.** A tool commit is supposed to change pixels, not the document. A reproduction harness
+exists that measures `totalSize`, `documentFrame` and the canvas backing store across commits, and it
+has never been run to a verdict. Four production entry points, all of them live code:
+
+1. ten Rectangle commits, then ten undos and ten redos — the canvas backing store and the footer's
+   `totalSize` text must never move
+2. crop, then five more commits, then three undos and three redos — the pre-crop cursor must stay at
+   the pre-crop size and every later cursor at the cropped one
+3. a 64×64 document opened from a fixture, then five commits and five undo/redo rounds (the import is
+   async, so it must be polled, and the opened size must be passed in rather than the seeded default)
+4. **the mobile shell** — `MobileLayersDrawer.tsx:173` calls
+   `createBlankLayer({ …, size: totalSize, isBedrock: true })` with NO `replaceDocument`, which is
+   exactly the history shape a replay bedrock branch reacts to
+
+**Reproduce.** The harness is committed on `salvage/probe-canvas-growth` (it was untracked in a
+detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it):
+
+```bash
+git worktree add .kilo/worktrees/probe-checkout salvage/probe-canvas-growth
+cd .kilo/worktrees/probe-checkout
+npx vitest run src/contexts/__tests__/probe-canvas-growth.test.tsx   # the per-cursor sweep
+npm run test:e2e -- e2e/zzz-probe-canvas-growth.spec.ts              # the four entry points
+```
+
+**Not verified.** Whether the defect still reproduces at current `main` is UNKNOWN — the probes have
+never been run to a verdict, and 31+ commits have landed since they were written. Run them before
+acting on anything here. Scenarios D and E in the jsdom probe are deliberately assertion-light and
+only log a summary: they are diagnostic, not verdicts.
+
+**Careful with the landing shape.** `probe-canvas-growth.test.tsx` is named `*.test.tsx` and is
+therefore collected by `npm run test`, so it must not be merged as-is without deciding where the
+probes live — an `expected-fail` pin or a prose reproduction in this file. A probe that FAILS is a
+tripwire, and per the repo's own rule it is removed in the same change that fixes the defect; a probe
+that PASSES means the defect is gone and the file should be deleted, not kept as a passing test.
+
+**Files.** `src/components/Mobile/MobileLayersDrawer.tsx:173`, `src/contexts/history-replay.ts`,
+the harness on `salvage/probe-canvas-growth`
+
+## 125. A screenshot clip taller than the viewport is still silently truncated, and the guard that would catch it has never been on main
+
+**Problem.** `onScreenClip` (`main:e2e/helpers/canvas-helpers.ts:325-345`) fixes the clip's POSITION
+and not its EXTENT: it returns `clip: { ...clip, y: pageRect.y - scrolledTo }` and passes the
+requested `height` through untouched. A region taller than the viewport is therefore scrolled into
+place and then still cut off by `page.screenshot`, with no error. Its own docblock disclaims
+responsibility: _"This is a SAFETY NET, not a workaround for a bug that is present."_
+
+`git grep -n -E "assertClipCapturable|clipToViewport" main -- e2e/ src/` returns **no matches**: the
+guard that would fail loudly on exactly this has never landed. So the failure mode is silent, and
+every visual-regression baseline recorded from a truncated clip is suspect.
+
+**Reproduce.** Ask for a clip taller than the window — e.g. `waitForCanvasPixels` with a clip whose
+`height` exceeds the viewport height — and observe that it returns pixels for a smaller region than
+asked for, exit 0.
+
+**Fix.** Add `ViewportSize`, `clipToViewport(clip, viewport)` and
+`assertClipCapturable(what, clip, viewport)` to `e2e/helpers/canvas-helpers.ts`; call it ONCE at the
+top of `waitForCanvasPixels` (`main:…:558`) before the poll loop and before the deadline is armed,
+and in `takeLineScreenshot` before `fs.mkdir`; and from `saveScreenshotArtifact` in
+`image-comparison.ts` only when `clip.width > 0 && clip.height > 0`. It must return early on
+`viewport === null`, and it cannot catch a clip that is too narrow — say so in its docblock.
+**Consolidate, do not duplicate:** `visibleCanvasBox` already exists in
+`e2e/helpers/history-helpers.ts:107` with a private copy at `e2e/adjustments.spec.ts:159`; move it
+into `canvas-helpers.ts` and re-export it rather than adding a third.
+
+**Do not port one thing from the old attempt.** The discarded `fix/clip-gate` branch also changed
+`e2e/helpers/cdp-helpers.spec.ts` to assert a capture scale of exactly 2. Main deliberately does not:
+`main:e2e/helpers/cdp-helpers.spec.ts:271-276` records that on this host the emulated ratio and the
+capture scale diverge, and that asserting the emulated value is what kept that block red in exactly
+the modes it was meant to protect. That branch was REQUEST CHANGES in review; take the guard, not
+the DPR assertion.
+
+**Files.** `e2e/helpers/canvas-helpers.ts:325-345`, `e2e/helpers/history-helpers.ts:107`,
+`e2e/adjustments.spec.ts:159`, `e2e/helpers/cdp-helpers.spec.ts:271-276`
+
+## 126. The five figure tools never see the foreground colour, because of one guard in the swatch
+
+**Problem.** `rectangle`, `ellipse`/`oval`, `triangle`, `polygon` and `line` all take their colour from
+a hardcoded literal rather than the foreground swatch:
+
+- `src/components/ToolbarsRight/Figures/Shape.tsx:32` mirrors the swatch behind an
+  `args.toolName !== 'shape'` guard, and one options-bar component serves all six of `toolsMap.ts`
+- `src/tools/settings.ts:278-306` gives each of those five a hardcoded `color: '#000000'`
+- `src/components/Main/ShapeToolArea.tsx` contains **zero** occurrences of `color` — it reads
+  `args.color` and nothing sets it
+
+So moving the foreground swatch does nothing for five of the six figure tools.
+
+**Fix.** In `ShapeToolArea.tsx`, read `color` and `backgroundColor` off the store AT GESTURE TIME —
+the same shape `FillToolArea.tsx` already ships — and inject them into the committed args and the
+live preview. Do **not** route through `setToolArgs`: `saveLastSettings` persists those five names as
+a bare `{ toolName }`, so a tool-args write would leave `args.points` and `lineWidth` undefined after a
+tool switch. The alternative — deleting the `args.toolName !== 'shape'` guard at `Figures/Shape.tsx:32`
+— writes through the args context, so that persistence hazard has to be closed first.
+
+Baked-in args rather than replay-time reads are what keep undo/redo re-rasterising in the painted
+colour with no migration, because the durable `legacy-tool` conversion already serialises the whole
+args object. Add BOTH colours: `hasFill` and the fill swatch are store-owned for the same reason, and
+a half-fixed shape tool strokes in the swatch while still filling in the default.
+
+**Where this came from.** The abandoned branch `fix/paint-overlay`. Its other two commits are dead:
+`139cc432` (clear the tool overlay on unmount) is on `main` verbatim at `useRect.ts:129-135`, and
+`37132d95`'s primary claim about `brush`/`pencil`/`color-replacement` being wired to a placeholder is
+false on main, which built a real options panel at `src/components/ToolbarsRight/Paint/Paint.tsx:63-66`.
+Only this rider survives.
+
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:32`, `src/tools/settings.ts:278-306`,
+`src/components/Main/ShapeToolArea.tsx`
+
+## 127. Touch input is unhandled: HTML5 drag-and-drop on the layer rows, no stylus discrimination, and no touch targets
+
+**Problem.** Three findings from an audit of the responsive plan, all still true on `main` and
+recorded nowhere (`grep -ciE "touch target"`, `"WCAG"`, `pointerType`, `stylus`, `palm`, `pinch"` on
+`e2e/OPEN-PROBLEMS.md` all return 0):
+
+1. `src/components/SidebarRight/LayersTab.tsx:134` still sets `draggable={editingLayerId !== layer.id}`
+   — HTML5 drag-and-drop, which does not fire on touch at all. On a phone the layer rows cannot be
+   reordered.
+2. `pointerType` appears on `main` only in `src/__tests__/fixtures/pointer.ts`, never in
+   `usePointerPosition`. So there is no stylus-versus-palm discrimination and no pinch-zoom.
+3. Slider touch targets are unaddressed.
+
+**Fix.** Each is independent and each is small; the third has a worked answer in the discarded
+`docs/responsive-design-plan` branch, which added a 70-line `src/components/Common/TouchSlider.tsx`
+with no counterpart on main. **Do not land that document** — its audit section is now false (it
+asserts no mobile drawer or hamburger exists, that all chrome is `max-md:hidden` leaving a blank
+canvas, and that `BottomToolbar.tsx` is an unintegrated stub; `main` has `MobileMenuDrawer.tsx`,
+`MobileShell.tsx` and `e2e/mobile-shell.spec.ts`). Take the component, re-derive the document.
+
+**Files.** `src/components/SidebarRight/LayersTab.tsx:134`, `src/hooks/usePointerPosition.ts`,
+`src/hooks/useMediaQuery.ts`
+
+## 128. `scripts/lib/agent-board/db.mjs` carries two raw NUL bytes, so the file reads as binary
+
+**Problem.** `main:scripts/lib/agent-board/db.mjs` is 88,366 bytes and contains **two raw NUL bytes**,
+at **line 1081** and **line 1083** (byte offsets 43191 and 43309), inside the `Map` key of
+`locksFor`:
+
+```js
+const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path}<NUL>${lock.agent_id}`, lock]));
+```
+
+Any tool that sniffs for NUL — an editor agent, a diff viewer, a binary detector — reads the file as
+binary and refuses it. It is a real file in the repository right now, and it is the coordination
+database every worktree shares.
+
+**Reproduce.**
+
+```bash
+git show main:scripts/lib/agent-board/db.mjs | perl -0777 -ne '()=/\x00/g; print scalar(()), "\n"'   # 2
+git show main:scripts/lib/agent-board/db.mjs | perl -ne 'print "$.: $_ =~ s/\x00/<NUL>/gr if /\x00/'
+```
+
+**A detection trap worth knowing.** `grep -aob $'\000'` **cannot** find these: zsh truncates NUL in
+`argv`, so the pattern arrives empty and the command reports nothing found on a file that has two.
+That is a false negative produced by the tool, not by the file. Use
+`perl -0777 -ne '()=/\x00/g'`; `LC_ALL=C tr -dc '\000' | wc -c` also gives 2, via set complement.
+
+**Fix.** Replace the literal NUL separator with a printable one that cannot occur in a path or an
+agent id, and note the choice in a comment — the obvious fix is to write `'\0'` in the source, which
+keeps the byte out of the file while a reader still sees an escape. The working replacement is
+already implemented on branch `fix/swarm-lock-identity` (commit `8c4316cf`), which folds the pair into
+a single `holdingKey` helper for exactly this reason.
+
+**Files.** `scripts/lib/agent-board/db.mjs:1081`, `:1083`
+
+## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
+
+**Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
+to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
+and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
+with 56 worktrees:
+
+```
+full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
+the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
+```
+
+So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
+bare `Test timed out` with no assertion — the same output a genuine break produces.
+
+**Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
+started with makes this test cross the line, and CI cannot tell the difference. A green local run at
+99 worktrees and a red CI run at 56 would be the same defect with a different cause.
+
+**Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
+worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
+answerable from a handful of synthetic worktrees in a temporary repository — the same technique the
+new fixture-based tests in this suite already use. Do **not** raise the timeout: that is a gate
+change, and it moves the knife edge rather than removing it.
+
+**A second, independent worktree-count sensitivity sits in the same file.** `it('gives every
+non-primary worktree a curated entry, so none is undocumented')` asserts on the SIZE OF THE
+OPERATOR'S FLEET and is red in any CI checkout with `expected 1 to be greater than 1`. It is being
+replaced on branch `test/infra-suite-hardening`. Two tests, one file, two unrelated reasons to depend
+on how many worktrees the operator happens to have.
+
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs`, `scripts/worktree-inventory.mjs`
+
+## 130. `ctx.filter` is set with no capability check, so a Safari blur silently becomes a no-op that history then records as pixels
+
+**Problem.** `main:src/tools/blur.ts:11` is `ctx.filter = \`blur(${radius}px)\`;`and there is **no**
+capability guard anywhere in`main` (`git grep -c "supportsCanvasFilter\|requireCanvasFilter" main
+-- src/`returns nothing). The same unguarded pattern is in`src/tools/colors.ts`and`src/tools/levels.ts`.
+
+`CanvasRenderingContext2D.filter` is **not Baseline**. caniuse records Safari `3.1 - 17.6: Not
+supported` (implementation: WebKit bug 198416, since resolved), and MDN's own page states "This
+feature is not Baseline because it does not work in some of the most widely-used browsers." So on
+Safari a Blur, a colour adjustment or a Levels adjustment applies **nothing**, and the app presents
+and records the unchanged bitmap. That is the worst shape of failure: a silent no-op that
+materializes into history as if it were the edit, and that no replay can reproduce.
+
+**Fix.** A capability gate, not a polyfill. Probe once by writing `grayscale(100%)` and reading it
+back, and when it is absent **refuse the filter rather than applying it as a no-op** — the refusal has
+to be loud precisely because the alternative looks like success. Then guard all four points where a
+filtered result is minted or consumed: `blur.ts` / `colors.ts` / `levels.ts` at the write; a
+`requiresCanvasFilter?: boolean` on `ToolProcessorDefinition` in `toolProcessors.ts`, set on the
+three; `history-replay.ts` skips a `requiresCanvasFilter` operation when support is absent; and
+`layer-renderer.ts` catches per layer so one unsupported layer logs instead of killing composition.
+`materialization.ts` guards the durable `operationFilter` too.
+
+A working implementation is on branch `wip/photoshop-fidelity` (commit `9394c998`), in a
+48-line `src/util/canvas-filter.ts` plus those guards. Two of that branch's other changes are
+already on main and must not be re-landed: `creator: true` on the shape family, and its
+`ShapeToolArea.tsx` (an ancestor of main's larger version).
+
+**Note for whoever lands it:** main's own canvas mock already makes the probe return true —
+`src/__tests__/canvas-mock.ts:64-65` makes `ctx.filter` a readable data property and
+`src/test/setup.ts:318-320` sets `filter: ''` — so no existing test goes red. The branch ships a
+richer mock of its own; take the guard, and take the richer mock only if it does not weaken any
+assertion elsewhere.
+
+**Files.** `src/tools/blur.ts:11`, `src/tools/colors.ts`, `src/tools/levels.ts`,
+`src/tools/toolProcessors.ts`, `src/contexts/history-replay.ts`,
+`src/contexts/layer-renderer.ts`, `src/contexts/materialization.ts`
+
+## 131. The Crop tooltip promises `Esc` restores the framing, in two copies, and the crop is a destructive raster operation
+
+**Problem.** The same sentence ships twice, and it is false:
+`main:src/tools/descriptions/tooltips.ts:185` and `main:src/tools/descriptions/type-crop.ts:129`
+both read _"Frames a new boundary for the photo; nothing is committed until you confirm, and Esc
+restores the old framing."_
+
+Nothing is committed until you confirm — that half is right. The `Esc` half is not: the crop is a
+destructive raster resize. `main:src/tools/crop.ts:27-36` allocates an `OffscreenCanvas` at the
+trimmed size, assigns `canvas.width = width; canvas.height = height;` and _then_ draws the old
+bitmap into it. The pixels outside the crop rectangle are discarded, not held.
+
+**Reproduce.** Start a crop, drag a boundary, press `Esc`, and read the canvas. The document is
+already trimmed, or — depending on where the `Esc` is handled — the framing is restored over a
+bitmap that no longer has the pixels it used to have. Either way the promise does not hold.
+
+**Fix.** Two separate decisions, and the second is the real one.
+
+1. Correct the copy in **both** files, or delete one of them. Two copies of one tooltip is itself a
+   maintenance hazard, and whichever survives must be the one the UI actually reads.
+2. Decide whether Crop is a _destructive_ operation or a _framing_ one, and make the behaviour match
+   the answer. A framing tool should keep the pixels outside the boundary and crop at rasterization
+   time, so `Esc` can mean what the tooltip says. A destructive tool should say so plainly, name the
+   loss, and not promise an undo the history does not offer. Do not "fix" this by adding a history
+   entry for the crop alone — that is a design change, and the wording question is cheaper to settle
+   first.
+
+**Why this was found twice and not fixed:** the same falsehood was independently reported in the
+abandoned `audit/chat-damage-90` branch. It survives because the text is duplicated, so a fix in one
+file leaves the other wrong and the e2e tooltip check reads whichever it reads.
+
+**Files.** `src/tools/descriptions/tooltips.ts:185`, `src/tools/descriptions/type-crop.ts:129`,
+`src/tools/crop.ts:27-36`
+
+## 132. A shape committed in a cropped document has the document-frame offset applied twice
+
+**Problem.** `ShapeToolArea` converts the drag into document space, derives a position from the
+converted points, hands that position to `createLayerFromTool` — and `createLayerFromTool` converts
+it into document space **again**:
+
+```
+main:src/components/Main/ShapeToolArea.tsx:177   const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
+main:src/components/Main/ShapeToolArea.tsx:178   const end   = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
+main:src/components/Main/ShapeToolArea.tsx:188   const pos   = shapeGeometryBounds({ start, end }, args.lineWidth);
+main:src/components/Main/ShapeToolArea.tsx:200   createLayerFromTool(fullArgs);
+
+main:src/contexts/useLayer.ts:278                const createLayerFromTool = (sourceArgs) => {
+main:src/contexts/useLayer.ts:286                  if (!pos) { … derive … }
+main:src/contexts/useLayer.ts:296                  pos: canvasToDocumentPos(pos, documentFrame),
+```
+
+`useLayer.ts:286` only skips the _derivation_ when `pos` is supplied. The **conversion** at `:296` is
+unconditional, so a caller that already converted is charged twice.
+
+**Reproduce.** Crop the document so `documentFrame.x` or `.y` is non-zero, then draw a shape. The
+layer's origin is displaced by twice the crop offset — at a 100px crop the shape lands 200px from
+where it was dragged. In an uncropped document `documentFrame` is `{x:0,y:0}` and the bug is
+invisible, which is why the default 800x600 document has never shown it.
+
+**Fix.** Make the contract explicit rather than inferred: either `createLayerFromTool` takes a
+position already in document space and does not convert it, or it takes a position in layer space and
+the caller does not. One of the two conversions has to go. The durable-conversion layer makes this
+worth settling properly rather than patching at the call site — a `pos` whose coordinate space
+depends on which path built it will be re-introduced by the next caller, and `legacy-tool` conversion
+serialises whatever `pos` it is handed.
+
+**Where this came from.** The abandoned branch `ps-tools-spine` (`8351451e`, now unreachable from any
+branch; anchored at `refs/keep/harvested/ps-tools-spine`), whose salvage documented it as a handoff
+item. It is recorded nowhere on main — `grep -ci "ShapeToolArea.*offset|offset.*twice"` over
+`main:HANDOFF.md` and `main:e2e/OPEN_PROBLEMS.md` both return 0.
+
+**Note on the rest of that branch:** do not land it. Its Gradient implementation is superseded by
+`d8f5d03f`, and its `ec9bbb58` would **reverse a deliberate tripwire** —
+`main:src/contexts/layer-utils.blend-mode.test.ts:178` is `it('ignores a mode carried on a non-paint
+tool source, which no bar ever writes')`, commented as existing precisely so that widening the blend
+seam is a deliberate change with a test to update. The branch deletes that test and asserts the
+opposite.
+
+**Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-300`
+
+## 133. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
+
+**Problem.** `getStrokeAnalysis` counts only pixels that are **dark** (`STROKE_ANALYSIS.DARK_THRESHOLD`)
+**or** a **spray** pixel — and the spray arm is `luminance > SPRAY_LUMINANCE_THRESHOLD` (200),
+`saturation < 30`, and not near-white. Every pixel in between is invisible to it. The spray renderer
+is now denser than it was (it was fixed to give a real dab rather than a grey blur), so a mid-tone
+spray falls into exactly that blind band, and `waitForSprayPixels` then fails on a **timeout** with a
+message about a null analysis rather than about missing ink.
+
+**Reproduce.** Spray at a mid luminance and call `getStrokeAnalysis`. The pixel count does not include
+it, so the wait times out. The measurement on the branch: the landed renderer drops the analysis from
+26,040 counted pixels to 8,144.
+
+**Why it matters beyond this suite:** the threshold is not a test detail, it is the definition of
+"there is ink here". Anything that reasons about spray coverage inherits it, and the unit suite
+hard-codes the same threshold at `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`, so
+changing the rule has to change that too — it is a gate on the gate.
+
+**Fix.** Either widen the classifier to a real "is this an ink pixel for the tool that drew it"
+predicate, or make it tool-parameterised so a spray's expected luminance comes from the tool's own
+`settings` rather than a constant. Then fix the failure MESSAGE: a timeout caused by an empty analysis
+must say so, because "timed out waiting for pixels" sends the next reader to widen a timeout instead
+of looking at the classifier.
+
+**Platform contract.** Photoshop's Airbrush is a density-building tool: it deposits colour while the
+pointer is held, and Flow controls how fast
+(https://helpx.adobe.com/photoshop/using/airbrush-tool-options.html). A single visible tap depositing
+one dab is the correct order of operations — the pre-fix `alpha / 4` peak of 0.125 made the tool dark
+on a drag and invisible on a tap. The flow accumulation itself is not reachable in this renderer; that
+is a separate known limit, and it belongs in this file rather than in a comment on the renderer.
+
+**Where this came from.** The abandoned branch `fix/spray` (`60590a25`, anchored at
+`refs/keep/harvested/fix-spray`). The _code_ half of that branch is already on main as `1a26dfe5` —
+same subject, rebuilt on a different base, which is why `git cherry` reported it unabsorbed. Only the
+defect record was missing, and it is recorded nowhere on main
+(`git show main:e2e/OPEN_PROBLEMS.md | grep -i spray` → empty).
+
+**Files.** `e2e/helpers/canvas-helpers.ts:242`, `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`

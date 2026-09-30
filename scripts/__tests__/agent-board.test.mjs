@@ -1867,6 +1867,53 @@ describe('the command line', () => {
     expect(watched.out).toContain('a line the swarm reads');
   });
 
+  /**
+   * The log is longer than one page, and a bare `watch` used to show the wrong
+   * end of it.
+   *
+   * It started at seq 0, printed one 200-event page and stopped. On this
+   * repository's real board — 572 events when this was found — that is the
+   * first seventeen hours and nothing since, so every `note` an agent had just
+   * written was absent from the output. Two agents grepped for their own note
+   * text, got nothing, and concluded the note had not landed; it had. One of
+   * them reported the cause as ANSI colour, and the output contains no ESC byte
+   * at all, so a search for that would have found nothing either.
+   *
+   * Both halves are pinned here because they are two different mistakes: a bare
+   * `watch` has to show the RECENT end (and say it is a window), and an
+   * explicit `--since` has to read forward past the first page instead of
+   * stopping at 200.
+   */
+  it('gives a bare `watch` the RECENT end of a log longer than a page, and says so', async () => {
+    const board = boardFor('a');
+    for (let i = 0; i < 210; i += 1) board.note(`filler note ${i}`);
+    board.note('the note the agent is looking for');
+    const total = board.lastSeq();
+    board.close();
+    expect(total).toBeGreaterThan(200);
+
+    const bare = await cli(['watch']);
+    expect(bare.code).toBe(0);
+    expect(bare.out).toContain('the note the agent is looking for');
+    // The window is the one fact the reader cannot see from the lines, so it is
+    // said out loud, as a comment a pipeline can drop. The line carries the
+    // count SHOWN, the count MATCHED, and the command that reads the rest —
+    // `matched` comes from the query, so a header cannot claim a completeness
+    // the read did not have.
+    expect(bare.out).toMatch(/^# showing the last \d+ of \d+ event\(s\); .*swarm watch --since 0$/m);
+    // And it really is the recent end: the first event is not in it.
+    expect(bare.out).not.toContain('filler note 0');
+
+    // An explicit read starts where it says and does not stop at one page.
+    const whole = await cli(['watch', '--since', '0']);
+    expect(whole.out).toContain('filler note 0');
+    expect(whole.out).toContain('the note the agent is looking for');
+    // Reading from the start is not a window, so it carries no `#` header at
+    // all. Asserted on the line START, not on a phrase: a suffix read has no
+    // window to describe, and the only `#` this command ever writes is one.
+    expect(whole.out).not.toMatch(/^# /m);
+  });
+
   it('exits 2 for an issue that does not exist', async () => {
     const missing = await cli(['show', 'ph-404']);
     expect(missing.code).toBe(2);
