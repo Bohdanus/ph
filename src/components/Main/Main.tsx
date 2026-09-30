@@ -180,7 +180,7 @@ const Main = () => {
       try {
         await setImageFromUpload(await loadDocumentFile(file));
       } catch (error) {
-        window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   };
@@ -352,7 +352,7 @@ const Main = () => {
                 const data = await openLoadImageDialog();
                 if (data) await setImageFromUpload(data);
               } catch (error) {
-                window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
+                console.error(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
               }
             }}
             data-testid="main-open-file-button"
@@ -366,7 +366,7 @@ const Main = () => {
                 const data = await openNewImageDialog();
                 if (data) setBlankImage(data);
               } catch (error) {
-                window.alert(`Failed to create document: ${error instanceof Error ? error.message : String(error)}`);
+                console.error(`Failed to create document: ${error instanceof Error ? error.message : String(error)}`);
               }
             }}
             data-testid="main-blank-image-button"

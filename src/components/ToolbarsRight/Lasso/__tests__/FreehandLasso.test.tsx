@@ -216,13 +216,12 @@ describe('FreehandLasso toolbar', () => {
     expect(getClearButton()).toBeEnabled();
   });
 
-  it('copies the active polygon selection and reports success without alerting', () => {
-    const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
+  it('copies the active polygon selection and reports success without logging an error', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     // `restoreMocks` is off, and the only global `afterEach` is `cleanup()` plus
-    // `useRealTimers()`, so a red assertion here used to leave `window.alert` and
-    // `console.error` mocked for every test after it in the file.
+    // `useRealTimers()`, so a red assertion here used to leave `console.error` mocked for every
+    // test after it in the file.
     try {
       const activeSelection = { id: 'sel-1', geometry: 'polygon' };
       setSelectionState({ activeSelection });
@@ -231,20 +230,17 @@ describe('FreehandLasso toolbar', () => {
       fireEvent.click(getCopyButton());
 
       expect(clipboardMocks.copyActiveSelection).toHaveBeenCalledWith(activeSelection);
-      expect(alertSpy).not.toHaveBeenCalled();
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {
-      alertSpy.mockRestore();
       errorSpy.mockRestore();
     }
   });
 
-  it('surfaces a copy failure to the user and keeps the toolbar usable', () => {
+  it('logs a copy failure and keeps the toolbar usable', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
 
     // Same reason as the test above: the restore has to run whatever the assertions do. The
-    // `mockReset` is the part the two spies alone do not cover — `beforeEach` and the global
+    // `mockReset` is the part the spy alone does not cover — `beforeEach` and the global
     // `clearMocks` both use `mockClear`, which clears call history but leaves the `once` queue
     // intact, so a `render` or `fireEvent` that threw before the click below would leave a
     // throwing implementation armed for the next test that copies.
@@ -258,13 +254,11 @@ describe('FreehandLasso toolbar', () => {
       fireEvent.click(getCopyButton());
 
       expect(errorSpy).toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.any(Error));
-      expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
       // The transient copying state must be released even when the copy throws.
       expect(getCopyButton()).toBeEnabled();
       expect(getCopyButton()).toHaveTextContent('Copy');
     } finally {
       clipboardMocks.copyActiveSelection.mockReset();
-      alertSpy.mockRestore();
       errorSpy.mockRestore();
     }
   });

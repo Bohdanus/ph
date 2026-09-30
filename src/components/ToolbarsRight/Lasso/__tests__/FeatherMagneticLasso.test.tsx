@@ -562,7 +562,7 @@ describe('FeatherMagneticLasso toolbar', () => {
   });
 
   describe('copy failure', () => {
-    it('logs and alerts when the copy throws, then restores the button', async () => {
+    it('logs when the copy throws, then restores the button', async () => {
       const failure = new Error('clipboard exploded');
       // `mockImplementationOnce` so the throwing behaviour cannot leak: the shared `beforeEach`
       // only calls `mockClear()`, which does not reset implementations.
@@ -570,7 +570,6 @@ describe('FeatherMagneticLasso toolbar', () => {
         throw failure;
       });
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
       setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
 
       try {
@@ -579,18 +578,16 @@ describe('FeatherMagneticLasso toolbar', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
         await waitFor(() => {
-          expect(alertSpy).toHaveBeenCalledWith('Failed to copy feathered selection');
+          expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying feathered magnetic selection:', failure);
         });
-        expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying feathered magnetic selection:', failure);
 
-        // `finally { setIsCopying(false) }` (FeatherMagneticLasso.tsx:174-176) is the only thing
+        // `finally { setIsCopying(false) }` (FeatherMagneticLasso.tsx:191-193) is the only thing
         // keeping the label from being stranded on 'Copying...'.
         const copyButton = screen.getByRole('button', { name: 'Copy' });
         expect(copyButton).toHaveTextContent('Copy');
         expect(copyButton).toBeEnabled();
       } finally {
         consoleErrorSpy.mockRestore();
-        alertSpy.mockRestore();
       }
     });
   });

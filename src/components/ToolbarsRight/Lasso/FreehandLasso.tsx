@@ -29,7 +29,6 @@ const FreehandLasso: React.FC<{}> = () => {
       copyActiveSelection(activeSelection);
     } catch (error) {
       console.error('Error copying freehand lasso selection:', error);
-      alert('Failed to copy selection');
     } finally {
       setIsCopying(false);
     }

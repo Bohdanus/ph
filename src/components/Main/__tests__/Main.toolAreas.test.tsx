@@ -133,7 +133,6 @@ beforeEach(() => {
   setImageFromUpload.mockResolvedValue(undefined);
   setBlankImage.mockImplementation(() => {});
   vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
-  vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -499,12 +498,18 @@ describe('Main empty-document actions', () => {
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 
-  it('alerts when the file dialog rejects', async () => {
+  it('reports the failure through console.error when the file dialog rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openLoadImageDialog.mockRejectedValue(new Error('no access'));
     render(<Main />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
-    await vi.waitFor(() => expect(window.alert).toHaveBeenCalledWith('Failed to open file: no access'));
+    // The dialog threw before it could name a file, so the upload must not have been attempted:
+    // the console report and the untouched document are the whole of the failure now that the
+    // modal is gone, and the second half is what keeps a handler that still called
+    // `setImageFromUpload` on the error path from passing this.
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to open file: no access'));
+    expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 
   it('creates a blank document from the new image dialog', async () => {
@@ -527,12 +532,16 @@ describe('Main empty-document actions', () => {
     expect(setBlankImage).not.toHaveBeenCalled();
   });
 
-  it('alerts when the new image dialog rejects', async () => {
+  it('reports the failure through console.error when the new image dialog rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openNewImageDialog.mockRejectedValue(new Error('canceled'));
     render(<Main />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
-    await vi.waitFor(() => expect(window.alert).toHaveBeenCalledWith('Failed to create document: canceled'));
+    // A rejected dialog yields no size, so no blank document may be created from it — the
+    // console report and an unchanged document are the whole of the failure.
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to create document: canceled'));
+    expect(setBlankImage).not.toHaveBeenCalled();
   });
 });
 
@@ -632,13 +641,17 @@ describe('Main file drop', () => {
     await vi.waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
   });
 
-  it('alerts when a dropped file cannot be decoded', async () => {
+  it('reports the failure through console.error when a dropped file cannot be decoded', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     loadDocumentFile.mockRejectedValue(new Error('corrupt'));
     render(<Main />);
 
     dropOnMain(screen.getByRole('main'));
 
-    await vi.waitFor(() => expect(window.alert).toHaveBeenCalledWith('Failed to open file: corrupt'));
+    // The decode is the last thing the drop handler does before it publishes, so a rejection
+    // leaves the open document exactly as it was — the assertion that matters now that the
+    // modal dialog is gone.
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to open file: corrupt'));
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 });

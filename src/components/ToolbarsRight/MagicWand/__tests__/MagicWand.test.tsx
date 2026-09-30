@@ -309,7 +309,7 @@ describe('MagicWand toolbar', () => {
       expect(screen.getByRole('button', { name: 'Paste' })).toBeEnabled();
     });
 
-    it('copies the active polygon selection and never alerts on success', async () => {
+    it('copies the active polygon selection', async () => {
       withActivePolygonSelection();
       render(<MagicWand />);
 
@@ -320,7 +320,7 @@ describe('MagicWand toolbar', () => {
       });
     });
 
-    it('logs and alerts when copying throws, then restores the button', async () => {
+    it('logs when copying throws, then restores the button', async () => {
       const failure = new Error('clipboard exploded');
       // `mockImplementationOnce` so the throwing behaviour cannot leak into later tests:
       // `beforeEach` only calls `mockClear()`, which does not reset implementations.
@@ -328,7 +328,6 @@ describe('MagicWand toolbar', () => {
         throw failure;
       });
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
       withActivePolygonSelection();
 
       try {
@@ -337,18 +336,16 @@ describe('MagicWand toolbar', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
         await waitFor(() => {
-          expect(alertSpy).toHaveBeenCalledWith('Failed to copy magic wand selection');
+          expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying magic wand selection:', failure);
         });
-        expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying magic wand selection:', failure);
 
-        // `finally { setIsCopying(false) }` (MagicWand.tsx:39-41) is the only thing keeping the
+        // `finally { setIsCopying(false) }` (MagicWand.tsx:42-44) is the only thing keeping the
         // label from being stranded on 'Copying...'.
         const copyButton = screen.getByRole('button', { name: 'Copy' });
         expect(copyButton).toHaveTextContent('Copy');
         expect(copyButton).toBeEnabled();
       } finally {
         consoleErrorSpy.mockRestore();
-        alertSpy.mockRestore();
       }
     });
 

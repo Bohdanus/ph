@@ -248,14 +248,14 @@ const jpegFormat = (): ExportFormat => formatByLabel('JPEG');
  *
  * `page.once` immediately before the click, never a global `page.on('dialog')`: the
  * guard is `confirm()` in `DesktopHeader.tsx`, and a global accept would also swallow
- * every unexpected alert/confirm in the suite, so those surfacing would stop being a
- * load-bearing signal. See the same note at e2e/export/helpers.ts:309-312.
+ * every unexpected confirm/prompt in the suite, so those surfacing would stop being a
+ * load-bearing signal. See the same note at e2e/export/helpers.ts:517-528.
  *
  * The `prompted` flag and the `expect.poll` are what make a NON-firing prompt a failure
  * here instead of a leak. `page.once` is armed unconditionally and depends on this click
  * always producing a `confirm()`: if it ever stops, the handler is still armed, and
- * `once` consumes the NEXT dialog of any kind — a stray alert, an unrelated confirm
- * later in the same test — accepting it. That is the hazard e2e/export/helpers.ts:309-312
+ * `once` consumes the NEXT dialog of any kind — a stray `prompt`, an unrelated confirm
+ * later in the same test — accepting it. That is the hazard e2e/export/helpers.ts:517-528
  * warns about, arrived at from the other direction. A comment alone would not close it:
  * the flag is polled for, so a missing prompt fails this helper at a named line instead
  * of quietly accepting something else three steps later. The flag is already consumed by
@@ -984,10 +984,10 @@ test.describe('Save dialog', () => {
     // The counter is read only AFTER the dialog has closed, and that ordering is the
     // gate — not a timing allowance, and not "two round trips". In the regression this
     // catches, Cancel wired to `handleSave` would not close the dialog at all: `onSave`
-    // runs (`src/components/SaveDialog/SaveDialog.tsx:31`) and the dialog is unmounted
+    // runs (`src/components/SaveDialog/SaveDialog.tsx:22`) and the dialog is unmounted
     // only by the `finally` in `handleImageSave`
-    // (`src/contexts/useFile.tsx:135-138`), which runs AFTER `downloadBlob` /
-    // `saveImageToDisk` has already been dispatched (`src/contexts/useFile.tsx:124,126`).
+    // (`src/contexts/useFile.tsx:133-136`), which runs AFTER `downloadBlob` /
+    // `saveImageToDisk` has already been dispatched (`src/contexts/useFile.tsx:123,125`).
     // So the download is dispatched BEFORE the dialog closes, always, and waiting for the
     // close cannot be what observes it — it only guarantees the count has settled. What
     // observes it is that the listener is registered before the click and read after the

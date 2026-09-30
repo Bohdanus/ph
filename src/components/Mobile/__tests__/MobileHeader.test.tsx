@@ -84,6 +84,7 @@ describe('MobileHeader', () => {
 
   afterEach(() => {
     resetDocumentGestures();
+    vi.restoreAllMocks();
   });
 
   it('shows the document name and the quick actions', () => {
@@ -194,6 +195,30 @@ describe('MobileHeader', () => {
     expect(exportButton).toBeDisabled();
     await user.click(exportButton);
     expect(openSaveImageDialogMock).not.toHaveBeenCalled();
+  });
+
+  it('logs the rejection with the encoder detail and saves nothing', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    openSaveImageDialogMock.mockRejectedValue(new Error('encoder died'));
+    renderHeader();
+
+    await user.click(screen.getByRole('button', { name: 'Export image' }));
+
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image: encoder died');
+    expect(handleImageSaveMock).not.toHaveBeenCalled();
+  });
+
+  it('stringifies a non-Error rejection into the log rather than losing it', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    openSaveImageDialogMock.mockRejectedValue('disk offline');
+    renderHeader();
+
+    await user.click(screen.getByRole('button', { name: 'Export image' }));
+
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image: disk offline');
+    expect(handleImageSaveMock).not.toHaveBeenCalled();
   });
 
   it('keeps every control at least 44px on both axes', () => {

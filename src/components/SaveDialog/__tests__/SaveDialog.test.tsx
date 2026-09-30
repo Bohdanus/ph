@@ -213,12 +213,11 @@ describe('SaveDialog cancel and close paths', () => {
 });
 
 describe('SaveDialog failure handling', () => {
-  // The `catch` in `SaveDialog.handleSave` owns the user-visible failure: the
-  // `finally` alone only re-enables the controls, so without it a rejected
-  // `onSave` reached the void as an unhandled rejection and the user was told
-  // nothing. The production caller (useFile.handleImageSave) catches its own
-  // failures, alerts, and resolves, so the contract under test here is the
-  // component boundary a rejecting caller crosses.
+  // The `catch` in `SaveDialog.handleSave` owns the failed save: the `finally` alone
+  // only re-enables the controls, so without it a rejected `onSave` reached the void as
+  // an unhandled rejection and the failure was never recorded. The production caller
+  // (useFile.handleImageSave) catches its own failures, logs them, and resolves, so the
+  // contract under test here is the component boundary a rejecting caller crosses.
   it('restores the controls when onSave resolves', async () => {
     const onClose = vi.fn();
     const onSave = vi.fn(() => Promise.resolve());
@@ -310,7 +309,7 @@ describe('SaveDialog rejected save', () => {
     }
   };
 
-  it('surfaces a rejected save to the user instead of dropping it into an unhandled rejection', async () => {
+  it('logs a rejected save instead of dropping it into an unhandled rejection', async () => {
     const onClose = vi.fn();
     const onSave = vi.fn(() => Promise.reject(new Error('Encoding failed')));
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
@@ -322,7 +321,7 @@ describe('SaveDialog rejected save', () => {
 
     expect(rejections).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file:', expect.any(Error));
-    expect(alertSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file: Encoding failed');
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it('still restores the controls and leaves the dialog open after a rejected save', async () => {
@@ -335,8 +334,10 @@ describe('SaveDialog rejected save', () => {
     });
     await drain();
 
-    // A non-Error rejection reason is stringified, matching useFile.tsx:132.
-    expect(alertSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file: PSD encoder exploded');
+    // A non-Error rejection reason still reaches the catch, which records it verbatim
+    // rather than stringifying it into a message for the user.
+    expect(consoleErrorSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file:', 'PSD encoder exploded');
+    expect(alertSpy).not.toHaveBeenCalled();
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();

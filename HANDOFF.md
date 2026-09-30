@@ -809,9 +809,9 @@ capability loss rather than a latent trap:
 | TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:24`                                   |
 
 So a document between 80 MP and 100 MP **cannot be saved as AVIF at all** — `saveImageToDisk` throws
-with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard it saved
-and then failed to reopen, which is the worse failure, so the change is right; the cost is real and
-the number was not chosen by whoever added the guard.
+with the budget message, and `useFile.tsx:118-136` catches it, logs it and resolves `null`. Before the
+guard it saved and then failed to reopen, which is the worse failure, so the change is right; the cost
+is real and the number was not chosen by whoever added the guard.
 
 **Decided 2026-09-28: the 80 MP ceiling stands.** The operator was asked to choose between raising
 `MAX_AVIF_PIXELS` to TIFF's `MAX_CREATABLE_DOCUMENT_PIXELS` derivation and accepting the export loss,
@@ -3044,3 +3044,59 @@ green over the defect.
 `src/components/SidebarLeft/toolbar-overflow.ts:122-149`,
 `src/components/SidebarLeft/SidebarLeft.tsx:869-898` (where the three-dots tile is placed in the
 section of the last visible row), `e2e/toolbar-fit.spec.ts:43` and `:165` and `:173-179`.
+
+## 98. The app has no user-facing error channel at all, and a failed export is now indistinguishable from a successful one
+
+**Problem.** Every user-facing `alert()` in the app was removed in favour of `console.error`. The
+alerts were the app's _entire_ user-facing error channel: `git grep -iE "toast|snackbar|notif"` over
+production `src/` returns nothing, and `ErrorBoundary` is mounted at only two places
+(`src/App.tsx:92,96`), catches React render throws only, and does not cover `Menu`,
+`MobileMenuDrawer` or `MobileHeader`. So a failed file open, save, export or selection copy now tells
+the user nothing at all.
+
+The export path is the sharpest case. `handleImageSave`'s `finally` closes the save dialog
+unconditionally (`src/contexts/useFile.tsx:133-136`), so a failure closes it exactly as a success does.
+On desktop the screen is then byte-identical to success: `fileName` is rendered only at
+`src/components/Mobile/MobileMenuDrawer.tsx:110` and `src/components/Mobile/MobileHeader.tsx:107` —
+`src/components/DesktopHeader/DesktopHeader.tsx` only passes it into the save payload — and
+`hasUnsavedChanges` is rendered nowhere, appearing in components only inside the three `confirm()`
+guards. The document is not corrupted (`useApp.handleImageSave`, the only writer of
+`hasUnsavedChanges: false`, is guarded by `if (data)` at each call site), so this is a
+silently-lost-work problem, not a data-loss one.
+
+This is reachable by decision, not by accident: see entry 45, where the operator decided on
+2026-09-28 that the 80 MP AVIF ceiling stands, so an 80–100 MP document is _supposed_ to fail to
+export and was supposed to say so.
+
+**Problem.** Three of the four selection-copy components silently swallow a failed copy.
+`copyActiveSelection` returns `false` and does not throw for every null-snapshot case
+(`src/contexts/useSelectionClipboard.ts:41-62`), and only `Lasso.tsx` reads that boolean.
+`FreehandLasso.tsx:29`, `FeatherMagneticLasso.tsx:188`, `MagicWand.tsx:39` and
+`AppKeyboardShortcuts.tsx:280` all discard it — the last outside any `try` — so a failed copy leaves
+no log and no UI change. Their `catch` only fires on a throw, which this path does not produce. This
+hole is pre-existing and not caused by the alert removal, but it is the same channel and
+`src/util/selection.ts:430-441` documents the asymmetry. `Lasso.tsx:42-44` is the one correct caller
+and is the model to copy.
+
+**Fix.** A non-blocking error surface the file/export paths can write to, and stop closing the save
+dialog on failure. Separately, read `copyActiveSelection`'s boolean in the four discarding call sites
+as `Lasso.tsx` does. Both are design decisions rather than one-liners, and the error surface in
+particular is a new UI concern — it needs its own decision, not a patch.
+
+**Test that fails without the fix.** None today, and that is the point: no e2e spec drives a failed
+open, save, export or copy, and none asserts on `console.error` or `pageerror`. No e2e spec ever used a
+Playwright `dialog` handler to _detect_ a failure either — `page.on('dialog')` appears only in a
+comment discouraging it, and every handler is a `page.once` accepting a `confirm()`. So removing the
+alerts deleted no detection mechanism, because there was none; it also left the gap unpinned. A test
+that drives a real export failure and asserts the user can see it is the only thing that will hold
+this shut.
+
+**Files.** `src/contexts/useFile.tsx:118-136` (`handleImageSave` and its unconditional
+`finally`), `src/hooks/useApp.ts:67-71`, `src/components/DesktopHeader/DesktopHeader.tsx` (File >
+Save handler), `src/components/Mobile/MobileMenuDrawer.tsx:110`,
+`src/components/Mobile/MobileHeader.tsx:81,107`,
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:29`,
+`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:188`,
+`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:39`,
+`src/components/Common/AppKeyboardShortcuts.tsx:280`,
+`src/contexts/useSelectionClipboard.ts:41-62`, `src/util/selection.ts:430-441`.

@@ -31,7 +31,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
 
   /**
    * The same guard `DesktopHeader` puts on File → New and File → Open
-   * (`DesktopHeader.tsx:150` / `:175`). Without it, mobile Open silently
+   * (`DesktopHeader.tsx:199` / `:224`). Without it, mobile Open silently
    * discarded a document with unsaved work while the desktop menu refused —
    * and an uncommitted text layer is not in `hasUnsavedChanges` yet, so
    * `hasPendingText(currentArgs.current)` is the half that catches a typed but
@@ -46,7 +46,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
       const data = await openNewImageDialog();
       if (data) setBlankImage(data);
     } catch (error) {
-      window.alert(`Failed to create document: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`Failed to create document: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -57,7 +57,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
       const data = await openLoadImageDialog();
       if (data) await setImageFromUpload(data);
     } catch (error) {
-      window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -79,7 +79,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
       });
       if (data) handleImageSave(data);
     } catch (error) {
-      window.alert(`Failed to export image: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`Failed to export image: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 

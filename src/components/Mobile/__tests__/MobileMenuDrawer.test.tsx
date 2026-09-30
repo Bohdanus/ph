@@ -133,6 +133,30 @@ describe('MobileMenuDrawer', () => {
       expect(window.confirm).toHaveBeenCalled();
       expect(openNewImageDialogMock).not.toHaveBeenCalled();
     });
+
+    it('logs the rejection with the dialog detail and leaves the document alone', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openNewImageDialogMock.mockRejectedValue(new Error('dialog exploded'));
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /New Document/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document: dialog exploded');
+      expect(setBlankImageMock).not.toHaveBeenCalled();
+    });
+
+    it('stringifies a non-Error rejection into the log rather than losing it', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openNewImageDialogMock.mockRejectedValue('plain failure');
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /New Document/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document: plain failure');
+      expect(setBlankImageMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('Open', () => {
@@ -170,6 +194,18 @@ describe('MobileMenuDrawer', () => {
       expect(openLoadImageDialogMock).toHaveBeenCalledTimes(1);
       expect(setImageFromUploadMock).toHaveBeenCalledTimes(1);
     });
+
+    it('logs the rejection with the picker detail and keeps the current document', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openLoadImageDialogMock.mockRejectedValue(new Error('read failed'));
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Open Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file: read failed');
+      expect(setImageFromUploadMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('Export', () => {
@@ -194,6 +230,32 @@ describe('MobileMenuDrawer', () => {
       render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
 
       expect(screen.getByRole('button', { name: /Export \/ Save Image/ })).toBeDisabled();
+    });
+
+    it('logs the rejection with the encoder detail and saves nothing', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openSaveImageDialogMock.mockRejectedValue(new Error('encoder died'));
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image: encoder died');
+      expect(handleImageSaveMock).not.toHaveBeenCalled();
+    });
+
+    it('logs when the commit throws before the save dialog opens', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      commitDirtyToolMock.mockImplementation(() => {
+        throw new Error('commit failed');
+      });
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image: commit failed');
+      expect(openSaveImageDialogMock).not.toHaveBeenCalled();
     });
   });
 
