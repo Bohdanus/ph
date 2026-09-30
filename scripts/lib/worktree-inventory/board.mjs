@@ -26,7 +26,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { LIVE_WINDOW_MS } from './classify.mjs';
 
 /**
@@ -38,8 +38,7 @@ import { LIVE_WINDOW_MS } from './classify.mjs';
  * resolves it against `process.cwd()`, which inside a task worktree is a
  * directory whose `.git` is a gitlink FILE, not a directory — so the whole
  * board half of the inventory degrades to "unavailable" and every worktree
- * reports zero claims, with nothing on screen to say why. The fallback to
- * `join(cwd, …)` covers the git versions that lack the flag.
+ * reports zero claims, with nothing on screen to say why.
  */
 export function resolveBoardDb(cwd) {
   if (process.env.AGENT_BOARD_DIR) return join(process.env.AGENT_BOARD_DIR, 'board.db');
@@ -48,7 +47,7 @@ export function resolveBoardDb(cwd) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-  return join(isAbsolute(common) ? common : cwd, 'agent-board', 'board.db');
+  return join(common, 'agent-board', 'board.db');
 }
 
 function openBoard(dbPath) {
@@ -168,6 +167,14 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
       .all()
       .filter((c) => isLive(c, 'lease_until', nowMs));
 
+    // `issue_id` is deliberately NOT selected, and this is a v2 board query.
+    // The column is v1 residue: issue attribution moved to the `issue_locks`
+    // pairing table, and `migrateFileLockAttribution` copies rows into it
+    // without ever dropping the old column. So a board created before v2 still
+    // has it, and a board created AT v2 does not — which is why selecting it
+    // worked on the only database anyone tested against and threw
+    // `no such column: issue_id` on every fresh clone.
+    //
     // The columns of the CURRENT schema, which are not the columns of every
     // board that exists: `issue_id` is selected from `issue_locks` below, not
     // from here. See `readLockIssueAttribution`.
@@ -228,6 +235,31 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
       fileLocks: locksByWorktree,
       agents: agentsByWorktree,
       issues,
+    };
+  } catch (err) {
+    // A board that OPENS but cannot be QUERIED is the same situation as one that
+    // is missing, and this module promises at the top that every function here
+    // returns an empty result rather than throwing — an inventory that cannot be
+    // generated because a coordination database is malformed would be a worse
+    // tool than one that generates and says the board was unavailable.
+    //
+    // It was `try { … } finally` with no `catch`, so a single bad column escaped
+    // `main()` and the generator died having written nothing at all. The reason
+    // is reported rather than swallowed, because "board unavailable" and "board
+    // broken" are different states and an operator needs to tell them apart.
+    return {
+      available: false,
+      dbPath,
+      // The same key the success return carries, for the reason the missing-file
+      // return gives: a caller must be able to read the payload without knowing
+      // which way `readBoard` came out, and a board that FAILED TO QUERY has
+      // read no attribution either.
+      lockIssueAttribution: 'unavailable',
+      claims: new Map(),
+      fileLocks: new Map(),
+      agents: new Map(),
+      issues: [],
+      error: String(err?.message ?? err),
     };
   } finally {
     db.close();

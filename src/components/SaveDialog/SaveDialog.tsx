@@ -22,7 +22,6 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
       await onSave(format === 'image/jpeg' ? { fileName, format, quality: jpegQuality } : { fileName, format });
     } catch (error) {
       console.error('Failed to save file:', error);
-      window.alert(`Failed to save file: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setSaving(false);
     }

@@ -26,24 +26,30 @@ import {
  * ~60-80ms from a shell, and this file's slowest test spends eight of them.
  *
  * The default is not merely tight for that, it is SMALLER THAN THE WORK ALREADY
- * MEASURED IN THIS FILE. Across three isolated runs of the three `scripts/`
- * suites on this machine, the slowest span here was 7.1s
- * (`never reclaims a holder that this wrapper did not create`, which loops four
- * identities and spends two board spawns on each) and the slowest in
- * `agent-board.test.mjs` was 4.5s. A budget below a test's own measured cost is
- * not a flake waiting to happen; it is a coin flip, and on a machine slower than
- * this one, or on one also running a Playwright suite as this repository normally
- * is, the same tests fail with no code change at all — which is exactly how
- * `npm run test` reported five of them.
+ * MEASURED IN THIS FILE. What a span costs here is process spawns, and spawns cost
+ * whatever the machine is doing, so the figure below is an OBSERVATION OF ONE RUN
+ * and not a property of the file: measured across three isolated runs on an
+ * otherwise idle machine, the slowest span here was 7.1s and the slowest in
+ * `agent-board.test.mjs` was 4.5s; measured again on a busier day with 93
+ * worktrees live, the same two were 4.9s and 2.9s. Nothing about the tests
+ * changed. So treat any single number in this paragraph as "this low, sometimes
+ * higher", and read the HEADROOM rather than the figure — 30s against the worst
+ * span this file has been seen to take is between 6x and 4x, and that margin is
+ * the actual property, because it is what has to survive a loaded machine.
+ *
+ * A budget below a test's own measured cost is not a flake waiting to happen; it
+ * is a coin flip. And it loses on a busy machine rather than on a slow test: run
+ * at the pre-fix commit on a loaded machine, the failures were not the five
+ * recorded below but a DIFFERENT test in a sibling file, which is what a
+ * population of marginal tests looks like rather than five specific ones.
  *
  * What is deliberately NOT claimed here: any contention factor. A full 266-file
  * run was measured against these same tests and came out FASTER per test than the
- * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is not
- * a thing this suite can currently support, and a number of that shape would be a
- * guess wearing a measurement's clothes. The headroom below is therefore stated
- * for what it is: 30s is about four times this file's own worst measured case, so
- * a machine several times slower than this one still runs the file, and nothing
- * more is claimed on top of that.
+ * three-file run (median 0.45x, max 1.1x, n=48), so "a full run is N times
+ * slower" is not a claim this suite can support, and a number of that shape would
+ * be a guess wearing a measurement's clothes. The headroom below is stated for
+ * what it is: room for a machine several times more loaded than the one these
+ * figures were taken on, and nothing more.
  *
  * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
  * only decides how long a test may run before the harness reports it, and every
@@ -491,11 +497,13 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
   });
 
   it('renews the lease while the suite runs, and says so if a renewal fails', async () => {
-    // A file lock is never renewed by the board itself, so this wrapper owns the
-    // lease for as long as the suite lives. An earlier version defined the renewal
-    // and never started it: the timer existed, was documented, and no code path
-    // reached it. It survived a real full-suite run purely because the 30-minute
-    // lease outlasted it, which is exactly the kind of pass that is not evidence.
+    // The board renews this run's own lock too (`renewOwnLocks`, while the
+    // worktree is on disk), so this timer is belt and braces rather than the only
+    // thing standing between a live run and the sweep. An earlier version defined
+    // the renewal and never started it: the timer existed, was documented, and no
+    // code path reached it. It survived a real full-suite run purely because the
+    // 30-minute lease outlasted it, which is exactly the kind of pass that is not
+    // evidence — and the reason it still has to start is the same.
     //
     // A failed renewal is now a MESSAGE, not a kill. The old version stopped the
     // suite, which was correct when the lock was the guarantee and is wrong now that

@@ -102,7 +102,6 @@ const sizeSlider = () => screen.getByLabelText(/Size/) as HTMLInputElement;
 const opacitySlider = () => screen.getByLabelText(/Opacity/) as HTMLInputElement;
 
 describe('Lasso toolbar', () => {
-  let alertSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -114,12 +113,10 @@ describe('Lasso toolbar', () => {
     clipboardMocks.copyActiveSelection.mockReturnValue(true);
     clipboardMocks.pasteSelectionClipboard.mockClear();
     mockSetToolArgs.mockClear();
-    alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
-    alertSpy.mockRestore();
     consoleErrorSpy.mockRestore();
   });
 
@@ -202,7 +199,7 @@ describe('Lasso toolbar', () => {
   });
 
   describe('size slider', () => {
-    it('is revealed in outline mode and hidden in fill mode (Lasso.tsx:105-125)', () => {
+    it('is revealed in outline mode and hidden in fill mode (Lasso.tsx:101-121)', () => {
       const { rerender } = render(<Lasso />);
       expect(sizeSlider()).toBeInTheDocument();
       expect(screen.getByText('5px')).toBeInTheDocument();
@@ -268,7 +265,7 @@ describe('Lasso toolbar', () => {
       clipboardState.activeSelection = RECT_SELECTION;
       render(<Lasso />);
 
-      // `hasActiveSelection` excludes rectangles (Lasso.tsx:61) even though a selection exists.
+      // `hasActiveSelection` excludes rectangles (Lasso.tsx:57) even though a selection exists.
       expect(copyButton()).toBeDisabled();
       expect(copyButton()).toHaveAttribute('title', 'No active selection to copy');
     });
@@ -282,7 +279,7 @@ describe('Lasso toolbar', () => {
       expect(copyButton().className).not.toContain('cursor-not-allowed');
     });
 
-    it('copies the active selection and never alerts on success', async () => {
+    it('copies the active selection and logs nothing on success', async () => {
       clipboardState.activeSelection = POLYGON_SELECTION;
       render(<Lasso />);
 
@@ -290,16 +287,15 @@ describe('Lasso toolbar', () => {
       await Promise.resolve();
 
       expect(clipboardMocks.copyActiveSelection).toHaveBeenCalledWith(POLYGON_SELECTION);
-      expect(alertSpy).not.toHaveBeenCalled();
       expect(consoleErrorSpy).not.toHaveBeenCalled();
     });
 
-    it('makes the "no active selection" alert unreachable from the UI', async () => {
+    it('makes the "no active selection" guard unreachable from the UI', async () => {
       // `handleCopySelection` opens with `if (!activeSelection || geometry === 'rectangle')
-      // { alert(...); return; }` (Lasso.tsx:39-42), but `disabled={!hasActiveSelection}` (Lasso.tsx:81)
-      // already uses the same predicate, so a click can never reach the alert. Asserting the
-      // disabled state is the reachable half of that guard; the alert is a defensive fallback
-      // for a stale render and is deliberately not tested through the DOM.
+      // return;` (Lasso.tsx:39), but `disabled={!hasActiveSelection}` (Lasso.tsx:77) already uses
+      // the same predicate, so a click can never reach the guard. Asserting the disabled state is
+      // the reachable half of that guard; the early return is a defensive fallback for a stale
+      // render and is deliberately not tested through the DOM.
       render(<Lasso />);
 
       const button = copyButton() as HTMLButtonElement;
@@ -311,10 +307,13 @@ describe('Lasso toolbar', () => {
       await Promise.resolve();
 
       expect(clipboardMocks.copyActiveSelection).not.toHaveBeenCalled();
-      expect(alertSpy).not.toHaveBeenCalled();
+      // The handler logs nothing, but that is not what this line proves: the click is
+      // swallowed by `disabled`, so the assertion holds whatever the guard's body does. The
+      // reachable half of the contract is the two `toBeDisabled` checks above.
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
     });
 
-    it('alerts when the copy reports failure', async () => {
+    it('logs an error when the copy reports failure', async () => {
       clipboardState.activeSelection = POLYGON_SELECTION;
       clipboardMocks.copyActiveSelection.mockReturnValue(false);
       render(<Lasso />);
@@ -322,11 +321,13 @@ describe('Lasso toolbar', () => {
       fireEvent.click(copyButton());
       await Promise.resolve();
 
-      expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
-      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to copy selection');
+      // The refusal is distinct from the throwing path, which prefixes the error it caught —
+      // so the two must not collapse into one diagnostic if either branch ever changes.
+      expect(consoleErrorSpy).not.toHaveBeenCalledWith('Error copying selection:', expect.anything());
     });
 
-    it('logs and alerts when the copy throws', async () => {
+    it('logs the thrown error when the copy throws', async () => {
       const failure = new Error('clipboard exploded');
       clipboardState.activeSelection = POLYGON_SELECTION;
       clipboardMocks.copyActiveSelection.mockImplementation(() => {
@@ -338,7 +339,6 @@ describe('Lasso toolbar', () => {
       await Promise.resolve();
 
       expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying selection:', failure);
-      expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
     });
 
     it('re-enables the button after a failed copy instead of staying stuck on Copying', async () => {
@@ -351,7 +351,7 @@ describe('Lasso toolbar', () => {
       fireEvent.click(copyButton());
       await Promise.resolve();
 
-      // `finally { setIsCopying(false) }` (Lasso.tsx:51-53) is the only thing keeping the label
+      // `finally { setIsCopying(false) }` (Lasso.tsx:47-49) is the only thing keeping the label
       // from being stranded on 'Copying...'.
       expect(copyButton()).toHaveTextContent('Copy');
       expect(copyButton()).not.toBeDisabled();

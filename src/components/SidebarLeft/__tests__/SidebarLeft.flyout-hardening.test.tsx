@@ -373,6 +373,73 @@ describe('SidebarLeft flyout hardening', () => {
    * nothing tall and never binds the clamp. The real geometry is `e2e/sidebar-flyout.spec.ts`;
    * the arithmetic is the subject of `AnchoredOverlay.test.tsx`, which stubs the size.
    */
+  it('holds the menu at its tighter density: 16px icon, py-1, and the values the row height turns on', () => {
+    render(<SidebarLeft />);
+
+    openFlyout(toolbarButtonByName('freehand-lasso'));
+    const menu = screen.getByRole('menu');
+
+    // jsdom has no layout engine, so a row cannot be measured here — only its inputs can be.
+    // This is therefore a STRING PIN and not a cascade proof, and the test says so: the icon
+    // mock at the top of this file replaces `toolIcons` with a bare `<svg>` that carries no
+    // size class, so the `h-7` this override is written against does not exist in this DOM at
+    // all. The e2e spec `e2e/sidebar-flyout.spec.ts` is where the row's real box is measured
+    // (24.5px) and the icon's (16px); this is the cheap gate that fails first.
+    //
+    // Every value the density change decided is named here, including the two that a
+    // six-class assertion leaves out (`rounded-sm` and the `<kbd>`'s size). An assertion set
+    // that covers most of a diff reads as coverage of the diff.
+    const row = screen.getByRole('menuitemradio', { name: 'Lasso Tool' });
+    expect(row).toHaveClass(
+      'flex',
+      'items-center',
+      'py-1',
+      'px-2',
+      'text-[11px]',
+      'rounded-sm',
+      '[&_svg]:!h-4',
+      '[&_svg]:!w-4'
+    );
+    expect(row.querySelector('kbd'), 'the shortcut hint is part of the row, and it has a size too').toHaveClass(
+      'text-[9px]'
+    );
+
+    // ONE stale class per `not.toHaveClass` call, deliberately. The matcher takes a list and
+    // requires ALL of them, so `not.toHaveClass('p-1.5', 'min-w-48')` cannot fire unless both
+    // are present at once — which is the one state the positive assertions above have already
+    // excluded. Measured: a single stale class added leaves the old paired form green. As a
+    // pair these read as a guard and catch nothing.
+    //
+    // And `py-1.5` ALONGSIDE `py-1` is the realistic regression, not a replacement: Tailwind
+    // emits named utilities in ascending value order, so `.py-1.5` follows `.py-1` and wins the
+    // cascade (compiled and confirmed). A REPLACED class fails the positive above; an ADDED one
+    // does not, which is why this is worth a call of its own.
+    expect(row).not.toHaveClass('py-1.5');
+    // `text-xs` is the exception and it is worth knowing why: arbitrary values are emitted
+    // AFTER the named ones, so `text-[11px]` wins and an added `text-xs` is inert. This guard is
+    // a STRING PIN with no rendering consequence, unlike the three above. Kept because a
+    // density audit should not have to reason about the stylesheet to learn the declared label
+    // size, and it was proved to fire when both classes are present.
+    expect(row).not.toHaveClass('text-xs');
+
+    // The menu's own padding, and the minimum width that stops a short menu being a sliver.
+    // `min-w-36` rather than nothing: a two-item menu's natural width is not enough to hold a
+    // label without wrapping, and the menu never wraps (`whitespace-nowrap`).
+    expect(menu).toHaveClass('p-0.5', 'min-w-36');
+    expect(menu).not.toHaveClass('p-1.5');
+    expect(menu).not.toHaveClass('min-w-48');
+
+    // What this buys, stated so the next reader can tell a measurement from a design value.
+    // Measured in Chrome at 1280x900: a 24.5px row, an 80px three-item menu, 2px of menu
+    // padding, an 11px label, and the 8px gap to the rail unchanged. It was a 40px row and a
+    // 134px menu. Those are MEASUREMENTS. The row is not "the icon plus `py-1`" — it is
+    // `max(icon, 1.5 × font-size) + py-*`, and preflight's `line-height: 1.5` makes the 11px
+    // label's line box 16.5px, half a pixel taller than the 16px icon, so the LABEL sets the
+    // height. The override's job is the other direction: without it the icon is 28px and the
+    // row is 36px. And no document in this repo records Photoshop's own flyout row height, so
+    // none of these numbers is a figure taken from Adobe.
+  });
+
   it('places the flyout on the vertical axis of the tile it was opened from, not the rail top', () => {
     render(<SidebarLeft />);
     const boxOf = stubTileBoxes();

@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Releases the board claims and file locks of worktrees that this merge put on main.
+#
+# WHY THIS IS A HOOK AND NOT A STEP IN THE LANDING RECIPE
+# -------------------------------------------------------
+# The failure it prevents is a claim that outlives the work it claimed. A chat that merges
+# and stops leaves its claims behind, and because they are leases they block other agents
+# for hours on files whose work is already on main. Nothing else ever takes them back, and
+# "remember to release before you stop" is a step that is skipped exactly when it matters —
+# by the sessions that died, and by the ones that merged and moved on.
+#
+# A merge is the event that makes the claim false, so it is the event that should clear it.
+# The check is a git fact (`merge-base --is-ancestor`) plus a clean tree, never a timer, and
+# the release is made as the merged branch's own identity, so it needs no `--force` and can
+# never take a file from an agent that is still writing.
+#
+# IT MUST NOT BE ABLE TO STOP A MERGE. By the time a post-merge hook runs the merge is
+# already recorded, so failing here would not prevent anything — it would only leave the
+# operator with a landed merge and a confusing error. The script reports to stderr and
+# exits 0, and this file deliberately does not use `set -e` for the same reason: a gate that
+# can block a landing is a gate that will eventually stop one.
+#
+# `HUSKY=0` is handled by the dispatcher in scripts/install-git-hooks.js, which also skips
+# this file when the worktree predates it.
+node scripts/merge-release.mjs || echo "merge-release: could not run; claims stay held, run it by hand" >&2

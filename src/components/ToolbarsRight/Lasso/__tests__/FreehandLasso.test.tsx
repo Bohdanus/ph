@@ -139,6 +139,12 @@ describe('FreehandLasso toolbar', () => {
     mockPatchToolArgs.mockClear();
     mockDispatch.mockClear();
     clipboardMocks.copyActiveSelection.mockClear();
+    // The real hook returns `true` on success (`useSelectionClipboard.ts:61`), and the component
+    // now READS that boolean. Left at the `undefined` a bare `vi.fn()` returns, a click here
+    // would look exactly like a refused copy, so the default has to be the success value —
+    // otherwise every test that copies without asking for a return value reports a failure
+    // that never happened.
+    clipboardMocks.copyActiveSelection.mockReturnValue(true);
     clipboardMocks.pasteSelectionClipboard.mockClear();
   });
 
@@ -216,13 +222,12 @@ describe('FreehandLasso toolbar', () => {
     expect(getClearButton()).toBeEnabled();
   });
 
-  it('copies the active polygon selection and reports success without alerting', () => {
-    const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
+  it('copies the active polygon selection and reports success without logging an error', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     // `restoreMocks` is off, and the only global `afterEach` is `cleanup()` plus
-    // `useRealTimers()`, so a red assertion here used to leave `window.alert` and
-    // `console.error` mocked for every test after it in the file.
+    // `useRealTimers()`, so a red assertion here used to leave `console.error` mocked for every
+    // test after it in the file.
     try {
       const activeSelection = { id: 'sel-1', geometry: 'polygon' };
       setSelectionState({ activeSelection });
@@ -231,20 +236,17 @@ describe('FreehandLasso toolbar', () => {
       fireEvent.click(getCopyButton());
 
       expect(clipboardMocks.copyActiveSelection).toHaveBeenCalledWith(activeSelection);
-      expect(alertSpy).not.toHaveBeenCalled();
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {
-      alertSpy.mockRestore();
       errorSpy.mockRestore();
     }
   });
 
-  it('surfaces a copy failure to the user and keeps the toolbar usable', () => {
+  it('logs a copy failure and keeps the toolbar usable', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
 
     // Same reason as the test above: the restore has to run whatever the assertions do. The
-    // `mockReset` is the part the two spies alone do not cover — `beforeEach` and the global
+    // `mockReset` is the part the spy alone does not cover — `beforeEach` and the global
     // `clearMocks` both use `mockClear`, which clears call history but leaves the `once` queue
     // intact, so a `render` or `fireEvent` that threw before the click below would leave a
     // throwing implementation armed for the next test that copies.
@@ -258,13 +260,39 @@ describe('FreehandLasso toolbar', () => {
       fireEvent.click(getCopyButton());
 
       expect(errorSpy).toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.any(Error));
-      expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
       // The transient copying state must be released even when the copy throws.
       expect(getCopyButton()).toBeEnabled();
       expect(getCopyButton()).toHaveTextContent('Copy');
     } finally {
       clipboardMocks.copyActiveSelection.mockReset();
-      alertSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('reports a copy that returns false, which is not the throwing path', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Same reason as the two tests above: the restore has to run whatever the assertions do,
+    // because a red assertion would otherwise leave `console.error` mocked for the rest of the file.
+    try {
+      setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
+      // A REFUSAL, not a throw: `copySelection` returns `false` when there is no snapshot to
+      // take and never reaches the `catch` above it, so the only way out of the silent path
+      // is the component reading the boolean itself.
+      clipboardMocks.copyActiveSelection.mockReturnValueOnce(false);
+      render(<FreehandLasso />);
+
+      fireEvent.click(getCopyButton());
+
+      expect(errorSpy).toHaveBeenCalledWith('Failed to copy freehand lasso selection');
+      // Distinct from the throwing path, which prefixes the error it caught — if either
+      // branch's message ever changes, these two must not collapse into one diagnostic.
+      expect(errorSpy).not.toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.anything());
+      // A refusal is still a completed attempt, so `finally` releases the transient state.
+      expect(getCopyButton()).toBeEnabled();
+      expect(getCopyButton()).toHaveTextContent('Copy');
+    } finally {
+      clipboardMocks.copyActiveSelection.mockReset();
       errorSpy.mockRestore();
     }
   });

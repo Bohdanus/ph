@@ -82,7 +82,7 @@ export const AppKeyboardShortcuts = () => {
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { copyActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
+  const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -277,7 +277,15 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage,
     onKeyDown: () => {
-      copyActiveSelection();
+      // The only copy call site with no `try` around it, and the one that most needs the
+      // boolean read: `copySelection` returns `false` for a null snapshot instead of
+      // throwing, so an unread result is a failed copy that leaves no trace anywhere. This
+      // registration deliberately does NOT set `repeat`, which is what keeps the log to one
+      // line per press — `useKeyboardEvents.tsx:154` drops an `event.repeat` before
+      // `onKeyDown` runs, so a held Meta+C is one intent and one line, not a scrub.
+      if (!copyActiveSelection()) {
+        console.error('Failed to copy selection');
+      }
     },
   });
 
@@ -309,9 +317,30 @@ export const AppKeyboardShortcuts = () => {
     key: 'j',
     mod: true,
     preventDefault: true,
+    // `hasImage` alone, deliberately NOT `hasImage && hasActiveSelection`. `enabled` is
+    // resolved BEFORE `preventDefault` (`useKeyboardEvents.tsx:111` continues out of the loop
+    // body before :140 runs), so gating on the selection would hand the key back to the browser
+    // — Ctrl+J is Downloads in Chrome on Windows and Linux — and replace a silent no-op with an
+    // out-of-app page. `preventDefault: true` is what claims the key, so the registration stays
+    // enabled and the empty case is answered where it belongs, in the handler. That is also what
+    // the rest of this file already does for "nothing to act on": Meta+Z on an empty history is a
+    // silent no-op (see the undo describe block), and every `copyActiveSelection` button guard
+    // returns BEFORE calling rather than logging a refusal that never happened.
     enabled: hasImage,
-    onKeyDown: () => {
-      layerViaCopy();
+    onKeyDown: async () => {
+      // No selection is a state, not a failure: `layerViaCopy` would return `false` at
+      // `useSelectionClipboard.ts:90` before touching anything. Reporting it would put a failure
+      // in the console for the ordinary state of a document the user has not selected in yet.
+      if (!hasActiveSelection) return;
+
+      // `layerViaCopy`'s null-snapshot exits are an in-band channel its callers are expected to
+      // report — `src/util/selection.ts:420-428` says so, and this was the only caller in the
+      // family that discarded the boolean. `await` rather than a `.catch`: the promise is not
+      // swallowed, so a throw from the un-`try`-wrapped `copySelectionToCanvas` still reaches the
+      // console with its stack, which a defensive catch that can never fire would destroy.
+      if (!(await layerViaCopy())) {
+        console.error('Failed to create a layer from the active selection');
+      }
     },
   });
 

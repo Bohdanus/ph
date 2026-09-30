@@ -657,69 +657,49 @@ does not do.
 
 ---
 
-## P1 — the Text commit-path spec drives the wrong colour control, and the app may be right
+## P2 — a collapsed tool's selection assertion is GROUP-level, so it passes for any member of the collapsed set
 
-**A real red gate, and the first question for whoever takes it is "is the test wrong or is the
-product?" — the evidence below points at the test.** A full headless run reports
-`331 passed, 3 failed, 3 skipped`. Two of the failures are the machine's AVIF encoder timeout —
-a slow-encode infrastructure failure rather than a defect — now filed on its own below rather
-than only on `audit/retina-canvas-dpr`, where a reader of this file would not find it.
-This is the third:
+**Found 2026-09-30 while fixing the 17 `aria-pressed` failures, and it survives that fix.** The
+helper is `expectToolSelected` (`e2e/helpers/toolbar-helpers.ts`). For a tool the rail still shows a
+tile of its own it asserts `aria-pressed`, which is per-tool. For a tool folded into the three-dots
+tile it asserts the tile's lit class instead — because `SidebarLeft.tsx:635` deliberately renders no
+`aria-pressed` there — and that class is painted from `group.some((tool) => tool.name === toolName)`
+over the WHOLE collapsed set (`:636`). So `expectToolSelected(page, 'eraser')` is answered by "is
+SOME collapsed tool selected", not by "is the eraser selected".
 
-- `e2e/text-tool.spec.ts:367` — "committed text reaches the canvas as foreground pixels inside the
-  dragged rectangle" — `Error: Canvas did not render red text pixels within 10000ms`
+**Measured at 1280x720, where it bites.** The only tiles on the rail are `reposition`,
+`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper` and `crop`. The default tool
+is `brush` (`src/tools/settings.ts:146`), and `brush` is itself in the collapsed set — so the
+three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
+collapsed tool therefore passes before anything is selected.
 
-**What has been ruled out: the e2e harness.** The identical `playwright.config.ts` and
-`scripts/e2e-run.mjs` ran this spec green earlier the same day, and the delta between that run and
-the failing one is app code, not how the suite reaches it. The wrapper allocates a different port
-per run and nothing else about a run's shape changed.
+**This is not a regression from the `aria-pressed` conversion, and that distinction is the whole
+point.** `:635` and `:636` are the same `group.some(...)` call on the same tile, so the removed
+attribute carried identical information to the class that replaced it. The limitation predates the
+conversion and the conversion neither added nor hid it.
 
-**What is very likely the cause.** Commit `a12e35c9` made the Text tool's colour the tool's own
-setting instead of a value mirrored out of the store — a behaviour change, not a type change. Its
-runtime hunk in `src/components/Main/TextToolArea.tsx` drops `color` from the store subscription and
-from the `renderText` call, and its commit message says so in words ("neither the tool area nor the
-bar writes the store colour over it"). The tool's colour is seeded at `src/tools/settings.ts:87` and
-is what gets committed. Meanwhile `e2e/text-tool.spec.ts:375` sets the **store's** swatch through
-`e2e/helpers/color-helpers.ts:209` (`data-testid="foreground-color-input"`), and the Text bar's own
-control is `<input id="text-color" type="color">` in `src/components/ToolbarsRight/Text/Text.tsx`,
-which carries **no `data-testid`**. A spec that sets the sidebar swatch and expects it to reach a
-committed Text layer can no longer do so, and it fails with no red pixels on the canvas.
+**Why the suite is nonetheless sound today, and where that stops being true.** Every caller that
+depends on a specific tool pairs the tile assertion with a per-tool one:
+`keyboard-shortcuts.spec.ts:173` asserts the tool's own options-bar control (`bar`), precisely
+because the tile "answers 'is SOME tool of the collapsed set selected'" — its comment says so. The
+`erase-fill-eyedropper` tests instead drive pixels: the eraser must clear the slab, the bucket must
+fill a contiguous region, the eyedropper must set a specific colour, and none of those can happen
+with the wrong tool. `color.spec.ts` and `paint-tool-pixels.spec.ts` draw and measure. So the
+TOOL-SPECIFIC claim is made by a second assertion everywhere it matters, and `selectBrushFamilyTool`
+is misnamed — it proves the group is lit, and the test's own pixels prove the rest.
 
-**That is the hypothesis, not a conclusion**, and the distinction decides who fixes it: if the app
-is right, the spec is stale, and Photoshop's Type tool having its own colour is the correct
-behaviour. Read `a12e35c9` in full before changing anything.
+**What would actually close it.** A per-tool channel on the overflow tile — `data-active-tool={toolName}`
+on the element at `SidebarLeft.tsx:755`, which already carries `data-toolbar-tile` for the fit
+measurement — lets the helper assert the tool by name at any window, with no second assertion needed.
+That is a PRODUCT change, deliberately not made here: `aria-pressed` was removed from that tile on
+purpose (`1dcc25cb`), and the same reasoning that removed it is why nothing should be added back in a
+shape that announces the wrong thing. Decide it deliberately, with the accessibility intent in view.
 
-**The cheap discriminators, in order — none of them is a bisect.**
+**Do not "fix" it by restoring `aria-pressed` on the three-dots tile.** That would announce a
+pressed toggle for whichever hidden tool happens to be selected, on a control whose only job is to
+open a menu — the exact defect `1dcc25cb` corrected.
 
-1. **Zero runs: read the failure PNG already on disk** under
-   `test-results/runs/<run-id>/text-tool-*/test-failed-1.png` (`screenshot: 'only-on-failure'` in
-   `playwright.config.ts`). Black glyphs where red is expected confirms the colour-path hypothesis
-   and refutes a rendering failure outright.
-2. **Zero runs: three reads.** The spec sets `foreground-color-input`
-   (`src/components/SidebarLeft/SidebarLeft.tsx:1050`); the Text tool's own control is `text-color`,
-   with no testid; the tool's colour is seeded at `src/tools/settings.ts:87` and consumed at
-   `src/components/Main/TextToolArea.tsx:58`.
-3. **One run, about a minute:** `npm run test:e2e -- e2e/text-tool.spec.ts`, which also answers
-   whether the failure is deterministic. One observation is not, and `TEST-FLAKES.md` §1 exists
-   because that inference has already been made in this file.
-4. **One run that settles it:** point the spec at `#text-color` instead of the store swatch. If it
-   passes, the cause is confirmed and the spec is what needed fixing.
-
-**Do not bisect.** The cause landed in `a12e35c9`, which predates the recent e2e-harness work, so
-the range a bisect would search is not where the defect is. **Do not close it by widening the 10s
-wait**: a committed text layer that has not painted in 10s is not a marginal budget.
-
-**Do not fix the product to satisfy the test.** If discriminator 4 passes, the change belongs in the
-spec, and its premise — that the sidebar's foreground swatch is what a Text tool commits — should
-be re-examined on its own terms rather than restored by making the renderer read the store again.
-
-**Reproduced unchanged on 2026-09-29**, by run `2026-09-29T22-33-27-196Z-21344` on
-`feat/history-remove-append`: `334 passed, 3 failed, 3 skipped`, the same three failures, the other
-two being the AVIF pair filed below. **Deterministic, which is what discriminator 3 asks about:**
-two runs on `main` (`2026-09-29T22-43-08-281Z-31375`, `2026-09-29T22-44-17-612Z-56869`) fail with
-byte-identical text, each after waiting out the full 10s with the red pixels never observed — so
-this is a content assertion failing, not a slow machine, and not a race. The counts here are
-current and the cause below is still a hypothesis: discriminators 1, 2 and 4 remain unrun.
+---
 
 ## P2 — the AVIF export waits on a wasm encoder inside a 30s download timeout, and only AVIF exceeds it
 

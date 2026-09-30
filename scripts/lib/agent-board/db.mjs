@@ -5,10 +5,10 @@
  *
  * WHY SQLITE IN THE COMMON GIT DIRECTORY
  * --------------------------------------
- * `git rev-parse --git-common-dir` is the one path every worktree of a
- * repository agrees on: they all share `.git/`, and each resolves to it, so
- * a single database file is visible from all of them without a symlink, a
- * server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
+ * `git rev-parse --path-format=absolute --git-common-dir` is the one path every
+ * worktree of a repository agrees on: they all share `.git/`, and each resolves
+ * to it, so a single database file is visible from all of them without a symlink,
+ * a server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
  * for a board that should outlive a reclone.
  *
  * WHY THERE IS NO DAEMON
@@ -252,13 +252,10 @@ export function resolveBoardDir({ cwd = process.cwd(), env = process.env } = {})
   try {
     common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd });
   } catch {
-    try {
-      common = join(cwd, git(['rev-parse', '--git-common-dir'], { cwd }));
-    } catch {
-      throw new BoardError('not inside a git repository, and AGENT_BOARD_DIR is unset; the board has no home', {
-        code: 1,
-      });
-    }
+    throw new BoardError(
+      'cannot read the common git directory here, and AGENT_BOARD_DIR is unset; the board has no home',
+      { code: 1 }
+    );
   }
   return join(common, 'agent-board');
 }
@@ -1754,11 +1751,26 @@ export class Board {
    */
   doctor({ at = this.now(), dryRun = false, record = true } = {}) {
     const findings = [];
+    /**
+     * The agents already reported as gone, so the same abandonment is not
+     * counted twice.
+     *
+     * A claim taken with `--issue` and its file lock are ONE event, and the
+     * release loop below proves it: `releaseClaim` cascades into
+     * `releaseIssueLocksInTransaction`, so a second finding would name a release
+     * that already happened, and the log would report two reclaimments for one
+     * abandoned agent. The `hold <path>` with no `--issue` form that the
+     * dead-worktree test below exists for writes NO claim at all, so its holder
+     * is not in this set and its lock is still reported — which is the whole
+     * point of adding the test rather than extending the claim's.
+     */
+    const goneAgents = new Set();
     const claims = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     for (const claim of claims) {
       const expired = Date.parse(claim.lease_until) <= at;
       const gone = claim.worktree ? !existsDir(claim.worktree) : false;
       if (!expired && !gone) continue;
+      if (gone) goneAgents.add(claim.agent_id);
       findings.push({
         kind: gone ? 'dead-worktree' : 'expired-lease',
         issue: claim.issue_id,
@@ -1788,9 +1800,15 @@ export class Board {
        * Safe for the same reason it is safe for claims: the worktree is written
        * from the holder's own identity, so it is the HOLDER's directory, and a
        * directory that is gone is not coming back to renew anything.
+       *
+       * And skipped when the CLAIM loop already reported this agent as gone —
+       * see `goneAgents`. `expired-lock` is untouched by that: a lapsed lock is
+       * a lapsed lock whatever the claim is doing, and the release loop needs
+       * the row to release it.
        */
       const gone = lock.worktree ? !existsDir(lock.worktree) : false;
       if (!expired && !gone) continue;
+      if (gone && goneAgents.has(lock.agent_id)) continue;
       findings.push({
         kind: gone ? 'dead-worktree-lock' : 'expired-lock',
         path: lock.path,
@@ -1815,9 +1833,38 @@ export class Board {
     if (!dryRun) {
       for (const finding of findings) {
         if (finding.issue) this.releaseClaim(finding.issue, { agent: finding.agent, force: true });
-        if (finding.path) {
-          this.releaseFiles([finding.path], { agent: finding.agent, force: true, reason: 'swept' });
-        }
+        /**
+         * NO `force` here, and that is the whole point of the line.
+         *
+         * `releaseFiles` skips any row whose `agent_id` is not the one named —
+         * UNLESS `force` is set, and `force` skips the check on EVERY row for
+         * the path, not just the offending one. A sweep therefore used to revoke
+         * live holders, not stale ones.
+         *
+         * The sequence needs no `--force` anywhere. A's lock on P lapses, so
+         * `liveLocks` stops seeing it and B is granted P; two live rows for one
+         * path are schema-legal, because the key is `(path, agent_id)`. Then ANY
+         * `swarm` command from ANY agent runs `autoSweep` — `agent-board.mjs`
+         * calls it on every command except `doctor` itself — and the sweep
+         * released A's stale row *and B's live one*, handing the file to a third
+         * agent while B was mid-edit.
+         *
+         * Without `force`, `finding.agent` is the holder of the row this sweep
+         * actually found expired, so the guard releases exactly that row and
+         * leaves every other holder alone. A separate finding is generated for
+         * each expired row, so a second stale holder is still collected.
+         *
+         * A sweep agent may reclaim what has lapsed. It may NOT take a file away
+         * from an agent that is still writing: only the operator stops a chat.
+         *
+         * `reason: 'swept'` is the ONLY thing this branch adds to the line, and
+         * it is a log discriminator, not a permission: it is what makes a swept
+         * `lock.release` distinguishable from an `unlock` a human asked for, in a
+         * column that has no `path` to tell them apart by. `force` is left off
+         * because adding it back would re-open the hole the paragraph above
+         * documents, in exchange for nothing this change needs.
+         */
+        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' });
       }
     }
     return findings;
@@ -1850,9 +1897,23 @@ export class Board {
     const worktree = this.identity?.worktree;
     if (!worktree || !existsDir(worktree)) return [];
     const until = new Date(at + leaseMs).toISOString();
+    // Scoped to claims made FROM THIS WORKTREE, not merely by this agent id.
+    //
+    // Identity is the git BRANCH, so two agents on one branch in different
+    // worktrees are the same `agent_id` to this table — and the two halves of
+    // `autoSweep` were asking different questions about the same row. Renewal
+    // asked "is a worktree I can see still on disk?", using the CALLER's path;
+    // `doctor` asks "is the worktree named in THIS ROW gone?". For a single
+    // agent those coincide. For a shared branch they cannot both be true, and a
+    // live agent extended a dead colleague's lease, then released it in the same
+    // invocation.
+    //
+    // `worktree IS NULL` keeps the legacy intent: a claim recorded before a
+    // worktree was known still renews, because refusing to renew it would
+    // silently convert every such claim into a 45-minute countdown.
     const mine = this.db
-      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ?')
-      .all(agentId)
+      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)')
+      .all(agentId, worktree)
       .filter((claim) => Date.parse(claim.lease_until) - at < leaseMs / 2);
     for (const claim of mine) {
       this.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(until, claim.issue_id);
@@ -2027,13 +2088,26 @@ export class Board {
      */
     const perFileReal = new Map();
     const perFileVirtual = new Map();
+    /**
+     * TWO QUERIES, because the split needs a per-path row and the unit does not.
+     *
+     * The unit split is an aggregate — `GROUP BY kind, is_file` answers it in one
+     * pass, and it is the one that has to keep working: `perCommand` is where a
+     * `lock.hold` that took no file lands, and a rewrite that kept only the
+     * per-path rows emptied that bucket entirely. Splitting a query by the
+     * `WHERE` clause is not a refactor, it deletes a population.
+     */
     for (const row of this.db
       .prepare(
-        `SELECT kind, path, CASE WHEN path IS NULL THEN 0 ELSE 1 END AS is_file, COUNT(*) n
-         FROM events WHERE path IS NOT NULL GROUP BY kind, path`
+        `SELECT kind, CASE WHEN path IS NULL THEN 0 ELSE 1 END AS is_file, COUNT(*) n
+         FROM events GROUP BY kind, is_file`
       )
       .all()) {
-      (row.is_file ? perFile : perCommand).set(row.kind, (perFile.get(row.kind) ?? 0) + row.n);
+      (row.is_file ? perFile : perCommand).set(row.kind, row.n);
+    }
+    for (const row of this.db
+      .prepare('SELECT kind, path, COUNT(*) n FROM events WHERE path IS NOT NULL GROUP BY kind, path')
+      .all()) {
       const bucket = this.isRepoFile(row.path) ? perFileReal : perFileVirtual;
       bucket.set(row.kind, (bucket.get(row.kind) ?? 0) + row.n);
     }

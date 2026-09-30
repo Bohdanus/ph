@@ -12,7 +12,7 @@ import Main from '../Main.tsx';
  * They are replaced by the one assertion `Main` is uniquely placed to make, and the drop test is
  * gone because `Main.toolAreas.test.tsx` covers it strictly harder, branches included (see the
  * `Main file drop` describe there: the happy path, the `hasUnsavedChanges` and pending-text
- * confirmations, and the decode-failure alert).
+ * confirmations, and the decode-failure `console.error`).
  *
  * Every module below is mocked because `Main` calls it during render, not because any test
  * asserts on it: with no image open nothing here reaches a file dialog, a layer publish or a

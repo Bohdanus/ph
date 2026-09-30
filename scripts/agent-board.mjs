@@ -315,91 +315,6 @@ const eventKind = (value) => {
   return String(value);
 };
 
-/**
- * The verbs, for `did you mean`.
- *
- * One list, and the test beside it checks every `case` in the switch in `run`
- * appears here: an unknown-verb message that suggests a command this file does
- * not have would be a second false answer from the same line.
- */
-const VERBS = Object.freeze([
-  'init',
-  'new',
-  'ready',
-  'list',
-  'show',
-  'claim',
-  'heartbeat',
-  'hb',
-  'release',
-  'hold',
-  'unlock',
-  'check',
-  'comment',
-  'note',
-  'resolve',
-  'close',
-  'defer',
-  'reopen',
-  'dep',
-  'status',
-  'watch',
-  'health',
-  'doctor',
-  'import',
-  'export',
-  'help',
-]);
-
-/**
- * Levenshtein distance, two rows deep.
- *
- * Guessing a verb is a spelling problem, so the answer has to be a spelling a
- * human would recognise. Hand-rolled rather than imported: this is a
- * twenty-six-word vocabulary, and the cost of a dependency here is paid on every
- * `swarm` invocation in a repository whose first rule is that this tool runs
- * without a working `node_modules`.
- */
-function editDistance(a, b) {
-  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
-  for (let i = 1; i <= a.length; i += 1) {
-    let diagonal = row[0];
-    row[0] = i;
-    for (let j = 1; j <= b.length; j += 1) {
-      const previous = row[j];
-      row[j] = Math.min(
-        row[j] + 1, // delete a[i-1]
-        row[j - 1] + 1, // insert b[j-1]
-        diagonal + (a[i - 1] === b[j - 1] ? 0 : 1) // substitute
-      );
-      diagonal = previous;
-    }
-  }
-  return row[b.length];
-}
-
-/**
- * The nearest real verbs, nearest first, at most `limit` of them.
- *
- * Forty-six lines of usage after `unknown command: X` is a wall, and the
- * observed result was invented verbs — `unhold`, `locks`, `file`,
- * `merge-claim`. The usage dump cannot answer "which of the twenty-six did I
- * mean", so the guess is made here and the dump stays one `help` away. The
- * distance ceiling is what keeps a wildly wrong verb from being answered with
- * three confident non-answers: at half the typed length, then a floor of 3 so a
- * short typo still gets the two nearest real words.
- */
-export function suggestVerbs(typed, { limit = 3, verbs = VERBS } = {}) {
-  const word = String(typed);
-  const ceiling = Math.max(3, Math.ceil(word.length / 2));
-  return verbs
-    .map((name) => ({ name, distance: editDistance(word, name) }))
-    .filter((candidate) => candidate.distance <= ceiling)
-    .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name))
-    .slice(0, limit)
-    .map((candidate) => candidate.name);
-}
-
 function columns(rows, headers) {
   if (rows.length === 0) return '';
   const widths = headers.map((header, index) =>
@@ -1030,7 +945,7 @@ export async function run(
           const events = board.events({
             since: cursor,
             limit: 200,
-            kind: flags.kind ? String(flags.kind) : null,
+            kind: eventKind(flags.kind),
           });
           for (const event of events) {
             out.write(`${eventLine(event)}\n`);

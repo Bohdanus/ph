@@ -15,7 +15,7 @@ import {
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
-import { clickToolButton, openToolFlyout, resolveToolTile, selectFromFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
@@ -234,20 +234,30 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
  *
  * At 1280x720 there is no such tile: the rail folds a SUFFIX, so the whole brush group — the
  * fifth of sixteen — is in the three-dots tile, and this helper's `openToolFlyout` reaches it
- * through the collapse branch rather than through the long press. The selection is then proved on
- * the tile that REPRESENTS the tool, which for a collapsed tool is the three-dots tile and nothing
- * else. That is also why `verifyPrimaryTool` cannot be used here: it asserts a tile's ACCESSIBLE
- * NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name is
- * "More Tools" and never the tool's label. `verifyPrimaryTool` now says exactly that when a tool
- * has no tile of its own, instead of failing on an empty text content. The eyedropper tests below
- * confirm selection through the eyedropper's own options bar for the same reason: it is the fifth
- * of sixteen rows, so the 1280x720 suite viewport folds it away too.
+ * through the collapse branch rather than through the long press. The selection is therefore
+ * proved on the tile that REPRESENTS the tool, which for a collapsed tool is the three-dots tile
+ * and nothing else.
+ *
+ * That tile is read as SELECTION STATE, not as an accessible name, and `expectToolSelected` picks
+ * the right channel for whichever of the two kinds of tile it is handed. The three-dots tile
+ * deliberately renders NO `aria-pressed` (`SidebarLeft.tsx:635` — a control that opens a menu must
+ * not also claim to be a pressed toggle for a tool the user cannot see), so what it does still
+ * render for the selected member of the collapsed set is the lit class
+ * `TOOL_BUTTON_ACTIVE_CLASS`, painted off the same `group.some(tool => tool.name === toolName)`
+ * predicate the attribute used to expose. Its failure message therefore names the tool by slug;
+ * `label` remains what the flyout item itself is matched on.
+ *
+ * `verifyPrimaryTool` cannot answer the same question for a different reason: it asserts a tile's
+ * ACCESSIBLE NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name
+ * is "More Tools" and never the tool's label. It now says exactly that when a tool has no tile of
+ * its own, instead of failing on an empty text content. The eyedropper tests below confirm
+ * selection through the eyedropper's own options bar for the same reason: it is the fifth of
+ * sixteen rows, so the 1280x720 suite viewport folds it away too.
  */
 async function selectBrushFamilyTool(page: Page, from: string, toolName: string, label: string): Promise<void> {
   await openToolFlyout(page, from);
   await selectFromFlyout(page, { toolName, label });
-  const tile = await resolveToolTile(page, toolName);
-  await expect(tile, `${label} must be the tool the rail reports as selected`).toHaveAttribute('aria-pressed', 'true');
+  await expectToolSelected(page, toolName);
 }
 
 /**
