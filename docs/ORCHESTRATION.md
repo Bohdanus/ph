@@ -550,44 +550,51 @@ blocked on it.
 ### Resource locking and releasing
 
 The board at `.git/agent-board/board.db` tracks three resources: issue claims
-(`claims`), file locks (`file_locks`) and agent presence (`agents`). All three are
-keyed on `agent_id`, and `agent_id` is the **git branch** — `resolveIdentity`
-prefers `AGENT_BOARD_AGENT`, then the branch, and nothing in this repository ever
-sets that variable. Two sessions on one branch are the same agent to the board and
-cannot deny each other a file.
+(`claims`), file locks (`file_locks`) and agent presence (`agents`). All are keyed
+on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
+`AGENT_BOARD_AGENT`, then the branch, and nothing in this repository ever sets
+that variable. Two sessions on one branch are one agent to the board and cannot
+deny each other a file.
 
 **Liveness is recency only.** `agents.last_pid` and `session_id` are written and
 never read — the one process-level signal the schema carries is consulted nowhere.
-A timestamp that will not parse reads as **live**, on both the write side and in
-`worktree-inventory/board.mjs:isLive`, because showing a lapsed claim beats hiding
-a live one.
 
-A **claim** renews itself: `renewOwnClaims` extends leases while the worktree
-exists, and `autoSweep` renews before it sweeps, so a working agent's lease is
-never the thing reclaimed. Renewal and release read the **same** row — both the
-worktree in the claim itself, not the caller's. That is not a detail: identity is
-the branch, so two agents on one branch in different worktrees share an
-`agent_id`, and when renewal asked about the caller's worktree while `doctor`
-asked about the row's, a live agent extended a dead colleague's lease and released
-it in the same invocation. A claim recorded before a worktree was known still
-renews, or the scoping would turn it into a countdown.
+**The two readers disagree about a malformed timestamp, and the board side is the
+dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
+(`db.mjs:1065`) treats it as **free**, because `NaN > at` is false — so the
+inventory can show a file held while `swarm check` calls it free. Unreachable
+today, since every writer goes through `msFromNow`, but a resource's safety rests
+on an invariant the code does not hold. Claims fail the other way: `doctor` tests
+`Date.parse(lease_until) <= at`, also false for `NaN`, so a malformed lease is
+neither live nor reclaimable and `swarm health` reports an expired count
+`swarm doctor` cannot reduce.
+
+A **claim** renews itself while its worktree exists, and `autoSweep` renews
+before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
+and renewal only fires when a `swarm` command runs, so it protects an agent that
+ran one inside the last half-lease — a long `npm run test` loses the claim to a
+peer's next command. Renewal and release must read the **same** row, and now do:
+both use the worktree in the claim, not the caller's. Because identity is the
+branch, two agents on one branch in different worktrees share an `agent_id`, and
+when renewal asked about the caller while `doctor` asked about the row, a live
+agent extended a dead colleague's lease and released it in one invocation.
 
 **A file lock has no renewal at all.** Every write to `file_locks` is an acquire,
 a release, or the expiry sweep, so a lock is a hard `DEFAULT_LEASE_MS` (45 min)
-TTL regardless of activity, and `doctor` — which runs on every command — strips an
-expired one whether or not its holder is working. An agent holding a file longer
-than that loses it silently and the next agent is granted it: the contention the
-board exists to prevent, arriving by timeout rather than by decision. The log
-shows the pressure, 456 `lock.hold` against 832 `lock.deny`. Renewing on worktree
-presence is the obvious fix and the wrong one — a lock means _an agent is in this
-file_, not _this branch owns this directory_, and worktree presence outlives the
-session by days. Closing it needs an activity signal, not a longer timer.
+TTL, and `doctor` — which runs on every command — strips an expired one whether or
+not its holder is working. Worse, that sweep calls `releaseFiles(..., {force:
+true})`, whose `force` skips the `agent_id !== who` guard and so releases **every**
+holder of the path, including one who acquired it after the first row lapsed. Holding a
+file past the TTL therefore loses it silently and hands it to a third agent; the
+log shows the pressure, 456 `lock.hold` against 832 `lock.deny`. Renewing on
+worktree presence is the obvious fix and the wrong one — a lock means _an agent is
+in this file_, not _this branch owns this directory_. It needs an activity
+signal.
 
-Nothing is double-released: `releaseClaim` walks the `issue_locks` pairing table
-so a file another live issue needs survives, and `ON CONFLICT(path, agent_id)`
-makes re-acquiring your own lock extend it. The board is currently clean — zero
-unreleased claims, zero unreleased locks — but that is agents releasing their own
-work, not a sweep that could not have leaked.
+Hand-driven release is careful: `releaseClaim` walks the `issue_locks` pairing
+table so a file another live issue needs survives. The board is currently clean —
+zero unreleased claims, zero unreleased locks — but that is agents releasing their
+own work, not a sweep that could not have leaked.
 
 ### The board is cross-session, so a merge can announce itself
 
