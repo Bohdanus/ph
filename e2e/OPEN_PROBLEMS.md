@@ -657,6 +657,50 @@ does not do.
 
 ---
 
+## P2 — a collapsed tool's selection assertion is GROUP-level, so it passes for any member of the collapsed set
+
+**Found 2026-09-30 while fixing the 17 `aria-pressed` failures, and it survives that fix.** The
+helper is `expectToolSelected` (`e2e/helpers/toolbar-helpers.ts`). For a tool the rail still shows a
+tile of its own it asserts `aria-pressed`, which is per-tool. For a tool folded into the three-dots
+tile it asserts the tile's lit class instead — because `SidebarLeft.tsx:635` deliberately renders no
+`aria-pressed` there — and that class is painted from `group.some((tool) => tool.name === toolName)`
+over the WHOLE collapsed set (`:636`). So `expectToolSelected(page, 'eraser')` is answered by "is
+SOME collapsed tool selected", not by "is the eraser selected".
+
+**Measured at 1280x720, where it bites.** The only tiles on the rail are `reposition`,
+`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper` and `crop`. The default tool
+is `brush` (`src/tools/settings.ts:146`), and `brush` is itself in the collapsed set — so the
+three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
+collapsed tool therefore passes before anything is selected.
+
+**This is not a regression from the `aria-pressed` conversion, and that distinction is the whole
+point.** `:635` and `:636` are the same `group.some(...)` call on the same tile, so the removed
+attribute carried identical information to the class that replaced it. The limitation predates the
+conversion and the conversion neither added nor hid it.
+
+**Why the suite is nonetheless sound today, and where that stops being true.** Every caller that
+depends on a specific tool pairs the tile assertion with a per-tool one:
+`keyboard-shortcuts.spec.ts:173` asserts the tool's own options-bar control (`bar`), precisely
+because the tile "answers 'is SOME tool of the collapsed set selected'" — its comment says so. The
+`erase-fill-eyedropper` tests instead drive pixels: the eraser must clear the slab, the bucket must
+fill a contiguous region, the eyedropper must set a specific colour, and none of those can happen
+with the wrong tool. `color.spec.ts` and `paint-tool-pixels.spec.ts` draw and measure. So the
+TOOL-SPECIFIC claim is made by a second assertion everywhere it matters, and `selectBrushFamilyTool`
+is misnamed — it proves the group is lit, and the test's own pixels prove the rest.
+
+**What would actually close it.** A per-tool channel on the overflow tile — `data-active-tool={toolName}`
+on the element at `SidebarLeft.tsx:755`, which already carries `data-toolbar-tile` for the fit
+measurement — lets the helper assert the tool by name at any window, with no second assertion needed.
+That is a PRODUCT change, deliberately not made here: `aria-pressed` was removed from that tile on
+purpose (`1dcc25cb`), and the same reasoning that removed it is why nothing should be added back in a
+shape that announces the wrong thing. Decide it deliberately, with the accessibility intent in view.
+
+**Do not "fix" it by restoring `aria-pressed` on the three-dots tile.** That would announce a
+pressed toggle for whichever hidden tool happens to be selected, on a control whose only job is to
+open a menu — the exact defect `1dcc25cb` corrected.
+
+---
+
 ## P2 — the AVIF export waits on a wasm encoder inside a 30s download timeout, and only AVIF exceeds it
 
 **The two export failures in one run are the same wait, and the format is the discriminator.**
