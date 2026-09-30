@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import type { Page, TestInfo } from '@playwright/test';
 import path from 'node:path';
+import { initializeCanvas, writePsd } from 'ag-psd';
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
@@ -13,14 +14,21 @@ import {
   CHANNEL_DELTA_TOLERANCE,
   DOWNLOAD_TIMEOUT_MS,
   INTEGRATION_TEST_TIMEOUT_MS,
+  MIN_EXPORT_INK_RATIO,
+  browserVerifiedFormats,
+  containerVerifiedFormats,
+  exportByteVerifiers,
   exportFormats,
   icoFormat,
   ICON_STROKE,
   mimeType,
   exportAndVerify,
   exportIcoAndVerify,
+  exportPixelPayload,
+  prepareExportDownloadDirectory,
   setupExportTest,
   setupIcoTest,
+  verifyExportContainer,
   verifyPsdInPhotopea,
   type ExportFormat,
   type PixelComparisonResult,
@@ -31,10 +39,11 @@ import {
 import {
   CANVAS_REDRAW_CLIP,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
-  canvasRedrawClip,
+  containFit,
   DEFAULT_DOCUMENT_HEIGHT,
   DEFAULT_DOCUMENT_WIDTH,
   documentToCanvasOffset,
+  INK_LUMA_FLOOR,
 } from '../../helpers/canvas-helpers';
 
 const mocks = vi.hoisted(() => {
@@ -155,6 +164,13 @@ const ICON_CANVAS_SIZE = 256;
 const PHOTOPEA_URL = 'https://www.photopea.com/';
 
 /**
+ * The `TestInfo` the export entry points are given. One instance for the whole file: the
+ * `attach` mock is reset by `beforeEach`, so sharing it cannot leak a recorded call between
+ * tests, and every call site needs the same argument to exist.
+ */
+const testInfo = createTestInfoMock();
+
+/**
  * The document size an export produces, and the bytes that state it. `verifyPsdInPhotopea`
  * reads the expected dimensions out of the PSD header it is given, so a test needs a
  * header that really carries them — the same layout the app's own PSD fixtures build
@@ -187,6 +203,305 @@ const COMPARE_IMAGE_SIZE = 256;
 const EXPORTED_BASE64 = mocks.exportedFile.toString('base64');
 const EXPORTED_PNG_DATA_URL = `data:image/png;base64,${EXPORTED_BASE64}`;
 const EXPORTED_ICO_DATA_URL = `data:image/x-icon;base64,${EXPORTED_BASE64}`;
+
+/** The size every container fixture below is built at: small, and not the fixture's. */
+const CONTAINER_IMAGE_SIZE = 4;
+
+/** A source canvas carrying a mark, as a data URL. The `container` oracle measures BOTH sides. */
+async function drawnSourceDataUrl(): Promise<string> {
+  const png = await sharp({
+    create: {
+      width: CONTAINER_IMAGE_SIZE,
+      height: CONTAINER_IMAGE_SIZE,
+      channels: 3,
+      background: { r: 0, g: 0, b: 0 },
+    },
+  })
+    .png()
+    .toBuffer();
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+/** A source canvas with no mark on it, as a data URL. */
+async function blankSourceDataUrl(): Promise<string> {
+  const png = await sharp({
+    create: {
+      width: CONTAINER_IMAGE_SIZE,
+      height: CONTAINER_IMAGE_SIZE,
+      channels: 3,
+      background: { r: 255, g: 255, b: 255 },
+    },
+  })
+    .png()
+    .toBuffer();
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+/** sharp writes little-endian TIFF; the app's exporter writes big-endian. Both are legal. */
+async function containerTiff(size: number, options: { blank?: boolean } = {}): Promise<Buffer> {
+  return sharp({
+    create: {
+      width: size,
+      height: size,
+      channels: 3,
+      background: options.blank ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 },
+    },
+  })
+    .tiff()
+    .toBuffer();
+}
+
+interface TiffIfd {
+  littleEndian: boolean;
+  offset: number;
+}
+
+/** The first IFD's position and byte order, read the way `verifyTiffExport` reads them. */
+function tiffIfd(file: Buffer): TiffIfd {
+  const littleEndian = file[0] === 0x49;
+  return { littleEndian, offset: littleEndian ? file.readUInt32LE(4) : file.readUInt32BE(4) };
+}
+
+function writeTiffU16(file: Buffer, littleEndian: boolean, offset: number, value: number): void {
+  if (littleEndian) file.writeUInt16LE(value, offset);
+  else file.writeUInt16BE(value, offset);
+}
+
+function writeTiffU32(file: Buffer, littleEndian: boolean, offset: number, value: number): void {
+  if (littleEndian) file.writeUInt32LE(value, offset);
+  else file.writeUInt32BE(value, offset);
+}
+
+/**
+ * A big-endian TIFF, built by hand from Adobe's TIFF 6.0 layout.
+ *
+ * sharp only writes little-endian, so the byte order the app's exporter actually uses — a
+ * real export begins `4d 4d 00 2a`, measured — cannot be produced by handing libvips a
+ * request. This writes the header and IFD directly: mark, IFD offset, entry count, and
+ * one 12-byte entry per tag, with `BitsPerSample`'s three shorts out of line.
+ *
+ * Its raster is deliberately NOT claimed to be decodable. libvips rejects a hand-built
+ * uncompressed TIFF of any size tried here, so a unit test cannot use one to exercise the
+ * DECODE step in big-endian order; `structured-formats.spec.ts` covers that against the
+ * real encoder, whose output is big-endian. What this fixture does establish is the header
+ * walk, which is where the byte order is actually read.
+ */
+function bigEndianTiff(width: number, height: number, rasterValue: number): Buffer {
+  const ENTRY = 12;
+  const rowsPerStrip = height;
+  const entries: Array<[number, number, number, number]> = [
+    [0x0100, 4, 1, width], // ImageWidth, LONG
+    [0x0101, 4, 1, height], // ImageLength, LONG
+    [0x0115, 3, 1, 3], // SamplesPerPixel, SHORT
+    [0x0116, 3, 3, 0], // BitsPerSample x3, SHORT — out of line, patched below
+    [0x0117, 4, 1, 0], // StripByteCounts, LONG — patched below
+    [0x0103, 3, 1, 1], // Compression, SHORT, none
+    [0x0106, 3, 1, 2], // PhotometricInterpretation, SHORT, RGB
+    [0x0111, 4, 1, 0], // StripOffsets, LONG — patched below
+    [278, 4, 1, rowsPerStrip], // RowsPerStrip, LONG
+    [284, 3, 1, 1], // PlanarConfiguration, SHORT, chunky
+  ];
+  const ifdAt = 8;
+  const ifdSize = 2 + entries.length * ENTRY + 4;
+  const bitsAt = ifdAt + ifdSize; // three u16, which is more than an entry's value field holds
+  const stripAt = bitsAt + 6;
+  const stripBytes = width * height * 3;
+  entries[3][3] = bitsAt;
+  entries[4][3] = stripBytes;
+  entries[7][3] = stripAt;
+
+  const file = Buffer.alloc(stripAt + stripBytes);
+  file.write('MM', 0, 'latin1');
+  file[2] = 0;
+  file[3] = 0x2a;
+  file.writeUInt32BE(ifdAt, 4);
+  file.writeUInt16BE(entries.length, ifdAt);
+  entries.forEach(([tag, type, count, value], index) => {
+    const at = ifdAt + 2 + index * ENTRY;
+    file.writeUInt16BE(tag, at);
+    file.writeUInt16BE(type, at + 2);
+    file.writeUInt32BE(count, at + 4);
+    file.writeUInt32BE(value, at + 8);
+  });
+  for (let sample = 0; sample < 3; sample += 1) file.writeUInt16BE(8, bitsAt + sample * 2);
+  file.fill(rasterValue, stripAt, stripAt + stripBytes);
+  return file;
+}
+
+interface PsdOptions {
+  signature?: string;
+  version?: number;
+  channels?: number;
+  width?: number;
+  height?: number;
+  layerAndMaskLength?: number;
+  layerCount?: number;
+  layers?: Array<{ name: string } & Partial<PsdLayerSpec>>;
+  /** Write the records with no channel data at all. */
+  skipLayerImageData?: boolean;
+}
+
+interface PsdLayerSpec {
+  name: string;
+  /** Pixel value the layer's raster is filled with. `0` is what makes it carry ink. */
+  fill?: number;
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+/**
+ * A PSD carrying `layerCount` layers, the first of which is the bedrock blank layer and the
+ * second the `draw` layer `verifyPsdExport` requires. The layout follows Adobe's: a
+ * signature, version, six reserved bytes, channels, height, width, depth, colour mode, then
+ * three length-prefixed sections.
+ */
+function containerPsd(options: PsdOptions = {}): Buffer {
+  const {
+    signature = '8BPS',
+    version = 1,
+    channels = 3,
+    width = CONTAINER_IMAGE_SIZE,
+    height = CONTAINER_IMAGE_SIZE,
+    layerAndMaskLength,
+    layerCount,
+    layers,
+    skipLayerImageData = false,
+  } = options;
+
+  const specs = layers ?? [{ name: 'Blank 1' }, { name: 'draw 2', fill: 0 }];
+
+  initializePsdWriteCanvas();
+  const buffer = Buffer.from(
+    writePsd(
+      {
+        width,
+        height,
+        children: specs.map((spec) => ({
+          name: spec.name,
+          left: spec.left ?? 0,
+          top: spec.top ?? 0,
+          ...(skipLayerImageData
+            ? {}
+            : { imageData: solidRaster(spec.right ?? width, spec.bottom ?? height, spec.fill ?? 255) }),
+        })),
+      },
+      // The same two options the exporter uses (`src/contexts/psd-utils.ts:271`), so the
+      // bytes this writes are laid out the way the app's are.
+      // `skipLayerImageData` is read-side; the write-side spelling is `skipCompositeImageData`
+      // plus an empty `imageData` per layer, so the option is applied to the children.
+      { noBackground: true } as Parameters<typeof writePsd>[1]
+    )
+  );
+
+  if (signature !== '8BPS') buffer.write(signature, 0, 'latin1');
+  if (version !== 1) buffer.writeUInt16BE(version, 4);
+  if (channels !== 3) buffer.writeUInt16BE(channels, 12);
+
+  const resourcesLength = buffer.readUInt32BE(30);
+  const layerMaskAt = 30 + 4 + resourcesLength;
+  if (layerAndMaskLength !== undefined) buffer.writeUInt32BE(layerAndMaskLength, layerMaskAt);
+  if (layerCount !== undefined) buffer.writeInt16BE(layerCount, layerMaskAt + 4 + 4);
+  return buffer;
+}
+
+/**
+ * Offsets of every layer record's four int32 rect fields, walked exactly the way
+ * `readPsdLayerRecords` walks it, so a test can patch a rect without knowing the record
+ * size up front.
+ */
+function psdRecordTops(file: Buffer): number[] {
+  const resourcesLength = file.readUInt32BE(30);
+  // 30 header, then a 4-byte image-resources length and that many bytes, then the
+  // 4-byte layer-and-mask length, then the 4-byte layer-info length, then the count.
+  const layerInfoAt = 30 + 4 + resourcesLength + 4;
+  let at = layerInfoAt + 6;
+  const count = Math.abs(file.readInt16BE(layerInfoAt + 4));
+  const tops: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    tops.push(at);
+    const channelCount = file.readUInt16BE(at + 16);
+    const extraLengthAt = at + 18 + channelCount * 6 + 12;
+    at = extraLengthAt + 4 + file.readUInt32BE(extraLengthAt);
+  }
+  return tops;
+}
+
+/**
+ * Where one channel's raster bytes start. PSD packs every layer record first and every
+ * layer's channel data after, so this is the sum of every earlier record's size plus every
+ * earlier channel's declared length.
+ */
+function psdChannelDataAt(file: Buffer, layerIndex: number, channelIndex: number): number {
+  const tops = psdRecordTops(file);
+  let at = tops[tops.length - 1];
+  const lastCount = file.readUInt16BE(at + 16);
+  const extraLengthAt = at + 18 + lastCount * 6 + 12;
+  at = extraLengthAt + 4 + file.readUInt32BE(extraLengthAt);
+  for (let layer = 0; layer < layerIndex; layer += 1) {
+    const channelCount = file.readUInt16BE(tops[layer] + 16);
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      at += file.readUInt32BE(tops[layer] + 18 + channel * 6 + 2);
+    }
+  }
+  for (let channel = 0; channel < channelIndex; channel += 1) {
+    at += file.readUInt32BE(tops[layerIndex] + 18 + channel * 6 + 2);
+  }
+  return at;
+}
+
+function solidRaster(
+  width: number,
+  height: number,
+  value: number
+): {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+  colorSpace: 'srgb';
+} {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let index = 0; index < data.length; index += 4) {
+    data[index] = value;
+    data[index + 1] = value;
+    data[index + 2] = value;
+    data[index + 3] = 255;
+  }
+  return { width, height, data, colorSpace: 'srgb' };
+}
+
+/**
+ * `ag-psd` asks the host for a canvas and for `ImageData`. In a Node test worker there is
+ * neither, and on the paths used here — `writePsd` over `ImageData`, and `readPsd` over a
+ * buffer — the context is only ever asked to allocate. A stub that allocates and draws
+ * nothing is enough, and it is the same shim `helpers.ts` installs for the reader.
+ */
+let psdCanvasReady = false;
+
+function initializePsdWriteCanvas(): void {
+  if (psdCanvasReady) return;
+  const noop = () => {};
+  const allocate = (width: number, height: number) => solidRaster(width, height, 255) as unknown as ImageData;
+  const canvas = (width: number, height: number) => ({
+    width,
+    height,
+    getContext: () => ({
+      createImageData: allocate,
+      getImageData: allocate,
+      putImageData: noop,
+      drawImage: noop,
+      clearRect: noop,
+      save: noop,
+      restore: noop,
+      translate: noop,
+      scale: noop,
+      rotate: noop,
+    }),
+  });
+  initializeCanvas(canvas as unknown as (width: number, height: number) => HTMLCanvasElement, allocate);
+  psdCanvasReady = true;
+}
 
 interface StubImage {
   width: number;
@@ -222,6 +537,30 @@ const IDENTICAL_EXPORT = compareImage(0, 255);
 const SHIFTED_EXPORT = compareImage(255, 0);
 const WITHIN_TOLERANCE_EXPORT = compareImage(40, 255);
 const ALPHA_ONLY_EXPORT = compareImage(0, 255, 0);
+
+/**
+ * A small black mark on white paper, `side` pixels square.
+ *
+ * Sized for the ink guard, not the colour budget. A mark small enough that erasing most of
+ * it stays inside `CHANGED_CHANNEL_THRESHOLD_GENERAL` is the whole reason the guard exists,
+ * and a left/right split of the image is the wrong shape to demonstrate that: erasing it
+ * relights half the picture.
+ */
+function sparseMark(side: number): StubImage {
+  const pixels = new Uint8ClampedArray(COMPARE_IMAGE_SIZE * COMPARE_IMAGE_SIZE * 4);
+  for (let row = 0; row < COMPARE_IMAGE_SIZE; row += 1) {
+    for (let column = 0; column < COMPARE_IMAGE_SIZE; column += 1) {
+      const inside = row < side && column < side;
+      const index = (row * COMPARE_IMAGE_SIZE + column) * 4;
+      const value = inside ? 0 : 255;
+      pixels[index] = value;
+      pixels[index + 1] = value;
+      pixels[index + 2] = value;
+      pixels[index + 3] = 255;
+    }
+  }
+  return { width: COMPARE_IMAGE_SIZE, height: COMPARE_IMAGE_SIZE, pixels };
+}
 
 /**
  * Stubs the browser surface the `page.evaluate` pixel comparators close over,
@@ -297,6 +636,8 @@ interface PixelPayload {
   mime?: string;
   threshold: number;
   tolerance: number;
+  lumaFloor: number;
+  minInkRatio: number;
 }
 
 interface LocatorSurface {
@@ -520,13 +861,23 @@ function redrawClip(box: Box): Box {
   };
 }
 
-function pixelPayload(format: ExportFormat): PixelPayload {
+/**
+ * The payload `exportAndVerify` hands to the in-browser comparator.
+ *
+ * Every threshold is in it, and that is the point: `page.evaluate` serialises the
+ * comparator's SOURCE, so a threshold left as a module-scope reference would be an
+ * undefined free variable in the page. Asserting the whole object here is what stops a
+ * threshold being added to the comparator and not to its input.
+ */
+function pixelPayload(format: ExportFormat, threshold = CHANGED_CHANNEL_THRESHOLD_GENERAL): PixelPayload {
   return {
     source: SOURCE_DATA_URL,
     exported: mocks.exportedFile.toString('base64'),
     mime: mimeType(format.extension),
-    threshold: CHANGED_CHANNEL_THRESHOLD_GENERAL,
+    threshold,
     tolerance: CHANNEL_DELTA_TOLERANCE,
+    lumaFloor: INK_LUMA_FLOOR,
+    minInkRatio: MIN_EXPORT_INK_RATIO,
   };
 }
 
@@ -538,7 +889,7 @@ function isValidExportFormat(value: unknown): value is ExportFormat {
     candidate.label.length > 0 &&
     typeof candidate.extension === 'string' &&
     /^\.[a-z0-9]+$/i.test(candidate.extension) &&
-    typeof candidate.comparePixels === 'boolean'
+    (candidate.verification === 'browser-pixels' || candidate.verification === 'container')
   );
 }
 
@@ -552,15 +903,15 @@ afterEach(() => {
 
 describe('Export Helpers', () => {
   const DECLARED_FORMATS: Array<[string, ExportFormat]> = [
-    ['PNG', { label: 'PNG', extension: '.png', comparePixels: true }],
-    ['JPEG', { label: 'JPEG', extension: '.jpeg', comparePixels: true }],
-    ['WebP', { label: 'WebP', extension: '.webp', comparePixels: true }],
-    ['TIFF', { label: 'TIFF', extension: '.tiff', comparePixels: false }],
-    ['BMP', { label: 'BMP', extension: '.bmp', comparePixels: true }],
-    ['GIF (static)', { label: 'GIF (static)', extension: '.gif', comparePixels: true }],
-    ['AVIF', { label: 'AVIF', extension: '.avif', comparePixels: true }],
-    ['SVG (flattened)', { label: 'SVG (flattened)', extension: '.svg', comparePixels: true }],
-    ['Photoshop PSD (layers)', { label: 'Photoshop PSD (layers)', extension: '.psd', comparePixels: false }],
+    ['PNG', { label: 'PNG', extension: '.png', verification: 'browser-pixels' }],
+    ['JPEG', { label: 'JPEG', extension: '.jpeg', verification: 'browser-pixels' }],
+    ['WebP', { label: 'WebP', extension: '.webp', verification: 'browser-pixels' }],
+    ['TIFF', { label: 'TIFF', extension: '.tiff', verification: 'container' }],
+    ['BMP', { label: 'BMP', extension: '.bmp', verification: 'browser-pixels' }],
+    ['GIF (static)', { label: 'GIF (static)', extension: '.gif', verification: 'browser-pixels' }],
+    ['AVIF', { label: 'AVIF', extension: '.avif', verification: 'browser-pixels' }],
+    ['SVG (flattened)', { label: 'SVG (flattened)', extension: '.svg', verification: 'browser-pixels' }],
+    ['Photoshop PSD (layers)', { label: 'Photoshop PSD (layers)', extension: '.psd', verification: 'container' }],
   ];
 
   const DECLARED_MIME_TYPES: Array<[string, string]> = [
@@ -583,6 +934,7 @@ describe('Export Helpers', () => {
       ['CHANNEL_DELTA_TOLERANCE', CHANNEL_DELTA_TOLERANCE, 40],
       ['DOWNLOAD_TIMEOUT_MS', DOWNLOAD_TIMEOUT_MS, 30_000],
       ['INTEGRATION_TEST_TIMEOUT_MS', INTEGRATION_TEST_TIMEOUT_MS, 60_000],
+      ['MIN_EXPORT_INK_RATIO', MIN_EXPORT_INK_RATIO, 2],
     ];
 
     it.each(CONSTANT_PINS)('pins %s', (_name, value, pinned) => {
@@ -599,16 +951,16 @@ describe('Export Helpers', () => {
   });
 
   describe('exportFormats', () => {
-    it.each(DECLARED_FORMATS)('declares %s with its extension and comparePixels flag', (_label, format) => {
+    it.each(DECLARED_FORMATS)('declares %s with its extension and verification mechanism', (_label, format) => {
       expect(exportFormats.find((candidate) => candidate.label === format.label)).toEqual(format);
     });
 
-    it('declares label, extension and comparePixels on every format', () => {
+    it('declares label, extension and verification on every format', () => {
       for (const format of exportFormats) {
         expect(format).toHaveProperty('label');
         expect(format).toHaveProperty('extension');
-        expect(format).toHaveProperty('comparePixels');
-        expect(typeof format.comparePixels).toBe('boolean');
+        expect(format).toHaveProperty('verification');
+        expect(['browser-pixels', 'container']).toContain(format.verification);
       }
     });
 
@@ -627,17 +979,56 @@ describe('Export Helpers', () => {
       expect(labels).not.toContain(icoFormat.label);
     });
 
-    it('enables pixel comparison for exactly the formats the browser can decode', () => {
+    it('compares a format in the browser if and only if the browser can decode it', () => {
       const all = [...exportFormats, icoFormat];
       const decodable = all
         .filter((format) => mimeType(format.extension) !== OCTET_STREAM_MIME)
         .map((format) => format.label);
-      const compared = all.filter((format) => format.comparePixels).map((format) => format.label);
-      const skipped = all.filter((format) => !format.comparePixels).map((format) => format.label);
+      const compared = all.filter((format) => format.verification === 'browser-pixels').map((format) => format.label);
+      const containers = all.filter((format) => format.verification === 'container').map((format) => format.label);
       expect(compared).toEqual(decodable);
-      expect(skipped).toEqual(all.map((format) => format.label).filter((label) => !decodable.includes(label)));
+      expect(containers).toEqual(all.map((format) => format.label).filter((label) => !decodable.includes(label)));
       expect(decodable.length).toBeGreaterThan(0);
-      expect(skipped.length).toBeGreaterThan(0);
+      expect(containers.length).toBeGreaterThan(0);
+    });
+
+    /**
+     * THE INVARIANT. A format that names no mechanism is the defect this type was built to
+     * remove, and the two that used to be exempt are named in the fixture above: with
+     * `comparePixels: false` a blank TIFF and a zero-layer PSD passed, because the only
+     * assertions `exportAndVerify` made for them were a `> 100` byte floor and a file
+     * extension. Remove a verifier from `exportByteVerifiers` and this is the test that
+     * goes red.
+     */
+    it('registers a container verifier for every format the browser cannot decode, and no others', () => {
+      for (const format of [...exportFormats, icoFormat]) {
+        const registered = Object.hasOwn(exportByteVerifiers, format.extension);
+        expect(
+          registered,
+          `${format.label} (${format.extension}) is '${format.verification}' with no registered verifier`
+        ).toBe(format.verification === 'container');
+      }
+      for (const extension of Object.keys(exportByteVerifiers)) {
+        expect(
+          containerVerifiedFormats.some((format) => format.extension === extension),
+          `${extension} has a verifier but no format declares it as a container`
+        ).toBe(true);
+      }
+    });
+
+    it('partitions the formats between the two mechanisms, leaving none unverified', () => {
+      const partitioned = [...browserVerifiedFormats, ...containerVerifiedFormats].map((format) => format.label);
+      expect(partitioned.slice().sort()).toEqual(
+        exportFormats
+          .map((format) => format.label)
+          .slice()
+          .sort()
+      );
+    });
+
+    it('keeps the verifier map free of inherited keys', () => {
+      expect(Object.getPrototypeOf(exportByteVerifiers)).toBe(null);
+      expect(Object.keys(exportByteVerifiers).sort()).toEqual(['.psd', '.tiff']);
     });
 
     it('every declared format satisfies the shape contract', () => {
@@ -647,7 +1038,7 @@ describe('Export Helpers', () => {
 
   describe('icoFormat', () => {
     it('declares the ICO contract', () => {
-      expect(icoFormat).toEqual({ label: 'ICO', extension: '.ico', comparePixels: true });
+      expect(icoFormat).toEqual({ label: 'ICO', extension: '.ico', verification: 'browser-pixels' });
     });
   });
 
@@ -959,7 +1350,11 @@ describe('Export Helpers', () => {
       ['accepts an identical export', IDENTICAL_EXPORT, { ok: true }],
       ['rejects an export shifted by half its width', SHIFTED_EXPORT, { ok: false, reason: 'pixels-differ' }],
       ['accepts an export differing by exactly the per-channel tolerance', WITHIN_TOLERANCE_EXPORT, { ok: true }],
-      ['accepts an export differing only in the alpha channel', ALPHA_ONLY_EXPORT, { ok: true }],
+      [
+        'rejects a fully transparent export as carrying no drawing',
+        ALPHA_ONLY_EXPORT,
+        { ok: false, reason: 'export-blank' },
+      ],
     ] satisfies Array<[string, StubImage, PixelComparisonResult]>)(
       'pixel comparator %s',
       async (_label, exported, expected) => {
@@ -972,9 +1367,94 @@ describe('Export Helpers', () => {
           [EXPORTED_PNG_DATA_URL]: exported,
         });
 
-        await expect(compare(payload)).resolves.toEqual(expected);
+        // `toMatchObject`, not `toEqual`: `export-blank` carries a `detail` naming the two
+        // ink counts, and asserting its exact shape here would make adding that detail a
+        // breaking change. Its content is asserted separately, below.
+        await expect(compare(payload)).resolves.toMatchObject(expected);
       }
     );
+
+    /**
+     * WHY THE INK GUARD EXISTS, as a number rather than a claim.
+     *
+     * The transparent export above has exactly the source's RGB everywhere, so the
+     * differing-CHANNEL budget the export oracle used to consist of could not see it at
+     * all: zero of the 196,608 colour channels differ, and the budget is 50,000. This test
+     * counts them, so the claim in `MIN_EXPORT_INK_RATIO`'s docstring is falsifiable —
+     * if a future change made the comparator read alpha as a colour channel, the count
+     * here would move and so would the case above.
+     */
+    it('a fully transparent export differs from its source in zero colour channels, and the guard is what rejects it', async () => {
+      const { surface, page } = createSaveDialogPage();
+      await exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock());
+      const [compare, payload] = surface.evaluate.mock.calls[0];
+
+      stubCompareEnvironment({
+        [SOURCE_DATA_URL]: IDENTICAL_EXPORT,
+        [EXPORTED_PNG_DATA_URL]: ALPHA_ONLY_EXPORT,
+      });
+
+      let differing = 0;
+      for (let index = 0; index < IDENTICAL_EXPORT.pixels.length; index += 4) {
+        for (let channel = 0; channel < 3; channel += 1) {
+          if (
+            Math.abs(IDENTICAL_EXPORT.pixels[index + channel] - ALPHA_ONLY_EXPORT.pixels[index + channel]) >
+            CHANNEL_DELTA_TOLERANCE
+          ) {
+            differing += 1;
+          }
+        }
+      }
+      expect(differing, 'the colour budget alone would have passed this export').toBe(0);
+      expect(differing).toBeLessThan(payload.threshold);
+      await expect(compare(payload)).resolves.toMatchObject({ ok: false, reason: 'export-blank' });
+    });
+
+    it('rejects an export that dropped most of a small mark, which the channel budget cannot see', async () => {
+      const { surface, page } = createSaveDialogPage();
+      await exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock());
+      const [compare, payload] = surface.evaluate.mock.calls[0];
+
+      // A SPARSE mark, which is the shape that matters. The ink guard exists because a mark
+      // small enough that removing it moves few colour channels defeats a budget expressed
+      // in channels: on the real 800x600 fixture the line covers 1,911 of 480,000 pixels, so
+      // erasing it entirely is 5,733 differing channels against a budget of 50,000. Here the
+      // mark is 40x40 and 1,200 of its 1,600 pixels are missing, which is 3,600 channels —
+      // an order of magnitude inside the budget, and a 75% loss of the drawing.
+      const source = sparseMark(40);
+      const eroded = sparseMark(10);
+
+      let differing = 0;
+      for (let index = 0; index < source.pixels.length; index += 4) {
+        for (let channel = 0; channel < 3; channel += 1) {
+          if (Math.abs(source.pixels[index + channel] - eroded.pixels[index + channel]) > CHANNEL_DELTA_TOLERANCE) {
+            differing += 1;
+          }
+        }
+      }
+      expect(differing, 'this much lost ink must be invisible to the channel budget').toBeLessThan(payload.threshold);
+
+      stubCompareEnvironment({ [SOURCE_DATA_URL]: source, [EXPORTED_PNG_DATA_URL]: eroded });
+      const result = (await compare(payload)) as { ok: boolean; reason?: string; detail?: string };
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('export-blank');
+      expect(result.detail).toContain('100 inked pixels');
+    });
+
+    it('names the ink counts in the blank-export failure, so the report says which side is empty', async () => {
+      const { surface, page } = createSaveDialogPage();
+      await exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock());
+      const [compare, payload] = surface.evaluate.mock.calls[0];
+
+      stubCompareEnvironment({
+        [SOURCE_DATA_URL]: IDENTICAL_EXPORT,
+        [EXPORTED_PNG_DATA_URL]: ALPHA_ONLY_EXPORT,
+      });
+
+      const result = (await compare(payload)) as { ok: boolean; detail?: string };
+      expect(result.detail).toContain('0 inked pixels');
+      expect(result.detail).toContain(`${COMPARE_IMAGE_SIZE}x${COMPARE_IMAGE_SIZE}`);
+    });
 
     it('pixel comparator decodes the export with the format mime type', async () => {
       const { surface, page } = createSaveDialogPage();
@@ -1023,26 +1503,57 @@ describe('Export Helpers', () => {
       expect(result).toBe(path.join(DOWNLOAD_DIRECTORY, upperCaseName));
     });
 
-    it('skips the browser pixel comparison for formats that are not re-encoded', async () => {
+    it('verifies the container in Node for a format the browser cannot decode, without touching the browser', async () => {
       const download = createDownloadMock(`${EXPORT_FILENAME}${TIFF_FORMAT.extension}`);
       const { surface, page, dialog } = createSaveDialogPage({ download });
       const target = path.join(DOWNLOAD_DIRECTORY, `${EXPORT_FILENAME}${TIFF_FORMAT.extension}`);
+      // Restored in a `finally` rather than left to the next test: `beforeEach` only
+      // CLEARS mock calls, so a `mockResolvedValue` set here outlives the test and the
+      // ICO byte comparisons further down would compare a TIFF against a stub keyed on
+      // the PNG's base64.
+      const restore = vi.mocked(readFile).getMockImplementation();
+      vi.mocked(readFile).mockResolvedValue((await containerTiff(CONTAINER_IMAGE_SIZE)) as Buffer<ArrayBuffer>);
+      try {
+        const result = await exportAndVerify(
+          page,
+          TIFF_FORMAT,
+          await drawnSourceDataUrl(),
+          DOWNLOAD_DIRECTORY,
+          createTestInfoMock()
+        );
 
-      const result = await exportAndVerify(
-        page,
-        TIFF_FORMAT,
-        SOURCE_DATA_URL,
-        DOWNLOAD_DIRECTORY,
-        createTestInfoMock()
-      );
+        expect(dialog.formatSelect.selectOption).toHaveBeenCalledWith({ label: TIFF_FORMAT.label });
+        expect(mocks.matchers.toBe).toHaveBeenCalledWith(TIFF_FORMAT.extension);
+        expect(download.saveAs).toHaveBeenCalledWith(target);
+        expect(vi.mocked(readFile)).toHaveBeenCalledWith(target);
+        expect(mocks.matchers.toBeGreaterThan).toHaveBeenCalledWith(MIN_EXPORT_BYTES);
+        // The browser never decoded this format and never will; that is the whole reason
+        // `verification: 'container'` exists.
+        expect(surface.evaluate).not.toHaveBeenCalled();
+        expect(result).toBe(target);
+      } finally {
+        vi.mocked(readFile).mockImplementation(restore ?? (async () => mocks.exportedFile));
+      }
+    });
 
-      expect(dialog.formatSelect.selectOption).toHaveBeenCalledWith({ label: TIFF_FORMAT.label });
-      expect(mocks.matchers.toBe).toHaveBeenCalledWith(TIFF_FORMAT.extension);
-      expect(download.saveAs).toHaveBeenCalledWith(target);
-      expect(vi.mocked(readFile)).toHaveBeenCalledWith(target);
-      expect(mocks.matchers.toBeGreaterThan).toHaveBeenCalledWith(MIN_EXPORT_BYTES);
+    it('rejects a container export that carries no drawing, without reaching the browser', async () => {
+      const download = createDownloadMock(`${EXPORT_FILENAME}${TIFF_FORMAT.extension}`);
+      const { surface, page } = createSaveDialogPage({ download });
+      // A structurally PERFECT TIFF of blank canvas. On the real fixture it is 1,921,000
+      // bytes, and it clears the `> 100` byte floor by four orders of magnitude. It is the
+      // exact case that used to pass, because a byte-length floor and a file extension
+      // were the whole of TIFF's verification.
+      const blank = await containerTiff(CONTAINER_IMAGE_SIZE, { blank: true });
+      const restore = vi.mocked(readFile).getMockImplementation();
+      vi.mocked(readFile).mockResolvedValue(blank as Buffer<ArrayBuffer>);
+      try {
+        await expect(
+          exportAndVerify(page, TIFF_FORMAT, await drawnSourceDataUrl(), DOWNLOAD_DIRECTORY, createTestInfoMock())
+        ).rejects.toThrow('TIFF: the TIFF raster carries 0 inked pixels');
+      } finally {
+        vi.mocked(readFile).mockImplementation(restore ?? (async () => mocks.exportedFile));
+      }
       expect(surface.evaluate).not.toHaveBeenCalled();
-      expect(result).toBe(target);
     });
 
     it('rejects when the save dialog is still open after submitting', async () => {
@@ -1207,7 +1718,20 @@ describe('Export Helpers', () => {
       const heightInput = createLocatorMock();
       const newImageSubmit = createLocatorMock();
       const drawTool = createLocatorMock();
-      const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
+      const canvas = createLocatorMock({
+        boundingBox: vi.fn().mockResolvedValue(box),
+        // The ICON document, not the export fixture's: `setupIcoTest` reads the backing
+        // store to learn the size it maps the stroke through, and the shared default hands
+        // out the 800x600 export canvas. Reading 800x600 here mapped the icon's 256x256
+        // stroke through a fit for the wrong document.
+        evaluate: vi.fn(async (fn: (element: unknown) => unknown) =>
+          (fn as (element: { width: number; height: number; toDataURL: () => string }) => unknown)({
+            width: ICON_CANVAS_SIZE,
+            height: ICON_CANVAS_SIZE,
+            toDataURL: () => SOURCE_DATA_URL,
+          })
+        ),
+      });
       const { surface, page } = createPageMock({
         getByTestId: byKey(
           {
@@ -1231,6 +1755,32 @@ describe('Export Helpers', () => {
       };
     }
 
+    /**
+     * The redraw region `setupIcoTest` polls, derived from the MAPPED stroke. It replaced
+     * the shared `CANVAS_REDRAW_CLIP`, whose fixed 100,100 300x100 box-relative region does
+     * not cover a stroke at box row 291 of a 583-tall box — the wait would poll a region
+     * the stroke never touched, which is what a dark pixel elsewhere in that region can
+     * satisfy without the stroke having reached the backing store.
+     */
+    function iconRedrawClip(box: Box, documentSize = { width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE }): Box {
+      const start = documentToCanvasOffset(box, ICON_STROKE.startX, ICON_STROKE.centerY, documentSize);
+      const end = documentToCanvasOffset(box, ICON_STROKE.endX, ICON_STROKE.centerY, documentSize);
+      return {
+        x: box.x + Math.floor(start.x) - 20,
+        y: box.y + Math.floor(start.y) - 20,
+        width: Math.ceil(end.x - start.x) + 40,
+        height: 40,
+      };
+    }
+
+    /** The client coordinates `setupIcoTest` should stroke between, in DOCUMENT space. */
+    function mappedStroke(box: Box, documentSize = { width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE }) {
+      return {
+        start: documentToCanvasOffset(box, ICON_STROKE.startX, ICON_STROKE.centerY, documentSize),
+        end: documentToCanvasOffset(box, ICON_STROKE.endX, ICON_STROKE.centerY, documentSize),
+      };
+    }
+
     it('creates a 256px icon canvas, strokes it with the icon stroke offsets and returns the data url', async () => {
       const box: Box = { x: 24, y: 36, width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE };
       const { surface, page, newImage, canvas } = createIcoPage(box);
@@ -1244,20 +1794,64 @@ describe('Export Helpers', () => {
       expect(newImage.heightInput.fill).toHaveBeenCalledWith(String(ICON_CANVAS_SIZE));
       expect(newImage.newImageSubmit.click).toHaveBeenCalled();
       expect(mocks.mockExpect).toHaveBeenCalledWith(canvas);
+      const stroke = mappedStroke(box);
       expect(surface.mouse.move.mock.calls).toEqual([
-        [box.x + ICON_STROKE.startX, box.y + ICON_STROKE.centerY],
-        [box.x + ICON_STROKE.endX, box.y + ICON_STROKE.centerY, { steps: ICON_STROKE.steps }],
+        [box.x + stroke.start.x, box.y + stroke.start.y],
+        [box.x + stroke.end.x, box.y + stroke.end.y, { steps: ICON_STROKE.steps }],
       ]);
       expect(surface.mouse.down).toHaveBeenCalled();
       expect(surface.mouse.up).toHaveBeenCalled();
-      // The ICO flow is a different draw: a 256x256 document, stroked with `ICON_STROKE`
-      // canvas-relative offsets, and compared in-browser against the source canvas rather
-      // than against a committed baseline. It keeps the default `canvasRedrawClip`, so this
-      // is the box-relative 100,100 300x100 region rather than the export line's, and it
-      // remains coupled to the canvas box — recorded in `e2e/OPEN_PROBLEMS.md`.
-      expect(surface.screenshot).toHaveBeenCalledWith({ clip: canvasRedrawClip(box) });
+      expect(surface.screenshot).toHaveBeenCalledWith({ clip: iconRedrawClip(box) });
       expect(canvas.evaluate).toHaveBeenCalled();
       expect(result).toBe(SOURCE_DATA_URL);
+    });
+
+    /**
+     * THE REGRESSION PIN for the icon stroke, and the reason the offsets are document
+     * pixels.
+     *
+     * `ICON_STROKE` used to be applied as CANVAS-BOX offsets on a 974x583 box holding a
+     * 256x256 document, through a fit of `scale = 2.27734375, offsetX = 195.5`. Box
+     * offset 60 is document x `(60 - 195.5) / 2.27734375 = -59.499` and box offset 196 is
+     * document x `+0.220`, so the whole stroke sat to the LEFT of the document's left
+     * edge and the icon it produced carried 63 inked pixels instead of 1,446.
+     *
+     * Both halves of that are asserted here. `inside` is the property the fixture needs;
+     * `outside` is the arithmetic that made the box-relative reading fail, so restoring it
+     * is a red on the `outside` line and not a silent pass.
+     */
+    it('maps the icon stroke through the app fit, so the mark lands inside the 256x256 document', async () => {
+      const box: Box = { x: 56, y: 100, width: 974, height: 583 };
+      const { surface, page } = createIcoPage(box);
+      const documentSize = { width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE };
+      const fit = containFit(box, documentSize);
+
+      await setupIcoTest(page);
+
+      // The box-relative reading, for the record. `x` is the document column it addressed.
+      const boxRelative = {
+        startX: (ICON_STROKE.startX - fit.offsetX) / fit.scale,
+        endX: (ICON_STROKE.endX - fit.offsetX) / fit.scale,
+      };
+      expect(boxRelative.startX).toBeLessThan(0);
+      expect(boxRelative.endX).toBeLessThan(1);
+
+      // What was drawn instead, inverted back to document columns.
+      const [first, second] = surface.mouse.move.mock.calls;
+      const documentOf = (client: number, origin: number, offset: number) => (client - origin - offset) / fit.scale;
+      expect(documentOf(first[0], box.x, fit.offsetX)).toBe(ICON_STROKE.startX);
+      expect(documentOf(second[0], box.x, fit.offsetX)).toBe(ICON_STROKE.endX);
+      for (const client of [first[1], second[1]]) {
+        const documentY = documentOf(client, box.y, fit.offsetY);
+        expect(documentY).toBe(ICON_STROKE.centerY);
+        expect(documentY).toBeGreaterThanOrEqual(0);
+        expect(documentY).toBeLessThanOrEqual(ICON_CANVAS_SIZE);
+      }
+      for (const client of [first[0], second[0]]) {
+        const documentX = documentOf(client, box.x, fit.offsetX);
+        expect(documentX).toBeGreaterThanOrEqual(0);
+        expect(documentX).toBeLessThanOrEqual(ICON_CANVAS_SIZE);
+      }
     });
 
     it('accepts the unsaved-changes confirm before clicking File > New', async () => {
@@ -1289,18 +1883,34 @@ describe('Export Helpers', () => {
       expect(dialog.dismiss).not.toHaveBeenCalled();
     });
 
-    it('strokes at the icon stroke offsets rather than the canvas box centre', async () => {
-      const box: Box = { x: 10, y: 20, width: 512, height: 400 };
-      const { surface, page } = createIcoPage(box);
+    /**
+     * The export is a function of the DOCUMENT, not of the frame — the same property
+     * `setupExportTest` gets from `EXPORT_LINE_START`/`EXPORT_LINE_END`, and the one whose
+     * absence the ICO fixture was quietly living with.
+     *
+     * The old assertion here was "not the canvas box centre", which is vacuous for an
+     * icon: 128 IS the centre row of a 256-tall document, and at a box whose height binds
+     * the fit it is also the centre row of the box. Two different boxes are compared
+     * instead, and the claim is that both address the same document columns.
+     */
+    it('maps the same document stroke to different client coordinates at two canvas sizes', async () => {
+      const wide: Box = { x: 10, y: 20, width: 512, height: 400 };
+      const narrow: Box = { x: 10, y: 20, width: 320, height: 400 };
+      const widePage = createIcoPage(wide);
+      const narrowPage = createIcoPage(narrow);
 
-      await setupIcoTest(page);
+      await setupIcoTest(widePage.page);
+      await setupIcoTest(narrowPage.page);
 
-      expect(surface.mouse.move.mock.calls).toEqual([
-        [box.x + ICON_STROKE.startX, box.y + ICON_STROKE.centerY],
-        [box.x + ICON_STROKE.endX, box.y + ICON_STROKE.centerY, { steps: ICON_STROKE.steps }],
-      ]);
-      expect(surface.mouse.move.mock.calls[0][1]).not.toBe(box.y + box.height / 2);
-      expect(surface.mouse.move.mock.calls[1][1]).not.toBe(box.y + box.height / 2);
+      const documentColumnOf = (box: Box, client: number) => {
+        const fit = containFit(box, { width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE });
+        return (client - box.x - fit.offsetX) / fit.scale;
+      };
+      const wideStart = widePage.surface.mouse.move.mock.calls[0][0];
+      const narrowStart = narrowPage.surface.mouse.move.mock.calls[0][0];
+      expect(narrowStart, 'a narrower box really did move the stroke').not.toBe(wideStart);
+      expect(documentColumnOf(wide, wideStart)).toBe(ICON_STROKE.startX);
+      expect(documentColumnOf(narrow, narrowStart)).toBe(ICON_STROKE.startX);
     });
 
     it('throws when the icon canvas has no bounding box', async () => {
@@ -1364,7 +1974,7 @@ describe('Export Helpers', () => {
       const { surface, page, dialog, download } = createIcoExportPage();
       const target = path.join(DOWNLOAD_DIRECTORY, `${ICON_EXPORT_FILENAME}${icoFormat.extension}`);
 
-      const result = await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY);
+      const result = await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo);
 
       expect(dialog.fileMenuButton.click).toHaveBeenCalled();
       expect(dialog.saveMenuButton.click).toHaveBeenCalled();
@@ -1385,12 +1995,9 @@ describe('Export Helpers', () => {
       expect(surface.evaluate).toHaveBeenCalledTimes(1);
       const [compare, payload] = surface.evaluate.mock.calls[0];
       expect(typeof compare).toBe('function');
-      expect(payload).toEqual({
-        source: SOURCE_DATA_URL,
-        exported: EXPORTED_BASE64,
-        threshold: CHANGED_CHANNEL_THRESHOLD_ICO,
-        tolerance: CHANNEL_DELTA_TOLERANCE,
-      });
+      expect(payload).toEqual(
+        exportPixelPayload(SOURCE_DATA_URL, EXPORTED_BASE64, icoFormat.extension, CHANGED_CHANNEL_THRESHOLD_ICO)
+      );
       expect(result).toBe(target);
     });
 
@@ -1401,7 +2008,7 @@ describe('Export Helpers', () => {
       'ICO pixel comparator %s',
       async (_label, exported, expected) => {
         const { surface, page } = createIcoExportPage();
-        await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY);
+        await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo);
         const [compare, payload] = surface.evaluate.mock.calls[0];
 
         const requestedSources = stubCompareEnvironment({
@@ -1416,7 +2023,7 @@ describe('Export Helpers', () => {
 
     it('ICO pixel comparator reports an unavailable canvas context as its own failure', async () => {
       const { surface, page } = createIcoExportPage();
-      await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY);
+      await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo);
       const [compare, payload] = surface.evaluate.mock.calls[0];
 
       stubCompareEnvironment(
@@ -1432,7 +2039,7 @@ describe('Export Helpers', () => {
       // runs against an export whose dialog is still covering the document.
       const { page, download } = createIcoExportPage({ saveDialogCount: 1 });
 
-      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo)).rejects.toThrow(
         'expected count 0, received 1'
       );
 
@@ -1443,7 +2050,7 @@ describe('Export Helpers', () => {
     it('rejects without saving when the ICO download failed', async () => {
       const { page, download } = createIcoExportPage({ failure: 'canceled' });
 
-      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo)).rejects.toThrow(
         `${icoFormat.label}: download failed`
       );
 
@@ -1454,7 +2061,7 @@ describe('Export Helpers', () => {
       vi.mocked(readFile).mockResolvedValueOnce(Buffer.alloc(0));
       const { page } = createIcoExportPage();
 
-      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo)).rejects.toThrow(
         'ICO file should not be empty'
       );
     });
@@ -1463,7 +2070,7 @@ describe('Export Helpers', () => {
       const { page, download } = createIcoExportPage();
       download.saveAs.mockRejectedValue(new Error('ENOSPC: no space left on device'));
 
-      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo)).rejects.toThrow(
         'ENOSPC: no space left on device'
       );
 
@@ -1475,7 +2082,7 @@ describe('Export Helpers', () => {
         evaluate: vi.fn().mockResolvedValue({ ok: false, reason: 'context-unavailable' }),
       });
 
-      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo)).rejects.toThrow(
         `${icoFormat.label}: the browser provided no 2d canvas context to compare the export against`
       );
     });
@@ -1485,7 +2092,7 @@ describe('Export Helpers', () => {
         evaluate: vi.fn().mockResolvedValue({ ok: false, reason: 'pixels-differ' }),
       });
 
-      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, testInfo)).rejects.toThrow(
         'ICO: pixels differ too much from source'
       );
     });
@@ -1783,7 +2390,11 @@ describe('Export Helpers', () => {
       // the ICO flow to throw all of it away and keep the download directory.
       expect(code).not.toMatch(/\bsetupExportTest\b/);
       expect(code).toMatch(/\bsetupIcoTest\b/);
-      expect(code).toMatch(/\bmkdir\b/);
+      // The directory is prepared through the one function that CLEARS it. Hand-rolling
+      // `mkdir` is what this replaced: a directory left behind in a reused `outputDir`
+      // could satisfy a later read with a stale download.
+      expect(code).toMatch(/\bprepareExportDownloadDirectory\b/);
+      expect(code).not.toMatch(/\bmkdir\b/);
       expect(source).toContain('visual-regression.spec.ts');
     });
 
@@ -1811,6 +2422,376 @@ describe('Export Helpers', () => {
       expect(source).toContain('ag-psd@^31.0.2');
       expect(source).toContain('is a root dependency');
       expect(source).not.toContain('psd-tools');
+    });
+  });
+
+  /**
+   * The container oracle, which is the WHOLE content check for the two formats no browser
+   * decodes.
+   *
+   * Before this existed, `exportAndVerify` made exactly two assertions for a `container`
+   * format: `byteLength > 100`, and the file extension. On the 800x600 fixture a blank
+   * export measures 1,921,000 bytes as a TIFF and 67,408 as a PSD, so every test below
+   * describes a file that PASSED under that rule.
+   */
+  describe('exportByteVerifiers', () => {
+    const TIFF_FORMAT: ExportFormat = { label: 'TIFF', extension: '.tiff', verification: 'container' };
+    const PSD_FORMAT: ExportFormat = {
+      label: 'Photoshop PSD (layers)',
+      extension: '.psd',
+      verification: 'container',
+    };
+
+    const verifyTiff = (file: Buffer, sourceDataUrl: string) => verifyExportContainer(TIFF_FORMAT, file, sourceDataUrl);
+    const verifyPsd = (file: Buffer, sourceDataUrl: string) => verifyExportContainer(PSD_FORMAT, file, sourceDataUrl);
+
+    it('rejects a container format with no registered verifier rather than skipping it', async () => {
+      const unregistered: ExportFormat = { label: 'WebP', extension: '.webp', verification: 'container' };
+      await expect(verifyExportContainer(unregistered, Buffer.alloc(0), await drawnSourceDataUrl())).rejects.toThrow(
+        'WebP: no container verifier is registered for .webp'
+      );
+    });
+
+    it('rejects a source data URL with no base64 payload, rather than measuring nothing', async () => {
+      await expect(verifyTiff(await containerTiff(CONTAINER_IMAGE_SIZE), 'data:image/png')).rejects.toThrow(
+        'TIFF: the source canvas data URL has no base64 payload'
+      );
+    });
+
+    /**
+     * The byte order is read in FOUR places — the mark, the IFD offset, the entry count and
+     * every entry's tag — so a verifier that handled only one of them would pass every
+     * little-endian file it had ever been shown. Each is asserted to have been read, by
+     * requiring the walk to get PAST all of them: the failure a big-endian file produces
+     * must be the decode step and nothing before it.
+     *
+     * The decode is not asserted here, and this does not claim it. libvips rejects a
+     * hand-built uncompressed TIFF, so the raster step in big-endian order is covered by
+     * `structured-formats.spec.ts`, against the real encoder — whose output is big-endian.
+     */
+    it('walks a big-endian TIFF all the way to its raster, and only then fails', async () => {
+      const file = bigEndianTiff(CONTAINER_IMAGE_SIZE, CONTAINER_IMAGE_SIZE, 0);
+      expect(file.subarray(0, 4).toString('hex'), 'a real export is MM\\0*').toBe('4d4d002a');
+
+      const failure = await verifyTiff(file, await drawnSourceDataUrl()).then(
+        () => null,
+        (error: Error) => error.message
+      );
+
+      // Not the mark, not the IFD offset, not the entry count, not a missing tag: the walk
+      // read all of them correctly in this byte order and got to the raster.
+      expect(failure).not.toContain('is not a TIFF');
+      expect(failure).not.toContain('declares its first IFD at byte');
+      expect(failure).not.toContain('IFD entries');
+      expect(failure).not.toContain('is missing the');
+      expect(failure).toContain('the TIFF raster');
+    });
+
+    it('rejects a big-endian file whose mark is corrupted, exactly as it does a little-endian one', async () => {
+      const file = bigEndianTiff(CONTAINER_IMAGE_SIZE, CONTAINER_IMAGE_SIZE, 0);
+      file.write('MM', 0, 'latin1');
+      file[2] = 0x99;
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'TIFF: is not a TIFF: expected the II*\\0 or MM\\0* byte-order mark, read 4d4d992a'
+      );
+    });
+
+    it('rejects a big-endian file whose IFD is empty, reading the count in that order too', async () => {
+      const file = bigEndianTiff(CONTAINER_IMAGE_SIZE, CONTAINER_IMAGE_SIZE, 0);
+      file.writeUInt16BE(0, 8);
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'TIFF: declares 0 IFD entries, fewer than the 5 a decodable image needs'
+      );
+    });
+
+    it('accepts a TIFF whose raster carries the drawing', async () => {
+      await expect(
+        verifyTiff(await containerTiff(CONTAINER_IMAGE_SIZE), await drawnSourceDataUrl())
+      ).resolves.toBeUndefined();
+    });
+
+    it('rejects a TIFF with the wrong byte-order mark', async () => {
+      const file = await containerTiff(CONTAINER_IMAGE_SIZE);
+      file.write('XY', 0, 'latin1');
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'TIFF: is not a TIFF: expected the II*\\0 or MM\\0* byte-order mark'
+      );
+    });
+
+    it('rejects a TIFF that is shorter than a header', async () => {
+      await expect(verifyTiff(Buffer.alloc(3), await drawnSourceDataUrl())).rejects.toThrow('TIFF: is not a TIFF');
+    });
+
+    it('rejects a TIFF whose IFD declares no entries', async () => {
+      const file = await containerTiff(CONTAINER_IMAGE_SIZE);
+      const { littleEndian, offset } = tiffIfd(file);
+      writeTiffU16(file, littleEndian, offset, 0);
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'TIFF: declares 0 IFD entries, fewer than the 5 a decodable image needs'
+      );
+    });
+
+    it('rejects a TIFF whose IFD points outside the file', async () => {
+      const file = await containerTiff(CONTAINER_IMAGE_SIZE);
+      const { littleEndian } = tiffIfd(file);
+      writeTiffU32(file, littleEndian, 4, file.length + 1024);
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'TIFF: declares its first IFD at byte'
+      );
+    });
+
+    it('rejects a TIFF whose IFD entries do not fit in the file', async () => {
+      const file = await containerTiff(CONTAINER_IMAGE_SIZE);
+      const { littleEndian, offset } = tiffIfd(file);
+      const count = littleEndian ? file.readUInt16LE(offset) : file.readUInt16BE(offset);
+      writeTiffU16(file, littleEndian, offset, 0xfff0);
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        `TIFF: declares ${count === 0xfff0 ? count : 0xfff0} IFD entries, which do not fit in the`
+      );
+    });
+
+    it('rejects a TIFF whose IFD omits the tags that describe a raster', async () => {
+      const file = await containerTiff(CONTAINER_IMAGE_SIZE);
+      const { littleEndian, offset } = tiffIfd(file);
+      // Retag the first entry — ImageWidth — with an id nothing reads, without moving
+      // anything, so the directory is intact but no longer names an image.
+      writeTiffU16(file, littleEndian, offset + 2, 0x8888);
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'TIFF: its IFD is missing the ImageWidth tag'
+      );
+    });
+
+    /**
+     * THE CASE THAT MATTERS. A structurally perfect TIFF of blank canvas: a real
+     * byte-order mark, a full 10-entry directory naming width, length, samples and strip
+     * byte counts, and a raster that decodes to the right dimensions. Every header check
+     * above passes, and on the real fixture it is 1,921,000 bytes — four orders of magnitude
+     * clear of the `> 100` floor that used to be the only assertion this format had.
+     */
+    it('rejects a TIFF of blank canvas, which a header check cannot see', async () => {
+      const file = await containerTiff(CONTAINER_IMAGE_SIZE, { blank: true });
+      expect(file.byteLength).toBeGreaterThan(MIN_EXPORT_BYTES);
+
+      await expect(verifyTiff(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'TIFF: the TIFF raster carries 0 inked pixels'
+      );
+    });
+
+    it('rejects a TIFF of the wrong size', async () => {
+      await expect(
+        verifyTiff(await containerTiff(CONTAINER_IMAGE_SIZE * 2), await drawnSourceDataUrl())
+      ).rejects.toThrow(
+        `TIFF: the TIFF raster decodes to ${CONTAINER_IMAGE_SIZE * 2}x${CONTAINER_IMAGE_SIZE * 2}, not the source canvas's ${CONTAINER_IMAGE_SIZE}x${CONTAINER_IMAGE_SIZE}`
+      );
+    });
+
+    it('rejects a TIFF whose raster cannot be decoded', async () => {
+      const file = await containerTiff(CONTAINER_IMAGE_SIZE);
+      await expect(verifyTiff(file.subarray(0, 4), await drawnSourceDataUrl())).rejects.toThrow('TIFF: is not a TIFF');
+    });
+
+    it('accepts a PSD carrying the drawn document', async () => {
+      await expect(verifyPsd(containerPsd(), await drawnSourceDataUrl())).resolves.toBeUndefined();
+    });
+
+    it.each([
+      ['a wrong signature', { signature: '8BPX' }, 'does not start with the 8BPS signature'],
+      ['a wrong version', { version: 2 }, 'declares PSD version 2, not 1'],
+      ['no channels', { channels: 0 }, 'declares 0 channels'],
+
+      ['no layer and mask section', { layerAndMaskLength: 0 }, 'carries no layer and mask section'],
+      [
+        'a layer section that overruns the file',
+        { layerAndMaskLength: 1_000_000 },
+        // A regex, because the byte count is a function of the fixture and the label is
+        // followed by it: `Photoshop PSD (layers): is 324 bytes, too short to hold ...`.
+        /is \d+ bytes, too short to hold the layer and mask section it declares/,
+      ],
+      ['too few layers', { layerCount: 1 }, 'declares 1 layers, fewer than the 2 the drawn document has'],
+      [
+        'no drawing layer',
+        {
+          layerCount: 2,
+          layers: [{ name: 'Blank 1' }, { name: 'shape 3' }] as Array<{ name: string }>,
+        },
+        'has no layer named "draw 2"; its layers are "Blank 1", "shape 3"',
+      ],
+    ] satisfies Array<[string, PsdOptions, string | RegExp]>)(
+      'rejects a PSD with %s',
+      async (_label, options, expected) => {
+        const want = typeof expected === 'string' ? `Photoshop PSD (layers): ${expected}` : expected;
+        await expect(verifyPsd(containerPsd(options), await drawnSourceDataUrl())).rejects.toThrow(want);
+      }
+    );
+
+    it('rejects a drawing layer whose channels all declare zero bytes', async () => {
+      // The rectangles stay real and only the channel LENGTHS are zeroed, so the
+      // "carries no channel image data" check is the one that has to fire. Writing the file
+      // with `skipLayerImageData` instead would also erase the raster, and the degenerate
+      // rectangle would be reported first — which would make this test pass for the wrong
+      // reason.
+      const file = containerPsd();
+      const drawing = psdRecordTops(file)[1];
+      const channelCount = file.readUInt16BE(drawing + 16);
+      for (let channel = 0; channel < channelCount; channel += 1) {
+        file.writeUInt32BE(0, drawing + 18 + channel * 6 + 2);
+      }
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): layer "draw 2" carries no channel image data'
+      );
+    });
+
+    /**
+     * A degenerate rectangle and one that leaves the document cannot be asked of
+     * `writePsd` — it derives each layer's bounds from the raster it is handed — so the
+     * bytes are patched after the write, at the offsets the same walk
+     * `readPsdLayerRecords` performs. Each is a structural claim, so the failure names the
+     * rectangle rather than anything about pixels.
+     */
+    it('rejects a PSD whose drawing layer has a degenerate rectangle', async () => {
+      const file = containerPsd();
+      const drawing = psdRecordTops(file)[1];
+      file.writeInt32BE(2, drawing + 8); // bottom
+      file.writeInt32BE(2, drawing); // top
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): layer "draw 2" has a degenerate 4x0 rectangle'
+      );
+    });
+
+    it('rejects a PSD whose drawing layer lies outside the document', async () => {
+      const file = containerPsd();
+      const drawing = psdRecordTops(file)[1];
+      file.writeInt32BE(99, drawing + 12); // right
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        `Photoshop PSD (layers): layer "draw 2" spans (0,0)-(99,${CONTAINER_IMAGE_SIZE}), outside the ${CONTAINER_IMAGE_SIZE}x${CONTAINER_IMAGE_SIZE} document`
+      );
+    });
+
+    /**
+     * The PSD's SECOND pass, and the last hole `comparePixels: false` left open.
+     *
+     * The structural checks above all pass on this file: the signature, the section length,
+     * the layer count, the name "draw 2", a non-degenerate rectangle inside the document,
+     * and four channels with data in them. What it does not carry is a mark — the drawing
+     * layer's raster is paper-coloured. Before the raster pass existed, this file passed the
+     * whole of the PSD verifier, which is why the raster pass is here and not optional.
+     */
+    it('rejects a structurally valid PSD whose layers carry no drawing', async () => {
+      // Every structural claim holds on this file: the signature, the section length, the
+      // layer count, the name "draw 2", a non-degenerate rectangle inside the document, and
+      // channels with data in them. What it does not carry is a mark — the drawing layer's
+      // raster is paper-coloured. Before the raster pass existed this file passed the whole
+      // of the PSD verifier, which is why the pass is here and not optional.
+      const file = containerPsd({
+        layerCount: 2,
+        layers: [
+          { name: 'Blank 1', fill: 255 },
+          { name: 'draw 2', fill: 255 },
+        ],
+      });
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): its layers carry 0 inked pixels against the source'
+      );
+    });
+
+    it('rejects a PSD whose drawing layer kept only a fraction of the mark', async () => {
+      // The drawing layer is a quarter of the document's area rather than the whole of it.
+      // The layer NAMES and the counts still hold, so only the ink ratio can see this.
+      const file = containerPsd({
+        layerCount: 2,
+        layers: [
+          { name: 'Blank 1', fill: 255 },
+          { name: 'draw 2', fill: 0, right: CONTAINER_IMAGE_SIZE, bottom: CONTAINER_IMAGE_SIZE / 4 },
+        ],
+      });
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): its layers carry 4 inked pixels against the source'
+      );
+    });
+
+    it('rejects a PSD whose layer rasters cannot be decoded at all', async () => {
+      // The channel data declares a compression word ag-psd does not accept. Every
+      // structural check passes, so this is the only thing left that can reject it — which
+      // is the point: a PSD whose bytes say the right things but carry no readable raster
+      // must not pass.
+      const file = containerPsd();
+      // The drawing layer's first channel begins with a two-byte compression word; 9 is
+      // not a compression scheme, so the raster cannot be decoded.
+      file.writeUInt16BE(9, psdChannelDataAt(file, 1, 0));
+
+      const failure = await verifyPsd(file, await drawnSourceDataUrl()).then(
+        () => null,
+        (error: Error) => error.message
+      );
+      expect(failure).not.toBeNull();
+      expect(failure).not.toContain('8BPS');
+      expect(failure).not.toContain('IFD');
+      expect(failure).toMatch(/its layers (could not be decoded|carry \d+ inked pixels)/);
+    });
+
+    /**
+     * THE OTHER CASE THAT MATTERS, and the second of the two formats that used to pass
+     * unconditionally. A real zero-layer export declares 0 in its layer count, is 67,408
+     * bytes on the fixture, and passed the `> 100` floor and the extension check.
+     */
+    it('rejects a zero-layer PSD, which a byte-length floor cannot see', async () => {
+      const file = containerPsd({ layerCount: 0, layers: [] });
+      expect(file.byteLength).toBeGreaterThan(MIN_EXPORT_BYTES);
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): declares 0 layers, fewer than the 2 the drawn document has'
+      );
+    });
+
+    it('rejects a PSD too short to hold a header', async () => {
+      await expect(verifyPsd(Buffer.alloc(12), await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): is 12 bytes, too short to hold a PSD header'
+      );
+    });
+
+    it('rejects a truncated PSD with a message that names the layer table', async () => {
+      const file = containerPsd();
+
+      // Cut into the layer records, not into the trailing composite: a real PSD ends with
+      // a flattened image, so a 40-byte cut lands in padding and the file still parses.
+      await expect(verifyPsd(file.subarray(0, file.length - 200), await drawnSourceDataUrl())).rejects.toThrow(
+        /Photoshop PSD \(layers\): .*(layer record|declares \d+ layers|too short)/
+      );
+    });
+
+    it('rejects a container export whose source canvas carries no drawing either', async () => {
+      // Both sides blank. The guard is a comparison, so a fixture that never drew anything
+      // is rejected too rather than passing vacuously — which is the state `setupIcoTest`
+      // was in before its stroke was mapped into the document.
+      await expect(
+        verifyTiff(await containerTiff(CONTAINER_IMAGE_SIZE, { blank: true }), await blankSourceDataUrl())
+      ).rejects.toThrow('TIFF: the TIFF raster carries 0 inked pixels');
+    });
+  });
+
+  describe('prepareExportDownloadDirectory', () => {
+    it('clears and recreates the export directory under the test output dir', async () => {
+      const info = createTestInfoMock();
+      vi.mocked(mkdir).mockResolvedValue(undefined);
+      vi.mocked(rm).mockResolvedValue(undefined);
+
+      const result = await prepareExportDownloadDirectory(info);
+
+      expect(rm).toHaveBeenCalledWith(DOWNLOAD_DIRECTORY, { recursive: true, force: true });
+      expect(mkdir).toHaveBeenCalledWith(DOWNLOAD_DIRECTORY, { recursive: true });
+      expect(result).toBe(DOWNLOAD_DIRECTORY);
     });
   });
 });

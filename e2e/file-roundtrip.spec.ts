@@ -70,7 +70,7 @@ const FIXTURE_SPLIT_BAND = { min: 0.48, max: 0.52 } as const;
 /** `exportAndVerify`'s budget, reused because this spec is bound by the same encoders plus a reload. */
 const ROUNDTRIP_TEST_TIMEOUT_MS = INTEGRATION_TEST_TIMEOUT_MS;
 
-const PNG_FORMAT: ExportFormat = { label: 'PNG', extension: '.png', comparePixels: true };
+const PNG_FORMAT: ExportFormat = { label: 'PNG', extension: '.png', verification: 'browser-pixels' };
 
 /** The stroke colour the round trip puts on the canvas and reads back. */
 const STROKE_HEX = '#ff0000';

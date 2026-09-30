@@ -9,16 +9,17 @@ import { containFit, DEFAULT_DOCUMENT_SIZE, getWorkspaceCanvas } from '../helper
 import { clickToolButton } from '../helpers/toolbar-helpers';
 import {
   assertExportGeometry,
+  browserVerifiedFormats,
   exportAndVerify,
-  exportFormats,
   exportIcoAndVerify,
   INTEGRATION_TEST_TIMEOUT_MS,
   mimeType,
+  prepareExportDownloadDirectory,
   setupExportTest,
   setupIcoTest,
 } from './helpers';
 
-const formats = exportFormats.filter((f) => f.comparePixels);
+const formats = browserVerifiedFormats;
 
 /** Sub-directory of the committed snapshot directory that holds the baseline PNGs. */
 const BASELINE_DIR = 'export-baselines';
@@ -412,10 +413,9 @@ test.describe('Export visual regression', () => {
     const sourceDataUrl = await setupIcoTest(page);
     // The ICO flow never uses the workspace export fixture, so prepare its download
     // directory the same way `setupExportTest` does.
-    const downloadDirectory = path.join(testInfo.outputDir, 'exports');
-    await mkdir(downloadDirectory, { recursive: true });
+    const downloadDirectory = await prepareExportDownloadDirectory(testInfo);
 
-    await exportIcoAndVerify(page, sourceDataUrl, downloadDirectory);
+    await exportIcoAndVerify(page, sourceDataUrl, downloadDirectory, testInfo);
   });
 });
 
