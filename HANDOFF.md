@@ -3907,3 +3907,88 @@ file leaves the other wrong and the e2e tooltip check reads whichever it reads.
 
 **Files.** `src/tools/descriptions/tooltips.ts:185`, `src/tools/descriptions/type-crop.ts:129`,
 `src/tools/crop.ts:27-36`
+
+## 121. A shape committed in a cropped document has the document-frame offset applied twice
+
+**Problem.** `ShapeToolArea` converts the drag into document space, derives a position from the
+converted points, hands that position to `createLayerFromTool` — and `createLayerFromTool` converts
+it into document space **again**:
+
+```
+main:src/components/Main/ShapeToolArea.tsx:177   const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
+main:src/components/Main/ShapeToolArea.tsx:178   const end   = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
+main:src/components/Main/ShapeToolArea.tsx:188   const pos   = shapeGeometryBounds({ start, end }, args.lineWidth);
+main:src/components/Main/ShapeToolArea.tsx:200   createLayerFromTool(fullArgs);
+
+main:src/contexts/useLayer.ts:278                const createLayerFromTool = (sourceArgs) => {
+main:src/contexts/useLayer.ts:286                  if (!pos) { … derive … }
+main:src/contexts/useLayer.ts:296                  pos: canvasToDocumentPos(pos, documentFrame),
+```
+
+`useLayer.ts:286` only skips the _derivation_ when `pos` is supplied. The **conversion** at `:296` is
+unconditional, so a caller that already converted is charged twice.
+
+**Reproduce.** Crop the document so `documentFrame.x` or `.y` is non-zero, then draw a shape. The
+layer's origin is displaced by twice the crop offset — at a 100px crop the shape lands 200px from
+where it was dragged. In an uncropped document `documentFrame` is `{x:0,y:0}` and the bug is
+invisible, which is why the default 800x600 document has never shown it.
+
+**Fix.** Make the contract explicit rather than inferred: either `createLayerFromTool` takes a
+position already in document space and does not convert it, or it takes a position in layer space and
+the caller does not. One of the two conversions has to go. The durable-conversion layer makes this
+worth settling properly rather than patching at the call site — a `pos` whose coordinate space
+depends on which path built it will be re-introduced by the next caller, and `legacy-tool` conversion
+serialises whatever `pos` it is handed.
+
+**Where this came from.** The abandoned branch `ps-tools-spine` (`8351451e`, now unreachable from any
+branch; anchored at `refs/keep/harvested/ps-tools-spine`), whose salvage documented it as a handoff
+item. It is recorded nowhere on main — `grep -ci "ShapeToolArea.*offset|offset.*twice"` over
+`main:HANDOFF.md` and `main:e2e/OPEN_PROBLEMS.md` both return 0.
+
+**Note on the rest of that branch:** do not land it. Its Gradient implementation is superseded by
+`d8f5d03f`, and its `ec9bbb58` would **reverse a deliberate tripwire** —
+`main:src/contexts/layer-utils.blend-mode.test.ts:178` is `it('ignores a mode carried on a non-paint
+tool source, which no bar ever writes')`, commented as existing precisely so that widening the blend
+seam is a deliberate change with a test to update. The branch deletes that test and asserts the
+opposite.
+
+**Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-300`
+
+## 122. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
+
+**Problem.** `getStrokeAnalysis` counts only pixels that are **dark** (`STROKE_ANALYSIS.DARK_THRESHOLD`)
+**or** a **spray** pixel — and the spray arm is `luminance > SPRAY_LUMINANCE_THRESHOLD` (200),
+`saturation < 30`, and not near-white. Every pixel in between is invisible to it. The spray renderer
+is now denser than it was (it was fixed to give a real dab rather than a grey blur), so a mid-tone
+spray falls into exactly that blind band, and `waitForSprayPixels` then fails on a **timeout** with a
+message about a null analysis rather than about missing ink.
+
+**Reproduce.** Spray at a mid luminance and call `getStrokeAnalysis`. The pixel count does not include
+it, so the wait times out. The measurement on the branch: the landed renderer drops the analysis from
+26,040 counted pixels to 8,144.
+
+**Why it matters beyond this suite:** the threshold is not a test detail, it is the definition of
+"there is ink here". Anything that reasons about spray coverage inherits it, and the unit suite
+hard-codes the same threshold at `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`, so
+changing the rule has to change that too — it is a gate on the gate.
+
+**Fix.** Either widen the classifier to a real "is this an ink pixel for the tool that drew it"
+predicate, or make it tool-parameterised so a spray's expected luminance comes from the tool's own
+`settings` rather than a constant. Then fix the failure MESSAGE: a timeout caused by an empty analysis
+must say so, because "timed out waiting for pixels" sends the next reader to widen a timeout instead
+of looking at the classifier.
+
+**Platform contract.** Photoshop's Airbrush is a density-building tool: it deposits colour while the
+pointer is held, and Flow controls how fast
+(https://helpx.adobe.com/photoshop/using/airbrush-tool-options.html). A single visible tap depositing
+one dab is the correct order of operations — the pre-fix `alpha / 4` peak of 0.125 made the tool dark
+on a drag and invisible on a tap. The flow accumulation itself is not reachable in this renderer; that
+is a separate known limit, and it belongs in this file rather than in a comment on the renderer.
+
+**Where this came from.** The abandoned branch `fix/spray` (`60590a25`, anchored at
+`refs/keep/harvested/fix-spray`). The _code_ half of that branch is already on main as `1a26dfe5` —
+same subject, rebuilt on a different base, which is why `git cherry` reported it unabsorbed. Only the
+defect record was missing, and it is recorded nowhere on main
+(`git show main:e2e/OPEN_PROBLEMS.md | grep -i spray` → empty).
+
+**Files.** `e2e/helpers/canvas-helpers.ts:242`, `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`
