@@ -394,14 +394,34 @@ describe('yieldToHost', () => {
     expect(outcome.state).toBe('published');
   });
 
-  it('restores the host requestAnimationFrame after a test that stubbed one', () => {
+  it('restores the host requestAnimationFrame the teardown is responsible for', () => {
     // The tripwire for the file-level `afterEach`'s `vi.unstubAllGlobals()`. The
-    // two `yieldToHost` tests above `vi.stubGlobal` the global, and `vitest.config.ts`
-    // sets `isolate: true` per FILE without `unstubGlobals`, so a stub that
-    // survived would make every later test in this file — and every other
-    // `vi.fn` expectation on the host — silently run against a mock. A `vi.fn`
-    // reaches this assertion only if an earlier test's stub was never unstuck.
-    expect(vi.isMockFunction(globalThis.requestAnimationFrame)).toBe(false);
-    expect(typeof globalThis.requestAnimationFrame).toBe('function');
+    // two `yieldToHost` tests in this block `vi.stubGlobal` the host, and
+    // `vitest.config.ts` sets `isolate: true` per FILE without `unstubGlobals`,
+    // so a stub that survived would make every later test in this file — and
+    // every `vi.fn` expectation on the host — silently run against a mock.
+    //
+    // ORDER-INDEPENDENT BY CONSTRUCTION. This arrived asserting only
+    // `isMockFunction(rAF) === false`, which is a claim about what an EARLIER
+    // test left behind: it is satisfied by an empty run, by `-t` filtering this
+    // one test in alone, and it goes vacuous the moment either `yieldToHost`
+    // test is renamed, moved into another file or deleted. A tripwire whose
+    // sensitivity is a side effect of unrelated tests is worse than none,
+    // because it reads as coverage. So the stub is installed HERE, the teardown
+    // the afterEach performs is invoked here, and the restoration is asserted
+    // against the value captured before this test touched anything.
+    const host = globalThis.requestAnimationFrame;
+    expect(typeof host, 'precondition: the host rAF is real').toBe('function');
+    expect(vi.isMockFunction(host), 'precondition: nothing stubbed rAF on entry').toBe(false);
+
+    vi.stubGlobal('requestAnimationFrame', vi.fn());
+    expect(vi.isMockFunction(globalThis.requestAnimationFrame), 'the stub took').toBe(true);
+
+    // Exactly the call the file-level `afterEach` makes, and the whole of the
+    // contract: a stub must not outlive the test that installed it.
+    vi.unstubAllGlobals();
+
+    expect(vi.isMockFunction(globalThis.requestAnimationFrame), 'the teardown unstuck it').toBe(false);
+    expect(globalThis.requestAnimationFrame, 'and put the host back, not a lookalike').toBe(host);
   });
 });
