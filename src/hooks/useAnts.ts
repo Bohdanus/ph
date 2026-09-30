@@ -16,23 +16,33 @@ export const SPEED = 1; // pixels per frame
 export type AntsProps = {
   overlayRef: RefObject<HTMLCanvasElement | null>;
   containerRef?: RefObject<HTMLDivElement | null>;
+  /**
+   * CSS px per document px, as a ref — the contain fit. See `useContainScale`.
+   *
+   * The constants above are CSS px, but the overlay canvas is sized to the DOCUMENT and displayed
+   * with `object-contain`, so a context draws in document px and every one of them has to be
+   * divided by this to stay constant on screen. Omitting it leaves the divisor at 1, which is
+   * exactly what this hook did before the divisor existed: correct at scale 1, sub-pixel below it.
+   */
+  scaleRef?: RefObject<number>;
 };
 
 type Outline = { bounds: Pos; path?: Path2D };
 
 // Use an overlay owned by this hook: clearing an outline also clears its interior.
-export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
+export function useMarchingAnts({ overlayRef, containerRef, scaleRef }: AntsProps) {
   const animationIdRef = useRef<number | null>(null);
   const dashOffsetRef = useRef(0);
   const outlineRef = useRef<Outline | null>(null);
-  const paintedRef = useRef<{ ctx: CanvasRenderingContext2D; bounds: Pos } | null>(null);
+  const paintedRef = useRef<{ ctx: CanvasRenderingContext2D; bounds: Pos; lineWidth: number } | null>(null);
   const cursorContainerRef = useRef<HTMLDivElement | null>(null);
 
   const erase = useCallback(() => {
     const painted = paintedRef.current;
     if (!painted) return;
     const { x, y, width, height } = painted.bounds;
-    painted.ctx.clearRect(x - LINE_WIDTH, y - LINE_WIDTH, width + LINE_WIDTH * 2, height + LINE_WIDTH * 2);
+    const { lineWidth } = painted;
+    painted.ctx.clearRect(x - lineWidth, y - lineWidth, width + lineWidth * 2, height + lineWidth * 2);
     paintedRef.current = null;
   }, []);
 
@@ -52,25 +62,33 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
     erase();
     if (!outline || !ctx) return;
 
+    const scale = scaleRef?.current ?? 1;
+    const lineWidth = LINE_WIDTH / scale;
+    const dashLength = DASH_LENGTH / scale;
+    const gapLength = GAP_LENGTH / scale;
+
     const { x, y, width, height } = outline.bounds;
     ctx.save();
     resetOverlayAlpha(ctx);
-    ctx.lineWidth = LINE_WIDTH;
+    ctx.lineWidth = lineWidth;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'butt';
-    ctx.setLineDash([DASH_LENGTH, GAP_LENGTH]);
+    ctx.setLineDash([dashLength, gapLength]);
     ctx.strokeStyle = 'black';
     ctx.lineDashOffset = dashOffsetRef.current;
     if (outline.path) ctx.stroke(outline.path);
     else ctx.strokeRect(x, y, width, height);
     ctx.strokeStyle = 'white';
-    ctx.lineDashOffset = dashOffsetRef.current + DASH_LENGTH;
+    ctx.lineDashOffset = dashOffsetRef.current + dashLength;
     if (outline.path) ctx.stroke(outline.path);
     else ctx.strokeRect(x, y, width, height);
     ctx.restore();
 
-    paintedRef.current = { ctx, bounds: outline.bounds };
-    dashOffsetRef.current = (dashOffsetRef.current - SPEED) % (DASH_LENGTH + GAP_LENGTH);
+    paintedRef.current = { ctx, bounds: outline.bounds, lineWidth };
+    // The crawl rate is a screen speed, so it is divided by the same factor as the dash it walks
+    // along. At scale 1 this is the original `SPEED`; below it the ants keep the same apparent pace
+    // instead of crawling in slow motion.
+    dashOffsetRef.current = (dashOffsetRef.current - SPEED / scale) % (dashLength + gapLength);
     animationIdRef.current = requestAnimationFrame(animate);
   };
 
