@@ -773,28 +773,47 @@ Whether the fix is the timeout or a fresh page per height is a call for whoever
 owns the spec. What is not a call: the failure is a budget, and diagnosing it as
 a layout or a product defect wastes a run.
 
-## 14. The lock and queue suites fail inside a full-suite run and never in isolation
+## 14. The lock and queue suites ran inside a budget smaller than their own work
 
-Observed four times across two branches: `scripts/__tests__/e2e-run.test.mjs` and
-`scripts/__tests__/agent-board.test.mjs` contribute failures to `npm test` while
-the fleet is active, and every one of them passes when the same file is run on
-its own (158 tests, twice). The named failures are the ones that depend on
-another agent's state rather than on a fixture: _reclaims the queue from a holder
-whose process is gone_, _never reclaims a holder that this wrapper did not
-create_, _is per run, so two runs on one branch are two holders_, and _gives back
-only its own locks when a claim fails_. A run where `npm run swarm -- doctor`
-says "every claim and lock is live" is a run where these are competing with real
-holders.
+Observed four times across two branches, and the standing guess about it was
+wrong. The entry used to say these tests fail inside a full-suite run because
+they depend on another agent's state rather than on a fixture, and it named the
+board database and the queue lock file as the shared reads that lose. Neither is
+involved: these suites already isolate the board by pointing `AGENT_BOARD_DIR` at
+a fresh temp directory, and the queue lock lives in that same directory.
 
-The distinction that matters when reading the report: a failing test in
-`agent-board.test.mjs` looks like a regression in the board's locking, and a
-failing test in `e2e-run.test.mjs` looks like a regression in the e2e queue. Both
-are the fleet talking to itself. Re-run the file alone before believing either.
+What they are is not unit tests. Each one builds its state by spawning the real
+board CLI, so its cost is process spawns and not computation — a cold board call
+is ~60-80ms from a shell, and the slowest test in `e2e-run.test.mjs` spends eight
+of them. Vitest's 5s default is therefore not a budget those files can live
+inside. Measured over three isolated runs, the slowest span per file was 7.1s,
+4.5s and 3.0s: a budget at or below the work it is timing, which is why `npm run
+test` reported five of them as `Test timed out in 5000ms` with no code change
+anywhere.
 
-NOT ESTABLISHED: which shared read or liveness probe is the one that loses. The
-obvious candidates — the board database and the queue lock file, both shared by
-every agent in the repository — are where to look, but no single mechanism was
-isolated, so this entry records the pattern and the reproduction, not a cause.
+The tempting explanation is a contention factor, and it is false here. A full
+266-file run was measured against the same tests and came out FASTER per test
+than the three-file run — median 0.45x, max 1.1x, n=48. So "a full run is N times
+more loaded" is not a claim this suite can support, and a number of that shape
+would be a guess wearing a measurement's clothes. Do not reinstate one.
+
+Each suite now declares its own budget next to its imports, sized from its own
+measured worst case, and `scripts/__tests__/suite-budgets.test.mjs` is the
+tripwire: it fails if a budget is reverted to the default, lowered below three
+times it, declared twice, or matched by a reader that no longer recognises the
+call it is looking for. It reads the suites' SOURCE, because the budget is a
+`vi.setConfig` side effect that nothing exports and an import can only see the
+default it is guarding. Two properties were checked rather than assumed and are
+worth keeping: the budget is scoped to the file that declares it (a 7s body in an
+undeclared sibling still died at the 5s default in the same run), and a per-test
+`it(name, fn, timeout)` argument still wins over the file budget, which is how the
+two tests that read git in every worktree keep their declared `60_000`.
+
+**Remaining verification:** the code review this change was merged without. Every
+review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
+was not an available substitute, and it was merged on the operator's decision with
+the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
+fixed two false claims in the new comments, but that is not the review.
 
 ## 15. The worktree-inventory suite cannot pass in a checkout without this machine's worktrees
 
@@ -853,6 +872,10 @@ branch from reading as disposable, so it must not be skipped there.
   records the operator decision with its reason inline
 - `scripts/__tests__/e2e-run.test.mjs` — the only coverage of the lock, including a
   test that reads the board as another agent while a suite is "running"
+- `scripts/__tests__/suite-budgets.test.mjs` — the tripwire behind section 14, which
+  reads the three spawn-heavy suites' SOURCE for their declared `testTimeout` and
+  fails if one is reverted, lowered, or matched by a reader that no longer
+  recognises the call it is looking for
 - `playwright.config.ts` — the `webServer` block, the now opt-in
   `reuseExistingServer` condition behind section 10, and why an explicit `PLAYWRIGHT_PORT`
   disables server reuse

@@ -253,6 +253,17 @@ describe('EraserToolArea', () => {
   });
 
   it('coalesces a burst of pointer moves into exactly one live-layer write', () => {
+    // The faked clock is confined to THIS test, and that is the runner's guarantee
+    // rather than this file's: a test that installs fake timers and a later test
+    // that asks `vi.isFakeTimers()` sees `false`, because Vitest restores timers
+    // between tests. Measured, not assumed — a two-test probe with one faking the
+    // clock and the next reporting what it inherited printed `false`.
+    //
+    // So there is deliberately no `afterEach(() => vi.useRealTimers())` here, and
+    // adding one would be noise that reads as a fix. A grep for `useFakeTimers`
+    // without a matching `useRealTimers` in the same file reports this as a leak;
+    // it is not one, and an earlier pass of this file's own audit reported it as
+    // one and shipped a guard that could not have failed.
     vi.useFakeTimers();
     const { toolArea } = renderArea();
 

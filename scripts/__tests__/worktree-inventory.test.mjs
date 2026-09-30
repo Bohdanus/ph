@@ -21,7 +21,7 @@
  * `node:sqlite` is only exercised where a real temporary database is cheap.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
@@ -36,6 +36,43 @@ import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
+
+/**
+ * This file's budget, and the reason it is not Vitest's default 5s.
+ *
+ * The "against a real repository" blocks build a throwaway git repository per
+ * test and then run real `git` against it, so a test here is bounded by process
+ * spawns and git's own startup rather than by anything being computed. The
+ * `curated table` block is worse: it reads git in every worktree in the
+ * repository, which is 70-odd directories on this machine today and grows with
+ * the fleet.
+ *
+ * The default is not merely tight for that, it is at or above the measured cost
+ * of this file's own slowest test: across three isolated runs of the three
+ * `scripts/` suites on this machine the slowest span here EXCLUDING the two tests
+ * that declare their own budget was 3.0s (`reports a conflict when both sides
+ * changed the same line`), and `reports whether the commit list was cut off at the
+ * cap` has been reported failing at the 5s default with no code change.
+ *
+ * What is deliberately NOT claimed here: any contention factor. A full 266-file
+ * run was measured against these same tests and came out FASTER per test than the
+ * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
+ * not a thing this suite can currently support. The headroom below is stated for
+ * what it is: 15s is about five times this file's own worst measured case, and is
+ * deliberately tighter than the two sibling suites because they spawn a CLI per
+ * assertion and this one does not.
+ *
+ * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
+ * only decides how long a test may run before the harness reports it, and no
+ * assertion below is changed by it.
+ *
+ * A per-test `it(name, fn, timeout)` argument still wins over this. The two tests
+ * that read every worktree keep their declared `60_000`, which is what they
+ * actually need: `gives every non-primary worktree a curated entry` measures
+ * 21.5s on a machine with 70 worktrees, and that number is a function of how
+ * many worktrees exist, not of this test.
+ */
+vi.setConfig({ testTimeout: 15_000 });
 
 const NOW = 1_790_000_000_000;
 
