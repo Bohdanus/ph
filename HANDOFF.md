@@ -4326,51 +4326,36 @@ file leaves the other wrong and the e2e tooltip check reads whichever it reads.
 **Files.** `src/tools/descriptions/tooltips.ts:185`, `src/tools/descriptions/type-crop.ts:129`,
 `src/tools/crop.ts:27-36`
 
-## 132. A shape committed in a cropped document has the document-frame offset applied twice
+## 132. NOT A DEFECT — the shape’s three document-frame conversions are correct, and a test already pins that
 
-**Problem.** `ShapeToolArea` converts the drag into document space, derives a position from the
-converted points, hands that position to `createLayerFromTool` — and `createLayerFromTool` converts
-it into document space **again**:
+**This entry is a guard against a future "simplification", not a problem to fix.** An earlier
+reading of this code claimed the frame offset is applied twice to a shape and lands it 2x from
+where it was dragged. **That reading was wrong.** The arithmetic is worth writing down so nobody
+derives it again. Three conversions, in order:
 
-```
-main:src/components/Main/ShapeToolArea.tsx:177   const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
-main:src/components/Main/ShapeToolArea.tsx:178   const end   = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
-main:src/components/Main/ShapeToolArea.tsx:188   const pos   = shapeGeometryBounds({ start, end }, args.lineWidth);
-main:src/components/Main/ShapeToolArea.tsx:200   createLayerFromTool(fullArgs);
+| where                                                                                    | conversion        | sign   |
+| ---------------------------------------------------------------------------------------- | ----------------- | ------ |
+| `ShapeToolArea.tsx:177-178`, `canvasToDocumentPoint(..., documentFrame)`                 | canvas → document | **+1** |
+| `useLayer.ts:296`, `createLayerFromTool`, `pos: canvasToDocumentPos(pos, documentFrame)` | canvas → document | **+1** |
+| `layer-renderer.ts:78-79`, `position.x - (documentFrame?.x ?? 0)`                        | document → canvas | **−1** |
 
-main:src/contexts/useLayer.ts:278                const createLayerFromTool = (sourceArgs) => {
-main:src/contexts/useLayer.ts:286                  if (!pos) { … derive … }
-main:src/contexts/useLayer.ts:296                  pos: canvasToDocumentPos(pos, documentFrame),
-```
+`document-frame.ts:44-47` — `canvasToDocumentPos` adds. `:40-41` — `documentToCanvasPos`
+subtracts. The renderer’s inline subtraction is that same conversion. **Net +1**, which is
+correct: a shape in a cropped document belongs one frame down and right of the origin.
 
-`useLayer.ts:286` only skips the _derivation_ when `pos` is supplied. The **conversion** at `:296` is
-unconditional, so a caller that already converted is charged twice.
+The two "+1"s are not redundant. The first converts the _gesture_ from canvas to document space.
+The second is `createLayerFromTool`’s unconditional conversion, which exists because a caller may
+supply a `pos` already in layer space and a caller may not. `useLayer.ts:286` skips only the
+_derivation_ when `pos` is supplied; the conversion at `:296` is not conditional, and that is
+deliberate rather than an oversight.
 
-**Reproduce.** Crop the document so `documentFrame.x` or `.y` is non-zero, then draw a shape. The
-layer's origin is displaced by twice the crop offset — at a 100px crop the shape lands 200px from
-where it was dragged. In an uncropped document `documentFrame` is `{x:0,y:0}` and the bug is
-invisible, which is why the default 800x600 document has never shown it.
+**Do not "fix" this by dropping either conversion.** `fix/shape-truth` carries a test that frames
+the pair in exactly these terms — "the renderer’s `pos - documentFrame` cancels the commit’s
+`+ documentFrame`" — so the cancellation is already pinned, and that test is what to read before
+touching either line.
 
-**Fix.** Make the contract explicit rather than inferred: either `createLayerFromTool` takes a
-position already in document space and does not convert it, or it takes a position in layer space and
-the caller does not. One of the two conversions has to go. The durable-conversion layer makes this
-worth settling properly rather than patching at the call site — a `pos` whose coordinate space
-depends on which path built it will be re-introduced by the next caller, and `legacy-tool` conversion
-serialises whatever `pos` it is handed.
-
-**Where this came from.** The abandoned branch `ps-tools-spine` (`8351451e`, now unreachable from any
-branch; anchored at `refs/keep/harvested/ps-tools-spine`), whose salvage documented it as a handoff
-item. It is recorded nowhere on main — `grep -ci "ShapeToolArea.*offset|offset.*twice"` over
-`main:HANDOFF.md` and `main:e2e/OPEN_PROBLEMS.md` both return 0.
-
-**Note on the rest of that branch:** do not land it. Its Gradient implementation is superseded by
-`d8f5d03f`, and its `ec9bbb58` would **reverse a deliberate tripwire** —
-`main:src/contexts/layer-utils.blend-mode.test.ts:178` is `it('ignores a mode carried on a non-paint
-tool source, which no bar ever writes')`, commented as existing precisely so that widening the blend
-seam is a deliberate change with a test to update. The branch deletes that test and asserts the
-opposite.
-
-**Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-300`
+**Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-300`,
+`src/contexts/layer-renderer.ts:78-79`, `src/contexts/document-frame.ts:40-47`
 
 ## 133. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
 
