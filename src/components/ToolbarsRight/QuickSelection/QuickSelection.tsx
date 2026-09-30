@@ -91,7 +91,9 @@ const QuickSelection: React.FC<{}> = () => {
   const handleCopy = () => {
     if (!activeSelection) return;
 
-    copyActiveSelection(activeSelection);
+    if (!copyActiveSelection(activeSelection)) {
+      console.error('Failed to copy quick selection');
+    }
   };
 
   // Only what the tool area does. Photoshop's Alt-drag brush-tip resize and Shift-drag circular

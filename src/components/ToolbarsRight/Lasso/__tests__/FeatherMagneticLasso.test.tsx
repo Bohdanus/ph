@@ -178,6 +178,10 @@ describe('FeatherMagneticLasso toolbar', () => {
     patchToolArgsMock.mockClear();
     toolArgsAvailable.current = true;
     clipboardMock.copyActiveSelection.mockClear();
+    // The real hook returns `true` on success (`useSelectionClipboard.ts:61`) and the component
+    // READS it, so a bare `vi.fn()`'s `undefined` would be indistinguishable from a refused copy
+    // in every test that copies without choosing a return value for itself.
+    clipboardMock.copyActiveSelection.mockReturnValue(true);
     clipboardMock.layerViaCopy.mockClear();
     clipboardMock.pasteSelectionClipboard.mockClear();
     setClipboardState();
@@ -562,6 +566,55 @@ describe('FeatherMagneticLasso toolbar', () => {
   });
 
   describe('copy failure', () => {
+    it('reports a copy that returns false, which is not the throwing path', async () => {
+      clipboardMock.copyActiveSelection.mockReturnValueOnce(false);
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
+
+      try {
+        render(<FeatherMagneticLasso />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        // A refusal reaches no `catch`: `copySelection` returns `false` rather than throwing, so
+        // the click above produced no output at all before the component read the boolean.
+        await waitFor(() => {
+          expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to copy feathered magnetic selection');
+        });
+        // The throwing path prefixes the error it caught, so the two diagnostics stay separate.
+        expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+          'Error copying feathered magnetic selection:',
+          expect.anything()
+        );
+        // `finally` releases the transient state on a refusal exactly as it does on a throw.
+        const copyButton = screen.getByRole('button', { name: 'Copy' });
+        expect(copyButton).toHaveTextContent('Copy');
+        expect(copyButton).toBeEnabled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it('logs nothing when the copy succeeds', async () => {
+      // The other half of the contract, and the one an unconditional `console.error` would
+      // pass while breaking every copy: a successful copy is not a failure.
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
+
+      try {
+        render(<FeatherMagneticLasso />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        await waitFor(() => {
+          expect(clipboardMock.copyActiveSelection).toHaveBeenCalledTimes(1);
+        });
+        expect(consoleErrorSpy).not.toHaveBeenCalled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
     it('logs when the copy throws, then restores the button', async () => {
       const failure = new Error('clipboard exploded');
       // `mockImplementationOnce` so the throwing behaviour cannot leak: the shared `beforeEach`

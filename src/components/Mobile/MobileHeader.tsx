@@ -78,7 +78,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
       });
       if (data) handleImageSave(data);
     } catch (error) {
-      console.error(`Failed to save image: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to save image:', error);
     }
   };
 

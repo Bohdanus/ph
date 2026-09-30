@@ -277,7 +277,15 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage,
     onKeyDown: () => {
-      copyActiveSelection();
+      // The only copy call site with no `try` around it, and the one that most needs the
+      // boolean read: `copySelection` returns `false` for a null snapshot instead of
+      // throwing, so an unread result is a failed copy that leaves no trace anywhere. This
+      // registration deliberately does NOT set `repeat`, which is what keeps the log to one
+      // line per press — `useKeyboardEvents.tsx:154` drops an `event.repeat` before
+      // `onKeyDown` runs, so a held Meta+C is one intent and one line, not a scrub.
+      if (!copyActiveSelection()) {
+        console.error('Failed to copy selection');
+      }
     },
   });
 

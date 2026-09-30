@@ -434,11 +434,13 @@ function requireSelectionCanvasContext(canvas: ClipboardCanvas, operation: strin
  * (`src/tools/selection.ts:18`), reached solely from `tempUpdateLayer`, whose `catch`
  * (`src/contexts/useLayer.ts:606-608`) logs it and returns. Nothing else observes it, which
  * is exactly why a stand-in canvas cannot be substituted here: a `null` would leave the
- * error with no in-band consumer at all. The outermost UI callers are a separate channel and
- * do not reach these wrappers — they go through `copyActiveSelection`, whose `false` return
- * only `Lasso.tsx` reads, while `FreehandLasso.tsx`, `FeatherMagneticLasso.tsx`,
- * `MagicWand.tsx`, `RectangularSelection.tsx` and `AppKeyboardShortcuts.tsx` all discard it,
- * and the keyboard shortcut discards it outside any `try`.
+ * error with no in-band consumer at all. The outermost UI callers are a separate channel
+ * and never reach these wrappers — they go through `copyActiveSelection`, whose `false`
+ * return every caller now reads and reports: `Lasso.tsx`, `FreehandLasso.tsx`,
+ * `FeatherMagneticLasso.tsx`, `MagicWand.tsx`, `QuickSelection.tsx`,
+ * `EllipticalSelection.tsx`, `RectangularSelection.tsx` and the `AppKeyboardShortcuts.tsx`
+ * copy shortcut each log it. That channel is therefore not silent, but it is not this one
+ * either: it reports the missing snapshot, and says nothing about the context failure below.
  */
 function unavailableSelectionCanvasContext(operation: string, canvas: ClipboardCanvas): null {
   console.error(new SelectionCanvasContextError(operation, canvas.width, canvas.height));

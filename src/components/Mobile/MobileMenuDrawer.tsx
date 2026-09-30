@@ -46,7 +46,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
       const data = await openNewImageDialog();
       if (data) setBlankImage(data);
     } catch (error) {
-      console.error(`Failed to create document: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to create document:', error);
     }
   };
 
@@ -57,7 +57,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
       const data = await openLoadImageDialog();
       if (data) await setImageFromUpload(data);
     } catch (error) {
-      console.error(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to open file:', error);
     }
   };
 
@@ -79,7 +79,7 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
       });
       if (data) handleImageSave(data);
     } catch (error) {
-      console.error(`Failed to export image: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to export image:', error);
     }
   };
 

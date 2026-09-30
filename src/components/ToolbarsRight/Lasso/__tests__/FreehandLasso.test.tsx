@@ -139,6 +139,12 @@ describe('FreehandLasso toolbar', () => {
     mockPatchToolArgs.mockClear();
     mockDispatch.mockClear();
     clipboardMocks.copyActiveSelection.mockClear();
+    // The real hook returns `true` on success (`useSelectionClipboard.ts:61`), and the component
+    // now READS that boolean. Left at the `undefined` a bare `vi.fn()` returns, a click here
+    // would look exactly like a refused copy, so the default has to be the success value —
+    // otherwise every test that copies without asking for a return value reports a failure
+    // that never happened.
+    clipboardMocks.copyActiveSelection.mockReturnValue(true);
     clipboardMocks.pasteSelectionClipboard.mockClear();
   });
 
@@ -255,6 +261,34 @@ describe('FreehandLasso toolbar', () => {
 
       expect(errorSpy).toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.any(Error));
       // The transient copying state must be released even when the copy throws.
+      expect(getCopyButton()).toBeEnabled();
+      expect(getCopyButton()).toHaveTextContent('Copy');
+    } finally {
+      clipboardMocks.copyActiveSelection.mockReset();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('reports a copy that returns false, which is not the throwing path', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Same reason as the two tests above: the restore has to run whatever the assertions do,
+    // because a red assertion would otherwise leave `console.error` mocked for the rest of the file.
+    try {
+      setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
+      // A REFUSAL, not a throw: `copySelection` returns `false` when there is no snapshot to
+      // take and never reaches the `catch` above it, so the only way out of the silent path
+      // is the component reading the boolean itself.
+      clipboardMocks.copyActiveSelection.mockReturnValueOnce(false);
+      render(<FreehandLasso />);
+
+      fireEvent.click(getCopyButton());
+
+      expect(errorSpy).toHaveBeenCalledWith('Failed to copy freehand lasso selection');
+      // Distinct from the throwing path, which prefixes the error it caught — if either
+      // branch's message ever changes, these two must not collapse into one diagnostic.
+      expect(errorSpy).not.toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.anything());
+      // A refusal is still a completed attempt, so `finally` releases the transient state.
       expect(getCopyButton()).toBeEnabled();
       expect(getCopyButton()).toHaveTextContent('Copy');
     } finally {

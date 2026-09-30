@@ -205,11 +205,12 @@ describe('MobileHeader', () => {
 
     await user.click(screen.getByRole('button', { name: 'Export image' }));
 
-    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image: encoder died');
+    // The Error is the second argument, not an interpolation, so the stack reaches the console.
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image:', expect.any(Error));
     expect(handleImageSaveMock).not.toHaveBeenCalled();
   });
 
-  it('stringifies a non-Error rejection into the log rather than losing it', async () => {
+  it('passes a non-Error rejection through to the console unchanged', async () => {
     const user = userEvent.setup();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     openSaveImageDialogMock.mockRejectedValue('disk offline');
@@ -217,7 +218,9 @@ describe('MobileHeader', () => {
 
     await user.click(screen.getByRole('button', { name: 'Export image' }));
 
-    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image: disk offline');
+    // Stringified, a reason object arrived as `Failed to save image: [object Object]` and the
+    // reason was gone. The exact raw value is asserted here, so it fails against that.
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image:', 'disk offline');
     expect(handleImageSaveMock).not.toHaveBeenCalled();
   });
 

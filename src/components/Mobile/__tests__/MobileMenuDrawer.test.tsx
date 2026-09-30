@@ -142,11 +142,12 @@ describe('MobileMenuDrawer', () => {
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
-      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document: dialog exploded');
+      // The Error is the second argument, not an interpolation, so the stack reaches the console.
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document:', expect.any(Error));
       expect(setBlankImageMock).not.toHaveBeenCalled();
     });
 
-    it('stringifies a non-Error rejection into the log rather than losing it', async () => {
+    it('passes a non-Error rejection through to the console unchanged', async () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const user = userEvent.setup();
       openNewImageDialogMock.mockRejectedValue('plain failure');
@@ -154,7 +155,9 @@ describe('MobileMenuDrawer', () => {
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
-      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document: plain failure');
+      // Stringified, a reason object became `[object Object]` and was lost. Asserting the exact
+      // raw value fails against that and passes only against the two-argument call.
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document:', 'plain failure');
       expect(setBlankImageMock).not.toHaveBeenCalled();
     });
   });
@@ -203,7 +206,19 @@ describe('MobileMenuDrawer', () => {
 
       await user.click(screen.getByRole('button', { name: /Open Image/ }));
 
-      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file: read failed');
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file:', expect.any(Error));
+      expect(setImageFromUploadMock).not.toHaveBeenCalled();
+    });
+
+    it('passes a non-Error rejection through to the console unchanged', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openLoadImageDialogMock.mockRejectedValue({ code: 42 });
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Open Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file:', { code: 42 });
       expect(setImageFromUploadMock).not.toHaveBeenCalled();
     });
   });
@@ -240,7 +255,7 @@ describe('MobileMenuDrawer', () => {
 
       await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
 
-      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image: encoder died');
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image:', expect.any(Error));
       expect(handleImageSaveMock).not.toHaveBeenCalled();
     });
 
@@ -254,8 +269,22 @@ describe('MobileMenuDrawer', () => {
 
       await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
 
-      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image: commit failed');
+      // Same log as the dialog rejection and the same two-argument shape: the commit runs inside
+      // the same `try`, so a throw before the dialog opens is reported identically.
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image:', expect.any(Error));
       expect(openSaveImageDialogMock).not.toHaveBeenCalled();
+    });
+
+    it('passes a non-Error rejection through to the console unchanged', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const user = userEvent.setup();
+      openSaveImageDialogMock.mockRejectedValue('disk offline');
+      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
+
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to export image:', 'disk offline');
+      expect(handleImageSaveMock).not.toHaveBeenCalled();
     });
   });
 
