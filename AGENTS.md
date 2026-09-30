@@ -12,8 +12,8 @@ ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE
 
 1. A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION
 2. A GPT SESSION MAY LAUNCH GPT SUBAGENTS
-3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is correct provider for GPT models, "Kilo Gateway", is the ONLY right way for SpaceBunny.
-4. `model: 'Space Bunny Alpha (new)', provider: 'kiloGateway', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless.
+3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is correct provider for GPT models, "Kilo", is the ONLY right way for SpaceBunny.
+4. `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless.
 5. Cost doubles past 200k of context FOR GPT Luna, and doubles above 270k of context for GPT Terra and Sol. Space Bunny does not have such restriction. IMPORTANT THAT GPT MODELS stay below threshold!
 6. `agent_manager`: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
 
