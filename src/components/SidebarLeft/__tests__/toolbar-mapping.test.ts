@@ -161,6 +161,75 @@ describe('toolbar mapping shape group contract', () => {
   });
 });
 
+describe('toolbar mapping shortcut contract', () => {
+  /**
+   * No two entries may claim the same key.
+   *
+   * WHY THIS IS NOT REDUNDANT WITH THE KEYMAP. `SidebarLeft` renders a declared `shortcut` as
+   * a `<kbd>` badge on the flyout item and passes the same string to `ToolTooltip`, so a
+   * declared shortcut is a promise the user reads. The runtime keymap lives in
+   * `AppKeyboardShortcuts.tsx` as inline `useKeyDownShortcut` handlers and cannot be
+   * enumerated as data, so nothing in the suite could previously ask "does every badge the
+   * rail renders correspond to a key that selects this tool?".
+   *
+   * This pins the half of that which is a pure function of the mapping: two entries cannot
+   * both claim one key. That was violated exactly once — `Draw Tool` declared `B`, the Brush's
+   * key, and `b`/`shift+b` both resolve to `selectBrushTool`, so the badge was a falsehood
+   * rather than a duplicate. The invariant is deliberately about the CLAIM, not about
+   * reachability, so it stays checkable without mounting the app.
+   *
+   * Not vacuous: the offenders are collected by name and label, so a failure says which two
+   * entries collided, and the pre-fix state reports `B` on both Brush and Draw.
+   */
+  it('never declares the same shortcut on two entries', () => {
+    const claimed = new Map<string, string[]>();
+
+    for (const tool of allTools) {
+      if (tool.shortcut === undefined) continue;
+      const labels = claimed.get(tool.shortcut) ?? [];
+      labels.push(tool.label);
+      claimed.set(tool.shortcut, labels);
+    }
+
+    const collisions = [...claimed.entries()]
+      .filter(([, labels]) => labels.length > 1)
+      .map(([shortcut, labels]) => `${shortcut}: ${labels.join(' and ')}`);
+
+    expect(collisions).toEqual([]);
+  });
+
+  /**
+   * The same invariant, stated from the other side: a key is claimed at most once, counted
+   * rather than grouped. This is the assertion that would survive a future edit that made
+   * `allTools` contain a tool twice, where the grouped form above would report one pair and
+   * this one reports the count.
+   */
+  it('claims each shortcut key at most once across the whole mapping', () => {
+    const keys = allTools.map((tool) => tool.shortcut).filter((key): key is string => key !== undefined);
+
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  /**
+   * The Draw tool is the entry the collision was found on, and it is the one tool in the
+   * mapping that is registered with `ToolArgsByName` and reachable from the rail while having
+   * no keyboard binding at all. Pinning that it declares no shortcut keeps the badge off it:
+   * a shortcut added here without a matching `useKeyDownShortcut` is the exact defect this
+   * describe block exists to prevent, and it is a one-line regression.
+   */
+  it('gives the Draw tool no shortcut, because no key selects it', () => {
+    const draw = allTools.filter((tool) => tool.name === 'draw');
+
+    expect(draw).toHaveLength(1);
+    expect(draw[0].label).toBe('Draw Tool');
+    expect(draw[0].shortcut).toBeUndefined();
+  });
+});
+
+describe('toolbar mapping icon contract', () => {
+  /**
+    * Every mapped tool resolves to a real icon, because `SidebarLeft.getToolIcon` returns the
+
 describe('toolbar mapping icon contract', () => {
   /**
    * Every mapped tool resolves to a real icon, because `SidebarLeft.getToolIcon` returns the
