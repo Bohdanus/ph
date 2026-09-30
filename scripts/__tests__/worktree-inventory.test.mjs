@@ -44,23 +44,28 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
  * test and then run real `git` against it, so a test here is bounded by process
  * spawns and git's own startup rather than by anything being computed. The
  * `curated table` block is worse: it reads git in every worktree in the
- * repository, which is 70-odd directories on this machine today and grows with
- * the fleet.
+ * repository, so its cost is a function of how many worktrees exist on the
+ * machine — 70-odd when these numbers were first taken, 93 when they were last
+ * checked, and it grows with the fleet.
  *
  * The default is not merely tight for that, it is at or above the measured cost
- * of this file's own slowest test: across three isolated runs of the three
- * `scripts/` suites on this machine the slowest span here EXCLUDING the two tests
- * that declare their own budget was 3.0s (`reports a conflict when both sides
- * changed the same line`), and `reports whether the commit list was cut off at the
- * cap` has been reported failing at the 5s default with no code change.
+ * of this file's own slowest test. Spawns and git cost whatever the machine is
+ * doing, so the figure is an OBSERVATION OF ONE RUN and not a property of the
+ * file: 3.0s across three isolated runs on an idle machine, and 2.9s for the same
+ * test when the file was measured again on a busier day with 93 worktrees live.
+ * `reports whether the commit list was cut off at the cap` has been reported
+ * failing at the 5s default with no code change, and at the pre-fix commit on a
+ * loaded machine the failure that appeared instead was a DIFFERENT test in this
+ * file — which is what a population of marginal tests looks like, not five
+ * specific ones.
  *
  * What is deliberately NOT claimed here: any contention factor. A full 266-file
  * run was measured against these same tests and came out FASTER per test than the
  * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
  * not a thing this suite can currently support. The headroom below is stated for
- * what it is: 15s is about five times this file's own worst measured case, and is
- * deliberately tighter than the two sibling suites because they spawn a CLI per
- * assertion and this one does not.
+ * what it is: 15s against the worst span this file has been seen to take is 5x,
+ * and is deliberately tighter than the two sibling suites because they spawn a CLI
+ * per assertion and this one does not.
  *
  * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
  * only decides how long a test may run before the harness reports it, and no
@@ -68,9 +73,11 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
  *
  * A per-test `it(name, fn, timeout)` argument still wins over this. The two tests
  * that read every worktree keep their declared `60_000`, which is what they
- * actually need: `gives every non-primary worktree a curated entry` measures
- * 21.5s on a machine with 70 worktrees, and that number is a function of how
- * many worktrees exist, not of this test.
+ * actually need: `gives every non-primary worktree a curated entry` measured
+ * 21.5s on a machine with 70 worktrees and 12.3s on a busier day with 93, and
+ * both of those are a function of how many worktrees exist rather than of this
+ * test. 60s is the one budget here that is sized against a cost that GROWS, so
+ * re-measure it if the worktree count changes by an order of magnitude.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
