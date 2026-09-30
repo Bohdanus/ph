@@ -850,6 +850,10 @@ export const CURATED = {
       'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface, and a rule across the bottom of the rail that divided nothing — with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
     note: 'The band moves whenever the rail’s chrome changes height, so no window height can be its address. This worktree was flagged while the flatten was uncommitted; the flatten is now committed (92ce61cc) and the branch tip is not a main commit, so the claim is withdrawn — a committed branch is not work git cannot see, and the flag that carried it is no longer a field here.',
   },
+  'flyout-density': {
+    summary:
+      'The tool flyout at Photoshop’s density: 24px rows and an 80px three-item menu, where it had been 40px rows and 134px — the row is a 16px icon and py-1, and the icon override is the load-bearing part, because IconShell is fixed at 28px for the 44px rail tile and padding alone cannot shrink a row.',
+  },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */
   // The one shape this table was written for, and the shape that no longer earns

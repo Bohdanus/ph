@@ -725,8 +725,17 @@ const SidebarLeft = () => {
                * measurement and no re-render: the menu shrinks on its own when the window
                * does. `max-h` rather than `h` because a short menu must not be padded out to
                * fill the window.
+               *
+               * DENSITY, in the same comment because the next person will otherwise ask why
+               * this is smaller than the rail's tiles. A flyout row is `py-1` around a 16px
+               * icon, so 24px, where the rail's tile is 44px — Photoshop's flyout is the
+               * compact one and the tile is the comfortable one, and a menu at tile density
+               * puts three tools in the space two belong in. `min-w-36` rather than a
+               * minimum that would then drive the width: the menu is content-sized, as
+               * Photoshop's is, and the longest label plus its icon and shortcut sets the
+               * width.
                */
-              className="pointer-events-auto max-h-[calc(100vh-1rem)] min-w-48 list-none overflow-y-auto overscroll-contain rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
+              className="pointer-events-auto max-h-[calc(100vh-1rem)] min-w-36 list-none overflow-y-auto overscroll-contain rounded-lg border border-gray-300 bg-gray-100 p-0.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
               data-toolbar-flyout={groupIndex}
               onKeyDown={(event) => {
                 // Tab leaves the menu rather than walking it. The overlay lives in
@@ -782,7 +791,13 @@ const SidebarLeft = () => {
                     <button
                       aria-checked={isSelected}
                       aria-label={tool.label}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                      // `[&_svg]:!h-4 [&_svg]:!w-4` is what makes the row 24px. The icons are
+                      // sized by `IconShell`, which is fixed at `h-7 w-7` because a RAIL tile
+                      // is 44px and its icon has to fill it — so the menu cannot ask the
+                      // icon for a smaller one, and the `!` is what makes this override win
+                      // against `h-7` instead of depending on which utility Tailwind happened
+                      // to emit last.
+                      className={`flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition-colors [&_svg]:!h-4 [&_svg]:!w-4 ${
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                           : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
@@ -807,7 +822,7 @@ const SidebarLeft = () => {
                     >
                       <FlyoutIcon title={tool.label} />
                       <span className="flex-1 whitespace-nowrap">{tool.label}</span>
-                      {tool.shortcut && <kbd className="text-[10px] opacity-65">{tool.shortcut}</kbd>}
+                      {tool.shortcut && <kbd className="text-[9px] opacity-65">{tool.shortcut}</kbd>}
                     </button>
                   </li>
                 );
