@@ -31,6 +31,21 @@ playwright/.auth
 
 .eslintcache
 
+# The worktree inventory, and only the one at the repository root.
+#
+# `scripts/worktree-inventory.mjs` writes a document about THIS machine: session
+# ids, chat ids, absolute worktree paths, swarm claims and a `generatedAt`
+# timestamp. None of it describes the repository, so tracking it bought churn —
+# every agent that regenerated it produced a diff, and two agents regenerating it
+# concurrently produced a merge conflict in a file that carries no reviewable
+# meaning. A worktree's own copy lives under `.kilo/worktrees/` and is already
+# covered by the `.kilo` line below.
+#
+# It is untracked, and a test enforces that: `worktree-inventory.test.mjs` fails
+# if this file is tracked or if this rule is deleted. The generator, the curated
+# table, and every finding are all still tracked — only the output is not.
+/WORKTREES.json
+
 .kilo
 .serena
 

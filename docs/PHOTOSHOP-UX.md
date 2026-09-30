@@ -80,7 +80,16 @@ violations on `main`.
   swatches, "Edit in Quick Mask Mode", the three screen-mode toggles, the `…` Edit
   Toolbar caret, the toolbar grip, and the Extra Tools container.
 
-### The foreground/background swatch pair BELONGS in the rail
+### The foreground/background swatch pair BELONGS in the rail, and must NEVER be hidden
+
+**The rail's colour pickers are not part of what collapses.** The operator's standing
+constraint: nothing may hide them — not to save space, not at a short viewport,
+not when the toolbar fit collapses every tool into the three-dots tile, not in
+either layout mode. The rail swatch pair is the app's ONLY way to choose a paint
+colour, so losing it takes the capability away silently, in the one place nobody
+would think to look for it. A test pins the cluster, both swatches, both native
+`<input type="color">` elements and the swap, at the most collapsed state the fit
+can produce — the one-tile rail.
 
 Being "not a tool" is not the same as "not in the rail" — and the swatch pair is
 in the rail. Adobe's page on it
@@ -92,10 +101,8 @@ that toolbar. Verified by fetching the page: all five phrases are in the body
 (HTTP 200). It 403s to a browser-shaped User-Agent, so a `curl` with the default
 one is how to read it.
 
-Screenshots of a customized or cropped panel can look like it is missing, and a
-request to remove it is a real fidelity loss here, not a correction: this app has
-no Color, Swatches or HSB panel, so the rail pair is the ONLY way to choose a
-paint colour. Deleting it leaves the Eyedropper
+This app has no Color, Swatches or HSB panel, so a request to remove the pair is
+a real fidelity loss, not a correction: deleting it leaves the Eyedropper
 (`src/components/Main/EyedropperToolArea.tsx:133`) as the sole writer of
 `state.color`, and the Paint options bar, which only READS that colour
 (`src/components/ToolbarsRight/Paint/Paint.tsx:214`), showing a value nothing can

@@ -20,6 +20,20 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   session, a `cd` in a previous tool call, or a session started in the root
   checkout and driven into a task worktree all leave you somewhere other than
   where you think.
+- **A `task` subagent inherits the caller's working directory, so the worktree has
+  to exist before the fan-out and not after it.** `task` creates no session and no
+  worktree, and `agent_manager`'s `mode: 'local'` deliberately runs in the caller's
+  directory too. A root chat that fans out from `main` is therefore running N
+  writers in `main`, and no `kilo.jsonc` permission can prevent it: tool
+  permissions match a path glob and have no term for the working directory, so
+  `src/foo.ts` is the same pattern in `main` and in `.kilo/worktrees/task`.
+  Measured 2026-09-30 against the session database: **1398 `task` subagents ran
+  with the main checkout as their directory in seven days**, and 22 Agent Manager
+  `mode: 'local'` sessions were editing it in parallel. **Put the worktree path in
+  the brief**, because a subagent's cwd only affects relative `bash` — its `edit`
+  and `write` calls take absolute paths, so a brief that names the worktree is the
+  thing that actually moves the work, and a brief that does not is a fan-out into
+  whichever checkout the root chat happens to sit in.
 - **One task = one worktree and one branch**, created **before** the first edit.
   Lowercase prefix (`fix/`, `feat/`, `e2e/`, `cleanup/`, `audit/`), for example:
   `git worktree add -b fix/task .kilo/worktrees/task`. A second worktree for the
@@ -43,8 +57,43 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   Agent Manager worktree session, or any checkout under `.kilo/worktrees/`. Never
   nest a second worktree inside one.
 - **A doc-only change is not an exemption.** A comment correction, a stale
-  citation, a new `AGENTS.md` paragraph, a regenerated `WORKTREES.json` — every
-  one is a tracked-file change and takes a worktree.
+  citation, a new `AGENTS.md` paragraph — every one is a tracked-file change and
+  takes a worktree. Regenerating `WORKTREES.json` is the one exception, because
+  it is untracked.
+
+### The rule is enforced at the commit, not by the reader
+
+`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit` and refuses to
+record a commit made from the main worktree. It names the worktree recipe and the
+one override, so a refusal is a redirect rather than an obstacle: an agent that
+meets a bare "no" commits anyway, from the same checkout, on a branch nobody made.
+It is a program rather than another paragraph for the two reasons above — a
+permission cannot see the working directory, and Kilo has no lifecycle hook that
+could veto a write before it happens. The commit is the last moment the damage is
+still free to undo, and the one moment git itself guarantees to run code in.
+Ordering is load-bearing: it runs before `gate:commit` because that gate is
+lint-staged plus `tsc -b` plus a build, and lint-staged rewrites staged files with
+`--fix` before the commit is ever called illegitimate.
+
+What it does **not** do is stop the write. It runs after the edit, so a session
+that writes into `main` and never commits is not stopped by it. It converts "71
+rogue commits nobody can attribute" into "a dirty tree the next `git status`
+names" — the write side is the process rule above, and the guard is the floor
+under it.
+
+Three things stay allowed, each deliberately:
+
+- **A landing.** `git merge` into `main` runs `pre-merge-commit`, and a
+  fast-forward runs no hook at all, so the documented landing flow never reaches
+  this file.
+- **An operator hotfix the operator asked for on `main` by name** —
+  `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
+  would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
+  like a denial into a bypass.
+- **A repository the guard cannot place.** Detection fails open and policy fails
+  closed, because they are different questions: a git that will not answer is a
+  broken environment, not a decision, and blocking there would trade a real gate
+  for a phantom one.
 
 ### Landing
 
@@ -86,11 +135,10 @@ status` and `git diff` before staging.
     <(git diff --name-only main..HEAD | sort)
   ```
   Anything that set difference is main content the merge had no business
-  touching. The legitimate exceptions are the files the merge deliberately edits
-  and a regenerated `WORKTREES.json`; anything else gets restored from main with
-  `git checkout main -- <path>` before the merge lands. Run it _before_ the
-  review, because a reviewer only catches the files its brief happened to
-  mention.
+  touching. The legitimate exception is the files the merge deliberately edits;
+  anything else gets restored from main with `git checkout main -- <path>` before
+  the merge lands. Run it _before_ the review, because a reviewer only catches
+  the files its brief happened to mention.
 - **A red `tsc` in the main worktree may be someone else's work in progress, not
   a broken `main`.** The main worktree is shared, so it is routinely holding an
   agent's half-written change: tests that import a symbol their branch has not
@@ -189,9 +237,25 @@ regenerated, never hand-edited**, and it is the first thing to read before
 deleting a worktree or starting one that may already exist. The list does not
 belong in prose; regenerate it.
 
+**It is UNTRACKED and gitignored, and that is a hard rule, not a convenience.**
+Everything in it describes the machine that generated it — session ids, chat
+ids, absolute worktree paths, swarm claims, a `generatedAt` timestamp — so a
+tracked copy was a diff nobody could review and a conflict two agents could not
+resolve: two regenerations five minutes apart collide, and neither side means
+anything. `/WORKTREES.json` in `.gitignore` is enforced by
+`worktree-inventory.test.mjs`, which fails if the file is tracked or if the rule
+is deleted. **Do not commit it and do not re-add it**; a regeneration is
+`node scripts/worktree-inventory.mjs` and nothing else. The generator, the
+curated table and every finding stay tracked — only the output does not.
+
+The consequence worth knowing: **a fresh clone has no inventory**, because
+nothing regenerates it for you. Generate one before you read a worktree list, and
+treat any `WORKTREES.json` you find as a claim about a moment rather than a
+shared source of truth.
+
 ```bash
 node scripts/worktree-inventory.mjs            # regenerate
-node scripts/worktree-inventory.mjs --check    # exit 1 if stale, write nothing
+node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, write nothing
 node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
@@ -237,10 +301,24 @@ the list had to be re-derived by hand. Anything a human must decide lives in
 `scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
 entries are not interchangeable: `tsc-guard` has a `note` but no `issues` and no
 `landed`, while `paint-easy` carries an `issues` ref and a claimed `landed` state.
-Read the source file rather than copying a prose example. **When
-you create a worktree, add its entry in the same change** — an uncurated
-worktree is one nobody has written down what it is for, which is how a
-preservation branch gets mistaken for a disposable one.
+Read the source file rather than copying a prose example. **Curation is worth
+writing when you know something git cannot see**, which today means exactly one
+field: `mustNotPrune` on a branch git already calls disposable. Nothing else in
+an entry moves a verdict, and a test enforces that — `summary`, `note`,
+`liveNote`, `issues` and `landed` are documentation.
+
+**An uncurated worktree is not at risk**, and there is deliberately no rule that
+demands an entry for one. There was: every live worktree holding work had to
+have an entry, which is what an in-flight task looks like for the whole of its
+life, so it was red from an agent's first edit to its merge — in every other
+checkout too, since the generator reads the repository's worktrees and not the
+caller's. The table was re-derived by hand four times in one session against a
+fleet that kept moving. What protects that work is `classify`, on git's facts
+alone, and `worktree-inventory.test.mjs` asserts it over the live worktrees with
+the curated entry removed. Measured on 2026-09-30: 160 curated keys, 102 live
+in-repo worktrees, 26 with no entry, 13 holding work on no ref — every one of
+them reported `at-risk`. Write an entry when you have a judgement to record; the
+suite does not ask you for one per worktree.
 
 `readyToLand`, `disposalCandidates`, `atRisk`, `readUnfinished`, `workOnNoRef` and
 `readLostWorktree` are named at the top of the file so you do not have to filter
@@ -298,16 +376,85 @@ nothing to salvage or redo. `active` is never reported abandoned: recency is
 checked before the shape of the last turn, because a live machine's most recent
 turn always ends in a tool call.
 
+### Who wrote here, who read it, and who is writing now
+
+`chats` is keyed on `session.directory` and is windowed, so it answers "who was
+in this directory recently" and nothing more. The call history answers different
+questions, and it is derived from the `part` table instead: the tool, the path it
+named, and the time it happened
+(`scripts/lib/worktree-inventory/writes.mjs`). It is in **three separate
+structures, because they have three different lifetimes**:
+
+| Field          | Tools                                           | Permanent?                     |
+| -------------- | ----------------------------------------------- | ------------------------------ |
+| `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **yes** — this is who built it |
+| `readHistory`  | `read`, `grep`, `glob`, `semantic_search`       | **no** — releasable            |
+| `shellHistory` | `bash`, `background_process`                    | no — the size of the gap below |
+
+Reading a worktree is interest, not authorship: reviewers, explorers and
+debugging agents all read directories they never touched, and a reader list that
+only grows stops answering "who is looking at this" while still claiming to.
+Keeping readers out of `writeHistory` is what makes the release possible — a
+release that preserved writers by filtering a _merged_ list would have to remember
+which entries were which, forever. Two lists need no memory.
+
+**Releasing readers is a watermark, not an event.** `--release-reads` (optionally
+`=<iso>`) sets `ownership.readsReleasedBefore`; a reader is emitted only when its
+last read is newer than that mark. The mark is read back from the existing file
+and combined with `Math.max`, so it only ever moves forward — a release cannot
+silently undo itself on the next regeneration, and it keeps no record of which
+entries it removed. Writers live in a different structure that nothing filters, so
+a release cannot reach them. On a run with `--release-reads=2026-09-29` on this
+repository: 407 readers became 139, and the 206 writers were unchanged.
+
+**A write is a stronger ownership claim than a message**, so
+`writeHistory.derivedChatIds` feeds the `in-use` verdict alongside the session and
+board signals. A chat that edited files here twenty minutes ago owns the
+directory even if it has been quiet since.
+
+**The write count is not complete, and the file says so.** A shell changes files
+with `sed -i`, a heredoc or `>`, and none of that appears in any tool's
+arguments — 61,795 commands ran with a workdir inside a worktree on this
+repository. `shellHistory.writeCapableCalls` is the size of that gap, not a count
+of writes. Likewise `readHistory.unlocatedCalls`: 4% of greps and 66% of globs
+record no path because they defaulted to the working directory, and they are
+counted rather than dropped. Calls that belong to no known worktree are counted
+**per kind** in `dataSources.calls`; a single mixed counter made the write total
+meaningless the moment a second kind existed. There is deliberately no `sessions`
+field — an earlier version reported every session on the machine, including the
+ones that never wrote, under a key that said `writes`.
+
+**A deleted worktree keeps its writers.** The registry loses a removed worktree,
+but the `.kilo/worktrees/<name>/` segment survives in the recorded path, so its
+history is reported under `goneWorktrees` at the top level rather than being filed
+under the main checkout — which is what a prefix match does, because the main
+checkout contains every worktree. It has to be a top-level list: the per-worktree
+loop only visits worktrees that still exist.
+
+**`ownership` at the top of the document is the liveness answer, and it carries
+its own provenance.** `liveWriterCount` of zero is ambiguous between "nobody is
+writing" and "every writer is dead", so `suppressed` and `reason` say which.
+Generate with `--no-live-writers "<why>"` to declare a hard state — an editor
+restart takes every chat with it, and the recency heuristics keep reporting an
+owner for half an hour afterwards. The override is auditable rather than silent:
+per worktree, `live` is the claim, `derivedLive` is what the signals said, and
+`derivedChatIds` names the chats that were overridden. **No `project_id` filter is
+applied when reading the session table**, deliberately: scoping to one project
+dropped 30 sessions that had made 774 completed writes into this checkout, and a
+writer that is absent is the one failure the structure cannot have.
+
 **`landed: true` is a curator's claim**, printed next to git's answer as
 `claimedLanded` against `mergedIntoMain`. A test re-derives it from
 `git merge-base --is-ancestor` and fails when the two disagree.
 
 **Never put a count in a summary.** `dirty`, `untracked`, `ahead`, `behind` and
 `commitsAheadTruncated` are already on every record — describe WHAT a worktree
-holds and leave the arithmetic to the generator. **Regenerate and commit
-`WORKTREES.json` in the same change that adds or removes a worktree**; a stale
-inventory is worse than none, and `--check` names the per-worktree fields that
-drifted.
+holds and leave the arithmetic to the generator. **Regenerate `WORKTREES.json`
+when you add or remove a worktree**; a stale inventory is worse than none, and
+`--check` names the per-worktree fields that drifted. There is no commit step —
+the file is untracked — and that is the one thing `--check` no longer does for
+you: it can no longer catch a collaborator's regeneration, because there is no
+shared file left for a collaborator to regenerate.
 
 ## The swarm board
 
@@ -413,6 +560,55 @@ heartbeat` still exists and is still correct — it is the only thing that can
 
 It is a command, not a gate. Nothing in `.husky/` calls it, and no commit may be
 blocked on it.
+
+### Resource locking and releasing
+
+The board at `.git/agent-board/board.db` tracks three resources: issue claims
+(`claims`), file locks (`file_locks`) and agent presence (`agents`). All are keyed
+on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
+`AGENT_BOARD_AGENT`, then the branch, and nothing in this repository ever sets
+that variable. Two sessions on one branch are one agent to the board and cannot
+deny each other a file.
+
+**Liveness is recency only.** `agents.last_pid` and `session_id` are written and
+never read — the one process-level signal the schema carries is consulted nowhere.
+
+**The two readers disagree about a malformed timestamp, and the board side is the
+dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
+(`db.mjs:1065`) treats it as **free**, because `NaN > at` is false — so the
+inventory can show a file held while `swarm check` calls it free. Unreachable
+today, since every writer goes through `msFromNow`, but a resource's safety rests
+on an invariant the code does not hold. Claims fail the other way: `doctor` tests
+`Date.parse(lease_until) <= at`, also false for `NaN`, so a malformed lease is
+neither live nor reclaimable and `swarm health` reports an expired count
+`swarm doctor` cannot reduce.
+
+A **claim** renews itself while its worktree exists, and `autoSweep` renews
+before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
+and renewal only fires when a `swarm` command runs, so it protects an agent that
+ran one inside the last half-lease — a long `npm run test` loses the claim to a
+peer's next command. Renewal and release must read the **same** row, and now do:
+both use the worktree in the claim, not the caller's. Because identity is the
+branch, two agents on one branch in different worktrees share an `agent_id`, and
+when renewal asked about the caller while `doctor` asked about the row, a live
+agent extended a dead colleague's lease and released it in one invocation.
+
+**A file lock has no renewal at all.** Every write to `file_locks` is an acquire,
+a release, or the expiry sweep, so a lock is a hard `DEFAULT_LEASE_MS` (45 min)
+TTL, and `doctor` — which runs on every command — strips an expired one whether or
+not its holder is working. Worse, that sweep calls `releaseFiles(..., {force:
+true})`, whose `force` skips the `agent_id !== who` guard and so releases **every**
+holder of the path, including one who acquired it after the first row lapsed. Holding a
+file past the TTL therefore loses it silently and hands it to a third agent; the
+log shows the pressure, 456 `lock.hold` against 832 `lock.deny`. Renewing on
+worktree presence is the obvious fix and the wrong one — a lock means _an agent is
+in this file_, not _this branch owns this directory_. It needs an activity
+signal.
+
+Hand-driven release is careful: `releaseClaim` walks the `issue_locks` pairing
+table so a file another live issue needs survives. The board is currently clean —
+zero unreleased claims, zero unreleased locks — but that is agents releasing their
+own work, not a sweep that could not have leaked.
 
 ### The board is cross-session, so a merge can announce itself
 

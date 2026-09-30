@@ -729,10 +729,6 @@ export const CURATED = {
       { ref: 'HANDOFF.md#worktree-hygiene', title: 'growing a file silently invalidates every file.ts:NNN below it' },
     ],
   },
-  'review-findings': {
-    summary: 'Carries the review findings for the 2026-09-28 focused review across the components those findings name.',
-    note: 'The worktree is gone and its branch is on main, so the findings are on main and not on no ref — the opposite of what this entry used to say.',
-  },
   'text-tool-requirements': {
     summary:
       'A documentation branch holding the text tool’s requirements, sitting on the merged reorder slice. No commits of its own.',
@@ -850,6 +846,14 @@ export const CURATED = {
       'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface, and a rule across the bottom of the rail that divided nothing — with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
     note: 'The band moves whenever the rail’s chrome changes height, so no window height can be its address. This worktree was flagged while the flatten was uncommitted; the flatten is now committed (92ce61cc) and the branch tip is not a main commit, so the claim is withdrawn — a committed branch is not work git cannot see, and the flag that carried it is no longer a field here.',
   },
+  'flyout-density': {
+    summary:
+      'The tool flyout at Photoshop’s density: a 24.5px row and an 80px three-item menu, where it had been 40px and 134px — the row is `max(icon, 1.5 × font-size) + padding`, and preflight’s `line-height: 1.5` makes the LABEL the height driver, not the icon, so the `[&_svg]:!h-4` override lowers the row’s ceiling rather than its floor.',
+  },
+  'review-findings': {
+    summary:
+      'The defects four reviews found in the rail and flyout work: a row-height comment naming the icon where the label sets it, an `!` credited with a win specificity already gave, two decided values no test asserted, AND-ed negative assertions that cannot fire, an e2e assertion that cannot fail because the grid fits the slot anyway, a degenerate band located 28px off by a ladder coarser than the change it absorbs, the three-dots tile opening on a hold and silently selecting `group[0]`, and the 300ms hold duplicated into four copies of the same number.',
+  },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */
   // The one shape this table was written for, and the shape that no longer earns
@@ -896,6 +900,11 @@ export const CURATED = {
     summary:
       'A line-numbered citation sweep through the tool-creation skill: every `src/…:NNN` re-derived against the current tree, the settings, selection and shape ranges having all moved under the citation rotation.',
     note: 'The sweep is uncommitted and on no ref, the whole diff being the one skill document, while the branch tip is a main commit — so the branch looks disposable and the only copy of the re-derived citations is the working tree, which is enough without a flag. The skill’s claims about tool behaviour are untouched; only their addresses move.',
+  },
+  'swarm-lock-identity': {
+    summary:
+      'Makes a held file behave as one file: a file lock is renewed by the same worktree-presence rule a claim already used, so a task longer than one lease no longer reports its own held file free, and two spellings of one path resolve to one lock instead of two.',
+    note: 'The board database module and the CLI are edited in the working tree, uncommitted, and the branch is a main commit rather than a commit of its own — so the work exists only in this working tree, which is the reason this entry exists.',
   },
   'swarm-watch-tail': {
     summary:
@@ -990,6 +999,14 @@ export const CURATED = {
     summary:
       'Reviewing the append-boundary validation guard over the remove-append work, on a branch six commits ahead of main with one test file still modified on top of it. The branch is a ref git can see, so it is protected by being a branch and owes no flag.',
   },
+  'narrow-uncategorised': {
+    summary:
+      'Narrowing the curated-summary rule to the worktrees that actually hold work, so creating a scratch worktree stops turning main red — the same derivation the `mustNotPrune` guard was given, one layer up.',
+  },
+  'fix-handoff-95': {
+    summary:
+      'The corrected HANDOFF §95: the refused-publication entry re-derived after a review found five false claims in it, including that no test pins the console.error text when two do.',
+  },
   'skill-handoff-cites': {
     summary:
       'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
@@ -1035,6 +1052,11 @@ export const CURATED = {
     summary:
       'Makes a typecheck that checked nothing impossible to mistake for a pass: node_modules/.bin/tsc becomes scripts/tsc-guard.mjs, which refuses any invocation that is not build mode and names the two commands that do work. A tripwire test fails when npm has restored its plain symlink, and kilo.jsonc denies the command at the permission layer.',
     note: 'The guard itself is a symlink inside node_modules, which is gitignored and cannot be committed: the work that matters is the tracked guard, its installer, its tests and the prepare wiring, and npm regenerates the link from those. Losing this branch loses the refusal, and the trap it closes is a zero-file exit 0 that reads as a clean typecheck. It is not flagged: everything here is committed, so the branch is what protects it.',
+  },
+  'untrack-inventory': {
+    summary:
+      'Untracking `WORKTREES.json` — the generated inventory is a machine-local snapshot of session ids, chat ids, absolute worktree paths and a timestamp, so it leaves the index along with the anchored ignore rule, the docs that told agents to commit a regeneration, and the tripwire that fails if it is re-added. The generator and this table stay tracked; only the output does not.',
+    note: 'Two sessions curated this key independently and the merge kept both, where the second silently discarded the first — the `panel-docks` shape again, and the reason this key is one entry rather than two. An earlier version of this note claimed the work was held on no ref, which was true only while the change was uncommitted; it is committed on a branch ahead of main, so the branch is what protects it and no flag is owed.',
   },
 };
 

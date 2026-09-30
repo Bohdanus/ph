@@ -5,10 +5,10 @@
  *
  * WHY SQLITE IN THE COMMON GIT DIRECTORY
  * --------------------------------------
- * `git rev-parse --git-common-dir` is the one path every worktree of a
- * repository agrees on: they all share `.git/`, and each resolves to it, so
- * a single database file is visible from all of them without a symlink, a
- * server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
+ * `git rev-parse --path-format=absolute --git-common-dir` is the one path every
+ * worktree of a repository agrees on: they all share `.git/`, and each resolves
+ * to it, so a single database file is visible from all of them without a symlink,
+ * a server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
  * for a board that should outlive a reclone.
  *
  * WHY THERE IS NO DAEMON
@@ -252,13 +252,10 @@ export function resolveBoardDir({ cwd = process.cwd(), env = process.env } = {})
   try {
     common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd });
   } catch {
-    try {
-      common = join(cwd, git(['rev-parse', '--git-common-dir'], { cwd }));
-    } catch {
-      throw new BoardError('not inside a git repository, and AGENT_BOARD_DIR is unset; the board has no home', {
-        code: 1,
-      });
-    }
+    throw new BoardError(
+      'cannot read the common git directory here, and AGENT_BOARD_DIR is unset; the board has no home',
+      { code: 1 }
+    );
   }
   return join(common, 'agent-board');
 }
@@ -1735,7 +1732,31 @@ export class Board {
     if (!dryRun) {
       for (const finding of findings) {
         if (finding.issue) this.releaseClaim(finding.issue, { agent: finding.agent, force: true });
-        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent, force: true });
+        /**
+         * NO `force` here, and that is the whole point of the line.
+         *
+         * `releaseFiles` skips any row whose `agent_id` is not the one named —
+         * UNLESS `force` is set, and `force` skips the check on EVERY row for
+         * the path, not just the offending one. A sweep therefore used to revoke
+         * live holders, not stale ones.
+         *
+         * The sequence needs no `--force` anywhere. A's lock on P lapses, so
+         * `liveLocks` stops seeing it and B is granted P; two live rows for one
+         * path are schema-legal, because the key is `(path, agent_id)`. Then ANY
+         * `swarm` command from ANY agent runs `autoSweep` — `agent-board.mjs`
+         * calls it on every command except `doctor` itself — and the sweep
+         * released A's stale row *and B's live one*, handing the file to a third
+         * agent while B was mid-edit.
+         *
+         * Without `force`, `finding.agent` is the holder of the row this sweep
+         * actually found expired, so the guard releases exactly that row and
+         * leaves every other holder alone. A separate finding is generated for
+         * each expired row, so a second stale holder is still collected.
+         *
+         * A sweep agent may reclaim what has lapsed. It may NOT take a file away
+         * from an agent that is still writing: only the operator stops a chat.
+         */
+        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent });
       }
     }
     return findings;
@@ -1768,9 +1789,23 @@ export class Board {
     const worktree = this.identity?.worktree;
     if (!worktree || !existsDir(worktree)) return [];
     const until = new Date(at + leaseMs).toISOString();
+    // Scoped to claims made FROM THIS WORKTREE, not merely by this agent id.
+    //
+    // Identity is the git BRANCH, so two agents on one branch in different
+    // worktrees are the same `agent_id` to this table — and the two halves of
+    // `autoSweep` were asking different questions about the same row. Renewal
+    // asked "is a worktree I can see still on disk?", using the CALLER's path;
+    // `doctor` asks "is the worktree named in THIS ROW gone?". For a single
+    // agent those coincide. For a shared branch they cannot both be true, and a
+    // live agent extended a dead colleague's lease, then released it in the same
+    // invocation.
+    //
+    // `worktree IS NULL` keeps the legacy intent: a claim recorded before a
+    // worktree was known still renews, because refusing to renew it would
+    // silently convert every such claim into a 45-minute countdown.
     const mine = this.db
-      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ?')
-      .all(agentId)
+      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)')
+      .all(agentId, worktree)
       .filter((claim) => Date.parse(claim.lease_until) - at < leaseMs / 2);
     for (const claim of mine) {
       this.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(until, claim.issue_id);

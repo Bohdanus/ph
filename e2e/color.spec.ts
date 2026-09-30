@@ -12,7 +12,7 @@ import {
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
-import { clickToolButton, resolveToolTile } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
@@ -38,21 +38,14 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
   // folded into the three-dots tile and there is no `tool-button-draw` element at all. The
   // three-dots tile computes `aria-pressed` with the same `group.some(...)` the real tiles do,
   // so this says the same thing whether the tool has a tile or not.
-  await expect(await resolveToolTile(page, 'draw'), 'draw is not active while another tool is').toHaveAttribute(
-    'aria-pressed',
-    'false'
-  );
+  await expectToolSelected(page, 'draw', false);
 
   await clickToolButton(page, 'draw');
   // The draw tool only strokes with the active foreground color once it is the active tool.
-  // Resolved for the same reason as the assertion above it: `draw` is the seventeenth group,
+  // Asserted for the same reason as the assertion above it: `draw` is the seventeenth group,
   // so at this viewport it has been folded into the three-dots tile and there is no
-  // `tool-button-draw` element. Two assertions in one test, and only one of them was
-  // converted — which is the usual way a half-finished migration reaches the gate.
-  await expect(
-    await resolveToolTile(page, 'draw'),
-    'clicking the Draw tile must make draw the active tool'
-  ).toHaveAttribute('aria-pressed', 'true');
+  // `tool-button-draw` element.
+  await expectToolSelected(page, 'draw');
 
   // Measured AFTER the tool switches, not before: a tool change swaps the options
   // bar, which can move the canvas, and `drawLine` takes box-relative offsets. A box

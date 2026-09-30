@@ -65,9 +65,10 @@ export const toolbarMap = [
     ],
   ],
   [
-    // The Brush stays the tile's primary tool, so the eraser-family tools are appended
-    // rather than inserted: `SidebarLeft.tsx:144-152` makes the first entry the tile identity.
-    // Six entries is the same length as the Pen family flyout below, so this is not an outlier.
+    // The Brush stays the tile's default tool, so the eraser-family tools are appended
+    // rather than inserted: `renderToolGroup` derives the tile's default identity from the
+    // first entry (`SidebarLeft.tsx:578`). Six entries is the same length as the Pen family
+    // flyout below, so this is not an outlier.
     [
       { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
       { label: 'Pencil Tool', name: 'pencil' },

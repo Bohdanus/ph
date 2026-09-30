@@ -133,6 +133,12 @@ describe('EllipticalSelection toolbar', () => {
     mockPatchToolArgs.mockClear();
     mockSetToolArgs.mockClear();
     copyActiveSelectionMock.mockClear();
+    // The real hook returns `true` on success (`useSelectionClipboard.ts:61`), and the component
+    // now READS that boolean. Left at the `undefined` a bare `vi.fn()` returns, a click here
+    // would look exactly like a refused copy, so the default has to be the success value —
+    // otherwise every test that copies without asking for a return value reports a failure
+    // that never happened.
+    copyActiveSelectionMock.mockReturnValue(true);
     pasteSelectionClipboardMock.mockClear();
     clearSelectionsMock.mockClear();
   });
@@ -379,16 +385,53 @@ describe('EllipticalSelection toolbar', () => {
     });
 
     it('copies the active selection and clears the selections through their own hooks', () => {
-      resetSelectionState({ activeSelection: ELLIPSE_SELECTION, hasSelectionClipboard: true });
-      render(<EllipticalSelection />);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      fireEvent.click(getCopy());
-      fireEvent.click(getPaste());
-      fireEvent.click(getClear());
+      // `restoreMocks` is off, and the only global `afterEach` is `cleanup()` plus
+      // `useRealTimers()`, so a red assertion here used to leave `console.error` mocked for every
+      // test after it in the file.
+      try {
+        resetSelectionState({ activeSelection: ELLIPSE_SELECTION, hasSelectionClipboard: true });
+        render(<EllipticalSelection />);
 
-      expect(copyActiveSelectionMock).toHaveBeenCalledExactlyOnceWith(ELLIPSE_SELECTION);
-      expect(pasteSelectionClipboardMock).toHaveBeenCalledTimes(1);
-      expect(clearSelectionsMock).toHaveBeenCalledTimes(1);
+        fireEvent.click(getCopy());
+        fireEvent.click(getPaste());
+        fireEvent.click(getClear());
+
+        expect(copyActiveSelectionMock).toHaveBeenCalledExactlyOnceWith(ELLIPSE_SELECTION);
+        expect(pasteSelectionClipboardMock).toHaveBeenCalledTimes(1);
+        expect(clearSelectionsMock).toHaveBeenCalledTimes(1);
+        // A copy that succeeded reports nothing, so a bar that logged on the happy path would be
+        // indistinguishable from one that only learned to log at all.
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('reports a copy that returns false, which is not the throwing path', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      // Same reason as the test above: the restore has to run whatever the assertions do.
+      try {
+        resetSelectionState({ activeSelection: ELLIPSE_SELECTION, hasSelectionClipboard: true });
+        // A REFUSAL, not a throw: `copySelection` returns `false` when there is no snapshot to
+        // take (`useSelectionClipboard.ts:46`) and never reaches a `catch`, so the only way out of
+        // the silent path is the component reading the boolean itself. The `if (!activeSelection)`
+        // guard above it is why this case — and only this case — is reportable from here: nothing
+        // selected is not a copy failure, and the button is disabled for it anyway.
+        copyActiveSelectionMock.mockReturnValueOnce(false);
+        render(<EllipticalSelection />);
+
+        fireEvent.click(getCopy());
+
+        expect(errorSpy).toHaveBeenCalledWith('Failed to copy elliptical selection');
+        // The refusal still reached the clipboard hook; only the outcome went unreported.
+        expect(copyActiveSelectionMock).toHaveBeenCalledExactlyOnceWith(ELLIPSE_SELECTION);
+      } finally {
+        copyActiveSelectionMock.mockReset();
+        errorSpy.mockRestore();
+      }
     });
   });
 

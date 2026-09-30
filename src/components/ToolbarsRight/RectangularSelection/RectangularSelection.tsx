@@ -17,7 +17,9 @@ const RectangularSelection: React.FC<{}> = () => {
   const handleCopy = async () => {
     if (!activeRectangleSelection || !activeRectangleRect) return;
 
-    copyActiveSelection(activeRectangleSelection);
+    if (!copyActiveSelection(activeRectangleSelection)) {
+      console.error('Failed to copy rectangular selection');
+    }
   };
 
   const handlePaste = () => {
