@@ -3576,3 +3576,196 @@ git remote get-url origin                                       # .../drguz69/li
 
 **Files.** `scripts/lib/worktree-inventory/git.mjs:69`, `scripts/worktree-inventory.mjs`,
 `HANDOFF.md` §0
+
+## 111. No pixel tool honours an active selection — the eraser, the magic eraser, the paint bucket and the clone stamp all ignore it
+
+**Problem.** A selection is a coverage limit on every raster operation. In this app it is a limit on
+none of them. Measured against current `main`:
+
+```
+git show main:src/tools/eraser.ts     | grep -ci selection   # 0
+git show main:src/tools/cloneStamp.ts | grep -ci selection   # 0
+git show main:src/tools/fill.ts       | grep -ci selection   # 0
+git grep -niE "multiplyBySelection|applySelectionMask|selectionAlpha|constrainToSelection" main -- 'src/**'   # 0
+```
+
+There is no shared seam to hang a fix on, and `src/contexts/useLayer.ts`'s commit path never reads
+selection state at all. So selecting a region and painting outside it paints outside it.
+
+**Reproduce.** Make a selection, switch to the Eraser or the Paint Bucket, and stroke well outside
+the selection's bounds. The stroke is not clipped.
+
+**Fix.** Multiply the selection's alpha into the region write, per processor, because each computes
+coverage differently: the eraser has a stroke mask, the flood fills a fill mask, the clone stamp a
+displaced fetch. There is no shared region-write primitive to hang a common helper on, so this is a
+per-processor change and needs its own tests — a "clip the whole result afterwards" approach
+re-reads and re-writes the bounding box on every stroke and is what makes this expensive.
+
+**Where this came from.** The abandoned branch `ps-pixel-tools` (worktree `ps-pixel-tools`, 12k lines,
+now harvested) filed it as handoff items 34/35 of a different numbering. Its code is superseded by a
+different architecture, so this is a rebuild, not a merge. Two of that branch's items are dead: the
+`eraseToHistory` plumbing it described no longer exists on main at all, and its blast-radius note is
+addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs and returns).
+
+**Files.** `src/tools/eraser.ts`, `src/tools/cloneStamp.ts`, `src/tools/fill.ts`,
+`src/contexts/useLayer.ts` (the commit path)
+
+## 112. Every pointer move of a stroke re-rasterizes the stroke's whole bounding box
+
+**Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress, and the
+pointer-move path reads the bitmap from the hook closure rather than from the canvas the previous
+move wrote:
+
+```
+src/contexts/useLayer.ts:584   previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
+src/contexts/useLayer.ts:585   drawAllLayers();
+src/contexts/useLayer.ts:589   const bitmap = layer.tmpCanvas ?? layer.bitmap;
+```
+
+`previewLayersRef.current[id]` is written and never read back as the next invocation's input, so each
+move redoes the work for the entire region the stroke has touched so far. A short stroke is cheap; a
+long drag over a large canvas is quadratic in the distance travelled, and it gets worse the longer
+the stroke runs.
+
+**Reproduce.** Drag one continuous stroke across a large canvas and profile `tempUpdateLayer`. Cost
+per event grows with the bounding box covered SO FAR, not with the delta.
+
+**Fix.** Either accumulate across the stroke, or document the cost as a known limit. A persistent
+canvas handle in the processor contract would work, but it must NOT go in `args`: the durable
+conversion whitelists the tool-arg shape, and a canvas in `args` would either void the document or
+require a migration. Put it outside `args`.
+
+**Files.** `src/contexts/useLayer.ts:583-612`
+
+## 113. An ordinary tool commit can move the document's size, and a mid-document bedrock blank layer is the production trigger
+
+**Problem.** A tool commit is supposed to change pixels, not the document. A reproduction harness
+exists that measures `totalSize`, `documentFrame` and the canvas backing store across commits, and it
+has never been run to a verdict. Four production entry points, all of them live code:
+
+1. ten Rectangle commits, then ten undos and ten redos — the canvas backing store and the footer's
+   `totalSize` text must never move
+2. crop, then five more commits, then three undos and three redos — the pre-crop cursor must stay at
+   the pre-crop size and every later cursor at the cropped one
+3. a 64×64 document opened from a fixture, then five commits and five undo/redo rounds (the import is
+   async, so it must be polled, and the opened size must be passed in rather than the seeded default)
+4. **the mobile shell** — `MobileLayersDrawer.tsx:173` calls
+   `createBlankLayer({ …, size: totalSize, isBedrock: true })` with NO `replaceDocument`, which is
+   exactly the history shape a replay bedrock branch reacts to
+
+**Reproduce.** The harness is committed on `salvage/probe-canvas-growth` (it was untracked in a
+detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it):
+
+```bash
+git worktree add .kilo/worktrees/probe-checkout salvage/probe-canvas-growth
+cd .kilo/worktrees/probe-checkout
+npx vitest run src/contexts/__tests__/probe-canvas-growth.test.tsx   # the per-cursor sweep
+npm run test:e2e -- e2e/zzz-probe-canvas-growth.spec.ts              # the four entry points
+```
+
+**Not verified.** Whether the defect still reproduces at current `main` is UNKNOWN — the probes have
+never been run to a verdict, and 31+ commits have landed since they were written. Run them before
+acting on anything here. Scenarios D and E in the jsdom probe are deliberately assertion-light and
+only log a summary: they are diagnostic, not verdicts.
+
+**Careful with the landing shape.** `probe-canvas-growth.test.tsx` is named `*.test.tsx` and is
+therefore collected by `npm run test`, so it must not be merged as-is without deciding where the
+probes live — an `expected-fail` pin or a prose reproduction in this file. A probe that FAILS is a
+tripwire, and per the repo's own rule it is removed in the same change that fixes the defect; a probe
+that PASSES means the defect is gone and the file should be deleted, not kept as a passing test.
+
+**Files.** `src/components/Mobile/MobileLayersDrawer.tsx:173`, `src/contexts/history-replay.ts`,
+the harness on `salvage/probe-canvas-growth`
+
+## 114. A screenshot clip taller than the viewport is still silently truncated, and the guard that would catch it has never been on main
+
+**Problem.** `onScreenClip` (`main:e2e/helpers/canvas-helpers.ts:325-345`) fixes the clip's POSITION
+and not its EXTENT: it returns `clip: { ...clip, y: pageRect.y - scrolledTo }` and passes the
+requested `height` through untouched. A region taller than the viewport is therefore scrolled into
+place and then still cut off by `page.screenshot`, with no error. Its own docblock disclaims
+responsibility: _"This is a SAFETY NET, not a workaround for a bug that is present."_
+
+`git grep -n -E "assertClipCapturable|clipToViewport" main -- e2e/ src/` returns **no matches**: the
+guard that would fail loudly on exactly this has never landed. So the failure mode is silent, and
+every visual-regression baseline recorded from a truncated clip is suspect.
+
+**Reproduce.** Ask for a clip taller than the window — e.g. `waitForCanvasPixels` with a clip whose
+`height` exceeds the viewport height — and observe that it returns pixels for a smaller region than
+asked for, exit 0.
+
+**Fix.** Add `ViewportSize`, `clipToViewport(clip, viewport)` and
+`assertClipCapturable(what, clip, viewport)` to `e2e/helpers/canvas-helpers.ts`; call it ONCE at the
+top of `waitForCanvasPixels` (`main:…:558`) before the poll loop and before the deadline is armed,
+and in `takeLineScreenshot` before `fs.mkdir`; and from `saveScreenshotArtifact` in
+`image-comparison.ts` only when `clip.width > 0 && clip.height > 0`. It must return early on
+`viewport === null`, and it cannot catch a clip that is too narrow — say so in its docblock.
+**Consolidate, do not duplicate:** `visibleCanvasBox` already exists in
+`e2e/helpers/history-helpers.ts:107` with a private copy at `e2e/adjustments.spec.ts:159`; move it
+into `canvas-helpers.ts` and re-export it rather than adding a third.
+
+**Do not port one thing from the old attempt.** The discarded `fix/clip-gate` branch also changed
+`e2e/helpers/cdp-helpers.spec.ts` to assert a capture scale of exactly 2. Main deliberately does not:
+`main:e2e/helpers/cdp-helpers.spec.ts:271-276` records that on this host the emulated ratio and the
+capture scale diverge, and that asserting the emulated value is what kept that block red in exactly
+the modes it was meant to protect. That branch was REQUEST CHANGES in review; take the guard, not
+the DPR assertion.
+
+**Files.** `e2e/helpers/canvas-helpers.ts:325-345`, `e2e/helpers/history-helpers.ts:107`,
+`e2e/adjustments.spec.ts:159`, `e2e/helpers/cdp-helpers.spec.ts:271-276`
+
+## 115. The five figure tools never see the foreground colour, because of one guard in the swatch
+
+**Problem.** `rectangle`, `ellipse`/`oval`, `triangle`, `polygon` and `line` all take their colour from
+a hardcoded literal rather than the foreground swatch:
+
+- `src/components/ToolbarsRight/Figures/Shape.tsx:32` mirrors the swatch behind an
+  `args.toolName !== 'shape'` guard, and one options-bar component serves all six of `toolsMap.ts`
+- `src/tools/settings.ts:278-306` gives each of those five a hardcoded `color: '#000000'`
+- `src/components/Main/ShapeToolArea.tsx` contains **zero** occurrences of `color` — it reads
+  `args.color` and nothing sets it
+
+So moving the foreground swatch does nothing for five of the six figure tools.
+
+**Fix.** In `ShapeToolArea.tsx`, read `color` and `backgroundColor` off the store AT GESTURE TIME —
+the same shape `FillToolArea.tsx` already ships — and inject them into the committed args and the
+live preview. Do **not** route through `setToolArgs`: `saveLastSettings` persists those five names as
+a bare `{ toolName }`, so a tool-args write would leave `args.points` and `lineWidth` undefined after a
+tool switch. The alternative — deleting the `args.toolName !== 'shape'` guard at `Figures/Shape.tsx:32`
+— writes through the args context, so that persistence hazard has to be closed first.
+
+Baked-in args rather than replay-time reads are what keep undo/redo re-rasterising in the painted
+colour with no migration, because the durable `legacy-tool` conversion already serialises the whole
+args object. Add BOTH colours: `hasFill` and the fill swatch are store-owned for the same reason, and
+a half-fixed shape tool strokes in the swatch while still filling in the default.
+
+**Where this came from.** The abandoned branch `fix/paint-overlay`. Its other two commits are dead:
+`139cc432` (clear the tool overlay on unmount) is on `main` verbatim at `useRect.ts:129-135`, and
+`37132d95`'s primary claim about `brush`/`pencil`/`color-replacement` being wired to a placeholder is
+false on main, which built a real options panel at `src/components/ToolbarsRight/Paint/Paint.tsx:63-66`.
+Only this rider survives.
+
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:32`, `src/tools/settings.ts:278-306`,
+`src/components/Main/ShapeToolArea.tsx`
+
+## 116. Touch input is unhandled: HTML5 drag-and-drop on the layer rows, no stylus discrimination, and no touch targets
+
+**Problem.** Three findings from an audit of the responsive plan, all still true on `main` and
+recorded nowhere (`grep -ciE "touch target"`, `"WCAG"`, `pointerType`, `stylus`, `palm`, `pinch"` on
+`e2e/OPEN-PROBLEMS.md` all return 0):
+
+1. `src/components/SidebarRight/LayersTab.tsx:134` still sets `draggable={editingLayerId !== layer.id}`
+   — HTML5 drag-and-drop, which does not fire on touch at all. On a phone the layer rows cannot be
+   reordered.
+2. `pointerType` appears on `main` only in `src/__tests__/fixtures/pointer.ts`, never in
+   `usePointerPosition`. So there is no stylus-versus-palm discrimination and no pinch-zoom.
+3. Slider touch targets are unaddressed.
+
+**Fix.** Each is independent and each is small; the third has a worked answer in the discarded
+`docs/responsive-design-plan` branch, which added a 70-line `src/components/Common/TouchSlider.tsx`
+with no counterpart on main. **Do not land that document** — its audit section is now false (it
+asserts no mobile drawer or hamburger exists, that all chrome is `max-md:hidden` leaving a blank
+canvas, and that `BottomToolbar.tsx` is an unintegrated stub; `main` has `MobileMenuDrawer.tsx`,
+`MobileShell.tsx` and `e2e/mobile-shell.spec.ts`). Take the component, re-derive the document.
+
+**Files.** `src/components/SidebarRight/LayersTab.tsx:134`, `src/hooks/usePointerPosition.ts`,
+`src/hooks/useMediaQuery.ts`
