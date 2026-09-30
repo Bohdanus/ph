@@ -1608,8 +1608,8 @@ derived from `operationForTool` and the two consumers of its output.
 | `source`             | I _create_ a layer; my args **are** the layer source.                         | `create-layer`, `src/contexts/history-adapter.ts:504` — reached from the `NEW_LAYER_ACTION \|\| (TOOL_ACTION && source)` arm at `:500`, **not** from `operationForTool`                                                                                                                                                           | **YES for the create path.** The op carries no tool name; the name lives on `DurableLayerSource.toolName`, a free `string` (`src/contexts/history-model.ts:31`, `:47`)                                                                                                                                                                  | zero edits to the history files                                                                          | **ESCAPE HATCH for a creator only.** See the trap below                                                                                                  |
 | `layer-operation`    | I am a non-destructive filter: append a retained op, do not touch pixels now. | `apply-filter` carrying a `DurableFilter`, `src/contexts/history-adapter.ts:391-402`                                                                                                                                                                                                                                              | **NO.** Allowlist `['blur', 'color', 'levels']` at `src/contexts/history-adapter.ts:393`; closed union `DurableFilter['toolName']` at `src/contexts/history-model.ts:75`; a `switch` with **no `default` arm** at `src/contexts/materialization.ts:73-89`; a second throw at `src/contexts/materialization.ts:100-102`                  | four hardcoded sites across three files                                                                  | **NOT an escape hatch — tier 2**                                                                                                                         |
 | `selection`          | I produce selection state.                                                    | **`null`.** `src/contexts/history-adapter.ts:503` returns `null` for `selection` and `document-operation` alike. Selection state enters the durable timeline as a `set-selection` op derived from the `SELECTION_ACTION` entry's args by `deriveSetSelectionEntry` (`src/contexts/history-adapter.ts:311-328`, arm at `:556-599`) | the **op** is generic; the **representation** is not — `SelectionGeometry` (`src/contexts/general-types.ts:19`) and `SelectionSourceTool` (`:17-18`) are closed unions                                                                                                                                                                  | a new geometry widens both unions                                                                        | **NOT an escape hatch — tier 2**                                                                                                                         |
-| `affine-operation`   | I retain an affine transform.                                                 | `apply-affine-transform`, `src/contexts/history-adapter.ts:384-388`                                                                                                                                                                                                                                                               | **NO — the commit kind is never consulted.** The affine arm sits behind `if (args.toolName === 'transform')` at `src/contexts/history-adapter.ts:357`, which returns or throws from inside its own block. A new tool declaring `commit: 'affine-operation'` falls past every `processor.commit === …` test and hits the throw at `:426` | the `toolName` gate at `:357`, the trapezoid arm at `:362-373`, `src/contexts/history-replay.ts:162-188` | **NOT an escape hatch.** The _op_ is generic; the _kind_ is a name-keyed special case                                                                    |
-| `document-operation` | I own the document frame, not a layer.                                        | **`null`**, `src/contexts/history-adapter.ts:503`. Legacy replay `continue`s: `if (processor.commit === 'document-operation') continue;` at `src/contexts/history-replay.ts:195`                                                                                                                                                  | n/a                                                                                                                                                                                                                                                                                                                                     | none — but the op is discarded by **both** systems                                                       | **NOT an escape hatch.** This is crop's declaration, and it silently loses the operation in legacy replay too                                            |
+| `affine-operation`   | I retain an affine transform.                                                 | `apply-affine-transform`, `src/contexts/history-adapter.ts:384-388`                                                                                                                                                                                                                                                               | **NO — the commit kind is never consulted.** The affine arm sits behind `if (args.toolName === 'transform')` at `src/contexts/history-adapter.ts:357`, which returns or throws from inside its own block. A new tool declaring `commit: 'affine-operation'` falls past every `processor.commit === …` test and hits the throw at `:426` | the `toolName` gate at `:357`, the trapezoid arm at `:362-373`, `src/contexts/history-replay.ts:182-208` | **NOT an escape hatch.** The _op_ is generic; the _kind_ is a name-keyed special case                                                                    |
+| `document-operation` | I own the document frame, not a layer.                                        | **`null`**, `src/contexts/history-adapter.ts:503`. Legacy replay `continue`s: `if (processor.commit === 'document-operation') continue;` at `src/contexts/history-replay.ts:215`                                                                                                                                                  | n/a                                                                                                                                                                                                                                                                                                                                     | none — but the op is discarded by **both** systems                                                       | **NOT an escape hatch.** This is crop's declaration, and it silently loses the operation in legacy replay too                                            |
 | `unimplemented`      | I do not exist yet.                                                           | **throws** `UnsupportedHistoryFeatureError` at `src/contexts/history-adapter.ts:504`                                                                                                                                                                                                                                              | n/a                                                                                                                                                                                                                                                                                                                                     | none                                                                                                     | **NOT an escape hatch.** The processor is also a no-op: `unimplemented = () => () => [null as never] as ToolResult` at `src/tools/toolProcessors.ts:110` |
 
 #### Three traps the table exposes
@@ -1623,20 +1623,20 @@ block**; then `processor.commit === 'layer-operation'` (`:391`), `=== 'geometry'
 `=== 'raster'` (`:416`), and `=== 'document-operation' || === 'selection'` returning `null`
 (`:425`); then `throw new UnsupportedHistoryFeatureError(...)` at `:426`. A tool named
 `warp` with `commit: 'affine-operation'` reaches `:426` and throws. Legacy replay survives
-it (`src/contexts/history-replay.ts:162-188` handles the kind for any tool name), so the
+it (`src/contexts/history-replay.ts:182-208` handles the kind for any tool name), so the
 failure is **durable-only** and silent until the shadow is exercised.
 
 **`source` — only an escape hatch in its creator role.** `operationForTool` has no
 `commit === 'source'` arm at all, so a `source` tool dispatched as a `TOOL_ACTION` against
 an **existing** layer (no `layerSource`) falls past every arm to the throw at `:426`, while
 legacy replay rasterizes it through its own default arm
-(`src/contexts/history-replay.ts:196`). `draw`, `shape`, `text`, `rectangle`, `ellipse`,
+(`src/contexts/history-replay.ts:216`). `draw`, `shape`, `text`, `rectangle`, `ellipse`,
 `triangle`, `polygon` and `line` all declare `commit: 'source'` and are all marked
 `creator: true` (`src/tools/toolProcessors.ts:145-159`, `:220-224`); keep that pairing.
 
 **`layer-operation` — looks generic and is not.** Sharpen, Noise Reduction and Vibrance
 are the natural next tools and all three are filters. They work perfectly in legacy replay
-(`src/contexts/history-replay.ts:152-161` appends a retained operation for **any**
+(`src/contexts/history-replay.ts:172-181` appends a retained operation for **any**
 `layer-operation` tool, no name check) and fail **only** the shadow, with an
 `Unsupported filter ${args.toolName}` throw (`src/contexts/history-adapter.ts:394`) that
 voids the whole durable document.
@@ -1690,7 +1690,7 @@ that retains an affine transform touches three:
 | 5   | `src/tools/__tests__/tool-processors.test.ts:114-128` | the `requiresRaster` tool list is asserted exhaustively                               | yes                                                                            |
 | 6   | `src/contexts/history-adapter.ts:357`                 | `if (args.toolName === 'transform')` — the whole affine arm                           | no                                                                             |
 | 7   | `src/contexts/history-adapter.ts:362-373`             | the trapezoid raster boundary, keyed on `trapezoid` and `transform` args              | no                                                                             |
-| 8   | `src/contexts/history-replay.ts:163-164`              | `toolArgs.toolName === 'transform' ? … : 0`                                           | no                                                                             |
+| 8   | `src/contexts/history-replay.ts:183-184`              | `toolArgs.toolName === 'transform' ? … : 0`                                           | no                                                                             |
 
 Touching any of these is a **history-migration task, not a tool task**: it changes what an
 existing durable document means, and `DURABLE_SCHEMA_VERSION` is `1`
@@ -1774,7 +1774,7 @@ of them fails in a different way.
    (`src/contexts/materialization.ts:100-102`) re-derives the processor from
    `operation.filter.toolName` and throws on a `replay.version` mismatch.
 
-The legacy side has none of this: `src/contexts/history-replay.ts:152-161` appends a
+The legacy side has none of this: `src/contexts/history-replay.ts:172-181` appends a
 retained operation for **any** `layer-operation` tool, no name check. So a new filter tool
 is legacy-good and durable-fatal, and the failure is invisible until the shadow runs. The
 honest move in a stripped task: declare `commit: 'raster'`, accept that the shadow no
@@ -1860,7 +1860,7 @@ covering the representation.
 
 - **`affine-operation`** — see the trap above. Generic op, name-gated kind.
 - **`document-operation`** — `src/contexts/history-adapter.ts:503` returns `null` and
-  `src/contexts/history-replay.ts:195` `continue`s, so the operation is discarded by
+  `src/contexts/history-replay.ts:215` `continue`s, so the operation is discarded by
   **both** systems. It is crop's declaration, not a way to skip work.
 - **`unimplemented`** — `src/contexts/history-adapter.ts:504` throws, which voids the
   whole durable document, and the processor is
@@ -4270,7 +4270,7 @@ merge --ff-only main`.
     This is correct fail-closed behaviour and must not be "fixed" by manufacturing a durable
     no-op operation.
 29. **`commit: 'document-operation'` is a no-op in legacy replay too.** Verified:
-    `src/contexts/history-replay.ts:195` is literally `if (processor.commit ===
+    `src/contexts/history-replay.ts:215` is literally `if (processor.commit ===
 'document-operation') continue;`. It silently loses **both** systems. The durable half returns
     `null` for `document-operation` alongside `selection` (`history-adapter.ts:503`), so the
     durable shadow is not the thing to fix.

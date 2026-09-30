@@ -1272,7 +1272,7 @@ drawer had one that was removed rather than shipped broken.
 other layer property write uses (`src/contexts/useLayer.ts:473`). It fails three
 times, all silently. `updateLayer` only plans a durable append when
 `isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
-whitelist, so the entry never gets a durable translation. `history-replay.ts:146`
+whitelist, so the entry never gets a durable translation. `history-replay.ts:166`
 reads `if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries
 no `toolName` in its args, so legacy replay skips it and the document after an undo
 diverges from the document before. And `getHistoryItemTitle`
@@ -1296,7 +1296,7 @@ belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
   `isSetLayerPropertiesAction` and give `deriveSetLayerPropertiesEntry` its branch.
   Adding it to the first without the second makes `updateLayer` plan an append that
   resolves to no durable entry, and it silently falls back to the raw patch.
-- `src/contexts/history-replay.ts:112-121` — the legacy arm beside the
+- `src/contexts/history-replay.ts:132-141` — the legacy arm beside the
   show/hide and rename arms, writing `{ ...layer, opacity }` the way those write
   `visible` and `name`. This is the arm that made the `TOOL_ACTION` route wrong, and
   without it undo/redo leaves the document inconsistent.
@@ -1316,7 +1316,7 @@ layer property.
 
 **Files.** `src/contexts/layer-types.ts:58`, `src/contexts/useLayer.ts:473`,
 `src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:355,387`,
-`src/contexts/history-replay.ts:112,146`, `src/contexts/useHistory.ts:14,22`,
+`src/contexts/history-replay.ts:132-141,166`, `src/contexts/useHistory.ts:14,22`,
 `src/contexts/psd-utils.ts:159,229`
 
 ## 57. The mobile shell has no colour control at all
@@ -2697,6 +2697,58 @@ pin at `history-adapter.branches.test.ts:704`; the fix must re-point it.
 
 ---
 
+## 91. A bedrock source on the FIRST history entry sizes the document for legacy replay and not for the durable baseline
+
+**Problem.** `replayHistory` takes the document frame from a bedrock source when the entry is the
+FIRST one (`history-replay.ts:103-109`), and that is the shape every document opens with:
+`App.tsx:23-26` seeds a `DEFAULT_BLANK_IMAGE` carrying `{ isBedrock: true, size }` and commits it
+through `setBlankImage` → `createBlankLayer(params, true)` (`useApp.ts:77-79`), which replaces the
+document and writes that one `NEW_LAYER` entry with no `documentSource` (`useLayer.ts:192-214`,
+`:242`); `File > New` (`NewImageDialog.tsx:39`) and `File > Open` (`useApp.ts:163`) write the same
+shape. The converter's baseline took its frame from `options.initialFrame` instead (the baseline
+branch of `legacyHistoryToDurable`, `history-adapter.ts:590-595`), and its create-layer arm cannot
+reach the case: it publishes the layer and deliberately leaves `currentFrame` alone
+(`history-adapter.ts:651-655`). The two models therefore agreed only while the caller's seed
+happened to equal the bedrock size.
+
+**Why the seed is what makes it reachable.** Conversion is always handed the store's CURRENT frame
+(`StoreContext.tsx:672`), and a commit that takes the reconvert path is handed the frame that commit
+is about to publish (`StoreContext.tsx:978-985`) — so the first reconversion after a crop seeds the
+converter with the CROPPED frame. `replayDurableDocument` reads its frame from
+`document.baseline.frame` (`durable-replay.ts:60`) and moves it only for a `set-document-frame`
+operation (`:129-131`), so that cropped baseline then holds at cursor `-1` and at every cursor
+before the crop's entry, while legacy replay at index 0 still returns the size the document was
+opened at. Crop the document, let the shadow reconcile, and the baseline describes the cropped
+document at exactly the cursor where the user can undo back into the un-cropped original.
+
+**Reachable consequence, and it is a wrong frame in a shadow nothing consumes yet.** No production
+reader renders from `baseline.frame` — the only two are `durable-replay.ts:60` and
+`history-model.ts:307` — and the conversion records no diagnostic for it, so the canvas is right and
+the disagreement is silent. It is recorded because the durable document is the model that will
+eventually replace legacy replay, and a baseline that is wrong at the first cursor is wrong at the
+cursor every replay starts from.
+
+**Fix.** Derive the baseline frame from the same first entry legacy replay derives it from, ranked
+above `options.initialFrame`, so index 0 agrees by rule rather than by caller seeding: for that
+history the bedrock size IS the document that was opened, while `options.initialFrame` is the frame
+a later crop has already moved. The read belongs in the baseline, not in the create-layer arm, which
+must keep leaving `currentFrame` alone for every LATER entry — a bedrock commit mid-history moves
+neither model.
+
+**Confirm before deleting this entry; unverified is not closed.** The rule to check is that BOTH
+models read the FIRST entry and neither prefers the caller's seed, and then that a test compares the
+two models at index 0 and at cursor `-1` with a seeded `initialFrame` that differs from the bedrock
+size. Nothing does that today: the only cross-model bedrock test
+(`src/contexts/__tests__/history-adapter.branches.test.ts`, "leaves the durable frame at the
+pre-add size when a bedrock layer is added mid-history") puts its bedrock entry at index 1 and so
+cannot see this case, and the index-0 rule is pinned on the legacy side only
+(`src/contexts/__tests__/history-replay.branches.test.ts`, "keeps a frame established at index 0
+rather than reverting it on a later commit"). The durable half at index 0 is what has to exist.
+
+**Files.** `src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
+
+---
+
 ## 92. The converter re-derives a created or merged layer's snapshot, and disagrees with the runtime rule
 
 **Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts:166`),
@@ -2868,7 +2920,7 @@ What `StoreContext` then does with a `true` is the decision:
 - **Accept, and publish the stored record** — the larger change, and the one the durable model
   prefers. An identity operation in `layer.operations` with no history entry is live state the
   durable shadow cannot reproduce: the reducer deliberately does not move `durableStatus` on this
-  transition (`src/contexts/StoreContext.tsx:510-515`), and `history-replay.ts:180` rebuilds
+  transition (`src/contexts/StoreContext.tsx:510-515`), and `history-replay.ts:200` rebuilds
   `layer.operations` from history entries. Accepting the payload as-is would publish a record whose
   operations the shadow cannot re-derive. Publishing the STORED record instead makes the preview a
   pure no-op, which is what the user asked for.
@@ -3069,35 +3121,35 @@ failure from a silent one.
 
 ---
 
-## 99. Every `history-replay.ts` line citation past `:89` is off by eight
+## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
 
-**Problem.** §91's fix wrapped the bedrock-frame assignment in `if (index === 0)` (`history-replay.ts:91-97`),
-which turned a five-line block into a thirteen-line one. Every cited line below 89 still points where it
-did; **every cited line above it is now eight lines early.** The citations were all correct before the fix
-and are all wrong after it, so nothing here is pre-existing rot — it is drift this change introduced.
+**Problem.** The bedrock-frame assignment in `replayHistory` is now wrapped in `if (index === 0)`
+(`history-replay.ts:103-109`), which turned a five-line block into a thirteen-line one, and the
+`documentSource` arm above it grew a gate of its own (`:89-94`). Every cited line up to `:78` still
+points where it did; **every citation past `:89` is now twenty lines early**, and the shift in between
+is not uniform (`:79-82` moved eleven, `:83-84` twelve, `:85-89` nineteen). The citations were all
+correct before the gates and are all wrong after them, so nothing here is pre-existing rot — it is
+drift this change introduced.
 
 **Why it matters.** These are references a session follows instead of reading, and `history-replay.ts`
-ends at 215, so an eight-line miss usually lands inside the neighbouring arm rather than past the file:
-`docs/LAYERS-PANEL.md:39` sends the reader to the rename arm when it means the new-layer arm,
-`.skills/photoshop-tool-creation.md` cites the `document-operation` `continue` at `:195` when it is `:203`,
-and `MIGRATION_NEXT_STEPS_SUNDAY.md:457` cites the crop arm at `:91-97` when it is `:99-105`. Entry 96 in
-this file is the same genre of defect for the same reason.
+ends at 227, so a twenty-line miss lands inside the neighbouring arm rather than past the file. The
+sites this entry listed in other documents have been re-pointed; the ones left are in the history
+tests, which still quote the bedrock block as `:85-97`
+(`history-adapter.branches.test.ts:724`, `:771`, and `useHistory.test.tsx:413`), the document-frame
+arm as `:99-105` (`history-adapter.branches.test.ts:344`) and the document-source arm as `:78-84`
+(`:669-670`). Entry 96 in this file is the same genre of defect for the same reason.
 
-**Fix.** Mechanical: add eight to every cited line above 89, and re-verify each against the file rather
-than by arithmetic — the citations name arms, so `:152` (now `:160`) is the `layer-operation` test and
-`:195` (now `:203`) is the `document-operation` `continue`. Already re-pointed, because §91 made their
-own claims false rather than merely late: `src/contexts/history-adapter.ts:676-688`, and the bedrock-frame
-blocks in both §91 test files. Sites still stale:
+**Fix.** Re-point each site by reading the file, not by arithmetic — the shift is not uniform below
+`:89`. For reference, past `:89` the two gates together moved everything twenty lines down: the
+bedrock block is `:103-109`, the document-frame arm `:111-117`, the layer arms `:126-161`, the
+`layer-operation` test `:172` and the `document-operation` `continue` `:215`. Already correct, and
+re-verified against the working tree: the `set-document-frame` comment in
+`src/contexts/history-adapter.ts:707-717` (which now names `frameFromFirstEntryBedrock` and cites
+`:103-109`), `src/contexts/history-adapter.ts:303` and `:670`, and `src/contexts/history-append.ts:179`
+and `:464`. The four sites in this file are re-pointed too. Sites still stale:
 
-- `src/contexts/history-adapter.ts:273` (`:102`) and `:639` (`:127`)
-- `src/contexts/history-append.ts:179` (`:138`) and `:464` (`:102`)
-- `docs/TOOLS.md:2100` and `:2167` (`:152`)
-- `docs/LAYERS-PANEL.md:39` (`:106-141`, `:91`, `:99`)
-- `MIGRATION_NEXT_STEPS_SUNDAY.md:457` (`:91-97`) and `:467` (`:195`)
-- `.skills/photoshop-tool-creation.md:1611,1612,1626,1633,1639,1693,1777,1863,4270`
-- `src/tools/descriptions/transform.ts:406` and `:490` (`:152`)
-- `src/tools/descriptions/transform.notes.md:151` and `:632` (`:152-160`)
-- `HANDOFF.md:1275` (`:146`), `:1299` (`:112-121`), `:1319` (`:112,146`), `:2871` (`:180`)
+- `src/contexts/__tests__/history-adapter.branches.test.ts:344` (`:99-105`), `:669-670` (`:78-84`), `:724` and `:771` (`:85-97`), `:1407` (`:135`)
+- `src/contexts/__tests__/useHistory.test.tsx:413` (`:85-97`)
 
 **Files.** `src/contexts/history-replay.ts`
 
