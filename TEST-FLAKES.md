@@ -307,11 +307,16 @@ AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
       Tests  1 failed | 1956 passed | 3 expected fail (1960)
 ```
 
-`useFile.test.tsx:157` is the `expect(...).toBeNull()` half of a test whose
-first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)'… })`
-at `:156` — so the save **did** resolve and the pipeline **did** hand back its
+`useFile.test.tsx:176` is the `expect(...).toBeNull()` half of a test whose
+first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
+at `:175` — so the save **did** resolve and the pipeline **did** hand back its
 details. What failed is that a **Save File As dialog was open when it should not
-be**. Read against this entry's own findings that is a real narrowing: the
+be**. (The failure quoted above says `:157`, which is what the reporter printed;
+the file has since grown — the `it.skip` above it, and 19 more lines — so the
+assertion now lives at `:176` and its passing sibling at `:175`. Read the line
+number in the quote as history and these two as the current tree.)
+
+Read against this entry's own findings that is a real narrowing: the
 encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
 so `saveImageToDisk` is a bare `vi.fn()` and `encodeAvif` never runs), so the
 failure is not an encoding refusal and not `retireUnreferenced` — **it is
@@ -350,7 +355,10 @@ Observed 2026-09-28 on `main` at `cc7b647`, in a full headless `npx playwright t
 reporting `182 passed, 1 failed, 2 skipped` (185 total). The line numbers in that
 quote are `cc7b647`'s; on the branch that hardened the failure path the same
 anchors are the test declaration at `:487`, `drawSlab` at `:245` and the pixel
-wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work.
+wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work — though it has
+since moved: the quote's `:536` frame is now the blank line before
+`waitForCanvasPixels` (`:558`), whose timeout throw is at `:579`. So "unchanged by
+that work" was true of the commit range and is no longer true of the file.
 
 **That run was not a clean run, and that is the single most useful thing known
 about it.** It was produced by the e2e orchestrator with six other agents running
