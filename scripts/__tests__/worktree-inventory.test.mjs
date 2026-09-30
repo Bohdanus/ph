@@ -16,9 +16,23 @@
  *   2. A paid-model launch that died at zero tokens is classified as a
  *      failure, not as a finished session that happened to be quiet.
  *
- * Everything runs under the root jsdom project per AGENTS.md, so these are
- * environment-agnostic: no git repository is created, no clock is read, and
- * `node:sqlite` is only exercised where a real temporary database is cheap.
+ * Everything runs under the root jsdom project per AGENTS.md, and that is a
+ * deliberate constraint with a real cost, so it is stated rather than claimed as
+ * free. What is actually true of this file:
+ *
+ *   - It CREATES GIT REPOSITORIES. `makeRepo` runs `git init`, three commits, a
+ *     branch and `git worktree add` per test, and the curated-table guards read
+ *     git in the repository this suite is running in. So a test here is bounded
+ *     by process spawns, which is what the budget below is for.
+ *   - It READS THE MACHINE'S CLOCK in exactly one place — 'is stamped in the
+ *     PAST, never the future' — and keeps reading it on purpose, because the
+ *     thing it defends (a tracked `asOf` that is not in the future) has no
+ *     other reference to be checked against. The reasoning is at that test.
+ *   - It reads a machine-LOCAL database under `$HOME/.local/share/kilo`, in one
+ *     test, and the cross-check it wants is only possible where that database
+ *     exists. That test says which outcome it got rather than reporting green
+ *     for asserting nothing.
+ *   - `node:sqlite` is exercised only where a real temporary database is cheap.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -42,10 +56,15 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
  *
  * The "against a real repository" blocks build a throwaway git repository per
  * test and then run real `git` against it, so a test here is bounded by process
- * spawns and git's own startup rather than by anything being computed. The
- * `curated table` block is worse: it reads git in every worktree in the
- * repository, which is 70-odd directories on this machine today and grows with
- * the fleet.
+ * spawns and git's own startup rather than by anything being computed. Two tests
+ * are worse, because they read git in every worktree in the repository this suite
+ * happens to be running in, and that number is a property of the MACHINE's fleet
+ * rather than of the code: `never asks the table to protect a worktree whose
+ * protection is derived` and `never offers a live worktree that holds
+ * uncommitted work on no ref for disposal`. Both are named "live" for that
+ * reason. Neither of them asserts a fleet size, so both are cheap in CI, where
+ * the repository has one worktree, and both are the reason the remaining
+ * curated-table rules are pinned against a fixture instead.
  *
  * The default is not merely tight for that, it is at or above the measured cost
  * of this file's own slowest test: across three isolated runs of the three
@@ -60,17 +79,18 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
  * not a thing this suite can currently support. The headroom below is stated for
  * what it is: 15s is about five times this file's own worst measured case, and is
  * deliberately tighter than the two sibling suites because they spawn a CLI per
- * assertion and this one does not.
+ * assertion and this one does not. It is also exactly the floor
+ * `suite-budgets.test.mjs` holds every budgeted suite to, which is a floor and
+ * not a target — this file has to be as slow as the work is before the guard has
+ * anything to say about it.
  *
  * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
  * only decides how long a test may run before the harness reports it, and no
  * assertion below is changed by it.
  *
- * A per-test `it(name, fn, timeout)` argument still wins over this. The two tests
- * that read every worktree keep their declared `60_000`, which is what they
- * actually need: `gives every non-primary worktree a curated entry` measures
- * 21.5s on a machine with 70 worktrees, and that number is a function of how
- * many worktrees exist, not of this test.
+ * A per-test `it(name, fn, timeout)` argument still wins over this, and the two
+ * live tests that read every worktree keep their declared `60_000`: their cost is
+ * a function of how many worktrees exist, which is not a function of the code.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -251,6 +271,39 @@ function makeRepo() {
   return dir;
 }
 
+/**
+ * A throwaway repository whose WORKTREES have a known set of shapes, for the
+ * curated-table rule.
+ *
+ * `makeRepo` gives a branch, not a fleet. This adds three worktrees inside the
+ * repository — so it exercises the in-repository prefix rule too — one per way a
+ * worktree can hold work plus one that holds nothing:
+ *
+ *   wt-ahead   two commits on a branch main has not seen: `ahead > 0`
+ *   wt-edits   at main's tip with an untracked file: `ahead === 0`, and the only
+ *              copy of the work is in the tree
+ *   wt-clean   at main's tip and clean: holds nothing, and needs no entry
+ *
+ * The worktrees are created INSIDE `dir` so `inRepositoryWorktrees` cannot be
+ * satisfied by a filter that keeps everything.
+ */
+function makeRepoWithWorktrees() {
+  const dir = makeRepo();
+  const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+  // A branch at HEAD, so `wt-clean` is 0 ahead of main and already on it. A
+  // detached worktree would do too, but a named branch is the shape the
+  // generator classifies in production.
+  g('branch', 'empty');
+  g('worktree', 'add', '--quiet', join(dir, 'wt-clean'), 'empty');
+  g('worktree', 'add', '--quiet', '-b', 'edits', join(dir, 'wt-edits'), 'empty');
+  g('worktree', 'add', '--quiet', '-b', 'ahead', join(dir, 'wt-ahead'), 'side');
+  // Untracked rather than modified: `wt-edits` is a separate checkout of a
+  // branch at main's tip, so a modified file would need the blob git already
+  // has to differ, and this way the "work in no commit" claim is unambiguous.
+  writeFileSync(join(dir, 'wt-edits', 'scratch.txt'), 'never committed');
+  return dir;
+}
+
 /** A worktree shaped like the ones this repository actually has. */
 function wt(overrides = {}) {
   return {
@@ -285,7 +338,8 @@ const noSessions = [];
 const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true && r.dirty + r.untracked > 0;
 
 /**
- * Every worktree of this repository, with the git facts the rule above reads.
+ * Every worktree of an arbitrary git repository, with the git facts the rules
+ * below read.
  *
  * `collectWorktrees` is not used because it also runs `git merge-tree` on every
  * unmerged branch: that is the right cost for a generator which has to print all
@@ -300,14 +354,15 @@ const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true 
  * everything, and a guard written that way is green no matter what the generator
  * does with a dirty merged branch.
  *
- * Memoised: two tests below need the same few seconds of git, and a second read
- * of a repository other agents are actively writing to could see a different
- * shape than the first.
+ * The repository is a PARAMETER, and that is the load-bearing part of this
+ * signature. The same reader serves the two `live` tests, which read the checkout
+ * this suite runs in, and the curated-table fixture tests, which read a
+ * throwaway repository whose worktrees this file built. A reader hard-wired to
+ * `process.cwd()` is what made a rule about the code a rule about the machine:
+ * `git worktree list` in a CI checkout has one entry, and a test that needed
+ * more than one was red on every machine but the operator's.
  */
-let _liveFacts = null;
-function liveWorktreeFacts() {
-  if (_liveFacts) return _liveFacts;
-  const cwd = process.cwd();
+function worktreeFacts(cwd) {
   const missing = new Set(findMissingWorktrees(cwd).map((w) => w.path));
   // The MAIN checkout is the first entry of `git worktree list`, never `cwd`:
   // this suite is run from a task worktree as often as from the root checkout,
@@ -333,8 +388,94 @@ function liveWorktreeFacts() {
         commitsAhead: [],
       };
     });
-  _liveFacts = { mainPath, worktrees };
-  return _liveFacts;
+  return { mainPath, worktrees };
+}
+
+/**
+ * `worktreeFacts` memoised for THIS repository only.
+ *
+ * Two live tests below need the same few seconds of git, and a second read of a
+ * repository other agents are actively writing to could see a different shape
+ * than the first. The memo is keyed by directory so a fixture read is never
+ * answered from the live one, or the two would quietly describe one repository.
+ */
+const _liveFacts = new Map();
+function liveWorktreeFacts() {
+  const cwd = process.cwd();
+  if (!_liveFacts.has(cwd)) _liveFacts.set(cwd, worktreeFacts(cwd));
+  return _liveFacts.get(cwd);
+}
+
+/**
+ * The worktrees of a repository that are INSIDE it, in the sense the curated
+ * table means.
+ *
+ * The MAIN checkout is the first entry of `git worktree list` — not `cwd`, which
+ * under a task worktree is that worktree, and against which every other worktree
+ * path would fail the prefix test. Several agents run scratch worktrees in /tmp,
+ * and "every worktree needs a curated entry" is not a sensible rule for a
+ * transient one: the curated table documents THIS repository's worktrees.
+ *
+ * Returns the facts, not the names, because the rule below needs all three of
+ * `ahead`, `mergedIntoBase` and the working-tree counts, and a caller that
+ * re-derived them from a filtered name list is how two guards drift apart.
+ */
+function inRepositoryWorktrees(facts) {
+  const root = facts.worktrees.find((w) => w.isPrimary)?.path ?? facts.mainPath;
+  return facts.worktrees.filter((w) => w.path === root || w.path.startsWith(`${root}/`));
+}
+
+/**
+ * Whether a worktree holds work, over the three facts git reports.
+ *
+ * A worktree that holds NOTHING is not what the curated table is for. Its own
+ * comment used to say what the rule protects: "an uncurated worktree is one
+ * nobody has written down what it is for, which is how a preservation branch
+ * gets mistaken for a disposable one." A worktree that is clean, 0 ahead of main
+ * and already on main has no work to mistake for anything — it is a scratch
+ * space, and it cannot be lost.
+ *
+ * Demanding a summary for those is what made the guard the recurring red: the
+ * table was re-derived by hand FOUR times in one session, every time only
+ * because an agent had created a worktree that held nothing yet, and main went
+ * red within minutes of the derived guard landing. The shape is the same one
+ * `mustNotPrune` was just removed for — the risk is derivable from git, and only
+ * the risk deserves a hand-written claim.
+ *
+ * So the rule is the risk, not the existence: a worktree is required to be
+ * documented exactly when it has commits git cannot find on main, or edits that
+ * are in no commit at all, or a branch that is not on main. That is every way a
+ * worktree can hold work.
+ *
+ * A worktree whose facts could not be read is treated as HOLDING work, never as
+ * clean: `ahead: null` means git could not be asked, and a guard that read that
+ * as "nothing at risk" would be reporting on the absence of a lookup.
+ */
+function holdsSomething(f) {
+  if (!f || typeof f.ahead !== 'number' || typeof f.mergedIntoBase !== 'boolean') return true;
+  return f.ahead > 0 || f.mergedIntoBase === false || f.workingTree.modified + f.workingTree.untracked > 0;
+}
+
+/**
+ * The curated-table rule, as a function of FACTS and a curated lookup, so a test
+ * can pin it against a repository it built.
+ *
+ * `curated` is a parameter rather than the imported `CURATED` for the same
+ * reason `worktreeFacts` takes a directory: the property under test is "a
+ * worktree that holds work and has no entry is reported", and a rule that reads
+ * a module-level table cannot be exercised on a fixture without also editing a
+ * tracked file. The live tests pass `CURATED`; the fixture tests pass their own.
+ *
+ * `alsoAllowed` carries the names the rule exempts by construction — the main
+ * checkout, which AGENTS.md describes rather than the table, and the worktree
+ * that documents this very suite.
+ */
+function uncategorisedWorktrees(facts, curated, { alsoAllowed = [] } = {}) {
+  const permitted = new Set(['ph', ...alsoAllowed]);
+  return inRepositoryWorktrees(facts)
+    .filter(holdsSomething)
+    .map((w) => w.name)
+    .filter((name) => !permitted.has(name) && !curated[name]);
 }
 
 /**
@@ -1860,71 +2001,111 @@ describe('the curated table', () => {
     ).toEqual([]);
   });
 
-  it('gives every non-primary worktree a curated entry, so none is undocumented', () => {
-    // This reads the REAL worktree list, not the curated table. The previous
-    // version iterated `Object.keys(CURATED)` and compared it to itself, so it
-    // passed with 23 entries deleted and with every summary blanked.
-    const cwd = process.cwd();
-    // Only worktrees whose directory still exists. A registration whose
-    // directory is gone is reported in `dataSources.git.missingWorktrees` and
-    // has nothing to curate — demanding a summary for it would mean inventing
-    // an entry every time a stray registration appeared and disappeared.
-    const missingPaths = new Set(findMissingWorktrees(cwd).map((w) => w.path));
-    const live = listWorktrees(cwd).filter((w) => !missingPaths.has(w.path));
-    expect(live.length).toBeGreaterThan(1);
-
-    // Only worktrees INSIDE the repository. Several agents run scratch
-    // worktrees in /tmp, and "every worktree needs a curated entry" is not a
-    // sensible rule for a transient one — the curated table documents this
-    // repository's worktrees.
-    // The MAIN checkout, which is the first entry of `git worktree list` — not
-    // `cwd`, which under a task worktree is that worktree, and against which
-    // every other worktree path would fail the prefix test.
-    const repoRoot = live[0].path;
-    const inRepo = live.filter((w) => w.path === repoRoot || w.path.startsWith(`${repoRoot}/`));
-    expect(inRepo.length, 'no worktrees matched the repository prefix').toBeGreaterThan(10);
-
-    // A worktree that holds NOTHING is not what this rule is for. Its own comment said
-    // what the rule protects: "an uncurated worktree is one nobody has written down
-    // what it is for, which is how a preservation branch gets mistaken for a
-    // disposable one." A worktree that is clean, 0 ahead of main and already on
-    // main has no work to mistake for anything — it is a scratch space, and it
-    // cannot be lost.
+  it('reports a worktree that holds work and has no entry, in a repository this suite built', () => {
+    // THE RULE, against a fixture. The previous version of this test read
+    // `git worktree list` in whatever checkout it ran in and asserted on the
+    // result, so what it checked was the SIZE of the operator's fleet: it was
+    // red in a CI checkout (`expected 1 to be greater than 1` — one worktree,
+    // because CI clones one) and red on the operator's laptop naming real
+    // worktrees that other agents had created minutes earlier. `npm run test` IS
+    // the `ci` job's Test step, so a gate that can only pass on one machine was
+    // never a gate.
     //
-    // Demanding a summary for those is what made this the recurring red: the
-    // table was re-derived by hand FOUR times in one session, every time only
-    // because an agent had created a worktree that held nothing yet, and main
-    // went red within minutes of the derived guard landing. The shape is the same
-    // one `mustNotPrune` was just removed for — the risk is derivable from git,
-    // and only the risk deserves a hand-written claim.
-    //
-    // So the rule is the risk, not the existence: a worktree is required to be
-    // documented exactly when it has commits git cannot find on main, or edits
-    // that are in no commit at all, or a branch that is not on main. That is
-    // every way a worktree can hold work, and the three facts are read with the
-    // same helpers the sibling guard uses, so the two cannot drift apart.
-    const { worktrees: withFacts } = liveWorktreeFacts();
-    const holdsSomething = (w) => {
-      const f = withFacts.find((x) => x.name === w.name);
-      if (!f) return true; // git could not be asked: demand a summary rather than wave it through
-      return f.ahead > 0 || f.mergedIntoBase === false || f.workingTree.modified + f.workingTree.untracked > 0;
-    };
+    // Three worktrees hold work by the three different routes git reports, one
+    // holds nothing, and the rule has to tell them apart by FACT rather than by
+    // how many of them there happen to be.
+    const dir = makeRepoWithWorktrees();
+    try {
+      const facts = worktreeFacts(dir);
+      const uncategorised = uncategorisedWorktrees(facts, {}).sort();
 
-    // Worktrees created after the table was written, plus the two that are
-    // documented elsewhere by construction.
-    const allowed = new Set(['worktree-inventory', 'land-and-dispose']);
-    const uncategorised = inRepo
-      .filter(holdsSomething)
-      .map((w) => w.name)
-      .filter((name) => name !== 'ph' && !allowed.has(name) && !CURATED[name]);
+      expect(
+        uncategorised,
+        'a worktree holding commits git cannot find on main, or edits in no commit, or sitting ' +
+          'on a branch main has not seen, has to be described in the curated table'
+      ).toEqual(['wt-ahead', 'wt-edits']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
-    expect(
-      uncategorised,
-      `these worktrees hold work — commits git cannot find on main, edits in no commit, or a ` +
-        `branch that is not on main — and none is described in ` +
-        `scripts/lib/worktree-inventory/curated.mjs: ${uncategorised.join(', ')}. ` +
-        'Add each with a summary. A worktree holding nothing needs no entry.'
-    ).toEqual([]);
+  it('reads the three shapes it is about to tell apart from git, not from their names', () => {
+    // The case above is only meaningful if the fixture still has the shapes it
+    // was built for. `worktree add` and a stray `.gitignore` can change them
+    // silently, and then the test would be passing on a repository where every
+    // worktree looks identical — which is the state in which the rule cannot
+    // distinguish anything.
+    const dir = makeRepoWithWorktrees();
+    try {
+      const byName = new Map(worktreeFacts(dir).worktrees.map((w) => [w.name, w]));
+      const shape = (n) => {
+        const w = byName.get(n);
+        return { ahead: w.ahead, merged: w.mergedIntoBase, changed: w.workingTree.modified + w.workingTree.untracked };
+      };
+
+      expect(shape('wt-ahead'), 'the worktree with commits on a branch main has not seen').toEqual({
+        ahead: 2,
+        merged: false,
+        changed: 0,
+      });
+      expect(shape('wt-edits'), 'the worktree whose only copy of the work is in its tree').toEqual({
+        ahead: 0,
+        merged: true,
+        changed: 1,
+      });
+      expect(shape('wt-clean'), 'the scratch worktree, which holds nothing').toEqual({
+        ahead: 0,
+        merged: true,
+        changed: 0,
+      });
+      expect(holdsSomething(byName.get('wt-ahead'))).toBe(true);
+      expect(holdsSomething(byName.get('wt-edits'))).toBe(true);
+      expect(holdsSomething(byName.get('wt-clean'))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops reporting a worktree the moment an entry describes it', () => {
+    // The half of the rule the first case cannot reach on its own: `no entry` is
+    // only load-bearing if `an entry` removes the worktree from the report. A
+    // rule that ignored the table would pass the case above forever.
+    const dir = makeRepoWithWorktrees();
+    try {
+      const facts = worktreeFacts(dir);
+      const described = { 'wt-ahead': { summary: 'injected entry' } };
+      expect(uncategorisedWorktrees(facts, described).sort()).toEqual(['wt-edits']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exempts the main checkout and a worktree documented elsewhere, by name', () => {
+    // `ph` is described in AGENTS.md rather than per-worktree, and a worktree
+    // whose own subject is the curated table cannot be expected to hold an entry
+    // about itself. Both exemptions are read from the same predicate as the
+    // report itself, so this is a statement about the rule and not about a list
+    // of names the rule happens to contain.
+    const dir = makeRepoWithWorktrees();
+    try {
+      const facts = worktreeFacts(dir);
+      expect(uncategorisedWorktrees(facts, {}, { alsoAllowed: ['wt-edits'] }).sort()).toEqual(['wt-ahead']);
+      expect(uncategorisedWorktrees(facts, {}, { alsoAllowed: ['wt-edits', 'wt-ahead'] })).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('holds a worktree whose git facts could not be read to needing an entry, not to being clean', () => {
+    // `ahead: null` means git could not be asked, not that there is nothing to
+    // lose. The derived set in the block below is worthless if this reads an
+    // unread fact as "safe", so the rule is pinned on the two shapes git can
+    // actually produce for a failure.
+    expect(holdsSomething(undefined)).toBe(true);
+    expect(holdsSomething({ ahead: null, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0 } })).toBe(
+      true
+    );
+    expect(holdsSomething({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0 } })).toBe(false);
   });
 
   it('agrees with git about every `landed: true` claim, so the two cannot contradict', () => {
