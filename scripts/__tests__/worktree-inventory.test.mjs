@@ -498,15 +498,27 @@ describe('resolveBoardDb', () => {
 });
 
 describe('readBoard: liveness of claims and locks', () => {
-  /** A board database with the real schema and one row of each kind. */
+  /**
+   * A board database with the CURRENT schema and one row of each kind.
+   *
+   * `file_locks` deliberately has NO `issue_id` column. That is v1 residue:
+   * attribution moved to the `issue_locks` pairing table, and the migration
+   * copies rows into it without dropping the old column — so every board created
+   * before v2 still carries it and every board created AT v2 does not. This
+   * fixture used to build the v1 shape, which is precisely why `readBoard`
+   * selecting `file_locks.issue_id` passed here and threw
+   * `no such column: issue_id` on a fresh clone. A fixture must be the shape a
+   * real new database has, or it certifies the bug.
+   */
   function makeBoard({ leaseUntil, releasedAt = null, expiresAt }) {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
     const db = new DatabaseSync(join(dir, 'board.db'));
     db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
              CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
                                   lease_until TEXT, released_at TEXT);
-             CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
-                                     expires_at TEXT, released_at TEXT);
+             CREATE TABLE file_locks (path TEXT NOT NULL, agent_id TEXT NOT NULL, worktree TEXT,
+                                     acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+                                     released_at TEXT, PRIMARY KEY (path, agent_id));
              CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
                                  session_id TEXT, last_seen TEXT);`);
     db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', 'x');
@@ -521,8 +533,8 @@ describe('readBoard: liveness of claims and locks', () => {
     db.prepare('INSERT INTO file_locks VALUES (?,?,?,?,?,?)').run(
       'src/a.ts',
       'agent-a',
-      'ph-1',
       '/repo/.kilo/worktrees/x',
+      '2026-09-28T12:00:00.000Z',
       expiresAt,
       releasedAt
     );
@@ -3094,5 +3106,35 @@ describe('the call history', () => {
     expect(inv.goneWorktrees).toEqual(writeAudit.goneWorktrees);
     expect(inv.totals.goneWorktreesWithWrites).toBe(1);
     expect(inv.totals.totalShellCalls).toBe(4);
+  });
+});
+
+describe('readBoard: a board it cannot query', () => {
+  /**
+   * The module header promises that "every function here returns an empty result
+   * rather than throwing", on the grounds that an inventory which cannot be
+   * generated is a worse tool than one that generates and says the board was
+   * unavailable. `readBoard` was `try { … } finally` with no `catch`, so any
+   * query error escaped `main()` and the generator died having written nothing.
+   */
+  it('degrades to unavailable, and says why, instead of throwing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-broken-'));
+    const dbPath = join(dir, 'board.db');
+    const db = new DatabaseSync(dbPath);
+    // Opens fine. Cannot be queried: `claims` is a table of nonsense, so the very
+    // first SELECT in `readBoard` throws. This is the shape a board has after a
+    // partial migration, which is exactly the case the promise is about.
+    db.exec('CREATE TABLE claims (nonsense TEXT)');
+    db.close();
+
+    const board = readBoard(dir, { nowMs: NOW, dbPath });
+    expect(board.available).toBe(false);
+    expect(board.claims.size).toBe(0);
+    expect(board.fileLocks.size).toBe(0);
+    expect(board.issues).toEqual([]);
+    // "board unavailable" and "board broken" are different states, so the reason
+    // is reported rather than swallowed.
+    expect(board.error).toBeTruthy();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
