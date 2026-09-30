@@ -16,7 +16,6 @@ this file is right and the loader is a bug.
 ## Step 0 — the governing rule
 
 **`main` is a landing, never a negotiation.**
-
 Every other session in this repository commits into `main` while you work. A
 harvest that stops to ask "is this right?" about `main`'s current shape has
 started a second conversation, and the answer will be stale by the time it is
@@ -24,14 +23,34 @@ acted on. Bring the BRANCH to `main`, never the reverse: rebase or merge `main`
 **into the branch**, in the branch's own worktree, and let `main` receive a
 fast-forward or a plain merge commit. Resolving a conflict in the main worktree
 puts your resolution — an unreviewed, unattributed one — into a shared checkout
-that three other sessions are writing to.
+that other sessions are writing to.
 
 The corollary that decides the whole sweep: **an `action: land` you did not
 generate yourself is a claim about a moment.** `WORKTREES.json` is a snapshot
-(`scripts/lib/worktree-inventory/assemble.mjs:293` stamps `generatedAt`), `main`
+(`scripts/lib/worktree-inventory/assemble.mjs:319` stamps `generatedAt`), `main`
 moves underneath it, and the `mergeConflict` answer in particular is the fastest
-field in the file to go stale. Regenerate before you trust it, and re-read
-`dirty` and `mergeConflict` before you act.
+field in the file to go stale. Regenerate before you trust it, and re-read `dirty`
+and `mergeConflict` before you act.
+
+There is a second governing rule, and it decides how hard you try before you ask.
+**Time and compute are effectively unlimited in this repository; the scarce
+resources are autonomy and correctness.** Nothing in a harvest is to be
+abandoned for being expensive, slow, or hard to establish. Escalating to the
+operator is the last move on the board, not the first: it hands a decision to
+somebody who cannot see the branch, the transcript, or the diff you can see, so
+every question you ask instead of answering is one whose answer will be stale by
+the time it is acted on.
+
+**What makes the first rule enforceable is one layer down.**
+`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit` and refuses
+a commit made from the main worktree. It does not stop the write — it runs after
+the edit — so it converts "rogue commits nobody can attribute" into "a dirty
+tree the next `git status` names". A landing never reaches it, because a
+fast-forward runs no hook and a merge runs `pre-merge-commit`; the one override
+is `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`. Everything else that
+changes a tracked file belongs in the branch's own worktree, including a comment
+— and before you edit, `git rev-parse --show-toplevel` is the only thing that
+distinguishes the worktree you are in from the one you believe you are in.
 
 ---
 
@@ -84,7 +103,12 @@ Per worktree, the fields that decide:
 - **`dirty` / `untracked`** — uncommitted work is on NO ref. It is the first
   thing to be lost and the last thing git can find. A worktree with
   `dirty > 0` needs its contents committed or saved **before** the merge, not
-  after.
+  after. **`uncommitted-only` is derived, and it is never prunable.** A branch at
+  0 ahead of `main`, already on it, with a dirty tree is that status whatever the
+  curated table says, and `worktree-inventory.test.mjs` re-derives the set from
+  the live worktrees to keep it that way. **Never put a count in a summary**:
+  `dirty`, `untracked`, `ahead`, `behind` and `commitsAheadTruncated` are already
+  on every record, and prose arithmetic goes stale the moment `main` moves.
 - **`mergeConflict` / `mergeConflictFiles`** — and remember `mergeChecked: false`
   means _no answer_, never "clean" (`classify.mjs:266-272`).
 - **`summary` / `note` / `issues`** — the curator's claim about the branch. The
@@ -137,6 +161,19 @@ Then read the transcript with the history tools, in this order:
    design is shaped the way it is.
 3. `sqlite3 ~/.local/share/kilo/kilo.db "SELECT id, parent_id, title, time_updated FROM session WHERE directory = '<abs worktree path>' ORDER BY time_updated DESC LIMIT 20"`
    for the family walk, when the recorded ids look thin.
+
+**The recorded ids are a starting point, not the boundary of the search.** Both
+`writeHistory` and `chats` are derivations — one from the tools that wrote, one
+from the directory a chat _opened_ in — and the requirement was often stated in a
+chat neither recorded: the operator's turn in a main-checkout session, a sibling
+task on the same files, a subagent's brief. So when the recorded ids do not
+produce the requirement, search the whole project's session history:
+`kilo_local_recall` with `mode: "search"` on the **file names, the tool names and
+the phrases in the diff** — not only on the branch name, which is the one query
+the inventory has already answered. Read the ids it returns with `mode: "read"`;
+that is the follow-up, not the search. **An empty result is a fact about your
+query, never evidence that nobody ever asked for it** — and the searches that came
+back empty belong in the harvest record, because the next sweep will repeat them.
 
 What to extract, and why each matters:
 
@@ -192,9 +229,56 @@ If the intersection is non-empty and the two changes touch the same behaviour,
 the web platform rather than against the hunk, and recovers requirements from
 history rather than from the branch name. Do not pick a winner by diff size.
 
+**Escalating is the last resort, and the effort that precedes it is not optional.**
+A hard problem is an instruction to dig, not to ask. If the requirement is still
+unclear after step 2, spend the next hour on it: more transcripts, the sibling
+sessions that touched the same files, the branch's own earlier commits, the
+handoff documents. Only when that is genuinely exhausted — and only when what
+remains is a decision about **intent** rather than a fact you could have found —
+does the question belong to the operator. Escalating something you could have read
+is the same failure as landing a branch you did not read.
+
+**When the diff does not explain itself, the reference implementation does, and it
+is one search away.** This repository is a Photoshop clone, so the authoritative
+answer to what a transform selection should do when a modifier is held is Adobe's
+own documentation — not the commit message, and not your recollection. Web search
+the feature's **industry best practice** (what Krita, Affinity, GIMP and the
+platform HIG do) alongside Adobe's page for the feature, and gather the platform
+contract the same way step 4 does: as an input you hand a reviewer _instead of_ the
+author's justification. A branch that contradicts the documented platform behaviour
+is a finding, not a merge conflict, and it is far cheaper to find here than after it
+has landed.
+
 ---
 
 ## Step 4 — independent review
+
+### Claim the merge before you touch it
+
+`npm run swarm -- claim <id> --files <paths you will touch>` or `npm run swarm
+-- hold <path>`, and `npm run swarm -- check <paths>` before you edit anything a
+brief or a sibling subagent names; `claim` and `hold` exit 4, `check` exits 1, and
+both name the holder. **Claim the merge, not just the files** — a branch about to
+land carries a hazard to every path in it, and no file claim expresses that — and
+`npm run swarm -- note` the branch and its paths _before_ you start resolving. A
+held file is a queue, not a deadlock: do not edit it and do not wait on the lease.
+An unclaimed path looks free.
+
+Identity here is the git branch, so **the board cannot enforce one writer per
+worktree**: two writers in one worktree are the same agent to the board, both holds
+are granted, and the collision surfaces as a conflict or a clobbered index rather
+than a refusal. It is a discipline. Your step-4 reviewers are read-only agents and
+may share a worktree freely — inspecting somebody else's worktree is the common case
+— but a reader mutates nothing: no commit, `checkout`, `reset`, `npm install`, no
+worktree removal.
+
+One trap while you are here: Kilo's built-in `board_read` is **not** this board. It
+carries messages between one session and the task children it spawned, so outside a
+fan-out it reports `messages: []` truthfully, and `board_post` usually returns
+`total: 0, active: 0`. **Neither response is evidence that nobody is working.** The
+board is `npm run swarm`, its name must not be reverted to `board`, and it is a
+command and not a gate: nothing in `.husky/` calls it and no commit may be blocked
+on it.
 
 Review the diff **before** merging, and make the reviewers genuinely independent
 of the chat that wrote it.
@@ -209,9 +293,14 @@ of the chat that wrote it.
 - **Model, per `AGENTS.md`:** pass `model` AND `provider` together. Omitting them
   inherits this session's model, which on a free orchestrator has resolved onto a
   paid GPT id and killed the subagent at zero tokens with `Add credits to
-continue`. The subagent also **inherits the working directory** — so launch
-  reviews with the branch's absolute worktree path in the brief, and never from
-  the main checkout, or the review's own notes land in `main`.
+continue`. Two rules ride with that: **a free session must never launch a GPT
+  subagent**, so the free default is
+  `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'`; and
+  `agent_manager` inherits the current turn's model unless both fields are set, so
+  a main turn on a paid model silently spawns paid worktrees. The subagent also
+  **inherits the working directory** — so launch reviews with the branch's absolute
+  worktree path in the brief, and never from the main checkout, or the review's own
+  notes land in `main`.
 - **Tell them what to return:** `file:line` for every finding, with the evidence
   they got it from. A claim without a line number is not a review, it is an
   opinion. Ask for candidate results _and_ how they obtained them.
@@ -271,7 +360,20 @@ npm run test:e2e          # headless; starts its own dev server on its own port
   fails on `main` before attributing it. A pre-existing red that this branch did
   not cause is a finding to report, not a reason to block the harvest — and never
   a reason to fix it inside this branch, which would land an unrelated change
-  under this branch's name.
+  under this branch's name. **Check the _committed_ state of `main`, not the working
+  tree you are looking at**: the main worktree is shared and is routinely holding
+  another agent's half-written change, so a red test there is often a WIP rather
+  than a broken `main`.
+
+  ```bash
+  git worktree add --detach /tmp/verify-main main
+  ln -s "$PWD/node_modules" /tmp/verify-main/node_modules
+  (cd /tmp/verify-main && npx vitest run <suite>)
+  git worktree remove --force /tmp/verify-main
+  ```
+
+  A path you did not touch is not yours to stage, and its type error is not yours
+  to resolve.
 
 **Never weaken a gate to get green.** No skips, no raised thresholds, no deleted
 assertions, no re-recorded visual baselines. Each is either a real defect with a
@@ -293,16 +395,24 @@ cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
 
 # 1. Save anything on no ref BEFORE the merge. This is the only copy.
 git status --short
-git add -A && git commit -m "wip(salvage): <what the uncommitted work is>"
+git add -- <each path git status named>
+git commit -m "wip(salvage): <what the uncommitted work is>"
 
 # 2. Bring main to the branch. NEVER the reverse.
 git fetch origin main 2>/dev/null || true
 git merge main        # resolve HERE, in this worktree, reviewed
 
-# 3. Re-verify after the merge. Composition is where silent reverts live.
+# 3. Did the merge silently revert anything? Compute it, do not read for it.
+comm -13 \
+  <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
+  <(git diff --name-only main..HEAD | sort)
+#    Anything in that set is main content the merge had no business touching.
+#    Restore it: git checkout main -- <path>
+
+# 4. Re-verify after the merge. Composition is where silent reverts live.
 npm run tsc && npm run build && npm run test
 
-# 4. Land it.
+# 5. Land it.
 cd /Users/bkalynovskyi/ph
 git merge --ff-only <branch> 2>/dev/null || git merge <branch>
 ```
@@ -310,11 +420,33 @@ git merge --ff-only <branch> 2>/dev/null || git merge <branch>
 - **Re-read `git status` and `git log --oneline -10` immediately before staging,
   every time.** Other sessions commit into `main` concurrently, and `git add -A`
   in the main checkout will stage their work under your commit message.
+- **`git add -A` in a worktree is not a neutral staging step either, and this is
+  the more expensive of the two.** The root is a _different checkout_ of a
+  _different HEAD_, so a file the branch never touched can be sitting in this
+  worktree's tree holding main's older content, and `-A` commits it as a deliberate
+  reverting of whatever `main` has since done to that file. One merge shipped **17
+  such reverts** and not one of them was a conflict, so the merge was clean and the
+  revert was invisible in the diff. Step 3 of the block above computes the set;
+  run it **before** step 4, because a reviewer only catches the files its brief
+  happened to mention.
 - **`git merge --ff-only` first** because it is the cheap case and it fails
   loudly when it is not possible. Fall back to a real merge only then.
 - **A conflict resolution is new code.** It has been reviewed by nobody. Re-read
   every hunk you resolved, and run step 5 again — the gates cannot see a wrong
   resolution that typechecks.
+- **Resolving a conflict is not always the cheaper path, and it is often the
+  wrong one.** A branch that forked from `main` several weeks ago and now conflicts
+  in ten files is not ten decisions; it is a design that has been overtaken. With
+  the requirements in hand from step 2, price both options honestly: reimplement
+  the feature on top of today's `main`, where you can read every current file
+  before writing a line, versus composing two sets of changes neither author ever
+  tested together. When the branch is far behind and the feature is bounded,
+  reimplementation is frequently correct — and it yields a merge with none of your
+  hunks in it, so the composition risk step 3 warns about never arises. **The old
+  branch is not evidence the work was wasted; it is the specification.** Reimplement
+  from the recovered requirements, and let the branch die with the requirement
+  recorded in `HANDOFF.md`. This is a `hard-merge` decision, so it goes through
+  `.skills/hard-merge.md` like any other.
 
 Then, and only once the merge is on `main`:
 
@@ -354,9 +486,21 @@ skipped its own safety steps.
   `git stash push` on a CLEAN tree exits 0, prints nothing, and creates NO entry —
   so the `git stash pop` that follows is unpaired, and it pops a _different_
   session's work. This has destroyed work in this repository.
-- **Resolve anything in the main worktree.** See step 0.
+- **Resolve anything in the main worktree.** See step 0. Never _repair_ one there
+  either: `reset --hard` and `checkout --ours`/`--theirs` destroy another
+  session's uncommitted work, and `hash-object` and `update-index` write an index
+  entry no later `git status` reconciles. If a merge conflicts in `main`,
+  `git merge --abort` and redo it in the worktree. After any interrupted or
+  abandoned merge, run `git rev-parse -q --verify MERGE_HEAD` and
+  `git rev-list --parents -n 1 HEAD` before committing — an interrupted merge can
+  leave `AUTO_MERGE` and `MERGE_MSG` behind with no `MERGE_HEAD`, and `git commit`
+  then lands a single-parent commit that reads as a resolution.
 - **Hand-edit `WORKTREES.json`.** It is generated and untracked; the edit is lost
   on the next run, and a hand-edited `prunable: true` is a licence to delete.
+- **`git add -A` in a worktree whose root checkout is dirty.** This is the more
+  expensive of the two `-A` traps and the one that ships reverts: 17 of them, none
+  a conflict. Stage the paths `git status` named, and run the `comm -13`
+  computation before the review.
 - **`git add -A` in the main checkout.** Stage only your own paths, after
   re-reading `git status`.
 - **Land a branch without bringing `main` into it first.** A merge that skips this
