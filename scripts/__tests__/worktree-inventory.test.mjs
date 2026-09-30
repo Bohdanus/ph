@@ -84,13 +84,15 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
  * only decides how long a test may run before the harness reports it, and no
  * assertion below is changed by it.
  *
- * A per-test `it(name, fn, timeout)` argument still wins over this. The two tests
- * that read every worktree keep their declared `60_000`, which is what they
- * actually need: `gives every non-primary worktree a curated entry` measured
- * 21.5s on a machine with 70 worktrees and 12.3s on a busier day with 93, and
- * both of those are a function of how many worktrees exist rather than of this
- * test. 60s is the one budget here that is sized against a cost that GROWS, so
- * re-measure it if the worktree count changes by an order of magnitude.
+ * A per-test `it(name, fn, timeout)` argument still wins over this. The THREE
+ * tests that read every worktree keep their declared `60_000`, which is what they
+ * actually need: the live worktree read measured 21.5s on a machine with 70
+ * worktrees and 12.3s on a busier day with 93, and that is a function of how many
+ * worktrees exist rather than of this test. `liveWorktreeFacts` memoises, so the
+ * three pay for the read once, and which of them asks first is not something the
+ * budget may depend on. 60s is the one budget here that is sized against a cost
+ * that GROWS, so re-measure it if the worktree count changes by an order of
+ * magnitude.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -1859,6 +1861,35 @@ describe('the read and computed chat views together', () => {
 });
 
 describe('the curated table', () => {
+  // WHY THERE IS NO "EVERY WORKTREE HAS AN ENTRY" RULE HERE
+  // ---------------------------------------------------------
+  // There was one, and it was the recurring red. It demanded a curated entry for
+  // every live in-repo worktree holding work — which is what an in-flight task
+  // looks like for the whole of its life, from an agent's first edit to its
+  // merge — so it was red from the first minute of every task, in every OTHER
+  // checkout too, because the list it read is the repository's and not the
+  // caller's. Narrowing it from "exists" to "holds work" moved the red from the
+  // first minute of a task to every minute of it. The table was re-derived by
+  // hand four times in one session for exactly that reason.
+  //
+  // It could not be fixed by data entry, because it compares a COMMITTED file
+  // against LIVE machine state. Nothing an agent can do at session end makes the
+  // table agree with a fleet that keeps moving, and the entry it would have to
+  // write is prose about work that has not happened yet. Measured while this was
+  // being fixed: 160 curated keys against 102 live in-repo worktrees, 26 of
+  // which had no entry and 8 of those holding work on no ref. The table was an
+  // accumulating log of past tasks, not an index of the present one.
+  //
+  // So the rule is the RISK, not the existence, and it is asserted where the risk
+  // is derived: `describe('work git cannot see: derived from the worktrees,
+  // never curated')` below pins it over the real repository with the curated
+  // entry REMOVED — the state most of those worktrees are actually in — and pins
+  // that no curated field except `mustNotPrune` can move a verdict at all.
+  //
+  // What is left for a human is a judgement git cannot make about a tree it
+  // already calls disposable, and that is `mustNotPrune` on a clean merged
+  // branch. No entry sets it today.
+
   it('gives every entry a summary, because the inventory is read as prose', () => {
     for (const [name, entry] of Object.entries(CURATED)) {
       expect(typeof entry.summary, `${name} has no summary`).toBe('string');
@@ -1889,73 +1920,6 @@ describe('the curated table', () => {
       offenders,
       `curated prose contains counts that will drift: ${offenders.join('; ')}. ` +
         'Describe what is there; read dirty/untracked/ahead/behind from the record.'
-    ).toEqual([]);
-  });
-
-  it('gives every non-primary worktree a curated entry, so none is undocumented', () => {
-    // This reads the REAL worktree list, not the curated table. The previous
-    // version iterated `Object.keys(CURATED)` and compared it to itself, so it
-    // passed with 23 entries deleted and with every summary blanked.
-    const cwd = process.cwd();
-    // Only worktrees whose directory still exists. A registration whose
-    // directory is gone is reported in `dataSources.git.missingWorktrees` and
-    // has nothing to curate — demanding a summary for it would mean inventing
-    // an entry every time a stray registration appeared and disappeared.
-    const missingPaths = new Set(findMissingWorktrees(cwd).map((w) => w.path));
-    const live = listWorktrees(cwd).filter((w) => !missingPaths.has(w.path));
-    expect(live.length).toBeGreaterThan(1);
-
-    // Only worktrees INSIDE the repository. Several agents run scratch
-    // worktrees in /tmp, and "every worktree needs a curated entry" is not a
-    // sensible rule for a transient one — the curated table documents this
-    // repository's worktrees.
-    // The MAIN checkout, which is the first entry of `git worktree list` — not
-    // `cwd`, which under a task worktree is that worktree, and against which
-    // every other worktree path would fail the prefix test.
-    const repoRoot = live[0].path;
-    const inRepo = live.filter((w) => w.path === repoRoot || w.path.startsWith(`${repoRoot}/`));
-    expect(inRepo.length, 'no worktrees matched the repository prefix').toBeGreaterThan(10);
-
-    // A worktree that holds NOTHING is not what this rule is for. Its own comment said
-    // what the rule protects: "an uncurated worktree is one nobody has written down
-    // what it is for, which is how a preservation branch gets mistaken for a
-    // disposable one." A worktree that is clean, 0 ahead of main and already on
-    // main has no work to mistake for anything — it is a scratch space, and it
-    // cannot be lost.
-    //
-    // Demanding a summary for those is what made this the recurring red: the
-    // table was re-derived by hand FOUR times in one session, every time only
-    // because an agent had created a worktree that held nothing yet, and main
-    // went red within minutes of the derived guard landing. The shape is the same
-    // one `mustNotPrune` was just removed for — the risk is derivable from git,
-    // and only the risk deserves a hand-written claim.
-    //
-    // So the rule is the risk, not the existence: a worktree is required to be
-    // documented exactly when it has commits git cannot find on main, or edits
-    // that are in no commit at all, or a branch that is not on main. That is
-    // every way a worktree can hold work, and the three facts are read with the
-    // same helpers the sibling guard uses, so the two cannot drift apart.
-    const { worktrees: withFacts } = liveWorktreeFacts();
-    const holdsSomething = (w) => {
-      const f = withFacts.find((x) => x.name === w.name);
-      if (!f) return true; // git could not be asked: demand a summary rather than wave it through
-      return f.ahead > 0 || f.mergedIntoBase === false || f.workingTree.modified + f.workingTree.untracked > 0;
-    };
-
-    // Worktrees created after the table was written, plus the two that are
-    // documented elsewhere by construction.
-    const allowed = new Set(['worktree-inventory', 'land-and-dispose']);
-    const uncategorised = inRepo
-      .filter(holdsSomething)
-      .map((w) => w.name)
-      .filter((name) => name !== 'ph' && !allowed.has(name) && !CURATED[name]);
-
-    expect(
-      uncategorised,
-      `these worktrees hold work — commits git cannot find on main, edits in no commit, or a ` +
-        `branch that is not on main — and none is described in ` +
-        `scripts/lib/worktree-inventory/curated.mjs: ${uncategorised.join(', ')}. ` +
-        'Add each with a summary. A worktree holding nothing needs no entry.'
     ).toEqual([]);
   });
 
@@ -2300,6 +2264,132 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     ).toEqual([]);
     // See the timeout note on the curated-table test that shares this read.
   }, 60_000);
+
+  it('protects that shape in a worktree NOBODY has written anything down about', () => {
+    // The guard above builds the document WITH the curated table, so a curated
+    // entry is standing behind every verdict it checks. This one takes the entry
+    // away, which is the state the deleted coverage rule used to make impossible
+    // to reach: of the ten live worktrees holding work on no ref when this was
+    // written, eight had no entry at all. If the protection came from the table,
+    // those eight would be disposable and nothing here would be able to say so.
+    //
+    // So this is the coverage rule's actual subject — "a preservation branch gets
+    // mistaken for a disposable one" — asserted as the invariant it needed,
+    // against `classify` on git's facts and nothing else. It cannot be made green
+    // by adding curated entries, which is the point: creating a worktree, and
+    // this agent's own worktree, change nothing here.
+    const inv = liveInventory();
+    const { worktrees } = liveWorktreeFacts();
+    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+
+    // Non-vacuity, and it comes first so a green run cannot mean "git refused to
+    // answer, so the set below was empty for a reason unrelated to risk".
+    expect(
+      inRepo
+        .filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean')
+        .map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
+      'git could not be read in these worktrees, so the set below would be empty for a reason that has ' +
+        'nothing to do with whether any work is at risk'
+    ).toEqual([]);
+
+    // The same three signals `buildInventory` would pass here, with the curated
+    // entry removed. `liveInventory()` builds with liveness deliberately empty,
+    // so `noChats`/`noSessions` reproduce it exactly and the only difference
+    // between this call and the record it is compared against is the curation.
+    const exposed = [];
+    const silent = [];
+    for (const r of inRepo) {
+      if (!holdsWorkGitCannotSee(r)) continue;
+      const facts = worktrees.find((x) => x.name === r.name);
+      const bare = classify(facts, { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW });
+      const where =
+        `${r.name} (curated: ${CURATED[r.name] ? 'yes' : 'NONE'}): ahead=${r.ahead} onMain=${r.mergedIntoMain} ` +
+        `dirty=${r.dirty} untracked=${r.untracked} -> status=${bare.status} recommendation=${bare.recommendation} ` +
+        `action=${bare.action} prunable=${bare.prunable}`;
+      // The three ways to lose, which is what the sibling guard checks. `undecided`
+      // is not one of them: an unreadable head or a detached one yields it, and
+      // `classify` reaches it precisely so the worktree is not removed.
+      if (bare.prunable || bare.recommendation === RECOMMENDATION.PRUNE || bare.action === ACTION.DISPOSE) {
+        exposed.push(where);
+      } else if (facts.tip === null || facts.detached) {
+        // git could not name a tip, so the shape is not classifiable and
+        // `undecided` is the honest answer. Reported rather than skipped, because
+        // "the guard had nothing to check" and "the guard checked nothing" look
+        // identical in a green run otherwise.
+        silent.push(`${where} (tip unreadable or detached)`);
+      } else if (bare.action !== ACTION.AT_RISK) {
+        // Everything git could answer, it answered, and the work is on no ref.
+        // Anything other than at-risk here means the record does not point an
+        // operator at the only copy of it.
+        exposed.push(`${where} — readable, so this must be reported as at-risk, not as anything else`);
+      }
+    }
+    expect(
+      exposed,
+      'these worktrees hold work that is in no commit on any branch, so the working tree is the only ' +
+        'copy, and with nothing curated about them classify does not report them as at risk: ' +
+        exposed.join('; ') +
+        // Named rather than dropped, so a green run cannot be read as "the guard
+        // checked everything" when it could not classify something.
+        (silent.length ? ` (skipped as unclassifiable: ${silent.join('; ')})` : '')
+    ).toEqual([]);
+  }, 60_000);
+
+  it('lets the curated table move a verdict only by vetoing a disposal', () => {
+    // The reason the coverage rule could not simply be dropped: a curated entry
+    // that changed a verdict would be a hand-written claim overriding git, and
+    // `curated.mjs` is prose maintained by agents under time pressure. `classify`
+    // reads exactly one field, `mustNotPrune`, and it can only ever make a
+    // worktree LESS safe to delete. Everything else — `summary`, `note`,
+    // `liveNote`, `issues`, `landed` — is documentation, and documentation that
+    // moves a verdict is a lie the generator cannot detect.
+    //
+    // Both directions of the verdict are covered, because the two live in
+    // different branches of `classify`: a clean merged branch (`LANDED` ->
+    // `prune`, which is where a curated veto has something to bite on) and a
+    // clean unmerged one (`UNMERGED_WORK` -> `ready-to-land`, the verdict
+    // `mustNotPrune` is documented as also vetoing).
+    const LANDABLE = wt({ name: 'landable', ahead: 0, mergedIntoBase: true });
+    const TO_LAND = wt({ name: 'to-land', ahead: 4, mergedIntoBase: false, merge: { conflict: false } });
+    const verdictOf = (w, curated) => {
+      const v = classify(w, { chatSummary: noChats, chatSessions: noSessions, curated, nowMs: NOW });
+      return `${v.status}/${v.recommendation}/${v.action}/prunable=${v.prunable}`;
+    };
+
+    // Real field values, each taken from whichever entry actually carries it,
+    // so a field that exists in this table is covered by this loop.
+    const all = Object.values(CURATED);
+    const carrying = (field) => all.find((e) => e[field] !== undefined && e[field] !== null);
+    const PROSE = {
+      summary: carrying('summary').summary,
+      note: carrying('note').note,
+      liveNote: carrying('liveNote').liveNote,
+      issues: carrying('issues').issues,
+      landed: carrying('landed').landed,
+    };
+    expect(
+      Object.keys(PROSE),
+      'a curated field this table uses has no entry carrying it, so the loop below probes a value ' +
+        'nothing in the table actually holds'
+    ).toEqual(['summary', 'note', 'liveNote', 'issues', 'landed']);
+
+    for (const shape of [LANDABLE, TO_LAND]) {
+      const bare = verdictOf(shape, null);
+      for (const [field, value] of Object.entries(PROSE)) {
+        expect(
+          verdictOf(shape, { [field]: value }),
+          `curated.${field} changed the verdict for ${shape.name} (${bare}) — a prose field must never move it`
+        ).toBe(bare);
+      }
+      // And the one field that may: if this stopped differing, the loop above
+      // would be asserting inertness over a table whose veto had been disabled.
+      expect(
+        verdictOf(shape, { mustNotPrune: true, note: PROSE.note }),
+        `curated.mustNotPrune no longer changes the verdict for ${shape.name} (${bare}), so the assertions above ` +
+          'prove nothing: the table has stopped being able to veto anything'
+      ).not.toBe(bare);
+    }
+  });
 
   it('refuses to dispose of that shape even with nothing but a dirty tree behind it', () => {
     // The live set above can legitimately be EMPTY — every worktree of this shape

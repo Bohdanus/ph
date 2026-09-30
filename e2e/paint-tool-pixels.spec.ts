@@ -12,7 +12,7 @@ import {
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
-import { clickToolButton, openToolFlyout, resolveToolTile, selectFromFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 /**
  * Pixel coverage for the three paint tools — Brush, Pencil and Color Replacement — which
@@ -174,25 +174,22 @@ async function measureStroke(screenshot: Buffer): Promise<Stroke | null> {
  * Selects `tool` from the Brush group flyout, proves the selection took, and returns the
  * workspace canvas box to draw into.
  *
- * The proof is `aria-pressed` on the tile that REPRESENTS the tool, not on a tile of its own and
- * not on the tile's text. At 1280x720 a one-column rail shows five tiles and everything from the
+ * The proof is the SELECTION state on the tile that REPRESENTS the tool, not on a tile of its own
+ * and not on the tile's text. At 1280x720 a one-column rail shows five tiles and everything from the
  * Crop down — Brush, Pencil, Color Replacement, Eraser, Magic Eraser and Paint Bucket among them
  * — lives in the three-dots tile, so `tool-button-brush` reported zero elements and this helper
- * threw before the gesture. `resolveToolTile` is the selector for a question about a TOOL: it
- * answers at every window, and the three-dots tile's `aria-pressed` is true exactly when some
- * tool in the collapsed set is the current one. Its label is the tile's own ("More Tools"), which
- * is why the old `verifyPrimaryTool(page, name, label)` — a `toContainText` on that tile — could
- * never pass once the group collapsed, and reading `aria-pressed` replaces it rather than
- * weakening it: both facts (the tool is current, the tile is the one on screen) are still pinned.
+ * threw before the gesture. `expectToolSelected` is the assertion for a question about a TOOL: it
+ * answers at every window, reading `aria-pressed` off the tool's own tile when the rail still shows
+ * one and the tile's lit class off the three-dots tile when it does not. Its label is the tile's own
+ * ("More Tools"), which is why the old `verifyPrimaryTool(page, name, label)` — a `toContainText` on
+ * that tile — could never pass once the group collapsed, and reading the selection state replaces it
+ * rather than weakening it: both facts (the tool is current, the tile is the one on screen) are still
+ * pinned.
  */
 async function selectPaintTool(page: Page, tool: { name: string; label: string }): Promise<BoundingBox> {
   await openToolFlyout(page, 'brush');
   await selectFromFlyout(page, { toolName: tool.name, label: tool.label });
-  const tile = await resolveToolTile(page, tool.name);
-  await expect(tile, `${tool.label} must be the tool the rail reports as selected`).toHaveAttribute(
-    'aria-pressed',
-    'true'
-  );
+  await expectToolSelected(page, tool.name);
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (!box) throw new Error(`selectPaintTool: no bounding box after selecting ${tool.name}`);
   return box;

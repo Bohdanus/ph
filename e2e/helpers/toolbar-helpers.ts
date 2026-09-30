@@ -440,11 +440,19 @@ export async function hasOwnToolTile(page: Page, toolName: string): Promise<bool
  * The tile that currently REPRESENTS a tool: its own if the rail still shows it, and the
  * three-dots tile if the rail folded it away.
  *
- * This is the selector for any question about a TOOL rather than about a tile — "is this tool
- * the selected one", "what does the user see when they look at it". It works because the app
- * already computes the same thing: the three-dots tile's `aria-pressed` is true when ANY tool
- * of the collapsed set is the current one, and its `aria-label` is the tile's own rather than a
- * tool's, so a caller reading `aria-pressed` off the resolved tile reads the truth either way.
+ * This is the LOCATOR for any question about a tile rather than about a tool — "does this tile
+ * have focus", "is this tile visible". Its `aria-label` is the standing tile's own rather than a
+ * tool's, so it cannot answer a question about selection.
+ *
+ * IT IS NOT THE SELECTION ASSERTION, and used to be read as one. This comment previously claimed
+ * that "the three-dots tile's `aria-pressed` is true when ANY tool of the collapsed set is the
+ * current one … so a caller reading `aria-pressed` off the resolved tile reads the truth either
+ * way". That stopped being true at 1dcc25cb, which deliberately renders NO `aria-pressed` on the
+ * three-dots tile (SidebarLeft.tsx:635 — a control that opens a menu must not also claim to be a
+ * pressed toggle for a tool the user cannot see), and the 17 tests that read it went red on a tile
+ * that was correctly lit. A question about SELECTION now goes to {@link expectToolSelected}, which
+ * picks the channel each kind of tile actually renders. `resolveToolTile` keeps its job: naming
+ * the element.
  *
  * Async because the question is: a locator has to exist before anything is known about it, and
  * a tool's tile may or may not be on the rail depending on the window. Returning a Locator
@@ -460,6 +468,55 @@ export async function resolveToolTile(page: Page, toolName: string): Promise<Loc
   // Neither. Returning the tool's own id is the useful failure: the caller's assertion then
   // names a test id that exists nowhere, which says which tool was being looked for.
   return ownTile;
+}
+
+/**
+ * Asserts that `toolName` is, or is not, the tool the rail currently has selected.
+ *
+ * This is the assertion for a question about a TOOL. It replaces reading `aria-pressed` off
+ * whatever tile {@link resolveToolTile} hands back, which was correct once and is now wrong
+ * for every collapsed tool: the three-dots tile deliberately renders NO `aria-pressed`
+ * (SidebarLeft.tsx:635 — a control that opens a menu must not also claim to be a pressed
+ * toggle for a tool the user cannot see), so that read reports `Received: ""` on a tile that
+ * is in fact correctly lit.
+ *
+ * The two branches assert DIFFERENT surfaces because the two tiles are different kinds of
+ * control, and collapsing them into one selector is what made the old form misleading:
+ *
+ * - A tool with a tile of its own is a toggle button, and `aria-pressed` is exactly the right
+ *   question to ask it. Unchanged from before.
+ * - A collapsed tool is represented by the three-dots tile, which paints its lit state as
+ *   `TOOL_BUTTON_ACTIVE_CLASS` off the same `group.some(tool => tool.name === toolName)`
+ *   predicate the attribute used to expose (SidebarLeft.tsx:636). So the class is read
+ *   instead — the same predicate, on the same tile, through the channel the component still
+ *   renders. This is a re-reading of the identical claim, not a weaker one: it still fails if
+ *   the group stops lighting for a selected member, and it still passes when it should.
+ *
+ * A caller needing to know WHICH of the two it got asks {@link hasOwnToolTile}; this function
+ * makes the same choice internally so no caller has to.
+ */
+export async function expectToolSelected(page: Page, toolName: string, selected = true): Promise<void> {
+  const ownTile = getToolButton(page, toolName);
+  if (await ownTile.count()) {
+    await expect(
+      ownTile.first(),
+      `${toolName} ${selected ? 'must be' : 'must not be'} the selected tool`
+    ).toHaveAttribute('aria-pressed', selected ? 'true' : 'false');
+    return;
+  }
+  // Collapsed. The lit class is the only per-selection state the three-dots tile renders, and
+  // it is read off the tile itself rather than off a menu, so this does not open a flyout and
+  // does not perturb the rail the caller is about to measure.
+  const overflow = page.getByTestId(OVERFLOW_TILE_TESTID);
+  await expect(overflow, `the three-dots tile representing ${toolName} is not on the rail`).toHaveCount(1);
+  // `\b` anchors: an unanchored `/bg-blue-100/` is a substring match that can be satisfied by a
+  // neighbouring utility, and the whole point of reading a class is to read THIS one.
+  const lit = selected
+    ? expect(overflow, `${toolName} is selected but the tile standing for it is not lit`).toHaveClass(/\bbg-blue-100\b/)
+    : expect(overflow, `${toolName} is not selected yet the tile standing for it is lit`).not.toHaveClass(
+        /\bbg-blue-100\b/
+      );
+  await lit;
 }
 
 /**
