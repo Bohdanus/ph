@@ -651,7 +651,9 @@ describe('FileProvider save dialog after a failed export', () => {
     });
 
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
-    await waitFor(() => expect(resolved).toHaveBeenCalledExactlyOnceWith({ fileName: 'test (copy)', format: 'image/png' }));
+    await waitFor(() =>
+      expect(resolved).toHaveBeenCalledExactlyOnceWith({ fileName: 'test (copy)', format: 'image/png' })
+    );
 
     expect(screen.queryByTestId('save-dialog')).toBeNull();
   });

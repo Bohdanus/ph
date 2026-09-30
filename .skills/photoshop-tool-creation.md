@@ -15,6 +15,15 @@ here, not paraphrased, and not restated with a citation attached. Where the two 
 `AGENTS.md` wins and this document is wrong. What follows is only what `AGENTS.md` does not say:
 the Photoshop tool contract, the code surfaces, and the process for getting there.
 
+**`AGENTS.md` is the short form, and `docs/ORCHESTRATION.md` is the detail behind it.** That
+matters here, because a whole class of rules is in the second file and in neither section of the
+first: the hard worktree rule and its exceptions, `scripts/main-worktree-guard.mjs`, never
+`git stash`, the `git add -A` silent-revert trap and its `comm -13` detection, `WORKTREES.json`, and
+the swarm board. An agent that reads `AGENTS.md`, finds no worktree rule beyond three traps, and
+concludes none exists is following this document's own index correctly and still gets it wrong.
+**Read `docs/ORCHESTRATION.md` before your first edit**, and treat a rule you cannot find in either
+as a rule you do not know rather than one that does not apply.
+
 Every `file:line` here was last re-verified on 2026-09-28. **Re-verify before you rely on one**,
 and name a symbol as well as a line wherever you can: a stale citation sends the next session
 after a bug that does not exist, and writing this skill corrected more than sixty of them.
@@ -71,6 +80,30 @@ These are the ones that actually change outcomes. Each is expanded where it is u
    closed one. → [Phase 9](#the-entry-shape)
 5. **Verify every citation before you commit the handoff.** Adding one import shifts every
    line below it. → [Phase 9](#verify-every-citation-before-you-commit-the-handoff)
+6. **A hard fix is a requirements problem until proven otherwise.** Compute and time are
+   effectively unlimited here, so effort is free and giving up is expensive. Before you conclude
+   that a defect is not fixable, or that a feature is out of scope, spend the effort on
+   establishing what the feature was **for** — read the older chats, read the plan documents, read
+   the pre-existing handoff entries, and research the upstream product's documented behaviour. A
+   wrong requirement produces a clean, well-tested, useless implementation, which is worse than a
+   red test because nothing about it looks wrong.
+7. **Search the chats by meaning, not by id.** The ids in this document are the ones somebody
+   happened to write down. To recover a requirement, search the project's session history broadly —
+   by the feature noun, by the commit subject, by the file paths the work touched, and by the
+   operator's own phrasing — and widen to synonyms when nothing hits. The `chat-history-query` skill
+   is the surface for it. **A chat id attached to a worktree is a claim about a moment, not the set
+   of sessions that worked on it**, so a requirement recovered only from the recorded ids has been
+   recovered from one corner.
+8. **When the requirement is unclear, go back to Adobe.** Defaults, ranges, modifier semantics and
+   commit points are exactly what Adobe's user guide and API reference publish and what reading code
+   cannot recover. `developer.adobe.com` is fetchable and carries exact parameter names. **Do not
+   resolve an ambiguity from memory when a source can be asked.**
+9. **Escalating is the last resort.** Time and compute are effectively unlimited; the scarce things
+   are autonomy and correctness, so a question is a request to take over a decision you had the tools
+   to make. Exhaust the searches above first, then write the question into a file with what each one
+   did **not** find. The exceptions are real and they are narrower than they look: a **recording
+   decision** — a re-recorded baseline, a deliberately waived threshold — is genuinely the
+   operator's, because it is a statement about what the number is allowed to mean.
 
 ## How to read this document
 
@@ -135,7 +168,7 @@ git merge --ff-only main
 ### 0.3 `.kilo` is gitignored — a new worktree has no plan documents
 
 ```bash
-git check-ignore -v .kilo   # .gitignore:34:.kilo	.kilo
+git check-ignore -v .kilo   # .gitignore:49:.kilo	.kilo
 git ls-files .kilo | wc -l  # 0
 ```
 
@@ -201,6 +234,61 @@ git diff --cached --stat                          # read this: it is what you ar
 ```
 
 `git add -A` in a shared checkout stages another session's in-flight work under your commit message, with no clean undo once pushed. **One investigation to skip:** `.eslintcache` and `.serena/` appear in and disappear from `git status` across sessions because a fast-forward brought a new `.gitignore` line; run `git check-ignore -v` before treating either as another session's work.
+
+### 0.7 Four traps at commit and integration time
+
+`AGENTS.md` does not carry these, so they are stated here. Each has already cost real work in this
+repository.
+
+- **A commit made from the main worktree is refused.** `scripts/main-worktree-guard.mjs` runs first
+  in `.husky/pre-commit`, ahead of `gate:commit`, and tells you the worktree recipe instead of a bare
+  "no". It stops the **commit, not the write** — it runs after the edit — so it converts rogue commits
+  into a dirty tree the next `git status` names. A landing never reaches it, because a fast-forward
+  runs no hook and `git merge` runs `pre-merge-commit`; the one override is `ALLOW_MAIN_COMMIT=1`,
+  and only the exact value `1`. Everything that changes a tracked file belongs in the branch's own
+  worktree, **including a comment**, and `git rev-parse --show-toplevel` before the first edit is the
+  only thing that distinguishes where you are from where you believe you are.
+- **Never resolve _or repair_ a merge conflict in the main worktree.** `reset --hard` and
+  `checkout --ours`/`--theirs` destroy another session's uncommitted work; `hash-object` and
+  `update-index` write an index entry no later `git status` reconciles. `git merge --abort` and redo
+  it in the worktree. After any interrupted merge, `git rev-parse -q --verify MERGE_HEAD` before
+  committing — an interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` behind with no
+  `MERGE_HEAD`, and `git commit` then lands a single-parent commit that reads as a resolution.
+- **Never `git stash`.** It is a shared, unordered stack in the common git dir. The silent part is
+  the one that matters: `git stash push` on a CLEAN tree exits 0, prints nothing and creates **no
+  entry at all**, so the `git stash pop` that follows takes `stash@{0}`, which is whoever pushed
+  last. This has destroyed work here.
+- **`git add -A` in a worktree whose _root_ checkout is dirty is a silent-revert trap, and it is not
+  the same one as above.** The root is a different checkout at a different `HEAD`, so a file your
+  branch never touched can sit in your worktree holding main's older content, and `-A` commits it as
+  a deliberate reverting of whatever main has since done. One merge shipped **17 such reverts and not
+  one of them was a conflict**, so the merge was clean and the revert was invisible in the diff.
+  Detect it by computation, not by reading the merge diff, and run it **before** the review:
+
+  ```sh
+  comm -13 \
+    <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
+    <(git diff --name-only main..HEAD | sort)
+  ```
+
+  Anything in that set is main content the merge had no business touching; restore it with
+  `git checkout main -- <path>` before the merge lands.
+
+**And a red `tsc` in the main worktree may be somebody else's work in progress**, not a broken `main`
+— the main worktree is shared, so it routinely holds an agent's half-written change, and that state
+blocks every commit made from there. Read `git status --porcelain` first: a path you have not touched
+is not yours to stage and its type error is not yours to resolve. Check whether the _committed_ state
+is green instead, in a throwaway worktree, and report the block.
+
+### 0.8 Before you start: is this tool actually missing?
+
+`docs/TOOLS-RESEARCH-BRIEF.md` and the backlog in
+[Appendix B](#appendix-b--the-tool-backlog--what-to-build-next) are claims about a moment, and the
+moment is old. **Re-derive before you build**: `git merge-base --is-ancestor <sha> main` for every
+commit the backlog says is unlanded, `grep -n "'<tool>'" src/tools/toolsMap.ts`, and
+`ls src/components/ToolbarsRight/`. The backlog once listed six tools as ABSENT that are in
+`toolsMap.ts` with real options bars today, and named a branch that no longer exists. A backlog row
+is a starting point, exactly as a chat id is.
 
 ---
 
@@ -789,7 +877,7 @@ Two more habits from that `README.md` that make a doc set worth maintaining:
   spec says so in that section. **Do not promote a reconstruction to a spec** — that is the
   single rule that keeps a research corpus from decaying into folklore.
 
-**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore:34`
+**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore:49`
 (`.kilo`, alongside `.serena`), and `git check-ignore -v .kilo/plans/ps-research/README.md`
 confirms it. Two consequences, both of which will bite:
 
@@ -2317,6 +2405,24 @@ and that are positionally coupled to each other. Assign the whole spine to one s
 when you start, **stop and report** rather than editing: a merge of two `toolProcessors.ts` edits is worse than a delay, and `git status`
 in a shared worktree is not a lock.
 
+**The board cannot enforce that, and the reason matters.** Board identity is the git branch, and
+`holdFiles` refuses only a _foreign_ lock, so two writers in one worktree are the same agent to the
+board: both holds are granted and the file reads as uncontended. It is a discipline, not a lock, and
+when two writers do collide neither sees it in the board — the symptom is a clobbered index in
+someone else's file, not a refusal. Read-only agents may share a worktree freely; a reader mutates
+nothing.
+
+**And do not reach for Kilo's `board_read` when you want to know whether anyone is working.** That
+tool carries messages between one session and the task children it spawned, so outside a fan-out it
+reports `messages: []` truthfully and knows nothing about this repository, and `board_post` about
+work in a worktree usually returns `total: 0, active: 0` with a warning that nothing was delivered.
+**Neither response is evidence that nobody is working.** The cross-session channel is
+`npm run swarm`: `-- claim <id> --files <paths>` before your first edit, `-- check <paths>` before
+touching anything a brief or a sibling names, and `-- note` the branch and its paths before you
+start integrating. **Claim the merge, not just the files** — a branch about to land carries a
+hazard to every path in it, and no file claim expresses that. A held file is a queue, not a
+deadlock, and an unclaimed path _looks_ free.
+
 ### The gesture contract
 
 The shared primitive is `usePointerPosition` (`src/hooks/usePointerPosition.ts`): `isPointerDownValid` `:122`, `isPointerMoveValid`
@@ -3248,10 +3354,34 @@ item 36: "baselines were recorded through the `draw` tool and are unaffected as 
 left alone"). When a new paint engine changes stroke rendering, check that tripwire list before
 touching a baseline.
 
-**Pass all three fields.** This repo's own history shows both accepted shapes: the research wave
-passed `model: 'kilo/stealth/space-bunny-alpha'`, the review wave passed
-`model: 'Space Bunny Alpha (new)', variant: 'max'`. The `variant: 'max'` pairing is the one to
-copy for anything adversarial or architecture-shaped.
+#### Subagent model fields
+
+`task` takes `model`, `provider` and `variant`, and **`provider` must be sent together with
+`model`**. Omitting it inherits the current turn's model, and a bare model name can resolve
+through the Kilo Gateway onto a paid id. Three rules ride with that, and the first has no
+exception:
+
+- **A free session must never launch a GPT subagent.** Every GPT model is paid, and the failure is
+  an `APIError: Add credits to continue` at zero tokens — the subagent dies before it does
+  anything, and the orchestrator that launched it was itself free.
+- **The default is `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'`.** The
+  `variant: 'max'` pairing is the one to copy for anything adversarial or architecture-shaped.
+- **`agent_manager` inherits the current turn's model** unless both `model` and `provider` are set,
+  so a main turn on a paid model silently spawns paid worktrees.
+
+**Do not copy a qualified id.** A brief that passes `model: 'kilo/stealth/space-bunny-alpha'` with
+no `provider` is exactly the shape that fell through to `~openai/gpt-luna-latest` on 2026-09-28 and
+killed both subagents in under a second. Audit the live session database before spawning a fleet
+rather than after one has died:
+
+```bash
+sqlite3 ~/.local/share/kilo/kilo.db "SELECT id, model, parent_id, title FROM session WHERE json_extract(data,'$.model') IS NOT NULL ORDER BY time_updated DESC LIMIT 20"
+```
+
+And every subagent you send **inherits your working directory**: create the worktree before the
+fan-out, never after it, and put the **absolute** path in every brief — a subagent's cwd only
+affects relative `bash`, while its `edit` and `write` calls take absolute paths, so the brief is
+what moves the work.
 
 ### The rule that actually matters
 
@@ -3322,7 +3452,7 @@ read/write rights on the source tree.
 2. `<ABSOLUTE PATH>/<plan>.md` — <what it is, which section>
 3. `<ABSOLUTE PATH>/AGENTS.md` — the binding repo rules
 
-<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore:34`), so it is not carried into a
+<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore:49`), so it is not carried into a
 fresh worktree: a plan that exists in one checkout must be named by absolute path, or the subagent
 will read a file that is not there.>
 
@@ -3590,7 +3720,7 @@ does not ship is lost.** `.gitignore` matches `.kilo`, and therefore `.kilo/plan
 
 ```bash
 $ git check-ignore -v .kilo/plans
-.gitignore:34:.kilo	.kilo/plans
+.gitignore:49:.kilo	.kilo/plans
 ```
 
 Run that before writing. A plan in `.kilo/plans/` is a working document on one machine; a finding
@@ -4000,13 +4130,13 @@ always verified.
 
 | Tool                                                   | Photoshop behaviour (FROM-MEMORY)                                                                    | Status here                                                                                                                                                                        | COST                                                                                       | Deciding `file:line`                                                                                                                  | Effort                                      |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| **Eraser** (Eraser / Background Eraser / Magic Eraser) | Paints the backdrop through the alpha channel; Brush-based, with Erase-to-History and Airbrush modes | **SHIPPED** on `ps/missing-tools` (`80eb207`): `src/tools/eraser.ts`, `src/components/ToolbarsRight/Eraser/Eraser.tsx`                                                             | **CHEAP**                                                                                  | `history-adapter.ts:416-424` (generic raster arm)                                                                                     | S                                           |
-| **Clone Stamp** (+ Pattern Stamp)                      | Copies from a user-set source point, with Aligned and Sample-All-Layers                              | **ABSENT** — 0 hits for `clone-stamp` / "clone stamp"                                                                                                                              | **CHEAP**                                                                                  | `history-adapter.ts:416-424`                                                                                                          | M (needs a source offset + alignment state) |
-| **Paint Bucket**                                       | Tolerance flood fill, contiguous / global, anti-aliased edge                                         | **SHIPPED** on `ps/missing-tools` (`80eb207`): `src/tools/fill.ts` over `src/util/floodFill.ts`                                                                                    | **CHEAP**, but do not write it                                                             | `history-adapter.ts:416-424`; see `### Already in flight`                                                                             | S once the branch lands                     |
-| **Gradient**                                           | Linear / radial / angle / reflected / diamond along the drag; multi-stop, dither                     | **ABSENT** — the 19 `gradient` hits in `src` are all CSS                                                                                                                           | **CHEAP** (`createLinearGradient` is universal)                                            | `history-adapter.ts:416-424`                                                                                                          | S                                           |
+| **Eraser** (Eraser / Background Eraser / Magic Eraser) | Paints the backdrop through the alpha channel; Brush-based, with Erase-to-History and Airbrush modes | **SHIPPED on `main`** — `toolsMap.ts:122-123` (`80eb207`): `src/tools/eraser.ts`, `src/components/ToolbarsRight/Eraser/Eraser.tsx`                                                 | **CHEAP**                                                                                  | `history-adapter.ts:416-424` (generic raster arm)                                                                                     | S                                           |
+| **Clone Stamp** (+ Pattern Stamp)                      | Copies from a user-set source point, with Aligned and Sample-All-Layers                              | **SHIPPED** — `toolsMap.ts:96`, panel `ToolbarsRight/CloneStamp`                                                                                                                   | **CHEAP**                                                                                  | `history-adapter.ts:416-424`                                                                                                          | M (needs a source offset + alignment state) |
+| **Paint Bucket**                                       | Tolerance flood fill, contiguous / global, anti-aliased edge                                         | **SHIPPED on `main`** — `toolsMap.ts:124` (`80eb207`): `src/tools/fill.ts` over `src/util/floodFill.ts`                                                                            | **CHEAP**, but do not write it                                                             | `history-adapter.ts:416-424`; see `### Already in flight`                                                                             | S once the branch lands                     |
+| **Gradient**                                           | Linear / radial / angle / reflected / diamond along the drag; multi-stop, dither                     | **SHIPPED** — `toolsMap.ts:97`, panel `ToolbarsRight/Gradient`                                                                                                                     | **CHEAP** (`createLinearGradient` is universal)                                            | `history-adapter.ts:416-424`                                                                                                          | S                                           |
 | **Dodge / Burn / Sponge**                              | Per-pixel tonal or saturation remap inside the brush footprint, with Exposure and Range              | **ABSENT** — the `dodge`/`burn` hits are `'color dodge'` / `'color burn'` blend-mode names at `src/contexts/psd-utils.ts:23-24`                                                    | **CHEAP for history, EXPENSIVE in effect**                                                 | `history-adapter.ts:416-424` for the history; the cost is the JS kernel, because the `ctx.filter` route is the inert one — see Tier 3 | M                                           |
 | **Zoom / Hand / Rotate View**                          | Viewport transforms; commit nothing, record nothing                                                  | **ABSENT.** `zoom-container` is a bare class at `Main.tsx:245` with the transform commented out at `:248`, and `'zoom'` at `Main.tsx:68` is a dead sentinel meaning "no tool area" | **CHEAPEST** — view state, not document state, so no processor and no history entry at all | `Main.tsx:68,245,248`                                                                                                                 | S                                           |
-| **Eyedropper / Color Sampler**                         | Samples a pixel; commits nothing, records nothing                                                    | **SHIPPED** on `ps/missing-tools` (`80eb207`): `src/tools/eyedropper.ts`, which has no processor at all                                                                            | **CHEAPEST**                                                                               | `SidebarLeft.tsx:56-58` already dispatches `SET_COLOR`; a sampler reuses it                                                           | S                                           |
+| **Eyedropper / Color Sampler**                         | Samples a pixel; commits nothing, records nothing                                                    | **SHIPPED on `main`** — `toolsMap.ts:127` (`80eb207`): `src/tools/eyedropper.ts`, which has no processor at all                                                                    | **CHEAPEST**                                                                               | `SidebarLeft.tsx:56-58` already dispatches `SET_COLOR`; a sampler reuses it                                                           | S                                           |
 
 #### Tier 2 — CHEAP, lower frequency, or a defect rather than a feature
 
@@ -4074,11 +4204,16 @@ options bar and the theme tokens wholesale.
 test each with `git merge-base --is-ancestor <branch> main`. A "0 commits ahead" branch is not a
 safety test — a worktree whose work was never committed is also 0 ahead. What matters:
 
-- **`ps/tool-expansion` is consolidated onto `merge/ps-tool-expansion`** (tip `ab5f53c`, 2026-09-28)
-  and is **not in `main`** — the ancestor test fails. Eight tools landed there that `main` lacks:
-  `elliptical-selection`, `quick-selection`, `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`,
-  `gradient`. It is parked behind an operator decision on seven export baselines. **Check that
-  branch before writing any of the eight.**
+- **`ps/tool-expansion` was consolidated onto `merge/ps-tool-expansion`** (tip `ab5f53c`,
+  2026-09-28) — and an earlier revision of this bullet said it was **not in `main`**. That was
+  wrong, and it was wrong in the direction that costs the most: `git merge-base --is-ancestor
+ab5f53c main` **passes**. The eight tools — `elliptical-selection`, `quick-selection`,
+  `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`, `gradient` — **are on `main` today**, with
+  real options-bar components under `src/components/ToolbarsRight/` (`CloneStamp`, `Gradient`,
+  `Sharpen`, `Smudge`, `Tonal`, `EllipticalSelection`, `QuickSelection`) and rows in
+  `src/tools/toolsMap.ts:96-106`. The branch `merge/ps-tool-expansion` no longer exists either, so
+  "check that branch" sent an agent nowhere. **Re-run the ancestor test and grep `toolsMap.ts`
+  before believing any absence in this document** — see §0.8.
 - **`dodge` and `burn` share one options-bar component**, `ToolbarsRight/Tonal/Tonal.tsx`. That is
   the precedent for one file per tool _family_ rather than per tool, and the collision to expect if
   two agents take one each.
@@ -4107,7 +4242,7 @@ merge --ff-only main`.
 2. **`.kilo` is gitignored, so a worktree has no plan docs and no skills.** Symptom: the
    research corpus, the skill, and every plan directory appear not to exist; you re-research
    something that was already answered. Defence: read the corpus from the **main** checkout
-   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore:34`
+   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore:49`
    matches `.kilo`, and `git ls-files .kilo` returns nothing. Note the corollary —
    `HANDOFF.md`, `docs/handoffs/`, and `e2e/OPEN_PROBLEMS.md` **are** tracked and do exist in a
    worktree.
@@ -4351,7 +4486,7 @@ merge --ff-only main`.
 ## Appendix B — the research corpus that already exists
 
 `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/` — 11 files, ~265 KB, in the **main** checkout
-only. `.gitignore:34` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
+only. `.gitignore:49` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
 has none of it** (trap 2). Read it from the main checkout.
 
 **The rule: read before re-researching. A new research wave that ignores this corpus does not

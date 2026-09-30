@@ -12,7 +12,6 @@ import {
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { setForegroundColor } from './helpers/color-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
 
 /**
@@ -143,8 +142,24 @@ const INK_MARGIN = 6;
  */
 const POLL_MARGIN = 24;
 
-/** The colour the Text toolbar paints with, read from the store's foreground. */
-const FOREGROUND = '#ff0000';
+/**
+ * The colour the Text tool paints with, which is the tool's OWN setting and not the store's
+ * foreground.
+ *
+ * It used to be read the other way round: this constant was documented as "the colour the Text
+ * toolbar paints with, read from the store's foreground", and the test drove it through the
+ * sidebar's swatch. That was true until `a12e35c9` made `toolArgs.color` the tool's own setting —
+ * `TextToolArea` dropped `color` from its store subscription and from the `renderText` call
+ * (`src/components/Main/TextToolArea.tsx:15`, `:58`), and `Text.tsx` stopped mirroring the store's
+ * foreground into the args on every render. The seed is still black (`src/tools/settings.ts:87`) and
+ * `renderText` still reads `args.color` for `ctx.fillStyle` (`src/tools/text.ts:29`, `:48`), so the
+ * text simply committed black. The swatch in the sidebar still turned red, which is what made this
+ * look like a rendering failure rather than a stale control.
+ *
+ * Red is still the right choice, for the reason it was chosen: it is a colour nothing else on this
+ * canvas is, so ink can be told apart from the black default and the blue selection outline.
+ */
+const TEXT_COLOR = '#ff0000';
 
 /**
  * `createLayerSource` names a tool layer `${toolName} ${maxOrder}` after the tool that
@@ -168,12 +183,17 @@ const TOOL_LAYER_NAME = /^text \d+$/;
 const STARTING_LAYER_NAME = 'Blank 1';
 
 /**
- * Foreground red, as a predicate. These are the constants `hasRedPixels` itself reads,
- * so a pixel that satisfies this one is the same pixel that helper would report: ink in
- * any other colour - black default text, the blue selection outline - cannot match.
+ * Red, as a predicate. These are the constants `hasRedPixels` itself reads, so a pixel that
+ * satisfies this one is the same pixel that helper would report: ink in any other colour cannot
+ * match — the black default (`src/tools/settings.ts:87`), and the blue selection outline.
+ *
+ * The black default is worth naming twice over, because it is now the FAILURE colour as well as
+ * the unconfigured one. If the colour written into `#text-color` ever stopped reaching the tool's
+ * args, the text would commit black and this predicate would find nothing, so a broken colour path
+ * is red on this file rather than silently green.
  */
 const { RED_PIXEL_RED_MIN, RED_PIXEL_GREEN_MAX, RED_PIXEL_BLUE_MAX } = STROKE_ANALYSIS;
-const isForegroundInk: PixelPredicate = (red, green, blue, alpha) =>
+const isRedInk: PixelPredicate = (red, green, blue, alpha) =>
   alpha !== 0 && red > RED_PIXEL_RED_MIN && green < RED_PIXEL_GREEN_MAX && blue < RED_PIXEL_BLUE_MAX;
 
 interface Rect {
@@ -242,6 +262,49 @@ async function dragDraftRect(page: Page, box: BoundingBox): Promise<void> {
   await drawLine(page, box, DRAFT_RECT.x1, DRAFT_RECT.y1, DRAFT_RECT.x2, DRAFT_RECT.y2, {
     steps: DRAFT_DRAG_STEPS,
   });
+}
+
+/**
+ * Writes the colour through the control that owns it: the Text bar's own swatch,
+ * `<input id="text-color" type="color">` (`src/components/ToolbarsRight/Text/Text.tsx:184`), whose
+ * `onChange` is `handleColorChange` (`Text.tsx:79-81`) and which writes `toolArgs.color`. That is
+ * the value `renderText` fills with (`src/tools/text.ts:29`, `:48`) and the value `applyText` commits
+ * (`Text.tsx:100` passes the current `toolArgs` to `createLayerFromTool`), so this is the input whose
+ * value the red pixels downstream are made of. It is also what a user touches: the swatch is in the
+ * options bar, and `beforeEach` has already selected the Text tool, so it is mounted.
+ *
+ * A local copy of `setForegroundColor`'s injection rather than a call to it, because that helper is
+ * pinned to the sidebar's two testids and generalising it means editing `e2e/helpers/color-helpers.ts`,
+ * which is shared and owned elsewhere. What is copied is the part that is load-bearing: the native
+ * `value` setter is taken off `HTMLInputElement.prototype` rather than assigned to `input.value`,
+ * because React installs its own instance-level setter that keeps its value tracker in step, so the
+ * assignment would leave `onChange` unfired and the colour would silently stay black.
+ *
+ * What the readback below does and does not prove. It DOES catch a value the input refused — a
+ * colour input sanitises an invalid value to `#000000` rather than rejecting it, so a typo in
+ * `TEXT_COLOR` fails here instead of 10s later as an unexplained missing-ink timeout. It does NOT
+ * prove React state took the change, because it reads the same element it wrote: a change React
+ * ignored would leave the DOM value alone and still read red. That case is caught by the ink
+ * assertions, which is why a broken colour path goes red here instead of passing quietly.
+ */
+async function setTextToolColor(page: Page, hex: string): Promise<void> {
+  await page.evaluate((color) => {
+    const input = document.querySelector<HTMLInputElement>('#text-color');
+    if (!(input instanceof window.HTMLInputElement)) {
+      throw new Error('setTextToolColor: no HTMLInputElement matched #text-color; is the Text toolbar mounted?');
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+    if (!descriptor || !descriptor.set) {
+      throw new Error('Native value setter not found on HTMLInputElement.prototype');
+    }
+    descriptor.set.call(input, color);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, hex);
+
+  await expect(page.locator('#text-color'), "the Text bar's own swatch did not take the colour under test").toHaveValue(
+    hex
+  );
 }
 
 /**
@@ -372,7 +435,10 @@ test.describe('Text tool', () => {
     const apply = page.getByRole('button', { name: 'Apply' });
     const box = await canvasBox(page);
 
-    await setForegroundColor(page, FOREGROUND, true);
+    // The colour goes in through the Text bar's own swatch, because that is what a user edits and
+    // what the commit reads. It used to go in through the sidebar's foreground swatch instead, and
+    // that stopped working when `a12e35c9` moved `toolArgs.color` off the store — see TEXT_COLOR.
+    await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box);
     await input.fill('Hi');
     await apply.click();
@@ -404,8 +470,8 @@ test.describe('Text tool', () => {
     // (`cdp-helpers.ts:67-72`); no clip is passed here, so the fallback IS the capture.
     const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-committed');
     const image = await loadImageData(capture);
-    const ink = await scanPixelsForBounds(image, isForegroundInk);
-    expect(ink.found, 'no foreground-red pixels anywhere on the canvas after Apply').toBe(true);
+    const ink = await scanPixelsForBounds(image, isRedInk);
+    expect(ink.found, 'no red pixels anywhere on the canvas after Apply').toBe(true);
 
     // The capture really is the whole canvas box and not a clipped fragment of it, since
     // the mapping below divides by this box's extent.

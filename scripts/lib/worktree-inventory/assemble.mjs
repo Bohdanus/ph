@@ -14,11 +14,12 @@ import { dirname, join } from 'node:path';
 const require = createRequire(import.meta.url);
 import { classify, riskScore, ACTION } from './classify.mjs';
 import { summariseChats, isUnfinished, isDead } from './chats.mjs';
+import { summariseWrites, summariseReads, summariseShell } from './writes.mjs';
 import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -44,9 +45,27 @@ export function buildInventory({
   mainHead,
   board,
   chatAudit,
+  writeAudit = null,
   readAudit = { available: false, byId: new Map(), records: [] },
   nowMs,
   chatWindowMs = 24 * 60 * 60 * 1000,
+  liveWindowMs = 30 * 60 * 1000,
+  /**
+   * Readers whose last read predates this are not emitted.
+   *
+   * A release has to be a WATERMARK rather than an event, because the document is
+   * regenerated from the database on every run: a flag that dropped readers once
+   * would simply be repopulated by the next run from the same rows. Moving the
+   * mark forward is permanent, needs no record of which entries it removed, and
+   * touches only the reader list — writers are never filtered by it.
+   */
+  readsReleasedBeforeMs = 0,
+  // A DECLARED hard state, or null. Set when the operator knows something the
+  // database cannot: that the editor restarted and took every chat with it. The
+  // recency heuristics all keep answering "active" for half an hour afterwards,
+  // and a file that says a dead chat owns a worktree is worse than one that says
+  // nothing — so the override wins, and everything it overrode is kept beside it.
+  liveWritersSuppressed = null,
 }) {
   // `nowMs` is clamped to the newest thing the data can know about, on BOTH
   // sides. `chats.mjs` clamps internally for its own classification, but
@@ -74,7 +93,30 @@ export function buildInventory({
     // only liveness signal for a session opened in the main checkout and then
     // driven into a task worktree.
     const boardAgents = board.agents?.get(wt.path) ?? [];
-    const verdict = classify(wt, { chatSummary, chatSessions, curated, nowMs: effectiveNow, boardAgents });
+    // All three histories are looked up by the worktree's ABSOLUTE path, because
+    // that is how `writes.mjs` attributed every call. A worktree living outside
+    // the repository — several agents keep scratch ones in /tmp — has no recorded
+    // history until somebody works in it, so the empty shape is the default
+    // rather than a missing field.
+    const raw = writeAudit?.available ? writeAudit.byWorktree.get(wt.path) : null;
+    const suppressed = Boolean(liveWritersSuppressed);
+    const writeHistory = summariseWrites(raw?.write ?? null, { nowMs: effectiveNow, liveWindowMs, suppressed });
+    const readHistory = summariseReads(raw?.read ?? null, {
+      nowMs: effectiveNow,
+      liveWindowMs,
+      releasedBeforeMs: readsReleasedBeforeMs,
+    });
+    const shellHistory = summariseShell(raw?.shell ?? null, { nowMs: effectiveNow, liveWindowMs });
+
+    const verdict = classify(wt, {
+      chatSummary,
+      chatSessions,
+      curated,
+      nowMs: effectiveNow,
+      boardAgents,
+      writeHistory,
+      liveWritersSuppressed,
+    });
 
     const claims = board.claims?.get(wt.path) ?? [];
     const fileLocks = board.fileLocks?.get(wt.path) ?? [];
@@ -191,6 +233,33 @@ export function buildInventory({
         })),
       },
 
+      // THREE histories, not one, because they have three different lifetimes.
+      //
+      // `writeHistory` — who WROTE here, over all of history, and who is writing
+      // right now. Separate from `chats` above, which is windowed and
+      // directory-keyed: that one answers "who is here at the moment", this one
+      // answers "whose work is this", and for a worktree built and abandoned last
+      // week only the second has an answer at all. PERMANENT.
+      writeHistory,
+
+      // `readHistory` — who READ here. RELEASABLE via `readsReleasedBefore` at the
+      // top of the document. Reading a worktree is interest, not authorship, and
+      // a reader list that only grows stops answering "who is looking at this"
+      // while still claiming to.
+      readHistory,
+
+      // `shellHistory` — commands run with a `workdir` inside this worktree.
+      // `writeCapableCalls` is the honest headline: a shell can write a file and
+      // this structure cannot see that it did, so the number is the size of the
+      // gap in `writeHistory`, not a count of writes.
+      shellHistory,
+
+      // `live` and the raw signals behind it, so a reader can see whether
+      // "nobody is working here" was derived or declared.
+      live: verdict.live,
+      derivedLive: verdict.derivedLive,
+      liveSuppressed: verdict.liveSuppressed,
+
       board: {
         claims,
         fileLocks,
@@ -252,6 +321,46 @@ export function buildInventory({
     base,
     mainHead,
     chatWindowMs,
+    liveWindowMs,
+
+    /**
+     * The ownership answer, at the top of the document.
+     *
+     * `liveWriterChatIds` is every chat that wrote in any worktree inside the
+     * liveness window, and `suppressed` says whether that list is what the
+     * database said or what the operator declared. A file that reports zero live
+     * writers is ambiguous — nobody is writing, or every writer is dead — and
+     * those two demand opposite responses, so the reason is carried with it
+     * rather than left to the reader to guess from an empty array.
+     */
+    ownership: {
+      asOf: new Date(effectiveNow).toISOString(),
+      liveWriterChatIds: [...new Set(records.flatMap((r) => r.writeHistory.currentChatIds))].sort(),
+      liveWriterCount: new Set(records.flatMap((r) => r.writeHistory.currentChatIds)).size,
+      // Shell traffic is reported beside the writers because it is the part of
+      // "is anybody in there" that the writer list cannot see: a session that
+      // only ever ran commands in a worktree wrote no file and so names no
+      // writer, while being plainly present.
+      liveShellChatIds: [...new Set(records.flatMap((r) => r.shellHistory.currentChatIds))].sort(),
+      liveShellCount: new Set(records.flatMap((r) => r.shellHistory.currentChatIds)).size,
+      derivedLiveWorktrees: records
+        .filter((r) => r.derivedLive)
+        .map((r) => r.name)
+        .sort(),
+      suppressed: Boolean(liveWritersSuppressed),
+      suppressedAt: liveWritersSuppressed ? new Date(effectiveNow).toISOString() : null,
+      reason: liveWritersSuppressed,
+      worktreesWithWriteHistory: records.filter((r) => r.writeHistory.chatCount > 0).length,
+      worktreesWithReadHistory: records.filter((r) => r.readHistory.chatCount > 0).length,
+      /**
+       * The reader release mark, published here so it is visible without walking
+       * to a worktree. It is a WATERMARK, not an event, and it only moves
+       * forward: readers below it have been released and are never emitted again,
+       * while `writeHistory` is untouched by it.
+       */
+      readsReleasedBefore: readsReleasedBeforeMs > 0 ? new Date(readsReleasedBeforeMs).toISOString() : null,
+      readsReleasedChatCount: records.reduce((n, r) => n + r.readHistory.chatCount, 0),
+    },
     dataSources: {
       git: { ok: worktrees.length > 0, root, base },
       sessions: chatAudit.available
@@ -277,11 +386,53 @@ export function buildInventory({
             reason: readAudit.reason ?? 'no transcript read audit at the expected path',
             corrupt: readAudit.corrupt ?? false,
           },
+      /**
+       * The call history, as three separate totals.
+       *
+       * `attributed` and `total` are both published for writes because the
+       * difference is the honest part: `total` counts every completed write call
+       * this machine made against a path under any of these worktrees, and
+       * `attributed` counts the ones that resolved to a worktree this document
+       * knows about. They are PER KIND and must not be summed together — a
+       * single mixed counter made the write total meaningless the moment a second
+       * kind existed.
+       *
+       * There is deliberately no `sessions` field. An earlier version reported
+       * the count of sessions in the database, which is every session on the
+       * machine including the ones that never wrote, under a key that said
+       * `writes`.
+       */
+      calls: writeAudit?.available
+        ? {
+            ok: true,
+            path: writeAudit.dbPath,
+            write: {
+              total: writeAudit.totalWriteCalls,
+              attributed: writeAudit.attributedWriteCalls,
+              unmapped: writeAudit.unmapped.write,
+            },
+            read: { total: writeAudit.totalReadCalls, unmapped: writeAudit.unmapped.read },
+            shell: { total: writeAudit.totalShellCalls, unmapped: writeAudit.unmapped.shell },
+            unmappedBuckets: writeAudit.unmappedBuckets,
+          }
+        : { ok: false, reason: 'no Kilo session database at the expected path' },
     },
     // Read these first. They are the answers; `worktrees` is the evidence.
     readyToLand,
     disposalCandidates,
     atRisk,
+
+    /**
+     * Worktrees that were deleted, and who had written in them.
+     *
+     * It MUST be a top-level list for the same reason `readLostWorktree` is: the
+     * per-worktree loop only visits worktrees that still exist, so a deleted one
+     * has no record to hang this on. It is the half of the ownership history
+     * that `git worktree list` cannot produce at all, and it is where the
+     * uncommitted work tends to be — a worktree that was removed while a chat
+     * was mid-flight leaves exactly this trace and nothing else.
+     */
+    goneWorktrees: writeAudit?.available ? writeAudit.goneWorktrees : [],
 
     // Every session a reader of the transcript says is unfinished, and the
     // ones where the work exists on no ref at all. These are the answers to
@@ -349,6 +500,18 @@ export function buildInventory({
       inUse: records.filter((r) => r.recommendation === 'in-use').length,
       holdingUncommittedWork: records.filter((r) => r.dirty + r.untracked > 0).length,
       withoutSummary: records.filter((r) => !r.summary).length,
+      withWriteHistory: records.filter((r) => r.writeHistory.chatCount > 0).length,
+      withReadHistory: records.filter((r) => r.readHistory.chatCount > 0).length,
+      withShellHistory: records.filter((r) => r.shellHistory.chatCount > 0).length,
+      writtenRecently: records.filter(
+        (r) => r.writeHistory.calls > 0 && r.writeHistory.lastAtMs > effectiveNow - liveWindowMs
+      ).length,
+      goneWorktreesWithWrites: writeAudit?.available ? writeAudit.goneWorktrees.length : 0,
+      totalWriteCalls: writeAudit?.available ? writeAudit.totalWriteCalls : 0,
+      totalReadCalls: writeAudit?.available ? writeAudit.totalReadCalls : 0,
+      // The size of the gap `writeHistory` cannot close: shell calls that ran
+      // with a workdir inside a worktree, any of which may have written a file.
+      totalShellCalls: writeAudit?.available ? writeAudit.totalShellCalls : 0,
       byStatus,
       byRecommendation,
       byAction,

@@ -3323,3 +3323,204 @@ option is the cheaper correct move. Whichever is chosen, the seven lines above a
 
 **Files.** `src/contexts/StoreContext.tsx:1064-1108`, `:568-586`,
 `src/contexts/__tests__/StoreContext.durable-boundary.test.tsx:711`
+
+## 104. The reclaim skill's tracked document is not on `main`, so three files point at a file that does not exist
+
+`.kilo/skills/stale-worktree-reclaim/SKILL.md:12` says "**The full skill is
+`.skills/stale-worktree-reclaim.md` (tracked in git).** Read it." It is not tracked, and it is not
+on `main`:
+
+```bash
+git ls-files .skills
+# .skills/broad-test-improvement.md
+# .skills/hard-merge.md
+# .skills/photoshop-tool-creation.md
+# .skills/worktree-merge-harvest.md          <- no reclaim
+git cat-file -e main:.skills/stale-worktree-reclaim.md   # fatal, exit 128
+```
+
+Three files on `main` carry the dangling reference: `.kilo/skills/stale-worktree-reclaim/SKILL.md:12`,
+`.kilo/skills/worktree-merge-harvest/SKILL.md:57`, and the tracked
+`.skills/worktree-merge-harvest.md:5` and `:329`. `main:AGENTS.md` contains no reference to
+`.skills/` or to any skill name, so the loader is the only pointer and it points at nothing.
+
+The document exists — 501 lines, twice reviewed — on branch `fix/stale-reclaim-skill`, where
+`git diff --stat main...fix/stale-reclaim-skill` reports `.skills/stale-worktree-reclaim.md` at 501
+added lines, plus `AGENTS.md`, `WORKTREES.json`, and two inventory files. Two copies on disk are
+byte-identical (`.kilo/worktrees/stale-reclaim-skill/` and `.kilo/worktrees/cleanup-sweep/`). Its own
+review subagent recorded the hazard at the time: _"This is an ordering constraint, not a defect: the
+branch and the stub must land together."_ The operator never merged, and the pointer has been live
+since `86d0ed9f`.
+
+**Landing it as-is is not the fix, and the reason is a red suite.** The branch is 8 ahead and 132
+behind, its `AGENTS.md` hunk is structural rather than textual (it lands in the "Working with other
+agents" section that `1e82da20` deleted, so it cannot apply), and — the part that matters — it still
+**tracks `WORKTREES.json`**. The commit that untracked it, `0bb0e58c`, is not an ancestor of the
+branch. `main` gitignores that file at `.gitignore:47`, and
+`scripts/__tests__/worktree-inventory.test.mjs:2544` fails when it is tracked, so landing the branch
+whole turns the inventory suite red on `main` and violates `docs/ORCHESTRATION.md:240`.
+
+Three options, none of them a plain merge:
+
+- **(a) Land the branch, dropping the two files that regress** — keep `.skills/stale-worktree-reclaim.md`,
+  drop the `WORKTREES.json` re-tracking and the `AGENTS.md` hunk. Preserves the reviewed content:
+  the transitive family walk, its truth table (`:196-211`) and the synthetic
+  `ROOT→{A,B,ORPHAN}; A→GRAND; GRAND→GREAT` tree that caught a bug the author introduced twice, all
+  of which exist nowhere else. Costs a real review, and the `scripts/` and `curated.mjs` changes the
+  doc's claims may rest on still have to be re-derived.
+- **(b) Reimplement the document on `main`.** Clean base, current `ORCHESTRATION.md`, and the two
+  factual errors the branch carries (below) cannot survive by construction. Costs 501 reconstructed
+  lines that `ORCHESTRATION.md` cannot regenerate, because it is a rules document and holds no sweep
+  procedure.
+- **(c) Leave the branch alone and keep the loader honest**, which is what is done in the meantime:
+  the loader now says what to do when the path does not resolve instead of asserting it is tracked.
+
+**Two claims in the branch's copy are provably false and must not land with it.**
+`.skills/stale-worktree-reclaim.md:456-458` inverts the defects filename — it says
+`e2e/OPEN-PROBLEMS.md` with a **hyphen**; `git ls-files e2e/ | grep -i open` returns
+`e2e/OPEN_PROBLEMS.md`, underscore — so the bullet whose entire point is "grep a path you have not
+confirmed" confirms the wrong one, and a reader following it greps a path that returns nothing,
+which reads as "main has no such defect". And `:499-501` tells the reader to `git status` and
+_restore_ a regenerated `WORKTREES.json` in `main`, which is both unnecessary (the file is
+untracked) and the one action `docs/ORCHESTRATION.md:452` calls worse than none.
+
+**Files.** `.kilo/skills/stale-worktree-reclaim/SKILL.md:12`,
+`.kilo/skills/worktree-merge-harvest/SKILL.md:57`, `.skills/worktree-merge-harvest.md:5`, `:329`;
+branch `fix/stale-reclaim-skill`; `scripts/__tests__/worktree-inventory.test.mjs:2544`
+
+## 105. `broad-test-improvement` cannot be loaded at all, and the only copy Kilo would find is a stale fork
+
+The skill's only copy is `.kilo/skill/broad-test-improvement/skill.md`. Three defects, each fatal on
+its own:
+
+- **Wrong directory.** `.kilo/skill/`, not `.kilo/skills/` — Kilo loads from `skills/`.
+- **Wrong filename case.** `skill.md`, not `SKILL.md`.
+- **No frontmatter.** The file opens on `# Broad Test Improvement Skill`, so there is no `name:` /
+  `description:` pair to register it by.
+
+It is also a **stale fork**: 30,731 bytes against the tracked `.skills/broad-test-improvement.md` at
+38,062 bytes, with no loader of its own telling anyone which is authoritative. The tracked document
+is the one that ships; nothing points an agent at it, and the one file that does exist is a version
+of it from before roughly 7 KB of content was added.
+
+**Fix.** Write `.kilo/skills/broad-test-improvement/SKILL.md` as a loader in the shape the other
+six use — frontmatter with `name` and `description`, a line saying the full skill is
+`.skills/broad-test-improvement.md` and is tracked, a short shape table, and the note that
+`.kilo/` is gitignored so a skill stored only there would not ship — then delete
+`.kilo/skill/`. Do not carry content into the loader: the tracked document is the authority and a
+second copy is how the two drifted in the first place.
+
+**Files.** `.kilo/skill/broad-test-improvement/skill.md`, `.skills/broad-test-improvement.md`
+
+## 106. `docs/TOOLS-RESEARCH-BRIEF.md` cites four numbers for one file, and all four are stale
+
+```bash
+wc -l .skills/photoshop-tool-creation.md       # 4,455
+grep -n '^## Photoshop shape tools\|^## The tool backlog\|^## Appendix A' \
+  .skills/photoshop-tool-creation.md
+```
+
+which prints `373:## Photoshop shape tools`, `3879:## The tool backlog — what to build next` and
+`4094:## Appendix A — the trap list`.
+
+`docs/TOOLS-RESEARCH-BRIEF.md:102-104` says "a 4,371-line playbook", its `## Photoshop shape tools`
+section is "`:357-846`", its `## The tool backlog` is "`:3797`" and its `## Appendix A` is
+"`:4012`". Every one of those points at content that has since moved. This is the citation-staleness
+defect `.skills/photoshop-tool-creation.md` phase 9 exists to catch, in the one document that tells
+an agent what to read before writing a tool — and the drift is in the count as well as the anchors,
+which is the case a `grep` cannot see.
+
+**Fix.** Re-derive all four from `wc -l` and `grep -n` at the moment of writing, and consider naming
+the sections by heading rather than by line, since a heading survives a merge and a line number
+does not.
+
+**Files.** `docs/TOOLS-RESEARCH-BRIEF.md:102-104`, `.skills/photoshop-tool-creation.md`
+
+## 107. `docs/ORCHESTRATION.md` cites a handoff section and a source line that both point at the wrong thing
+
+Two pointers in the document every other worktree rule defers to:
+
+- **`:117`** attributes the `git stash` rule to "HANDOFF §69". `HANDOFF.md:1597` §69 is "An eraser
+  gesture abandoned by switching tools leaves its preview on the layer, with no history entry". The
+  stash rule is `HANDOFF.md:1836` **§75**, "`git stash` is not just shared in this repo — an empty
+  push makes `pop` a coin toss".
+- **`:202`** cites `db.mjs:1130` for the `lock.agent_id !== who` conflict test. The lock-level
+  comparisons are `scripts/lib/agent-board/db.mjs:1127` and `:1518`; `:1130` is inside the
+  claim-renewal arm. The claim-level one is `:1126`'s neighbourhood (`:1035`, `:1284`, `:1551`,
+  `:1641`).
+
+Both matter more than an ordinary stale citation, because both sit inside a rule an agent is told to
+obey rather than to check: the section that ends "a failure the operator reads and acts on" and the
+one that ends "Only `e2e-run/<…>/<digits>` is probed".
+
+**Fix.** Correct both to `HANDOFF §75` and `db.mjs:1127`. Deriving them with `grep -n` rather than
+editing the number is the point.
+
+**Files.** `docs/ORCHESTRATION.md:117`, `:202`, `HANDOFF.md:1836`,
+`scripts/lib/agent-board/db.mjs:1127`
+
+## 108. `.skills/photoshop-tool-creation.md` carries ~200 source citations it last verified two days before `main` moved, and it does not know which are dead
+
+The skill's own header says every `file:line` was "last re-verified on 2026-09-28", and `main` has
+moved since. The four worst instances are confirmed stale today:
+
+- **`:492`** quotes `e2e/README.md:30` for "npm run test:e2e is **headless by default. Keep it that
+  way.**". That sentence is at `e2e/README.md:73`; `:30` is the "Counts are deliberately absent…"
+  line. The same paragraph says the README is "415 lines" and it is **580**.
+- **`:3774-3779`** and **`:3766-3767`** assert `e2e/README.md:401-411` still says the `e2e` job is
+  `continue-on-error: true`, and instruct the reader that "the README is the stale one — fix it in
+  the same commit". It is already fixed: `e2e/README.md:401-411` is a file listing of the export
+  baselines, and the history is at `:564`, which reads "It **was** `continue-on-error`". **This
+  instructs an agent to "fix" a correct document.**
+- **`:3137`**, **`:3553`**, **`:3766`**, **`:4328`** say the pass/skip count lives in
+  `e2e/OPEN_PROBLEMS.md:41-42`. `:41` is blank and `:42` is the `## Observed failures` heading;
+  `grep -c '97 pass\|skipped by declaration' e2e/OPEN_PROBLEMS.md` returns **0**. The count moved
+  to `AGENTS.md:129` and nothing in the file says so.
+- **`:3207-3208`** cites `e2e/README.md:243-263` for `testInfo.snapshotDir`, which is at `:395`; and
+  **`:3770-3772`** cites `e2e/OPEN_PROBLEMS.md:13-17` for a passage that starts at `:19`.
+
+**Why this is filed as one entry rather than five.** The individual fixes are mechanical and were
+deliberately **not** made here: a bulk re-derivation of a 4,455-line document's citations is its own
+job, and doing it in a change whose subject was orchestration rules would hide the diff. The defect
+worth recording is the **shape**: the skill asserts verified citations over `src/`, `e2e/` and
+`scripts/`, has no way to know which half are dead, and its phase 9 rule ("verify every citation
+before you commit the handoff") is scoped to the handoff the skill writes rather than to the skill
+itself. A skill that carries hundreds of line-numbered claims about a moving tree needs either a
+dated re-verification pass recorded per section, or citations that name a **symbol** rather than a
+line — which its own header already recommends and its own body does not follow.
+
+**Fix.** Run the re-derivation as its own change: for every `file:line` in the skill, check the
+line, and where it has moved, replace it with `file:symbol` rather than a new number. Then record
+the date the pass covered. Fix the `e2e/README.md` `continue-on-error` instruction **first**, since
+it is the one that causes an agent to make the tree worse.
+
+**Files.** `.skills/photoshop-tool-creation.md:492`, `:3774-3779`, `:3137`, `:3207-3208`, `:3553`,
+`:3766`, `:3770-3772`, `:4328`; `e2e/README.md:30`, `:73`, `:401-411`, `:564`;
+`e2e/OPEN_PROBLEMS.md:41-42`
+
+## 109. `.skills/hard-merge.md` cites eight source locations that have moved, three of them inside a paragraph that tells the reader to re-derive
+
+`.skills/hard-merge.md` has the strongest evidentiary discipline of any document here — it names the
+tree it was read against, and Appendix F is entirely about not trusting a citation. These are the
+ones that did not get re-derived:
+
+| line                   | claims                                                           | actually                                                                     |
+| ---------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `:433`                 | `git.mjs:183-224` is `mergeConflict`                             | `git.mjs:198` (`export function mergeConflict`)                              |
+| `:445`                 | "JSDoc at `git.mjs:193-196`"                                     | `:194-197`                                                                   |
+| `:445`                 | `return { conflict: null, … }` at `:226-231`                     | the two returns are at `:231` and `:233`                                     |
+| `:1129`                | `'toolbar-overflow'` present on `main` at `:859`                 | `scripts/lib/worktree-inventory/curated.mjs:947`                             |
+| `:1067`                | "of the last 200 merge commits on `main`, 50 carry a body"       | re-running the document's own command returns **62**                         |
+| `:851-853`, `:868-871` | "matches 83"; "78 times … and 5 in `HANDOFF.md`"                 | 92 uncorrected today: 79 in this skill, 7 in `HANDOFF.md`                    |
+| `:829-830`             | quotes `ef85d3ab`'s subject                                      | the real subject ends "**and shorten it**"; quoted with no ellipsis          |
+| `:1426`                | "See `docs/ORCHESTRATION.md:290-294`" for the expired-lease trap | that range is the `mustNotPrune` paragraph; the lease material is `:596-606` |
+
+The load-bearing claim — that the **corrected** pattern has **0** occurrences — still holds, so the
+rule the numbers support is intact. What is broken is every number a reader would copy.
+
+**Fix.** Correct the eight, and prefer the symbol over the line everywhere in this file, because
+Appendix F's own argument is that a line number is a property of a moment.
+
+**Files.** `.skills/hard-merge.md:433`, `:445`, `:829-830`, `:851-853`, `:868-871`, `:1067`,
+`:1129`, `:1426`; `scripts/lib/worktree-inventory/git.mjs:198`,
+`scripts/lib/worktree-inventory/curated.mjs:947`
