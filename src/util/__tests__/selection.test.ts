@@ -476,6 +476,21 @@ describe('drawSelectionOutline', () => {
     expect(ctx.restore).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * The outline is drawn into a DOCUMENT-sized overlay canvas that CSS displays with
+   * `object-contain`, so the context draws in document px while these constants are CSS px. Below
+   * a scale of 1 the undivided numbers are sub-pixel — the outline smears — which is what this
+   * pins: at scale 0.5 (document shown at half size) the dash must be 12 document px to stay the
+   * same 6 CSS px on screen.
+   */
+  it('divides its chrome by the contain scale so the outline is constant in CSS px', () => {
+    const ctx = makeMockCtx();
+    drawSelectionOutline(ctx, selection(), undefined, 0.5);
+
+    expect(ctx.setLineDash).toHaveBeenNthCalledWith(1, [12, 8]);
+    expect(ctx.arc).toHaveBeenCalledWith(5, 5, SELECTION_ANCHOR_RADIUS * 2, 0, Math.PI * 2);
+  });
+
   it.each(['freehand-lasso', 'magic-wand'] as const)('omits anchors for %s', (sourceTool) => {
     const ctx = makeMockCtx();
     drawSelectionOutline(ctx, selection({ sourceTool }));
@@ -578,6 +593,22 @@ describe('drawSelectionOutline', () => {
 });
 
 describe('drawSelectionAnchors', () => {
+  /**
+   * The anchors left the border when `drawSelectionOutline` gave it to the ants canvas, and they
+   * took the divisor with it. This canvas is DOCUMENT-sized and displayed with `object-contain`, so
+   * the context draws in document px while `SELECTION_ANCHOR_RADIUS` is CSS px: at scale 0.5 the
+   * undivided 5 is a 2.5 CSS px dot, and the grab target `findSelectionAnchorAtPoint` scales is a
+   * 4 CSS px circle around it. Asserting the scaled numbers is the only way this is a pin — a
+   * hardcoded 5 would read the same with no divisor in the file.
+   */
+  it('divides the dot by the contain scale so it is constant in CSS px', () => {
+    const ctx = makeMockCtx();
+    drawSelectionAnchors(ctx, selection(), undefined, 0.5);
+
+    expect(ctx.arc).toHaveBeenNthCalledWith(1, 5, 5, SELECTION_ANCHOR_RADIUS * 2, 0, Math.PI * 2);
+    expect(ctx.lineWidth).toBe(4);
+  });
+
   it('draws one filled anchor per vertex, the first one stroked blue and the rest in the default grey', () => {
     const ctx = makeMockCtx();
     const styles = recordStyleAssignments(ctx);
@@ -712,6 +743,22 @@ describe('findSelectionAnchorAtPoint', () => {
   it('returns the index of the anchor within the hit radius', () => {
     const found = findSelectionAnchorAtPoint(selection(), { x: 5 + SELECTION_ANCHOR_HIT_RADIUS, y: 5 });
     expect(found).toBe(0);
+  });
+
+  /**
+   * The hit target has to move with the dot, or the dot grows and the target shrinks. The visible
+   * anchor is `SELECTION_ANCHOR_RADIUS / scale` document px, so at scale 0.5 it covers 10 document
+   * px on screen; a hit radius left at the undivided 8 would be a 4 CSS px target under a 5 CSS px
+   * dot, which is a worse defect than the thin line this divisor was added to fix.
+   */
+  it('scales the grab radius with the dot, so the target never shrinks below it', () => {
+    // The fixture's anchors land at (5,5), (15,5) and (15,15) once `pos` is applied, 10 apart.
+    // (15,-9) is 14 from the second — inside 8 / 0.5 = 16 — and more than 8 from the other two, so
+    // the undivided radius finds nothing and the scaled one finds exactly that anchor.
+    const probe = { x: 15, y: -9 };
+
+    expect(findSelectionAnchorAtPoint(selection(), probe, 0.5)).toBe(1);
+    expect(findSelectionAnchorAtPoint(selection(), probe)).toBeNull();
   });
 
   it('returns null when no anchor is within the hit radius', () => {

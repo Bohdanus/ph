@@ -1284,7 +1284,7 @@ drawer had one that was removed rather than shipped broken.
 other layer property write uses (`src/contexts/useLayer.ts:473`). It fails three
 times, all silently. `updateLayer` only plans a durable append when
 `isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
-whitelist, so the entry never gets a durable translation. `history-replay.ts:146`
+whitelist, so the entry never gets a durable translation. `history-replay.ts:166`
 reads `if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries
 no `toolName` in its args, so legacy replay skips it and the document after an undo
 diverges from the document before. And `getHistoryItemTitle`
@@ -1308,7 +1308,7 @@ belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
   `isSetLayerPropertiesAction` and give `deriveSetLayerPropertiesEntry` its branch.
   Adding it to the first without the second makes `updateLayer` plan an append that
   resolves to no durable entry, and it silently falls back to the raw patch.
-- `src/contexts/history-replay.ts:112-121` — the legacy arm beside the
+- `src/contexts/history-replay.ts:132-141` — the legacy arm beside the
   show/hide and rename arms, writing `{ ...layer, opacity }` the way those write
   `visible` and `name`. This is the arm that made the `TOOL_ACTION` route wrong, and
   without it undo/redo leaves the document inconsistent.
@@ -1328,7 +1328,7 @@ layer property.
 
 **Files.** `src/contexts/layer-types.ts:58`, `src/contexts/useLayer.ts:473`,
 `src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:355,387`,
-`src/contexts/history-replay.ts:112,146`, `src/contexts/useHistory.ts:14,22`,
+`src/contexts/history-replay.ts:132-141,166`, `src/contexts/useHistory.ts:14,22`,
 `src/contexts/psd-utils.ts:159,229`
 
 ## 57. The mobile shell has no colour control at all
@@ -2709,6 +2709,58 @@ pin at `history-adapter.branches.test.ts:704`; the fix must re-point it.
 
 ---
 
+## 91. A bedrock source on the FIRST history entry sizes the document for legacy replay and not for the durable baseline
+
+**Problem.** `replayHistory` takes the document frame from a bedrock source when the entry is the
+FIRST one (`history-replay.ts:103-109`), and that is the shape every document opens with:
+`App.tsx:23-26` seeds a `DEFAULT_BLANK_IMAGE` carrying `{ isBedrock: true, size }` and commits it
+through `setBlankImage` → `createBlankLayer(params, true)` (`useApp.ts:77-79`), which replaces the
+document and writes that one `NEW_LAYER` entry with no `documentSource` (`useLayer.ts:192-214`,
+`:242`); `File > New` (`NewImageDialog.tsx:39`) and `File > Open` (`useApp.ts:163`) write the same
+shape. The converter's baseline took its frame from `options.initialFrame` instead (the baseline
+branch of `legacyHistoryToDurable`, `history-adapter.ts:590-595`), and its create-layer arm cannot
+reach the case: it publishes the layer and deliberately leaves `currentFrame` alone
+(`history-adapter.ts:651-655`). The two models therefore agreed only while the caller's seed
+happened to equal the bedrock size.
+
+**Why the seed is what makes it reachable.** Conversion is always handed the store's CURRENT frame
+(`StoreContext.tsx:672`), and a commit that takes the reconvert path is handed the frame that commit
+is about to publish (`StoreContext.tsx:978-985`) — so the first reconversion after a crop seeds the
+converter with the CROPPED frame. `replayDurableDocument` reads its frame from
+`document.baseline.frame` (`durable-replay.ts:60`) and moves it only for a `set-document-frame`
+operation (`:129-131`), so that cropped baseline then holds at cursor `-1` and at every cursor
+before the crop's entry, while legacy replay at index 0 still returns the size the document was
+opened at. Crop the document, let the shadow reconcile, and the baseline describes the cropped
+document at exactly the cursor where the user can undo back into the un-cropped original.
+
+**Reachable consequence, and it is a wrong frame in a shadow nothing consumes yet.** No production
+reader renders from `baseline.frame` — the only two are `durable-replay.ts:60` and
+`history-model.ts:307` — and the conversion records no diagnostic for it, so the canvas is right and
+the disagreement is silent. It is recorded because the durable document is the model that will
+eventually replace legacy replay, and a baseline that is wrong at the first cursor is wrong at the
+cursor every replay starts from.
+
+**Fix.** Derive the baseline frame from the same first entry legacy replay derives it from, ranked
+above `options.initialFrame`, so index 0 agrees by rule rather than by caller seeding: for that
+history the bedrock size IS the document that was opened, while `options.initialFrame` is the frame
+a later crop has already moved. The read belongs in the baseline, not in the create-layer arm, which
+must keep leaving `currentFrame` alone for every LATER entry — a bedrock commit mid-history moves
+neither model.
+
+**Confirm before deleting this entry; unverified is not closed.** The rule to check is that BOTH
+models read the FIRST entry and neither prefers the caller's seed, and then that a test compares the
+two models at index 0 and at cursor `-1` with a seeded `initialFrame` that differs from the bedrock
+size. Nothing does that today: the only cross-model bedrock test
+(`src/contexts/__tests__/history-adapter.branches.test.ts`, "leaves the durable frame at the
+pre-add size when a bedrock layer is added mid-history") puts its bedrock entry at index 1 and so
+cannot see this case, and the index-0 rule is pinned on the legacy side only
+(`src/contexts/__tests__/history-replay.branches.test.ts`, "keeps a frame established at index 0
+rather than reverting it on a later commit"). The durable half at index 0 is what has to exist.
+
+**Files.** `src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
+
+---
+
 ## 92. The converter re-derives a created or merged layer's snapshot, and disagrees with the runtime rule
 
 **Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts:166`),
@@ -2880,7 +2932,7 @@ What `StoreContext` then does with a `true` is the decision:
 - **Accept, and publish the stored record** — the larger change, and the one the durable model
   prefers. An identity operation in `layer.operations` with no history entry is live state the
   durable shadow cannot reproduce: the reducer deliberately does not move `durableStatus` on this
-  transition (`src/contexts/StoreContext.tsx:510-515`), and `history-replay.ts:180` rebuilds
+  transition (`src/contexts/StoreContext.tsx:510-515`), and `history-replay.ts:200` rebuilds
   `layer.operations` from history entries. Accepting the payload as-is would publish a record whose
   operations the shadow cannot re-derive. Publishing the STORED record instead makes the preview a
   pure no-op, which is what the user asked for.
@@ -3081,35 +3133,35 @@ failure from a silent one.
 
 ---
 
-## 99. Every `history-replay.ts` line citation past `:89` is off by eight
+## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
 
-**Problem.** §91's fix wrapped the bedrock-frame assignment in `if (index === 0)` (`history-replay.ts:91-97`),
-which turned a five-line block into a thirteen-line one. Every cited line below 89 still points where it
-did; **every cited line above it is now eight lines early.** The citations were all correct before the fix
-and are all wrong after it, so nothing here is pre-existing rot — it is drift this change introduced.
+**Problem.** The bedrock-frame assignment in `replayHistory` is now wrapped in `if (index === 0)`
+(`history-replay.ts:103-109`), which turned a five-line block into a thirteen-line one, and the
+`documentSource` arm above it grew a gate of its own (`:89-94`). Every cited line up to `:78` still
+points where it did; **every citation past `:89` is now twenty lines early**, and the shift in between
+is not uniform (`:79-82` moved eleven, `:83-84` twelve, `:85-89` nineteen). The citations were all
+correct before the gates and are all wrong after them, so nothing here is pre-existing rot — it is
+drift this change introduced.
 
 **Why it matters.** These are references a session follows instead of reading, and `history-replay.ts`
-ends at 215, so an eight-line miss usually lands inside the neighbouring arm rather than past the file:
-`docs/LAYERS-PANEL.md:39` sends the reader to the rename arm when it means the new-layer arm,
-`.skills/photoshop-tool-creation.md` cites the `document-operation` `continue` at `:195` when it is `:203`,
-and `MIGRATION_NEXT_STEPS_SUNDAY.md:457` cites the crop arm at `:91-97` when it is `:99-105`. Entry 96 in
-this file is the same genre of defect for the same reason.
+ends at 227, so a twenty-line miss lands inside the neighbouring arm rather than past the file. The
+sites this entry listed in other documents have been re-pointed; the ones left are in the history
+tests, which still quote the bedrock block as `:85-97`
+(`history-adapter.branches.test.ts:724`, `:771`, and `useHistory.test.tsx:413`), the document-frame
+arm as `:99-105` (`history-adapter.branches.test.ts:344`) and the document-source arm as `:78-84`
+(`:669-670`). Entry 96 in this file is the same genre of defect for the same reason.
 
-**Fix.** Mechanical: add eight to every cited line above 89, and re-verify each against the file rather
-than by arithmetic — the citations name arms, so `:152` (now `:160`) is the `layer-operation` test and
-`:195` (now `:203`) is the `document-operation` `continue`. Already re-pointed, because §91 made their
-own claims false rather than merely late: `src/contexts/history-adapter.ts:676-688`, and the bedrock-frame
-blocks in both §91 test files. Sites still stale:
+**Fix.** Re-point each site by reading the file, not by arithmetic — the shift is not uniform below
+`:89`. For reference, past `:89` the two gates together moved everything twenty lines down: the
+bedrock block is `:103-109`, the document-frame arm `:111-117`, the layer arms `:126-161`, the
+`layer-operation` test `:172` and the `document-operation` `continue` `:215`. Already correct, and
+re-verified against the working tree: the `set-document-frame` comment in
+`src/contexts/history-adapter.ts:707-717` (which now names `frameFromFirstEntryBedrock` and cites
+`:103-109`), `src/contexts/history-adapter.ts:303` and `:670`, and `src/contexts/history-append.ts:179`
+and `:464`. The four sites in this file are re-pointed too. Sites still stale:
 
-- `src/contexts/history-adapter.ts:273` (`:102`) and `:639` (`:127`)
-- `src/contexts/history-append.ts:179` (`:138`) and `:464` (`:102`)
-- `docs/TOOLS.md:2100` and `:2167` (`:152`)
-- `docs/LAYERS-PANEL.md:39` (`:106-141`, `:91`, `:99`)
-- `MIGRATION_NEXT_STEPS_SUNDAY.md:457` (`:91-97`) and `:467` (`:195`)
-- `.skills/photoshop-tool-creation.md:1611,1612,1626,1633,1639,1693,1777,1863,4270`
-- `src/tools/descriptions/transform.ts:406` and `:490` (`:152`)
-- `src/tools/descriptions/transform.notes.md:151` and `:632` (`:152-160`)
-- `HANDOFF.md:1275` (`:146`), `:1299` (`:112-121`), `:1319` (`:112,146`), `:2871` (`:180`)
+- `src/contexts/__tests__/history-adapter.branches.test.ts:344` (`:99-105`), `:669-670` (`:78-84`), `:724` and `:771` (`:85-97`), `:1407` (`:135`)
+- `src/contexts/__tests__/useHistory.test.tsx:413` (`:85-97`)
 
 **Files.** `src/contexts/history-replay.ts`
 
@@ -4274,51 +4326,36 @@ file leaves the other wrong and the e2e tooltip check reads whichever it reads.
 **Files.** `src/tools/descriptions/tooltips.ts:185`, `src/tools/descriptions/type-crop.ts:129`,
 `src/tools/crop.ts:27-36`
 
-## 132. A shape committed in a cropped document has the document-frame offset applied twice
+## 132. NOT A DEFECT — the shape’s three document-frame conversions are correct, and a test already pins that
 
-**Problem.** `ShapeToolArea` converts the drag into document space, derives a position from the
-converted points, hands that position to `createLayerFromTool` — and `createLayerFromTool` converts
-it into document space **again**:
+**This entry is a guard against a future "simplification", not a problem to fix.** An earlier
+reading of this code claimed the frame offset is applied twice to a shape and lands it 2x from
+where it was dragged. **That reading was wrong.** The arithmetic is worth writing down so nobody
+derives it again. Three conversions, in order:
 
-```
-main:src/components/Main/ShapeToolArea.tsx:177   const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
-main:src/components/Main/ShapeToolArea.tsx:178   const end   = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
-main:src/components/Main/ShapeToolArea.tsx:188   const pos   = shapeGeometryBounds({ start, end }, args.lineWidth);
-main:src/components/Main/ShapeToolArea.tsx:200   createLayerFromTool(fullArgs);
+| where                                                                                    | conversion        | sign   |
+| ---------------------------------------------------------------------------------------- | ----------------- | ------ |
+| `ShapeToolArea.tsx:177-178`, `canvasToDocumentPoint(..., documentFrame)`                 | canvas → document | **+1** |
+| `useLayer.ts:296`, `createLayerFromTool`, `pos: canvasToDocumentPos(pos, documentFrame)` | canvas → document | **+1** |
+| `layer-renderer.ts:78-79`, `position.x - (documentFrame?.x ?? 0)`                        | document → canvas | **−1** |
 
-main:src/contexts/useLayer.ts:278                const createLayerFromTool = (sourceArgs) => {
-main:src/contexts/useLayer.ts:286                  if (!pos) { … derive … }
-main:src/contexts/useLayer.ts:296                  pos: canvasToDocumentPos(pos, documentFrame),
-```
+`document-frame.ts:44-47` — `canvasToDocumentPos` adds. `:40-41` — `documentToCanvasPos`
+subtracts. The renderer’s inline subtraction is that same conversion. **Net +1**, which is
+correct: a shape in a cropped document belongs one frame down and right of the origin.
 
-`useLayer.ts:286` only skips the _derivation_ when `pos` is supplied. The **conversion** at `:296` is
-unconditional, so a caller that already converted is charged twice.
+The two "+1"s are not redundant. The first converts the _gesture_ from canvas to document space.
+The second is `createLayerFromTool`’s unconditional conversion, which exists because a caller may
+supply a `pos` already in layer space and a caller may not. `useLayer.ts:286` skips only the
+_derivation_ when `pos` is supplied; the conversion at `:296` is not conditional, and that is
+deliberate rather than an oversight.
 
-**Reproduce.** Crop the document so `documentFrame.x` or `.y` is non-zero, then draw a shape. The
-layer's origin is displaced by twice the crop offset — at a 100px crop the shape lands 200px from
-where it was dragged. In an uncropped document `documentFrame` is `{x:0,y:0}` and the bug is
-invisible, which is why the default 800x600 document has never shown it.
+**Do not "fix" this by dropping either conversion.** `fix/shape-truth` carries a test that frames
+the pair in exactly these terms — "the renderer’s `pos - documentFrame` cancels the commit’s
+`+ documentFrame`" — so the cancellation is already pinned, and that test is what to read before
+touching either line.
 
-**Fix.** Make the contract explicit rather than inferred: either `createLayerFromTool` takes a
-position already in document space and does not convert it, or it takes a position in layer space and
-the caller does not. One of the two conversions has to go. The durable-conversion layer makes this
-worth settling properly rather than patching at the call site — a `pos` whose coordinate space
-depends on which path built it will be re-introduced by the next caller, and `legacy-tool` conversion
-serialises whatever `pos` it is handed.
-
-**Where this came from.** The abandoned branch `ps-tools-spine` (`8351451e`, now unreachable from any
-branch; anchored at `refs/keep/harvested/ps-tools-spine`), whose salvage documented it as a handoff
-item. It is recorded nowhere on main — `grep -ci "ShapeToolArea.*offset|offset.*twice"` over
-`main:HANDOFF.md` and `main:e2e/OPEN_PROBLEMS.md` both return 0.
-
-**Note on the rest of that branch:** do not land it. Its Gradient implementation is superseded by
-`d8f5d03f`, and its `ec9bbb58` would **reverse a deliberate tripwire** —
-`main:src/contexts/layer-utils.blend-mode.test.ts:178` is `it('ignores a mode carried on a non-paint
-tool source, which no bar ever writes')`, commented as existing precisely so that widening the blend
-seam is a deliberate change with a test to update. The branch deletes that test and asserts the
-opposite.
-
-**Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-300`
+**Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-300`,
+`src/contexts/layer-renderer.ts:78-79`, `src/contexts/document-frame.ts:40-47`
 
 ## 133. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
 
@@ -4358,3 +4395,79 @@ defect record was missing, and it is recorded nowhere on main
 (`git show main:e2e/OPEN_PROBLEMS.md | grep -i spray` → empty).
 
 **Files.** `e2e/helpers/canvas-helpers.ts:242`, `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`
+
+## 134. Three tool descriptions promise a scrubby slider that does not exist
+
+**Problem.** `main:src/tools/descriptions/paint.ts` promises the same thing three times — at `:37`
+(Opacity, Brush), `:44` (Flow) and `:170` (Opacity, Pencil):
+
+> "A label with a numeric field, **scrubbable by dragging the label**, 0 to 100 percent."
+
+There is no such behaviour. `git cat-file -e main:src/components/ToolbarHorizontal/ScrubbableField.tsx`
+fails, and a `git grep -il scrub main -- src/**` returns only the descriptions themselves plus
+unrelated hits (`AppKeyboardShortcuts`, `SharpenToolArea`, `useKeyboardEvents` — none a scrub
+handler). Nothing reads a drag on a label.
+
+**Why this class of gap matters more than a missing feature.** These description files are read by
+agents as ground truth about how the app works, and the repository already treats a description that
+outruns the product as a defect rather than a wish — see the other entries about false claims. An
+agent that trusts this sentence will write a test asserting a drag works, or will explain a user's
+"the slider doesn't scrub" report as the user being wrong.
+
+**The contract to implement, and it is small.** Adobe documents scrubby sliders in _Enter values in
+panels, dialog boxes, and the options bar_ (https://helpx.adobe.com/photoshop/using/panels-menus.html):
+the control is **hidden until the pointer is over the title**, the cursor becomes a **Hand**, and
+**holding Shift while dragging accelerates the scrub by a factor of 10**. A worked implementation
+exists on the abandoned `wip/ps-ux-chrome` branch (180-line `ScrubbableField.tsx` plus a
+`fieldPrecision.ts` carrying `SCRUB_SPEED_MULTIPLIER = 10`).
+
+That branch implements **only half** the contract, and the missing half is worth naming before anyone
+rebuilds from it: Adobe documents no Option/Alt modifier, but third-party documentation of the same
+control records _"Hold down the Option (PC: Alt) key as you drag and the sliders change at 1/10
+speed"_. So the Shift-10× rule is documented by Adobe and the Option-0.1× rule is documented
+elsewhere; do not treat the first as the whole contract without deciding about the second.
+
+**Do not land that branch as a whole.** It targets a **schema-driven single options bar**
+(`optionsBarSchema.ts`, 352 lines, plus `OptionsBar.tsx`) while `main` renders per-tool
+`ToolbarsRight/*` panels, and its `src/index.scss` is 817 lines against main's 164. It is a different
+architecture, so the `ScrubbableField` component and `fieldPrecision` are worth taking and the
+options-bar rewrite is not. Its `railPanelIcons.tsx` and ten icon edits are unexplained in any of its
+commit messages — read them before assuming they belong to this work.
+
+**Files.** `src/tools/descriptions/paint.ts:37,44,170`,
+`src/components/ToolbarHorizontal/` (no `ScrubbableField` on main)
+
+## 135. Symlinking a worktree's `node_modules` to the root's makes `tsc` resolve through the ROOT checkout
+
+**Problem.** The standard shortcut for a worktree with no `node_modules` is
+`ln -s /Users/bkalynovskyi/ph/node_modules .kilo/worktrees/<name>/node_modules`. It appears to work —
+`tsc` and `vitest` both run. It is also how you get a gate that silently tests the wrong tree.
+
+`node_modules/.bin/tsc` is itself a **relative** symlink:
+
+```
+$ readlink node_modules/.bin/tsc
+../../scripts/tsc-guard.mjs
+```
+
+So the resolution is `<root>/node_modules/.bin/../../scripts/tsc-guard.mjs` — and `realpathSync` on it
+lands in the **root checkout's** `scripts/`, not the worktree's. The tsc guard then guards main.
+
+**Observed.** A landing in this worktree failed 3 cases in
+`scripts/__tests__/tsc-guard.test.mjs:392,424` for no reason connected to its change. The cause was
+this symlink, not the work. The fix is a real `npm ci` in the worktree — and the order matters:
+`rm` the symlink **first**, because a real directory at that path makes `npm ci` delete the contents
+of the directory it is pointed at, which is main's `node_modules`.
+
+**Fix / convention.** Either run `npm ci` in the worktree, or accept the symlink and know that
+`tsc-guard`'s three cases are measuring main. If you use the symlink, verify before blaming a change:
+
+```
+ls -l node_modules/.bin/tsc | awk '{print $NF}'     # a relative path means it escapes
+```
+
+`AGENTS.md` already warns that a worktree's missing `node_modules` "is exactly what makes it
+misleading", because `tsc` and `vitest` mostly work by walking up to the parent. This is the sharper
+form of the same trap: they not only work, they work on the wrong files.
+
+**Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`

@@ -4,6 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import type { Pos, RectXYSorted } from '../../contexts/general-types.ts';
 import { useMarchingAnts } from '../../hooks/useAnts.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
 import { useRect } from '../../hooks/useRect.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
@@ -27,7 +28,8 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { tempUpdateLayer, setActiveLayer, updateLayerByTool } = useLayers();
-  const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef });
+  const containScale = useContainScale(containerRef, totalSize);
+  const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef, scaleRef: containScale });
 
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
   const activeLayerRect = useMemo(
