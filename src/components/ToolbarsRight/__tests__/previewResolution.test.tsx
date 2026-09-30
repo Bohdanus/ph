@@ -54,19 +54,33 @@ vi.mock('../../../tools/shape.ts', () => ({
     },
 }));
 
+/**
+ * Both spellings the three bars use. `Paint` calls `getToolArgs(toolName)`; `Draw` and `Shape`
+ * read `toolArgs` off the hook and cast it. A mock carrying only one of the two renders two of the
+ * three bars with `args === undefined`, which is not a state any of them has a path through.
+ */
+const TOOL_ARGS = {
+  color: '#000000',
+  lineWidth: 10,
+  penType: 'pen',
+  toolName: 'brush',
+  alpha: 1,
+  lineDash: [10, 10],
+  smoothing: 0,
+  pointShape: 'round',
+  pointCount: 3,
+  figure: 'rectangle',
+  shapeMode: 'fill',
+  lineCap: 'round',
+  lineJoin: 'round',
+  cornerRadius: 0,
+  sides: 3,
+} as const;
+
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
-    getToolArgs: () => ({
-      color: '#000000',
-      lineWidth: 10,
-      penType: 'pen',
-      toolName: 'brush',
-      alpha: 1,
-      lineDash: [10, 10],
-      smoothing: 0,
-      pointShape: 'round',
-      pointCount: 3,
-    }),
+    toolArgs: TOOL_ARGS,
+    getToolArgs: () => TOOL_ARGS,
     patchToolArgs: vi.fn(),
     setToolArgs: vi.fn(),
   }),
@@ -114,17 +128,26 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe('option-bar thumbnail resolution', () => {
-  // The probe below stands in for all three bars: they render the same 96x48 preview through the
-  // same two lines, so pinning the store size and the render scale here pins all three.
-  async function renderProbe() {
-    const { createPaintToolbar } = await import('../Paint/Paint.tsx');
-    const PaintBar = createPaintToolbar('brush');
-    return render(<PaintBar />);
-  }
+  /**
+   * All THREE bars, not one probe standing in for three.
+   *
+   * An earlier version of this file rendered `Paint` only, on the argument that the three render
+   * "the same 96x48 preview through the same two lines". That is an argument, not a pin, and it
+   * does not survive a per-file mutation: dropping `dpr` from `Draw.tsx`'s raster or from
+   * `Shape.tsx`'s leaves every assertion here green, because neither component is ever mounted.
+   * `Draw` and `Shape` are separate implementations with separately-spelled expressions, so each
+   * is rendered and each is asserted.
+   */
+  const BARS = [
+    { name: 'Paint', load: async () => (await import('../Paint/Paint.tsx')).createPaintToolbar('brush') },
+    { name: 'Draw', load: async () => (await import('../Draw/Draw.tsx')).default },
+    { name: 'Shape', load: async () => (await import('../Figures/Shape.tsx')).default },
+  ] as const;
 
-  it('keeps a 1:1 store at dpr 1, which is the behaviour that already worked', async () => {
+  it.each(BARS)('$name keeps a 1:1 store at dpr 1, which is the behaviour that already worked', async ({ load }) => {
     await withDpr(1, async () => {
-      const { container } = await renderProbe();
+      const Bar = await load();
+      const { container } = render(<Bar />);
       await vi.waitFor(() => expect(drawMock.size).not.toBeNull());
 
       expect(previewCanvas(container).width).toBe(PREVIEW_WIDTH);
@@ -132,9 +155,10 @@ describe('option-bar thumbnail resolution', () => {
     });
   });
 
-  it('multiplies the backing store by the ratio at dpr 2', async () => {
+  it.each(BARS)('$name multiplies the backing store by the ratio at dpr 2', async ({ load }) => {
     await withDpr(2, async () => {
-      const { container } = await renderProbe();
+      const Bar = await load();
+      const { container } = render(<Bar />);
       await vi.waitFor(() => expect(drawMock.size).not.toBeNull());
 
       expect(previewCanvas(container).width).toBe(PREVIEW_WIDTH * 2);
@@ -142,21 +166,26 @@ describe('option-bar thumbnail resolution', () => {
     });
   });
 
-  it('pins the CSS box with a class, so a larger store does not enlarge the control', async () => {
-    await withDpr(2, async () => {
-      const { container } = await renderProbe();
-      await vi.waitFor(() => expect(drawMock.size).not.toBeNull());
+  it.each(BARS)(
+    '$name pins the CSS box with a class, so a larger store does not enlarge the control',
+    async ({ load }) => {
+      await withDpr(2, async () => {
+        const Bar = await load();
+        const { container } = render(<Bar />);
+        await vi.waitFor(() => expect(drawMock.size).not.toBeNull());
 
-      // `h-12 w-24` is 48px x 96px — PREVIEW_HEIGHT x PREVIEW_WIDTH. Without it the element would
-      // take its intrinsic size, which is now the DEVICE size, and the control would double.
-      expect(previewCanvas(container).className).toContain('h-12');
-      expect(previewCanvas(container).className).toContain('w-24');
-    });
-  });
+        // `h-12 w-24` is 48px x 96px — PREVIEW_HEIGHT x PREVIEW_WIDTH. Without it the element would
+        // take its intrinsic size, which is now the DEVICE size, and the control would double.
+        expect(previewCanvas(container).className).toContain('h-12');
+        expect(previewCanvas(container).className).toContain('w-24');
+      });
+    }
+  );
 
-  it('renders the stroke at device resolution rather than upscaling a 1x raster', async () => {
+  it.each(BARS)('$name renders the stroke at device resolution rather than upscaling a 1x raster', async ({ load }) => {
     await withDpr(2, async () => {
-      await renderProbe();
+      const Bar = await load();
+      await render(<Bar />);
       await vi.waitFor(() => expect(drawMock.size).not.toBeNull());
 
       // The render target is the DEVICE size, so `drawImage` is 1:1. Had the geometry been left at
@@ -167,8 +196,13 @@ describe('option-bar thumbnail resolution', () => {
   });
 
   it('scales the stroke width with the store, so the preview is the same apparent weight', async () => {
+    // Only `Paint` and `Draw` read a width off the tool args, and only `Paint`'s is the one the
+    // brush settings reach. `Shape` sizes its stroke from the figure's own settings, so there is
+    // no `args.lineWidth` for it to multiply.
     await withDpr(2, async () => {
-      await renderProbe();
+      const { createPaintToolbar } = await import('../Paint/Paint.tsx');
+      const Bar = createPaintToolbar('brush');
+      render(<Bar />);
       await vi.waitFor(() => expect(drawMock.args).not.toBeNull());
 
       // 10 document px at dpr 1, 20 device px at dpr 2 — the same weight on screen.
