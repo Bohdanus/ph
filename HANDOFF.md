@@ -3178,3 +3178,148 @@ Both are defaults in a tool, not a rule in a document, which is the whole of thi
 
 **Files.** `scripts/lib/agent-board/identity.mjs:43-47`, `docs/ORCHESTRATION.md:9-22`,
 `AGENTS.md` (delegation section), `kilo.jsonc`, `.git/hooks-gate/pre-commit`
+
+---
+
+## 101. A new blank image keeps the previous document's file name, so Save As pre-fills the old file's name
+
+**Problem.** `src/contexts/useLayer.ts:199-212` builds the `REPLACE_DOCUMENT` payload for a new
+document and omits `fileName` from `updates`. `REPLACE_DOCUMENT` spreads caller `updates` over state
+(`src/contexts/StoreContext.tsx:574`), so the field is simply never written and the outgoing
+document's name survives. The other two document-creation paths both set it — the raster open through
+`_setFileName` (`src/hooks/useApp.ts:164`) and the PSD open through `updates.fileName`
+(`src/hooks/useApp.ts:128`) — which is exactly why the omission reads as an accident rather than a
+decision.
+
+Measured 2026-09-30 against the real `StoreProvider`, driving `setBlankImage` after seeding a document
+named `holiday-photo.png`:
+
+```
+PROBE fileName after setBlankImage = "holiday-photo.png"
+PROBE hasUnsavedChanges = true
+```
+
+Consequence: a document the user just created from scratch is named after a file that had nothing to
+do with it. The stale name reaches the export path through three hops — the store's `fileName` into
+`openSaveImageDialog` (`src/components/DesktopHeader/DesktopHeader.tsx:253`), into `setFileInput`
+(`src/contexts/useFile.tsx:110`), and out as `SaveDialog`'s `proposedName`
+(`src/contexts/useFile.tsx:174`) — so the save dialog is pre-filled from the old file. On mobile the
+staleness is also on screen, in the two components that render it (`MobileHeader.tsx:107`,
+`MobileMenuDrawer.tsx:110`); on desktop nothing displays it, so there the stale name is invisible until
+a save. `hasUnsavedChanges` is not rendered anywhere, so there is no dirty-marker reading either way —
+its only consumers are the two `confirm()` guards at `DesktopHeader.tsx:200` and `:225`.
+
+**Fix.** Add `fileName` to the `updates` block in `_addLayer`'s `newDocument` branch
+(`src/contexts/useLayer.ts:199`). A new document's name is a product decision, not a derivation — the
+PSD arm sets the imported name, so the blank arm needs the untitled one (`BlankImageParams` at
+`src/contexts/tool-types.ts:107` carries no name field, so either a constant is introduced or the
+value arrives from the caller alongside `size`; `src/App.tsx:21`'s `DEFAULT_BLANK_IMAGE` is the
+existing precedent for a caller-supplied default). `src/hooks/__tests__/useApp.document-reset.test.tsx`
+is the place to pin it, and its `expectOutgoingDocumentKilled` helper deliberately asserts nothing
+about `fileName` today — adding that assertion is the fix's own tripwire, so it must be added in the
+same change.
+
+**Files.** `src/contexts/useLayer.ts:199-212`, `src/contexts/StoreContext.tsx:574`,
+`src/hooks/useApp.ts:128`, `:164`, `src/contexts/useFile.tsx:110`, `:174`,
+`src/components/DesktopHeader/DesktopHeader.tsx:253`, `src/components/Mobile/MobileHeader.tsx:107`
+
+---
+
+## 102. A failed raster open resizes the canvas and then keeps the old document
+
+**Problem.** `src/hooks/useApp.ts:160-164` resizes the canvas before it has anything to replace:
+
+```ts
+const { image } = data;
+const size = { width: image.width, height: image.height };
+handleImageCreate(size); // :162  resizes the canvas
+await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true); // :163  may reject
+```
+
+`createLayerFromBitmap` awaits `immutableRaster` (`src/contexts/useLayer.ts:253`) before it dispatches
+`REPLACE_DOCUMENT`, so a decode failure rejects at `:163` with the canvas already resized and no store
+transition published. The store half is correct — the retained document is untouched, and
+`src/hooks/__tests__/useApp.document-reset.test.tsx` pins exactly that as a negative control. The
+canvas half is not: it is now the new file's size while the document, `totalSize` and `documentFrame`
+are all still the old one.
+
+Measured 2026-09-30, failing a 64×48 open against a seeded 800×600 document:
+
+```
+PROBE canvas after failed open = 64 x 48
+PROBE document totalSize after failed open = {"width":800,"height":600}
+PROBE documentId after failed open = outgoing
+```
+
+The retained document then renders through a canvas of the wrong size until something redraws it, and
+the overlay refs are untouched, so the tool overlay keeps the old geometry while the base canvas does
+not. The PSD arm already gets this right — it resizes all three refs at `:111-115` only after
+`immutableRaster` has resolved every layer at `:88-104`.
+
+**Fix.** Move `handleImageCreate(size)` to after `await createLayerFromBitmap(...)`, matching the PSD
+arm's ordering, or resize inside `_addLayer`'s `newDocument` branch where the replacement is
+published. Three things must change in the same commit, all of them pins of this defect rather than of
+intended behaviour:
+
+- `src/hooks/__tests__/useApp.image-upload.test.ts:148-153` asserts
+  `['resizeCanvas:80x480', 'resizeCanvas:80x40', 'createLayerFromBitmap', 'SET_FILE_NAME']`.
+- `src/hooks/__tests__/useApp.image-upload.test.ts:174-179` asserts the same shape with a live canvas
+  read — `createLayerFromBitmap(canvas=120x90)` is interpolated from inside the mock, so it pins the
+  canvas's dimensions at the moment the layer build starts and cannot be satisfied by reordering alone.
+- The `it` titles at `src/hooks/__tests__/useApp.image-upload.test.ts:143` and `:167` declare the
+  ordering as the behaviour ("has already resized the canvas to the image size when the layer creation
+  starts"), so renaming the expectations while leaving those titles would leave the test promising the
+  defect.
+
+**Files.** `src/hooks/useApp.ts:160-164`, `src/contexts/useLayer.ts:247-277`,
+`src/hooks/__tests__/useApp.image-upload.test.ts:143-180`,
+`src/hooks/__tests__/useApp.document-reset.test.tsx` ("kills nothing when the import fails before the
+document is replaced")
+
+---
+
+## 103. The `REPLACE_DOCUMENT` fast path is a second, untested copy of the reducer's identity logic
+
+**Problem.** `src/contexts/StoreContext.tsx:1064-1108` intercepts `REPLACE_DOCUMENT` before it
+reaches the reducer. It recomputes seven fields the reducer's own `REPLACE_DOCUMENT` arm
+(`:568-586`) also computes — `documentFrame`, `totalSize`, `documentId`, `documentRevision`,
+`branchRevision`, `history`, `historyIndex` — assigns them to `latestStateRef.current` at
+`:1085-1097`, and then calls `rawDispatch`, so the reducer runs anyway and React state is recomputed
+from the reducer chain. The two copies are related by nothing but a comment.
+
+**Measured 2026-09-30, one field at a time, against the real provider** with
+`src/hooks/__tests__/useApp.document-reset.test.tsx` (12 tests, all green):
+
+| fast-path line | field              | mutated to                      | result                                                                               |
+| -------------- | ------------------ | ------------------------------- | ------------------------------------------------------------------------------------ |
+| `:1088`        | `documentFrame`    | `currentState.documentFrame`    | **survives**                                                                         |
+| `:1089`        | `totalSize`        | `currentState.totalSize`        | **survives**                                                                         |
+| `:1090`        | `documentId`       | `currentState.documentId`       | **survives**                                                                         |
+| `:1091`        | `documentRevision` | `currentState.documentRevision` | **survives**                                                                         |
+| `:1092`        | `branchRevision`   | `currentState.branchRevision`   | **survives**                                                                         |
+| `:1096`        | `history`          | appended instead of replaced    | **survives**                                                                         |
+| `:1097`        | `historyIndex`     | `currentState.historyIndex`     | **survives**                                                                         |
+| `:1082`        | disposal guard     | `if (false)`                    | caught — but by `StoreContext.durable-boundary.test.tsx:711`, not by any other suite |
+
+Seven of eight survive, and the reason is structural rather than incidental: the pre-write lands in
+`latestStateRef`, which the next dispatch reads as its `currentState`, and that value is used only to
+(a) decide document disposal and (b) seed the _next_ fast path. It never reaches `useReducer`, so no
+React state and no exported value can observe it. The one append that reads a cursor —
+`updateHistoryTimeline` — clamps it, so even a stale `historyIndex` yields the same timeline.
+
+**Why it matters.** The duplication is a real correctness surface, not dead code: `currentState` is
+read by the disposal guard, so a wrong `documentId` at `:1090` would dispose the wrong document's
+assets — and that is precisely the one field whose divergence is currently caught by a different
+suite, which is luck rather than design. Nothing binds the two copies together, so an edit to the
+reducer arm that is not mirrored at `:1085-1097` is invisible, and an edit to the fast path that is
+not mirrored in the reducer is invisible too.
+
+**Fix.** Two options, and the second is the real one. Either expose the fast path's pre-write to a
+test — `latestStateRef` is already in the provider's value, so a store test can assert the seven
+fields directly and pin the two copies against each other. Or delete the fast path and let the
+reducer be the only writer; the pre-write exists to make same-batch dispatches see the new document,
+which `useSetSelectionFromHistory` and the append path need, so deletion is not free and the first
+option is the cheaper correct move. Whichever is chosen, the seven lines above are the list.
+
+**Files.** `src/contexts/StoreContext.tsx:1064-1108`, `:568-586`,
+`src/contexts/__tests__/StoreContext.durable-boundary.test.tsx:711`
