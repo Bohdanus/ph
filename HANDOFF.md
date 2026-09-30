@@ -2920,54 +2920,54 @@ absent from `main` today, and `fix/unit-tests` remains 2 commits ahead with 13 c
 `StoreContext.tsx` and `useLayer.ts` among them. Treat the branch as at-risk salvage, not as a clean
 source, and re-derive from this entry rather than from its copy.
 
-## 96. `docs/LAYERS-PANEL.md` §20 item 6 counts a filename defect that no longer exists, by line numbers that no longer point at it
+## 96. `docs/LAYERS-PANEL.md` §20 item 6 undercounts a filename defect, by line numbers that no longer point at it
 
-`docs/LAYERS-PANEL.md:825-835` reports that the hyphen form `e2e/OPEN-PROBLEMS.md` is "written in
+`docs/LAYERS-PANEL.md:825-835` reports the hyphen form `e2e/OPEN-PROBLEMS.md` is "written in
 **only two files, five lines**: `AGENTS.md:15`, `:165`, `:172` and `TEST-FLAKES.md:391`, `:657`",
-and argues from `AGENTS.md:170-173` that the typo "has no home among the three routed files".
-Every part of that is now false against the tree.
+and argues from `AGENTS.md:170-173` that the typo "has no home among the three routed files". The
+census is four, the cited lines have drifted, and the "no home" premise is false.
 
-**Verified on `main` (`c23d036e`), by re-deriving rather than by reading the cited lines.**
+**Verified on `main` (`c23d036e`) by re-deriving, tree-wide — not by reading the cited lines.**
 
 ```
-$ git show main:AGENTS.md | grep -n "e2e/OPEN-PROBLEMS"        # hyphen
-15:| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect |
-$ git show main:AGENTS.md | grep -n "e2e/OPEN_PROBLEMS"        # underscore
-178:`HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN_PROBLEMS.md`: validated, actionable
-185:  gates); `e2e/OPEN_PROBLEMS.md` for Playwright. A cross-scope entry is the one
-$ grep -n "e2e/OPEN-PROBLEMS" TEST-FLAKES.md
-712:(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+$ git grep -n 'e2e/OPEN-PROBLEMS' main -- .
+main:AGENTS.md:15:| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect |
+main:TEST-FLAKES.md:712:(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+main:docs/LAYERS-PANEL.md:825:6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch — a _docs_ defect with no routed home.** The file
+main:e2e/viewport-drawing.spec.ts:228:   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
+$ git ls-files e2e/ | grep -i open
+e2e/OPEN_PROBLEMS.md
 $ git show main:AGENTS.md | sed -n '165p;170p;172p;173p'
 5. **Reviewed by someone else** — a code review subagent on the prompt in
+
 - **A green gate is the floor, not the review** — `gate:commit`/`gate:push` are
-  mechanical, and a review not performed is not a review that found nothing.
 - **Only step 6 writes to `main`** (plus an operator-requested hotfix on `main`).
-$ sed -n '593p;2471p' HANDOFF.md
-the CURRENT behaviour of a publication precondition the boundary does not have,
-                                    (2471 is empty)
 ```
 
-**Two lines, not five, and both are in `AGENTS.md:15` and `TEST-FLAKES.md:712`.** The remaining
-three (`AGENTS.md:165`, `:172` and `TEST-FLAKES.md:391`, `:657`) have drifted to unrelated prose —
-`:165`/`:172` are Definition-of-Done steps, and `TEST-FLAKES.md:391`/`:657` are a port note and a
-marker-bounding-box note. `HANDOFF.md:593` and `:2471`, cited in the same breath as "uses the
-correct underscore form", are likewise not filename references at all; `:2471` is blank. The
-`AGENTS.md:170-173` premise — that the routing rule lives there — is the same drift: the routing
-rule is at `:178` and `:185`, and it already uses the **underscore** form, so the "cross-scope entry
-has no home" argument is built on a line that says the opposite.
+**Four lines in four files, and two of the four citations the source names are not filename
+references at all.** `AGENTS.md:165` and `:172` are Definition-of-Done steps; `TEST-FLAKES.md:391`
+and `:657` are a port note and a marker-bounding-box note. `HANDOFF.md:593` and `:2471`, cited in
+the same breath as "uses the correct underscore form", are unrelated prose, and `:2471` is blank —
+so the source's own arithmetic is 2 + 4 = 6 against its stated five. The `AGENTS.md:170-173`
+premise is the same drift: the routing rule is at the two `AGENTS.md` lines that already use the
+**underscore** form, so "a cross-scope entry has no home" is argued from a line saying the
+opposite.
 
-**The defect is real and one line wide, so the entry is not dead — its accounting is.** The file on
-disk is `e2e/OPEN_PROBLEMS.md` (`git ls-files e2e/ | grep -i open` → `e2e/OPEN_PROBLEMS.md`), and
-`AGENTS.md:15` plus `TEST-FLAKES.md:712` still name a path that does not resolve on any platform,
-case-insensitive volumes included. What no longer holds is the "two files, five lines" census, the
-`:170-173` premise, and the conclusion that a routed home is unavailable — one already exists, and
-it is this one.
+**The defect is live on all four, and the two prose ones route differently from the Playwright
+one.** Every one of the four names a path that does not resolve on any platform, case-insensitive
+volumes included. `AGENTS.md:15` and `TEST-FLAKES.md:712` are prose, so this entry is their routed
+home. `e2e/viewport-drawing.spec.ts:228` is a comment inside a Playwright spec, and `AGENTS.md`'s
+own route-by-scope rule sends that one to `e2e/OPEN_PROBLEMS.md` — which is precisely the
+cross-scope gap the source diagnosed, and it is why a fix confined to the two prose files would
+leave half of it standing.
 
-**Fix.** Correct the two hyphen occurrences to the underscore form, then delete or rewrite §20 item
-6 so it no longer asserts a five-line census or the `AGENTS.md:170-173` premise. Re-derive the
-remaining line numbers from the prose at the time of the fix: `AGENTS.md` is a file every agent reads
-first, so a citation into it silently rots, and `AGENTS.md`'s own rule says as much.
+**Fix.** Correct all four to the underscore form, filing the `e2e/viewport-drawing.spec.ts:228`
+occurrence in `e2e/OPEN_PROBLEMS.md` rather than here. Then delete or rewrite §20 item 6 so it
+asserts neither a five-line census nor the `AGENTS.md:170-173` premise. Re-derive the remaining
+line numbers from the prose at the time of the fix: `AGENTS.md` is the file every agent reads
+first, so a citation into it silently rots, and its own rule says as much.
 
-**Not caused by, and not in scope for, the `docs/subagent-provider` model-policy change**, which
-touched `AGENTS.md:41-66` and so moved `:178`/`:185` to `:193`/`:200`. Re-derive from the prose when
-this is fixed; do not assume the numbers above survive another edit to `AGENTS.md`.
+**Not caused by the `docs/subagent-provider` model-policy change**, which touched `AGENTS.md:41-66`
+and moved the two routing lines from `:178`/`:185` to `:199`/`:206` — the numbers above are
+re-derived against the post-change file. Re-derive again when fixing; do not assume they survive
+another edit to `AGENTS.md`.

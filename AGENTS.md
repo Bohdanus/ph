@@ -49,27 +49,33 @@ THE POINT.** 40 sequential tool calls in one context = 8 parallel subagents + a
      with a paid GPT under a `~` id and also serves GPTs outright** — the catalog
      lists `OpenAI: GPT-5.6 Luna` on `kilo`. **The gateway is not a cost guarantee:
      cost follows the MODEL.** A `~` id is paid.
-   - **A bare `provider` takes the model from somewhere you did not choose.** The
-     recorded sessions show children resolving to a different provider than their
-     parent — 4 children of a paid `openai/gpt-5.6-terra-fast` turn came out on
-     `openrouter/stealth/space-bunny-alpha` — and the db stores the resolved model,
-     not the call, so the mechanism is not something you can reason your way to.
-     `~/.config/kilo/kilo.jsonc` is where to look first. Pass the pair and stop
-     guessing.
+   - **Passing neither takes the model from `subagent_model` in
+     `~/.config/kilo/kilo.jsonc`, which is not a provider you chose** — on this
+     machine it is `openrouter/stealth/space-bunny-alpha`, and 134 of the children
+     launched with neither field landed there. Check that file before omitting
+     anything.
+   - **The pair is necessary, not sufficient: 28 children of calls that passed
+     exactly `'Space Bunny Alpha (new)'`/`kilo` still recorded another provider**
+     (23 `openrouter`, 5 `openai`), all in the last two days. `session.model` is the
+     session's _current_ model, so a later switch explains some of it — but not
+     something to bet a fleet on. Audit the pair itself, not just the outcome.
 3. The default: `'Space Bunny Alpha (new)'` / `kilo` / `max`. Other free models
    are useless; do not spend a turn sampling them.
 4. **Double billing starts earlier on Luna** — ~200k there, ~270k on Sol and
    Terra. Keep the main turn lean; push fan-out into fresh contexts.
-5. `agent_manager` does **not** reliably inherit the turn's model: a paid turn has
-   spawned children on `openrouter` and on the free gateway, so a worktree's cost is
-   whatever resolved, not whatever the parent was. Set `model` and `provider`
-   explicitly for every session.
+5. `agent_manager` resolves a session's model the same way `task` does, so a paid
+   turn has spawned children on `openrouter` and on the free gateway. Set `model`
+   and `provider` explicitly for every session.
 
 **Never escalate to a paid model on your own**; override only when the user named
 a GPT model, and say so when you do. `task` for everything else; `agent_manager`
-only for visible sessions and worktrees. Audit before spawning a fleet:
-`sqlite3 ~/.local/share/kilo/kilo.db "SELECT json_extract(model,'\$.id') m, json_extract(model,'\$.providerID') p, count(*) FROM session GROUP BY 1,2 ORDER BY 3 DESC"`
-(`session.model` is a TEXT column holding JSON; there is no `data` column).
+only for visible sessions and worktrees. Both the resolved models and the recorded
+call arguments are auditable — `session.model` and `part.data` respectively, and
+`part.session_id` is the **caller**, so a child's model needs
+`session.parent_id = part.session_id`:
+`sqlite3 ~/.local/share/kilo/kilo.db "SELECT json_extract(c.model,'\$.providerID') p, count(DISTINCT c.id) FROM part pt JOIN session c ON c.parent_id = pt.session_id WHERE json_extract(pt.data,'\$.tool')='task' GROUP BY 1"`
+(`session.model` and `part.data` are TEXT columns holding JSON; there is no `data`
+column on `session`).
 
 ### Rules of delegation
 
