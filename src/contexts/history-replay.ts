@@ -84,7 +84,7 @@ export function replayHistory(
       // is the same class of defect as the mid-history bedrock source below, so it is
       // refused — the durable converter already refuses it, reporting
       // `document-replacement` and holding the previous state
-      // (`history-adapter.ts:641`). Unreachable in production today, so this is a
+      // (`history-adapter.ts:640`). Unreachable in production today, so this is a
       // parity repair rather than a fix for something a user can see.
       if (index === 0) {
         layers = cloneLayers(documentSource.layers);
