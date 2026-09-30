@@ -301,10 +301,24 @@ the list had to be re-derived by hand. Anything a human must decide lives in
 `scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
 entries are not interchangeable: `tsc-guard` has a `note` but no `issues` and no
 `landed`, while `paint-easy` carries an `issues` ref and a claimed `landed` state.
-Read the source file rather than copying a prose example. **When
-you create a worktree, add its entry in the same change** — an uncurated
-worktree is one nobody has written down what it is for, which is how a
-preservation branch gets mistaken for a disposable one.
+Read the source file rather than copying a prose example. **Curation is worth
+writing when you know something git cannot see**, which today means exactly one
+field: `mustNotPrune` on a branch git already calls disposable. Nothing else in
+an entry moves a verdict, and a test enforces that — `summary`, `note`,
+`liveNote`, `issues` and `landed` are documentation.
+
+**An uncurated worktree is not at risk**, and there is deliberately no rule that
+demands an entry for one. There was: every live worktree holding work had to
+have an entry, which is what an in-flight task looks like for the whole of its
+life, so it was red from an agent's first edit to its merge — in every other
+checkout too, since the generator reads the repository's worktrees and not the
+caller's. The table was re-derived by hand four times in one session against a
+fleet that kept moving. What protects that work is `classify`, on git's facts
+alone, and `worktree-inventory.test.mjs` asserts it over the live worktrees with
+the curated entry removed. Measured on 2026-09-30: 160 curated keys, 102 live
+in-repo worktrees, 26 with no entry, 13 holding work on no ref — every one of
+them reported `at-risk`. Write an entry when you have a judgement to record; the
+suite does not ask you for one per worktree.
 
 `readyToLand`, `disposalCandidates`, `atRisk`, `readUnfinished`, `workOnNoRef` and
 `readLostWorktree` are named at the top of the file so you do not have to filter
