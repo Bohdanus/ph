@@ -854,7 +854,54 @@ repository holds fewer than two worktrees, or this suite is excluded from the
 worktrees — on a machine that has them it is the thing stopping a preservation
 branch from reading as disposable, so it must not be skipped there.
 
-## 16. Files
+## 16. The curated-worktree gate is red for as long as any agent's task runs
+
+**Problem.** `scripts/__tests__/worktree-inventory.test.mjs:1870` requires every
+worktree that HOLDS WORK — commits git cannot find on main, edits in no commit,
+or a branch that is not on main — to have an entry in
+`scripts/lib/worktree-inventory/curated.mjs`. A worktree holds work for the
+whole of every task, from the first edit to the merge. So on a machine running
+several agents this case is red from the moment the first one starts until the
+last one lands, and it is red in EVERY OTHER checkout in between, because the
+list it reads is the repository's, not the caller's. A red `npm run test` on
+`main` therefore reports what other processes on the machine are doing, not the
+tree it was run on — which is the one thing a local suite exists to answer.
+
+Observed on this machine, 93 worktrees, re-derived 2026-09-30 while landing
+`fix/swarm-lock-identity`: 9 held work with no entry (`cleanup-sweep`,
+`contexts-suite`, `e2e-harden-harness`, `infra-suite`, `prepush-gate`,
+`skill-handoff-stability`, `subagent-provider-pair`, `swarm-lease-truth`,
+`swarm-lock-identity`), while 84 were clean and correctly absent from the table.
+Eight of the nine belong to other agents' tasks, so the failure is not one
+agent's oversight; it is the rule's shape.
+
+This is the same failure the guard at `:1894-1911` was written to stop, one
+trigger narrower, and that comment records the first round: demanding a summary
+for a worktree holding NOTHING made "main go red within minutes of the derived
+guard landing", and the table was re-derived by hand four times in one session.
+Narrowing the rule from "exists" to "holds work" did not close the class — it
+moved the red from the first minute of a task to every minute of it.
+
+**Not claimed.** That `ci` is red, and that is not what this is about. A fresh
+`actions/checkout` has one worktree, so this case fails there for the opposite
+reason (`expected 1 to be greater than 1`); that half is section 15 and it is
+not re-argued here. What is new is the multi-agent local machine, where the
+guard has something to compare and compares it against live concurrent work.
+
+**The call is the operator's.** Two shapes that stop the result being a function
+of concurrent activity, and the choice between them is a policy one:
+
+- Narrow the trigger to worktrees whose branch is not a main commit AND whose
+  edits are not the only copy of anything — which is a set a FINISHED task
+  leaves behind, rather than one every in-flight task occupies.
+- Or move the obligation to session end. The cost is that a crashed session
+  leaves an uncurated worktree, which is the case the table exists to protect
+  against, so this trades a constant red for an occasional one.
+
+What cannot stand is the current shape, in which the first thing an agent does
+after its first edit is turn every other checkout's test suite red.
+
+## 17. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -916,3 +963,7 @@ branch from reading as disposable, so it must not be skipped there.
   whose shape has to be re-derived when they commit or land
 - `scripts/__tests__/worktree-inventory.test.mjs:1874` — the `live.length > 1` guard section 15
   observed failing in a fresh clone, and the suite `ci` runs there without a worktree to find
+- `scripts/__tests__/worktree-inventory.test.mjs:1870` — the curated-entry case whose result is a
+  function of what other agents on this machine are doing, section 16
+- `scripts/lib/worktree-inventory/curated.mjs` — the table section 16 says is red to maintain while
+  a task is in flight, and the file every in-flight agent would have to edit to make it green
