@@ -147,7 +147,7 @@ const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
  *
  * Right-click rather than the long press `openToolFlyout` uses, because it needs no timer:
  * `onContextMenu` calls the same `openFlyout(groupIndex)` the long press reaches, and a
- * right-click cannot be cancelled by a `pointerup` arriving before the 300ms timer fires —
+ * right-click cannot be cancelled by a `pointerup` arriving before the long-press timer fires —
  * which is the whole defect `openToolFlyout` documents. The three-dots tile is rendered by
  * the same `renderToolGroup` as every other tile, so it answers to the same gesture.
  */
@@ -263,12 +263,15 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
  * The app's long-press threshold, in milliseconds.
  *
  * Mirrored from `scheduleFlyoutOpen` in `src/components/SidebarLeft/SidebarLeft.tsx`, which
- * opens a group's flyout from a `setTimeout(..., 300)`. The app exports no constant for it, so
- * 300 is duplicated here and the app is the only authority on the value: the defensive waits
- * below are expressed against this, never against a second literal, so raising the app's
- * threshold cannot quietly leave a wait behind it.
+ * opens a group's flyout from a `setTimeout(...)` on `FLYOUT_LONG_PRESS_MS`.
+ *
+ * A literal, and it is the LAST one: the app exports the constant now, and the suites import
+ * it, but the `e2e` TypeScript project does not compile `src/` — so this is the single place
+ * the value is written down twice. The defensive waits below are expressed against this
+ * constant, never against a second literal, so raising the app's threshold cannot quietly
+ * leave a wait behind it.
  */
-export const LONG_PRESS_DELAY_MS = 300;
+export const LONG_PRESS_DELAY_MS = 250;
 
 /**
  * Slack for the settle wait in {@link verifyHoverDoesNotOpenFlyout}, whose assertion is
@@ -282,15 +285,15 @@ const HOVER_SETTLE_BUFFER_MS = 100;
  * How long to wait for a flyout to be open.
  *
  * This is a budget for a CONDITION wait, not a deadline the app has to beat: the
- * long-press timer in `SidebarLeft` fires 300ms after pointerdown, and the rest of
+ * long-press timer in `SidebarLeft` fires `LONG_PRESS_DELAY_MS` after pointerdown, and the rest of
  * this budget absorbs scheduler jitter on a loaded machine. It is deliberately much
- * larger than the 300ms it is waiting on — the old helper instead raced a hard 350ms
- * sleep against that same 300ms timer, leaving 50ms of margin, which is the defect
+ * larger than the threshold it is waiting on — the old helper instead raced a hard 350ms
+ * sleep against the then-300ms timer, leaving 50ms of margin, which is the defect
  * `openToolFlyout` documents.
  *
  * Exported so the unit test pins this number instead of restating it: two literals
- * for one timeout is how `LONG_PRESS_DELAY_MS` came to be 300 in one place and 350 in
- * another while only `300 + 50 === 350` kept them compatible.
+ * for one timeout is how `LONG_PRESS_DELAY_MS` came to sit beside a 350 that was only ever
+ * compatible because `300 + 50 === 350`.
  */
 export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
 
@@ -303,14 +306,14 @@ export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
  * long press, and the branch says why in place rather than up here.
  *
  * The gesture is press, wait for the menu, lift — in that order, because that is what
- * the app's own handler requires. `SidebarLeft` arms a 300ms timer on pointerdown and
+ * the app's own handler requires. `SidebarLeft` arms a `LONG_PRESS_DELAY_MS` timer on pointerdown and
  * opens the flyout when it fires, while its pointerup handler calls
  * `clearLongPressFlyout()` unconditionally. So a pointerup that arrives before the timer
  * fires CANCELS the pending open: the menu is not merely late, it never appears, and no
  * amount of waiting afterwards can recover it.
  *
  * The previous version therefore had to win a race — sleep a fixed 350ms, then lift, so
- * that the 300ms timer had 50ms of margin — and it lost whenever the renderer's main
+ * that the then-300ms timer had 50ms of margin — and it lost whenever the renderer's main
  * thread was busy enough to deliver that timer late. Because the losing path destroys the
  * state the following assertion was waiting for, the failure surfaced as an unexplained
  * `toBeVisible()` timeout rather than as a missed press. Waiting for the menu instead of

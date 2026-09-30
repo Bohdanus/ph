@@ -1108,17 +1108,28 @@ ring and the Color Sampler are overlay work and belong with the navigation clust
 
 ## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
 
-**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
-the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:690`
-is `{/*<Zoom />*/}`.
+**Problem.** Three of Photoshop's twenty toolbar slots have no implementation. Nothing
+in the rail names them: `toolbar-mapping.ts:37` has no `hand`, `zoom` or `rotate` entry,
+and the rail renders nothing that map does not hold — `SidebarLeft.tsx:130` flattens it
+and every tile comes from the result. The placeholder this entry used to cite no longer
+exists: the `{/*<Zoom />*/}` line was deleted, and the only surviving copy of that text in
+the repository is `src/components/SidebarLeft/snippet.txt:128`.
+
+What the deletion left behind is a stale rationale. `SidebarLeft.tsx:1098-1104` justifies
+the rail's single `<hr>` by saying the second one it replaced "stood between the colour
+cluster and NOTHING — the commented-out Zoom control is not markup", which is a claim
+about a control that is now absent from the file the comment is in.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
-zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1166-1172` is
+zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1171-1177` is
 `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest
-of that block — and `usePointerPosition` maps client coordinates to image pixels
+of that block, and the context's own `zoomDataRef`/`setZoomData` members are commented out
+at `:142-143` with only the `ZoomData` type left live (`src/contexts/general-types.ts:14`) —
+and `usePointerPosition` maps client coordinates to image pixels
 through a `scale` supplied by the host rather than owning a view transform itself.
-`Main.tsx:61` initialises `interactionMode = 'zoom'` and nothing ever sets it to
-that string, so the name is currently a dead default rather than a feature.
+`Main.tsx:68` initialises `interactionMode = 'zoom'` and nothing ever assigns that string,
+so it is the value every tool without its own arm falls through to, and it lands on
+`Main.tsx:236`'s `DummyToolArea`: the name is a dead default rather than a feature.
 
 **Fix.** Decide whether the canvas has a view transform at all, because three
 different features want one and it should be one: pan/zoom, the space-drag
@@ -1128,9 +1139,10 @@ owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
 conversion reading from it, is the shape the commented-out code was reaching for.
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:690`,
-`src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
-`src/components/Main/Main.tsx:61`
+**Files.** `toolbar-mapping.ts:37`, `src/components/SidebarLeft/SidebarLeft.tsx:130,1098-1104`,
+`src/components/SidebarLeft/snippet.txt:128`, `src/contexts/StoreContext.tsx:142-143,1171-1177`,
+`src/contexts/general-types.ts:14`, `src/hooks/usePointerPosition.ts`,
+`src/components/Main/Main.tsx:68,236`
 
 ---
 
@@ -1143,7 +1155,7 @@ Do not start with a Hand tool; start with the scope, and the three tools fall ou
 (`src/tools/toolProcessors.ts:300` for `pen`, `:331-335` for `custom-shape`), and the
 processor returns `[null]`. Each has no `interactionMode` arm in
 `src/components/Main/Main.tsx`, so each falls through to `else EventHandler =
-DummyToolArea` (`:226`) — a `display: none` div with no handlers. **They do not
+DummyToolArea` (`:236`) — a `display: none` div with no handlers. **They do not
 consume a history entry**, which is the thing an earlier inventory of this repo
 got wrong and which is worth stating because it changes the severity: the defect
 is a dead button, not a corrupted document.
@@ -1161,10 +1173,10 @@ converts a silent no-op into a visible one, but it changes seven existing tools'
 behaviour, which is a product decision rather than a cleanup. Whatever is chosen,
 do it before the next tool tranche: every new tool inherits the same silent
 failure, and the four added here would have shipped the same way had the spine
-agent not checked `Main.tsx:61`.
+agent not checked `Main.tsx:68`.
 
 **Files.** `src/tools/toolProcessors.ts:110,300,331-335`,
-`src/components/Main/Main.tsx:61,226`, `toolbar-mapping.ts:123-134`
+`src/components/Main/Main.tsx:68,236`, `toolbar-mapping.ts:123-134`
 
 ---
 
@@ -1322,7 +1334,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1108-1123,1125-1140,1143-1150`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1342,7 +1354,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1108-1123,1125-1140,1143-1150`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -1772,7 +1784,7 @@ default panel or sitting in Extra Tools.
 
 **`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
 than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx:54` does `toolbarMap.flat()`, which discards the
+deleted, not kept.** Separately: `SidebarLeft.tsx:130` does `toolbarMap.flat()`, which discards the
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
@@ -1983,8 +1995,8 @@ and each is a one-line fix.
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
 `toolbar-mapping.ts:96` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
 `toolbar-mapping.ts:72` gives the Brush. The badge is rendered from the map
-(`SidebarLeft.tsx:539`), so the user is told the Draw Tool answers to `B`; and
-`AppKeyboardShortcuts.tsx:18` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
+(`SidebarLeft.tsx:837`), so the user is told the Draw Tool answers to `B`; and
+`AppKeyboardShortcuts.tsx:19` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
 so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
 is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
 

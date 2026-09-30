@@ -729,10 +729,6 @@ export const CURATED = {
       { ref: 'HANDOFF.md#worktree-hygiene', title: 'growing a file silently invalidates every file.ts:NNN below it' },
     ],
   },
-  'review-findings': {
-    summary: 'Carries the review findings for the 2026-09-28 focused review across the components those findings name.',
-    note: 'The worktree is gone and its branch is on main, so the findings are on main and not on no ref — the opposite of what this entry used to say.',
-  },
   'text-tool-requirements': {
     summary:
       'A documentation branch holding the text tool’s requirements, sitting on the merged reorder slice. No commits of its own.',
@@ -852,7 +848,11 @@ export const CURATED = {
   },
   'flyout-density': {
     summary:
-      'The tool flyout at Photoshop’s density: 24px rows and an 80px three-item menu, where it had been 40px rows and 134px — the row is a 16px icon and py-1, and the icon override is the load-bearing part, because IconShell is fixed at 28px for the 44px rail tile and padding alone cannot shrink a row.',
+      'The tool flyout at Photoshop’s density: a 24.5px row and an 80px three-item menu, where it had been 40px and 134px — the row is `max(icon, 1.5 × font-size) + padding`, and preflight’s `line-height: 1.5` makes the LABEL the height driver, not the icon, so the `[&_svg]:!h-4` override lowers the row’s ceiling rather than its floor.',
+  },
+  'review-findings': {
+    summary:
+      'The defects four reviews found in the rail and flyout work: a row-height comment naming the icon where the label sets it, an `!` credited with a win specificity already gave, two decided values no test asserted, AND-ed negative assertions that cannot fire, an e2e assertion that cannot fail because the grid fits the slot anyway, a degenerate band located 28px off by a ladder coarser than the change it absorbs, the three-dots tile opening on a hold and silently selecting `group[0]`, and the 300ms hold duplicated into four copies of the same number.',
   },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import SidebarLeft from '../SidebarLeft.tsx';
+import SidebarLeft, { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
 
 const goToTool = vi.fn();
 const patchToolArgsMock = vi.fn();
@@ -83,7 +83,7 @@ vi.mock('../toolIcons.tsx', () => {
   };
 });
 
-const LONG_PRESS_DELAY = 300;
+const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
 
 const longPress = (button: HTMLElement) => {
   fireEvent.pointerDown(button, { button: 0 });
@@ -198,7 +198,7 @@ describe('SidebarLeft primary tool selection', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it.each(groupedToolCases)('does not resolve the long-press until 300ms elapses ($title)', ({ name }) => {
+  it.each(groupedToolCases)('resolves the long-press only at the exported threshold ($title)', ({ name }) => {
     vi.useFakeTimers();
     render(<SidebarLeft />);
 
@@ -207,7 +207,7 @@ describe('SidebarLeft primary tool selection', () => {
       fireEvent.pointerDown(rootButton, { button: 0 });
     });
     act(() => {
-      vi.advanceTimersByTime(299);
+      vi.advanceTimersByTime(LONG_PRESS_DELAY - 1);
     });
     expect(screen.queryByRole('menu')).toBeNull();
 
