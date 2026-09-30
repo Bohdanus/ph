@@ -834,6 +834,21 @@ rather than a single defect, which is why it is still open: adding a project mul
 every run's cost, and the mobile/HiDPI specs this would exercise do not exist yet. It is
 not a one-line change to `playwright.config.ts`.
 
+**One more gap this entry did not name.** Nothing in the suite can detect a change to a canvas
+_backing store_. `check-dpr.spec.ts:8` asserts a drawn line lands within 25 CSS px of the cursor,
+and its `imageBoundsToCss` is scale-agnostic by construction, so that file passes identically
+whether the store is 1x, 2x or 8x — the one spec named for DPR is the least able to catch a DPR
+change. Nor does any other spec compare `canvas.width` against a bounding box: the two that read
+the store, `export/visual-regression.spec.ts:210-213` and `export/helpers.ts:228-232`, assert it
+is the DOCUMENT size, which is the correct invariant for export and says nothing about
+presentation.
+
+So a 2x project would raise the floor of what fails, but on its own it would not _pin_ backing
+store resolution; that needs its own assertion — a `canvas.width === box.width × dpr` check that
+exists nowhere today. The app side, including the blocker that has to be cleared first (the
+visible workspace canvas is the raster export source, so the display cannot be scaled until it is
+decoupled from export), is in `CANVAS-RESOLUTION-PLAN.md`.
+
 ## P3 — re-verification: the tablet band's option-row floor is no longer the panel's measured width
 
 `e2e/responsive-shell.spec.ts:238-256`

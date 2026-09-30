@@ -140,6 +140,79 @@ describe('useSelectionMarchingAnts', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
+  describe('the contain fit divisor', () => {
+    // This canvas is sized to the DOCUMENT and displayed with `object-contain`, so a context draws
+    // in document px while `LINE_WIDTH`/`DASH_LENGTH`/`GAP_LENGTH`/`SPEED` are CSS px. Every
+    // assertion below is stated as a NUMBER THAT CHANGES WITH THE SCALE, because a test that
+    // hardcodes 6 asserts only that the code still runs.
+    it('divides the chrome and the crawl rate by a scale below 1', () => {
+      const { ctx } = setup({ scaleRef: { current: 0.5 } });
+      const { offsets } = recordStrokes(ctx);
+
+      frame();
+
+      // Undivivided this is [6, 6] and `lineWidth` 1 — a sub-pixel stroke at half zoom.
+      expect(ctx.setLineDash).toHaveBeenCalledWith([DASH_LENGTH / 0.5, GAP_LENGTH / 0.5]);
+      expect(ctx.lineWidth).toBe(2);
+      expect(offsets).toEqual([0, DASH_LENGTH / 0.5]);
+
+      frame();
+
+      // `SPEED` is a per-frame distance, so it is divided by the same factor: undivided this is
+      // -1, which crawls at half the apparent speed.
+      expect(offsets).toEqual([0, 12, -SPEED / 0.5, DASH_LENGTH / 0.5 - SPEED / 0.5]);
+    });
+
+    it('divides the chrome and the crawl rate by a scale above 1', () => {
+      const { ctx } = setup({ scaleRef: { current: 2 } });
+      const { offsets } = recordStrokes(ctx);
+
+      frame();
+
+      expect(ctx.setLineDash).toHaveBeenCalledWith([DASH_LENGTH / 2, GAP_LENGTH / 2]);
+      expect(ctx.lineWidth).toBe(0.5);
+      expect(offsets).toEqual([0, DASH_LENGTH / 2]);
+
+      frame();
+
+      expect(offsets).toEqual([0, 3, -SPEED / 2, DASH_LENGTH / 2 - SPEED / 2]);
+    });
+
+    it('wraps the dash offset on the DIVIDED cycle, not the constant one', () => {
+      // The trap: `DASH_CYCLE` was a module constant equal to the UNDIVIDED cycle. At a scale below
+      // 1 the dashes are LONGER in document px than that, so offsetting by the constant wraps the
+      // offset in the middle of a dash and the pattern jumps twice per cycle — a visible stutter,
+      // and one that no assertion on the first two frames can see.
+      const scale = 0.5;
+      const { ctx } = setup({ scaleRef: { current: scale } });
+      const seen: number[] = [];
+      vi.mocked(ctx.stroke).mockImplementation(() => seen.push(ctx.lineDashOffset));
+
+      const cycle = (DASH_LENGTH + GAP_LENGTH) / scale;
+      for (let i = 0; i < Math.ceil(cycle / (SPEED / scale)) + 1; i++) frame();
+
+      // Every offset stays inside one divided cycle, in the negative half-open range JS `%` gives.
+      expect(Math.min(...seen)).toBeGreaterThanOrEqual(-cycle);
+      // And the modulo is the DIVIDED cycle: an undivided modulus could not hold this bound, since
+      // the offsets would have run on to -24 while the bound it can prove is -12.
+      expect(Math.min(...seen)).toBeLessThan(-(DASH_LENGTH + GAP_LENGTH));
+    });
+
+    it('reads 1 and draws exactly what it drew before the divisor existed', () => {
+      // The omitted `scaleRef` is the case every existing caller hits until `useContainScale` has
+      // measured, and 1 is the identity divisor. This is the control for the three above: if the
+      // divisor were read from anywhere else, this would go red with them.
+      const { ctx } = setup();
+      const { offsets } = recordStrokes(ctx);
+
+      frame();
+
+      expect(ctx.setLineDash).toHaveBeenCalledWith([DASH_LENGTH, GAP_LENGTH]);
+      expect(ctx.lineWidth).toBe(1);
+      expect(offsets).toEqual([0, DASH_LENGTH]);
+    });
+  });
+
   it('paints at full opacity, whatever globalAlpha the context was left holding', () => {
     // The merge added `resetOverlayAlpha` to this loop, and this is what holds it. Without the
     // reset the ants inherit whatever the context's current alpha is, and two 1px strokes are
