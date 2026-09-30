@@ -747,6 +747,10 @@ and `08bd4d16` — and Appendix A lists them. It is not a judgement call. A hand
 file preserves a document no run of the generator would ever produce, and the next `--check` fails
 on it.
 
+`WORKTREES.json` is the historical instance of that rule and no longer a live one: it stopped
+being committed, and an untracked file cannot reach a merge conflict at all. Read it as the
+worked example of a rule that still binds every generated file you do track.
+
 ### 5. A third design, when neither side is right
 
 Sometimes the answer is neither side, and saying so in the merge body is mandatory. The marker

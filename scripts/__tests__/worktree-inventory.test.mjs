@@ -2385,6 +2385,19 @@ describe('the generated file is already formatted', () => {
 describe('the generated inventory is untracked, and stays that way', () => {
   const INVENTORY = 'WORKTREES.json';
 
+  // The worktree root, resolved rather than assumed. This suite is run from a task
+  // worktree as often as from the root checkout, and `check-ignore` resolves its
+  // argument against the cwd: from `scripts/`, the probe path would become
+  // `scripts/WORKTREES.json`, the anchored `/WORKTREES.json` would not match it,
+  // and the assertion below would report a hard rule as broken while the
+  // `ls-files` one stopped describing a file that exists anywhere.
+  //
+  // Resolving it with git also removes a vacuity path. `gitSucceeds` swallows
+  // every throw, so a missing or broken git leaves an assertion that expects
+  // `false` passing without having asked anything; this call throws instead, and
+  // takes all three cases down with it rather than two.
+  const REPO = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+
   // One fact per `it`, and one gate per fact. `check-ignore` and `ls-files` can
   // both be satisfied by a file that is tracked AND ignored, so asserting only
   // the first would let a re-added inventory pass as a rule that still holds.
@@ -2392,7 +2405,7 @@ describe('the generated inventory is untracked, and stays that way', () => {
   // change that introduced them.
   const gitSucceeds = (args) => {
     try {
-      execFileSync('git', args, { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync('git', args, { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] });
       return true;
     } catch {
       return false;
@@ -2420,12 +2433,18 @@ describe('the generated inventory is untracked, and stays that way', () => {
     expect(gitSucceeds(['check-ignore', '--no-index', INVENTORY])).toBe(true);
   });
 
-  it('ignores the root copy alone, never a tracked source file', () => {
-    // The rule is anchored with a leading slash so it cannot reach a worktree's
-    // own copy, and this is the assertion that keeps a broadened pattern from
-    // swallowing the generator or the curated table — the curated table is
-    // hand-written source, and losing it to an ignore rule would delete the
-    // findings that stop a worktree being pruned.
+  it('reaches neither the generator nor the curated table', () => {
+    // The guard is that the rule cannot be broadened into the tracked source it
+    // sits beside. `curated.mjs` is hand-written source that the suite imports,
+    // and losing it to an ignore rule would delete the findings that stop a
+    // worktree being pruned — so `scripts/**` in `.gitignore` is the injection
+    // that reds this alone, with the two above green.
+    //
+    // What this does NOT establish, and an earlier version of this comment
+    // claimed it did: that the leading slash stops the rule reaching a worktree's
+    // own `WORKTREES.json`. `.kilo` already ignores those, so that path is green
+    // with or without the anchor — the anchor has no observable behaviour in this
+    // repository, and there is nothing here to test.
     for (const source of ['scripts/worktree-inventory.mjs', 'scripts/lib/worktree-inventory/curated.mjs']) {
       expect(gitSucceeds(['check-ignore', '--no-index', source]), `${source} must stay tracked`).toBe(false);
     }

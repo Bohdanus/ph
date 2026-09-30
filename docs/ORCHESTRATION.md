@@ -207,7 +207,7 @@ shared source of truth.
 
 ```bash
 node scripts/worktree-inventory.mjs            # regenerate
-node scripts/worktree-inventory.mjs --check    # exit 1 if stale, write nothing
+node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, write nothing
 node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 

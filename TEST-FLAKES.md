@@ -818,7 +818,7 @@ fixed two false claims in the new comments, but that is not the review.
 ## 15. The worktree-inventory suite cannot pass in a checkout without this machine's worktrees
 
 **Problem.** `scripts/__tests__/worktree-inventory.test.mjs` reads the LIVE
-worktree list, and the case at `:1837` guards on it:
+worktree list, and the case at `:1874` guards on it:
 `expect(live.length).toBeGreaterThan(1)`. A fresh clone has exactly one — its own
 main worktree — so the case fails with `expected 1 to be greater than 1`.
 `vitest.config.ts` leaves `include` at the Vitest default and excludes only
@@ -906,5 +906,5 @@ branch from reading as disposable, so it must not be skipped there.
   suites section 14 saw fail only inside a full run, and pass alone
 - `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees
   whose shape has to be re-derived when they commit or land
-- `scripts/__tests__/worktree-inventory.test.mjs:1837` — the `live.length > 1` guard section 15
+- `scripts/__tests__/worktree-inventory.test.mjs:1874` — the `live.length > 1` guard section 15
   observed failing in a fresh clone, and the suite `ci` runs there without a worktree to find
