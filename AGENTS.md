@@ -33,6 +33,7 @@ task({
 
 ### Rules of delegation
 
+- **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** If this chat is in `main`, every subagent you launch writes into `main` — 1398 of them did in seven days, and no permission can stop it. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work. `docs/ORCHESTRATION.md`.
 - **NEVER TWO SUBAGENTS ON THE SAME FILE.** Split by concern, not by convenience.
 - **Self-contained briefs.** A subagent has a fresh context: give it the goal, your constraints, whether it may edit code, and exactly what its final message must contain. "Return file:line for every match" beats "investigate the caching layer".
 - **Ask for evidence.** A claim without `file:line` or command output is not verified. Have subagents report candidate results _and_ how they got them, then check the load-bearing ones yourself.

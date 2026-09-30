@@ -82,10 +82,18 @@ export function replayHistory(
         : documentFrameFromSize(documentSource.size);
       continue;
     }
-    if (source?.isBedrock) {
-      documentFrame = documentFrameFromSize(source.size);
-    } else if ((args as NewBedrockSize | undefined)?.isBedrock) {
-      documentFrame = documentFrameFromSize((args as NewBedrockSize).size);
+    // A bedrock source sizes the DOCUMENT, so it may only establish the frame for
+    // the initial document entry. A later layer or tool commit is an ordinary edit:
+    // committing a background layer, or any geometric figure, must not resize the
+    // canvas. A `documentSource` above still replaces the frame outright, and
+    // `SET_DOCUMENT_FRAME` below still sets it explicitly, so a crop — the one
+    // action that means to change the document size — is unaffected.
+    if (index === 0) {
+      if (source?.isBedrock) {
+        documentFrame = documentFrameFromSize(source.size);
+      } else if ((args as NewBedrockSize | undefined)?.isBedrock) {
+        documentFrame = documentFrameFromSize((args as NewBedrockSize).size);
+      }
     }
 
     if (actionName === SET_DOCUMENT_FRAME_ACTION) {

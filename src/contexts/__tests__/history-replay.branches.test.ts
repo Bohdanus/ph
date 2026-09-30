@@ -127,12 +127,150 @@ describe('replayHistory document source and frame branches', () => {
       } satisfies HistoryItem,
       expectedFrame: { x: 0, y: 0, width: 1024, height: 768 },
     },
-  ])('reframes the document from $label', ({ item, expectedFrame }) => {
+  ])('reframes the document from $label at the initial document entry', ({ item, expectedFrame }) => {
     const dependencies = createDependencies();
 
     const result = replayHistory([item], 0, initialSize, dependencies);
 
     expect(result.documentFrame).toEqual(expectedFrame);
+  });
+
+  it.each([
+    {
+      label: 'a bedrock layer source',
+      item: {
+        id: 'bedrock-source',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'layer-bedrock',
+        layerSource: {
+          kind: 'blank',
+          color: '#000000',
+          opacity: 1,
+          isBedrock: true,
+          size: { width: 800, height: 600 },
+        },
+      } satisfies HistoryItem,
+    },
+    {
+      label: 'bedrock args beside a non-bedrock layer source',
+      item: {
+        id: 'bedrock-args',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'layer-bedrock-args',
+        layerSource: blankSource,
+        args: { isBedrock: true, size: { width: 1024, height: 768 } },
+      } satisfies HistoryItem,
+    },
+  ])('does NOT resize the document from $label committed after the initial entry', ({ item }) => {
+    const dependencies = createDependencies();
+    const currentFrame = { x: 1, y: 2, width: 300, height: 200 };
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId: 'layer-1',
+        documentSource: { layers: { 'layer-1': createTestLayer('layer-1') }, size: initialSize, frame: currentFrame },
+      },
+      item,
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.documentFrame).toEqual(currentFrame);
+    expect(result.totalSize).toEqual({ width: 300, height: 200 });
+    // The layer is still committed: refusing to resize is not refusing the edit.
+    expect(Object.keys(result.layers)).toContain(item.layerId);
+  });
+
+  it('does not resize the document when a tool commits a geometric figure over a layer', () => {
+    const dependencies = createDependencies();
+    const currentFrame = { x: 0, y: 0, width: 400, height: 300 };
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId: 'layer-1',
+        documentSource: { layers: { 'layer-1': createTestLayer('layer-1') }, size: initialSize, frame: currentFrame },
+      },
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
+      {
+        id: 'rectangle',
+        actionName: TOOL_ACTION,
+        layerId: 'layer-1',
+        layerSource: {
+          kind: 'tool',
+          args: { toolName: 'shape' },
+          isBedrock: true,
+          size: { width: 900, height: 700 },
+        } as LayerSource,
+        args: { toolName: 'shape' },
+      },
+    ];
+
+    const result = replayHistory(history, 2, initialSize, dependencies);
+
+    expect(result.documentFrame).toEqual(currentFrame);
+    expect(result.totalSize).toEqual({ width: 400, height: 300 });
+  });
+
+  it('keeps a frame established at index 0 rather than reverting it on a later commit', () => {
+    const dependencies = createDependencies();
+    const bedrockFrame = { x: 0, y: 0, width: 800, height: 600 };
+    const history: HistoryItem[] = [
+      {
+        id: 'bedrock',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'layer-bedrock',
+        layerSource: {
+          kind: 'blank',
+          color: '#000000',
+          opacity: 1,
+          isBedrock: true,
+          size: { width: 800, height: 600 },
+        },
+      },
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
+    ];
+
+    // `initialFrame` is the store's CURRENT frame, which is the size a later commit
+    // must not be able to drag back to: only `documentSource` and an explicit
+    // `SET_DOCUMENT_FRAME` may move it.
+    const result = replayHistory(history, 1, initialSize, dependencies, { x: 0, y: 0, width: 400, height: 300 });
+
+    expect(result.documentFrame).toEqual(bedrockFrame);
+    expect(result.totalSize).toEqual({ width: 800, height: 600 });
+  });
+
+  it('still resizes the document on an explicit frame action after a mid-history bedrock add', () => {
+    const dependencies = createDependencies();
+    const baselineFrame = { x: 0, y: 0, width: 400, height: 300 };
+    const croppedFrame = { x: 5, y: 5, width: 120, height: 90 };
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId: 'layer-1',
+        documentSource: { layers: { 'layer-1': createTestLayer('layer-1') }, size: initialSize, frame: baselineFrame },
+      },
+      {
+        id: 'bedrock',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'layer-bedrock',
+        layerSource: {
+          kind: 'blank',
+          color: '#000000',
+          opacity: 1,
+          isBedrock: true,
+          size: { width: 800, height: 600 },
+        },
+      },
+      { id: 'crop', actionName: SET_DOCUMENT_FRAME_ACTION, layerId: 'document', args: { nextFrame: croppedFrame } },
+    ];
+
+    const result = replayHistory(history, 2, initialSize, dependencies);
+
+    expect(result.documentFrame).toEqual(croppedFrame);
+    expect(result.totalSize).toEqual({ width: 120, height: 90 });
   });
 
   it.each([
