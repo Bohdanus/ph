@@ -37,7 +37,9 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 import { collectWorktrees, findMissingWorktrees } from './lib/worktree-inventory/git.mjs';
-import { auditChats } from './lib/worktree-inventory/chats.mjs';
+import { auditChats, resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
+import { LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
+import { auditWrites } from './lib/worktree-inventory/writes.mjs';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { loadChatAudit } from './lib/worktree-inventory/chat-audit.mjs';
 import { buildInventory, serialise, formatCanonical } from './lib/worktree-inventory/assemble.mjs';
@@ -51,11 +53,31 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
   --window-hours <n>  chat window in hours (default: 24)
   --now <ms>          pin the clock, for reproducible output
   --out <path>        write somewhere other than WORKTREES.json
+  --no-live-writers   declare that NO chat is writing to any worktree right now,
+                      and record WHY in the file. Overrides the recency
+                      heuristics, which keep reporting an owner for half an hour
+                      after the process that was writing is gone.
   --quiet             summary lines only, no per-worktree table
   --help              this message`;
 
+/**
+ * Read the value of a flag, which may or may not be followed by its argument.
+ *
+ * `--no-live-writers` reads naturally both as a bare switch and as
+ * `--no-live-writers "the editor restarted"`, and the second form is the one
+ * worth having: an override with no stated reason is indistinguishable from a
+ * bug in the generator, so the reason is required in substance and defaulted
+ * only so the bare switch still works.
+ */
+function takeValue(argv, i, inline) {
+  if (inline !== undefined) return { value: inline, next: i };
+  const next = argv[i + 1];
+  if (next === undefined || next.startsWith('--')) return { value: null, next: i };
+  return { value: next, next: i + 1 };
+}
+
 function parseArgs(argv) {
-  const opts = { base: 'main', windowHours: 24, now: null, out: null };
+  const opts = { base: 'main', windowHours: 24, now: null, out: null, noLiveWriters: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--check') opts.check = true;
@@ -66,7 +88,12 @@ function parseArgs(argv) {
     else if (arg === '--window-hours') opts.windowHours = Number(argv[++i]);
     else if (arg === '--now') opts.now = Number(argv[++i]);
     else if (arg === '--out') opts.out = argv[++i];
-    else throw new Error(`unknown argument: ${arg}`);
+    else if (arg === '--no-live-writers' || arg.startsWith('--no-live-writers=')) {
+      const eq = arg.indexOf('=');
+      const { value, next } = takeValue(argv, i, eq === -1 ? undefined : arg.slice(eq + 1));
+      i = next;
+      opts.noLiveWriters = value ?? 'declared by the operator: no chat is writing to any worktree right now';
+    } else throw new Error(`unknown argument: ${arg}`);
   }
   if (!Number.isFinite(opts.windowHours) || opts.windowHours <= 0) {
     throw new Error('--window-hours must be a positive number');
@@ -103,8 +130,53 @@ function printSummary(inventory, quiet) {
     `${inventory.worktrees.length} worktrees · ` +
       `${t.readyToLand} ready to land · ${t.disposalCandidates} to dispose · ` +
       `${t.atRisk} at risk · ${t.inUse} in use · ` +
-      `${t.holdingUncommittedWork} holding uncommitted work · ${t.withoutSummary} without a summary\n`
+      `${t.holdingUncommittedWork} holding uncommitted work · ` +
+      `${t.withoutSummary} without a summary\n`
   );
+
+  // Ownership, before anything that acts on it. A reader who has just been told
+  // "N ready for disposal" needs to know whether N is counting a worktree
+  // somebody is standing in.
+  const own = inventory.ownership;
+  process.stdout.write(
+    `OWNERSHIP — ${own.liveWriterCount} live writer chat(s) · ` +
+      `${own.derivedLiveWorktrees.length} worktree(s) derived live` +
+      (own.suppressed ? ` · SUPPRESSED: ${own.reason}\n` : '\n')
+  );
+  if (own.suppressed) {
+    for (const r of own.derivedLiveWorktrees) {
+      const w = byName.get(r);
+      process.stdout.write(
+        `  ${r} looked live at ${own.asOf} and is now reported as unowned` +
+          `${w?.writeHistory?.lastWriterChatId ? ` (last write by ${w.writeHistory.lastWriterChatId})` : ''}\n`
+      );
+    }
+  }
+  process.stdout.write(
+    `WRITE HISTORY — ${t.withWriteHistory} worktree(s) with writers · ` +
+      `${t.writtenRecently} written in the last 30m · ` +
+      `${t.goneWorktreesWithWrites} DELETED worktree(s) with writers · ` +
+      `${t.totalWriteCalls} write call(s) in total\n`
+  );
+
+  // Deleted worktrees are listed before the actionable lists because they are
+  // the entries with no other way to be discovered: `git worktree list` cannot
+  // return them, and no per-worktree record survives to carry them.
+  if (inventory.goneWorktrees.length > 0) {
+    process.stdout.write(
+      `\nWORKTREES THAT NO LONGER EXIST, AND WHO WROTE IN THEM ` +
+        `(${inventory.goneWorktrees.length}, sorted by write calls):\n`
+    );
+    for (const g of inventory.goneWorktrees.slice(0, 25)) {
+      process.stdout.write(
+        `  ${String(g.writeCalls).padStart(4)} calls · ${g.chatCount} chat(s) · ` +
+          `${String(g.name).padEnd(38)} last ${g.lastWriteAt ?? 'unknown'}\n`
+      );
+    }
+    if (inventory.goneWorktrees.length > 25) {
+      process.stdout.write(`  … and ${inventory.goneWorktrees.length - 25} more\n`);
+    }
+  }
 
   // The read audit, before the worktree table. A computed chat state cannot
   // tell you an agent reported "Done" for a branch that was never merged, and
@@ -209,6 +281,19 @@ function main() {
   }).trim();
 
   const chatAudit = auditChats({ sinceMs: nowMs - windowMs, nowMs, existingPaths });
+  // The write audit is a SECOND pass over the same database and costs ~14s on
+  // this machine's 428k-row `part` table. It is not windowed, so it cannot be
+  // folded into `auditChats`' query, and it answers a different question: not
+  // who is here now but who ever was. Skipped entirely for `--check` is
+  // deliberately NOT done — a stale write history is exactly the drift
+  // `--check` exists to catch.
+  const writeAudit = auditWrites({
+    dbPath: resolveSessionDb(),
+    root,
+    worktreePaths: worktrees.map((w) => w.path),
+    nowMs,
+    liveWindowMs: LIVE_WINDOW_MS,
+  });
   const board = readBoard(root, { nowMs });
   // The read audit is a human pass over transcripts, so it is NOT filtered by
   // the window: it is a fixed record of what those sessions were found to be
@@ -223,9 +308,12 @@ function main() {
     mainHead,
     board,
     chatAudit,
+    writeAudit,
     readAudit,
     nowMs,
     chatWindowMs: windowMs,
+    liveWindowMs: LIVE_WINDOW_MS,
+    liveWritersSuppressed: opts.noLiveWriters,
   });
 
   if (missing.length > 0) {
@@ -343,7 +431,24 @@ function describeDrift(currentText, nextText) {
     'mergeConflict',
     'mergeConflictFiles',
     'mergeChecked',
+    'writeHistory',
+    // Ownership is watched because a suppressed-liveness file drifts on a
+    // timer, not on a commit: the derived signals keep ageing and the operator
+    // has to be told when the file stopped being true.
+    'live',
+    'derivedLive',
+    'liveSuppressed',
   ];
+
+  // The ownership fields are objects, so a plain `a -> b` renders `[object
+  // Object]` on both sides and names no difference at all. The two that an
+  // operator acts on are scalars and get the readable form; the rest report as
+  // changed, which is the honest amount of detail for a nested record.
+  const scalar = (v) => (v === null || typeof v !== 'object' ? v : '…');
+  const describeField = (name, key, prev, next) => {
+    if (name === 'writeHistory') return `writeHistory.lastWriteAt ${prev?.lastWriteAt} -> ${next?.lastWriteAt}`;
+    return `${key} ${scalar(prev)} -> ${scalar(next)}`;
+  };
 
   for (const w of b.worktrees ?? []) {
     const prev = before.get(w.name);
@@ -353,7 +458,7 @@ function describeDrift(currentText, nextText) {
     }
     const changed = watched.filter((k) => JSON.stringify(prev[k]) !== JSON.stringify(w[k]));
     if (changed.length > 0) {
-      lines.push(`  ~ ${w.name}: ${changed.map((k) => `${k} ${prev[k]} -> ${w[k]}`).join(', ')}`);
+      lines.push(`  ~ ${w.name}: ${changed.map((k) => describeField(w.name, k, prev[k], w[k])).join(', ')}`);
     }
   }
   for (const prev of a.worktrees ?? []) {

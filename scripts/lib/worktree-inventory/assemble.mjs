@@ -14,11 +14,12 @@ import { dirname, join } from 'node:path';
 const require = createRequire(import.meta.url);
 import { classify, riskScore, ACTION } from './classify.mjs';
 import { summariseChats, isUnfinished, isDead } from './chats.mjs';
+import { summariseWrites, emptyWriteHistory } from './writes.mjs';
 import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -44,9 +45,17 @@ export function buildInventory({
   mainHead,
   board,
   chatAudit,
+  writeAudit = null,
   readAudit = { available: false, byId: new Map(), records: [] },
   nowMs,
   chatWindowMs = 24 * 60 * 60 * 1000,
+  liveWindowMs = 30 * 60 * 1000,
+  // A DECLARED hard state, or null. Set when the operator knows something the
+  // database cannot: that the editor restarted and took every chat with it. The
+  // recency heuristics all keep answering "active" for half an hour afterwards,
+  // and a file that says a dead chat owns a worktree is worse than one that says
+  // nothing — so the override wins, and everything it overrode is kept beside it.
+  liveWritersSuppressed = null,
 }) {
   // `nowMs` is clamped to the newest thing the data can know about, on BOTH
   // sides. `chats.mjs` clamps internally for its own classification, but
@@ -74,7 +83,28 @@ export function buildInventory({
     // only liveness signal for a session opened in the main checkout and then
     // driven into a task worktree.
     const boardAgents = board.agents?.get(wt.path) ?? [];
-    const verdict = classify(wt, { chatSummary, chatSessions, curated, nowMs: effectiveNow, boardAgents });
+    // The write history is looked up by the worktree's ABSOLUTE path, because
+    // that is how `writes.mjs` attributed every call. A worktree living outside
+    // the repository — several agents keep scratch ones in /tmp — has no
+    // recorded write history until somebody edits in it, so the empty shape is
+    // the default rather than a missing field.
+    const writeHistory = writeAudit?.available
+      ? summariseWrites(writeAudit.byWorktree.get(wt.path), {
+          nowMs: effectiveNow,
+          liveWindowMs,
+          suppressed: Boolean(liveWritersSuppressed),
+        })
+      : emptyWriteHistory({ nowMs: effectiveNow, liveWindowMs, suppressed: Boolean(liveWritersSuppressed) });
+
+    const verdict = classify(wt, {
+      chatSummary,
+      chatSessions,
+      curated,
+      nowMs: effectiveNow,
+      boardAgents,
+      writeHistory,
+      liveWritersSuppressed,
+    });
 
     const claims = board.claims?.get(wt.path) ?? [];
     const fileLocks = board.fileLocks?.get(wt.path) ?? [];
@@ -191,6 +221,19 @@ export function buildInventory({
         })),
       },
 
+      // Who WROTE here, over all of history, and who is writing right now.
+      // Separate from `chats` above, which is windowed and directory-keyed:
+      // that one answers "who is here at the moment", this one answers "whose
+      // work is this", and for a worktree built and abandoned last week only the
+      // second has an answer at all.
+      writeHistory,
+
+      // `live` and the raw signals behind it, so a reader can see whether
+      // "nobody is working here" was derived or declared.
+      live: verdict.live,
+      derivedLive: verdict.derivedLive,
+      liveSuppressed: verdict.liveSuppressed,
+
       board: {
         claims,
         fileLocks,
@@ -252,6 +295,31 @@ export function buildInventory({
     base,
     mainHead,
     chatWindowMs,
+    liveWindowMs,
+
+    /**
+     * The ownership answer, at the top of the document.
+     *
+     * `liveWriterChatIds` is every chat that wrote in any worktree inside the
+     * liveness window, and `suppressed` says whether that list is what the
+     * database said or what the operator declared. A file that reports zero live
+     * writers is ambiguous — nobody is writing, or every writer is dead — and
+     * those two demand opposite responses, so the reason is carried with it
+     * rather than left to the reader to guess from an empty array.
+     */
+    ownership: {
+      asOf: new Date(effectiveNow).toISOString(),
+      liveWriterChatIds: [...new Set(records.flatMap((r) => r.writeHistory.currentWriterChatIds))].sort(),
+      liveWriterCount: new Set(records.flatMap((r) => r.writeHistory.currentWriterChatIds)).size,
+      derivedLiveWorktrees: records
+        .filter((r) => r.derivedLive)
+        .map((r) => r.name)
+        .sort(),
+      suppressed: Boolean(liveWritersSuppressed),
+      suppressedAt: liveWritersSuppressed ? new Date(effectiveNow).toISOString() : null,
+      reason: liveWritersSuppressed,
+      worktreesWithWriteHistory: records.filter((r) => r.writeHistory.chatCount > 0).length,
+    },
     dataSources: {
       git: { ok: worktrees.length > 0, root, base },
       sessions: chatAudit.available
@@ -277,11 +345,36 @@ export function buildInventory({
             reason: readAudit.reason ?? 'no transcript read audit at the expected path',
             corrupt: readAudit.corrupt ?? false,
           },
+      writes: writeAudit?.available
+        ? {
+            ok: true,
+            path: writeAudit.dbPath,
+            sessions: writeAudit.sessionCount,
+            writeCalls: writeAudit.totalWriteCalls,
+            // Writes that landed somewhere this repository cannot name. They are
+            // counted here rather than dropped, because a total that quietly
+            // excludes them reads as complete.
+            unmappedWriteCalls: writeAudit.unmappedWriteCalls,
+            unmappedBuckets: writeAudit.unmappedBuckets,
+          }
+        : { ok: false, reason: 'no Kilo session database at the expected path' },
     },
     // Read these first. They are the answers; `worktrees` is the evidence.
     readyToLand,
     disposalCandidates,
     atRisk,
+
+    /**
+     * Worktrees that were deleted, and who had written in them.
+     *
+     * It MUST be a top-level list for the same reason `readLostWorktree` is: the
+     * per-worktree loop only visits worktrees that still exist, so a deleted one
+     * has no record to hang this on. It is the half of the ownership history
+     * that `git worktree list` cannot produce at all, and it is where the
+     * uncommitted work tends to be — a worktree that was removed while a chat
+     * was mid-flight leaves exactly this trace and nothing else.
+     */
+    goneWorktrees: writeAudit?.available ? writeAudit.goneWorktrees : [],
 
     // Every session a reader of the transcript says is unfinished, and the
     // ones where the work exists on no ref at all. These are the answers to
@@ -349,6 +442,12 @@ export function buildInventory({
       inUse: records.filter((r) => r.recommendation === 'in-use').length,
       holdingUncommittedWork: records.filter((r) => r.dirty + r.untracked > 0).length,
       withoutSummary: records.filter((r) => !r.summary).length,
+      withWriteHistory: records.filter((r) => r.writeHistory.chatCount > 0).length,
+      writtenRecently: records.filter(
+        (r) => r.writeHistory.writeCalls > 0 && r.writeHistory.lastWriteAtMs > effectiveNow - liveWindowMs
+      ).length,
+      goneWorktreesWithWrites: writeAudit?.available ? writeAudit.goneWorktrees.length : 0,
+      totalWriteCalls: writeAudit?.available ? writeAudit.totalWriteCalls : 0,
       byStatus,
       byRecommendation,
       byAction,

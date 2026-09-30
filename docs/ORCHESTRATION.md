@@ -362,6 +362,42 @@ nothing to salvage or redo. `active` is never reported abandoned: recency is
 checked before the shape of the last turn, because a live machine's most recent
 turn always ends in a tool call.
 
+### Who wrote here, and who is writing now
+
+`chats` is keyed on `session.directory` and is windowed, so it answers "who was
+in this directory recently" and nothing more. `writeHistory` answers a different
+question — **whose work is this** — and it is derived from the `part` table
+instead: every completed `edit`, `write` and `apply_patch` call, with the path it
+named, attributed to the worktree containing that path
+(`scripts/lib/worktree-inventory/writes.mjs`).
+
+Three properties are worth knowing before reading it:
+
+- **It is unwindowed.** There is no `--window-hours` bound, so a worktree built
+  and abandoned last week still answers. The two views are expected to disagree,
+  and the disagreement is the finding.
+- **A write is a stronger ownership claim than a message.** A chat that edited
+  files here twenty minutes ago owns the directory even if it has been quiet
+  since, so `writeHistory.derivedWriterChatIds` feeds the `in-use` verdict
+  alongside the session and board signals.
+- **A deleted worktree keeps its writers.** The registry loses a removed
+  worktree, but the `.kilo/worktrees/<name>/` segment survives in the recorded
+  path, so its history is reported under `goneWorktrees` at the top level rather
+  than being filed under the main checkout — which is what a prefix match does,
+  because the main checkout contains every worktree. It has to be a top-level
+  list: the per-worktree loop only visits worktrees that still exist.
+
+`ownership` at the top of the document is the liveness answer, and it carries its
+own provenance. `liveWriterCount` of zero is ambiguous between "nobody is writing"
+and "every writer is dead", so `suppressed` and `reason` say which. Generate with
+`--no-live-writers "<why>"` to declare a hard state — an editor restart takes
+every chat with it, and the recency heuristics keep reporting an owner for half
+an hour afterwards. The override is auditable rather than silent: per worktree,
+`live` is what the file claims, `derivedLive` is what the signals said, and
+`writeHistory.derivedWriterChatIds` names the chats that were overridden. Writes
+that could not be placed are counted in `dataSources.writes.unmappedWriteCalls`
+rather than dropped, so a total never reads as complete when it is not.
+
 **`landed: true` is a curator's claim**, printed next to git's answer as
 `claimedLanded` against `mergedIntoMain`. A test re-derives it from
 `git merge-base --is-ancestor` and fails when the two disagree.

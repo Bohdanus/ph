@@ -35,6 +35,16 @@ import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../l
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
+import {
+  auditWrites,
+  buildPathIndex,
+  buildWriteRecords,
+  emptyWriteHistory,
+  patchTargetPaths,
+  rootSessionId,
+  summariseWrites,
+  worktreeNameFromPath,
+} from '../lib/worktree-inventory/writes.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
 
 /**
@@ -2455,5 +2465,353 @@ describe('the generated inventory is untracked, and stays that way', () => {
     for (const source of ['scripts/worktree-inventory.mjs', 'scripts/lib/worktree-inventory/curated.mjs']) {
       expect(gitSucceeds(['check-ignore', '--no-index', source]), `${source} must stay tracked`).toBe(false);
     }
+  });
+});
+
+/**
+ * Write history: who changed a file in each worktree, ever.
+ *
+ * The property under test is ATTRIBUTION, and it is worth being precise about
+ * why. `chats.mjs` attributes a chat to a worktree by the directory the chat
+ * opened in, which is wrong in both directions at once: a chat opened in the
+ * main checkout and then driven into a task worktree is recorded against main
+ * for its whole life, and a chat whose worktree was deleted points at a
+ * directory that no longer exists. So the tests below are about which directory
+ * a write lands in, not about counting — and the two bugs they pin were both
+ * found by running this against the real 428k-row database, not by reading it.
+ */
+describe('the write history', () => {
+  const ROOT = '/repo';
+
+  /** A session/part database shaped like the real one, scoped to one project. */
+  function makeSessionDb(rows) {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-writes-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE project_directory (project_id TEXT, directory TEXT, type TEXT);
+             CREATE TABLE session (id TEXT, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
+               agent TEXT, time_created INTEGER, time_updated INTEGER);
+             CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+               time_updated INTEGER, data TEXT);
+             INSERT INTO project_directory VALUES ('p1', '${ROOT}', 'primary');`);
+    const addSession = db.prepare(
+      'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+    );
+    const addPart = db.prepare(
+      'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+    );
+    for (const s of rows.sessions ?? []) {
+      addSession.run(s.id, 'p1', s.parentId ?? null, s.directory, s.title ?? s.id, s.agent ?? 'code', s.at, s.at);
+    }
+    for (const [i, w] of (rows.writes ?? []).entries()) {
+      addPart.run(`p${i}`, `m${i}`, w.sessionId, w.at, w.at, JSON.stringify(w.data));
+    }
+    db.close();
+    return { dir, dbPath, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  const editPart = (filePath, status = 'completed') => ({
+    type: 'tool',
+    tool: 'edit',
+    state: { status, input: { filePath } },
+  });
+
+  it('reads the worktree name out of a path, and only out of a worktree path', () => {
+    // The separator is the whole test. The root arrives with no trailing slash,
+    // and concatenating the segment onto it built `<root>.kilo/worktrees/` —
+    // which matches nothing, so every write to a deleted worktree was silently
+    // filed under the main checkout instead.
+    expect(worktreeNameFromPath(`${ROOT}/.kilo/worktrees/gone-one/src/a.ts`, ROOT)).toBe('gone-one');
+    expect(worktreeNameFromPath(`${ROOT}/src/a.ts`, ROOT)).toBeNull();
+    expect(worktreeNameFromPath('/somewhere/else/.kilo/worktrees/x/src/a.ts', ROOT)).toBeNull();
+  });
+
+  it("attributes to the most specific worktree, and returns the caller's spelling of it", () => {
+    const index = buildPathIndex(ROOT, [`${ROOT}/.kilo/worktrees/x`]);
+    // The main checkout contains every worktree, so a match that did not prefer
+    // the longer path would file every worktree's writes under main.
+    expect(index.match(`${ROOT}/.kilo/worktrees/x/src/a.ts`)).toBe(`${ROOT}/.kilo/worktrees/x`);
+    expect(index.match(`${ROOT}/src/a.ts`)).toBe(ROOT);
+    // Both results are the path as the CALLER spelled it, un-normalised, because
+    // callers look records up by the worktree path `git worktree list` printed.
+    // Returning macOS's `/private` form instead misses every in-repo worktree at
+    // once and files the lot under whichever prefix did match — which is
+    // exactly the 10,074-vs-3,480 misattribution this replaced.
+    for (const hit of [index.match(`${ROOT}/src/a.ts`), index.match(`${ROOT}/.kilo/worktrees/x/src/a.ts`)]) {
+      expect(hit.startsWith('/private/')).toBe(false);
+    }
+  });
+
+  it('finds the files an apply_patch names, and not the ones its body mentions', () => {
+    const patch = [
+      '*** Begin Patch',
+      `*** Update File: ${ROOT}/src/real.ts`,
+      `*** Add File: ${ROOT}/src/added.ts`,
+      `*** Delete File: ${ROOT}/src/gone.ts`,
+      `*** Move to: ${ROOT}/src/moved.ts`,
+      '@@',
+      ' const seen = "*** Update File: not/a/target.ts";',
+      '*** End Patch',
+    ].join('\n');
+    // The body line is a CONTEXT line that happens to contain the header text.
+    // Anchoring only on the text would count a file that was never written.
+    expect(patchTargetPaths(patch)).toEqual([
+      `${ROOT}/src/real.ts`,
+      `${ROOT}/src/added.ts`,
+      `${ROOT}/src/gone.ts`,
+      `${ROOT}/src/moved.ts`,
+    ]);
+    expect(patchTargetPaths(null)).toEqual([]);
+  });
+
+  it("rolls a subagent's write up to the chat a human opened", () => {
+    const byId = new Map([
+      ['child', { id: 'child', parentId: 'parent' }],
+      ['parent', { id: 'parent', parentId: null }],
+    ]);
+    expect(rootSessionId('child', byId)).toBe('parent');
+    // A cycle must terminate rather than hang the generator.
+    const cyclic = new Map([
+      ['a', { id: 'a', parentId: 'b' }],
+      ['b', { id: 'b', parentId: 'a' }],
+    ]);
+    expect(rootSessionId('a', cyclic)).toBeTruthy();
+  });
+
+  it('counts only calls that completed', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: ROOT, at: NOW - 10_000 }],
+      writes: [
+        { sessionId: 's1', at: NOW - 10_000, data: editPart(`${ROOT}/src/ok.ts`) },
+        { sessionId: 's1', at: NOW - 9_000, data: editPart(`${ROOT}/src/bad.ts`, 'error') },
+      ],
+    });
+    try {
+      const audit = auditWrites({
+        dbPath: fx.dbPath,
+        root: ROOT,
+        worktreePaths: [],
+        nowMs: NOW,
+        liveWindowMs: 30 * 60 * 1000,
+      });
+      // The errored edit changed nothing. Counting it would put a number in the
+      // file that overstates what was written, and the number is what is trusted.
+      expect(audit.byWorktree.get(ROOT).writeCalls).toBe(1);
+      expect([...audit.byWorktree.get(ROOT).chats.values()][0].files.has(`${ROOT}/src/bad.ts`)).toBe(false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("keeps a deleted worktree's writers attached to it instead of the main checkout", () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: `${ROOT}/.kilo/worktrees/deleted`, at: NOW - 10_000 }],
+      writes: [
+        { sessionId: 's1', at: NOW - 10_000, data: editPart(`${ROOT}/.kilo/worktrees/deleted/src/a.ts`) },
+        { sessionId: 's1', at: NOW - 9_000, data: editPart(`${ROOT}/.kilo/worktrees/deleted/src/b.ts`) },
+      ],
+    });
+    try {
+      const audit = auditWrites({
+        dbPath: fx.dbPath,
+        root: ROOT,
+        worktreePaths: [`${ROOT}/.kilo/worktrees/live`],
+        nowMs: NOW,
+        liveWindowMs: 30 * 60 * 1000,
+      });
+      // The registry lost the worktree, but the path remembers it. Longest-prefix
+      // matching would have handed both writes to the main checkout, which
+      // contains every worktree — and that misattribution is what made the main
+      // checkout look like it had 10,074 writes when it had 3,480.
+      expect(audit.byWorktree.get('gone:deleted').writeCalls).toBe(2);
+      expect(audit.byWorktree.has(ROOT)).toBe(false);
+      expect(audit.goneWorktrees).toEqual([
+        expect.objectContaining({ name: 'deleted', writeCalls: 2, chatCount: 1, chatIds: ['s1'] }),
+      ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('counts writes it cannot place, rather than dropping them', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: ROOT, at: NOW - 10_000 }],
+      writes: [{ sessionId: 's1', at: NOW - 10_000, data: editPart('/elsewhere/project/src/a.ts') }],
+    });
+    try {
+      const audit = auditWrites({ dbPath: fx.dbPath, root: ROOT, worktreePaths: [], nowMs: NOW, liveWindowMs: 1 });
+      expect(audit.unmappedWriteCalls).toBe(1);
+      expect(audit.unmappedBuckets[0].bucket).toContain('elsewhere');
+      // The total is the sum of everything, so a reader can see that 1 of N
+      // writes is not attributed rather than trusting a smaller N.
+      expect(audit.totalWriteCalls).toBe(1);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('reports an unavailable database as empty rather than throwing', () => {
+    const audit = auditWrites({ dbPath: join(tmpdir(), 'definitely-not-a.db'), root: ROOT, nowMs: NOW });
+    expect(audit.available).toBe(false);
+    expect(audit.byWorktree.size).toBe(0);
+    expect(emptyWriteHistory({ nowMs: NOW, liveWindowMs: 1 }).writingNow).toBe(false);
+  });
+
+  it('keeps the evidence it suppressed, so an override can be audited', () => {
+    const record = {
+      writeCalls: 3,
+      subagentWriteCalls: 0,
+      chats: new Map([
+        [
+          's1',
+          {
+            id: 's1',
+            title: 'a chat',
+            agent: 'code',
+            openedIn: ROOT,
+            openedHere: true,
+            writeCalls: 3,
+            subagentWriteCalls: 0,
+            firstWriteAt: NOW - 60_000,
+            lastWriteAt: NOW - 60_000,
+            files: new Set([`${ROOT}/src/a.ts`]),
+          },
+        ],
+      ]),
+    };
+    const live = summariseWrites(record, { nowMs: NOW, liveWindowMs: 30 * 60 * 1000 });
+    expect(live.writingNow).toBe(true);
+    expect(live.currentWriterChatIds).toEqual(['s1']);
+
+    const suppressed = summariseWrites(record, { nowMs: NOW, liveWindowMs: 30 * 60 * 1000, suppressed: true });
+    // The override empties the claim and keeps the derivation. A file that says
+    // "nobody is writing" with no record of what it overrode cannot be told
+    // apart from a bug in the generator.
+    expect(suppressed.writingNow).toBe(false);
+    expect(suppressed.currentWriterChatIds).toEqual([]);
+    expect(suppressed.derivedWriterChatIds).toEqual(['s1']);
+    expect(suppressed.suppressed).toBe(true);
+    // `lastWriteAt` is the archaeology half and must survive suppression.
+    expect(suppressed.lastWriteAt).toBe(new Date(NOW - 60_000).toISOString());
+    expect(suppressed.chats[0].files).toEqual([`${ROOT}/src/a.ts`]);
+  });
+
+  it('makes a recent WRITE a stronger liveness claim than a recent message', () => {
+    const chatSummary = { ...noChats, lastActivity: null };
+    // `derivedWriterChatIds`, not `writingNow`: the classifier reads the signal
+    // as it was BEFORE any declared hard state, so an override cannot erase the
+    // evidence that justified it.
+    const writeHistory = { writingNow: true, derivedWriterChatIds: ['s1'] };
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary,
+      chatSessions: [],
+      nowMs: NOW,
+      writeHistory,
+    });
+    expect(verdict.live).toBe(true);
+    expect(verdict.reasons.join(' ')).toContain('wrote a file');
+  });
+
+  it('lets a declared hard state outrank every liveness signal, and says so', () => {
+    const liveSignal = { count: 1, lastActivity: NOW - 60_000 };
+    const withoutOverride = classify(wt({}), { chatSummary: liveSignal, chatSessions: [], nowMs: NOW });
+    expect(withoutOverride.live).toBe(true);
+
+    const verdict = classify(wt({}), {
+      chatSummary: liveSignal,
+      chatSessions: [],
+      nowMs: NOW,
+      boardAgents: [{ agentId: 'feat/x', live: true }],
+      liveWritersSuppressed: 'the editor restarted',
+    });
+    expect(verdict.live).toBe(false);
+    expect(verdict.liveSuppressed).toBe(true);
+    // Both recency signals are retained, so the file records that something was
+    // overridden and what it overrode rather than silently disagreeing.
+    expect(verdict.derivedLive).toBe(true);
+    expect(verdict.reasons.join(' ')).toContain('the editor restarted');
+  });
+
+  it('publishes the ownership answer at the top of the document', () => {
+    const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
+    const chatAudit = {
+      available: true,
+      dbPath: 'k',
+      byDirectory: new Map(),
+      total: 0,
+      newestSessionAt: 0,
+    };
+    const writeAudit = {
+      available: true,
+      dbPath: 'k',
+      totalWriteCalls: 5,
+      sessionCount: 1,
+      byWorktree: new Map([
+        [
+          '/repo/.kilo/worktrees/example',
+          {
+            key: '/repo/.kilo/worktrees/example',
+            writeCalls: 5,
+            subagentWriteCalls: 0,
+            chats: new Map([
+              [
+                's1',
+                {
+                  id: 's1',
+                  title: 'a chat',
+                  agent: 'code',
+                  openedIn: '/repo/.kilo/worktrees/example',
+                  openedHere: true,
+                  writeCalls: 5,
+                  subagentWriteCalls: 0,
+                  firstWriteAt: NOW - 60_000,
+                  lastWriteAt: NOW - 60_000,
+                  files: new Set(['/repo/.kilo/worktrees/example/src/a.ts']),
+                },
+              ],
+            ]),
+          },
+        ],
+      ]),
+      goneWorktrees: [{ name: 'deleted-one', writeCalls: 9, chatCount: 1, chatIds: ['s2'], lastWriteAt: null }],
+      unmappedWriteCalls: 2,
+      unmappedBuckets: [{ bucket: '/elsewhere', writeCalls: 2 }],
+    };
+
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'example' })],
+      root: ROOT,
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit,
+      writeAudit,
+      nowMs: NOW,
+      liveWritersSuppressed: 'the editor restarted',
+    });
+
+    // The per-worktree half: a recent write makes it in-use until overridden.
+    const w = inv.worktrees[0];
+    expect(w.writeHistory.chatCount).toBe(1);
+    expect(w.writeHistory.chats[0].files).toEqual(['/repo/.kilo/worktrees/example/src/a.ts']);
+    expect(w.writeHistory.writingNow).toBe(false);
+    expect(w.writeHistory.derivedWriterChatIds).toEqual(['s1']);
+    expect(w.liveSuppressed).toBe(true);
+
+    // The document half. A file that reports zero live writers is ambiguous
+    // between "nobody is writing" and "every writer is dead", and those two
+    // demand opposite responses, so the reason travels with the count.
+    expect(inv.ownership.liveWriterCount).toBe(0);
+    expect(inv.ownership.suppressed).toBe(true);
+    expect(inv.ownership.reason).toBe('the editor restarted');
+    expect(inv.ownership.derivedLiveWorktrees).toEqual(['example']);
+    expect(inv.ownership.worktreesWithWriteHistory).toBe(1);
+
+    // Deleted worktrees cannot be a per-worktree record: the loop that builds
+    // them only visits worktrees that still exist.
+    expect(inv.goneWorktrees).toEqual(writeAudit.goneWorktrees);
+    expect(inv.dataSources.writes.unmappedWriteCalls).toBe(2);
+    expect(inv.totals.goneWorktreesWithWrites).toBe(1);
+    expect(inv.totals.totalWriteCalls).toBe(5);
   });
 });
