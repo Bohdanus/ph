@@ -593,6 +593,42 @@ export class Board {
     return this.db.prepare(`SELECT * FROM events WHERE ${where.join(' AND ')} ORDER BY seq ASC LIMIT ?`).all(...params);
   }
 
+  /**
+   * The NEWEST `limit` events, in the ascending order a log reader expects,
+   * plus how many matched in total.
+   *
+   * A window is a set of MATCHING events, not a range of sequence numbers, so
+   * the filter has to be inside the query: the last 200 `note` events can sit
+   * anywhere in the log, and slicing the log by sequence and then filtering
+   * loses them. An earlier version of this fix did the reverse — it read the
+   * WHOLE log forward keeping a rolling buffer, on a comment claiming that
+   * querying backwards was wrong. The claim was false: `ORDER BY seq DESC
+   * LIMIT n` filtered in SQL is exactly this, in one indexed read, and it also
+   * removes the O(log length) scan that made a bare `watch` slow on a long
+   * board. `events_kind_idx` is `(kind, seq)`, so the filtered case is an index
+   * seek as well.
+   *
+   * The reversal happens here so every caller gets a log in reading order; a
+   * caller that forgot it would show the newest event first, which reads as a
+   * board running backwards.
+   */
+  recentEvents({ limit = 200, kind = null, issue = null } = {}) {
+    const where = [];
+    const params = [];
+    if (issue) {
+      where.push('issue_id = ?');
+      params.push(issue);
+    }
+    if (kind) {
+      where.push('kind = ?');
+      params.push(kind);
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const matched = Number(this.db.prepare(`SELECT COUNT(*) AS n FROM events ${clause}`).get(...params)?.n ?? 0);
+    const rows = this.db.prepare(`SELECT * FROM events ${clause} ORDER BY seq DESC LIMIT ?`).all(...params, limit);
+    return { events: rows.reverse(), matched };
+  }
+
   lastSeq() {
     const row = this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS seq FROM events').get();
     return Number(row?.seq ?? 0);

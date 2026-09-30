@@ -3524,3 +3524,369 @@ Appendix F's own argument is that a line number is a property of a moment.
 **Files.** `.skills/hard-merge.md:433`, `:445`, `:829-830`, `:851-853`, `:868-871`, `:1067`,
 `:1129`, `:1426`; `scripts/lib/worktree-inventory/git.mjs:198`,
 `scripts/lib/worktree-inventory/curated.mjs:947`
+
+## 110. `ToolbarsRight/Lasso/Lasso.tsx` has no importer, and it is the only UI for two persisted lasso settings
+
+`src/components/ToolbarsRight/Lasso/Lasso.tsx` (152 lines) is not reachable:
+
+```bash
+git grep -nE "import .*\bLasso\b.* from" -- src e2e   # zero hits
+git grep -n "Lasso/Lasso.tsx" -- src e2e             # zero hits
+```
+
+`src/tools/toolsMap.ts:65-79` wires the three lasso keys to `PolygonalLasso`, `FreehandLasso`
+and `FeatherMagneticLasso`. The component's only consumer is its own test,
+`Lasso/__tests__/Lasso.test.tsx`, which renders a component the app can never reach.
+
+**It is nevertheless the only place `lineWidth` and `alpha` are editable**, and both are
+persisted defaults for two live keys:
+
+- `src/tools/settings.ts:96-111` — `'polygonal-lasso'` and `'freehand-lasso'` each declare
+  `{ alpha: 1, lineWidth: 3, color: '#FF0000', fill: false, points: [] } satisfies LassoToolArgs`.
+- `src/tools/polygonSelection.ts` types all of them, and `PolygonSelectionToolSettings` is
+  `Omit<LassoToolArgs, 'points'>` — so they survive a reload.
+- `PolygonalLasso.tsx` and `FreehandLasso.tsx` render **hint text only**; neither has a control.
+
+So deleting it is not a cleanup, it is a second defect: two persisted settings with no UI
+at all, and a settings bucket that round-trips values a user can no longer change. **The real
+defect is the missing options bar.** `src/tools/descriptions/selection.notes.md:92` already
+records what Photoshop's Polygonal Lasso bar carries — the four combination modes, `Feather`,
+`Style` and `Anti-alias` — and marks them absent here, while `FeatherMagneticLasso` ships
+`featherRadius` / `magneticWidth` / `edgeContrast` / `frequency` (`settings.ts:112-116`).
+
+The component is also wrong if reconnected: `Lasso.tsx:22` hardcodes
+`toolName: 'polygonal-lasso'` into every `setToolArgs`, so wiring it to the freehand key would
+label that tool's panel with the polygonal name.
+
+**Fix.** Do not delete. Port `lineWidth` and `alpha` — and Photoshop's `Feather` and
+`Anti-alias` — into `PolygonalLasso.tsx` and `FreehandLasso.tsx`, which are the components the
+keys actually render, and delete `Lasso.tsx` and `Lasso.test.tsx` **in the same change**. The
+two hints in `Lasso.tsx:145-146` ("Backspace removes anchor • Enter finishes • Esc cancels")
+are behaviour the live panels do not document, so carry them across too.
+
+**Files.** `src/components/ToolbarsRight/Lasso/Lasso.tsx`,
+`src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts:96-111`
+
+## 111. `selection.notes.md` still says Shift-to-square is not implemented, which `7f3b0d19` fixed on 2026-09-29
+
+`src/tools/descriptions/selection.notes.md:119-125` asserts:
+
+> "the rectangle is drawn through `useRect`, and `useRect` reads `event.ctrlKey || event.metaKey
+|| event.shiftKey` in one place only — `src/hooks/useRect.ts:97`, and a whole-file grep for
+> those four properties returns no other line … **Nothing reads Shift during the initial drag,
+> so Shift-to-square is not implemented at all**"
+
+Commit `7f3b0d19` ("the marquee's modifiers, the wand's Contiguous, the lasso's Frequency")
+added `src/hooks/useRect.ts:401-402`:
+
+```ts
+freshDragModifiersRef.current.constrainToSquare = constrainToSquare && event.shiftKey;
+freshDragModifiersRef.current.fromCentre = fromCentre && event.altKey;
+```
+
+and `RectangularSelectionToolArea.tsx:74-75` opts both in. The notes file cites one modifier
+read where there are now four, and its `useRect.ts:97` anchor has moved. `:129` is wrong the
+same way: it cites `toolbar-mapping.ts:144-145` for the marquee tile, which is now an
+`availableTools` entry — the tile is `toolbar-mapping.ts:41-42`.
+
+The surrounding options table at `:108-112` is still correct and should be kept.
+
+**Files.** `src/tools/descriptions/selection.notes.md:119-125`, `:129`;
+`src/hooks/useRect.ts:401-402`
+
+## 112. Freeform Pen and Curvature Pen render the standard Pen's chip list, and a test documents the wrong config as expected
+
+`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23-25` defines:
+
+```ts
+pen:             ['Tool Mode', 'Fill', 'Stroke', 'Make Selection', 'Path Operations', 'Alignment', 'Auto Add/Delete'],
+'freeform-pen':  ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
+'curvature-pen': ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
+```
+
+but `src/tools/toolsMap.ts:132` and `:137` point all three at the **`pen`** key, so
+`freeform-pen` and `curvature-pen` render the standard Pen's seven chips. **Magnetic and Curve
+Fit are the two controls that are the entire reason those two tools exist** — a Freeform Pen
+tool without Magnetic, and a Curvature Pen without Curve Fit, are the Pen under another name
+(`src/tools/descriptions/pen.notes.md`, `docs/TOOLS.md:1656`, `:1716`).
+
+`ToolbarPlaceholder.test.tsx:163-172` asserts the resulting dead config is
+`expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle'])` and the
+comment is explicit that the list is _meant_ to be short. So this test is **half a pin**: it is
+doing its stated job against a growing pile, and it will fail the moment the wiring is fixed.
+The fix and the test must land together, with the list shrinking to `['rectangle']`.
+
+`rectangle` is the third unreachable group and is **correct** to be there: `rectangle` is a
+registry id the rail never names (see §114), so it renders the real `Shape` bar.
+
+**Fix.** Pass `'freeform-pen'` and `'curvature-pen'` as the second argument of their
+`placeholderTool(...)` calls in `toolsMap.ts`, and update the expected array in the same
+change.
+
+**Files.** `src/tools/toolsMap.ts:129-138`,
+`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24-25`,
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:163-172`
+
+## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
+
+`docs/TOOLS-TOO-HARD.md:214-215`:
+
+> "`AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
+> Photoshop grouping and naming are the specification, and the stub bar is the debt."
+
+`grep -rn "grouping and naming are the specification" --include='*.md'` returns exactly two
+hits — `docs/TOOLS-TOO-HARD.md:215` and `docs/PHOTOSHOP-UX.md:65`. `AGENTS.md` is 158 lines
+with no match for _placeholder_, _specification_, _grouping_ or _stub bar_.
+
+The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md:62-66` — _"A tool the
+app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
+because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
+— the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
+specification; the stub bar is the debt."_
+
+**Why this matters beyond a citation.** Six of the seven placeholder tools were audited for
+deletion this week and every one came back "keep" **because of that policy**. An agent
+reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
+conclusion from a missing policy is that no policy was ever written down.
+
+**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md:62-66` in that one sentence.
+
+**Files.** `docs/TOOLS-TOO-HARD.md:214-215`, `docs/PHOTOSHOP-UX.md:62-66`
+
+## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
+
+`toolbar-mapping.ts:110-114` (repo root) gives the toolbox entries
+`name: 'shape'` plus a `figure`, never the key:
+
+```ts
+{ label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
+{ label: 'Ellipse Tool',    name: 'shape', figure: 'oval' },
+{ label: 'Line Tool',       name: 'shape', figure: 'line' },
+{ label: 'Triangle Tool',   name: 'shape', figure: 'triangle' },
+{ label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
+```
+
+All four activation surfaces translate — `SidebarLeft.tsx:580-583`,
+`Mobile/mobile-tools.ts:77-85`, `DesktopHeader.tsx:112-117`,
+`AppKeyboardShortcuts.tsx:109-136` — and `useApp.ts:196` is the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. `DesktopHeader.tsx:67-76` records that dispatching the
+key directly was a **bug they fixed**: it mounted the Shape panel where the
+`toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the colour publish, so the well said
+red and the shape committed black.
+
+So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
+(`src/contexts/tool-types.ts:65-77`), a per-figure settings bucket (`src/tools/settings.ts:278-312`),
+a description record (`src/tools/descriptions/shape.ts:290,318,345,387,423`) and doc sections.
+`docs/PHOTOSHOP-UX.md:46-54` names them as _"registry ids the rail never names"_ and frames the
+rail-naming decision around them.
+
+**What is not stated anywhere is whether they are forward-scaffolding or residue**, and one fact
+would settle it: **can a durable document or a replayed history item carry
+`toolName: 'rectangle'`?** `src/tools/toolProcessors.ts:326-330` registers all five as
+`{ creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape }`,
+so a committed shape carries its tool name into history. The dispatch path is closed in the
+running app, but document import and the durable `ToolArgs` deserialiser were **not** audited
+for a persisted figure-key `toolName`. If one can arrive, these keys are load-bearing for
+existing documents and deleting them is a data-loss change; if none can, they are pure residue
+and the `ToolArgs` union is carrying five variants nothing constructs.
+
+**Fix.** Audit the import and durable-replay path for a persisted figure-key `toolName`, then
+either state in `docs/PHOTOSHOP-UX.md` that the five ids exist to keep historical documents
+replayable, or delete them together with their `ToolArgs` variants, settings buckets and
+descriptions. Whichever it is, `ToolbarPlaceholder.test.tsx:172`'s `rectangle` entry in the
+unreachable-config list changes and that test moves with it.
+
+**Files.** `toolbar-mapping.ts:110-114`, `src/tools/toolsMap.ts:154-159`,
+`src/tools/toolProcessors.ts:326-330`, `src/contexts/tool-types.ts:65-77`,
+`src/tools/settings.ts:278-312`, `docs/PHOTOSHOP-UX.md:46-54`,
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:163-172`
+
+## 115. The rectangular marquee ships no options bar at all, while the elliptical marquee beside it ships four controls
+
+`src/tools/settings.ts:130` declares
+`'rectangular-selection': { toolName: 'rectangular-selection' }` — **no settings whatsoever** —
+while `:220-226` gives `elliptical-selection` `style`, `fixedRatio`, `fixedWidth` and
+`fixedHeight`, implemented in full at `src/tools/ellipticalSelection.ts:9,51-67` down to the
+`MARQUEE_RATIO_MIN/MAX` and `MARQUEE_SIZE_MIN/MAX` bounds.
+
+`RectangularSelection.tsx:36` is, in full, the literal string
+`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
+
+Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
+`Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md:92` already records them
+as absent. Since `docs/PHOTOSHOP-UX.md:62-66` makes the rendered bar the contract, this is debt
+on a **shipped, working, reachable** tool — the rectangular marquee is a rail tile
+(`toolbar-mapping.ts:41`) with the `M` shortcut.
+
+**Fix.** Give `RectangularSelectionToolArgs` the same `MarqueeStyle` field the ellipse uses,
+extract `ellipticalSelection.ts:121-131`'s `applyRatio` as a shared ratio helper, and render
+the four controls.
+
+**Files.** `src/tools/settings.ts:130`, `src/tools/rectangularSelection.ts:4-7`,
+`src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:36-48`,
+`src/tools/descriptions/selection.notes.md:92`
+
+## 116. Three of the six pen tools have no shortcut, no Tools-menu entry, and the Pen's own icon
+
+`AppKeyboardShortcuts.tsx:33` binds `penGroup = ['pen', 'freeform-pen', 'curvature-pen']`, so
+`P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
+`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx:56-58` lists
+only the three pens. They are also visually identical to the Pen in the rail:
+`SidebarLeft/toolIcons.tsx:76-79` maps all three to `PenToolIcon`, where `freeform-pen` alone
+gets its own `FreeformPenIcon` at `:75`.
+
+Recorded in `docs/TOOLS.md:1755`, `:1787`, `:1823`, and in no handoff. It becomes moot the
+moment the family is implemented — and `HANDOFF.md` §53 already carries that open question with
+the operator's answer outstanding — but if the six are ever hidden rather than implemented, this
+is the defect that says the hiding was incomplete.
+
+**Files.** `src/components/Common/AppKeyboardShortcuts.tsx:33`,
+`src/components/DesktopHeader/DesktopHeader.tsx:56-58`, `src/components/SidebarLeft/toolIcons.tsx:74-79`
+
+## 117. `docs/PHOTOSHOP-UX.md` says the rail entries for `color`, `levels` and `transform` do not exist, and they are live tiles
+
+`docs/PHOTOSHOP-UX.md:38-45`, §"Adjustments are not tools":
+
+> "These three are to leave the rail and become menu commands. They have **no replacement
+> tool** … `toolbar-mapping.ts` already exports `extraTools = ['color', 'levels', 'transform']`,
+> so the extraction is half-staged: **the flag exists, the rail entries do not.**"
+
+Both halves of that are now false.
+
+```bash
+sed -n '61,65p' toolbar-mapping.ts
+#     [
+#       { label: 'Colors', name: 'color' },
+#       { label: 'Levels', name: 'levels' },
+#       { label: 'Transform', name: 'transform' },
+#     ],
+git grep -n extraTools -- src e2e '*.ts' '*.tsx'
+# toolbar-mapping.ts:164:export const extraTools = ['color','levels','transform'] as const …
+# src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:2,97,98   <- its own test only
+```
+
+So the three render as a live rail flyout, all three are fully implemented
+(`src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/transform.ts`), and **`extraTools`
+gates nothing in the application** — it is declared and consumed only by the test that checks
+it is disjoint from `shape`. The half-staged extraction it describes was never started, or was
+undone; either way the flag is inert and the doc reads as a completed step.
+
+**Why this is worth filing rather than editing.** The same section orders `draw` **deleted**
+(`:37`: "**It is to be deleted**, not relabelled") and names five ids the app declares that
+Photoshop has no counterpart for. That decision may well still be the operator's intent — it is
+a written product ruling and deleting on the strength of it is not an agent's call. But a
+reader auditing rail compliance against this list will look for four absent tools, find four
+present and working ones, and has to decide for itself whether to delete them. Two of the
+failures that invites are ugly: deleting a working tool, or concluding the doc outranks the
+tree and stopping there.
+
+**Fix.** Restate `:38-45` as _pending_ extraction that names what is actually true — the three
+are live tiles today, `extraTools` exists and gates nothing, and nothing consumes it — and mark
+`:37`'s `draw` ruling with its current state (`draw` is live at `toolbar-mapping.ts:97`, backed
+by a real rasteriser at `toolProcessors.ts:96-102`). Whether to carry out the extraction is the
+operator's decision; the document's job is to stop asserting a false intermediate.
+
+**Files.** `docs/PHOTOSHOP-UX.md:32-45`, `toolbar-mapping.ts:61-65`, `:97`, `:164`
+
+## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
+
+`src/tools/toolProcessors.ts` registers all three against the same rasteriser:
+
+```
+ 96: const buildDrawArgs = (args, penType: 'pen' | 'spray', lineWidth?) => …
+259-262: brush   → draw({…})(buildDrawArgs(args, 'pen'))
+267-275: pencil  → draw({…})(buildDrawArgs(args, 'pen', lineWidth))
+```
+
+So `brush ≡ pencil ≡ draw` at the pixel level. They differ by nothing a user can see except the
+preset list (`src/tools/brush.ts:143-154`) and the tool name carried into history.
+`src/components/ToolbarsRight/Brush/Brush.tsx:3` and `Pencil/Pencil.tsx:3` are both three-line
+`createPaintToolbar('brush' | 'pencil')` calls over one shared bar.
+
+**The constraint that makes this correct rather than a duplication bug exists only on an
+unmerged branch.** `fix/stale-reclaim-skill`'s `AGENTS.md` carries it:
+
+> "`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
+> SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
+> them — sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a
+> tool that left the paint panel must not be widened back for a new bar. Corollary
+> (`HANDOFF.md` §70): a group that persists one key may not absorb a tool that has more than
+> one."
+
+`grep -c PaintToolName AGENTS.md` on `main` returns **0**. `git grep -ln PaintToolName -- '*.md'`
+returns exactly one file, `.skills/photoshop-tool-creation.md`. The type exists and is enforced in
+code (`src/tools/draw.ts`, asserted at `src/tools/__tests__/paint-tools.test.ts:22`), and
+`HANDOFF.md` §70 ("A tool whose settings do not fit a shared arm must not be in that arm") carries
+the corollary — but the sentence that explains _why_ `'brush' | 'pencil'` is a narrowing and not
+an accident is on a branch that has not landed.
+
+**Why it matters for the dead-tool question this surfaced.** Three tools sharing one rasteriser
+is exactly the shape that reads as dead-code duplication, and the correct deletion — merging
+`brush` and `pencil` into `draw`, or deleting `draw` as `docs/PHOTOSHOP-UX.md:37` orders — would
+be a real regression for anyone who has not read the rule. The rule is what stops it. That is
+also the general lesson in `HANDOFF.md` §70, one section earlier.
+
+**Fix.** Move the `PaintToolName` paragraph out of the branch's `AGENTS.md` and into `main`'s
+**Architecture status** section, next to the history-authority paragraph it constrains. It is a
+boundary rule of the same kind, and it is currently only readable by whoever opens a branch that
+was never merged.
+
+**Files.** `src/tools/toolProcessors.ts:96`, `:259-262`, `:267-275`,
+`src/tools/brush.ts:143-154`, `AGENTS.md` §Architecture status, `HANDOFF.md` §70
+
+## 119. The Draw tile and the Brush tile both advertise `B`, and pressing `B` selects the Brush
+
+`toolbar-mapping.ts` declares the same shortcut twice:
+
+```
+ 73: { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
+ 97: [{ label: 'Draw Tool',   name: 'draw',   shortcut: 'B' }],
+```
+
+No key binding routes to `draw`. `src/components/Common/AppKeyboardShortcuts.tsx:347-352` and
+`:354-360` bind **both** `b` and `shift+b` to `selectBrushTool`, which cycles `brushGroup`
+(`:19`). `src/components/SidebarLeft/SidebarLeft.tsx:621` passes `primaryTool.shortcut` into
+`ToolTooltip` — suppressed only for the three-dots overflow tile at `:597` — so the Draw tile
+renders a `B` badge in the rail that no handler honours.
+
+That is a duplicate-shortcut collision in the mapping plus a dead advertised binding. It is
+small, it is user-visible, and it is the kind of thing a `toolbar-mapping` test should catch:
+`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` already asserts shortcut
+properties for other groups but nothing asserts that two tiles do not claim the same letter.
+
+**Fix.** Give `draw` a distinct shortcut or drop `shortcut` from its entry, and add a test that
+no two visible tile identities claim the same letter.
+
+**Files.** `toolbar-mapping.ts:73`, `:97`,
+`src/components/Common/AppKeyboardShortcuts.tsx:19`, `:347-360`,
+`src/components/SidebarLeft/SidebarLeft.tsx:597`, `:621`,
+`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts`
+
+## 120. The Move tool has nine documented missing controls and no entry tracking them as work
+
+`docs/TOOLS.md:2006-2028` gives `reposition` a written `partial` verdict and enumerates what is
+absent: Tool Preset Picker, Auto-Select, Auto-Select: Group, Auto-Select: Layer, Show Transform
+Controls, Align, Distribute, Align to, Width, Height — plus Alt-drag, Shift-constrain,
+Shift-extend and arrow-key nudge. It records Auto-Select as welded on with no control to turn it
+off.
+
+`grep -n reposition HANDOFF.md e2e/OPEN_PROBLEMS.md` returns only `:347`, `:1755` and `:2539`,
+and each is about a different subject. **Nothing tracks the nine as work.**
+
+The tool itself is not parked, which is the reason this is a handoff entry and not a deletion
+candidate. Its _processor_ file was last touched 2026-09-25 by `2e1b6e46` — a config-and-test
+commit whose real content was removing a dead `resize` rasteriser branch — but its live surface,
+`src/components/Main/MoveToolArea.tsx` and the Move panel, was changed on **2026-09-28** by
+`a30c318a` and `f6f54752`, i.e. _newer_ than `transform`'s 2026-09-27. It is the tool that owns
+`Merge all` (`src/components/ToolbarsRight/Reposition/Reposition.tsx:21`), which nothing else has.
+
+The scope decision is written down; the work is not. A documented `partial` verdict with no
+tracked work is how a half-built tool becomes permanently half-built.
+
+**Fix.** Add one `HANDOFF.md` entry carrying the nine controls and the four modifiers as named
+work, referencing the existing verdict rather than restating it.
+
+**Files.** `docs/TOOLS.md:2006-2028`, `src/components/ToolbarsRight/Reposition/Reposition.tsx:21`,
+`src/components/Main/MoveToolArea.tsx`
