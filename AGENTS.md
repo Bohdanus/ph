@@ -38,23 +38,48 @@ THE POINT.** 40 sequential tool calls in one context = 8 parallel subagents + a
    than its parent, never more expensive. A **PAID** session may spawn paid
    subagents on the turn's own model; a _different_ paid model still needs the
    user to name it in that request.
-2. **ALWAYS PASS `provider` WITH `model`.** A bare name is matched leniently and
-   can resolve to another provider's; with no `provider` it falls back to the Kilo
-   Gateway, which returns a GPT model under a `~` id. **A `~` id is paid.**
+2. **ALWAYS PASS BOTH `model` AND `provider`.** A subagent runs on the Kilo Gateway
+   — `provider: 'kilo'`, the string `kilo`. **`kiloGateway` is not a provider ID** — it
+   appears in no provider list and is not the value to pass — or, for a GPT,
+   `provider: 'openai'`, where the catalog has it. A GPT-5.6 **Pro** variant is the one
+   case with no `openai` entry; take its `OpenAI: … Pro` name on `kilo` instead.
+   `openrouter` is the trap, not a third option. Neither half is safe alone:
+   - **A bare `model` is matched leniently and can land on another provider's.**
+     `'Space Bunny Alpha (new)'` is the gateway's entry and `'Space Bunny Alpha'` is
+     `openrouter`'s — same family, different provider, and sessions exist on both.
+   - **A bare `model` with no `provider` falls back to the gateway, which answers
+     with a paid GPT under a `~` id and also serves GPTs outright** — the catalog
+     lists `OpenAI: GPT-5.6 Luna` on `kilo`. **The gateway is not a cost guarantee:
+     cost follows the MODEL.** A `~` id is paid.
+   - **Passing neither field scatters the model across providers.** It takes
+     `subagent_model` from `~/.config/kilo/kilo.jsonc` — `openrouter/stealth/space-bunny-alpha`
+     on this machine — and of the children launched with neither field, 106 landed there while
+     the rest spread over 13 models on three providers, **32 of them paid `openai` GPTs**.
+     Nothing pins it, so this is the half that actually leaks.
+   - **The pair itself is sufficient:** every child of a call that passed exactly
+     `'Space Bunny Alpha (new)'`/`kilo` resolved to `kilo`. Passing both is the whole fix.
 3. The default: `'Space Bunny Alpha (new)'` / `kilo` / `max`. Other free models
    are useless; do not spend a turn sampling them.
 4. **Double billing starts earlier on Luna** — ~200k there, ~270k on Sol and
    Terra. Keep the main turn lean; push fan-out into fresh contexts.
-5. `agent_manager` inherits the turn's model too, so a paid turn spawns paid
-   worktrees unless `model` and `provider` are both set.
+5. `agent_manager` resolves a session's model the same way `task` does, so a turn that omits
+   both fields has spawned worktrees on `openrouter` and on paid `openai` models. Set `model`
+   and `provider` explicitly for every session.
 
-Omitting those fields inherits the current model, which is what keeps a subagent
-free when the main turn is not. **Never escalate to a paid model on your own**;
-override only when the user named a GPT model, and say so when you do. `task` for
-everything else; `agent_manager` only for visible sessions and worktrees. Audit
-before spawning a fleet:
-`sqlite3 ~/.local/share/kilo/kilo.db "SELECT json_extract(model,'\$.id') m, json_extract(model,'\$.providerID') p, count(*) FROM session GROUP BY 1,2 ORDER BY 3 DESC"`
-(`session.model` is a TEXT column holding JSON; there is no `data` column).
+**Never escalate to a paid model on your own**; override only when the user named
+a GPT model, and say so when you do. `task` for everything else; `agent_manager`
+only for visible sessions and worktrees. To audit a fan-out, **attribute each child to the
+call that created it** — `part.data` holds the call and its `<task id="ses_…">` result, and
+`session.parent_id = part.session_id` is only a _necessary_ condition, because it credits a
+child to every call in its parent's session:
+
+```
+sqlite3 ~/.local/share/kilo/kilo.db "WITH calls AS (SELECT json_extract(pt.data,'\$.state.input.model') m, json_extract(pt.data,'\$.state.input.provider') p, substr(json_extract(pt.data,'\$.state.output'),11,instr(substr(json_extract(pt.data,'\$.state.output'),11),'\"')-1) cid FROM part pt WHERE json_extract(pt.data,'\$.tool')='task' AND json_extract(pt.data,'\$.state.status')='completed') SELECT calls.m, calls.p, json_extract(c.model,'\$.providerID') landed, count(*) FROM calls JOIN session c ON c.id=calls.cid GROUP BY 1,2,3"
+```
+
+(`session.model` and `part.data` are TEXT columns holding JSON; there is no `data` column on
+`session`. An aggregate over `session` alone counts the session's _current_ model, which is not
+what the caller asked for.)
 
 ### Rules of delegation
 

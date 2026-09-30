@@ -2919,3 +2919,58 @@ at `:656`). The `layer-presentation` predicate was the third part, and it has NO
 absent from `main` today, and `fix/unit-tests` remains 2 commits ahead with 13 conflicting files,
 `StoreContext.tsx` and `useLayer.ts` among them. Treat the branch as at-risk salvage, not as a clean
 source, and re-derive from this entry rather than from its copy.
+
+## 96. `docs/LAYERS-PANEL.md` §20 item 6 undercounts a filename defect, by line numbers that no longer point at it
+
+`docs/LAYERS-PANEL.md:825-835` reports the hyphen form `e2e/OPEN-PROBLEMS.md` is "written in
+**only two files, five lines**: `AGENTS.md:15`, `:165`, `:172` and `TEST-FLAKES.md:391`, `:657`",
+and argues from `AGENTS.md:170-173` that the typo "has no home among the three routed files". The
+census is four, the cited lines have drifted, and the "no home" premise is false.
+
+**Verified against `c23d036e` by re-deriving, tree-wide — not by reading the cited lines.** The
+ref is pinned on purpose: `main` moves, and an auditor re-running a bare `main` gets lines that
+have drifted. Once this entry lands, re-run excluding it — it quotes the occurrences, and
+`git grep <ref> -- .` prefixes every line with the ref, so the filter has to match the prefix:
+
+```
+$ git grep -n 'e2e/OPEN-PROBLEMS' c23d036e -- . | grep -vE '^c23d036e:HANDOFF\.md:29'
+c23d036e:AGENTS.md:15:| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect |
+c23d036e:TEST-FLAKES.md:712:(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+c23d036e:docs/LAYERS-PANEL.md:825:6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch — a _docs_ defect with no routed home.** The file
+c23d036e:e2e/viewport-drawing.spec.ts:228:   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
+$ git ls-files e2e/ | grep -i open
+e2e/OPEN_PROBLEMS.md
+$ git show c23d036e:AGENTS.md | sed -n '165p;170p;171p;173p'
+5. **Reviewed by someone else** — a code review subagent on the prompt in
+
+- **A green gate is the floor, not the review** — `gate:commit`/`gate:push` are
+- **Only step 6 writes to `main`** (plus an operator-requested hotfix on `main`).
+```
+
+**Four lines in four files, and most of the citations the source names are not filename references
+at all.** Of the five it enumerates, only `AGENTS.md:15` is one: `AGENTS.md:165` and `:172` are
+Definition-of-Done steps, and `TEST-FLAKES.md:391` and `:657` are a port note and a
+marker-bounding-box note. `HANDOFF.md:593` and `:2471`, cited in the same breath as "uses the
+correct underscore form", are unrelated prose, and `:2471` is blank. The `AGENTS.md:170-173`
+premise is the same drift: the routing rule is at the two `AGENTS.md` lines that already use the
+**underscore** form, so "a cross-scope entry has no home" is argued from a line saying the
+opposite.
+
+**The defect is live on all four, and the two prose ones route differently from the Playwright
+one.** Every one of the four names a path that does not resolve on any platform, case-insensitive
+volumes included. `AGENTS.md:15` and `TEST-FLAKES.md:712` are prose, so this entry is their routed
+home. `e2e/viewport-drawing.spec.ts:228` is a comment inside a Playwright spec, and `AGENTS.md`'s
+own route-by-scope rule sends that one to `e2e/OPEN_PROBLEMS.md` — which is precisely the
+cross-scope gap the source diagnosed, and it is why a fix confined to the two prose files would
+leave half of it standing.
+
+**Fix.** Correct all four to the underscore form, filing the `e2e/viewport-drawing.spec.ts:228`
+occurrence in `e2e/OPEN_PROBLEMS.md` rather than here. Then delete or rewrite §20 item 6 so it
+asserts neither a five-line census nor the `AGENTS.md:170-173` premise. Re-derive the remaining
+line numbers from the prose at the time of the fix: `AGENTS.md` is the file every agent reads
+first, so a citation into it silently rots, and its own rule says as much.
+
+**Not caused by the `docs/subagent-provider` model-policy change**, which edited the Model policy
+section and, with `main` merged in, left the two routing lines at `AGENTS.md:205` and `:212` — the
+numbers above are re-derived against that file. Re-derive again when fixing; do not assume they
+survive another edit to `AGENTS.md`.
