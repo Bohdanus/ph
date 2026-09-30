@@ -52,9 +52,9 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * and 612px against a grid that has never been either). No test asserted them, so they sat
  * here being plausible. The fit owns that question now: it collapses tiles into the
  * three-dots entry and asserts the rendered grid stays inside the budget at every height it
- * sweeps, and the height at which even that is impossible is DISCOVERED, not named — see the
- * degenerate-band ladder in the last test in this file. So the numbers here are either
- * measured by something or derived from what something measures.
+ * sweeps, and the window height at which even that is impossible is DISCOVERED TO THE PIXEL,
+ * not named — by descending and bisecting in the last test in this file. So the numbers here
+ * are either measured by something or derived from what something measures.
  *
  * The content heights are **font-metric dependent**. This header is the canonical copy;
  * `AGENTS.md`, `SidebarLeft.tsx`, `responsive-shell.spec.ts`
@@ -158,6 +158,31 @@ function readOuterShell(selectors: readonly string[]) {
       clientHeight: el.clientHeight,
       overflowX: getComputedStyle(el).overflowX,
       overflowY: getComputedStyle(el).overflowY,
+    };
+  });
+}
+
+/**
+ * The tool grid as the user sees it: from the top of the first visible tile to the bottom of
+ * the last section, so it includes every separator between them. The same measurement
+ * `e2e/toolbar-fit.spec.ts` prints, read here so the control in the last test is a
+ * measurement rather than this file's own 822px constant — a control that reads a constant
+ * cannot notice the constant going stale.
+ *
+ * `collapsed` says whether anything went into the three-dots entry, which is what decides
+ * whether the height returned is the WHOLE grid or a grid that has already been fitted.
+ */
+function measureRenderedGrid(page: Page) {
+  return page.evaluate(() => {
+    const tools = document.querySelector('[data-testid="left-toolbar-tools"]');
+    if (!tools) return null;
+    const lists = [...tools.querySelectorAll<HTMLElement>(':scope > ul')].filter((list) => list.childElementCount > 0);
+    const firstTile = lists[0]?.querySelector<HTMLElement>('[data-toolbar-tile]') ?? null;
+    const lastList = lists[lists.length - 1] ?? null;
+    if (!firstTile || !lastList) return null;
+    return {
+      height: lastList.getBoundingClientRect().bottom - firstTile.getBoundingClientRect().top,
+      collapsed: tools.querySelector('[data-testid="tool-overflow-tile"]') !== null,
     };
   });
 }
@@ -344,8 +369,34 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     // three-dots tile. The premise, not the claim, went stale — so both halves are now stated
     // against what is actually true, and the suppression is asserted where it can now be
     // exercised.
-    const viewport = VIEWPORTS.find((v) => v.name.startsWith('iPad 10.2'))!;
-    await open(page, viewport.width, viewport.height);
+    //
+    // AND THE FIT MUST BE LOAD-BEARING AT THIS HEIGHT FOR ANY OF THAT TO MEAN ANYTHING. It is
+    // load-bearing only where the whole one-column grid cannot fit the slot unshrunk, and at
+    // iPad 10.2" portrait — where this test used to run, and where the earlier version of it
+    // measured — the slot is 834px against a grid of 822px. The whole grid FITS: the rail does
+    // not overflow, and the assertion below passes with the collapse fit deleted from the app
+    // entirely. That is a test that cannot fail, and no amount of wording makes it otherwise.
+    //
+    // So the viewport is 1280×800, one of this file's own matrix viewports and the width the
+    // band search below runs at, where the same 822px grid is 294px TALLER than the 528px slot.
+    // The 80%-of-available budget the fit actually honours is `e2e/toolbar-fit.spec.ts`'s
+    // contract, swept across twelve heights, and is not restated here.
+    await open(page, 1280, 1400);
+    const wholeGrid = await measureRenderedGrid(page);
+    expect(wholeGrid, 'the untruncated grid must be measurable, or the control below measured nothing').not.toBeNull();
+    expect(
+      wholeGrid!.collapsed,
+      'nothing may collapse at the height the whole grid is measured at, or "the whole grid" is the collapsed grid and the control is vacuous'
+    ).toBe(false);
+
+    await open(page, 1280, 800);
+    const slotHeight = await page
+      .getByTestId('left-toolbar-slot')
+      .evaluate((el) => Math.round(el.getBoundingClientRect().height));
+    expect(
+      wholeGrid!.height,
+      `the whole one-column grid must NOT fit the ${slotHeight}px slot at 1280×800, or the collapse assertions here prove nothing`
+    ).toBeGreaterThan(slotHeight);
 
     const rail = page.getByTestId('left-sidebar');
     const overflow = await rail.evaluate((el) => el.scrollHeight - el.clientHeight);
@@ -365,55 +416,184 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     // short that the budget cannot hold even the three-dots tile's row — so that is where the
     // suppression is exercised. The previous version of this test asserted suppression on an
     // element that can no longer overflow, which is asserting nothing.
-    //
-    // THE BAND IS DISCOVERED, NOT NAMED. It used to be reached at a hardcoded 380px, and that
-    // number is a property of the rail's chrome — its padding, its rules, the height of its
-    // colour cluster — rather than of the behaviour under test. Flattening the rail took 69px
-    // of fixed chrome out of the column (`py-4`→`py-2` 16, `mb-2`→`mb-1` 4, `my-3`→`my-2` 8,
-    // the dead `<hr>` 25, `mt-4` 16) and 14px more out of the tools box, the band moved down
-    // with it, and the assertion failed on a rail that was behaving correctly. A test that
-    // names a magic height is a test that the next spacing change fails.
-    //
-    // The ladder walks DOWN from a height known to fit, so the first rung that degenerates is
-    // the TALLEST one that does — the most informative of the band. Each rung re-reads the
-    // viewport FROM THE PAGE: `page.viewportSize()` returns the value `setViewportSize` stored
-    // on the object, so asserting against it compares the request with itself and cannot
-    // observe a resize that did not apply, which is the one thing this rung is for.
     const slot = page.getByTestId('left-toolbar-slot');
-    const DEGENERATE_LADDER = [380, 300, 240, 190, 150, 120];
-    let degenerateAt: number | null = null;
-    for (const height of DEGENERATE_LADDER) {
+
+    // THE BAND IS DISCOVERED, NOT NAMED — AND RESOLVED TO THE PIXEL, because a search is the
+    // only resolution that does not put the magic height back. It used to be reached at a
+    // hardcoded 380px, and that number is a property of the rail's chrome — its padding, its
+    // rules, the height of its colour cluster — rather than of the behaviour under test.
+    // Flattening the rail took 69px of fixed chrome out of the column (`py-4`→`py-2` 16,
+    // `mb-2`→`mb-1` 4, `my-3`→`my-2` 8, the dead `<hr>` 25, `mt-4` 16) and 14px more out of the
+    // tools box, the hardcoded 380 was wrong afterwards, and the assertion failed on a rail
+    // that was behaving correctly. A test that names a magic height is a test that the next
+    // spacing change fails.
+    //
+    // THE BOUNDARY IS NOT A LINEAR TERM IN THAT CHROME, which is why it cannot be re-tuned by
+    // adding back what was removed, and why the 52px the hardcoded 380 gave was never going to
+    // be the 83px that came out of the column. Measured at 1280 wide: the slot's height is
+    // `window.innerHeight - 272` at every height from 331 to 1200 — one constant offset set by
+    // the shell's other rows, not by the rail's own padding — and from 327 down the slot stops
+    // shrinking altogether and clamps at 55px. The band is a clamp meeting an offset, not a sum,
+    // so the removed padding was never its top edge.
+    //
+    // IT WAS A FIXED LADDER, [380, 300, 240, 190, 150, 120], AND THE LADDER WAS COARSER THAN
+    // THE CHANGE IT EXISTS TO ABSORB: an 80px top step against 83px of chrome, so it reported
+    // 300 — 28px BELOW the boundary it was supposed to discover — and would have reported
+    // something else again for every rung it stepped over. A ladder degrades the moment the
+    // boundary moves further than its coarsest step, and rungs chosen to bracket the answer
+    // would be the same defect with the answer typed into the array. So: descend to bracket,
+    // bisect to close, and land on the TALLEST height that degenerates — the most informative
+    // point of the band, because it is the one with the most room left in it.
+    const KNOWN_FIT = 1400;
+    const SEARCH_FLOOR = 200;
+    const DESCENT_FACTOR = 0.75;
+
+    /**
+     * One rung: resize, confirm the page really is at that height, and report whether the
+     * slot's content no longer fits it.
+     *
+     * `inner` is read FROM THE PAGE on purpose. `page.viewportSize()` returns the value
+     * `setViewportSize` stored on the object, so asserting against it compares the request
+     * with itself and cannot observe a resize that did not apply, which is the one thing a rung
+     * is for.
+     */
+    const degenerates = async (height: number) => {
       await open(page, 1280, height);
+      const state = await slot.evaluate((el) => ({
+        inner: window.innerHeight,
+        over: el.scrollHeight - el.clientHeight,
+      }));
       expect(
-        await page.evaluate(() => window.innerHeight),
-        `the ladder's ${height}px rung must actually be the viewport, or nothing below measures what it claims`
+        state.inner,
+        `the ${height}px rung must actually be the viewport, or nothing below measures what it claims`
       ).toBe(height);
-      const slotOverflow = await slot.evaluate((el) => el.scrollHeight - el.clientHeight);
-      if (slotOverflow > 0) {
-        degenerateAt = height;
+      return state.over > 0;
+    };
+
+    // Phase 1, bracketing. Geometric rather than a fixed step, because a fixed step is either
+    // coarse near the answer — which is the defect above — or a long walk down from the tall
+    // end: ×0.75 puts the answer inside a 4/3 bracket in seven probes, where the 40px linear
+    // step that reached the band at 320 took 28.
+    const descent: number[] = [];
+    let highestFit: number | null = null;
+    let firstDegenerate: number | null = null;
+    for (let height = KNOWN_FIT; height >= SEARCH_FLOOR; height = Math.floor(height * DESCENT_FACTOR)) {
+      descent.push(height);
+      if (await degenerates(height)) {
+        firstDegenerate = height;
         break;
       }
+      highestFit = height;
     }
-    // Two states, two messages. `null` after the whole ladder means the rail no longer
-    // degenerates ANYWHERE the ladder reaches — the ladder ran out, which is this test's
+
+    // Two states, two messages. `firstDegenerate` null after the whole descent means the rail no
+    // longer degenerates ANYWHERE down to the floor — the search ran out, which is this test's
     // premise failing and not a product defect. It is not evidence that the rail cannot
-    // degenerate, so it must not be reported as though it were.
+    // degenerate, so it must not be reported as though it were. `highestFit` null means the tall
+    // end itself degenerates, so there was never a bracket to close.
     expect(
-      degenerateAt,
-      `the slot must still degenerate somewhere in the ${DEGENERATE_LADDER.at(-1)}..${DEGENERATE_LADDER[0]}px ladder — either the rail can no longer degenerate at any height (extend the ladder) or it is broken, and those are not the same defect`
+      firstDegenerate,
+      `the slot must still degenerate at some window height between ${SEARCH_FLOOR} and ${KNOWN_FIT}px — either the rail can no longer degenerate at any height (lower SEARCH_FLOOR) or it is broken, and those are not the same defect`
     ).not.toBeNull();
-    const degenerateHeight = degenerateAt!;
+    expect(
+      highestFit,
+      `the slot must fit at ${KNOWN_FIT}px, or the descent has no bracket to bisect: a rail that degenerates at every height has no band to discover`
+    ).not.toBeNull();
+
+    // Phase 2, bisecting. Degeneration is monotone in height — measured: the slot's overflow is
+    // 0 at every height from 1200 down to 329, 1 at 328, and 2 at 327 and at every height
+    // sampled below it to 100, flat because the slot has stopped shrinking — so halving
+    // [degenerate, fits] closes to the exact tallest height that degenerates.
+    let degenerateHeight = firstDegenerate!;
+    let stillFits = highestFit!;
+    const bisected: number[] = [];
+    while (stillFits - degenerateHeight > 1) {
+      const mid = Math.floor((degenerateHeight + stillFits) / 2);
+      bisected.push(mid);
+      if (await degenerates(mid)) degenerateHeight = mid;
+      else stillFits = mid;
+    }
+
+    // Printed, for the same reason `e2e/toolbar-fit.spec.ts` prints its sweep: the figure is
+    // a result, not an input, so nobody should have to re-derive it to check this file's header
+    // or to notice it moved. The degenerate band is every window height at or below the
+    // boundary, and the tallest height that still fits is one pixel above it.
+    console.log(
+      `DEGENERATE BAND (1280 wide) descent=[${descent.join(',')}] bisect=[${bisected.join(',')}] ` +
+        `boundary=${degenerateHeight} lastFit=${stillFits}`
+    );
+
+    // The bisection closes on a ONE-PIXEL bracket, so its last probe is whichever side of that
+    // bracket it visited last rather than necessarily the height it settled on — measured, one
+    // pixel above it. Entered explicitly, and re-checked on the way in: everything below
+    // asserts the degenerate state, and running it a pixel above the band would be exactly the
+    // vacuous assertion this whole block replaced.
+    expect(
+      await degenerates(degenerateHeight),
+      'the height the search settled on must itself degenerate, or the assertions below are running above the band'
+    ).toBe(true);
+
     expect(
       await slot.evaluate((el) => getComputedStyle(el).scrollbarWidth),
-      'and the degenerate slot must suppress the scrollbar itself, not merely stop overflowing'
+      `and at the discovered boundary (${degenerateHeight}px) the slot must suppress the scrollbar itself, not merely stop overflowing`
     ).toBe('none');
 
     // The thing suppression is allowed to cost: reachability. A scrollable slot with hidden
-    // content would satisfy everything above, so the last tile is scrolled to and checked.
+    // content would satisfy everything above, so the tile is scrolled into the slot's own
+    // scrollport and its rect is checked against the SLOT's client box.
+    //
+    // `scrollIntoViewIfNeeded` IS THE STIMULUS, NOT THE EVIDENCE. It resolves only once the
+    // element is in the viewport, and `boundingBox()` is viewport-relative, so the previous
+    // version's "and it ends up inside the window" was a restatement of the call — it read back
+    // the hundred-odd pixels of slack the call had just produced, on a rail that behaves
+    // identically with or without the line. What is independent of the call is that the SLOT
+    // scrolled, and that the tile's rect lands inside the slot's client box: the real claim is
+    // reachable INSIDE the scrolling slot, not merely somewhere on screen, which is all
+    // `toBeVisible` carries.
     const overflowTile = page.getByTestId('tool-overflow-tile');
-    await overflowTile.scrollIntoViewIfNeeded();
     await expect(overflowTile, 'the one reachable tile is still reachable inside the scrolling slot').toBeVisible();
-    const box = await overflowTile.boundingBox();
-    expect(box!.y + box!.height, 'and it ends up inside the window').toBeLessThanOrEqual(degenerateHeight);
+
+    const tileInSlot = () =>
+      slot.evaluate((el) => {
+        const tile = el.querySelector('[data-testid="tool-overflow-tile"]');
+        if (!tile) return null;
+        const slotBox = el.getBoundingClientRect();
+        const tileBox = tile.getBoundingClientRect();
+        // The CLIENT box, not the border box: `clientTop`/`clientHeight` exclude borders and
+        // any scrollbar gutter, so this stays the right comparison on a runner that draws
+        // classic scrollbars — which is the runner this file exists for.
+        const top = slotBox.top + el.clientTop;
+        const left = slotBox.left + el.clientLeft;
+        return {
+          scrollTop: el.scrollTop,
+          insideVertically: tileBox.top >= top && tileBox.bottom <= top + el.clientHeight,
+          insideHorizontally: tileBox.left >= left && tileBox.right <= left + el.clientWidth,
+        };
+      });
+
+    // Non-vacuity for the containment check, and the reason the containment check is worth
+    // anything at all: unclipped, the tile's bottom is BELOW the slot's client bottom — measured
+    // one pixel below it at the boundary, two at 300px — which is the overflow this band exists
+    // for. Asserting containment where the tile already fitted would be true before anything
+    // scrolled.
+    const unclipped = await tileInSlot();
+    expect(unclipped, 'the three-dots tile must be a child of the slot to be measured at all').not.toBeNull();
+    expect(
+      unclipped!.insideVertically,
+      `at ${degenerateHeight}px the tile must genuinely hang below the slot before anything scrolls, or the containment check below is already true and proves nothing`
+    ).toBe(false);
+
+    await overflowTile.scrollIntoViewIfNeeded();
+    const reached = await tileInSlot();
+    expect(reached, 'the three-dots tile must still be in the slot after scrolling it').not.toBeNull();
+    expect(
+      reached!.scrollTop,
+      'and the SLOT must be what moved it, or the tile only came into view because the call put it there'
+    ).toBeGreaterThan(unclipped!.scrollTop);
+    expect(
+      reached!.insideVertically,
+      'the one reachable tile must land inside the slot own vertical scrollport, not merely on screen somewhere'
+    ).toBe(true);
+    expect(reached!.insideHorizontally, 'and inside it across, or the rail is clipping sideways too').toBe(true);
   });
 });
