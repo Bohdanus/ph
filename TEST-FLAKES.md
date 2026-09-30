@@ -307,14 +307,16 @@ AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
       Tests  1 failed | 1956 passed | 3 expected fail (1960)
 ```
 
-`useFile.test.tsx:176` is the `expect(...).toBeNull()` half of a test whose
-first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
-at `:175` — so the save **did** resolve and the pipeline **did** hand back its
+The `expect(screen.queryByText('Save File As...')).toBeNull()` in `useFile.test.tsx` is
+the `toBeNull()` half of a test whose first assertion has already passed —
+`expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
+— so the save **did** resolve and the pipeline **did** hand back its
 details. What failed is that a **Save File As dialog was open when it should not
 be**. (The failure quoted above says `:157`, which is what the reporter printed;
 the file has since grown — the `it.skip` above it, and 19 more lines — so the
-assertion now lives at `:176` and its passing sibling at `:175`. Read the line
-number in the quote as history and these two as the current tree.)
+assertion is the `toBeNull()` above, and its passing sibling is the
+`toHaveBeenCalledWith` directly above that. Read the line
+number in the quote as history and the assertion text as the current tree.)
 
 Read against this entry's own findings that is a real narrowing: the
 encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
@@ -757,8 +759,9 @@ the warm-up has not paid for yet. This is the other half and it looks exactly th
 same in the report, which is the trap. Observed twice, in two different runs, on a
 branch whose only e2e change was a header comment and a viewport ladder:
 
-- `e2e/sidebar-flyout.spec.ts:508` — `Test timeout of 30000ms exceeded while
-running "beforeEach" hook`, `page.goto` never returning.
+- `e2e/sidebar-flyout.spec.ts` — `Test timeout of 30000ms exceeded while
+running "beforeEach" hook`, `page.goto` never returning, from the file's single
+  `test.beforeEach` (`await page.goto('/')`).
 - `e2e/toolbar-fit.spec.ts:188` — the same signature, inside
   `open(page, height)`.
 
@@ -872,7 +875,7 @@ fixed two false claims in the new comments, but that is not the review.
   where the project's other unit files already are; an earlier version of that file's
   own note justified the location by a coverage-report claim that was a
   non-sequitur, and it is recorded there as wrong rather than quietly replaced
-- `e2e/sidebar-flyout.spec.ts:235-239` — the `beforeEach` that loses the race
+- `e2e/sidebar-flyout.spec.ts` — the `beforeEach` that loses the race
 - `e2e/flyout-longpress-race.spec.ts` — the committed tripwire for the long-press flyout race section 8 names as a CPU-contention flake, and for the misdiagnosis section 9 recounts
 - `e2e/helpers/screenshot-scale.ts:108-116`, `e2e/helpers/cdp-helpers.ts:53-54` — the stale
   1177px/440px figures section 8 records as stale
