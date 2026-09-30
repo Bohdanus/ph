@@ -3803,3 +3803,107 @@ already implemented on branch `fix/swarm-lock-identity` (commit `8c4316cf`), whi
 a single `holdingKey` helper for exactly this reason.
 
 **Files.** `scripts/lib/agent-board/db.mjs:1081`, `:1083`
+
+## 118. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
+
+**Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
+to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
+and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
+with 56 worktrees:
+
+```
+full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
+the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
+```
+
+So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
+bare `Test timed out` with no assertion — the same output a genuine break produces.
+
+**Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
+started with makes this test cross the line, and CI cannot tell the difference. A green local run at
+99 worktrees and a red CI run at 56 would be the same defect with a different cause.
+
+**Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
+worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
+answerable from a handful of synthetic worktrees in a temporary repository — the same technique the
+new fixture-based tests in this suite already use. Do **not** raise the timeout: that is a gate
+change, and it moves the knife edge rather than removing it.
+
+**A second, independent worktree-count sensitivity sits in the same file.** `it('gives every
+non-primary worktree a curated entry, so none is undocumented')` asserts on the SIZE OF THE
+OPERATOR'S FLEET and is red in any CI checkout with `expected 1 to be greater than 1`. It is being
+replaced on branch `test/infra-suite-hardening`. Two tests, one file, two unrelated reasons to depend
+on how many worktrees the operator happens to have.
+
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs`, `scripts/worktree-inventory.mjs`
+
+## 119. `ctx.filter` is set with no capability check, so a Safari blur silently becomes a no-op that history then records as pixels
+
+**Problem.** `main:src/tools/blur.ts:11` is `ctx.filter = \`blur(${radius}px)\`;`and there is **no**
+capability guard anywhere in`main` (`git grep -c "supportsCanvasFilter\|requireCanvasFilter" main
+-- src/`returns nothing). The same unguarded pattern is in`src/tools/colors.ts`and`src/tools/levels.ts`.
+
+`CanvasRenderingContext2D.filter` is **not Baseline**. caniuse records Safari `3.1 - 17.6: Not
+supported` (implementation: WebKit bug 198416, since resolved), and MDN's own page states "This
+feature is not Baseline because it does not work in some of the most widely-used browsers." So on
+Safari a Blur, a colour adjustment or a Levels adjustment applies **nothing**, and the app presents
+and records the unchanged bitmap. That is the worst shape of failure: a silent no-op that
+materializes into history as if it were the edit, and that no replay can reproduce.
+
+**Fix.** A capability gate, not a polyfill. Probe once by writing `grayscale(100%)` and reading it
+back, and when it is absent **refuse the filter rather than applying it as a no-op** — the refusal has
+to be loud precisely because the alternative looks like success. Then guard all four points where a
+filtered result is minted or consumed: `blur.ts` / `colors.ts` / `levels.ts` at the write; a
+`requiresCanvasFilter?: boolean` on `ToolProcessorDefinition` in `toolProcessors.ts`, set on the
+three; `history-replay.ts` skips a `requiresCanvasFilter` operation when support is absent; and
+`layer-renderer.ts` catches per layer so one unsupported layer logs instead of killing composition.
+`materialization.ts` guards the durable `operationFilter` too.
+
+A working implementation is on branch `wip/photoshop-fidelity` (commit `9394c998`), in a
+48-line `src/util/canvas-filter.ts` plus those guards. Two of that branch's other changes are
+already on main and must not be re-landed: `creator: true` on the shape family, and its
+`ShapeToolArea.tsx` (an ancestor of main's larger version).
+
+**Note for whoever lands it:** main's own canvas mock already makes the probe return true —
+`src/__tests__/canvas-mock.ts:64-65` makes `ctx.filter` a readable data property and
+`src/test/setup.ts:318-320` sets `filter: ''` — so no existing test goes red. The branch ships a
+richer mock of its own; take the guard, and take the richer mock only if it does not weaken any
+assertion elsewhere.
+
+**Files.** `src/tools/blur.ts:11`, `src/tools/colors.ts`, `src/tools/levels.ts`,
+`src/tools/toolProcessors.ts`, `src/contexts/history-replay.ts`,
+`src/contexts/layer-renderer.ts`, `src/contexts/materialization.ts`
+
+## 120. The Crop tooltip promises `Esc` restores the framing, in two copies, and the crop is a destructive raster operation
+
+**Problem.** The same sentence ships twice, and it is false:
+`main:src/tools/descriptions/tooltips.ts:185` and `main:src/tools/descriptions/type-crop.ts:129`
+both read _"Frames a new boundary for the photo; nothing is committed until you confirm, and Esc
+restores the old framing."_
+
+Nothing is committed until you confirm — that half is right. The `Esc` half is not: the crop is a
+destructive raster resize. `main:src/tools/crop.ts:27-36` allocates an `OffscreenCanvas` at the
+trimmed size, assigns `canvas.width = width; canvas.height = height;` and _then_ draws the old
+bitmap into it. The pixels outside the crop rectangle are discarded, not held.
+
+**Reproduce.** Start a crop, drag a boundary, press `Esc`, and read the canvas. The document is
+already trimmed, or — depending on where the `Esc` is handled — the framing is restored over a
+bitmap that no longer has the pixels it used to have. Either way the promise does not hold.
+
+**Fix.** Two separate decisions, and the second is the real one.
+
+1. Correct the copy in **both** files, or delete one of them. Two copies of one tooltip is itself a
+   maintenance hazard, and whichever survives must be the one the UI actually reads.
+2. Decide whether Crop is a _destructive_ operation or a _framing_ one, and make the behaviour match
+   the answer. A framing tool should keep the pixels outside the boundary and crop at rasterization
+   time, so `Esc` can mean what the tooltip says. A destructive tool should say so plainly, name the
+   loss, and not promise an undo the history does not offer. Do not "fix" this by adding a history
+   entry for the crop alone — that is a design change, and the wording question is cheaper to settle
+   first.
+
+**Why this was found twice and not fixed:** the same falsehood was independently reported in the
+abandoned `audit/chat-damage-90` branch. It survives because the text is duplicated, so a fix in one
+file leaves the other wrong and the e2e tooltip check reads whichever it reads.
+
+**Files.** `src/tools/descriptions/tooltips.ts:185`, `src/tools/descriptions/type-crop.ts:129`,
+`src/tools/crop.ts:27-36`
