@@ -3769,3 +3769,37 @@ canvas, and that `BottomToolbar.tsx` is an unintegrated stub; `main` has `Mobile
 
 **Files.** `src/components/SidebarRight/LayersTab.tsx:134`, `src/hooks/usePointerPosition.ts`,
 `src/hooks/useMediaQuery.ts`
+
+## 117. `scripts/lib/agent-board/db.mjs` carries two raw NUL bytes, so the file reads as binary
+
+**Problem.** `main:scripts/lib/agent-board/db.mjs` is 88,366 bytes and contains **two raw NUL bytes**,
+at **line 1081** and **line 1083** (byte offsets 43191 and 43309), inside the `Map` key of
+`locksFor`:
+
+```js
+const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path}<NUL>${lock.agent_id}`, lock]));
+```
+
+Any tool that sniffs for NUL — an editor agent, a diff viewer, a binary detector — reads the file as
+binary and refuses it. It is a real file in the repository right now, and it is the coordination
+database every worktree shares.
+
+**Reproduce.**
+
+```bash
+git show main:scripts/lib/agent-board/db.mjs | perl -0777 -ne '()=/\x00/g; print scalar(()), "\n"'   # 2
+git show main:scripts/lib/agent-board/db.mjs | perl -ne 'print "$.: $_ =~ s/\x00/<NUL>/gr if /\x00/'
+```
+
+**A detection trap worth knowing.** `grep -aob $'\000'` **cannot** find these: zsh truncates NUL in
+`argv`, so the pattern arrives empty and the command reports nothing found on a file that has two.
+That is a false negative produced by the tool, not by the file. Use
+`perl -0777 -ne '()=/\x00/g'`; `LC_ALL=C tr -dc '\000' | wc -c` also gives 2, via set complement.
+
+**Fix.** Replace the literal NUL separator with a printable one that cannot occur in a path or an
+agent id, and note the choice in a comment — the obvious fix is to write `'\0'` in the source, which
+keeps the byte out of the file while a reader still sees an escape. The working replacement is
+already implemented on branch `fix/swarm-lock-identity` (commit `8c4316cf`), which folds the pair into
+a single `holdingKey` helper for exactly this reason.
+
+**Files.** `scripts/lib/agent-board/db.mjs:1081`, `:1083`
