@@ -390,7 +390,16 @@ describe('SidebarLeft flyout hardening', () => {
     // six-class assertion leaves out (`rounded-sm` and the `<kbd>`'s size). An assertion set
     // that covers most of a diff reads as coverage of the diff.
     const row = screen.getByRole('menuitemradio', { name: 'Lasso Tool' });
-    expect(row).toHaveClass('py-1', 'px-2', 'text-[11px]', 'rounded-sm', '[&_svg]:!h-4', '[&_svg]:!w-4');
+    expect(row).toHaveClass(
+      'flex',
+      'items-center',
+      'py-1',
+      'px-2',
+      'text-[11px]',
+      'rounded-sm',
+      '[&_svg]:!h-4',
+      '[&_svg]:!w-4'
+    );
     expect(row.querySelector('kbd'), 'the shortcut hint is part of the row, and it has a size too').toHaveClass(
       'text-[9px]'
     );
@@ -398,13 +407,19 @@ describe('SidebarLeft flyout hardening', () => {
     // ONE stale class per `not.toHaveClass` call, deliberately. The matcher takes a list and
     // requires ALL of them, so `not.toHaveClass('p-1.5', 'min-w-48')` cannot fire unless both
     // are present at once — which is the one state the positive assertions above have already
-    // excluded. As a pair these read as a guard and catch nothing.
+    // excluded. Measured: a single stale class added leaves the old paired form green. As a
+    // pair these read as a guard and catch nothing.
     //
     // And `py-1.5` ALONGSIDE `py-1` is the realistic regression, not a replacement: Tailwind
-    // resolves the conflict in the stylesheet, where `.py-1.5` is emitted after `.py-1` and
-    // therefore wins. A replaced class fails the positive above; an added one does not, which
-    // is why this is worth a call of its own even though it overlaps the positive.
+    // emits named utilities in ascending value order, so `.py-1.5` follows `.py-1` and wins the
+    // cascade (compiled and confirmed). A REPLACED class fails the positive above; an ADDED one
+    // does not, which is why this is worth a call of its own.
     expect(row).not.toHaveClass('py-1.5');
+    // `text-xs` is the exception and it is worth knowing why: arbitrary values are emitted
+    // AFTER the named ones, so `text-[11px]` wins and an added `text-xs` is inert. This guard is
+    // a STRING PIN with no rendering consequence, unlike the three above. Kept because a
+    // density audit should not have to reason about the stylesheet to learn the declared label
+    // size, and it was proved to fire when both classes are present.
     expect(row).not.toHaveClass('text-xs');
 
     // The menu's own padding, and the minimum width that stops a short menu being a sliver.

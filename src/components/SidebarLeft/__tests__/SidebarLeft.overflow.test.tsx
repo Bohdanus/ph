@@ -380,12 +380,13 @@ describe('SidebarLeft the three-dots tile', () => {
   });
 
   it('opens its flyout on the press itself, with no hold to wait out', () => {
-    // FAKE TIMERS ARE THE POINT, and without them this test could not fail: with real timers
-    // a `setTimeout` that nobody advances simply never fires, so a regression to a delayed
-    // open would still show an open menu the moment the assertion ran… no — it would show NO
-    // menu, and pass for the wrong reason only if the assertion were absent. With fake
-    // timers installed and no `advanceTimersByTime` call, a delayed open is visibly pending
-    // and a real one is visibly complete, which is the difference this asserts.
+    // WHY THIS IS FALSIFIABLE, since the obvious reading is that it is not. A `setTimeout`
+    // that nobody advances never fires under EITHER kind of timer, so a delayed open shows no
+    // menu and the assertion below fails in both modes — verified by deleting
+    // `vi.useFakeTimers()` from this test and re-running it against a mutated app: still two
+    // failures. The fake timers are kept anyway, for hygiene rather than mechanism: without
+    // them a delayed open leaves a live timer that can fire into a LATER test and pass one on
+    // its behalf.
     vi.useFakeTimers();
     setSlotHeight(TILE_HEIGHT);
     render(<SidebarLeft />);
@@ -401,7 +402,7 @@ describe('SidebarLeft the three-dots tile', () => {
     ).not.toBeNull();
   });
 
-  it('selects no tool when it is pressed, or clicked, or activated from the keyboard', () => {
+  it('selects no tool when it is pressed, or clicked, or activated with no press behind it', () => {
     vi.useFakeTimers();
     setSlotHeight(TILE_HEIGHT);
     render(<SidebarLeft />);
@@ -422,16 +423,70 @@ describe('SidebarLeft the three-dots tile', () => {
     });
     expect(goToTool, 'a press on the three-dots tile must not choose a tool').not.toHaveBeenCalled();
 
-    // And the keyboard path, which never has a press behind it: Enter on the tile, then the
-    // click Enter synthesises. That one has to OPEN the menu — it is the only way in from the
-    // keyboard — but it must not select either.
+    // Now the leg that reaches `onClick`'s `identity` branch, which is the one this whole test
+    // is really about. That branch needs a click with NO press behind it ON A CLOSED MENU: the
+    // press above set `ignoreNextClickRef` (swallowing the first click at the top of `onClick`)
+    // and left the menu OPEN, so a second click is absorbed by the `isOpen` toggle instead and
+    // never arrives. Verified: deleting the `identity !== undefined` branch from `onClick`
+    // leaves this file green when the leg is written the obvious way.
+    //
+    // So the menu is closed first, and then a bare `click()` with nothing before it — which is
+    // what an assistive technology sends, and the only activation that reaches this branch at
+    // all: a DOM keyboard activation on a `<button>` is intercepted by `onKeyDown` and produces
+    // no click. It must OPEN the menu and select nothing.
     act(() => {
-      fireEvent.keyDown(overflowTile()!, { key: 'Enter' });
+      fireEvent.keyDown(overflowTile()!, { key: 'Escape' });
     });
+    expect(
+      screen.queryByRole('menu'),
+      'Escape must have closed it, or the click below is absorbed by the toggle and the branch goes untested'
+    ).toBeNull();
     act(() => {
       fireEvent.click(overflowTile()!);
     });
-    expect(goToTool, 'nor may the keyboard path through it').not.toHaveBeenCalled();
+    expect(goToTool, 'nor may a pressless activation').not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole('menu'),
+      'and that activation must have OPENED the menu, or this tile is unreachable for anyone not using a mouse'
+    ).not.toBeNull();
+  });
+
+  it('is still reachable by an activation after a press that left the tile before release', () => {
+    // A press that leaves the button before releasing — a drag, or a scroll that steals the
+    // pointer — produces NO click, so the flag the press set to swallow that click survives.
+    // For a mouse the next press clears it first, so nothing is observably wrong. For anything
+    // that activates without a press there is no next press: the stranded flag swallows the
+    // activation, and this tile — the only way into the tools that did not fit — becomes
+    // unreachable for it. So the flag is cleared on leave and cancel, and this pins that.
+    vi.useFakeTimers();
+    setSlotHeight(TILE_HEIGHT);
+    render(<SidebarLeft />);
+
+    act(() => {
+      fireEvent.pointerDown(overflowTile()!, { button: 0 });
+    });
+    act(() => {
+      fireEvent.pointerLeave(overflowTile()!);
+    });
+
+    // The press opened the menu, so dismiss it the way an outside click would, leaving the
+    // pressless activation below to run against a closed menu and whatever the flag now holds.
+    act(() => {
+      fireEvent.keyDown(overflowTile()!, { key: 'Escape' });
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'the press opened it and Escape must have closed it, or the activation below is absorbed by the toggle'
+    ).toBeNull();
+
+    act(() => {
+      fireEvent.click(overflowTile()!);
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'an activation after an abandoned press must still open the menu; swallowing it makes the hidden tools unreachable without a mouse'
+    ).not.toBeNull();
+    expect(goToTool, 'and it must not have chosen a tool on the way').not.toHaveBeenCalled();
   });
 
   it('toggles its flyout closed on the next press, so the open tile can be shut again', () => {
@@ -444,7 +499,7 @@ describe('SidebarLeft the three-dots tile', () => {
     act(() => {
       fireEvent.pointerDown(overflowTile()!, { button: 0 });
     });
-    expect(screen.queryByRole('menu')).not.toBeNull();
+    expect(screen.queryByRole('menu'), 'the first press opened it, with no timer advanced').not.toBeNull();
 
     act(() => {
       fireEvent.pointerDown(overflowTile()!, { button: 0 });
@@ -455,7 +510,10 @@ describe('SidebarLeft the three-dots tile', () => {
     act(() => {
       fireEvent.click(overflowTile()!);
     });
-    expect(screen.queryByRole('menu'), 'the second press closes what the first one opened').toBeNull();
+    expect(
+      screen.queryByRole('menu'),
+      'the second press closes what the first one opened, or the tile cannot dismiss its own menu'
+    ).toBeNull();
   });
 
   it('leaves the colour pickers in the rail when the fit has collapsed to this tile alone', () => {

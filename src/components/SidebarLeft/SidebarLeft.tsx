@@ -79,14 +79,21 @@ const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
 /**
  * The hold a grouped tile needs before its flyout opens, in milliseconds.
  *
- * Exported rather than inlined at the `setTimeout` because three suites and the Playwright
- * helper had each grown their own copy of the number, which is how `300` came to sit beside a
- * `350` that was only ever compatible by the accident of `300 + 50`. A threshold that is
- * duplicated is a threshold that is changed in one place, and the other place is then either
- * too early (a test that opens a flyout the app has not opened yet) or too late (a wait that
- * outlives the behaviour it is waiting for). One constant, imported by everything that has to
- * agree about it. The Playwright helper still carries a literal, because the `e2e` TypeScript
- * project does not compile `src/`, and its comment says where the authority is.
+ * Exported rather than inlined at the `setTimeout` because SIX places had each grown their own
+ * copy of the number — which is how `300` came to sit beside a `350` that was only ever
+ * compatible by the accident of `300 + 50`. A threshold that is duplicated is a threshold that
+ * is changed in one place, and every other place is then either too early (a test that opens a
+ * flyout the app has not opened yet) or too late (a wait that outlives the behaviour it waits
+ * for). Over-advancing a fake timer is the quiet case: 300 against a real 250 changes nothing
+ * observable, so two of the six stayed green and wrong.
+ *
+ * WHAT STILL DUPLICATES IT, so the next person does not rediscover this: ONE place, and it is
+ * the Playwright helper `e2e/helpers/toolbar-helpers.ts`, which cannot import this because the
+ * `e2e` TypeScript project does not compile `src/`. That mirror is pinned against this export
+ * by an assertion in `e2e/helpers/__tests__/toolbar-helpers.unit.test.ts`, which is what makes
+ * it a mirror rather than a fourth opinion. A static import of this file from `e2e/` was tried
+ * and is not available: `tsconfig.e2e.json` sets no `jsx`, so importing a `.tsx` fails the
+ * build even though Playwright's own transform would load it.
  *
  * Not the three-dots tile's path, which opens on `pointerdown` with no hold at all — see
  * `onPointerDown` in `renderToolGroup`.
@@ -619,7 +626,13 @@ const SidebarLeft = () => {
             aria-expanded={hasFlyout ? isOpen : undefined}
             aria-haspopup={hasFlyout ? 'menu' : undefined}
             aria-label={tileLabel}
-            aria-pressed={group.some((tool) => tool.name === toolName)}
+            // Absent on the three-dots tile, deliberately. `group` there is the whole hidden
+            // set, so `aria-pressed` would announce — and the active class would paint — for
+            // whichever HIDDEN tool happens to be selected, on a tile whose only job is to open
+            // a menu. A control that opens something carries `aria-haspopup`/`aria-expanded`
+            // (both above) and must not also claim to be a pressed toggle for a tool the user
+            // cannot see.
+            aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
             onClick={() => {
               if (hasFlyout && ignoreNextClickRef.current) {
@@ -636,11 +649,13 @@ const SidebarLeft = () => {
                   return;
                 }
                 // A tile with an `identity` selects nothing, ever. Its press has already opened
-                // the menu, so the only way to arrive here is a click with no press behind it —
-                // a KEYBOARD activation, or a click the browser synthesised after a press that
-                // was already consumed. Both mean "open the menu", never "pick a tool": the
-                // three-dots tile has no default tool, and `group[0]` standing in for one is
-                // the same liability its `identity` exists to remove.
+                // the menu and set `ignoreNextClickRef`, so the only caller that reaches here is
+                // a click with NO press behind it on a CLOSED menu — in practice an assistive
+                // technology's `element.click()`, since a DOM keyboard activation on a `<button>`
+                // is intercepted by `onKeyDown` above and never produces a click at all. Both
+                // readings mean "open the menu", never "pick a tool": the three-dots tile has no
+                // default tool, and `group[0]` standing in for one is the same liability its
+                // `identity` exists to remove.
                 if (identity !== undefined) {
                   openFlyout(groupIndex);
                   return;
@@ -708,6 +723,16 @@ const SidebarLeft = () => {
             onPointerLeave={() => {
               suppressLongPressRef.current = false;
               longPressOpenedRef.current = false;
+              // `ignoreNextClickRef` too, and this is load-bearing rather than tidiness. The
+              // three-dots press sets it, and its only clearer is that button's own `onClick` —
+              // so a press that leaves the button before releasing (a drag, or a pointer capture
+              // stolen by a scroll) never produces that click, and the flag survives. The
+              // casualty is the NEXT activation: for a mouse the next press on any grouped tile
+              // clears it first, but an assistive technology's click on this tile has no press,
+              // so a stranded flag swallows the one activation AT has for reaching a menu.
+              // Cheap, and it cannot lose anything — the press it cancels is one that never
+              // resolved into a click anyway.
+              ignoreNextClickRef.current = false;
               clearLongPressFlyout();
             }}
             onPointerUp={() => {
@@ -721,6 +746,9 @@ const SidebarLeft = () => {
             onPointerCancel={() => {
               suppressLongPressRef.current = false;
               longPressOpenedRef.current = false;
+              // A cancelled pointer never produces a click, so the flag it would have set is
+              // pure residue. See `onPointerLeave` for why that residue is not harmless.
+              ignoreNextClickRef.current = false;
               clearLongPressFlyout();
             }}
             type="button"
@@ -779,12 +807,21 @@ const SidebarLeft = () => {
                * density, which is the compact one, the tile being the comfortable one. At
                * tile density the menu put three tools in the space two belong in.
                *
-               * WHAT IS MEASURED AND WHAT IS CHOSEN, because they are not the same claim: in
-               * Chrome at 1280x900 this is a 24.5px row and an 80px three-item menu, measured,
-               * where it was a 40px row and 134px. The numbers are DESIGN values, not
-               * measurements — and no document in this repo records Photoshop's own flyout row
-               * height, so nothing here should be read as one; the target was the operator's
-               * instruction and this is the density it produced.
+               * WHAT IS MEASURED AND WHAT IS DERIVED, because they are not the same claim and
+               * this heading used to conflate them. MEASURED in Chrome at 1280x900: every row
+               * of a 2-, 3- and 30-item menu is 24.5px, every row icon is 16.0px, and the
+               * 8px gap to the rail is unchanged. DERIVED from those, and not measured: a
+               * three-item menu is 3 × 24.5 + 2px of `p-0.5` a side + two 1px borders =
+               * 79.5px, which is the "80px" below rounded. What the e2e spec PINS is weaker
+               * than either — a row height of at most 27px and an icon of exactly 16 — because a
+               * bound that tight enough to reject the old 40px row is the most falsifiable
+               * number available, and a figure with a decimal place would have rotted the
+               * first time the font metrics moved.
+               *
+               * The row's own numbers are DESIGN values, not measurements — and no document in
+               * this repo records Photoshop's flyout row height, so nothing here should be read
+               * as one. The target was the operator's instruction and this is the density it
+               * produced.
                *
                * AND THE HEIGHT IS NOT THE ICON'S TO SET, which is the part that is easy to get
                * wrong twice. A row's height is `max(icon, label line box) + padding`, and
@@ -870,15 +907,22 @@ const SidebarLeft = () => {
                       // specificity (0,1,1) against `.h-7`'s (0,1,0), so it wins on
                       // specificity alone inside `@layer utilities` whatever order the two are
                       // emitted in — both orders were compiled, and the descendant selector
-                      // wins either way. It is kept deliberately, as a tripwire against a
-                      // future single-class rule landing at the same specificity, and a test
-                      // pins it, so dropping it reads as the change it is rather than tidying.
+                      // wins either way. It is kept deliberately, and pinned by a test, so
+                      // dropping it reads as the change it is rather than as tidying. What it is
+                      // NOT a tripwire for is another utilities-layer rule: inside one cascade
+                      // layer a (0,1,0) declaration loses to a (0,1,1) one with or without
+                      // `!important`, so `!` only changes the outcome against an UNLAYERED or
+                      // inline declaration. The reason to keep it is that `IconShell`'s own
+                      // `h-7` is one refactor away from becoming inline or moving out of the
+                      // layer, and the cost of keeping it is one character.
                       //
                       // It reaches one icon by accident worth recording: `MoreToolsIcon` is
-                      // the only rail icon that bypasses `IconShell` (24px,
-                      // `overflow: hidden`). It is never a row child — rows take
-                      // `getToolIcon(tool)` — so it is untouched today, and it is the one thing
-                      // that would break if a row ever rendered an `identity.Icon`.
+                      // the only rail icon that bypasses `IconShell` — it is `h-6 w-6` and
+                      // declares no overflow of its own, where `IconShell` sets
+                      // `overflow-visible`. It is never a row child (rows take
+                      // `getToolIcon(tool)`), so it is untouched today, and it is the one thing
+                      // that would render at 24px inside a 24.5px row if a row ever rendered an
+                      // `identity.Icon`.
                       className={`flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition-colors [&_svg]:!h-4 [&_svg]:!w-4 ${
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
