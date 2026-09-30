@@ -98,6 +98,12 @@ describe('RectangularSelection toolbar', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     copyActiveSelectionMock.mockClear();
+    // The real hook returns `true` on success (`useSelectionClipboard.ts:61`), and the component
+    // now READS that boolean. Left at the `undefined` a bare `vi.fn()` returns, a click here
+    // would look exactly like a refused copy, so the default has to be the success value —
+    // otherwise every test that copies without asking for a return value reports a failure
+    // that never happened.
+    copyActiveSelectionMock.mockReturnValue(true);
     pasteSelectionClipboardMock.mockClear();
     hasSelectionClipboard.current = true;
     storeState.activeSelectionId = 'selection-1';
@@ -120,18 +126,57 @@ describe('RectangularSelection toolbar', () => {
   });
 
   it('copies the active committed rectangular selection from store state', async () => {
-    render(<RectangularSelection />);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    // `restoreMocks` is off, and the only global `afterEach` is `cleanup()` plus
+    // `useRealTimers()`, so a red assertion here would leave `console.error` mocked for every test
+    // after it in the file.
+    try {
+      render(<RectangularSelection />);
 
-    await waitFor(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+      await waitFor(() => {
+        expect(copyActiveSelectionMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 'selection-1',
+            geometry: 'rectangle',
+          })
+        );
+      });
+      // A copy that succeeded reports nothing, so a bar that logged on the happy path would be
+      // indistinguishable from one that only learned to log at all.
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('reports a copy that returns false, which is not the throwing path', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Same reason as the test above: the restore has to run whatever the assertions do.
+    try {
+      // A REFUSAL, not a throw: `copySelection` returns `false` when there is no snapshot to take
+      // (`useSelectionClipboard.ts:46`) and never reaches a `catch`, so the only way out of the
+      // silent path is the component reading the boolean itself. The
+      // `if (!activeRectangleSelection || !activeRectangleRect)` guard above it is why this case —
+      // and only this case — is reportable from here: nothing selected is not a copy failure, and
+      // the button is disabled for it anyway.
+      copyActiveSelectionMock.mockReturnValueOnce(false);
+      render(<RectangularSelection />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+      expect(errorSpy).toHaveBeenCalledWith('Failed to copy rectangular selection');
+      // The refusal still reached the clipboard hook; only the outcome went unreported.
       expect(copyActiveSelectionMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 'selection-1',
-          geometry: 'rectangle',
-        })
+        expect.objectContaining({ id: 'selection-1', geometry: 'rectangle' })
       );
-    });
+    } finally {
+      copyActiveSelectionMock.mockReset();
+      errorSpy.mockRestore();
+    }
   });
 
   it('pastes the in-app copied selection as a new layer', () => {

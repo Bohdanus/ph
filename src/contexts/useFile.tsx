@@ -81,7 +81,6 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       uploadResolverRef.current = null;
     } catch (error) {
       console.error('Failed to load image:', error);
-      window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
       uploadResolverRef.current?.(null);
       uploadResolverRef.current = null;
     }
@@ -127,14 +126,27 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       }
       saveResolverRef.current?.(quality === undefined ? { fileName, format } : { fileName, format, quality });
       saveResolverRef.current = null;
-    } catch (e) {
-      console.error('Failed to save image:', e);
-      window.alert(`Failed to save file: ${e instanceof Error ? e.message : String(e)}`);
-      saveResolverRef.current?.(null);
-      saveResolverRef.current = null;
-    } finally {
+      // The teardown belongs to the success branch, NOT to `finally`. A `finally` runs on
+      // every exit, so it conflated "the attempt finished" with "the save worked" and tore
+      // the dialog down on a failure exactly as it does on a success: the user lost the
+      // chance to change format/quality and retry, and had to redo the whole export.
+      // Leaving both calls here is also what makes a retry work at all — `fileInput` stays
+      // staged, so the second attempt encodes the same `{ canvas, layers, size,
+      // documentFrame }`, and the dialog's `key` is derived from `fileInput.fileName`, so
+      // an unchanged input means no remount and the user's own `fileName`/`format`/
+      // `jpegQuality` edits are still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
+    } catch (e) {
+      console.error('Failed to save image:', e);
+      // `null` is the in-band failure signal every caller already guards with
+      // `if (data)`, so it still resolves, and it still resolves the promise exactly once
+      // because it is the first and only caller of a resolver that is nulled immediately
+      // after. The dialog, the staged input and the dialog's own controls all stay put, so
+      // the retry re-enters this `try` with `fileInput` intact and the now-nulled
+      // `saveResolverRef` makes the second resolution a no-op rather than a stale resolve.
+      saveResolverRef.current?.(null);
+      saveResolverRef.current = null;
     }
   }
 

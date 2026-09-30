@@ -34,20 +34,23 @@ import { run } from '../agent-board.mjs';
  * spawn count, not computation.
  *
  * The default is not merely tight for that, it is at the measured cost of this
- * file's own slowest test: across three isolated runs of the three `scripts/`
- * suites on this machine the slowest span here was 4.5s
- * (`emits valid JSON for EVERY machine-facing command, driven from the list`),
- * against a 5s budget. A budget at the value of the work it is timing is not a
- * flake waiting to happen, and `npm run test` has already reported a test from
- * this block failing with no code change — which is what a budget with no margin
- * looks like.
+ * file's own slowest test. What a span costs here is process spawns, and spawns
+ * cost whatever the machine is doing, so the figure is an OBSERVATION OF ONE RUN
+ * and not a property of the file: 4.5s across three isolated runs on an idle
+ * machine, and 2.9s when the same file was measured again on a busier day with 93
+ * worktrees live. Nothing about the tests changed. Read the HEADROOM rather than
+ * the figure — 20s against the worst span this file has been seen to take is 4x
+ * to 7x — because surviving a loaded machine is the property that has to hold. A
+ * budget at the value of the work it is timing has no such property, and
+ * `npm run test` has already reported a test from this block failing with no code
+ * change.
  *
  * What is deliberately NOT claimed here: any contention factor. A full 266-file
  * run was measured against these same tests and came out FASTER per test than the
  * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
  * not a thing this suite can currently support. The headroom below is stated for
- * what it is: 20s is about four times this file's own worst measured case, so a
- * machine several times slower than this one still runs the file.
+ * what it is: room for a machine several times more loaded than the one these
+ * figures were taken on.
  *
  * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
  * only decides how long a test may run before the harness reports it, and no

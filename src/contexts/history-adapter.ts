@@ -674,13 +674,17 @@ export function legacyHistoryToDurable(
           if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
         } else {
           // `replayHistory` drops a frame action whose `nextFrame` is not a valid
-          // frame too (`history-replay.ts:91-97` guards the assignment on
+          // frame too (`history-replay.ts:99-105` guards the assignment on
           // `isValidDocumentFrame`), so for an enabled entry the shadow stays in
           // PARITY with legacy replay and there is no disagreement to fail closed
           // over. (Two shapes are not parity and are not claimed to be: a
           // DISABLED entry, which legacy replay skips without an opinion
-          // (`history-replay.ts:74`), and a bedrock source, which rewrites the
-          // legacy frame before this branch runs (`history-replay.ts:85-89`).)
+          // (`history-replay.ts:74`), and a bedrock source on the INITIAL document
+          // entry, which still establishes the legacy frame
+          // (`history-replay.ts:91-97`) while the create-layer arm never touches
+          // `currentFrame`. A bedrock commit at any LATER index is not a
+          // disagreement: legacy replay ignores it too, so both sides hold the
+          // frame the baseline established.)
           // But parity alone is not observability: this branch cannot throw, so
           // without a diagnostic the conversion reports `status: 'current'`
           // while silently losing a document-frame change, and the only other

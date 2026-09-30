@@ -93,7 +93,7 @@ describe('FileProvider PSD integration', () => {
     expect(loadDocumentFile).toHaveBeenCalledWith(file);
   });
 
-  it('resolves PSD encoding failure with null, no download, and alert', async () => {
+  it('resolves PSD encoding failure with null, no download, and a logged error', async () => {
     let finish!: (error: Error) => void;
     vi.mocked(savePsd).mockImplementation(
       () =>
@@ -125,7 +125,6 @@ describe('FileProvider PSD integration', () => {
     });
     expect(downloadBlob).not.toHaveBeenCalled();
     expect(resolved).toHaveBeenCalledWith(null);
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: Encoding failed');
     expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Encoding failed'));
   });
 
@@ -176,7 +175,7 @@ describe('FileProvider PSD integration', () => {
     expect(screen.queryByText('Save File As...')).toBeNull();
   });
 
-  it('resolves PSD load failure with null, no document, and alert', async () => {
+  it('resolves PSD load failure with null, no document, and a logged error', async () => {
     vi.mocked(loadDocumentFile).mockRejectedValue(new Error('PSD load error'));
     const { container } = render(
       <FileProvider>
@@ -192,7 +191,6 @@ describe('FileProvider PSD integration', () => {
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
     expect(loadDocumentFile).toHaveBeenCalledWith(file);
-    expect(window.alert).toHaveBeenCalledWith('Failed to open file: PSD load error');
     expect(console.error).toHaveBeenCalledWith('Failed to load image:', new Error('PSD load error'));
   });
 
@@ -221,7 +219,6 @@ describe('FileProvider PSD integration', () => {
 describe('FileProvider openNewImageDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -371,7 +368,6 @@ describe('FileProvider openNewImageDialog', () => {
 describe('FileProvider save dialog edge cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -496,7 +492,7 @@ describe('FileProvider save dialog edge cases', () => {
     expect(saveImageToDisk).not.toHaveBeenCalled();
   });
 
-  it('handles save failure with alert and null resolution', async () => {
+  it('handles save failure with a logged error and null resolution', async () => {
     vi.mocked(saveImageToDisk).mockRejectedValue(new Error('Disk full'));
     render(
       <FileProvider>
@@ -515,11 +511,10 @@ describe('FileProvider save dialog edge cases', () => {
     });
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: Disk full');
     expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Disk full'));
   });
 
-  it('handles PSD save failure with alert and null resolution', async () => {
+  it('handles PSD save failure with a logged error and null resolution', async () => {
     let finish!: (error: Error) => void;
     vi.mocked(savePsd).mockImplementation(
       () =>
@@ -553,7 +548,7 @@ describe('FileProvider save dialog edge cases', () => {
     });
     expect(downloadBlob).not.toHaveBeenCalled();
     expect(resolved).toHaveBeenCalledWith(null);
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: PSD encoding failed');
+    expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('PSD encoding failed'));
   });
 
   it('handles multiple sequential saves', async () => {
@@ -590,6 +585,182 @@ describe('FileProvider save dialog edge cases', () => {
   });
 });
 
+/**
+ * A failed export must leave the Save dialog on screen. The teardown used to sit in the
+ * `finally` of `handleImageSave`, so "the attempt finished" and "the save worked" were the
+ * same condition and a failure closed the dialog exactly as a success does — which took
+ * away the only affordance that could recover from one. Each test below pins one half of
+ * the contract, because the two halves fail independently: a dialog that stays open but
+ * keeps its controls disabled is not a retry path, and re-enabled controls on a dialog
+ * that closed are not a retry either.
+ */
+describe('FileProvider save dialog after a failed export', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const stagedInput = () => ({
+    canvas: document.createElement('canvas'),
+    fileName: 'test.png',
+    layers: {},
+    size: { width: 10, height: 10 },
+  });
+
+  const submit = () => screen.getByTestId('save-dialog-submit-button') as HTMLButtonElement;
+  const cancel = () => screen.getByTestId('save-dialog-cancel-button') as HTMLButtonElement;
+
+  it('keeps the dialog on screen and its controls live after a failed raster export', async () => {
+    vi.mocked(saveImageToDisk).mockRejectedValue(new Error('Disk full'));
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openSaveImageDialog(stagedInput()).then(resolved);
+    });
+
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+    await waitFor(() => expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Disk full')));
+
+    // The failure is still reported in band, so the caller's `if (data)` guard holds and
+    // the document is never marked saved.
+    expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
+    expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
+    // `saving` is reset by SaveDialog's own `finally`, so the dialog is not a shell.
+    expect(submit().disabled).toBe(false);
+    expect(cancel().disabled).toBe(false);
+  });
+
+  it('closes the dialog when the export succeeds', async () => {
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openSaveImageDialog(stagedInput()).then(resolved);
+    });
+
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+    await waitFor(() => expect(resolved).toHaveBeenCalledExactlyOnceWith({ fileName: 'test (copy)', format: 'image/png' }));
+
+    expect(screen.queryByTestId('save-dialog')).toBeNull();
+  });
+
+  it('carries the format, filename and quality the user chose into the retry, and closes on the retry', async () => {
+    // The dialog is keyed on the staged file name, so a failure that leaves the staged
+    // input alone must not remount it: the point of a retry is that the user's own
+    // settings are still on screen. A remount would silently revert all three.
+    vi.mocked(saveImageToDisk).mockRejectedValue(new Error('Encoder refused this canvas'));
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openSaveImageDialog(stagedInput()).then(resolved);
+    });
+    fireEvent.change(screen.getByTestId('save-dialog-filename-input'), { target: { value: 'poster' } });
+    fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'image/jpeg' } });
+    fireEvent.change(screen.getByTestId('save-dialog-jpeg-quality'), { target: { value: '0.35' } });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+    await waitFor(() => expect(console.error).toHaveBeenCalledWith('Failed to save image:', expect.any(Error)));
+
+    expect((screen.getByTestId('save-dialog-filename-input') as HTMLInputElement).value).toBe('poster');
+    expect((screen.getByTestId('save-dialog-format-select') as HTMLSelectElement).value).toBe('image/jpeg');
+    expect((screen.getByTestId('save-dialog-jpeg-quality') as HTMLInputElement).value).toBe('0.35');
+
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    fireEvent.click(submit());
+    await waitFor(() => expect(screen.queryByTestId('save-dialog')).toBeNull());
+
+    expect(saveImageToDisk).toHaveBeenCalledTimes(2);
+    for (const call of vi.mocked(saveImageToDisk).mock.calls) {
+      expect(call.slice(1)).toEqual(['poster', 'image/jpeg', 0.35]);
+    }
+    // The failed attempt settled the promise with `null` and nulled the resolver, so the
+    // successful retry resolved nothing: one settlement, not two.
+    expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  it('re-encodes the same committed layers, size and frame on a retry after a failed PSD export', async () => {
+    // The teardown also cleared `fileInput`, which is the only thing holding the staged
+    // export record. A retry is only faithful if the second attempt encodes what the
+    // caller's `commitDirtyTool()` produced, not a re-read of anything it owns.
+    let fail!: (error: Error) => void;
+    vi.mocked(savePsd).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject;
+        })
+    );
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const documentFrame = { x: 4, y: 5, width: 10, height: 10 };
+    const input = { ...stagedInput(), fileName: 'drawing.psd', documentFrame };
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
+    });
+    fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'psd' } });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+    await waitFor(() => expect(savePsd).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      fail(new Error('PSD encoding failed'));
+    });
+
+    expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
+    expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
+
+    vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
+    fireEvent.click(submit());
+    await waitFor(() => expect(screen.queryByTestId('save-dialog')).toBeNull());
+
+    expect(savePsd).toHaveBeenCalledTimes(2);
+    for (const call of vi.mocked(savePsd).mock.calls) {
+      expect(call).toEqual([input.layers, input.size, documentFrame]);
+    }
+    expect(downloadBlob).toHaveBeenCalledTimes(1);
+    expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  it('closes on Cancel after a failed export without re-resolving the settled promise', async () => {
+    vi.mocked(saveImageToDisk).mockRejectedValue(new Error('Disk full'));
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openSaveImageDialog(stagedInput()).then(resolved);
+    });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+    await waitFor(() => expect(resolved).toHaveBeenCalledExactlyOnceWith(null));
+
+    fireEvent.click(cancel());
+
+    expect(screen.queryByTestId('save-dialog')).toBeNull();
+    // Cancel runs the same `saveResolverRef.current?.(null)` the failure already ran, so
+    // `resolved` has to still be a single `null` rather than a second call.
+    expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
+    expect(saveImageToDisk).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('FileProvider openLoadImageDialog edge cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -616,7 +787,7 @@ describe('FileProvider openLoadImageDialog edge cases', () => {
     const file = new File(['test'], 'document.pdf');
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to open file: Unsupported format');
+    expect(console.error).toHaveBeenCalledWith('Failed to load image:', new Error('Unsupported format'));
   });
 
   it('resets file input value after selection', async () => {
@@ -714,7 +885,6 @@ describe('useFile outside its provider', () => {
 describe('FileProvider document frame and non-Error failures', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -773,7 +943,7 @@ describe('FileProvider document frame and non-Error failures', () => {
     expect(vi.mocked(savePsd).mock.calls[0]).toHaveLength(2);
   });
 
-  it('stringifies a non-Error load failure into the alert message', async () => {
+  it('logs a non-Error load failure verbatim and resolves null', async () => {
     vi.mocked(loadDocumentFile).mockRejectedValue('decoder exploded');
     const { container } = render(
       <FileProvider>
@@ -789,10 +959,12 @@ describe('FileProvider document frame and non-Error failures', () => {
     });
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to open file: decoder exploded');
+    // Nothing stringifies the reason any more, so the log is the only record of it and
+    // a raw rejection has to reach it unchanged.
+    expect(console.error).toHaveBeenCalledWith('Failed to load image:', 'decoder exploded');
   });
 
-  it('stringifies a non-Error save failure into the alert message', async () => {
+  it('logs a non-Error save failure verbatim and resolves null', async () => {
     vi.mocked(saveImageToDisk).mockRejectedValue('encoder exploded');
     render(
       <FileProvider>
@@ -813,7 +985,7 @@ describe('FileProvider document frame and non-Error failures', () => {
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
-    expect(window.alert).toHaveBeenCalledWith('Failed to save file: encoder exploded');
+    expect(console.error).toHaveBeenCalledWith('Failed to save image:', 'encoder exploded');
   });
 
   it('proposes a bare copy name when the requested file name is empty', async () => {

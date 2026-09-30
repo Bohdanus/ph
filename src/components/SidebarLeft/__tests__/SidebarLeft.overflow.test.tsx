@@ -156,7 +156,6 @@ const openOverflowFlyout = (): string[] => {
 
 describe('SidebarLeft overflow', () => {
   useSidebarLeftHarness();
-
   beforeEach(() => {
     geometry.slotHeight = Number.NaN;
     ManualResizeObserver.instances = [];
@@ -355,5 +354,195 @@ describe('SidebarLeft overflow', () => {
       rerender(<SidebarLeft />);
     });
     expect(visibleTools()).toEqual(collapsed);
+  });
+});
+
+/**
+ * The two things the operator pinned about the three-dots tile, as behaviour.
+ *
+ * Kept out of the file's other describes deliberately: they are claims about ONE tile's
+ * response to a press, and the describes above are about the fit.
+ */
+describe('SidebarLeft the three-dots tile', () => {
+  useSidebarLeftHarness();
+
+  beforeEach(() => {
+    geometry.slotHeight = Number.NaN;
+    ManualResizeObserver.instances = [];
+    vi.stubGlobal('ResizeObserver', ManualResizeObserver);
+    installGeometry();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('opens its flyout on the press itself, with no hold to wait out', () => {
+    // WHY THIS IS FALSIFIABLE, since the obvious reading is that it is not. A `setTimeout`
+    // that nobody advances never fires under EITHER kind of timer, so a delayed open shows no
+    // menu and the assertion below fails in both modes — verified by deleting
+    // `vi.useFakeTimers()` from this test and re-running it against a mutated app: still two
+    // failures. The fake timers are kept anyway, for hygiene rather than mechanism: without
+    // them a delayed open leaves a live timer that can fire into a LATER test and pass one on
+    // its behalf.
+    vi.useFakeTimers();
+    setSlotHeight(TILE_HEIGHT);
+    render(<SidebarLeft />);
+
+    const tile = overflowTile()!;
+    act(() => {
+      fireEvent.pointerDown(tile, { button: 0 });
+    });
+
+    expect(
+      screen.queryByRole('menu'),
+      'the press that opens this menu is the only press there is: a hold on the one tile whose job is to be the way IN to the hidden tools makes the way in feel broken'
+    ).not.toBeNull();
+  });
+
+  it('selects no tool when it is pressed, or clicked, or activated with no press behind it', () => {
+    vi.useFakeTimers();
+    setSlotHeight(TILE_HEIGHT);
+    render(<SidebarLeft />);
+
+    // The press, then the click the browser synthesises from it. This tile stands for no
+    // tool, so there is no "default tool" a click could honestly mean — and the failure this
+    // guards is a real one, because the tile's `primaryTool` is `group[0]`, so a click that
+    // reached `selectTool` would silently select whichever tool happens to be first in the
+    // overflow list and change what the user is drawing with.
+    act(() => {
+      fireEvent.pointerDown(overflowTile()!, { button: 0 });
+    });
+    act(() => {
+      fireEvent.pointerUp(overflowTile()!, { button: 0 });
+    });
+    act(() => {
+      fireEvent.click(overflowTile()!);
+    });
+    expect(goToTool, 'a press on the three-dots tile must not choose a tool').not.toHaveBeenCalled();
+
+    // Now the leg that reaches `onClick`'s `identity` branch, which is the one this whole test
+    // is really about. That branch needs a click with NO press behind it ON A CLOSED MENU: the
+    // press above set `ignoreNextClickRef` (swallowing the first click at the top of `onClick`)
+    // and left the menu OPEN, so a second click is absorbed by the `isOpen` toggle instead and
+    // never arrives. Verified: deleting the `identity !== undefined` branch from `onClick`
+    // leaves this file green when the leg is written the obvious way.
+    //
+    // So the menu is closed first, and then a bare `click()` with nothing before it — which is
+    // what an assistive technology sends, and the only activation that reaches this branch at
+    // all: a DOM keyboard activation on a `<button>` is intercepted by `onKeyDown` and produces
+    // no click. It must OPEN the menu and select nothing.
+    act(() => {
+      fireEvent.keyDown(overflowTile()!, { key: 'Escape' });
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'Escape must have closed it, or the click below is absorbed by the toggle and the branch goes untested'
+    ).toBeNull();
+    act(() => {
+      fireEvent.click(overflowTile()!);
+    });
+    expect(goToTool, 'nor may a pressless activation').not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole('menu'),
+      'and that activation must have OPENED the menu, or this tile is unreachable for anyone not using a mouse'
+    ).not.toBeNull();
+  });
+
+  it('is still reachable by an activation after a press that left the tile before release', () => {
+    // A press that leaves the button before releasing — a drag, or a scroll that steals the
+    // pointer — produces NO click, so the flag the press set to swallow that click survives.
+    // For a mouse the next press clears it first, so nothing is observably wrong. For anything
+    // that activates without a press there is no next press: the stranded flag swallows the
+    // activation, and this tile — the only way into the tools that did not fit — becomes
+    // unreachable for it. So the flag is cleared on leave and cancel, and this pins that.
+    vi.useFakeTimers();
+    setSlotHeight(TILE_HEIGHT);
+    render(<SidebarLeft />);
+
+    act(() => {
+      fireEvent.pointerDown(overflowTile()!, { button: 0 });
+    });
+    act(() => {
+      fireEvent.pointerLeave(overflowTile()!);
+    });
+
+    // The press opened the menu, so dismiss it the way an outside click would, leaving the
+    // pressless activation below to run against a closed menu and whatever the flag now holds.
+    act(() => {
+      fireEvent.keyDown(overflowTile()!, { key: 'Escape' });
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'the press opened it and Escape must have closed it, or the activation below is absorbed by the toggle'
+    ).toBeNull();
+
+    act(() => {
+      fireEvent.click(overflowTile()!);
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'an activation after an abandoned press must still open the menu; swallowing it makes the hidden tools unreachable without a mouse'
+    ).not.toBeNull();
+    expect(goToTool, 'and it must not have chosen a tool on the way').not.toHaveBeenCalled();
+  });
+
+  it('toggles its flyout closed on the next press, so the open tile can be shut again', () => {
+    // A press that only ever opened would leave the menu with no way to dismiss it from the
+    // tile, which is the one dismissal a user reaches for first.
+    vi.useFakeTimers();
+    setSlotHeight(TILE_HEIGHT);
+    render(<SidebarLeft />);
+
+    act(() => {
+      fireEvent.pointerDown(overflowTile()!, { button: 0 });
+    });
+    expect(screen.queryByRole('menu'), 'the first press opened it, with no timer advanced').not.toBeNull();
+
+    act(() => {
+      fireEvent.pointerDown(overflowTile()!, { button: 0 });
+    });
+    act(() => {
+      fireEvent.pointerUp(overflowTile()!, { button: 0 });
+    });
+    act(() => {
+      fireEvent.click(overflowTile()!);
+    });
+    expect(
+      screen.queryByRole('menu'),
+      'the second press closes what the first one opened, or the tile cannot dismiss its own menu'
+    ).toBeNull();
+  });
+
+  it('leaves the colour pickers in the rail when the fit has collapsed to this tile alone', () => {
+    render(<SidebarLeft />);
+
+    // The strongest witness available, and the one this file can produce: at a slot height
+    // that fits nothing at all, the rail is the three-dots tile, one divider and the colour
+    // cluster — and the cluster is still there. The colour pickers are the only way to choose
+    // a paint colour in this app (there is no Color, Swatches or HSB panel), so a fit that
+    // dropped them at a short window would take the capability away silently, in the one
+    // place nobody would think to look for it.
+    setSlotHeight(2000);
+    const all = visibleTools();
+    expect(all.length, 'and the fit can show every tool when there is room for them').toBeGreaterThan(4);
+
+    setSlotHeight(TILE_HEIGHT);
+    expect(visibleTools(), 'the fit really has collapsed to nothing else').toHaveLength(0);
+    expect(overflowTile(), 'leaving the three-dots tile as the only tile').not.toBeNull();
+
+    expect(
+      screen.getByTestId('color-pickers'),
+      'the colour cluster is never part of what collapses'
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('foreground-color-swatch')).toBeInTheDocument();
+    expect(screen.getByTestId('background-color-swatch')).toBeInTheDocument();
+    // The two native inputs are what make the swatches open a picker at all; a cluster of
+    // two divs with no input is a picture of a colour control.
+    expect(screen.getByTestId('foreground-color-input')).toBeInTheDocument();
+    expect(screen.getByTestId('background-color-input')).toBeInTheDocument();
+    expect(screen.getByTestId('swap-colors-button')).toBeInTheDocument();
   });
 });

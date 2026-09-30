@@ -77,7 +77,9 @@ const EllipticalSelection: React.FC<{}> = () => {
   const handleCopy = () => {
     if (!activeSelection) return;
 
-    copyActiveSelection(activeSelection);
+    if (!copyActiveSelection(activeSelection)) {
+      console.error('Failed to copy elliptical selection');
+    }
   };
 
   const hint = (() => {

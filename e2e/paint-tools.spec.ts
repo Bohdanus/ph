@@ -433,9 +433,12 @@ async function expectLevelWithin(
  * case in this file failed at 1280x720 before it ever reached a canvas.
  *
  * The two paths are deliberately different gestures and not one helper: a group with its own
- * tile is opened by a SUSTAINED PRESS (the app arms a 300ms timer on `pointerdown` and its
- * `pointerup` cancels the open unconditionally), while the three-dots tile is opened by a
- * right-click, which reaches the same `openFlyout` in one event with no timer to lose.
+ * tile is opened by a SUSTAINED PRESS (the app arms `FLYOUT_LONG_PRESS_MS` on `pointerdown`
+ * and its `pointerup` cancels the open unconditionally), while the three-dots tile is opened
+ * by the press ITSELF, with no hold at all — it stands for no tool, so there is no default a
+ * click could mean, and a hold on the one tile whose job is to be the way in to the hidden
+ * tools makes the way in feel broken. A right-click reaches the same `openFlyout` in one event
+ * and is still accepted, which is what the other path here uses.
  */
 async function longPressGroupTile(page: Page, group: readonly string[]): Promise<void> {
   for (const name of group) {
@@ -446,7 +449,7 @@ async function longPressGroupTile(page: Page, group: readonly string[]): Promise
     await tile.dispatchEvent('pointerdown', { button: 0 });
     // `aria-expanded` is set from `openGroup === groupIndex` on the pressed tile, so it is
     // true only once this group is the open one. This used to be a fixed
-    // `waitForTimeout(FLYOUT_LONG_PRESS_MS)`, which raced the app's 300ms timer with a
+    // `waitForTimeout(FLYOUT_LONG_PRESS_MS)`, which raced the app's own timer with a
     // margin — and `onPointerUp` calls `clearLongPressFlyout()` unconditionally, so a lift
     // that arrived first cancelled the open outright: the menu never appeared, and the
     // failure surfaced as a `toBeVisible()` timeout on a menu that had not been opened yet.

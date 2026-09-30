@@ -26,7 +26,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { LIVE_WINDOW_MS } from './classify.mjs';
 
 /**
@@ -38,8 +38,7 @@ import { LIVE_WINDOW_MS } from './classify.mjs';
  * resolves it against `process.cwd()`, which inside a task worktree is a
  * directory whose `.git` is a gitlink FILE, not a directory — so the whole
  * board half of the inventory degrades to "unavailable" and every worktree
- * reports zero claims, with nothing on screen to say why. The fallback to
- * `join(cwd, …)` covers the git versions that lack the flag.
+ * reports zero claims, with nothing on screen to say why.
  */
 export function resolveBoardDb(cwd) {
   if (process.env.AGENT_BOARD_DIR) return join(process.env.AGENT_BOARD_DIR, 'board.db');
@@ -48,7 +47,7 @@ export function resolveBoardDb(cwd) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-  return join(isAbsolute(common) ? common : cwd, 'agent-board', 'board.db');
+  return join(common, 'agent-board', 'board.db');
 }
 
 function openBoard(dbPath) {
