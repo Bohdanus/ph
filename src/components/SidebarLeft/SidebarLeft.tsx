@@ -728,12 +728,24 @@ const SidebarLeft = () => {
                *
                * DENSITY, in the same comment because the next person will otherwise ask why
                * this is smaller than the rail's tiles. A flyout row is `py-1` around a 16px
-               * icon, so 24px, where the rail's tile is 44px — Photoshop's flyout is the
-               * compact one and the tile is the comfortable one, and a menu at tile density
-               * puts three tools in the space two belong in. `min-w-36` rather than a
-               * minimum that would then drive the width: the menu is content-sized, as
-               * Photoshop's is, and the longest label plus its icon and shortcut sets the
-               * width.
+               * icon, so 24px, where the rail's tile is 44px — and the operator asked for
+               * the flyout at Photoshop's density, which is the compact one, the tile being
+               * the comfortable one. At tile density the menu put three tools in the space
+               * two belong in.
+               *
+               * WHAT IS MEASURED AND WHAT IS CHOSEN, because they are not the same claim: in
+               * Chrome at 1280x900 this is a 25px row and an 80px three-item menu, measured,
+               * where it was a 40px row and 134px. The 24px and the 16px are the design, not
+               * a measurement — they are the icon plus `py-1`, and the icon is what has to be
+               * named below for anyone checking. No document in this repo records
+               * Photoshop's own row height, so nothing here should be read as one; the
+               * target was the operator's instruction and this is the density it produced.
+               *
+               * `min-w-36` so a two-tool menu is not a sliver, which it needs because the
+               * labels are `whitespace-nowrap` and cannot wrap to fit. It cannot outgrow the
+               * viewport either: the rail is `max-md:hidden`, so the narrowest window that can
+               * show a flyout at all is 768px. The width above that minimum is content-sized —
+               * the longest label plus its icon, gaps and shortcut.
                */
               className="pointer-events-auto max-h-[calc(100vh-1rem)] min-w-36 list-none overflow-y-auto overscroll-contain rounded-lg border border-gray-300 bg-gray-100 p-0.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
               data-toolbar-flyout={groupIndex}

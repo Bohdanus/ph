@@ -400,10 +400,12 @@ describe('SidebarLeft flyout hardening', () => {
     expect(menu).toHaveClass('p-0.5', 'min-w-36');
     expect(menu).not.toHaveClass('p-1.5', 'min-w-48');
 
-    // What this buys, stated so the next reader can tell the numbers were measured and not
-    // estimated: in Chrome at a 1280×900 window, a three-item lasso flyout is 80px tall with
-    // 25px rows, and was 134px with 40px rows. The width is content-driven and unchanged in
-    // kind — the longest label plus its icon, gaps and shortcut.
+    // What this buys, stated so the next reader can tell a measurement from a design value.
+    // Measured in Chrome at a 1280x900 window: 25px rows, an 80px three-item menu, 2px of
+    // menu padding, an 11px label, and the 8px gap to the rail unchanged. It was 40px rows
+    // and a 134px menu. The 24px row and the 16px icon are the DESIGN — the row is the icon
+    // plus `py-1` — and no document here records Photoshop's own row height, so these are the
+    // operator's target rendered, not a figure measured from Adobe.
   });
 
   it('places the flyout on the vertical axis of the tile it was opened from, not the rail top', () => {
