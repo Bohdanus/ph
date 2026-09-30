@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import type { DocumentFrame } from '../document-frame.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import {
   UnsupportedHistoryFeatureError,
@@ -20,6 +21,7 @@ import {
   type DurableDocument,
   type DurableLayerPropertyPatch,
 } from '../history-model.ts';
+import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerId, LayerSource } from '../layer-types.ts';
 import {
@@ -317,13 +319,16 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     registry.shutdown();
   });
 
-  it('drops a document frame action that carries no next frame', () => {
+  it('drops a document frame action that carries no next frame and reports the loss', () => {
     const registry = new AssetRegistry();
 
     const converted = convert(
       [
         {
-          id: 'frame',
+          // The id must not be the bare word `frame`: the message body says
+          // "document frame" twice on its own, so `toContain('frame')` would pass
+          // even with the interpolation removed.
+          id: 'frame-without-next',
           actionName: SET_DOCUMENT_FRAME_ACTION,
           layerId: 'document',
           args: { previousFrame: baselineFrame },
@@ -332,8 +337,28 @@ describe('legacyHistoryToDurable per-action option branches', () => {
       registry
     );
 
-    expect(converted.diagnostics).toEqual([]);
+    // Still dropped: an action with no usable `nextFrame` has no operation to
+    // derive, and fabricating one would assert a frame the user never cropped to.
     expect(converted.document.history).toHaveLength(0);
+    // And the drop is REPORTED rather than silent. `replayHistory` drops the
+    // same entry (`history-replay.ts:91-97` guards the assignment on
+    // `isValidDocumentFrame`), so the shadow was already in parity — but parity
+    // is not observability, and the only other evidence of a lost crop is a
+    // frame that no longer matches what the user cropped to.
+    expect(converted.diagnostics).toHaveLength(1);
+    expect(converted.diagnostics[0]).toMatchObject({
+      historyId: 'frame-without-next',
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      // WARNING, not error: `convertLegacyHistorySafely` withholds the ENTIRE
+      // durable document on the first error diagnostic, so an error here would
+      // punish every later entry for a defect the legacy timeline tolerates.
+      severity: 'warning',
+      code: 'invalid-history-entry',
+    });
+    // The message names the offending entry, so a warning is actionable without
+    // the caller having to correlate it back to the cursor map itself. The id is
+    // absent from the message body, so this pins the `${item.id}` interpolation.
+    expect(converted.diagnostics[0]?.message).toContain('frame-without-next');
     registry.shutdown();
   });
 
@@ -467,6 +492,292 @@ describe('legacyHistoryToDurable per-action option branches', () => {
 
     expect(converted.document.history[0]?.enabled).toBe(false);
     expect(converted.document.baseline.layers[0].pos).toEqual({ x: 0, y: 0, width: 100, height: 80 });
+    registry.shutdown();
+  });
+});
+
+/**
+ * Every falsifying branch of `isValidDocumentFrame`
+ * (`src/contexts/document-frame.ts:16`): the value is not an object, or any of
+ * `x`/`y`/`width`/`height` is not a finite number, or `width <= 0`, or
+ * `height <= 0`. The origin itself has no range constraint, so a negative
+ * origin is valid and appears in the guard set below.
+ */
+const invalidNextFrames: ReadonlyArray<{ label: string; nextFrame: unknown }> = [
+  { label: 'a non-object next frame', nextFrame: '400x300' },
+  { label: 'a null next frame', nextFrame: null },
+  { label: 'a zero width', nextFrame: { x: 0, y: 0, width: 0, height: 300 } },
+  { label: 'a negative width', nextFrame: { x: 0, y: 0, width: -200, height: 300 } },
+  { label: 'a zero height', nextFrame: { x: 0, y: 0, width: 400, height: 0 } },
+  { label: 'a negative height', nextFrame: { x: 0, y: 0, width: 400, height: -150 } },
+  { label: 'a NaN x coordinate', nextFrame: { x: Number.NaN, y: 0, width: 400, height: 300 } },
+  { label: 'a NaN width', nextFrame: { x: 0, y: 0, width: Number.NaN, height: 300 } },
+  { label: 'an infinite y coordinate', nextFrame: { x: 0, y: Number.POSITIVE_INFINITY, width: 400, height: 300 } },
+  { label: 'a missing x coordinate', nextFrame: { y: 0, width: 400, height: 300 } },
+  { label: 'a non-numeric width', nextFrame: { x: 0, y: 0, width: '400', height: 300 } },
+];
+
+const validNextFrames: ReadonlyArray<{ label: string; nextFrame: DocumentFrame }> = [
+  { label: 'a positive origin', nextFrame: { x: 10, y: 20, width: 200, height: 150 } },
+  { label: 'a negative origin', nextFrame: { x: -30, y: -40, width: 200, height: 150 } },
+  { label: 'a fractional positive size', nextFrame: { x: 0, y: 0, width: 0.5, height: 0.25 } },
+];
+
+describe('document frame conversion diagnostics', () => {
+  it.each(invalidNextFrames)('omits and reports a document frame change carrying $label', ({ nextFrame }) => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        {
+          id: 'frame-invalid',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame: nextFrame as DocumentFrame },
+        },
+      ],
+      registry
+    );
+
+    // The invalid payload produces no durable operation at all...
+    expect(converted.document.history).toHaveLength(0);
+    // ...and the omission is reported, so the shadow cannot claim to be a
+    // faithful conversion of a frame change it silently dropped.
+    expect(converted.diagnostics).toHaveLength(1);
+    expect(converted.diagnostics[0]).toMatchObject({
+      historyId: 'frame-invalid',
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      severity: 'warning',
+      code: 'invalid-history-entry',
+    });
+    expect(converted.diagnostics[0]?.message).toContain('frame-invalid');
+    // A skipped entry maps to the preceding durable cursor, never the tip.
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, -1]);
+    registry.shutdown();
+  });
+
+  it.each(validNextFrames)('converts a document frame change with $label and no diagnostic', ({ nextFrame }) => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        {
+          id: 'frame-valid',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame },
+        },
+      ],
+      registry
+    );
+
+    // The omitted-entry warning is not over-broad: a frame the predicate
+    // accepts still converts and still reports nothing.
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history).toHaveLength(1);
+    expect(converted.document.history[0]?.operation).toEqual({
+      kind: 'set-document-frame',
+      previous: baselineFrame,
+      next: nextFrame,
+    });
+    registry.shutdown();
+  });
+
+  it('keeps a rejected frame change from advancing the converted frame', () => {
+    const registry = new AssetRegistry();
+    const validFrame = { x: 10, y: 10, width: 200, height: 150 };
+
+    const converted = convert(
+      [
+        {
+          id: 'frame-invalid',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame: { x: 0, y: 0, width: 0, height: 300 } as DocumentFrame },
+        },
+        {
+          id: 'frame-valid',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { nextFrame: validFrame },
+        },
+      ],
+      registry
+    );
+
+    expect(converted.diagnostics).toHaveLength(1);
+    expect(converted.diagnostics[0]?.historyId).toBe('frame-invalid');
+    // The rejected frame never became the converted frame, so the next entry
+    // still resolves its `previous` against the baseline.
+    expect(converted.document.history).toHaveLength(1);
+    expect(converted.document.history[0]?.operation).toEqual({
+      kind: 'set-document-frame',
+      previous: baselineFrame,
+      next: validFrame,
+    });
+    registry.shutdown();
+  });
+
+  it('reports the omission through the safe entry point while keeping the shadow available', () => {
+    const registry = new AssetRegistry();
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+
+    const attempt = convertLegacyHistorySafely(
+      [
+        ...baselineHistory(),
+        {
+          id: 'frame-invalid',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame: { x: 0, y: 0, width: 0, height: 300 } as DocumentFrame },
+        },
+      ],
+      { documentId: 'test-doc', registry }
+    );
+
+    // A warning omits one entry and nothing else, so the conversion is still
+    // committed and still consumable: the omission is surfaced through
+    // `diagnostics`, not by withholding the whole shadow.
+    expect(attempt.status).toBe('current');
+    expect(attempt.document).not.toBeNull();
+    expect(attempt.document?.history).toHaveLength(0);
+    expect(reconcile).toHaveBeenCalledOnce();
+    // The status alone no longer implies faithfulness: the warning is in the
+    // same result any consumer reads the status from.
+    expect(attempt.diagnostics).toHaveLength(1);
+    expect(attempt.diagnostics[0]).toMatchObject({
+      historyId: 'frame-invalid',
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      severity: 'warning',
+      code: 'invalid-history-entry',
+    });
+    expect(attempt.diagnostics[0]?.message).toContain('frame-invalid');
+    registry.shutdown();
+  });
+});
+
+/**
+ * Two places where the durable shadow and legacy replay genuinely disagree, or
+ * where one of them is silent. These pin CURRENT behaviour, including the
+ * behaviour that is wrong: a test here is a tripwire that makes a future fix
+ * visible, not an endorsement of the divergence.
+ */
+describe('durable shadow divergences from legacy replay', () => {
+  /**
+   * NOT a protection for the first test below. Its only entry is a disabled one
+   * carrying a `documentSource`, and `replayHistory` skips a disabled item at
+   * `history-replay.ts:74` — before it could reach a dependency — and applies a
+   * `documentSource` by assignment at `history-replay.ts:78-84`, which also
+   * returns before any dependency call. So neither body can run for that
+   * fixture, and `expect(legacy.layers).toEqual({})` is the assertion that
+   * carries the test; deleting it because these deps "already" throw leaves a
+   * green test pinning nothing. They stay as a tripwire against a future replay
+   * that starts routing a skipped entry through `createLayer`/`applyRasterTool`.
+   */
+  const unreachableDependencies: HistoryReplayDependencies = {
+    createLayer: () => {
+      throw new Error('a disabled history entry must not create a layer');
+    },
+    applyRasterTool: () => {
+      throw new Error('a disabled history entry must not rasterize');
+    },
+  };
+
+  /**
+   * Duplicates the production layer-construction shape (`createLayerSource` in
+   * `layer-utils.ts:166`) so `replayHistory` has a `Layer` to insert — but NO
+   * assertion in the bedrock test below reads it: the frame rewrite it exists to
+   * reach happens at `history-replay.ts:85-89`, BEFORE `createLayer` is called at
+   * `history-replay.ts:108`. Returning a `Layer` at all is load-bearing (the call
+   * would throw otherwise); the fields are not, so treat any change here as untested.
+   */
+  function runtimeLayerFor(layerId: LayerId, source: LayerSource): Layer {
+    const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
+    return {
+      ...blankLayer(layerId),
+      isBedrock: !!source.isBedrock,
+      pos: source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos },
+      source,
+    };
+  }
+
+  it('takes a disabled first entry as the durable baseline, which legacy replay never applies', () => {
+    const registry = new AssetRegistry();
+    const disabledOpen: HistoryItem = {
+      id: 'baseline',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      disabled: true,
+      documentSource: {
+        layers: { 'layer-1': blankLayer('layer-1') },
+        size: initialSize,
+        frame: baselineFrame,
+      },
+    };
+
+    const converted = legacyHistoryToDurable([disabledOpen], { documentId: 'test-doc', registry });
+    const replayed = replayDurableDocument(converted.document);
+    const legacy = replayHistory([disabledOpen], 0, initialSize, unreachableDependencies);
+
+    // KNOWN DIVERGENCE, pinned as-is rather than endorsed. `replayHistory` skips
+    // a disabled item outright (`history-replay.ts:74`), so the document the
+    // USER sees after disabling the first History row is empty. This is the
+    // assertion that proves it — the throwing deps above are never reached.
+    expect(legacy.layers).toEqual({});
+    // The converter instead takes that same entry as the durable BASELINE
+    // without ever consulting `isEntryEnabled` (`history-adapter.ts:571`), and
+    // maps it to cursor -1 as if it were the pre-history state.
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
+    expect(Object.keys(replayed.layers)).toEqual(['layer-1']);
+    // Nothing reports it: the two documents disagree at every cursor and the
+    // conversion still reports no diagnostic at all.
+    expect(converted.diagnostics).toEqual([]);
+    registry.shutdown();
+  });
+
+  it('leaves the durable frame at the pre-add size when a bedrock layer is added mid-history', () => {
+    const registry = new AssetRegistry();
+    const bedrockSize = { width: 320, height: 240 };
+    const bedrockSource: LayerSource = {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      isBedrock: true,
+      size: bedrockSize,
+    };
+    const history: HistoryItem[] = [
+      ...baselineHistory(),
+      { id: 'bedrock', actionName: NEW_LAYER_ACTION, layerId: 'layer-bedrock', layerSource: bedrockSource },
+    ];
+    const dependencies: HistoryReplayDependencies = {
+      createLayer: ({ layerId, source }) => runtimeLayerFor(layerId, source),
+      applyRasterTool: () => {
+        throw new Error('a create-layer action must not rasterize');
+      },
+    };
+
+    const converted = legacyHistoryToDurable(history, { documentId: 'test-doc', registry });
+    const legacy = replayHistory(history, 1, initialSize, dependencies);
+
+    // `replayHistory` rewrites `documentFrame` from ANY bedrock source
+    // (`history-replay.ts:85-89`), so the frame the user sees is the new
+    // bedrock's size...
+    expect(legacy.documentFrame).toEqual({ x: 0, y: 0, ...bedrockSize });
+    // KNOWN DIVERGENCE, pinned as-is rather than endorsed: the converter's
+    // create-layer arm never touches `currentFrame` and `replayDurableDocument`'s
+    // create-layer case ignores `isBedrock` (`durable-replay.ts:69-75`). The
+    // document has exactly ONE durable entry, so -1 and 0 are the only two
+    // positions `replayDurableDocument` can return — any larger cursor clamps to
+    // 0 and would assert the tip twice.
+    expect(replayDurableDocument(converted.document, -1).frame).toEqual(baselineFrame);
+    expect(replayDurableDocument(converted.document, 0).frame).toEqual(baselineFrame);
+    // The layer itself IS published, so the divergence is the frame alone — and
+    // it is silent: no diagnostic says the durable frame disagrees with the one
+    // the document replays. At -1 the bedrock layer is not there yet, so this
+    // pins the frame as the ONLY thing that fails to track the add.
+    expect(Object.keys(replayDurableDocument(converted.document, -1).layers)).toEqual(['layer-1']);
+    expect(Object.keys(replayDurableDocument(converted.document, 0).layers)).toEqual(['layer-1', 'layer-bedrock']);
+    expect(converted.diagnostics).toEqual([]);
     registry.shutdown();
   });
 });

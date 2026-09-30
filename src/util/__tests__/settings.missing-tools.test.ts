@@ -66,6 +66,10 @@ describe('saveLastSettings for the four new tools', () => {
       mode: 'block',
       lineWidth: 220,
       alpha: 0.35,
+      // The Brush tip's two fields. Persisting them is the point of the arm: a session that
+      // reopens in Brush mode with the seeded hardness and spacing, whatever the user set.
+      hardness: defaultSettings.eraser.hardness,
+      spacing: defaultSettings.eraser.spacing,
       color: '#12ab34',
       points: [],
     });

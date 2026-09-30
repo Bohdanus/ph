@@ -15,6 +15,7 @@ import {
   createCommittedRectangleSelection,
   distanceBetweenPoints,
   drawClosedSelectionPath,
+  drawSelectionAnchors,
   drawSelectionOutline,
   findSelectionAnchorAtPoint,
   getActiveRectangularSelection,
@@ -167,6 +168,39 @@ const selection = (overrides: Partial<Selection> = {}): Selection => ({
   sourceTool: 'polygonal-lasso',
   ...overrides,
 });
+
+type StyleProperty = 'fillStyle' | 'strokeStyle';
+
+const STYLE_PROPERTIES: StyleProperty[] = ['fillStyle', 'strokeStyle'];
+
+/**
+ * `makeMockCtx` exposes `fillStyle`/`strokeStyle` as plain data properties, so the
+ * last assignment wins and every earlier one is unrecoverable — which is exactly
+ * what a per-anchor colour rule needs. Replacing both with recording accessors is
+ * what lets a test pin WHICH anchor carried which colour, not just the one the
+ * loop happened to finish on.
+ */
+const recordStyleAssignments = (ctx: CanvasRenderingContext2D) => {
+  const assignments: [StyleProperty, string][] = [];
+
+  STYLE_PROPERTIES.forEach((property) => {
+    let value = ctx[property] as string;
+
+    Object.defineProperty(ctx, property, {
+      configurable: true,
+      get: () => value,
+      set: (next: string) => {
+        value = next;
+        assignments.push([property, next]);
+      },
+    });
+  });
+
+  return {
+    /** Every value assigned to one property, in assignment order. */
+    for: (property: StyleProperty) => assignments.filter(([of]) => of === property).map(([, value]) => value),
+  };
+};
 
 describe('normalizeSelectionPoints', () => {
   it('returns null for fewer than three points', () => {
@@ -353,6 +387,59 @@ describe('getSelectionAbsolutePoints', () => {
   });
 });
 
+/** The drawing state a real `save()` pushes and a real `restore()` puts back. */
+type OverlayState = {
+  alpha: number;
+  strokeStyle: CanvasRenderingContext2D['strokeStyle'];
+  fillStyle: CanvasRenderingContext2D['fillStyle'];
+  lineWidth: number;
+  lineDash: number[];
+};
+
+/**
+ * Installs a REAL state stack on a `makeMockCtx()` context.
+ *
+ * `makeMockCtx`'s `save` and `restore` are bare `vi.fn()` spies that neither push nor pop
+ * anything (`src/__tests__/canvas-mock.ts:22-23`), so a context built from it cannot state
+ * what `CanvasRenderingContext2D` states: that the `restore()` closing
+ * `drawSelectionOutline` gives the caller back the `globalAlpha` it had. Every method stays a
+ * `vi.fn()`, so call counts and `invocationCallOrder` still read off it. The stack covers all
+ * five members the outline writes, not just the one the assertions below read: a stack that
+ * restored only the member under test would be the same mock-shaped lie, one field narrower.
+ * The line dash rides along by pairing `setLineDash` with a `getLineDash` reading the same
+ * list, because the shared mock's answers `[]` every time.
+ */
+function withStateStack(ctx: CanvasRenderingContext2D) {
+  let lineDash: number[] = [];
+  const stack: OverlayState[] = [];
+
+  ctx.setLineDash = vi.fn((segments: number[]) => {
+    lineDash = segments.slice();
+  });
+  ctx.getLineDash = vi.fn(() => lineDash.slice());
+  ctx.save = vi.fn(() => {
+    stack.push({
+      alpha: ctx.globalAlpha,
+      strokeStyle: ctx.strokeStyle,
+      fillStyle: ctx.fillStyle,
+      lineWidth: ctx.lineWidth,
+      lineDash,
+    });
+  });
+  ctx.restore = vi.fn(() => {
+    const state = stack.pop();
+    if (!state) return;
+
+    ctx.globalAlpha = state.alpha;
+    ctx.strokeStyle = state.strokeStyle;
+    ctx.fillStyle = state.fillStyle;
+    ctx.lineWidth = state.lineWidth;
+    lineDash = state.lineDash;
+  });
+
+  return ctx;
+}
+
 describe('drawClosedSelectionPath', () => {
   it('strokes a closed path through every point', () => {
     const ctx = makeMockCtx();
@@ -398,6 +485,73 @@ describe('drawSelectionOutline', () => {
     expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
   });
 
+  it('resets globalAlpha to 1 before it strokes, inside a bracket that hands the caller its own back', () => {
+    // The reset is `resetOverlayAlpha` at `src/util/selection.ts:168` — `ctx.globalAlpha = 1` and
+    // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
+    // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
+    // asserting 1 on a fresh context would pass whether or not the reset existed.
+    //
+    // The context carries a real state stack, so both halves of the contract are read off the one
+    // call: the alpha DURING the draw, and the alpha the caller is left holding.
+    const ctx = withStateStack(makeMockCtx());
+    ctx.globalAlpha = 0.25;
+    let alphaAtStroke: number | undefined;
+    ctx.stroke = vi.fn(() => {
+      alphaAtStroke = ctx.globalAlpha;
+    });
+
+    drawSelectionOutline(ctx, selection());
+
+    // A reset placed after the path was stroked would leave the outline painted at 0.25 while
+    // still reading back as 1, so the value has to be sampled during the draw.
+    expect(alphaAtStroke).toBe(1);
+    // …and what the context is left holding is the CALLER's 0.25, not 1. The reset is inside
+    // the bracket, so the `restore()` at `selection.ts:175` undoes it on the way out; a 1 here
+    // would be a reset that outlived the bracket that was supposed to contain it.
+    expect(ctx.globalAlpha).toBe(0.25);
+
+    // The `save()` is the half `expect(ctx.restore).toHaveBeenCalledTimes(1)` cannot see, and the
+    // half the contamination it exists to contain is made of: the tool overlay is ONE 2D context
+    // for the whole session and every tool area is handed the same object
+    // (`selection.ts:151-155`), so without the `save()` at `:150` the `restore()` at `:175` pops
+    // an empty stack and `strokeStyle`, `fillStyle`, `lineWidth`, the dash and the alpha all
+    // stay written for the next tool to draw on.
+    expect(ctx.save).toHaveBeenCalledTimes(1);
+    // The ORDER carries the other half. A `resetOverlayAlpha(ctx)` hoisted ABOVE the `save()`
+    // makes all three calls in exactly this order and leaks the alpha just the same, so the call
+    // sequence alone cannot separate "reset inside the bracket" from "reset in front of it" —
+    // only the state read back above can.
+    expect(vi.mocked(ctx.save).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.stroke).mock.invocationCallOrder[0]
+    );
+    expect(vi.mocked(ctx.stroke).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.restore).mock.invocationCallOrder[0]
+    );
+  });
+
+  it.each(['freehand-lasso', 'magic-wand'] as const)(
+    'resets globalAlpha on the anchor-less %s path too',
+    (sourceTool) => {
+      // These two skip the anchor loop, which is where an early return could have skipped the
+      // reset: the per-caller resets this retired were added one tool at a time and were
+      // missing the magic wand's, which is the whole reason the reset moved inside the function.
+      const ctx = withStateStack(makeMockCtx());
+      ctx.globalAlpha = 0.25;
+      let alphaAtStroke: number | undefined;
+      ctx.stroke = vi.fn(() => {
+        alphaAtStroke = ctx.globalAlpha;
+      });
+
+      drawSelectionOutline(ctx, selection({ sourceTool }));
+
+      expect(alphaAtStroke).toBe(1);
+      // The anchored path and this one share the bracket, so they share the post-condition: the
+      // caller gets its own 0.25 back, and the reset leaves with the bracket.
+      expect(ctx.globalAlpha).toBe(0.25);
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('skips inactive selections entirely', () => {
     const ctx = makeMockCtx();
     drawSelectionOutline(ctx, selection({ isActive: false }));
@@ -420,6 +574,124 @@ describe('drawSelectionOutline', () => {
 
     expect(ctx.moveTo).toHaveBeenCalledWith(-95, -45);
     expect(ctx.arc).toHaveBeenCalledWith(-95, -45, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+  });
+});
+
+describe('drawSelectionAnchors', () => {
+  it('draws one filled anchor per vertex, the first one stroked blue and the rest in the default grey', () => {
+    const ctx = makeMockCtx();
+    const styles = recordStyleAssignments(ctx);
+    drawSelectionAnchors(ctx, selection());
+
+    expect(ctx.beginPath).toHaveBeenCalledTimes(3);
+    expect(ctx.arc).toHaveBeenCalledTimes(3);
+    // `selection()`'s `pos` is not the origin, so the first anchor is (1,1)+(5,5)
+    // rather than the normalized first point — and it is the one that gets the
+    // blue start-handle stroke.
+    expect(ctx.arc).toHaveBeenNthCalledWith(1, 5, 5, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(ctx.arc).toHaveBeenNthCalledWith(2, 15, 5, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(ctx.arc).toHaveBeenNthCalledWith(3, 15, 15, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(ctx.fill).toHaveBeenCalledTimes(3);
+    expect(styles.for('strokeStyle')).toEqual(['rgba(0,123,255,1)', 'rgba(0,0,0,0.65)', 'rgba(0,0,0,0.65)']);
+    expect(styles.for('fillStyle')).toEqual(['white', 'white', 'white']);
+    // Solid handles, and the `[6, 4]` march that came with the border is gone: the
+    // dash pattern now belongs to the marching-ants canvas.
+    expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
+    expect(ctx.setLineDash).toHaveBeenCalledWith([]);
+    expect(ctx.save).toHaveBeenCalledTimes(1);
+    expect(ctx.restore).toHaveBeenCalledTimes(1);
+  });
+
+  it('never strokes the polygon path itself', () => {
+    const ctx = makeMockCtx();
+    drawSelectionAnchors(ctx, selection());
+
+    // The border is the animated marching-ants outline on its own canvas, so a
+    // path here would double-draw it. The only strokes are the three anchor rims.
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.lineTo).not.toHaveBeenCalled();
+    expect(ctx.closePath).not.toHaveBeenCalled();
+    expect(ctx.stroke).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['freehand-lasso', 'magic-wand'] as const)('draws nothing at all for %s', (sourceTool) => {
+    const ctx = makeMockCtx();
+    drawSelectionAnchors(ctx, selection({ sourceTool }));
+
+    // A traced boundary can carry hundreds of sampled points, so these two get
+    // no handles — and with the border on its own canvas, that leaves the tool
+    // overlay with nothing to draw for them at all.
+    expect(ctx.save).not.toHaveBeenCalled();
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('skips inactive selections entirely', () => {
+    const ctx = makeMockCtx();
+    drawSelectionAnchors(ctx, selection({ isActive: false }));
+
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.save).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+  });
+
+  it('skips degenerate selections with fewer than three points', () => {
+    const ctx = makeMockCtx();
+    drawSelectionAnchors(ctx, selection({ points: [{ x: 0, y: 0 }] }));
+
+    expect(ctx.save).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+  });
+
+  it('converts document points to canvas coordinates when a frame is supplied', () => {
+    const ctx = makeMockCtx();
+    const frame: DocumentFrame = { x: 100, y: 50, width: 500, height: 400 };
+    drawSelectionAnchors(ctx, selection(), frame);
+
+    expect(ctx.arc).toHaveBeenNthCalledWith(1, -95, -45, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+  });
+
+  it('resets globalAlpha to 1 before it strokes, inside a bracket that hands the caller its own back', () => {
+    // The reset is `resetOverlayAlpha` inside `drawSelectionAnchors` — `ctx.globalAlpha = 1` and
+    // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
+    // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
+    // asserting 1 on a fresh context would pass whether or not the reset existed.
+    //
+    // This assertion moved here from `drawSelectionOutline` when the polygon tools gave their
+    // border to the marching-ants canvas. The anchors inherited the reset from the outline that
+    // used to draw the border and the handles in one pass, so it is the anchors that must still
+    // be legible on a shared context — a tool that left `globalAlpha` at 0.2 makes them
+    // invisible, which is the exact class the reset retired for the outline.
+    const ctx = withStateStack(makeMockCtx());
+    ctx.globalAlpha = 0.25;
+    let alphaAtStroke: number | undefined;
+    ctx.stroke = vi.fn(() => {
+      alphaAtStroke = ctx.globalAlpha;
+    });
+
+    drawSelectionAnchors(ctx, selection());
+
+    expect(alphaAtStroke).toBe(1);
+    // …and what the context is left holding is the CALLER's 0.25, not 1: the reset is inside the
+    // bracket, so the `restore()` closing `drawSelectionAnchors` undoes it on the way out.
+    expect(ctx.globalAlpha).toBe(0.25);
+
+    // The `save()` is the half `expect(ctx.restore).toHaveBeenCalledTimes(1)` cannot see, and the
+    // half the contamination it exists to contain is made of: the tool overlay is ONE 2D context
+    // for the whole session and every tool area is handed the same object, so without the
+    // bracket `strokeStyle`, `fillStyle`, `lineWidth` and the alpha all stay written for the
+    // next tool to draw on.
+    expect(ctx.save).toHaveBeenCalledTimes(1);
+    // The ORDER carries the other half. A `resetOverlayAlpha(ctx)` hoisted ABOVE the `save()`
+    // leaks the alpha just the same, so the call sequence alone cannot separate "reset inside
+    // the bracket" from "reset in front of it" — only the state read back above can.
+    expect(vi.mocked(ctx.save).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.stroke).mock.invocationCallOrder[0]
+    );
+    expect(vi.mocked(ctx.stroke).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.restore).mock.invocationCallOrder[0]
+    );
   });
 });
 
@@ -480,6 +752,24 @@ describe('isPointInPolygon', () => {
   it('treats a point on the right edge as outside and the left edge as inside', () => {
     expect(isPointInPolygon({ x: 10, y: 5 }, square)).toBe(false);
     expect(isPointInPolygon({ x: 0, y: 5 }, square)).toBe(true);
+  });
+
+  it('applies the same half-open rule on the vertical axis: top edge inside, bottom edge outside', () => {
+    // `pi.y > point.y !== pj.y > point.y` (`src/util/selection.ts:256`) is the vertical straddle
+    // term, a separate branch of the same predicate from the horizontal comparison above. The
+    // horizontal half-open rule was pinned without it, so nothing asserted this half at all.
+    expect(isPointInPolygon({ x: 5, y: 0 }, square)).toBe(true);
+    expect(isPointInPolygon({ x: 5, y: 10 }, square)).toBe(false);
+  });
+
+  it('puts the corners the two axes disagree about on the same side each time', () => {
+    // (0,0) is inside on both readings and (10,10) outside on both, which is the pair an axis
+    // swap in the straddle term flips. The other two corners are outside, so all four are pinned:
+    // a square whose corners were {true, false, false, true} diagonally would be wrong too.
+    expect(isPointInPolygon({ x: 0, y: 0 }, square)).toBe(true);
+    expect(isPointInPolygon({ x: 10, y: 10 }, square)).toBe(false);
+    expect(isPointInPolygon({ x: 10, y: 0 }, square)).toBe(false);
+    expect(isPointInPolygon({ x: 0, y: 10 }, square)).toBe(false);
   });
 
   it('returns false for polygons with fewer than three vertices', () => {
@@ -571,6 +861,78 @@ describe('moveSelectionAnchor', () => {
     const before = structuredClone(original);
     moveSelectionAnchor(original, 1, { x: 99, y: 99 });
     expect(original).toEqual(before);
+  });
+  it('mirrors a rectangle anchor dragged past the opposite corner instead of rejecting the drag', () => {
+    // The polygon arm bails out of a degenerate drag at `src/util/selection.ts:306`
+    // (`if (!normalized) return selection;`); the rectangle arm at `:286-303` has no counterpart,
+    // so the drag is accepted and the box is re-derived from min/max by `pointsBoundingPos`
+    // (`src/util/draw.ts`, called with `lineWidth: 0`).
+    //
+    // The consequence is that the anchor is NOT where it was dropped. The box grows to contain
+    // the drop point, but index 0 is rebuilt as its top-left, so the corner the user is holding
+    // has ended up at the opposite corner of a larger rectangle. Whether that mirroring is
+    // desirable is the owner's call, not a defect; the point of the pin is that today nothing
+    // stated it, so it could change silently.
+    const rect = selection({
+      geometry: 'rectangle',
+      sourceTool: 'rectangular-selection',
+      pos: { x: 5, y: 5, width: 10, height: 10 },
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ],
+      metadata: { movedAtVersion: 4 },
+    });
+
+    const moved = moveSelectionAnchor(rect, 0, { x: 25, y: 25 });
+
+    expect(moved.pos).toEqual({ x: 5, y: 5, width: 20, height: 20 });
+    expect(moved.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 20 },
+      { x: 0, y: 20 },
+    ]);
+    expect(moved.metadata?.movedAtVersion).toBe(5);
+    // Index 0 is the top-left of the rebuilt box, not the (25, 25) the drag was dropped at.
+    expect(getSelectionAbsolutePoints(moved)[0]).toEqual({ x: 5, y: 5 });
+  });
+
+  it('keeps an already-collapsed rectangle collapsed, and never yields a negative extent', () => {
+    // `pointsBoundingPos` returns `maxX - minX`, which a min/max pair cannot make negative, so a
+    // drag along a collapsed axis holds that axis at exactly zero while the other one tracks.
+    //
+    // The starting selection is already collapsed, and that is the only reachable way in: three
+    // corners of a non-degenerate rectangle are never collinear and never share a coordinate, so
+    // moving the fourth can neither flatten the box nor collapse it. `normalizeRectangleSelectionRect`
+    // refuses to build a collapsed rectangle in the first place (`src/util/selection.ts:57`), which
+    // is what makes this state a pin on `moveSelectionAnchor` rather than on construction.
+    const collapsed = selection({
+      geometry: 'rectangle',
+      sourceTool: 'rectangular-selection',
+      pos: { x: 5, y: 5, width: 0, height: 10 },
+      points: [
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 10 },
+        { x: 0, y: 10 },
+      ],
+    });
+
+    const moved = moveSelectionAnchor(collapsed, 0, { x: 5, y: 3 });
+
+    expect(moved.pos).toEqual({ x: 5, y: 3, width: 0, height: 12 });
+    expect(moved.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 0, y: 12 },
+      { x: 0, y: 12 },
+    ]);
+    // A drag that leaves the shape degenerate still counts as a move, so the writers' own
+    // `hasSameSelectionGeometry` guard is what suppresses the commit, not the version counter.
+    expect(moved.metadata?.movedAtVersion).toBe(1);
   });
 });
 

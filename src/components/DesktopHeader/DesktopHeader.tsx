@@ -10,6 +10,7 @@ import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
+import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { FigureType } from '../../tools/shape.ts';
 
@@ -97,6 +98,7 @@ const DesktopHeader = () => {
   const fileMenuRef = useRef<HTMLLIElement>(null);
   const toolsMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
+  const windowMenuRef = useRef<HTMLLIElement>(null);
 
   const handleToolSelection = (toolName: ToolName) => {
     const figure = FIGURE_TOOLS[toolName];
@@ -128,6 +130,11 @@ const DesktopHeader = () => {
 
   const handleText = () => handleToolSelection('text');
 
+  const handleResetWorkspace = () => {
+    resetWorkspace();
+    setOpenMenu(null);
+  };
+
   const handleClickOutside = useCallback(
     (event: MouseEvent) => {
       if (openMenu === 'file' && fileMenuRef.current && !fileMenuRef.current.contains(event.target as Node)) {
@@ -139,6 +146,9 @@ const DesktopHeader = () => {
       if (openMenu === 'edit' && editMenuRef.current && !editMenuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
       }
+      if (openMenu === 'window' && windowMenuRef.current && !windowMenuRef.current.contains(event.target as Node)) {
+        setOpenMenu(null);
+      }
     },
     [openMenu]
   );
@@ -148,6 +158,8 @@ const DesktopHeader = () => {
     isOpen: isRightPanelOpen,
     toggle: toggleRightPanel,
   } = useRightPanelVisibility();
+
+  const { resetWorkspace } = usePanelLayout();
 
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);
@@ -361,6 +373,37 @@ const DesktopHeader = () => {
                   data-testid="edit-menu-text-button"
                 >
                   Text
+                </button>
+              </li>
+            </ul>
+          )}
+        </li>
+        {/* `Window`, because that is where Photoshop keeps the panel commands: "Select Window
+            from the menu bar. Select the panel name to remove it from the workspace" and
+            "Window > Workspace > Reset > Essentials (Default)". Only the reset is here, and
+            only because a draggable layout that persists needs the documented way back —
+            "Select Window > Workspace > Reset to restore the last arrangement you had before
+            a panel went missing."
+            (https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/move-panels.html) */}
+        <li className="relative" ref={windowMenuRef}>
+          <button
+            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'window' ? null : 'window')}
+            data-testid="header-window-menu-button"
+          >
+            Window
+          </button>
+          {openMenu === 'window' && (
+            <ul className="absolute left-0 top-full z-10 min-w-[180px] list-none rounded border border-gray-600 bg-[#2b2f33] p-1 shadow-lg">
+              <li>
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleResetWorkspace}
+                  data-testid="window-menu-reset-workspace-button"
+                >
+                  Reset Workspace
                 </button>
               </li>
             </ul>

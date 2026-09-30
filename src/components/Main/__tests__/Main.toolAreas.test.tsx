@@ -30,6 +30,7 @@ const storeState = vi.hoisted(
       hasUnsavedChanges: false,
       currentArgs: { current: { toolName: 'brush' } as ToolArgs },
       layers: {},
+      selections: [],
       toolName: 'reposition' as ToolName,
       totalSize: { width: 640, height: 480 },
       documentFrame: { x: 0, y: 0, width: 640, height: 480 },
@@ -252,12 +253,72 @@ describe('Main tool-area routing', () => {
   ] as const)('falls back to the hidden dummy area for %s', (toolName) => {
     storeState.toolName = toolName;
 
-    const { container } = render(<Main />);
+    render(<Main />);
 
+    // The only assertion here that says anything. It reads the whole marker list, so a fall-through
+    // that mounted SOME area rather than none would still be caught — which is the half of the
+    // old assertion below that was load-bearing. The other half was not: the produced
+    // `div[style*="display: none"]` is byte-identical for `SharpenToolArea` and `DummyToolArea`,
+    // so it could not tell a hidden area from the hidden one, and would have passed identically
+    // if the router had sent some other tool to `SharpenToolArea`. `SharpenToolArea`'s rendered
+    // surface is pinned directly in the describe below.
     expect(toolAreaTestId()).toBe(-1);
-    const dummy = container.querySelector('div[style*="display: none"]');
-    expect(dummy).toBeInstanceOf(HTMLElement);
-    expect((dummy as HTMLElement).getAttribute('style')).toContain('display: none');
+  });
+
+  /**
+   * The two components this file could not tell apart, compared directly.
+   *
+   * `SharpenToolArea` (`../SharpenToolArea.tsx:46`) renders
+   * `<div className={className} style={{ display: 'none' }} />` and `DummyToolArea`
+   * (`../DummyToolArea.tsx:11-18`) renders the same element, so the DOM is byte-identical and
+   * every `style`-shaped query matched both. The identity is the DESIGN — Sharpen is a one-shot
+   * filter with no gesture, and its area is "the documented ABSENCE of one" — so this asserts the
+   * identity rather than reporting it as a duplication.
+   *
+   * The inertness is the load-bearing half, and the reason is spelled out in `SharpenToolArea`'s
+   * own JSDoc: `Main` mounts the area with `className="absolute inset-0 h-full w-full"`, i.e. over
+   * the whole document. A pointer handler there would swallow every pointer event over the canvas
+   * without doing anything with any of them, and a drag would select text or scrub the layers
+   * panel instead of being inert. `toBeInTheDocument`-style assertions cannot see that, so the
+   * props React attached to the DOM node are read instead.
+   */
+  it('mounts SharpenToolArea as the same inert surface as DummyToolArea, with no pointer handler at all', async () => {
+    // This file mocks every tool area, so the real `SharpenToolArea` is unreachable through a
+    // normal import; `importActual` is the route that bypasses the mock without lifting it for
+    // the routing table, which needs the marker.
+    const { SharpenToolArea: ActualSharpenToolArea } =
+      await vi.importActual<typeof import('../SharpenToolArea.tsx')>('../SharpenToolArea.tsx');
+
+    const { container: dummyContainer } = render(<DummyToolArea className="probe" />);
+    const { container: sharpenContainer } = render(
+      <ActualSharpenToolArea className="probe" overlayCtxRef={{ current: null }} />
+    );
+
+    expect(sharpenContainer.innerHTML).toBe(dummyContainer.innerHTML);
+    expect(sharpenContainer.innerHTML).not.toBe('');
+
+    // The detector has to be shown to work, or "no handler names" is indistinguishable from
+    // "the probe found nothing". React DOM stores the props it attached to every host node under
+    // a `__reactProps$<key>` property (`updateFiberProps`), which is the only place an event
+    // handler is observable from the outside — React never reflects one onto a DOM attribute.
+    const reactProps = (element: Element): Record<string, unknown> => {
+      // React's internal prop key is an expando, so it is absent from the DOM's own typing and
+      // has to be read through an index signature.
+      const host = element as unknown as Record<string, unknown>;
+      const key = Object.keys(host).find((candidate) => candidate.startsWith('__reactProps$'));
+      if (!key) throw new Error('React attached no props to the element, so this probe proves nothing');
+
+      return host[key] as Record<string, unknown>;
+    };
+    const handlerNames = (element: Element): string[] =>
+      Object.keys(reactProps(element)).filter((name) => /^on[A-Z]/.test(name));
+
+    const control = render(<div className="probe" onPointerDown={() => undefined} />).container
+      .firstElementChild as Element;
+    expect(handlerNames(control)).toEqual(['onPointerDown']);
+
+    const sharpen = sharpenContainer.firstElementChild as Element;
+    expect(handlerNames(sharpen)).toEqual([]);
   });
 
   it('never mounts any tool area while no image is open', () => {
@@ -328,18 +389,8 @@ describe('Main tool-area routing', () => {
     }
   });
 
-  it('sizes both overlays to the document', () => {
-    render(<Main />);
-
-    const [, toolOverlay, rectOverlay] = canvases(document.body);
-    expect([toolOverlay, rectOverlay].map((el) => [el.width, el.height])).toEqual([
-      [640, 480],
-      [640, 480],
-    ]);
-  });
-
   it('leaves the workspace canvas to the CSS box and to useApp, never sizing it from the document', () => {
-    // `Main`'s `useLayoutEffect` sizes the two overlays from `totalSize`. The workspace canvas is
+    // `Main`'s `useLayoutEffect` sizes the overlays from `totalSize`. The workspace canvas is
     // deliberately absent from it: the drawing surface is CSS-sized to its container
     // (`h-full w-full object-contain`) and `useApp` owns its backing store, so a `resizeCanvas`
     // call here would fight that and resize a buffer nothing reads.
@@ -351,7 +402,10 @@ describe('Main tool-area routing', () => {
     // must not follow the document size, and the overlays are asserted to have followed it, which
     // is what stops "unchanged" from passing merely because the sizing effect never ran.
     const { rerender } = render(<Main />);
+    // The selection-ants canvas is appended LAST, so these three indices are unchanged by it —
+    // which is the reason it is appended last, and this destructuring is where that is load-bearing.
     const [workspace, toolOverlay, rectOverlay] = canvases(document.body);
+    const ants = document.body.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
     const untouched = [workspace.width, workspace.height];
 
     storeState.totalSize = { width: 800, height: 600 };
@@ -360,6 +414,43 @@ describe('Main tool-area routing', () => {
     expect([workspace.width, workspace.height]).toEqual(untouched);
     expect([toolOverlay.width, toolOverlay.height]).toEqual([800, 600]);
     expect([rectOverlay.width, rectOverlay.height]).toEqual([800, 600]);
+    // A canvas that is never sized paints a selection border at the document's own resolution
+    // into a buffer of the previous one, which is the "cached canvas box addresses a different
+    // pixel after a tool switch" class this suite already files for the other overlays.
+    expect([ants.width, ants.height]).toEqual([800, 600]);
+  });
+
+  it('shows the selection ants overlay for every polygon selection tool and hides it otherwise', () => {
+    storeState.toolName = 'polygonal-lasso';
+    const { container, rerender } = render(<Main />);
+    const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
+
+    expect(ants().style.display).toBe('block');
+
+    for (const toolName of ['freehand-lasso', 'feather-magnetic-lasso', 'magic-wand'] as const) {
+      storeState.toolName = toolName;
+      rerender(<Main />);
+
+      expect(ants().style.display).toBe('block');
+    }
+
+    // `rectangular-selection` is the one selection tool excluded: `useRect` already
+    // strokes that border, with handles, on the tool overlay. The elliptical and quick
+    // selection tools are excluded for the same reason in reverse — they are not in
+    // `POLYGON_SELECTION_MODES`, so they keep the static `drawSelectionOutline` border.
+    for (const toolName of [
+      'rectangular-selection',
+      'elliptical-selection',
+      'quick-selection',
+      'reposition',
+      'brush',
+      'zoom',
+    ] as const) {
+      storeState.toolName = toolName;
+      rerender(<Main />);
+
+      expect(ants().style.display).toBe('none');
+    }
   });
 
   it('repaints every layer when the document frame changes', () => {

@@ -40,6 +40,22 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
   const pointsRef = useRef<Point[]>([]);
   const frameRequested = useRef<number | null>(null);
   /**
+   * Where a Shift-clicked straight line would start, set by the last press that carried no Shift.
+   *
+   * Adobe's gesture is two clicks, not a constrained drag: "place the pointer where you want the
+   * line to start, press and hold Shift, and then click where you want the line to end". So the
+   * anchor is a press the user has already committed a stroke at, and the Shift-click is a second
+   * stroke of its own — which is why it also produces a second undo step, exactly as in Photoshop.
+   */
+  const anchorRef = useRef<Point | null>(null);
+  /**
+   * Set while the Shift-click is being handled, so the drag that would otherwise start on the same
+   * press, and the release that would otherwise commit its single point, both stand down. A ref
+   * rather than the `pointsRef` length because the Shift-click CLEARS `pointsRef` on its way out,
+   * and a release that then pushed a point back in would erase the end of the line a second time.
+   */
+  const lineCommittedRef = useRef(false);
+  /**
    * The pointer id this component's own claim was taken with. The cancel handler and the unmount
    * cleanup never see a pointer event, so the id is kept here for every release route to name the
    * claim it is releasing.
@@ -118,7 +134,23 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // this one — or the claim taken above would be held until some unrelated gesture released it.
     if (!isEnabled) return;
 
-    pointsRef.current = [getLocalCoords(event)];
+    const coords = getLocalCoords(event);
+
+    // Shift-clicking an anchor is the END of a straight line, not the start of a drag. The commit
+    // happens on the press rather than the release so the line appears under the cursor the
+    // instant the user clicks, and so a press that is then abandoned has still committed the
+    // stroke Photoshop would have committed.
+    if (event.shiftKey && anchorRef.current) {
+      const line = [anchorRef.current, coords];
+      anchorRef.current = null;
+      lineCommittedRef.current = true;
+      pointsRef.current = [];
+      updateLayerByTool({ toolArgs: { ...args, points: toLayerPoints(line) } });
+      return;
+    }
+
+    anchorRef.current = coords;
+    pointsRef.current = [coords];
 
     // Synchronous, deliberately: this is the only paint a single-point stroke gets, and waiting for
     // a frame would leave a click with no visible mark until the pointer moved again.
@@ -126,6 +158,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (lineCommittedRef.current) return;
     if (!isMouseDown.current || !isPointerMoveValid(event)) return;
 
     pointsRef.current.push(getLocalCoords(event));
@@ -151,6 +184,15 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
       flushDrawingFrame();
+    }
+
+    // The Shift-click already committed its line on the press. Its release must commit nothing:
+    // the `pointsRef` push below would re-add the end point and erase it a second time, under a
+    // second history entry.
+    if (lineCommittedRef.current) {
+      lineCommittedRef.current = false;
+      pointsRef.current = [];
+      return;
     }
 
     const coords = getLocalCoords(event);

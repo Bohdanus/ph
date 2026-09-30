@@ -81,11 +81,13 @@ const Harness = ({
   anchor,
   gap,
   align,
+  side,
   measureKey,
 }: {
   anchor: Box;
   gap?: number;
   align?: 'start' | 'center';
+  side?: 'left' | 'right';
   measureKey?: string;
 }) => {
   const [anchorElement, setAnchorElement] = useState<HTMLSpanElement | null>(null);
@@ -99,7 +101,7 @@ const Harness = ({
           setAnchorElement(node);
         }}
       />
-      <AnchoredOverlay align={align} anchor={anchorElement} gap={gap} measureKey={measureKey}>
+      <AnchoredOverlay align={align} anchor={anchorElement} gap={gap} measureKey={measureKey} side={side}>
         <ul data-testid="overlay" role="menu" />
       </AnchoredOverlay>
     </div>
@@ -119,12 +121,14 @@ const renderOverlay = ({
   overlaySize,
   gap,
   align,
+  side,
   measureKey,
 }: {
   anchor: Box;
   overlaySize: Size;
   gap?: number;
   align?: 'start' | 'center';
+  side?: 'left' | 'right';
   measureKey?: string;
 }): {
   anchor: Box;
@@ -132,14 +136,14 @@ const renderOverlay = ({
   commit: () => void;
 } => {
   measuredSize = overlaySize;
-  const { rerender } = render(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} />);
+  const { rerender } = render(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} side={side} />);
 
   return {
     anchor,
-    commit: () => rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} />),
+    commit: () => rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} side={side} />),
     resize: (size, nextMeasureKey = measureKey) => {
       measuredSize = size;
-      rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={nextMeasureKey} />);
+      rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={nextMeasureKey} side={side} />);
     },
   };
 };
@@ -221,6 +225,37 @@ describe('AnchoredOverlay', () => {
 
     // 1156 + 8 + 200 overflows 1280, so it goes to the anchor's other side instead.
     expect(position()).toEqual({ position: 'fixed', left: 892, top: 100 });
+  });
+
+  it('opens onto the leading edge for a rail docked to the right of the canvas', () => {
+    // A rail on the RIGHT edge has its tiles at the far right of the window, so the anchor's
+    // TRAILING edge is off-screen and "preferred side" cannot be read off the anchor's own
+    // geometry. `side` is how the caller says which edge it is on, and reading it from the
+    // anchor instead is what would put every flyout and tooltip a few pixels outside the
+    // viewport once the rail is re-docked.
+    const RIGHT_RAIL_TILE = { left: 1224, top: 100, width: 56, height: 44 };
+    renderOverlay({
+      anchor: RIGHT_RAIL_TILE,
+      side: 'left',
+      overlaySize: { width: 200, height: 120 },
+    });
+
+    // 1224 - 8 (gap) - 200 = 1016, and the whole box fits inside 1280, so nothing is clamped.
+    expect(position()).toEqual({ position: 'fixed', left: 1016, top: 100 });
+  });
+
+  it('still falls back to the far side when a right-docked rail has no room', () => {
+    // `side` is a PREFERENCE, not a constraint: the fit test is unchanged, and a viewport too
+    // narrow for the preferred side puts the overlay on the other one rather than off-screen.
+    renderOverlay({
+      anchor: { left: 1224, top: 100, width: 56, height: 44 },
+      side: 'left',
+      overlaySize: { width: 400, height: 120 },
+    });
+
+    // 1224 - 8 - 400 = 816 fits; nothing to fall back to, so this pins that the preferred side
+    // is used whenever it can be.
+    expect(position()).toEqual({ position: 'fixed', left: 816, top: 100 });
   });
 
   it('keeps the overlay on screen when the anchor is near the bottom', () => {

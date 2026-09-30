@@ -4,6 +4,7 @@ import type { UseRectProps } from '../../../hooks/useRect.ts';
 import { CropToolArea } from '../CropToolArea.tsx';
 
 const setToolArgsMock = vi.hoisted(() => vi.fn());
+const applyDocumentCropMock = vi.hoisted(() => vi.fn(() => true));
 
 const useRectProps = vi.hoisted((): { current: UseRectProps | null } => ({ current: null }));
 
@@ -51,6 +52,10 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   }),
 }));
 
+vi.mock('../../../contexts/useLayer.ts', () => ({
+  useLayers: () => ({ applyDocumentCrop: applyDocumentCropMock }),
+}));
+
 vi.mock('../../../hooks/useRect.ts', () => ({
   useRect: (props: UseRectProps) => {
     useRectProps.current = props;
@@ -66,6 +71,8 @@ describe('CropToolArea', () => {
   beforeEach(() => {
     useRectProps.current = null;
     setToolArgsMock.mockClear();
+    applyDocumentCropMock.mockClear();
+    applyDocumentCropMock.mockReturnValue(true);
     pointerHandlers.onPointerDown.mockClear();
     pointerHandlers.onPointerMove.mockClear();
     pointerHandlers.onPointerUp.mockClear();
@@ -253,6 +260,83 @@ describe('CropToolArea', () => {
       expect(setToolArgsMock).toHaveBeenCalledWith(
         expect.objectContaining({ toolName: 'crop', rect: null, preRatioRect: null })
       );
+    });
+  });
+
+  describe('Enter and Escape', () => {
+    const DRAWN = { x1: 10, y1: 20, x2: 100, y2: 200 };
+
+    const pressKey = (key: string) => {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      });
+    };
+
+    it('commits the drawn crop on Enter, exactly as the panel Apply does', () => {
+      toolArgsState.toolArgs.rect = DRAWN;
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      pressKey('Enter');
+
+      expect(applyDocumentCropMock).toHaveBeenCalledExactlyOnceWith(DRAWN);
+      expect(setToolArgsMock).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ toolName: 'crop', rect: null, preRatioRect: null })
+      );
+    });
+
+    it('clears the drawn crop on Escape without touching the document', () => {
+      toolArgsState.toolArgs.rect = DRAWN;
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      pressKey('Escape');
+
+      expect(applyDocumentCropMock).not.toHaveBeenCalled();
+      expect(setToolArgsMock).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ toolName: 'crop', rect: null, preRatioRect: null })
+      );
+    });
+
+    it('does nothing on Enter with no crop drawn', () => {
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      pressKey('Enter');
+
+      expect(applyDocumentCropMock).not.toHaveBeenCalled();
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the crop on Enter when the document refuses the frame', () => {
+      // `applyDocumentCrop` returns false for a zero-area rect and for a no-op frame, and the
+      // panel's Apply drops the rect only on true. Enter has to make the same decision or the
+      // drawing the user is looking at would vanish without anything happening to the document.
+      applyDocumentCropMock.mockReturnValue(false);
+      toolArgsState.toolArgs.rect = DRAWN;
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      pressKey('Enter');
+
+      expect(applyDocumentCropMock).toHaveBeenCalledExactlyOnceWith(DRAWN);
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+    });
+
+    it('ignores keys that are neither Enter nor Escape', () => {
+      toolArgsState.toolArgs.rect = DRAWN;
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      for (const key of ['a', ' ', 'Backspace', 'Tab']) pressKey(key);
+
+      expect(applyDocumentCropMock).not.toHaveBeenCalled();
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+    });
+
+    it('stops listening once the crop surface unmounts', () => {
+      toolArgsState.toolArgs.rect = DRAWN;
+      const { unmount } = render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      unmount();
+      pressKey('Enter');
+
+      expect(applyDocumentCropMock).not.toHaveBeenCalled();
     });
   });
 });

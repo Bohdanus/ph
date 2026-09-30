@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
+import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
 import { MagicWandToolArea } from '../MagicWandToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -13,9 +14,11 @@ const storeState = vi.hoisted(
     documentFrame: { x: number; y: number; width: number; height: number } | null;
   } => ({ selections: [], documentFrame: null })
 );
-const toolState = vi.hoisted((): { toolArgs: { smoothing: number; tolerance: number; toolName: string } } => ({
-  toolArgs: { smoothing: 1, tolerance: 0, toolName: 'magic-wand' },
-}));
+const toolState = vi.hoisted(
+  (): { toolArgs: { contiguous: boolean; smoothing: number; tolerance: number; toolName: string } } => ({
+    toolArgs: { contiguous: true, smoothing: 1, tolerance: 0, toolName: 'magic-wand' },
+  })
+);
 
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
@@ -69,11 +72,18 @@ function createImageData(width: number, height: number): ImageData {
     imageData.data[i * 4 + 3] = 255;
   }
 
+  // Two red 2x2 blocks of the identical colour, deliberately not sharing an edge. A
+  // contiguous fill reaches only the block under the seed; an all-matching fill takes both,
+  // which is the whole difference `Contiguous` makes.
   for (const [x, y] of [
     [2, 2],
     [3, 2],
     [2, 3],
     [3, 3],
+    [0, 0],
+    [1, 0],
+    [0, 1],
+    [1, 1],
   ]) {
     const index = (y * width + x) * 4;
     imageData.data[index] = 255;
@@ -155,7 +165,7 @@ describe('MagicWandToolArea', () => {
     dispatchMock.mockClear();
     storeState.selections = [];
     storeState.documentFrame = null;
-    toolState.toolArgs = { smoothing: 1, tolerance: 0, toolName: 'magic-wand' };
+    toolState.toolArgs = { contiguous: true, smoothing: 1, tolerance: 0, toolName: 'magic-wand' };
     sourceCanvas.width = 6;
     sourceCanvas.height = 6;
     getContextSpy = vi.spyOn(sourceCanvas, 'getContext').mockReturnValue({
@@ -175,6 +185,8 @@ describe('MagicWandToolArea', () => {
     );
     const toolArea = container.firstElementChild as HTMLDivElement;
 
+    // Read the commit's own repaint, not the mount effect's clear.
+    vi.mocked(mockCtx.clearRect).mockClear();
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
 
     expect(dispatchMock).toHaveBeenNthCalledWith(1, {
@@ -223,7 +235,42 @@ describe('MagicWandToolArea', () => {
     expect(singleSelectionEdit().payload.updates.activeSelectionId).toBe(
       singleSelectionEdit().payload.updates.selections[0].id
     );
-    expect(mockCtx.closePath).toHaveBeenCalled();
+    // A wand selection has no anchors and its border belongs to the marching-ants
+    // canvas, so the tool overlay's whole contribution to a commit is the clear.
+    expect(mockCtx.clearRect).toHaveBeenCalledWith(0, 0, 6, 6);
+    expect(mockCtx.arc).not.toHaveBeenCalled();
+    expect(mockCtx.moveTo).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Adobe: "Uncheck Contiguous if you want to select nonadjacent areas of similar color."
+   *
+   * The image carries two red blocks of the identical colour that share no edge, so the seed's
+   * own block is four pixels and the whole image's red is eight. The count the wand reports is
+   * read off the committed metadata, which is the same number the user sees in the bar.
+   */
+  describe('contiguous', () => {
+    function clickSeedWith(contiguous: boolean) {
+      toolState.toolArgs = { contiguous, smoothing: 1, tolerance: 0, toolName: 'magic-wand' };
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <MagicWandToolArea overlayCtxRef={{ current: mockCtx }} className="test-magic-wand-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
+
+      const selection = singleSelectionEdit().payload.updates.selections[0] as Selection;
+      return selection.metadata?.magicWand?.selectedPixelCount;
+    }
+
+    it('selects only the connected region under the seed when contiguous is on', () => {
+      expect(clickSeedWith(true)).toBe(4);
+    });
+
+    it('selects every region of the seed colour when contiguous is off', () => {
+      expect(clickSeedWith(false)).toBe(8);
+    });
   });
 
   it('ignores clicks outside image bounds', () => {
@@ -251,7 +298,7 @@ describe('MagicWandToolArea', () => {
   });
 
   it('ignores clicks when the current tool is not the magic wand', () => {
-    toolState.toolArgs = { smoothing: 1, tolerance: 0, toolName: 'rectangular-selection' };
+    toolState.toolArgs = { contiguous: true, smoothing: 1, tolerance: 0, toolName: 'rectangular-selection' };
     const mockCtx = createMockContext();
     const { container } = render(
       <MagicWandToolArea overlayCtxRef={{ current: mockCtx }} className="test-magic-wand-area" />
@@ -327,13 +374,15 @@ describe('MagicWandToolArea', () => {
     );
   });
 
-  it('repaints committed selections from the store on mount', () => {
+  it("repaints an interactive committed selection's anchors from the store on mount", () => {
+    // A wand selection has no anchors, so the only thing a tool area can repaint is
+    // a selection another tool made: its border is the marching-ants canvas's job.
     storeState.selections = [
       {
         id: 'selection-1',
         isActive: true,
         geometry: 'polygon',
-        sourceTool: 'freehand-lasso',
+        sourceTool: 'polygonal-lasso',
         lifecycle: 'committed',
         pos: { x: 0, y: 0, width: 4, height: 4 },
         points: [
@@ -347,21 +396,32 @@ describe('MagicWandToolArea', () => {
 
     render(<MagicWandToolArea overlayCtxRef={{ current: mockCtx }} className="test-magic-wand-area" />);
 
-    expect(mockCtx.moveTo).toHaveBeenCalledWith(0, 0);
-    expect(mockCtx.lineTo).toHaveBeenCalledWith(4, 0);
-    expect(mockCtx.closePath).toHaveBeenCalled();
+    expect(mockCtx.clearRect).toHaveBeenCalledWith(0, 0, 6, 6);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(1, 0, 0, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(2, 4, 0, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(3, 4, 4, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    // The handles are the whole picture the tool overlay paints of a committed
+    // selection: no path, so no double-drawn border.
+    expect(mockCtx.moveTo).not.toHaveBeenCalled();
   });
 
-  it('strokes the selection outline at full opacity, whatever alpha a previous tool left', () => {
-    // The reset lives inside `drawSelectionOutline` rather than in each caller, because the
+  it('resets globalAlpha to 1 before it draws the committed selection, whatever alpha a previous tool left', () => {
+    // The reset lives inside `drawSelectionAnchors` rather than in each caller, because the
     // per-caller version had to be added one tool at a time and the magic wand's two loops were
-    // the ones that never got it. 0.95 x 0.2 is an outline you cannot see.
+    // the ones that never got it. 0.95 x 0.2 is a selection you cannot see.
+    //
+    // This assertion moved from `drawSelectionOutline` to `drawSelectionAnchors` when the
+    // polygon tools gave their border to the marching-ants canvas: the magic wand paints no
+    // border here any more, so what is left on this context is the anchors, and those are what
+    // has to be legible. The wand's own `sourceTool` makes `drawSelectionAnchors` skip its
+    // anchor loop, so the fixture uses an interactive source — otherwise there is nothing to
+    // stroke and the test would pass for the wrong reason.
     storeState.selections = [
       {
         id: 'selection-1',
         isActive: true,
         geometry: 'polygon',
-        sourceTool: 'magic-wand',
+        sourceTool: 'polygonal-lasso',
         lifecycle: 'committed',
         pos: { x: 0, y: 0, width: 4, height: 4 },
         points: [
@@ -372,6 +432,7 @@ describe('MagicWandToolArea', () => {
       },
     ];
     const mockCtx = createMockContext();
+    mockCtx.globalAlpha = 0.2;
     const alphaAtStroke: number[] = [];
     vi.mocked(mockCtx.stroke).mockImplementation(() => {
       alphaAtStroke.push(mockCtx.globalAlpha);
@@ -379,7 +440,9 @@ describe('MagicWandToolArea', () => {
 
     render(<MagicWandToolArea overlayCtxRef={{ current: mockCtx }} className="test-magic-wand-area" />);
 
-    expect(alphaAtStroke).toEqual([1]);
+    // Every stroke the tool overlay makes is an anchor rim, and every one of them is at 1.
+    expect(alphaAtStroke.length).toBeGreaterThan(0);
+    expect(alphaAtStroke.every((alpha) => alpha === 1)).toBe(true);
   });
 
   it('clears the overlay on unmount', () => {

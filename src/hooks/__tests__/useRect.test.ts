@@ -5,6 +5,12 @@ import { createPointerEvent } from '@/__tests__/fixtures/pointer.ts';
 import { createMockCanvas, createMockCanvasContext } from '@/__tests__/fixtures/canvas.ts';
 import { refitRectWidthToAspect } from '@/util/rect-aspect.ts';
 import type { Point } from '@/contexts/general-types.ts';
+// `util/constants` is deliberately NOT mocked, and it used to be — with a `CURSOR_MAP` whose eight
+// of nine entries disagreed with the real one and a `HANDLE_SIZE` of 8 against the real 12. That
+// made the cursor assertion below a claim about the mock's `nw-resize`, a string no user ever sees
+// (the real top-left cursor is `nwse-resize`), and falsifiable only against the mock. `useRect.drag.test.ts`
+// already asserts `CURSOR_MAP[edge]` against this same real import; this file is the hover half.
+import { CURSOR_MAP } from '../../util/constants.ts';
 
 const usePointerPositionMock = vi.hoisted(() => {
   const mockData = {
@@ -30,35 +36,32 @@ vi.mock('../usePointerPosition.ts', () => usePointerPositionMock);
 
 const rectUtilsMock = vi.hoisted(() => ({
   getCanvasSize: vi.fn(() => ({ width: 800, height: 600 })),
-  posToSortedRect: vi.fn((pos) => ({ x1: pos.x, y1: pos.y, x2: pos.x + pos.width, y2: pos.y + pos.height })),
-  sortRect: vi.fn((rect) => rect),
-  trimRect: vi.fn((rect) => rect),
 }));
 
-// The path has to resolve from this test file: `../../../util/...` pointed
-// outside the repo, so the mock never applied and the real rect helpers ran.
-vi.mock('../../util/rect.ts', () => rectUtilsMock);
-
-const constantsMock = vi.hoisted(() => {
-  const CURSOR_MAP = {
-    'top-left': 'nw-resize',
-    'top-right': 'ne-resize',
-    'bottom-left': 'sw-resize',
-    'bottom-right': 'se-resize',
-    top: 'n-resize',
-    right: 'e-resize',
-    bottom: 's-resize',
-    left: 'w-resize',
-    inside: 'move',
-  } as const;
-
+// The path resolves: `useRect.ts` imports `'../util/rect.ts'` from `src/hooks/`, which is
+// the same `src/util/rect.ts` this resolves to, so the mock IS live. `getCanvasSize` is a
+// MEASUREMENT, not geometry — it is the one thing here that would otherwise be read off a
+// real canvas — and it is the only export left stubbed.
+//
+// Every other export delegates to the real implementation, and each one that did not was
+// the same hazard the aspect-ratio stubs were: a stub that agrees with production today
+// makes every assertion about the result invariant to whether the real code ran, so a
+// regression in the real code ships green. `sortRect` and `trimRect` were identity stubs
+// and made the whole aspect-ratio block blind to whether sorting ran at all, which is the
+// one thing that block exists to pin; `trimRect` internally calls `sortRect`, so an
+// identity stub there neutralised both the commit path and the paint path. `posToSortedRect`
+// was a byte-equivalent hand-copy of `util/rect.ts:95-104`, which is the strongest version
+// of the same defect: it is guaranteed to agree with production, so it can never fail and
+// can never catch anything.
+vi.mock('../../util/rect.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../util/rect.ts')>();
   return {
-    CURSOR_MAP,
-    HANDLE_SIZE: 8,
+    ...actual,
+    getCanvasSize: rectUtilsMock.getCanvasSize,
   };
 });
 
-vi.mock('../../util/constants.ts', () => constantsMock);
+// No `vi.mock('../../util/constants.ts', ...)` here, and that is the point — see the import above.
 
 function createMockLayer(pos = { x: 100, y: 100, width: 200, height: 150 }) {
   return {
@@ -169,13 +172,17 @@ describe('useRect', () => {
       expect(result.current.onPointerDown(onCorner)).toBe(true);
     });
 
-    // The mount effect published the incoming rect once; clearing it draws no rect, so it
-    // publishes nothing further.
+    // Both counts are absolute. The relative form below only says the clear published nothing MORE,
+    // which any starting count satisfies — including zero, on a hook that never published at all.
+    // The mount effect does publish the incoming rect, exactly once, and that is stated here rather
+    // than left to be inferred from a number the test reads back off the mock it is asserting on.
+    expect(onRepaint).toHaveBeenCalledTimes(1);
     const publishedBeforeClear = onRepaint.mock.calls.length;
     act(() => {
       result.current.clearSelection();
     });
     expect(onRepaint).toHaveBeenCalledTimes(publishedBeforeClear);
+    expect(onRepaint).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
 
     // The selection is gone, so the corner that was a handle no longer reports one.
     act(() => {
@@ -227,9 +234,12 @@ describe('useRect', () => {
         expect(result.current.onPointerDown(event, layer)).toBe(false);
       });
 
-      // Proves the rect-helper mock is live and the layer position was converted, and that the
-      // adopted rect is what the overlay publishes.
-      expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(layer.pos);
+      // Proves the layer position was converted and that the adopted rect is what the
+      // overlay publishes. `posToSortedRect` is no longer stubbed — the real implementation
+      // runs — so this asserts the conversion END TO END instead of that a hand-copy mock was
+      // called. The old form (`expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(...)`)
+      // could only ever prove the mock was live, never that the conversion was right.
+      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalled();
       expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
     });
 
@@ -257,7 +267,8 @@ describe('useRect', () => {
       const committed = onChangeEnd.mock.lastCall?.[0] as { x1: number; y1: number; x2: number; y2: number };
       const width = Math.abs(committed.x2 - committed.x1);
       const height = Math.abs(committed.y2 - committed.y1);
-      // 200x150 is the rect's own ratio, not the 4:3 the drag to (200, 200) would have produced.
+      // 200x150 is the rect's own ratio. A top-left handle drag anchors at the opposite corner
+      // (300, 250), so the free drag to (200, 200) would have committed 100x50 = 2:1.
       expect(width / height).toBeCloseTo(200 / 150, 10);
     });
   });
@@ -270,7 +281,8 @@ describe('useRect', () => {
       const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
 
       // The four corner centres and the four edge midpoints of (100,100)-(300,250) each sit inside
-      // their own hit region at HANDLE_SIZE 8 / scale 1, and (400, 400) is off the rect entirely.
+      // their own hit region — the real HANDLE_SIZE is 12, so `HANDLE_SIZE / scale / 2` is 6 here —
+      // and (400, 400) is off the rect entirely.
       const hits: Array<[number, number]> = [
         [100, 100],
         [300, 100],
@@ -344,7 +356,9 @@ describe('useRect', () => {
         const res = result.current.onPointerMove(createPointerEvent({ clientX: 100, clientY: 100, target }));
         expect(res).toBe(true);
       });
-      expect(target.style.cursor).toBe('nw-resize');
+      // The real `CURSOR_MAP`, so this is the cursor a user gets hovering the top-left handle, not
+      // a string this file's own mock invented.
+      expect(target.style.cursor).toBe(CURSOR_MAP['top-left']);
 
       // Off the rect there is no edge and the hover reports none, so the SAME target — which is
       // carrying the handle cursor the hover above just set — has to lose it. A fresh element would
@@ -536,8 +550,21 @@ describe('useRect', () => {
       };
     }
 
-    const width = ({ x1, x2 }: SortedRect) => Math.abs(x2 - x1);
-    const height = ({ y1, y2 }: SortedRect) => Math.abs(y2 - y1);
+    /**
+     * Width and height WITHOUT `Math.abs`. These are only the width and height of a rect
+     * that is sorted, so they assert sortedness as a side effect: an unsorted rect gives
+     * a negative extent and every ratio below fails. Computing them with `Math.abs` made
+     * the assertions true whether or not the real geometry ran, which is what let the
+     * inverted drags in `DRAGS` pass under an identity `sortRect` stub.
+     */
+    const width = ({ x1, x2 }: SortedRect) => x2 - x1;
+    const height = ({ y1, y2 }: SortedRect) => y2 - y1;
+
+    /** The one property the identity stub used to neutralise. */
+    const expectSorted = (rect: SortedRect, context: string) => {
+      expect(rect.x2, `x2 >= x1 (${context})`).toBeGreaterThanOrEqual(rect.x1);
+      expect(rect.y2, `y2 >= y1 (${context})`).toBeGreaterThanOrEqual(rect.y1);
+    };
 
     it.each(PRESETS)('constrains a $label free drag to the preset in every direction', ({ ratio }) => {
       // Documents `adjustFreePoint`'s own relation, which was always right. The defect was
@@ -545,9 +572,24 @@ describe('useRect', () => {
       // way back in. See the round-trip test below for the guard on that.
       for (const { from, to } of DRAGS) {
         const { committed } = dragWithRatio(ratio, from, to);
+        const label = `${from.x},${from.y} -> ${to.x},${to.y}`;
 
-        expect(width(committed) / height(committed), `${from.x},${from.y} -> ${to.x},${to.y}`).toBeCloseTo(ratio, 10);
+        expectSorted(committed, label);
+        expect(width(committed) / height(committed), label).toBeCloseTo(ratio, 10);
       }
+    });
+
+    it.each(DRAGS)('commits a sorted rect for the $from -> $to drag', ({ from, to }) => {
+      // The inverted drags are the whole point: `adjustFreePoint` returns `x2 < x1` for a
+      // right-to-left drag, and the ONLY thing that turns that into a usable rect is the
+      // `sortRect` in `handlePointerUp`. Under an identity stub the commit path published
+      // the inverted rect unchanged, and every ratio assertion still passed because it
+      // measured with `Math.abs`.
+      const { committed } = dragWithRatio(1, from, to);
+
+      expectSorted(committed, `${from.x},${from.y} -> ${to.x},${to.y}`);
+      expect(width(committed)).toBeGreaterThan(0);
+      expect(height(committed)).toBeGreaterThan(0);
     });
 
     it.each(PRESETS)('commits and repaints the same $label rect across the store round trip', ({ ratio }) => {
@@ -667,6 +709,7 @@ describe('useRect', () => {
 
       const committed = onChangeEnd.mock.lastCall?.[0] as SortedRect;
       // 200x150 is the initial rect's own ratio, held through a drag that is not 4:3.
+      expectSorted(committed, 'ctrl-locked drag');
       expect(width(committed) / height(committed)).toBeCloseTo(200 / 150, 10);
     });
 
@@ -690,6 +733,7 @@ describe('useRect', () => {
       });
 
       const committed = onChangeEnd.mock.lastCall?.[0] as SortedRect;
+      expectSorted(committed, 'top-edge resize');
       expect(height(committed)).toBe(200);
       expect(width(committed)).toBe(200);
     });
@@ -718,6 +762,7 @@ describe('useRect', () => {
       });
 
       const committed = onChangeEnd.mock.lastCall?.[0] as SortedRect;
+      expectSorted(committed, 'right-edge resize');
       expect(width(committed)).toBe(350);
       expect(height(committed)).toBe(350);
     });

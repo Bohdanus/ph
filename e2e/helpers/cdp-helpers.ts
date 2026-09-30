@@ -47,11 +47,16 @@ export async function captureCanvasScreenshot(
   // would otherwise apply: `Page.captureScreenshot` reads its clip against the DOCUMENT
   // origin. That asymmetry is the whole reason the conversion is here and not in the
   // callers -- `page.screenshot` and this function want opposite spaces for the same
-  // numbers. Measured: this app is 1177px tall in a 720px window, `clickToolButton`
-  // scrolls it 440px, and the canvas box moves from y=100 to y=-340; captured
-  // untranslated, the region came back 440px away from the one measured, which reads as
-  // a wrong answer rather than an error. The offset is read here, per capture, because
-  // the window scrolls between captures. `viewportRectToPageRect` carries the detail.
+  // numbers. The offset is read here, per capture, because the window scrolls between
+  // captures. `viewportRectToPageRect` carries the detail.
+  //
+  // The `1177px`/`440px` worked example that used to sit here — "this app is 1177px tall in a
+  // 720px window, `clickToolButton` scrolls it 440px" — was true when the rail's default was
+  // two columns and is FALSE now. The rail fits the window by design: its tiles are fitted to
+  // the space they have and the rest move into the three-dots tile, so the page does not
+  // outgrow the viewport at any width. The conversion is still correct and still needed, and
+  // this is a much better example for it: `preservingScroll` in `toolbar-helpers.ts` scrolls
+  // before an interaction, so a page CAN scroll under a test that never intended to scroll it.
   const scroll = await getPageScroll(page);
   const captureClip = viewportRectToPageRect(
     {
@@ -67,6 +72,24 @@ export async function captureCanvasScreenshot(
     const { data } = await cdp.send('Page.captureScreenshot', {
       format: 'png',
       clip: { ...captureClip, scale: 1 },
+      // FALSE, explicitly, and it is here as the DOCUMENTED scope rather than as a fix.
+      //
+      // Left unset, `Page.captureScreenshot` captures beyond the viewport. With it unset this
+      // helper has been observed returning a plausible screenshot of a page that is not the
+      // one the caller measured: `viewport-drawing.spec.ts`'s guard caught `window.innerHeight`
+      // reporting 700 before a capture in a 700px window and 613 after, and 900 before and 813
+      // after in a 900px one — the same 87px both times, with this call the only thing between
+      // the two readings. The caller then maps a stroke it measured under the OLD layout
+      // through the NEW one, and the mismatch reads as a geometry bug in the app: it produced
+      // a 32.5px error on a page whose coordinate mapping is self-consistent and exact.
+      //
+      // **This flag did not eliminate it.** Across 50 controlled captures at a fixed viewport
+      // the drift did not reproduce with it set, which is consistent with a race rather than
+      // with a scope problem, and `e2e/OPEN_PROBLEMS.md` carries the open problem with the
+      // signature. What the flag does buy is that the scope is stated rather than inherited
+      // from whatever Chrome's default happens to be, and nothing is lost by stating it: the
+      // clip is inside the viewport by construction, so there is nothing beyond it to capture.
+      captureBeyondViewport: false,
     });
     const screenshot = Buffer.from(data, 'base64');
     await fs.writeFile(screenshotPath, screenshot);

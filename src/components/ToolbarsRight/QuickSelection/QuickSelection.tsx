@@ -94,10 +94,13 @@ const QuickSelection: React.FC<{}> = () => {
     copyActiveSelection(activeSelection);
   };
 
+  // Only what the tool area does. Photoshop's Alt-drag brush-tip resize and Shift-drag circular
+  // constraint are not implemented here, and a modifier named on screen that does nothing is a
+  // defect of its own: the user presses Alt, expects the tip to change, and cannot tell it did not.
   const hint =
     args.mode === 'subtract'
-      ? 'Drag over what to remove from the selection. Shift and Alt drag on the canvas.'
-      : 'Drag over an object to grow the selection along the stroke. Shift and Alt drag on the canvas.';
+      ? 'Drag over what to remove from the selection.'
+      : 'Drag over an object to grow the selection along the stroke.';
 
   return (
     <div className="flex h-full flex-row items-center gap-5 overflow-x-auto">

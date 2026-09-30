@@ -7,8 +7,12 @@
  *
  *   1. A worktree reporting 0 commits ahead of main and being an ancestor of
  *      main is NOT prunable while its working tree holds changes. This is the
- *      "0 ahead is not a safety test" case, and it is the exact shape of the
- *      17 worktrees here that look disposable and are not.
+ *      "0 ahead is not a safety test" case, and it is the shape of every
+ *      worktree here that looks disposable and is not. The set is DERIVED from
+ *      the live worktrees on every run rather than listed by name: the list was
+ *      the recurring red, and it was re-derived by hand three times in one
+ *      session because an agent had committed, disposed a worktree, or created
+ *      one.
  *   2. A paid-model launch that died at zero tokens is classified as a
  *      failure, not as a finished session that happened to be quiet.
  *
@@ -17,7 +21,7 @@
  * `node:sqlite` is only exercised where a real temporary database is cheap.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
@@ -33,7 +37,188 @@ import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from 
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
 
+/**
+ * This file's budget, and the reason it is not Vitest's default 5s.
+ *
+ * The "against a real repository" blocks build a throwaway git repository per
+ * test and then run real `git` against it, so a test here is bounded by process
+ * spawns and git's own startup rather than by anything being computed. The
+ * `curated table` block is worse: it reads git in every worktree in the
+ * repository, which is 70-odd directories on this machine today and grows with
+ * the fleet.
+ *
+ * The default is not merely tight for that, it is at or above the measured cost
+ * of this file's own slowest test: across three isolated runs of the three
+ * `scripts/` suites on this machine the slowest span here EXCLUDING the two tests
+ * that declare their own budget was 3.0s (`reports a conflict when both sides
+ * changed the same line`), and `reports whether the commit list was cut off at the
+ * cap` has been reported failing at the 5s default with no code change.
+ *
+ * What is deliberately NOT claimed here: any contention factor. A full 266-file
+ * run was measured against these same tests and came out FASTER per test than the
+ * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
+ * not a thing this suite can currently support. The headroom below is stated for
+ * what it is: 15s is about five times this file's own worst measured case, and is
+ * deliberately tighter than the two sibling suites because they spawn a CLI per
+ * assertion and this one does not.
+ *
+ * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
+ * only decides how long a test may run before the harness reports it, and no
+ * assertion below is changed by it.
+ *
+ * A per-test `it(name, fn, timeout)` argument still wins over this. The two tests
+ * that read every worktree keep their declared `60_000`, which is what they
+ * actually need: `gives every non-primary worktree a curated entry` measures
+ * 21.5s on a machine with 70 worktrees, and that number is a function of how
+ * many worktrees exist, not of this test.
+ */
+vi.setConfig({ testTimeout: 15_000 });
+
 const NOW = 1_790_000_000_000;
+
+/** The curated table's SOURCE, for the checks that a JS object cannot answer. */
+const CURATED_PATH = resolve(import.meta.dirname, '../lib/worktree-inventory/curated.mjs');
+
+/**
+ * Remove JS comments from a source line, respecting string literals.
+ *
+ * A `line.split('//')[0]` is wrong in both directions here: it eats the rest of
+ * a summary that contains a URL, and — on the line it was written for — it does
+ * not fire at all, because a `//` comment after a key still matches a regex
+ * anchored at the start of the line only if the comment IS the line. Both
+ * failures are about the same thing: deciding what is code without knowing what
+ * is a comment.
+ *
+ * Returns the code with comments blanked to the same length, so column
+ * positions still mean what they did.
+ */
+function stripComments(line, inBlockComment) {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    const next = line[i + 1];
+    if (inBlockComment) {
+      out += ' ';
+      if (c === '*' && next === '/') {
+        out += ' ';
+        i++;
+        inBlockComment = false;
+      }
+      continue;
+    }
+    if (quote) {
+      out += c;
+      if (c === '\\') out += next ?? '';
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '/' && next === '/') {
+      out += ' '.repeat(line.length - i);
+      break;
+    }
+    if (c === '/' && next === '*') {
+      out += '  ';
+      i++;
+      inBlockComment = true;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      quote = c;
+      out += c;
+      continue;
+    }
+    out += c;
+  }
+  return { code: out, inBlockComment };
+}
+
+/**
+ * Read the key declarations at the top level of the `CURATED` object literal,
+ * in source order. Fails CLOSED.
+ *
+ * Returns `{ keys, unreadable }`. `keys` is every declaration the reader
+ * positively recognised. `unreadable` names every line at an entry's
+ * indentation that was NOT a plain key declaration — a computed key, a spread,
+ * a property shorthand, a method, a getter. Those are reported rather than
+ * skipped, because they are precisely the shapes a duplicate can hide inside and
+ * a reader that skips what it does not understand reports green on a file it
+ * could not see.
+ *
+ * The entry indentation is MEASURED from the first declaration after the
+ * literal opens, not hard-coded to two spaces, and the key is read with any
+ * quote style. Both were fixed in the reader's first version, which matched one
+ * quote at one indent and so passed on a duplicate written in double quotes and
+ * on a duplicate indented four spaces.
+ */
+function readCuratedKeys(source) {
+  const keys = [];
+  const unreadable = [];
+  let inBlockComment = false;
+  let entryIndent = null;
+  let depth = null;
+
+  for (const [i, raw] of source.split('\n').entries()) {
+    const { code, inBlockComment: wasIn } = stripComments(raw, inBlockComment);
+    inBlockComment = wasIn;
+    const line = code.trim();
+    if (!line) continue;
+
+    if (depth === null) {
+      // Still looking for the literal. `export const CURATED = {` is the anchor;
+      // requiring the brace to end the line means an inline `{` cannot be
+      // mistaken for it.
+      const open = /^(?:export\s+)?const\s+CURATED\s*(?::[^=]+)?=\s*\{\s*$/.exec(line);
+      if (open) depth = 1;
+      continue;
+    }
+
+    // A closing brace, in every form a property or the literal itself can take.
+    // Checked BEFORE the opening-brace increment, or `},` and `};` would both be
+    // missed and the reader would walk straight out of the literal and start
+    // reporting the code after it.
+    if (/^\}[,;]?$/.test(line)) {
+      depth--;
+      if (depth === 0) break;
+      continue;
+    }
+    if (line.endsWith('{')) depth++;
+
+    const indent = code.length - code.trimStart().length;
+
+    // A key declaration is read at ANY indentation, because a duplicate
+    // indented four spaces is a duplicate: the previous reader matched exactly
+    // two spaces and reported green on it. Inside this object literal the only
+    // nested objects are the `issues` arrays, whose properties are scalars, so
+    // there is nothing for the wider match to pick up by accident — and the scan
+    // stops at the literal's closing brace regardless.
+    const plain = /^(?:'([^']+)'|"([^"]+)"|`([^`]+)`|([A-Za-z_$][\w$]*))\s*:\s*\{\s*$/.exec(line);
+    if (plain) {
+      // The entry indentation is MEASURED from the first declaration, not
+      // hard-coded and not taken from whatever line happens to come next: the
+      // first thing after a declaration is a `summary:` field, and measuring
+      // from that would make every field the thing being checked.
+      if (entryIndent === null && indent > 0) entryIndent = indent;
+      keys.push(plain[1] ?? plain[2] ?? plain[3] ?? plain[4]);
+      continue;
+    }
+
+    if (entryIndent === null) {
+      if (indent === 0) continue; // still in the header comment or the export
+      entryIndent = indent;
+    }
+    // Only the ENTRY indentation is checked for shapes this reader cannot
+    // interpret. Deeper lines are the fields of an entry — a summary, a note, an
+    // `issues` array — and are not declarations, so they are not reported.
+    if (indent !== entryIndent) continue;
+
+    unreadable.push(`line ${i + 1}: ${raw.trim()}`);
+  }
+
+  return { keys, unreadable };
+}
+
+const count = (list, value) => list.filter((x) => x === value).length;
 
 /**
  * A throwaway git repository with a known ahead/behind shape.
@@ -86,6 +271,94 @@ function wt(overrides = {}) {
 
 const noChats = { count: 0, lastActivity: null };
 const noSessions = [];
+
+/**
+ * The shape the curated table used to have to be told about by hand, read off a
+ * GENERATED record rather than a fixture: a branch git already calls disposable
+ * (0 ahead of main, already on it) whose working tree holds the work anyway.
+ *
+ * This is `STATUS.UNCOMMITTED_ONLY` expressed over the fields the inventory
+ * prints, and it is the only shape for which a hand-written `mustNotPrune` ever
+ * earned its keep. Everything else in the curated table is either a branch git
+ * can see (so it is protected by being a branch) or prose.
+ */
+const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true && r.dirty + r.untracked > 0;
+
+/**
+ * Every worktree of this repository, with the git facts the rule above reads.
+ *
+ * `collectWorktrees` is not used because it also runs `git merge-tree` on every
+ * unmerged branch: that is the right cost for a generator which has to print all
+ * of them, and the wrong cost for a guard that only needs three facts per
+ * worktree. The merge answer is deliberately absent below, and it cannot change
+ * any verdict here — `STATUS.UNCOMMITTED_ONLY` is decided before the merge is
+ * consulted, so a worktree of this shape is `salvage` whether or not anyone
+ * asked git whether it would merge.
+ *
+ * `tip` is read for real rather than left out: `classify` reads a MISSING tip as
+ * `STATUS.UNREADABLE`, which reports `unknown` and `prunable: false` for
+ * everything, and a guard written that way is green no matter what the generator
+ * does with a dirty merged branch.
+ *
+ * Memoised: two tests below need the same few seconds of git, and a second read
+ * of a repository other agents are actively writing to could see a different
+ * shape than the first.
+ */
+let _liveFacts = null;
+function liveWorktreeFacts() {
+  if (_liveFacts) return _liveFacts;
+  const cwd = process.cwd();
+  const missing = new Set(findMissingWorktrees(cwd).map((w) => w.path));
+  // The MAIN checkout is the first entry of `git worktree list`, never `cwd`:
+  // this suite is run from a task worktree as often as from the root checkout,
+  // and "the main worktree" has to be the same worktree in both, or the guard
+  // asserts a different repository depending on where it was invoked.
+  const mainPath = listWorktrees(cwd)[0].path;
+  // A registration whose directory is gone is reported by the generator under
+  // `dataSources.git.missingWorktrees`; git cannot be asked about a tree that is
+  // not there, and an `ahead` of `null` would read as "not derived" for a
+  // worktree that is simply not there.
+  const worktrees = listWorktrees(cwd)
+    .filter((w) => !missing.has(w.path))
+    .map((w) => {
+      const { ahead, behind } = __testables.aheadBehind(w.path, 'main');
+      return {
+        ...w,
+        isPrimary: w.path === mainPath,
+        tip: __testables.tipCommit(w.path),
+        ahead,
+        behind,
+        mergedIntoBase: __testables.isMergedInto(w.path, 'main'),
+        workingTree: __testables.workingTreeState(w.path),
+        commitsAhead: [],
+      };
+    });
+  _liveFacts = { mainPath, worktrees };
+  return _liveFacts;
+}
+
+/**
+ * The real inventory, built from the real worktrees, with every LIVENESS signal
+ * deliberately empty.
+ *
+ * `in-use` is a protection of its own, so leaving the board and the chats in
+ * would let this guard pass for the wrong reason: a worktree nobody happens to
+ * be in is protected by the rule under test, and one somebody is in is protected
+ * by liveness. With them out, the only thing standing between a dirty merged
+ * branch and `disposalCandidates` is the derivation.
+ */
+function liveInventory() {
+  const { mainPath, worktrees } = liveWorktreeFacts();
+  return buildInventory({
+    worktrees,
+    root: mainPath,
+    base: 'main',
+    mainHead: execFileSync('git', ['rev-parse', 'main'], { cwd: mainPath, encoding: 'utf8' }).trim(),
+    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
+    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+    nowMs: NOW,
+  });
+}
 
 describe('git.mjs against a real repository', () => {
   it('maps rev-list --left-right --count to behind=left, ahead=right', () => {
@@ -1611,17 +1884,46 @@ describe('the curated table', () => {
     const inRepo = live.filter((w) => w.path === repoRoot || w.path.startsWith(`${repoRoot}/`));
     expect(inRepo.length, 'no worktrees matched the repository prefix').toBeGreaterThan(10);
 
+    // A worktree that holds NOTHING is not what this rule is for. Its own comment said
+    // what the rule protects: "an uncurated worktree is one nobody has written down
+    // what it is for, which is how a preservation branch gets mistaken for a
+    // disposable one." A worktree that is clean, 0 ahead of main and already on
+    // main has no work to mistake for anything — it is a scratch space, and it
+    // cannot be lost.
+    //
+    // Demanding a summary for those is what made this the recurring red: the
+    // table was re-derived by hand FOUR times in one session, every time only
+    // because an agent had created a worktree that held nothing yet, and main
+    // went red within minutes of the derived guard landing. The shape is the same
+    // one `mustNotPrune` was just removed for — the risk is derivable from git,
+    // and only the risk deserves a hand-written claim.
+    //
+    // So the rule is the risk, not the existence: a worktree is required to be
+    // documented exactly when it has commits git cannot find on main, or edits
+    // that are in no commit at all, or a branch that is not on main. That is
+    // every way a worktree can hold work, and the three facts are read with the
+    // same helpers the sibling guard uses, so the two cannot drift apart.
+    const { worktrees: withFacts } = liveWorktreeFacts();
+    const holdsSomething = (w) => {
+      const f = withFacts.find((x) => x.name === w.name);
+      if (!f) return true; // git could not be asked: demand a summary rather than wave it through
+      return f.ahead > 0 || f.mergedIntoBase === false || f.workingTree.modified + f.workingTree.untracked > 0;
+    };
+
     // Worktrees created after the table was written, plus the two that are
-    // documented elsewhere by construction. Everything else must be curated.
+    // documented elsewhere by construction.
     const allowed = new Set(['worktree-inventory', 'land-and-dispose']);
     const uncategorised = inRepo
+      .filter(holdsSomething)
       .map((w) => w.name)
       .filter((name) => name !== 'ph' && !allowed.has(name) && !CURATED[name]);
 
     expect(
       uncategorised,
-      `worktrees with no curated entry: ${uncategorised.join(', ')}. ` +
-        'Add each to scripts/lib/worktree-inventory/curated.mjs with a summary.'
+      `these worktrees hold work — commits git cannot find on main, edits in no commit, or a ` +
+        `branch that is not on main — and none is described in ` +
+        `scripts/lib/worktree-inventory/curated.mjs: ${uncategorised.join(', ')}. ` +
+        'Add each with a summary. A worktree holding nothing needs no entry.'
     ).toEqual([]);
   });
 
@@ -1667,7 +1969,11 @@ describe('the curated table', () => {
     expect(CURATED['worktree-inventory']).toBeUndefined();
   });
 
-  it('requires a mustNotPrune entry to say WHY, because the flag alone is unfalsifiable', () => {
+  it('requires a curated mustNotPrune entry to say WHY, because the flag alone is unfalsifiable', () => {
+    // The flag is a human claim about a tree git already calls disposable, so it
+    // is unfalsifiable by anything except prose. No entry sets it today — the
+    // case it was written for is derived, in the describe block below — and this
+    // rule is what the next entry that genuinely needs a veto has to satisfy.
     for (const [name, entry] of Object.entries(CURATED)) {
       if (entry.mustNotPrune) {
         expect(
@@ -1678,30 +1984,219 @@ describe('the curated table', () => {
     }
   });
 
-  it('sets mustNotPrune on every worktree whose danger is invisible to git', () => {
-    // These are the worktrees where `prunable` would be true on git's facts
-    // alone, or where the work is on no ref at all. Losing one is unrecoverable
-    // and no amount of rebasing brings it back, so the flag must be set.
-    const invisibleToGit = [
-      'fix-oracle',
-      'polygon-marching-ants',
-      'ps-pixel-tools',
-      'ps-tools-spine',
-      'responsive-design-plan',
-      'ps-tool-playbook',
-      'e2e-1-export-oracle',
-      'e2e-2-draw-specs',
-      'e2e-3-layers-levels',
-      'e2e-4-flyout-keyboard',
-      'e2e-5-history-undo',
-      'history-append-layer-ops-main',
-      'history-selection-creation-writer-2',
-      'history-selection-deselect-writer',
-      'history-selection-gesture-writer',
-    ];
-    for (const name of invisibleToGit) {
-      expect(CURATED[name]?.mustNotPrune, `${name} holds work on no ref and is not protected`).toBe(true);
+  it('never asks the table to protect a worktree whose protection is derived', () => {
+    // What the flag used to cost. It was a name on a hand-written list, and the
+    // list was re-derived by hand three times in one session: agents commit, so
+    // the flag goes stale; agents dispose worktrees, so a name refers to nothing
+    // and the guard fails on its own premise; agents create worktrees, so the
+    // table has no entry for a worktree that is genuinely holding work on no
+    // ref. It was stale in BOTH directions the last time it was read:
+    // `skill-handoff-cites` was listed and its worktree was gone, while
+    // `chat-damage-followup` and `layers-panel-spec` held uncommitted work on a
+    // main commit and carried no flag at all.
+    //
+    // So the flag is not how this case is expressed any more. `classify` already
+    // refuses to prune a working tree that holds anything, so a flag on a
+    // worktree of this shape protected nothing while asserting a claim that went
+    // out of date on its own. The rule itself is the describe block below; this
+    // test is the tripwire against the flag coming back for it.
+    const derived = liveInventory()
+      .worktrees.filter((r) => r.inRepo && holdsWorkGitCannotSee(r))
+      .map((r) => r.name);
+    const flagged = derived.filter((name) => CURATED[name]?.mustNotPrune);
+    expect(
+      flagged,
+      `these entries hold work git cannot see and are flagged mustNotPrune: ${flagged.join(', ')}. ` +
+        'The generator derives that protection, so the flag is a claim that goes stale the moment the ' +
+        'owner commits — delete the field and keep the note.'
+    ).toEqual([]);
+    // A derived set cannot be cheaper than the facts it is derived from: this
+    // reads git in every worktree in the repository, which is precisely what the
+    // hand-written list was pretending not to have to do. `liveWorktreeFacts`
+    // memoises, so the suite pays for the read once, and which of the two tests
+    // asking first is not something the budget may depend on.
+  }, 60_000);
+
+  it('declares no key twice, because a duplicate key silently discards a curation change', () => {
+    // Five keys were declared twice: a rich entry written deliberately near the
+    // top, and a terse one-liner appended near the bottom. `Object.keys()`
+    // cannot see the first — a JS object literal is last-wins, so the detailed
+    // summary and its `note` were unreachable dead code, and every test that
+    // checked the table still passed because the entry EXISTED. A committed
+    // curation change was a no-op.
+    //
+    // So this reads the SOURCE rather than the imported object: the duplicate
+    // exists only in the text. `readCuratedKeys` is the reader, and it fails
+    // CLOSED — anything at the entry indentation it does not positively
+    // recognise is reported as unreadable rather than skipped, because a reader
+    // that skips what it does not understand reports green on a file it could
+    // not see. That was the defect in the first version of this test, whose
+    // regex matched exactly one quote style at exactly one indentation: a
+    // duplicate in double quotes, a duplicate at a deeper indent, and a computed
+    // key or a spread all slipped past it, while a key-shaped line in a `//`
+    // comment — which is what you write after "removed the terse declarations" —
+    // failed it.
+    const { keys, unreadable } = readCuratedKeys(readFileSync(CURATED_PATH, 'utf8'));
+
+    // The reader must have understood the file. This is the assertion that turns
+    // a parse failure from silence into a failure, and it comes FIRST so a green
+    // run can never mean "the regex matched nothing".
+    expect(
+      unreadable,
+      `curated.mjs contains declarations this reader does not understand, so the duplicate-key ` +
+        `check cannot see the file and would report green on it: ${unreadable.join('; ')}. A ` +
+        `computed key, a spread, a shorthand property or a method at an entry's indentation are ` +
+        `all shapes a duplicate can hide inside — teach the reader this one, or write the entry ` +
+        `as a plain key.`
+    ).toEqual([]);
+
+    const seen = new Set();
+    const duplicates = [];
+    for (const name of keys) {
+      if (seen.has(name)) duplicates.push(`'${name}'`);
+      else seen.add(name);
     }
+
+    expect(
+      duplicates,
+      `curated.mjs declares these keys more than once, so the last declaration silently ` +
+        `replaces the first and the earlier curation is dead code: ${duplicates.join('; ')}. ` +
+        'Object.keys() cannot see this — the check has to read the source.'
+    ).toEqual([]);
+
+    // The parse must find exactly the keys the imported object has, and as MANY
+    // of them. The set comparison alone is what let four silent shapes through:
+    // when the declaration the reader could not see was a key `Object.keys()`
+    // already held, both sets stayed equal and the test passed. The duplicate
+    // assertion above is named first and is the one that should fire for a
+    // duplicate — a guard that reported "the parse is broken" about the very
+    // defect it exists to name teaches the next agent to ignore it — so this
+    // LENGTH comparison is a backstop for a reader that under-counted, not the
+    // primary signal.
+    expect([...new Set(keys)].sort()).toEqual([...Object.keys(CURATED)].sort());
+    expect(keys.length, 'the reader saw fewer declarations than the object has keys').toBe(Object.keys(CURATED).length);
+  });
+
+  describe('the duplicate-key reader, proven against injected shapes', () => {
+    const real = readFileSync(CURATED_PATH, 'utf8');
+    // Inject at the start of a known entry, which is the same place the original
+    // defect was: a declaration added near a declaration.
+    //
+    // Every injected block is BRACE-BALANCED and its comments are CLOSED. That
+    // is not tidiness: the reader counts braces to find where the object literal
+    // ends, so an unbalanced injection walks it out of the literal and it starts
+    // reporting the code after it — which fails the case for the wrong reason,
+    // exactly as a guard that fires for the wrong reason teaches people to
+    // ignore it.
+    const inject = (...lines) => real.replace(/^  'e2e-shell': \{$/m, `  'e2e-shell': {\n${lines.join('\n')}`);
+    const entry = (head) => [head, "    summary: 'injected.',", '  },'];
+
+    const DUPLICATE_CASES = [
+      ['the same quoting and indent as every other entry', entry("  'e2e-shell': {")],
+      ['double quotes', entry('  "e2e-shell": {')],
+      ['four-space indentation', entry("    'e2e-shell': {")],
+      ['eight-space indentation', entry("        'e2e-shell': {")],
+      ['a template-literal key', entry('  `e2e-shell`: {')],
+      ['no space before the colon', entry("  'e2e-shell':{")],
+      ['spaces around the colon', entry("  'e2e-shell'   :   {")],
+      ['a trailing comment on the same line', entry("  'e2e-shell': { // and this is not it")],
+    ];
+
+    for (const [what, lines] of DUPLICATE_CASES) {
+      it(`sees a duplicate declared with ${what}`, () => {
+        const { keys, unreadable } = readCuratedKeys(inject(...lines));
+        expect(unreadable).toEqual([]);
+        expect(count(keys, 'e2e-shell')).toBe(2);
+      });
+    }
+
+    it('sees the declaration behind a trailing comment, because the comment is not the line', () => {
+      // The complement of the comment cases below: stripping `// this is not it`
+      // must not also throw away the `e2e-shell` in front of it. The comment
+      // is discarded and the declaration survives, so this IS a duplicate.
+      const { keys, unreadable } = readCuratedKeys(inject("  'e2e-shell': {", "    summary: 'injected.',", '  },'));
+      expect(unreadable).toEqual([]);
+      expect(count(keys, 'e2e-shell')).toBe(2);
+    });
+
+    for (const [what, lines] of DUPLICATE_CASES) {
+      it(`sees a duplicate declared with ${what}`, () => {
+        const { keys, unreadable } = readCuratedKeys(inject(...lines));
+        expect(unreadable).toEqual([]);
+        expect(count(keys, 'e2e-shell')).toBe(2);
+      });
+    }
+
+    it('reads an entry declared with a bare identifier key', () => {
+      // `e2eShell` is a legal identifier and `e2e-shell` is not, so this cannot
+      // duplicate anything — it is here to prove the identifier form is still
+      // recognised rather than reported as unreadable.
+      const { keys, unreadable } = readCuratedKeys(inject(...entry('  e2eShell: {')));
+      expect(keys).toContain('e2eShell');
+      expect(unreadable).toEqual([]);
+    });
+
+    // [what to call it, the injected lines, a token the failure message must quote]
+    const UNREADABLE_CASES = [
+      ['a computed key', entry("  ['e2e-shell']: {"), "['e2e-shell']"],
+      ['a computed key built by a template', entry('  [`e2e-shell`]: {'), '[`e2e-shell`]'],
+      ['a spread of an object literal', ["  ...{ 'e2e-shell': { summary: 'injected.' } },", '  },'], '...{'],
+      ['a property shorthand', ['  e2eShell,'], 'e2eShell,'],
+      ['a method', entry('  e2eShell() {'), 'e2eShell()'],
+      ['a getter', entry('  get e2eShell() {'), 'get e2eShell()'],
+      ['a name that is not a legal identifier', entry('  e2e-shell: {'), 'e2e-shell:'],
+    ];
+
+    for (const [what, lines, token] of UNREADABLE_CASES) {
+      it(`refuses to guess at ${what}, rather than skipping it`, () => {
+        const { unreadable } = readCuratedKeys(inject(...lines));
+        expect(
+          unreadable.length,
+          `a reader that skipped this line would report green on a declaration it could not see`
+        ).toBeGreaterThan(0);
+        expect(unreadable.join('\\n')).toContain(token);
+      });
+    }
+
+    // Each comment here must CLOSE. An unterminated `/*` legitimately swallows
+    // the rest of the file, so a case built that way would pass for the wrong
+    // reason — the reader would be right to see nothing.
+    const COMMENT_CASES = [
+      ['a line comment', ["  // 'e2e-shell': {"]],
+      ['a single-line block comment', ["  /* 'e2e-shell': { */"]],
+      ['a multi-line block comment', ['  /*', "   'e2e-shell': {", '  */']],
+      ['a block comment holding a whole entry', ['  /*', "  'e2e-shell': {", '  },', '  */']],
+    ];
+
+    for (const [what, lines] of COMMENT_CASES) {
+      it(`ignores a key-shaped line inside ${what}, because a comment is not a declaration`, () => {
+        const { keys, unreadable } = readCuratedKeys(inject(...lines));
+        expect(unreadable).toEqual([]);
+        expect(count(keys, 'e2e-shell')).toBe(1);
+      });
+    }
+
+    it('ignores a key-shaped string inside an entry’s own prose', () => {
+      const { keys, unreadable } = readCuratedKeys(
+        inject("    note: 'see also: e2e-shell: { for the responsive shell, and https://example.com/x',")
+      );
+      expect(count(keys, 'e2e-shell')).toBe(1);
+      expect(unreadable).toEqual([]);
+    });
+
+    it('ignores a key-shaped line nested inside an entry', () => {
+      const { keys, unreadable } = readCuratedKeys(inject("    issues: [{ ref: 'HANDOFF.md#1', title: 't' }],"));
+      expect(keys).not.toContain('nested-thing');
+      expect(unreadable).toEqual([]);
+    });
+
+    it('reads the real file, and reads every key in it', () => {
+      const { keys, unreadable } = readCuratedKeys(real);
+      expect(unreadable).toEqual([]);
+      expect(new Set(keys)).toEqual(new Set(Object.keys(CURATED)));
+      expect(keys.length).toBe(Object.keys(CURATED).length);
+      expect(keys.length).toBeGreaterThan(50);
+    });
   });
 
   it('gives every issue a ref and a title, because a ref with no title is unreadable', () => {
@@ -1711,6 +2206,112 @@ describe('the curated table', () => {
         expect(issue.title, `${name} has an issue with no title`).toBeTruthy();
       }
     }
+  });
+});
+
+describe('work git cannot see: derived from the worktrees, never curated', () => {
+  /**
+   * A board and a chat audit with nothing in them, for a synthetic build.
+   *
+   * An in-use worktree is protected by liveness, so a guard that left liveness in
+   * would pass for the wrong reason. Every assertion in this block is about what
+   * git's own facts derive.
+   */
+  const silent = () => ({
+    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
+    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+  });
+
+  it('never offers a live worktree that holds uncommitted work on no ref for disposal', () => {
+    // This is the whole rule, and it is asserted over the repository as it is
+    // rather than over a list of names in this file. There is no name here to go
+    // stale: the set is recomputed from `git` on every run, so an agent that
+    // commits, an agent that disposes a worktree and an agent that creates one
+    // all change the set without changing a line of this suite. That is the point
+    // — the hand-written list was re-derived three times in one session, and each
+    // pass cost ten minutes and a hold.
+    const inv = liveInventory();
+    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+
+    // The facts must have been read at all. An `ahead` that is `null` means git
+    // could not be asked, and a derived set built from unread facts is not
+    // evidence that nothing is at risk — it is evidence that nothing was looked
+    // at, and the assertion below would pass on it.
+    const unread = inRepo.filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean');
+    expect(
+      unread.map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
+      'git could not be read in these worktrees, so the derived set below would be empty for a ' +
+        'reason that has nothing to do with whether any work is at risk'
+    ).toEqual([]);
+
+    // Three ways to lose, not one. `prunable` and the disposal list are what an
+    // operator acts on, but they are not the only thing that has to hold: a
+    // generator that stopped reading the working tree at all still refuses to
+    // prune a dirty tree, because the clean-tree clause is inside `prunable`
+    // itself — and it would do that while printing `status: landed` and
+    // `recommendation: prune` for the one copy of the work. So the verdict is
+    // asserted too, and the message says which of the three gave.
+    const exposed = inRepo
+      .filter((r) => holdsWorkGitCannotSee(r))
+      .filter(
+        (r) => r.prunable || inv.disposalCandidates.includes(r.name) || r.recommendation === RECOMMENDATION.PRUNE
+      );
+    expect(
+      exposed.map(
+        (r) =>
+          `${r.name}: ahead=${r.ahead} onMain=${r.mergedIntoMain} dirty=${r.dirty} untracked=${r.untracked} ` +
+          `status=${r.status} recommendation=${r.recommendation} action=${r.action} prunable=${r.prunable}`
+      ),
+      'these worktrees are 0 ahead of main, already on it, and hold uncommitted work that is in no ' +
+        'commit on the branch — so the only copy of it is the working tree, and the generator is ' +
+        'calling it disposable'
+    ).toEqual([]);
+    // See the timeout note on the curated-table test that shares this read.
+  }, 60_000);
+
+  it('refuses to dispose of that shape even with nothing but a dirty tree behind it', () => {
+    // The live set above can legitimately be EMPTY — every worktree of this shape
+    // may have committed or been disposed, which is the GOOD outcome and must not
+    // turn this guard red. So the rule is pinned here as well, on a worktree that
+    // cannot drift: no curated entry, no board agent, no chat, no branch of its
+    // own, nothing but `ahead: 0`, already on main, and files in the tree.
+    //
+    // `classify` is pinned for the same shape one level down ('never marks a
+    // worktree prunable while it holds uncommitted work'); this case is the
+    // assembled document and the `disposalCandidates` list an operator reads,
+    // which is a different surface and can disagree with `classify` without any
+    // test noticing.
+    const inv = buildInventory({
+      worktrees: [
+        wt({
+          name: 'derived-shape',
+          ahead: 0,
+          behind: 0,
+          mergedIntoBase: true,
+          workingTree: { modified: 2, untracked: 1, paths: [] },
+        }),
+      ],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      ...silent(),
+      nowMs: NOW,
+    });
+    const [record] = inv.worktrees;
+    expect(record.status).toBe(STATUS.UNCOMMITTED_ONLY);
+    expect(record.prunable).toBe(false);
+    expect(inv.disposalCandidates).toEqual([]);
+    // And the same worktree with a clean tree IS offered, so the assertion above
+    // is about the dirty tree and not about a list that is always empty.
+    const clean = buildInventory({
+      worktrees: [wt({ name: 'derived-shape', ahead: 0, behind: 0, mergedIntoBase: true })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      ...silent(),
+      nowMs: NOW,
+    });
+    expect(clean.disposalCandidates).toEqual(['derived-shape']);
   });
 });
 

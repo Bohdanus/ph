@@ -4,7 +4,8 @@ import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
-import type { ToolName } from '../../contexts/tool-types.ts';
+import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
+import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
 
 /**
  * Flyout groups, each cycled by Shift+<key>, exactly as `toolbar-mapping.ts` groups the
@@ -30,6 +31,45 @@ const fillGroup = ['paint-bucket', 'gradient'] as const satisfies readonly ToolN
 /** `O`: the dodge/burn tonal pair, which also share one options bar (`ToolbarsRight/Tonal`). */
 const tonalGroup = ['dodge', 'burn'] as const satisfies readonly ToolName[];
 const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies readonly ToolName[];
+
+/**
+ * The tools whose options bar carries a tip, and the field each one spells it with.
+ *
+ * Photoshop's `[` and `]` change the tip of whatever tool is up, so the binding is per TOOL and
+ * not per field: a partial `Record` is what makes "no tip" expressible, and an entry may only name
+ * a field that tool actually has. The stamping family and the pen-backed paint family disagree on
+ * the name — `lineWidth` is the legacy pen's stroke width and is carried as the tip size so the
+ * existing Size sliders keep writing one field, while the tools that stamp a tip call theirs `size`.
+ */
+const tipSizeField = {
+  brush: 'lineWidth',
+  pencil: 'lineWidth',
+  eraser: 'lineWidth',
+  'color-replacement': 'lineWidth',
+  smudge: 'size',
+  dodge: 'size',
+  burn: 'size',
+  'clone-stamp': 'size',
+} as const satisfies Partial<Record<ToolName, 'lineWidth' | 'size'>>;
+
+/** The same, for the bar control Photoshop labels `Opacity`, which is 0-1 in every args type here. */
+const opacityField = {
+  brush: 'alpha',
+  pencil: 'alpha',
+  eraser: 'alpha',
+  'color-replacement': 'alpha',
+  'clone-stamp': 'alpha',
+} as const satisfies Partial<Record<ToolName, 'alpha'>>;
+
+type TipSizeTool = keyof typeof tipSizeField;
+type OpacityTool = keyof typeof opacityField;
+
+/** One pixel per press, and `repeat: true` is what turns that into a scrub while the key is held. */
+const TIP_SIZE_STEP = 1;
+
+/** Photoshop's `0` and `1`, in the 0-1 the sliders and every args type already use. */
+const OPACITY_FULL = 1;
+const OPACITY_TEN_PERCENT = 0.1;
 
 function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
   const currentIndex = group.indexOf(currentTool as (typeof group)[number]);
@@ -154,6 +194,44 @@ export const AppKeyboardShortcuts = () => {
     }
 
     goToTool(penGroup.includes(toolName as (typeof penGroup)[number]) ? toolName : 'pen');
+  };
+
+  const tipSizeTool = (name: ToolName): TipSizeTool | null => (name in tipSizeField ? (name as TipSizeTool) : null);
+  const opacityTool = (name: ToolName): OpacityTool | null => (name in opacityField ? (name as OpacityTool) : null);
+
+  /**
+   * `[` and `]`, one pixel per press.
+   *
+   * The write is a PATCH, not a `setToolArgs` of a rebuilt object, so it cannot drop a sibling
+   * control's value the way a whole-object write would — the same reason the options bar patches.
+   * The clamp is the tip engine's own range (`BRUSH_SIZE_MIN`/`BRUSH_SIZE_MAX`) because every
+   * entry in the table is stamped by it, and it is the range `ERASER_SIZE_MAX` already mirrors.
+   *
+   * A non-finite current size falls back to `BRUSH_SIZE_DEFAULT` rather than to the floor:
+   * `NaN + 1` is `NaN`, and a `NaN` bound on a range input renders as an empty slider with no
+   * value to recover from.
+   */
+  const nudgeTipSize = (direction: -1 | 1) => {
+    const tool = tipSizeTool(toolName);
+    if (!tool) return;
+
+    const field = tipSizeField[tool];
+    const current = (toolArgs as Record<string, unknown>)[field];
+    const from = Number.isFinite(current) ? (current as number) : BRUSH_SIZE_DEFAULT;
+    const next = Math.min(BRUSH_SIZE_MAX, Math.max(BRUSH_SIZE_MIN, from + direction * TIP_SIZE_STEP));
+
+    // The field NAME is data, so the patch has a computed key that the per-tool `ToolPatch`
+    // union cannot check. `tipSizeField` is what narrows it: an entry may only name a field that
+    // tool actually carries, and `Partial` is what makes "this tool has no tip" expressible.
+    patchToolArgs(tool, { [field]: next } as unknown as ToolPatch<typeof tool>);
+  };
+
+  /** `0` is Opacity 100% and `1` is Opacity 10%, exactly as Adobe documents them. */
+  const setOpacity = (value: number) => {
+    const tool = opacityTool(toolName);
+    if (!tool) return;
+
+    patchToolArgs(tool, { alpha: value } as ToolPatch<typeof tool>);
   };
 
   useKeyDownShortcut({
@@ -394,6 +472,49 @@ export const AppKeyboardShortcuts = () => {
     shift: true,
     enabled: hasImage,
     onKeyDown: (event) => selectPenTool(event.shiftKey),
+  });
+
+  // Adobe's painting keys. <https://helpx.adobe.com/photoshop/using/painting-tools.html>
+  // "[ and ]", and "To set Opacity to 100%, press 0; to set it to 10%, press 1".
+  //
+  // `mod: false` is load-bearing on all four: the brackets and the digits are plain keystrokes in
+  // Photoshop, and a bare `key` with no modifier test would let Ctrl+[ and Cmd+] step the tip
+  // instead of reaching the platform chord the user asked for. The brackets therefore do not
+  // match Shift either — `{` is the key Shift+[ produces, and it is not a tip step.
+  //
+  // `preventDefault` is on the two digit keys only. They are the ones a browser would otherwise
+  // do something with, and a shortcut that is disabled (a tool with no Opacity) leaves the key
+  // alone, because the provider skips `preventDefault` for a registration that did not match.
+  useKeyDownShortcut({
+    key: '[',
+    mod: false,
+    repeat: true,
+    enabled: hasImage && tipSizeTool(toolName) !== null,
+    onKeyDown: () => nudgeTipSize(-1),
+  });
+
+  useKeyDownShortcut({
+    key: ']',
+    mod: false,
+    repeat: true,
+    enabled: hasImage && tipSizeTool(toolName) !== null,
+    onKeyDown: () => nudgeTipSize(1),
+  });
+
+  useKeyDownShortcut({
+    key: '0',
+    mod: false,
+    preventDefault: true,
+    enabled: hasImage && opacityTool(toolName) !== null,
+    onKeyDown: () => setOpacity(OPACITY_FULL),
+  });
+
+  useKeyDownShortcut({
+    key: '1',
+    mod: false,
+    preventDefault: true,
+    enabled: hasImage && opacityTool(toolName) !== null,
+    onKeyDown: () => setOpacity(OPACITY_TEN_PERCENT),
   });
 
   return null;

@@ -36,12 +36,20 @@ describe('Eyedropper toolbar', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('offers Photoshop three Sample Size options in Photoshop order', () => {
+  it('offers Photoshop all seven Sample Size options in Photoshop order', () => {
     render(<Eyedropper />);
     const options = [...screen.getByLabelText('Sample Size').querySelectorAll('option')];
 
-    expect(options.map((option) => option.textContent)).toEqual(['Point Sample', '3 by 3 Average', '5 by 5 Average']);
-    expect(options.map((option) => option.value)).toEqual(['1', '3', '5']);
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Point Sample',
+      '3 by 3 Average',
+      '5 by 5 Average',
+      '11 by 11 Average',
+      '31 by 31 Average',
+      '51 by 51 Average',
+      '101 by 101 Average',
+    ]);
+    expect(options.map((option) => option.value)).toEqual(['1', '3', '5', '11', '31', '51', '101']);
     expect(options.every((option) => !option.disabled)).toBe(true);
   });
 
@@ -66,18 +74,28 @@ describe('Eyedropper toolbar', () => {
     expect(screen.getByLabelText('Sample Size')).toHaveValue('3');
   });
 
-  it('renders Sample All Layers disabled and unchecked, and writes nothing', () => {
+  it('renders no Sample All Layers control at all, disabled or otherwise', () => {
     render(<Eyedropper />);
-    const allLayers = screen.getByLabelText('Sample All Layers') as HTMLInputElement;
 
-    // It needs a composite read of every visible layer, and the tool area only has the active
-    // layer's pixels — so it must read as unavailable rather than as a switch that does nothing.
-    expect(allLayers).toBeDisabled();
-    expect(allLayers).not.toBeChecked();
-
-    fireEvent.click(allLayers);
-
-    expect(allLayers).not.toBeChecked();
+    // The checkbox used to sit on the bar permanently `disabled` and unchecked. It needs a
+    // composite read of every visible layer and the tool area only has the composited canvas, so
+    // it was a promise the app could not keep on screen: a box that reads as a switch and cannot be
+    // used is worse than an absent one, because the absent one is honest about the gap.
+    expect(screen.queryByLabelText('Sample All Layers')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/All Layers/i)).not.toBeInTheDocument();
+    expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
     expect(patchToolArgsMock).not.toHaveBeenCalled();
+  });
+
+  it('patches every Sample Size the seven-entry union holds, as a number', () => {
+    render(<Eyedropper />);
+
+    for (const sampleSize of [1, 3, 5, 11, 31, 51, 101]) {
+      fireEvent.change(screen.getByLabelText('Sample Size'), { target: { value: String(sampleSize) } });
+    }
+
+    expect(patchToolArgsMock.mock.calls).toEqual(
+      [1, 3, 5, 11, 31, 51, 101].map((sampleSize) => ['eyedropper', { sampleSize }])
+    );
   });
 });

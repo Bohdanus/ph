@@ -86,6 +86,21 @@ async function immutableRaster(bitmap: ImageLayerSource['bitmap']): Promise<Imag
 }
 
 /**
+ * Whether a layer's own protection forbids a tool writing to it.
+ *
+ * `src/util/psd-utils.ts:160` reads the flag off an imported PSD and `:267-268` writes it back
+ * out as composite + position protection, so `locked` is exactly "this layer's PIXELS and POSITION
+ * may not change" — every `commit` kind the processors declare, which is why the check belongs
+ * above them all rather than in the raster branch alone. Nothing consulted it: `psd-utils.ts` is
+ * the only place that ever sets it true, every other construction path writes `false`, and no
+ * panel renders a lock control, so a layer a PSD protected was freely overwritten by every tool.
+ *
+ * `=== true` rather than a truthiness test, so a future flag-shaped value is a compile error
+ * rather than a layer that silently locks itself.
+ */
+const isLayerLocked = (layer: Layer): boolean => layer.locked === true;
+
+/**
  * The action that hands a raster the store has adopted to the presentation scope.
  *
  * `DocumentPresentationScope` is "the owner of every presentation bitmap the store
@@ -312,6 +327,11 @@ export const useLayers = () => {
     // pixel operation, so it is not reachable through this path at all.
     if (!processor) return;
     if (!id || !layers[id]) return;
+    // Before `tempUpdateLayer`, not only inside it: this is the function that appends the
+    // `TOOL_ACTION` history entry, so a locked layer refused only at the pixel write would still
+    // get a history state with no pixel change behind it. Undo would then restore nothing, look
+    // broken, and leave the user with a state they cannot reason about.
+    if (isLayerLocked(layers[id])) return;
     if (processor.commit === 'document-operation') return;
 
     // Whole-document merging is not a transparent step inside a tool, and there is
@@ -430,22 +450,28 @@ export const useLayers = () => {
     const sorted = getSortedLayersArray(remainingLayers);
     const nextActiveLayerId =
       activeLayerId === id ? (sorted.length > 0 ? sorted[sorted.length - 1].id : null) : activeLayerId;
+    const updates = {
+      layers: remainingLayers,
+      deletedLayers: newDeletedLayers,
+      activeLayerId: nextActiveLayerId,
+    };
+    const item = { layerId: id, actionName: REMOVE_ACTION, args: {} } as const;
 
-    dispatch({
-      type: 'COMMIT_DOCUMENT_EDIT',
-      payload: {
-        updates: {
-          layers: remainingLayers,
-          deletedLayers: newDeletedLayers,
-          activeLayerId: nextActiveLayerId,
-        },
-        historyItem: createHistoryItem({
-          layerId: id,
-          actionName: REMOVE_ACTION,
-          args: {},
-        }),
-      },
-    });
+    try {
+      const { entry, durableEntry } = planHistoryAppend({
+        item,
+        timeline: { entries: history, cursor: historyIndex, branchRevision },
+        currentFrame: documentFrame,
+      });
+      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
+    } catch {
+      // The plan is a projection, so a failure in it must not reject a valid
+      // removal. Re-dispatch the same edit with no durable plan, exactly as the
+      // selection writers do; the store rebuilds durable state from the legacy
+      // timeline instead. Nothing has been appended and no layer has left the
+      // record yet, so this is the whole edit rather than a repair of it.
+      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item) } });
+    }
 
     clearOverlay();
   };
@@ -501,6 +527,12 @@ export const useLayers = () => {
 
     const layer = layers[id];
     if (!layer) return;
+
+    // The ONE place a tool's pixels or geometry reach a layer, which is what makes this the guard
+    // for all thirteen `commit: 'raster'` tools at once rather than thirteen copies of the check.
+    // Above every `commit` branch below it, because the flag a PSD round-trips is composite AND
+    // position protection — see `isLayerLocked`.
+    if (isLayerLocked(layer)) return;
 
     const { toolName: toolArgsToolName } = toolArgs;
     const processor = findToolProcessor(toolArgsToolName);

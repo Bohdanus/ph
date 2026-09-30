@@ -43,6 +43,118 @@ import type { FullConfig } from '@playwright/test';
 /** The only environment value this guard accepts. Set by `npm run test:e2e:headed`. */
 const ALLOW_ENV = 'PLAYWRIGHT_ALLOW_HEADED';
 
+/**
+ * The only value that permits a run to test something other than its own checkout.
+ *
+ * Its own variable rather than being read out of `PLAYWRIGHT_BASE_URL`'s presence,
+ * because the point of it is to be a deliberate, greppable signature — the same
+ * reason the headed guard has one. `scripts/e2e-run.mjs` refuses the same pair, and
+ * its refusal is the friendlier one because it happens before Playwright is even
+ * loaded; this one is the load-bearing one.
+ */
+const ALLOW_REMOTE_ENV = 'E2E_ALLOW_REMOTE';
+
+export interface OwnServerCheck {
+  /** False only when the run would navigate somewhere its own dev server is not. */
+  permitted: boolean;
+  /** Logged on EVERY run, so a report can never imply a local verification. */
+  reason: string;
+}
+
+/**
+ * Would this run test the checkout it started in?
+ *
+ * ## Why this exists at all, when the wrapper already refuses it
+ *
+ * `scripts/e2e-run.mjs` refuses `PLAYWRIGHT_BASE_URL` before it starts anything,
+ * which is the friendliest place to be told. It is not the only place a run can be
+ * started from. `npm run test:e2e:raw` is a bare `playwright test`, the CI `e2e` job
+ * runs `npx playwright test` directly, and anything an operator types does whatever
+ * they typed — and `playwright.config.ts` resolves `use.baseURL` from the variable
+ * itself. So a run that set `PLAYWRIGHT_BASE_URL` and bypassed the wrapper navigated
+ * a whole suite to another origin, reported green, and wrote the artifacts everyone
+ * trusts. The wrapper's refusal was real and the guarantee was still one command
+ * away from being false.
+ *
+ * This runs from `globalSetup`, which every `playwright test` invocation loads
+ * whatever started it. That is the same layer as `refuseVisibleBrowser`, and for the
+ * same reason: a rule enforced in one caller is a convention.
+ *
+ * ## What it compares, and why origins rather than strings
+ *
+ * `webServer.url` and the project `use.baseURL` are independent settings. Comparing
+ * ORIGINS rather than the two strings is what makes this correct rather than
+ * annoying: `PLAYWRIGHT_BASE_URL=http://localhost:5173` with a dev server on 5173
+ * names the same server and is fine, while `http://localhost:5174` does not. A
+ * string comparison would refuse the first and allow nothing extra, which would make
+ * the guard something agents learn to work around.
+ */
+export function checkOwnServer(options: {
+  baseUrl: string | undefined;
+  webServerUrl: string | undefined;
+  allowRemote: string | undefined;
+}): OwnServerCheck {
+  const baseUrl = options.baseUrl?.trim();
+  if (!baseUrl) {
+    return { permitted: true, reason: 'no base URL is configured, so there is no origin to verify' };
+  }
+
+  if (options.allowRemote === '1') {
+    return {
+      permitted: true,
+      reason: `${ALLOW_REMOTE_ENV}=1: this run tests ${baseUrl}, which is NOT this checkout`,
+    };
+  }
+
+  const target = parseHttpUrl(baseUrl);
+  if (!target) {
+    return {
+      permitted: true,
+      reason: `base URL ${JSON.stringify(baseUrl)} is not an http(s) URL, so there is no origin to verify`,
+    };
+  }
+
+  const webServer = parseHttpUrl(options.webServerUrl);
+  if (!webServer) {
+    // No `webServer` block means no server was started, so there is nothing to
+    // compare against and nothing this layer can prove either way. Saying so beats
+    // claiming a guarantee the check did not make.
+    return {
+      permitted: true,
+      reason: 'no webServer is configured, so this run could not verify the origin the tests will load',
+    };
+  }
+
+  if (webServer.origin === target.origin) {
+    return { permitted: true, reason: `the tests will load the dev server this run started at ${target.origin}` };
+  }
+
+  return {
+    permitted: false,
+    reason:
+      `the tests will load ${target.origin}, but the dev server this run started is at ${webServer.origin}. ` +
+      'A run that tests another origin is not a run about this branch.',
+  };
+}
+
+function refuseForeignOrigin(check: OwnServerCheck): void {
+  if (check.permitted) return;
+  throw new Error(
+    [
+      `Refusing to start a run against a server it did not start: ${check.reason}`,
+      '',
+      'Every worktree serves its own checkout, so a suite pointed at a foreign origin reports',
+      "somebody else's code as this branch's result — green, with the artifacts everyone trusts.",
+      'TEST-FLAKES.md §10 is a mutation campaign that reported every mutation green that way.',
+      '',
+      'If you mean to test a deployed build, say so explicitly:',
+      `  ${ALLOW_REMOTE_ENV}=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test`,
+      '',
+      'and the run will log, on every run, which origin the tests were pointed at.',
+    ].join('\n')
+  );
+}
+
 function refuseVisibleBrowser(config: FullConfig): void {
   if (process.env[ALLOW_ENV] === '1') return;
 
@@ -83,9 +195,10 @@ function refuseVisibleBrowser(config: FullConfig): void {
       'any more, so a headed run is expected to agree rather than to fail differently. See',
       'e2e/README.md and e2e/OPEN_PROBLEMS.md.',
       '',
-      'To read a failure, open the screenshot Playwright already wrote under test-results/ on',
-      'failure. Do not open a viewer, and do not run `show-report` or `show-trace`: both open',
-      'a window, and both block until you close it.',
+      'To read a failure, open the screenshot Playwright already wrote under the run output',
+      'directory: test-results/, or test-results/runs/<run-id>/ when the run went through',
+      'scripts/e2e-run.mjs, which prints the path it used. Do not open a viewer, and do not run',
+      '`show-report` or `show-trace`: both open a window, and both block until you close it.',
       '',
       'If something genuinely only reproduces visually and you need to watch it, that is the',
       `operator's call, not yours: ask them to run \`npm run test:e2e:headed\`, which sets`,
@@ -453,14 +566,24 @@ export function resolvedWebServerUrl(config: Pick<FullConfig, 'webServer'>): str
 }
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
-  // The refusal comes first and is the only thing here that can throw. A warm-up
-  // that ran before it would spend Vite's transform cost on a run about to be
-  // refused for putting a window on the operator's screen.
+  // The refusals come first and are the only things here that can throw. A warm-up
+  // that ran before them would spend Vite's transform cost on a run about to be
+  // refused for putting a window on the operator's screen, or for testing somebody
+  // else's server.
   refuseVisibleBrowser(config);
 
+  const baseUrl = resolvedBaseUrl(config);
+  const webServerUrl = resolvedWebServerUrl(config);
+  const ownServer = checkOwnServer({ baseUrl, webServerUrl, allowRemote: process.env[ALLOW_REMOTE_ENV] });
+  refuseForeignOrigin(ownServer);
+  // Logged whether or not it was permitted: a permitted REMOTE run is exactly the
+  // case that must be visible in the log afterwards, and this is the only place that
+  // can say it.
+  console.log(`[global-setup] ${ownServer.reason}`);
+
   const plan = planWarmup({
-    baseUrl: resolvedBaseUrl(config),
-    webServerUrl: resolvedWebServerUrl(config),
+    baseUrl,
+    webServerUrl,
     html: readIndexHtml(),
   });
   const result = await runWarmup(plan, {

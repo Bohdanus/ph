@@ -253,6 +253,17 @@ describe('EraserToolArea', () => {
   });
 
   it('coalesces a burst of pointer moves into exactly one live-layer write', () => {
+    // The faked clock is confined to THIS test, and that is the runner's guarantee
+    // rather than this file's: a test that installs fake timers and a later test
+    // that asks `vi.isFakeTimers()` sees `false`, because Vitest restores timers
+    // between tests. Measured, not assumed — a two-test probe with one faking the
+    // clock and the next reporting what it inherited printed `false`.
+    //
+    // So there is deliberately no `afterEach(() => vi.useRealTimers())` here, and
+    // adding one would be noise that reads as a fix. A grep for `useFakeTimers`
+    // without a matching `useRealTimers` in the same file reports this as a leak;
+    // it is not one, and an earlier pass of this file's own audit reported it as
+    // one and shipped a guard that could not have failed.
     vi.useFakeTimers();
     const { toolArea } = renderArea();
 
@@ -483,5 +494,160 @@ describe('document gesture gate', () => {
     fireEvent.pointerDown(toolArea, { button: 2, pointerId: 7, clientX: 10, clientY: 20 });
 
     expect(isDocumentGestureOpen()).toBe(false);
+  });
+});
+
+/**
+ * Adobe's straight line: "place the pointer where you want the line to start, press and hold
+ * Shift, and then click where you want the line to end".
+ * <https://helpx.adobe.com/photoshop/using/painting-tools.html>
+ *
+ * A two-CLICK gesture, so it cannot live in the drag: the press that arms it is a full stroke of
+ * its own in Photoshop, and the Shift-click that finishes it replaces the drag rather than
+ * starting one. Both halves are asserted, because a component that drew the line but also
+ * committed the freehand stroke that came with it would erase twice and cost two undo steps.
+ */
+describe('EraserToolArea straight line', () => {
+  beforeEach(() => {
+    updateLayerByToolMock.mockClear();
+    tempUpdateLayerMock.mockClear();
+    pointerState.isMouseDown.current = false;
+    pointerState.activePointer = null;
+    storeState.documentFrame = null;
+    storeState.layers = { base: makeLayer('base', { x: 0, y: 0, width: 300, height: 200 }) };
+    storeState.activeLayerId = 'base';
+    toolState.toolArgs = {
+      toolName: 'eraser',
+      mode: 'brush',
+      alpha: 1,
+      hardness: 50,
+      spacing: 25,
+      color: '#000000',
+      lineWidth: 10,
+      points: [],
+    };
+  });
+
+  const committedPoints = () => {
+    const calls = updateLayerByToolMock.mock.calls as [{ toolArgs: { points: { x: number; y: number }[] } }][];
+    return calls.map(([params]) => params.toolArgs.points);
+  };
+
+  it('commits one straight stroke between the first press and the Shift-click, and nothing else', () => {
+    const { toolArea } = renderArea();
+
+    // The arming press: an ordinary stroke, which is also the anchor the line starts from.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    expect(committedPoints()).toEqual([[{ x: 20, y: 30 }]]);
+
+    // The Shift-click: two points, not one, and the whole path between them.
+    fireEvent.pointerDown(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+    fireEvent.pointerUp(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+
+    expect(committedPoints()).toEqual([
+      [{ x: 20, y: 30 }],
+      [
+        { x: 20, y: 30 },
+        { x: 200, y: 130 },
+      ],
+    ]);
+  });
+
+  it('does not start a freehand stroke on the Shift-click, so a held pointer cannot bend the line', () => {
+    const { toolArea } = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    updateLayerByToolMock.mockClear();
+    tempUpdateLayerMock.mockClear();
+
+    fireEvent.pointerDown(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 210, clientY: 140 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 200, clientY: 130 });
+
+    // The preview is the whole story here: `tempUpdateLayer` IS the live pixel write, so a move
+    // that reached it would bend the line the commit then contradicted.
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+    expect(committedPoints()).toEqual([
+      [
+        { x: 20, y: 30 },
+        { x: 200, y: 130 },
+      ],
+    ]);
+  });
+
+  it('clears the anchor afterwards, so a third click starts a new gesture rather than a second line', () => {
+    const { toolArea } = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    fireEvent.pointerDown(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+    fireEvent.pointerUp(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+    updateLayerByToolMock.mockClear();
+
+    fireEvent.pointerDown(toolArea, { button: 0, shiftKey: true, clientX: 60, clientY: 90 });
+    fireEvent.pointerUp(toolArea, { button: 0, shiftKey: true, clientX: 60, clientY: 90 });
+
+    // One point, not two: with no anchor a Shift-click is an ordinary click, which is what keeps
+    // a Shift-held pointer from chaining lines off the end of the last one.
+    expect(committedPoints()).toEqual([[{ x: 60, y: 90 }]]);
+  });
+
+  it('an unshifted press re-anchors, so the line starts from the last place the user clicked', () => {
+    const { toolArea } = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 20, clientY: 30 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 90, clientY: 90 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 90, clientY: 90 });
+    updateLayerByToolMock.mockClear();
+
+    fireEvent.pointerDown(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+    fireEvent.pointerUp(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+
+    expect(committedPoints()).toEqual([
+      [
+        { x: 90, y: 90 },
+        { x: 200, y: 130 },
+      ],
+    ]);
+  });
+
+  it('converts the line into the layer frame, like every other point the tool commits', () => {
+    storeState.layers = { base: makeLayer('base', { x: 30, y: 20, width: 300, height: 200 }) };
+    storeState.activeLayerId = 'base';
+    const { toolArea } = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 40, clientY: 50 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 40, clientY: 50 });
+    updateLayerByToolMock.mockClear();
+
+    fireEvent.pointerDown(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+    fireEvent.pointerUp(toolArea, { button: 0, shiftKey: true, clientX: 200, clientY: 130 });
+
+    expect(committedPoints()).toEqual([
+      [
+        { x: 10, y: 30 },
+        { x: 170, y: 110 },
+      ],
+    ]);
+  });
+
+  it('still erases freehand when Shift is held with no anchor, which is the first click of a line', () => {
+    const { toolArea } = renderArea();
+
+    // Shift on the arming press must not be a special case of its own: there is nothing to
+    // constrain to yet, and refusing the stroke would be a dead key.
+    fireEvent.pointerDown(toolArea, { button: 0, shiftKey: true, clientX: 40, clientY: 50 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 60, clientY: 70 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 60, clientY: 70 });
+
+    expect(committedPoints()).toEqual([
+      [
+        { x: 40, y: 50 },
+        { x: 60, y: 70 },
+      ],
+    ]);
   });
 });

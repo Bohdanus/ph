@@ -439,6 +439,7 @@ describe('tool image processors', () => {
       const result = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 28,
         smoothing: 1.5,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -451,11 +452,13 @@ describe('tool image processors', () => {
       const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 0,
         smoothing: 0,
+        contiguous: true,
         toolName: 'magic-wand',
       });
       const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 255,
         smoothing: 100,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 
@@ -468,6 +471,7 @@ describe('tool image processors', () => {
         acceptsArgs<MagicWandToolArgs>(magicWand(params))({
           tolerance: Number.NaN,
           smoothing: Number.NaN,
+          contiguous: true,
           toolName: 'magic-wand',
         })
       ).not.toThrow();
@@ -543,11 +547,13 @@ describe('tool image processors', () => {
       const strict = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 0,
         smoothing: 0,
+        contiguous: true,
         toolName: 'magic-wand',
       });
       const loose = acceptsArgs<MagicWandToolArgs>(magicWand(params))({
         tolerance: 255,
         smoothing: 100,
+        contiguous: true,
         toolName: 'magic-wand',
       });
 

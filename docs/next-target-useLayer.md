@@ -260,7 +260,6 @@ Key mocking patterns:
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `src/contexts/useLayer.ts`                         | Full source (604 lines)                                                                                                  |
 | `src/contexts/__tests__/useLayer.history.test.tsx` | Existing partial test file (29.47% coverage of useLayer.ts) — must be checked for conflicts                              |
-| `HANDOFF.md:454-458`                               | Lines 185-226 (createLayerFromTool), 277-288 (commitDirtyTool text path), 142/159 (commitDirtyTool callers)              |
 | `src/contexts/layer-utils.ts`                      | `createLayerSource`, `createLayerOperation`, `createAffineLayerOperation`                                                |
 | `src/tools/toolProcessors.ts`                      | `toolProcessors` table — `commit` field values ('layer-operation', 'geometry', 'raster', 'source', 'document-operation') |
 | `src/contexts/affine-transform.ts`                 | `isTrapezoidOnlyTransform`, `transformToolArgsToAffine`, `isIdentityAffineTransform`                                     |

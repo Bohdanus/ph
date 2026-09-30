@@ -8,15 +8,13 @@ import { defineConfig, devices } from '@playwright/test';
  * actually start it. Running the e2e suite needs nothing started by hand.
  */
 /**
- * The port the dev server and the tests agree on. Every worktree under
- * `.kilo/worktrees/` serves its OWN checkout, so two worktrees defaulting to
- * 5173 are two different applications on one port: `reuseExistingServer`
- * attaches the second run to the FIRST worktree's code, which then looks
- * exactly like "my change did nothing".
+ * The port the dev server and the tests agree on.
  *
- * Set PLAYWRIGHT_PORT to isolate a run. That alone disables server reuse below,
- * so a run cannot attach to whatever happens to hold the port. The strictPort
- * flag turns a silent attach into a startup failure instead.
+ * This is a default, and the interesting caller is `scripts/e2e-run.mjs`, which
+ * every `test:e2e*` run script routes through: it sets `PLAYWRIGHT_PORT` to a port
+ * it found free, so the dev server, the `baseURL` the tests navigate to, and the
+ * port probed below are one number belonging to that run. It leaves this value
+ * alone when the caller has already chosen one, and under `CI`.
  */
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://localhost:${port}`;
@@ -36,20 +34,27 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
-  // local runs stay sequential so two runs cannot fight over the same app instance
-  // on :5173. The readability argument for `workers: 1` is gone with headed mode: the
-  // local report is the same `list` output either way.
+  // local runs stay sequential so a failure is readable one test at a time and the
+  // machine is not running two browsers per core. The port argument that used to sit
+  // here is gone with the old reuse default: each run owns its port, so two runs no
+  // longer fight over one app instance. The readability argument for `workers: 1` is
+  // gone with headed mode: the local report is the same `list` output either way.
   workers: process.env.CI ? undefined : 1,
-  // Refuses --headed, --debug and --ui before a window exists. This is the layer
-  // that makes the headless default below enforceable rather than advisory - the
-  // flags bypass `use.headless` entirely. See e2e/global-setup.ts.
+  // Two refusals, and both run for every `playwright test` invocation whatever started
+  // it: a visible browser, and a base URL this run's own dev server is not serving.
+  // The flags bypass `use.headless` entirely, and `PLAYWRIGHT_BASE_URL` is read here,
+  // so neither can be enforced from one caller. See e2e/global-setup.ts.
   globalSetup: './e2e/global-setup.ts',
   reporter: process.env.CI
     ? [['github'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]]
     : [['list'], ['html', { open: 'never' }]],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
-    /* Override in another environment: PLAYWRIGHT_BASE_URL=https://example.com npm run test:e2e */
+    /* Testing a deployed build needs E2E_ALLOW_REMOTE=1, which
+     * `npm run test:e2e` refuses without and `e2e/global-setup.ts` refuses without
+     * for EVERY invocation, including a bare `npx playwright test`:
+     *   E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test
+     * The run logs which origin it loaded. See e2e/README.md. */
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? baseUrl,
     // HEADLESS IS THE DEFAULT. Do not flip this to headed-on-local.
     //
@@ -104,19 +109,30 @@ export default defineConfig({
 
   /* Run the dev server before starting the tests */
   webServer: {
-    // `npm run dev` is this repository's Vite dev server, serving `src/` on the
-    // port above. `--strictPort` makes a port clash a hard failure rather than
-    // Vite's default silent hop to 5174, which would leave the tests pointed at
-    // a server this run never started.
+    // `npm run dev` is this repository's Vite dev server, serving `src/` on the port
+    // above. `--strictPort` makes a port clash a hard failure rather than Vite's
+    // default silent hop to 5174, which would leave the tests pointed at a server
+    // this run never started.
     command: `npm run dev -- --port ${port} --strictPort`,
     url: baseUrl,
-    // CI must never attach to an unknown listener, so it always starts its
-    // own server. Locally, reuse a server you already have unless you opt out.
-    // An explicit PLAYWRIGHT_PORT is a request to test THIS checkout, so it
-    // also turns reuse off: a server left behind on that port by an earlier run
-    // is this run's own stale process, not someone else's to share.
-    reuseExistingServer:
-      process.env.CI || process.env.PLAYWRIGHT_PORT ? false : process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER !== 'false',
+    // NEVER TRUE, AND NOT CONFIGURABLE. There is no environment variable, no
+    // argument and no field to turn this on, and that is the point.
+    //
+    // Every worktree under `.kilo/worktrees/` serves its OWN checkout, so two
+    // worktrees on one port are two different applications on one address. A run
+    // that attaches to a server it did not start tests the other checkout's code
+    // and reports green, which reads exactly like "my change did nothing".
+    // TEST-FLAKES.md §10 is a mutation campaign that reported seven product
+    // mutations as green for precisely this reason.
+    //
+    // An earlier version of this file had an opt-in here
+    // (`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`) on the reasoning that an operator
+    // might want to attach to a `npm run dev` they started. It was withdrawn: an
+    // escape hatch that attaches to whatever holds the port is the same defect
+    // with a documented name, and the only thing it reliably does is let an agent
+    // under time pressure choose it. `scripts/e2e-run.mjs` now refuses the variable
+    // outright, so setting it is an error rather than a silent no-op.
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

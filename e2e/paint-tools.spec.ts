@@ -1,13 +1,16 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 import { type BoundingBox, getWorkspaceCanvas, type ImageDataResult, loadImageData } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import {
   clickToolButton,
   FLYOUT_VISIBLE_TIMEOUT_MS,
   type FlyoutItem,
+  hasOwnToolTile,
   navigateAndSelectInFlyout,
-  openToolFlyoutViaKeyboard,
+  resolveToolTile,
   selectFromFlyout,
+  waitForFlyout,
+  waitForFlyoutFocus,
 } from './helpers/toolbar-helpers';
 
 import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -418,6 +421,22 @@ async function expectLevelWithin(
   await expect.poll(() => readLevel(page, geometry, point), options).toBeGreaterThanOrEqual(expected - tolerance);
 }
 
+/**
+ * Opens the flyout that holds `group`, by whichever affordance the rail is currently showing.
+ *
+ * Two paths, and which one runs is a LAYOUT fact that changes with the window, not a property
+ * of the group. A one-column rail fits five tiles in a 720px window, so the Focus and
+ * Dodge/Burn groups — ninth and twelfth of sixteen — are folded into the three-dots tile and
+ * have no tile of their own at all. The old version threw `No sidebar tile found for group
+ * blur/sharpen/smudge` in that case, which reads as "the product has lost the Sharpen tool"
+ * rather than as "the window is short", and it is why every Sharpen, Smudge, Dodge and Burn
+ * case in this file failed at 1280x720 before it ever reached a canvas.
+ *
+ * The two paths are deliberately different gestures and not one helper: a group with its own
+ * tile is opened by a SUSTAINED PRESS (the app arms a 300ms timer on `pointerdown` and its
+ * `pointerup` cancels the open unconditionally), while the three-dots tile is opened by a
+ * right-click, which reaches the same `openFlyout` in one event with no timer to lose.
+ */
 async function longPressGroupTile(page: Page, group: readonly string[]): Promise<void> {
   for (const name of group) {
     const tile = page.getByTestId(`tool-button-${name}`);
@@ -438,13 +457,54 @@ async function longPressGroupTile(page: Page, group: readonly string[]): Promise
     await expect(page.getByRole('menu')).toBeVisible();
     return;
   }
-  throw new Error(`No sidebar tile found for group ${group.join('/')}`);
+
+  // No tile, so the group is in the three-dots menu — which lists every tool of every
+  // collapsed group, nested ones included, so `item` below resolves inside it exactly as it
+  // does in a tile's own flyout. Guarded on the tile existing so "there is no such group"
+  // fails on the three-dots tile rather than on a menu that was never going to open.
+  const overflowTile = page.getByTestId('tool-overflow-tile');
+  await expect(
+    overflowTile,
+    `no tile for group ${group.join('/')}, and no three-dots tile to find it in`
+  ).toBeVisible();
+  await overflowTile.click({ button: 'right' });
+  await waitForFlyout(page);
 }
 
 /** Selects a grouped tool the way a mouse does: sustained press on the tile, then the flyout item. */
 async function selectGroupedTool(page: Page, group: readonly string[], item: FlyoutItem): Promise<void> {
   await longPressGroupTile(page, group);
   await selectFromFlyout(page, item);
+}
+
+/**
+ * The tile that stands for `group` when the rail is showing one of its tools, or the three-dots
+ * tile when it is not. Same two questions `longPressGroupTile` asks, asked together because the
+ * keyboard path needs both halves before it can pick a gesture.
+ */
+async function tileForGroup(page: Page, group: readonly string[]): Promise<Locator> {
+  for (const name of group) {
+    if (await hasOwnToolTile(page, name)) return page.getByTestId(`tool-button-${name}`);
+  }
+  return page.getByTestId('tool-overflow-tile');
+}
+
+/**
+ * Opens that flyout from the keyboard and returns once the promised item holds focus.
+ *
+ * The three waits are the contract, in this order, and pairing them differently is the known
+ * race: the tile's handler calls `openFlyout` and focuses the item from a
+ * `requestAnimationFrame`, so the menu is visible one commit BEFORE anything is focused. An
+ * Enter arriving in that gap is handled by the TILE again — it re-opens the flyout instead of
+ * activating an item — so `waitForFlyout` alone is not interchangeable with `waitForFlyoutFocus`.
+ */
+async function openGroupFlyoutViaKeyboard(page: Page, group: readonly string[]): Promise<void> {
+  const tile = await tileForGroup(page, group);
+  await expect(tile).toBeVisible();
+  await tile.focus();
+  await tile.press('ArrowDown');
+  await waitForFlyout(page);
+  await waitForFlyoutFocus(page, 'ArrowDown');
 }
 
 async function expectOptionsBar(page: Page, controls: readonly OptionsControl[]): Promise<void> {
@@ -622,17 +682,19 @@ test.describe('Paint tools', () => {
       });
 
       test(`the ${tool.key} tool is reachable by keyboard alone`, async ({ page }) => {
-        if (tool.ownTile) {
-          // A single-tool group has no flyout, so its keyboard path is Enter on its own tile.
-          const tile = page.getByTestId(`tool-button-${tool.key}`);
+        // `ownTile` is a property of the MAP — the group holds one tool, so it has no flyout of
+        // its own — and it is NOT a statement that the rail is currently showing a tile for it.
+        // One column fits five tiles at 1280x720, so the Clone Stamp's tile is folded into the
+        // three-dots tile along with everything below it, and the old `tool-button-${key}`
+        // locator reported zero elements there. A single-tool group has no flyout to open, so
+        // the keyboard question is only "does Enter reach it", and that is answered by whichever
+        // tile represents the tool at this window.
+        if (tool.ownTile && (await hasOwnToolTile(page, tool.key))) {
+          const tile = await resolveToolTile(page, tool.key);
           await tile.focus();
           await tile.press('Enter');
         } else {
-          // `openToolFlyoutViaKeyboard` waits for the FOCUS to land, which is the whole point:
-          // the opener waits one requestAnimationFrame after the menu becomes visible, and an
-          // Enter arriving in that frame is handled by the tool button again — it re-opens the
-          // flyout instead of activating an item. Never pair `waitForFlyout` with `Enter`.
-          await openToolFlyoutViaKeyboard(page, tool.group[0]);
+          await openGroupFlyoutViaKeyboard(page, tool.group);
           await navigateAndSelectInFlyout(page, tool.key, tool.label);
           await expect(page.getByRole('menu')).toBeHidden();
         }
