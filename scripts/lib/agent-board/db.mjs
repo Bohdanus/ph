@@ -1765,9 +1765,23 @@ export class Board {
     const worktree = this.identity?.worktree;
     if (!worktree || !existsDir(worktree)) return [];
     const until = new Date(at + leaseMs).toISOString();
+    // Scoped to claims made FROM THIS WORKTREE, not merely by this agent id.
+    //
+    // Identity is the git BRANCH, so two agents on one branch in different
+    // worktrees are the same `agent_id` to this table — and the two halves of
+    // `autoSweep` were asking different questions about the same row. Renewal
+    // asked "is a worktree I can see still on disk?", using the CALLER's path;
+    // `doctor` asks "is the worktree named in THIS ROW gone?". For a single
+    // agent those coincide. For a shared branch they cannot both be true, and a
+    // live agent extended a dead colleague's lease, then released it in the same
+    // invocation.
+    //
+    // `worktree IS NULL` keeps the legacy intent: a claim recorded before a
+    // worktree was known still renews, because refusing to renew it would
+    // silently convert every such claim into a 45-minute countdown.
     const mine = this.db
-      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ?')
-      .all(agentId)
+      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ? AND (worktree IS NULL OR worktree = ?)')
+      .all(agentId, worktree)
       .filter((claim) => Date.parse(claim.lease_until) - at < leaseMs / 2);
     for (const claim of mine) {
       this.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(until, claim.issue_id);

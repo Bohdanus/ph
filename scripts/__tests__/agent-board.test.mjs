@@ -20,7 +20,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Board, BoardError, IDLE_LIVE_MS, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
+import {
+  Board,
+  BoardError,
+  DEFAULT_LEASE_MS,
+  IDLE_LIVE_MS,
+  isImportedOrigin,
+  parseDuration,
+} from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
 
@@ -1872,5 +1879,97 @@ describe('the command line', () => {
     expect(report.report[0].free).toBe(false);
     expect(report.report[0].holders[0].agent_id).toBe('a');
     expect(report.report[1].free).toBe(true);
+  });
+});
+
+/**
+ * The two halves of `autoSweep` asking about the same row.
+ *
+ * `autoSweep` renews first and sweeps second, so that a working agent's lease is
+ * never the thing that gets reclaimed. That ordering only works if both halves
+ * agree on WHICH claim is "mine", and for a while they did not: identity is the
+ * git BRANCH, so two agents on one branch in different worktrees share an
+ * `agent_id`, and renewal asked about the CALLER's worktree while `doctor` asked
+ * about the ROW's. A live agent then extended a dead colleague's lease and
+ * released it in the same invocation.
+ */
+describe('lease renewal when two agents share a branch', () => {
+  const openAs = (agentId, worktree) =>
+    new Board({
+      dir,
+      identity: { agentId, kind: 'kilo', worktree, branch: agentId, sessionId: null, pid: 1, meta: {} },
+      now: () => clock,
+    }).open();
+
+  it("renews only the claims made from the caller's own worktree", () => {
+    const mine = join(dir, 'wt-shared-mine');
+    const theirs = join(dir, 'wt-shared-theirs');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(theirs, { recursive: true });
+
+    // Both are `agentId: 'feat/shared'`, because the branch is the identity.
+    const a = openAs('feat/shared', mine);
+    const b = openAs('feat/shared', theirs);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+
+    // Past the full lease, so "renewed" and "expired" are distinguishable: a
+    // lease that is merely ageing is still in the future and would make the
+    // assertion below pass for the wrong reason.
+    advance(DEFAULT_LEASE_MS + 1000);
+    const renewed = a.renewOwnClaims();
+
+    // Exactly one. The other worktree's claim is not this agent's to extend, and
+    // renewing it is what let the sweep below take a live lease away.
+    expect(renewed).toEqual(['ph-1']);
+    const leases = new Map(
+      a.db
+        .prepare('SELECT issue_id, lease_until FROM claims WHERE released_at IS NULL')
+        .all()
+        .map((r) => [r.issue_id, r.lease_until])
+    );
+    expect(Date.parse(leases.get('ph-1'))).toBeGreaterThan(clock);
+    expect(Date.parse(leases.get('ph-2'))).toBeLessThan(clock);
+  });
+
+  it("still releases the dead worktree's claim, and keeps the live one", () => {
+    // The other half of the contract, and the reason the ordering exists:
+    // scoping renewal must not make a dead colleague's claim immortal, AND a
+    // live agent's own claim must survive a sweep it triggered itself.
+    const mine = join(dir, 'wt-live');
+    const gone = join(dir, 'wt-dead');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(gone, { recursive: true });
+    const a = openAs('feat/x', mine);
+    const b = openAs('feat/x', gone);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+
+    rmSync(gone, { recursive: true, force: true });
+    const sweep = a.autoSweep();
+
+    expect(sweep.renewed).toEqual([]);
+    expect(sweep.released.map((f) => f.issue)).toEqual(['ph-2']);
+    expect(sweep.released[0].kind).toBe('dead-worktree');
+    // The survivor is the whole point of renewing before sweeping.
+    expect(a.db.prepare('SELECT COUNT(*) n FROM claims WHERE released_at IS NULL').get().n).toBe(1);
+  });
+
+  it('keeps renewing a claim that recorded no worktree', () => {
+    // A claim written before a worktree was known must not be converted into a
+    // silent 45-minute countdown by the scoping above.
+    const mine = join(dir, 'wt-nullcase');
+    mkdirSync(mine, { recursive: true });
+    const a = openAs('feat/y', mine);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    a.db.prepare('UPDATE claims SET worktree = NULL WHERE issue_id = ?').run('ph-1');
+
+    advance(DEFAULT_LEASE_MS * 0.75);
+    expect(a.renewOwnClaims()).toEqual(['ph-1']);
   });
 });

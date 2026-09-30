@@ -547,6 +547,48 @@ heartbeat` still exists and is still correct — it is the only thing that can
 It is a command, not a gate. Nothing in `.husky/` calls it, and no commit may be
 blocked on it.
 
+### Resource locking and releasing
+
+The board at `.git/agent-board/board.db` tracks three resources: issue claims
+(`claims`), file locks (`file_locks`) and agent presence (`agents`). All three are
+keyed on `agent_id`, and `agent_id` is the **git branch** — `resolveIdentity`
+prefers `AGENT_BOARD_AGENT`, then the branch, and nothing in this repository ever
+sets that variable. Two sessions on one branch are the same agent to the board and
+cannot deny each other a file.
+
+**Liveness is recency only.** `agents.last_pid` and `session_id` are written and
+never read — the one process-level signal the schema carries is consulted nowhere.
+A timestamp that will not parse reads as **live**, on both the write side and in
+`worktree-inventory/board.mjs:isLive`, because showing a lapsed claim beats hiding
+a live one.
+
+A **claim** renews itself: `renewOwnClaims` extends leases while the worktree
+exists, and `autoSweep` renews before it sweeps, so a working agent's lease is
+never the thing reclaimed. Renewal and release read the **same** row — both the
+worktree in the claim itself, not the caller's. That is not a detail: identity is
+the branch, so two agents on one branch in different worktrees share an
+`agent_id`, and when renewal asked about the caller's worktree while `doctor`
+asked about the row's, a live agent extended a dead colleague's lease and released
+it in the same invocation. A claim recorded before a worktree was known still
+renews, or the scoping would turn it into a countdown.
+
+**A file lock has no renewal at all.** Every write to `file_locks` is an acquire,
+a release, or the expiry sweep, so a lock is a hard `DEFAULT_LEASE_MS` (45 min)
+TTL regardless of activity, and `doctor` — which runs on every command — strips an
+expired one whether or not its holder is working. An agent holding a file longer
+than that loses it silently and the next agent is granted it: the contention the
+board exists to prevent, arriving by timeout rather than by decision. The log
+shows the pressure, 456 `lock.hold` against 832 `lock.deny`. Renewing on worktree
+presence is the obvious fix and the wrong one — a lock means _an agent is in this
+file_, not _this branch owns this directory_, and worktree presence outlives the
+session by days. Closing it needs an activity signal, not a longer timer.
+
+Nothing is double-released: `releaseClaim` walks the `issue_locks` pairing table
+so a file another live issue needs survives, and `ON CONFLICT(path, agent_id)`
+makes re-acquiring your own lock extend it. The board is currently clean — zero
+unreleased claims, zero unreleased locks — but that is agents releasing their own
+work, not a sweep that could not have leaked.
+
 ### The board is cross-session, so a merge can announce itself
 
 The database is global and **nothing in it is scoped to a session**: identity is
