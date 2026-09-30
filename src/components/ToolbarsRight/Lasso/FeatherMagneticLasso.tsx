@@ -185,10 +185,11 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
 
     try {
       setIsCopying(true);
-      copyActiveSelection(activeSelection);
+      if (!copyActiveSelection(activeSelection)) {
+        console.error('Failed to copy feathered magnetic selection');
+      }
     } catch (error) {
       console.error('Error copying feathered magnetic selection:', error);
-      alert('Failed to copy feathered selection');
     } finally {
       setIsCopying(false);
     }

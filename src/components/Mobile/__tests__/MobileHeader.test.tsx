@@ -84,6 +84,7 @@ describe('MobileHeader', () => {
 
   afterEach(() => {
     resetDocumentGestures();
+    vi.restoreAllMocks();
   });
 
   it('shows the document name and the quick actions', () => {
@@ -194,6 +195,33 @@ describe('MobileHeader', () => {
     expect(exportButton).toBeDisabled();
     await user.click(exportButton);
     expect(openSaveImageDialogMock).not.toHaveBeenCalled();
+  });
+
+  it('logs the rejection with the encoder detail and saves nothing', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    openSaveImageDialogMock.mockRejectedValue(new Error('encoder died'));
+    renderHeader();
+
+    await user.click(screen.getByRole('button', { name: 'Export image' }));
+
+    // The Error is the second argument, not an interpolation, so the stack reaches the console.
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image:', expect.any(Error));
+    expect(handleImageSaveMock).not.toHaveBeenCalled();
+  });
+
+  it('passes a non-Error rejection through to the console unchanged', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    openSaveImageDialogMock.mockRejectedValue('disk offline');
+    renderHeader();
+
+    await user.click(screen.getByRole('button', { name: 'Export image' }));
+
+    // Stringified, a reason object arrived as `Failed to save image: [object Object]` and the
+    // reason was gone. The exact raw value is asserted here, so it fails against that.
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image:', 'disk offline');
+    expect(handleImageSaveMock).not.toHaveBeenCalled();
   });
 
   it('keeps every control at least 44px on both axes', () => {

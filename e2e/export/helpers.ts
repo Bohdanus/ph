@@ -523,7 +523,7 @@ export async function setupIcoTest(page: Page): Promise<string> {
   // and this helper would hang on the first input. Accept the single prompt this
   // helper causes. `once` keeps the handler scoped to the one dialog: a global
   // accept in a fixture or in `global-setup.ts` would silently swallow every
-  // unexpected `alert`/`confirm` in the suite, and those surfacing is a
+  // unexpected `confirm`/`prompt` in the suite, and those surfacing is a
   // load-bearing signal.
   page.once('dialog', (dialog) => {
     void dialog.accept();

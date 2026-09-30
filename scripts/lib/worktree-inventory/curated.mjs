@@ -901,6 +901,11 @@ export const CURATED = {
       'A line-numbered citation sweep through the tool-creation skill: every `src/…:NNN` re-derived against the current tree, the settings, selection and shape ranges having all moved under the citation rotation.',
     note: 'The sweep is uncommitted and on no ref, the whole diff being the one skill document, while the branch tip is a main commit — so the branch looks disposable and the only copy of the re-derived citations is the working tree, which is enough without a flag. The skill’s claims about tool behaviour are untouched; only their addresses move.',
   },
+  'swarm-lock-identity': {
+    summary:
+      'Makes a held file behave as one file: a file lock is renewed by the same worktree-presence rule a claim already used, so a task longer than one lease no longer reports its own held file free, and two spellings of one path resolve to one lock instead of two.',
+    note: 'The board database module and the CLI are edited in the working tree, uncommitted, and the branch is a main commit rather than a commit of its own — so the work exists only in this working tree, which is the reason this entry exists.',
+  },
   'swarm-watch-tail': {
     summary:
       'Makes `swarm watch` mean what a reader expects from a log: an unnamed call tails the last page and says which page it printed, and an explicit --since reads forward to the end of the log instead of stopping after one page.',

@@ -1546,7 +1546,7 @@ Every `file:line` below was read in `main` on 2026-09-28. Re-read them before yo
 
 An operator who says "strip the undoable requirement" is not asking you to delete undo.
 They are asking you **not to spend their task migrating the history system**. They have
-read `HANDOFF.md:137-192` ("P0 — the durable replay path has no production caller") and
+read `HANDOFF.md` §1 ("P0 — the durable replay path has no production caller") and
 they do not want their tool to be the reason that file grows.
 
 > **The reframe.** You are not removing undo. You are **choosing a `commit` kind whose
@@ -2159,9 +2159,10 @@ hard-edged — not an oversight."
 #### `**Fix — needs a call, not a patch.**`
 
 Use that exact label when the change would break an existing pin and the choice belongs to
-the operator. The one live instance is `HANDOFF.md:1143`, where the six path tools are
-selectable but `unimplemented`, and either hiding them from `toolbarMap` or making the
-processor throw is defensible:
+the operator. The one live instance is `HANDOFF.md` §53 ("Six selectable tools do nothing at
+all, and the honest fix is five lines"), where the six path tools are selectable but
+`unimplemented`, and either hiding them from `toolbarMap` or making the processor throw is
+defensible:
 
 > **Fix — needs a call, not a patch.** Two honest options, and the choice is the
 > operator's. Either hide the six from `toolbarMap` until they work, or make
@@ -2924,12 +2925,14 @@ run, where their own input reaches the page as real input. Reproduce the rule in
 dispatch; do not restate the table.
 
 What the rule costs, and why it is not a preference: a headed run fails a **disjoint** set of
-specs from a headless one. The measured disjoint sets were the CDP specs deriving an expected size
-from `getDevicePixelRatio()` (which pass headless) against the CDP specs with an explicit
+specs from a headless one. The disjoint sets were the CDP specs that derived an expected size
+from the device pixel ratio (which pass headless) against the CDP specs with an explicit
 `deviceScaleFactor: 2` (which pass headed). Both are fixed, and the fix was to remove the scale
 assertion rather than re-derive it, so the sets are now empty **by construction, not by
-observation**. If something only reproduces visually, that is the operator's call — name the
-command and stop there.
+observation** — the helper that read the device pixel ratio is gone, and
+`e2e/helpers/__tests__/cdp-helpers.unit.test.ts:145` and `:155` pin that it stays gone. If
+something only reproduces visually, that is the operator's call — name the command and stop
+there. `docs/TESTING.md:25-28` is the authority for the rule.
 
 Read a failure from disk, never a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing
 test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record
@@ -3830,7 +3833,7 @@ PLAYWRIGHT_PORT=5199 npm run test:e2e
 
 Batching merges and then debugging four sets of failures at once is what `08-merge-plan.md:112-113` explicitly warns against; the full gate after each merge is what makes "which merge broke it" answerable. The model is `f534335`, "merge: 15 review branches from the untouched-code campaign": 15 `rev2/*` leaves into `rev2/integration`, then that line into `main` with a body listing the highlights, the gates run, and the pin delta. The handoff doc ships inside the merge.
 
-Integration lines here are `rev2/integration`, `history/integration` and `cleanup/integration` — check with `git branch --list '*integration*'` before assuming one exists. `ps-integration` is **not** one: it is a parked preservation branch. `HANDOFF.md:580` lists it as holding unmerged commits and `HANDOFF.md:605-609` records that merging `wip/ps-integration` as written would break the others, because it reads `process.env.E2E_PORT` where they all use `PLAYWRIGHT_PORT`. Review it; do not land it.
+Integration lines here are `rev2/integration`, `history/integration` and `cleanup/integration` — check with `git branch --list '*integration*'` before assuming one exists. `ps-integration` is **not** one: it is a parked preservation branch. `HANDOFF.md` §17 lists it as holding unmerged commits and §17 records that merging `wip/ps-integration` as written would break the others, because it reads `process.env.E2E_PORT` where they all use `PLAYWRIGHT_PORT`. Review it; do not land it.
 
 ### 10.5 When two branches touch the same file
 
@@ -4427,7 +4430,7 @@ depend on it.
   re-verify any of them.
 - **Open citations I dropped rather than guess:** the `#d9c09a` sepia matrix in
   `src/tools/functions.ts`; `PolygonClickToolArea.tsx:733-738`; `useHistory.test.tsx:87-96`;
-  `useCurrentTool.tsx:26-31`; `toolIcons.test.tsx:21-60`; `HANDOFF.md:784`; `draw.ts`'s file
+  `useCurrentTool.tsx:26-31`; `toolIcons.test.tsx:21-60`; `HANDOFF.md` §45; `draw.ts`'s file
   length and its `:102` re-stroke. Each is marked in the correction table. A dropped citation is
   a claim the next session must re-derive, which is cheaper than a wrong one.
 

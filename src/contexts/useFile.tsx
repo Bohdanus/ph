@@ -81,7 +81,6 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       uploadResolverRef.current = null;
     } catch (error) {
       console.error('Failed to load image:', error);
-      window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
       uploadResolverRef.current?.(null);
       uploadResolverRef.current = null;
     }
@@ -129,7 +128,6 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       saveResolverRef.current = null;
     } catch (e) {
       console.error('Failed to save image:', e);
-      window.alert(`Failed to save file: ${e instanceof Error ? e.message : String(e)}`);
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
     } finally {

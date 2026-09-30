@@ -205,9 +205,6 @@ const DesktopHeader = () => {
                       if (data) setBlankImage(data);
                     } catch (error) {
                       console.error('Unable to create document', error);
-                      window.alert(
-                        `Failed to create document: ${error instanceof Error ? error.message : String(error)}`
-                      );
                     }
                   }}
                   data-testid="header-file-new-button"
@@ -233,9 +230,6 @@ const DesktopHeader = () => {
                       if (data) await setImageFromUpload(data);
                     } catch (error) {
                       console.error('Unable to open document', error);
-                      window.alert(
-                        `Failed to open document: ${error instanceof Error ? error.message : String(error)}`
-                      );
                     }
                   }}
                   data-testid="header-file-open-button"
@@ -265,9 +259,6 @@ const DesktopHeader = () => {
                       setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to prepare document export', error);
-                      window.alert(
-                        `Failed to prepare export: ${error instanceof Error ? error.message : String(error)}`
-                      );
                     }
                   }}
                   data-testid="header-file-save-button"

@@ -36,18 +36,14 @@ const Lasso: React.FC<{}> = () => {
 
   const handleCopySelection = async () => {
     try {
-      if (!activeSelection || activeSelection.geometry === 'rectangle') {
-        alert('No active selection to copy');
-        return;
-      }
+      if (!activeSelection || activeSelection.geometry === 'rectangle') return;
 
       setIsCopying(true);
       if (!copyActiveSelection(activeSelection)) {
-        alert('Failed to copy selection');
+        console.error('Failed to copy selection');
       }
     } catch (error) {
       console.error('Error copying selection:', error);
-      alert('Failed to copy selection');
     } finally {
       setIsCopying(false);
     }
