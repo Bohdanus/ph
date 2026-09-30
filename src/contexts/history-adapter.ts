@@ -64,6 +64,7 @@ export type MigrationDiagnostic = Readonly<{
     | 'document-replacement'
     | 'invalid-history-entry'
     | 'conversion-failed'
+    | 'array-arg-compacted'
     | 'durable-append-mismatch';
   message: string;
 }>;
@@ -98,40 +99,66 @@ export type LegacyConversionOptions = Readonly<{
   registry?: AssetRegistry;
 }>;
 
-function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject] {
+/**
+ * Where an array argument carried an absence that {@link plainValue} dropped.
+ *
+ * The drop is not value-preserving, and this file does not trade parity for
+ * silence — see the array arm. The caller turns this into a `warning` so a
+ * shadow that reports `current` while holding a different value than the
+ * authority is never silent.
+ */
+type ArrayCompaction = { paths: string[] };
+
+function plainValue(value: unknown, path: string, compaction?: ArrayCompaction): PlainObject[keyof PlainObject] {
   if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`Non-finite value at ${path}`);
     return value;
   }
-  if (Array.isArray(value))
-    // `undefined` is dropped here for the same reason the object branch below
-    // drops it: it is absence, not a value, and a history arg carrying one is a
-    // sparse array rather than a defect. The asymmetry was a bug — an object
-    // arg could hold an absent key and convert, while the same absence inside an
-    // array threw, and a throw here is an `error` diagnostic, which withholds
-    // the WHOLE shadow (`convertLegacyHistorySafely` voids on the first one).
-    // One holey tool-arg array was therefore enough to lose the document.
-    // Filtering re-indexes, which is correct: a sparse array and its compacted
-    // form describe the same sequence of values.
-    return Object.freeze(
-      value
-        .filter((item) => item !== undefined)
-        .map(
-          (item, index) => plainValue(item, `${path}[${index}]`) as Exclude<PlainObject[keyof PlainObject], undefined>
-        )
-    );
+  if (Array.isArray(value)) {
+    // `undefined` is absence, not a value, and a history arg carrying one is a
+    // sparse array rather than a defect. Treating it as one WAS the bug: a throw
+    // here becomes an `error` diagnostic, and `convertLegacyHistorySafely`
+    // withholds the WHOLE shadow on the first one, so one holey tool-arg array
+    // was enough to lose the document (`HANDOFF.md` §93).
+    //
+    // The object branch below drops absence for free, and that is exactly why
+    // this branch cannot borrow its argument: `args.missing` and
+    // `args.missing = undefined` are the same OBSERVATION, but in an array index
+    // IS the meaning. `lineDash: [4, undefined, 2]` compacts to `[4, 2]`, a
+    // different dash pattern, while legacy replay hands the processor the
+    // ORIGINAL array (`history-replay.ts`). So the compacted value is recorded
+    // and reported by the caller rather than adopted quietly — the same trade
+    // this file already refuses further down, where a conversion that cannot
+    // fail still emits a diagnostic rather than losing a frame silently.
+    //
+    // Each surviving element is addressed by the index the LEGACY array uses, so
+    // a diagnostic about a holey array points at the element the author wrote
+    // rather than one slot off.
+    const compacted: Exclude<PlainObject[keyof PlainObject], undefined>[] = [];
+    for (const [index, item] of value.entries()) {
+      if (item === undefined) {
+        compaction?.paths.push(path);
+        continue;
+      }
+      compacted.push(plainValue(item, `${path}[${index}]`, compaction) as Exclude<
+        PlainObject[keyof PlainObject],
+        undefined
+      >);
+    }
+    return Object.freeze(compacted);
+  }
   if (!value || Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`Non-plain value at ${path}`);
   return Object.freeze(
     Object.fromEntries(
       Object.entries(value)
         .filter(([, item]) => item !== undefined)
-        .map(([key, item]) => [key, plainValue(item, `${path}.${key}`)])
+        .map(([key, item]) => [key, plainValue(item, `${path}.${key}`, compaction)])
     )
   ) as PlainObject;
 }
 
-function plainObject(value: unknown, path: string): PlainObject {
-  const result = plainValue(value, path);
+function plainObject(value: unknown, path: string, compaction?: ArrayCompaction): PlainObject {
+  const result = plainValue(value, path, compaction);
   if (!result || Array.isArray(result) || typeof result !== 'object') throw new Error(`Expected object at ${path}`);
   return result as PlainObject;
 }
