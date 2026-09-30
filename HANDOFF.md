@@ -1108,17 +1108,28 @@ ring and the Color Sampler are overlay work and belong with the navigation clust
 
 ## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
 
-**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
-the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:690`
-is `{/*<Zoom />*/}`.
+**Problem.** Three of Photoshop's twenty toolbar slots have no implementation. Nothing
+in the rail names them: `toolbar-mapping.ts:37` has no `hand`, `zoom` or `rotate` entry,
+and the rail renders nothing that map does not hold — `SidebarLeft.tsx:130` flattens it
+and every tile comes from the result. The placeholder this entry used to cite no longer
+exists: the `{/*<Zoom />*/}` line was deleted, and the only surviving copy of that text in
+the repository is `src/components/SidebarLeft/snippet.txt:128`.
+
+What the deletion left behind is a stale rationale. `SidebarLeft.tsx:1098-1104` justifies
+the rail's single `<hr>` by saying the second one it replaced "stood between the colour
+cluster and NOTHING — the commented-out Zoom control is not markup", which is a claim
+about a control that is now absent from the file the comment is in.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
-zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1166-1172` is
+zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1171-1177` is
 `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest
-of that block — and `usePointerPosition` maps client coordinates to image pixels
+of that block, and the context's own `zoomDataRef`/`setZoomData` members are commented out
+at `:142-143` with only the `ZoomData` type left live (`src/contexts/general-types.ts:14`) —
+and `usePointerPosition` maps client coordinates to image pixels
 through a `scale` supplied by the host rather than owning a view transform itself.
-`Main.tsx:61` initialises `interactionMode = 'zoom'` and nothing ever sets it to
-that string, so the name is currently a dead default rather than a feature.
+`Main.tsx:68` initialises `interactionMode = 'zoom'` and nothing ever assigns that string,
+so it is the value every tool without its own arm falls through to, and it lands on
+`Main.tsx:236`'s `DummyToolArea`: the name is a dead default rather than a feature.
 
 **Fix.** Decide whether the canvas has a view transform at all, because three
 different features want one and it should be one: pan/zoom, the space-drag
@@ -1128,9 +1139,10 @@ owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
 conversion reading from it, is the shape the commented-out code was reaching for.
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:690`,
-`src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
-`src/components/Main/Main.tsx:61`
+**Files.** `toolbar-mapping.ts:37`, `src/components/SidebarLeft/SidebarLeft.tsx:130,1098-1104`,
+`src/components/SidebarLeft/snippet.txt:128`, `src/contexts/StoreContext.tsx:142-143,1171-1177`,
+`src/contexts/general-types.ts:14`, `src/hooks/usePointerPosition.ts`,
+`src/components/Main/Main.tsx:68,236`
 
 ---
 
@@ -1143,7 +1155,7 @@ Do not start with a Hand tool; start with the scope, and the three tools fall ou
 (`src/tools/toolProcessors.ts:300` for `pen`, `:331-335` for `custom-shape`), and the
 processor returns `[null]`. Each has no `interactionMode` arm in
 `src/components/Main/Main.tsx`, so each falls through to `else EventHandler =
-DummyToolArea` (`:226`) — a `display: none` div with no handlers. **They do not
+DummyToolArea` (`:236`) — a `display: none` div with no handlers. **They do not
 consume a history entry**, which is the thing an earlier inventory of this repo
 got wrong and which is worth stating because it changes the severity: the defect
 is a dead button, not a corrupted document.
@@ -1161,10 +1173,10 @@ converts a silent no-op into a visible one, but it changes seven existing tools'
 behaviour, which is a product decision rather than a cleanup. Whatever is chosen,
 do it before the next tool tranche: every new tool inherits the same silent
 failure, and the four added here would have shipped the same way had the spine
-agent not checked `Main.tsx:61`.
+agent not checked `Main.tsx:68`.
 
 **Files.** `src/tools/toolProcessors.ts:110,300,331-335`,
-`src/components/Main/Main.tsx:61,226`, `toolbar-mapping.ts:123-134`
+`src/components/Main/Main.tsx:68,236`, `toolbar-mapping.ts:123-134`
 
 ---
 
@@ -1322,7 +1334,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1108-1123,1125-1140,1143-1150`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1342,7 +1354,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1108-1123,1125-1140,1143-1150`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -1772,7 +1784,7 @@ default panel or sitting in Extra Tools.
 
 **`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
 than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx:54` does `toolbarMap.flat()`, which discards the
+deleted, not kept.** Separately: `SidebarLeft.tsx:130` does `toolbarMap.flat()`, which discards the
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
@@ -1983,8 +1995,8 @@ and each is a one-line fix.
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
 `toolbar-mapping.ts:96` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
 `toolbar-mapping.ts:72` gives the Brush. The badge is rendered from the map
-(`SidebarLeft.tsx:539`), so the user is told the Draw Tool answers to `B`; and
-`AppKeyboardShortcuts.tsx:18` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
+(`SidebarLeft.tsx:837`), so the user is told the Draw Tool answers to `B`; and
+`AppKeyboardShortcuts.tsx:19` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
 so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
 is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
 
@@ -3218,3 +3230,349 @@ Both are defaults in a tool, not a rule in a document, which is the whole of thi
 
 **Files.** `scripts/lib/agent-board/identity.mjs:43-47`, `docs/ORCHESTRATION.md:9-22`,
 `AGENTS.md` (delegation section), `kilo.jsonc`, `.git/hooks-gate/pre-commit`
+
+---
+
+## 101. A new blank image keeps the previous document's file name, so Save As pre-fills the old file's name
+
+**Problem.** `src/contexts/useLayer.ts:199-212` builds the `REPLACE_DOCUMENT` payload for a new
+document and omits `fileName` from `updates`. `REPLACE_DOCUMENT` spreads caller `updates` over state
+(`src/contexts/StoreContext.tsx:574`), so the field is simply never written and the outgoing
+document's name survives. The other two document-creation paths both set it — the raster open through
+`_setFileName` (`src/hooks/useApp.ts:164`) and the PSD open through `updates.fileName`
+(`src/hooks/useApp.ts:128`) — which is exactly why the omission reads as an accident rather than a
+decision.
+
+Measured 2026-09-30 against the real `StoreProvider`, driving `setBlankImage` after seeding a document
+named `holiday-photo.png`:
+
+```
+PROBE fileName after setBlankImage = "holiday-photo.png"
+PROBE hasUnsavedChanges = true
+```
+
+Consequence: a document the user just created from scratch is named after a file that had nothing to
+do with it. The stale name reaches the export path through three hops — the store's `fileName` into
+`openSaveImageDialog` (`src/components/DesktopHeader/DesktopHeader.tsx:253`), into `setFileInput`
+(`src/contexts/useFile.tsx:110`), and out as `SaveDialog`'s `proposedName`
+(`src/contexts/useFile.tsx:174`) — so the save dialog is pre-filled from the old file. On mobile the
+staleness is also on screen, in the two components that render it (`MobileHeader.tsx:107`,
+`MobileMenuDrawer.tsx:110`); on desktop nothing displays it, so there the stale name is invisible until
+a save. `hasUnsavedChanges` is not rendered anywhere, so there is no dirty-marker reading either way —
+its only consumers are the two `confirm()` guards at `DesktopHeader.tsx:200` and `:225`.
+
+**Fix.** Add `fileName` to the `updates` block in `_addLayer`'s `newDocument` branch
+(`src/contexts/useLayer.ts:199`). A new document's name is a product decision, not a derivation — the
+PSD arm sets the imported name, so the blank arm needs the untitled one (`BlankImageParams` at
+`src/contexts/tool-types.ts:107` carries no name field, so either a constant is introduced or the
+value arrives from the caller alongside `size`; `src/App.tsx:21`'s `DEFAULT_BLANK_IMAGE` is the
+existing precedent for a caller-supplied default). `src/hooks/__tests__/useApp.document-reset.test.tsx`
+is the place to pin it, and its `expectOutgoingDocumentKilled` helper deliberately asserts nothing
+about `fileName` today — adding that assertion is the fix's own tripwire, so it must be added in the
+same change.
+
+**Files.** `src/contexts/useLayer.ts:199-212`, `src/contexts/StoreContext.tsx:574`,
+`src/hooks/useApp.ts:128`, `:164`, `src/contexts/useFile.tsx:110`, `:174`,
+`src/components/DesktopHeader/DesktopHeader.tsx:253`, `src/components/Mobile/MobileHeader.tsx:107`
+
+---
+
+## 102. A failed raster open resizes the canvas and then keeps the old document
+
+**Problem.** `src/hooks/useApp.ts:160-164` resizes the canvas before it has anything to replace:
+
+```ts
+const { image } = data;
+const size = { width: image.width, height: image.height };
+handleImageCreate(size); // :162  resizes the canvas
+await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true); // :163  may reject
+```
+
+`createLayerFromBitmap` awaits `immutableRaster` (`src/contexts/useLayer.ts:253`) before it dispatches
+`REPLACE_DOCUMENT`, so a decode failure rejects at `:163` with the canvas already resized and no store
+transition published. The store half is correct — the retained document is untouched, and
+`src/hooks/__tests__/useApp.document-reset.test.tsx` pins exactly that as a negative control. The
+canvas half is not: it is now the new file's size while the document, `totalSize` and `documentFrame`
+are all still the old one.
+
+Measured 2026-09-30, failing a 64×48 open against a seeded 800×600 document:
+
+```
+PROBE canvas after failed open = 64 x 48
+PROBE document totalSize after failed open = {"width":800,"height":600}
+PROBE documentId after failed open = outgoing
+```
+
+The retained document then renders through a canvas of the wrong size until something redraws it, and
+the overlay refs are untouched, so the tool overlay keeps the old geometry while the base canvas does
+not. The PSD arm already gets this right — it resizes all three refs at `:111-115` only after
+`immutableRaster` has resolved every layer at `:88-104`.
+
+**Fix.** Move `handleImageCreate(size)` to after `await createLayerFromBitmap(...)`, matching the PSD
+arm's ordering, or resize inside `_addLayer`'s `newDocument` branch where the replacement is
+published. Three things must change in the same commit, all of them pins of this defect rather than of
+intended behaviour:
+
+- `src/hooks/__tests__/useApp.image-upload.test.ts:148-153` asserts
+  `['resizeCanvas:80x480', 'resizeCanvas:80x40', 'createLayerFromBitmap', 'SET_FILE_NAME']`.
+- `src/hooks/__tests__/useApp.image-upload.test.ts:174-179` asserts the same shape with a live canvas
+  read — `createLayerFromBitmap(canvas=120x90)` is interpolated from inside the mock, so it pins the
+  canvas's dimensions at the moment the layer build starts and cannot be satisfied by reordering alone.
+- The `it` titles at `src/hooks/__tests__/useApp.image-upload.test.ts:143` and `:167` declare the
+  ordering as the behaviour ("has already resized the canvas to the image size when the layer creation
+  starts"), so renaming the expectations while leaving those titles would leave the test promising the
+  defect.
+
+**Files.** `src/hooks/useApp.ts:160-164`, `src/contexts/useLayer.ts:247-277`,
+`src/hooks/__tests__/useApp.image-upload.test.ts:143-180`,
+`src/hooks/__tests__/useApp.document-reset.test.tsx` ("kills nothing when the import fails before the
+document is replaced")
+
+---
+
+## 103. The `REPLACE_DOCUMENT` fast path is a second, untested copy of the reducer's identity logic
+
+**Problem.** `src/contexts/StoreContext.tsx:1064-1108` intercepts `REPLACE_DOCUMENT` before it
+reaches the reducer. It recomputes seven fields the reducer's own `REPLACE_DOCUMENT` arm
+(`:568-586`) also computes — `documentFrame`, `totalSize`, `documentId`, `documentRevision`,
+`branchRevision`, `history`, `historyIndex` — assigns them to `latestStateRef.current` at
+`:1085-1097`, and then calls `rawDispatch`, so the reducer runs anyway and React state is recomputed
+from the reducer chain. The two copies are related by nothing but a comment.
+
+**Measured 2026-09-30, one field at a time, against the real provider** with
+`src/hooks/__tests__/useApp.document-reset.test.tsx` (12 tests, all green):
+
+| fast-path line | field              | mutated to                      | result                                                                               |
+| -------------- | ------------------ | ------------------------------- | ------------------------------------------------------------------------------------ |
+| `:1088`        | `documentFrame`    | `currentState.documentFrame`    | **survives**                                                                         |
+| `:1089`        | `totalSize`        | `currentState.totalSize`        | **survives**                                                                         |
+| `:1090`        | `documentId`       | `currentState.documentId`       | **survives**                                                                         |
+| `:1091`        | `documentRevision` | `currentState.documentRevision` | **survives**                                                                         |
+| `:1092`        | `branchRevision`   | `currentState.branchRevision`   | **survives**                                                                         |
+| `:1096`        | `history`          | appended instead of replaced    | **survives**                                                                         |
+| `:1097`        | `historyIndex`     | `currentState.historyIndex`     | **survives**                                                                         |
+| `:1082`        | disposal guard     | `if (false)`                    | caught — but by `StoreContext.durable-boundary.test.tsx:711`, not by any other suite |
+
+Seven of eight survive, and the reason is structural rather than incidental: the pre-write lands in
+`latestStateRef`, which the next dispatch reads as its `currentState`, and that value is used only to
+(a) decide document disposal and (b) seed the _next_ fast path. It never reaches `useReducer`, so no
+React state and no exported value can observe it. The one append that reads a cursor —
+`updateHistoryTimeline` — clamps it, so even a stale `historyIndex` yields the same timeline.
+
+**Why it matters.** The duplication is a real correctness surface, not dead code: `currentState` is
+read by the disposal guard, so a wrong `documentId` at `:1090` would dispose the wrong document's
+assets — and that is precisely the one field whose divergence is currently caught by a different
+suite, which is luck rather than design. Nothing binds the two copies together, so an edit to the
+reducer arm that is not mirrored at `:1085-1097` is invisible, and an edit to the fast path that is
+not mirrored in the reducer is invisible too.
+
+**Fix.** Two options, and the second is the real one. Either expose the fast path's pre-write to a
+test — `latestStateRef` is already in the provider's value, so a store test can assert the seven
+fields directly and pin the two copies against each other. Or delete the fast path and let the
+reducer be the only writer; the pre-write exists to make same-batch dispatches see the new document,
+which `useSetSelectionFromHistory` and the append path need, so deletion is not free and the first
+option is the cheaper correct move. Whichever is chosen, the seven lines above are the list.
+
+**Files.** `src/contexts/StoreContext.tsx:1064-1108`, `:568-586`,
+`src/contexts/__tests__/StoreContext.durable-boundary.test.tsx:711`
+
+## 104. The reclaim skill's tracked document is not on `main`, so three files point at a file that does not exist
+
+`.kilo/skills/stale-worktree-reclaim/SKILL.md:12` says "**The full skill is
+`.skills/stale-worktree-reclaim.md` (tracked in git).** Read it." It is not tracked, and it is not
+on `main`:
+
+```bash
+git ls-files .skills
+# .skills/broad-test-improvement.md
+# .skills/hard-merge.md
+# .skills/photoshop-tool-creation.md
+# .skills/worktree-merge-harvest.md          <- no reclaim
+git cat-file -e main:.skills/stale-worktree-reclaim.md   # fatal, exit 128
+```
+
+Three files on `main` carry the dangling reference: `.kilo/skills/stale-worktree-reclaim/SKILL.md:12`,
+`.kilo/skills/worktree-merge-harvest/SKILL.md:57`, and the tracked
+`.skills/worktree-merge-harvest.md:5` and `:329`. `main:AGENTS.md` contains no reference to
+`.skills/` or to any skill name, so the loader is the only pointer and it points at nothing.
+
+The document exists — 501 lines, twice reviewed — on branch `fix/stale-reclaim-skill`, where
+`git diff --stat main...fix/stale-reclaim-skill` reports `.skills/stale-worktree-reclaim.md` at 501
+added lines, plus `AGENTS.md`, `WORKTREES.json`, and two inventory files. Two copies on disk are
+byte-identical (`.kilo/worktrees/stale-reclaim-skill/` and `.kilo/worktrees/cleanup-sweep/`). Its own
+review subagent recorded the hazard at the time: _"This is an ordering constraint, not a defect: the
+branch and the stub must land together."_ The operator never merged, and the pointer has been live
+since `86d0ed9f`.
+
+**Landing it as-is is not the fix, and the reason is a red suite.** The branch is 8 ahead and 132
+behind, its `AGENTS.md` hunk is structural rather than textual (it lands in the "Working with other
+agents" section that `1e82da20` deleted, so it cannot apply), and — the part that matters — it still
+**tracks `WORKTREES.json`**. The commit that untracked it, `0bb0e58c`, is not an ancestor of the
+branch. `main` gitignores that file at `.gitignore:47`, and
+`scripts/__tests__/worktree-inventory.test.mjs:2544` fails when it is tracked, so landing the branch
+whole turns the inventory suite red on `main` and violates `docs/ORCHESTRATION.md:240`.
+
+Three options, none of them a plain merge:
+
+- **(a) Land the branch, dropping the two files that regress** — keep `.skills/stale-worktree-reclaim.md`,
+  drop the `WORKTREES.json` re-tracking and the `AGENTS.md` hunk. Preserves the reviewed content:
+  the transitive family walk, its truth table (`:196-211`) and the synthetic
+  `ROOT→{A,B,ORPHAN}; A→GRAND; GRAND→GREAT` tree that caught a bug the author introduced twice, all
+  of which exist nowhere else. Costs a real review, and the `scripts/` and `curated.mjs` changes the
+  doc's claims may rest on still have to be re-derived.
+- **(b) Reimplement the document on `main`.** Clean base, current `ORCHESTRATION.md`, and the two
+  factual errors the branch carries (below) cannot survive by construction. Costs 501 reconstructed
+  lines that `ORCHESTRATION.md` cannot regenerate, because it is a rules document and holds no sweep
+  procedure.
+- **(c) Leave the branch alone and keep the loader honest**, which is what is done in the meantime:
+  the loader now says what to do when the path does not resolve instead of asserting it is tracked.
+
+**Two claims in the branch's copy are provably false and must not land with it.**
+`.skills/stale-worktree-reclaim.md:456-458` inverts the defects filename — it says
+`e2e/OPEN-PROBLEMS.md` with a **hyphen**; `git ls-files e2e/ | grep -i open` returns
+`e2e/OPEN_PROBLEMS.md`, underscore — so the bullet whose entire point is "grep a path you have not
+confirmed" confirms the wrong one, and a reader following it greps a path that returns nothing,
+which reads as "main has no such defect". And `:499-501` tells the reader to `git status` and
+_restore_ a regenerated `WORKTREES.json` in `main`, which is both unnecessary (the file is
+untracked) and the one action `docs/ORCHESTRATION.md:452` calls worse than none.
+
+**Files.** `.kilo/skills/stale-worktree-reclaim/SKILL.md:12`,
+`.kilo/skills/worktree-merge-harvest/SKILL.md:57`, `.skills/worktree-merge-harvest.md:5`, `:329`;
+branch `fix/stale-reclaim-skill`; `scripts/__tests__/worktree-inventory.test.mjs:2544`
+
+## 105. `broad-test-improvement` cannot be loaded at all, and the only copy Kilo would find is a stale fork
+
+The skill's only copy is `.kilo/skill/broad-test-improvement/skill.md`. Three defects, each fatal on
+its own:
+
+- **Wrong directory.** `.kilo/skill/`, not `.kilo/skills/` — Kilo loads from `skills/`.
+- **Wrong filename case.** `skill.md`, not `SKILL.md`.
+- **No frontmatter.** The file opens on `# Broad Test Improvement Skill`, so there is no `name:` /
+  `description:` pair to register it by.
+
+It is also a **stale fork**: 30,731 bytes against the tracked `.skills/broad-test-improvement.md` at
+38,062 bytes, with no loader of its own telling anyone which is authoritative. The tracked document
+is the one that ships; nothing points an agent at it, and the one file that does exist is a version
+of it from before roughly 7 KB of content was added.
+
+**Fix.** Write `.kilo/skills/broad-test-improvement/SKILL.md` as a loader in the shape the other
+six use — frontmatter with `name` and `description`, a line saying the full skill is
+`.skills/broad-test-improvement.md` and is tracked, a short shape table, and the note that
+`.kilo/` is gitignored so a skill stored only there would not ship — then delete
+`.kilo/skill/`. Do not carry content into the loader: the tracked document is the authority and a
+second copy is how the two drifted in the first place.
+
+**Files.** `.kilo/skill/broad-test-improvement/skill.md`, `.skills/broad-test-improvement.md`
+
+## 106. `docs/TOOLS-RESEARCH-BRIEF.md` cites four numbers for one file, and all four are stale
+
+```bash
+wc -l .skills/photoshop-tool-creation.md       # 4,455
+grep -n '^## Photoshop shape tools\|^## The tool backlog\|^## Appendix A' \
+  .skills/photoshop-tool-creation.md
+```
+
+which prints `373:## Photoshop shape tools`, `3879:## The tool backlog — what to build next` and
+`4094:## Appendix A — the trap list`.
+
+`docs/TOOLS-RESEARCH-BRIEF.md:102-104` says "a 4,371-line playbook", its `## Photoshop shape tools`
+section is "`:357-846`", its `## The tool backlog` is "`:3797`" and its `## Appendix A` is
+"`:4012`". Every one of those points at content that has since moved. This is the citation-staleness
+defect `.skills/photoshop-tool-creation.md` phase 9 exists to catch, in the one document that tells
+an agent what to read before writing a tool — and the drift is in the count as well as the anchors,
+which is the case a `grep` cannot see.
+
+**Fix.** Re-derive all four from `wc -l` and `grep -n` at the moment of writing, and consider naming
+the sections by heading rather than by line, since a heading survives a merge and a line number
+does not.
+
+**Files.** `docs/TOOLS-RESEARCH-BRIEF.md:102-104`, `.skills/photoshop-tool-creation.md`
+
+## 107. `docs/ORCHESTRATION.md` cites a handoff section and a source line that both point at the wrong thing
+
+Two pointers in the document every other worktree rule defers to:
+
+- **`:117`** attributes the `git stash` rule to "HANDOFF §69". `HANDOFF.md:1597` §69 is "An eraser
+  gesture abandoned by switching tools leaves its preview on the layer, with no history entry". The
+  stash rule is `HANDOFF.md:1836` **§75**, "`git stash` is not just shared in this repo — an empty
+  push makes `pop` a coin toss".
+- **`:202`** cites `db.mjs:1130` for the `lock.agent_id !== who` conflict test. The lock-level
+  comparisons are `scripts/lib/agent-board/db.mjs:1127` and `:1518`; `:1130` is inside the
+  claim-renewal arm. The claim-level one is `:1126`'s neighbourhood (`:1035`, `:1284`, `:1551`,
+  `:1641`).
+
+Both matter more than an ordinary stale citation, because both sit inside a rule an agent is told to
+obey rather than to check: the section that ends "a failure the operator reads and acts on" and the
+one that ends "Only `e2e-run/<…>/<digits>` is probed".
+
+**Fix.** Correct both to `HANDOFF §75` and `db.mjs:1127`. Deriving them with `grep -n` rather than
+editing the number is the point.
+
+**Files.** `docs/ORCHESTRATION.md:117`, `:202`, `HANDOFF.md:1836`,
+`scripts/lib/agent-board/db.mjs:1127`
+
+## 108. `.skills/photoshop-tool-creation.md` carries ~200 source citations it last verified two days before `main` moved, and it does not know which are dead
+
+The skill's own header says every `file:line` was "last re-verified on 2026-09-28", and `main` has
+moved since. The four worst instances are confirmed stale today:
+
+- **`:492`** quotes `e2e/README.md:30` for "npm run test:e2e is **headless by default. Keep it that
+  way.**". That sentence is at `e2e/README.md:73`; `:30` is the "Counts are deliberately absent…"
+  line. The same paragraph says the README is "415 lines" and it is **580**.
+- **`:3774-3779`** and **`:3766-3767`** assert `e2e/README.md:401-411` still says the `e2e` job is
+  `continue-on-error: true`, and instruct the reader that "the README is the stale one — fix it in
+  the same commit". It is already fixed: `e2e/README.md:401-411` is a file listing of the export
+  baselines, and the history is at `:564`, which reads "It **was** `continue-on-error`". **This
+  instructs an agent to "fix" a correct document.**
+- **`:3137`**, **`:3553`**, **`:3766`**, **`:4328`** say the pass/skip count lives in
+  `e2e/OPEN_PROBLEMS.md:41-42`. `:41` is blank and `:42` is the `## Observed failures` heading;
+  `grep -c '97 pass\|skipped by declaration' e2e/OPEN_PROBLEMS.md` returns **0**. The count moved
+  to `AGENTS.md:129` and nothing in the file says so.
+- **`:3207-3208`** cites `e2e/README.md:243-263` for `testInfo.snapshotDir`, which is at `:395`; and
+  **`:3770-3772`** cites `e2e/OPEN_PROBLEMS.md:13-17` for a passage that starts at `:19`.
+
+**Why this is filed as one entry rather than five.** The individual fixes are mechanical and were
+deliberately **not** made here: a bulk re-derivation of a 4,455-line document's citations is its own
+job, and doing it in a change whose subject was orchestration rules would hide the diff. The defect
+worth recording is the **shape**: the skill asserts verified citations over `src/`, `e2e/` and
+`scripts/`, has no way to know which half are dead, and its phase 9 rule ("verify every citation
+before you commit the handoff") is scoped to the handoff the skill writes rather than to the skill
+itself. A skill that carries hundreds of line-numbered claims about a moving tree needs either a
+dated re-verification pass recorded per section, or citations that name a **symbol** rather than a
+line — which its own header already recommends and its own body does not follow.
+
+**Fix.** Run the re-derivation as its own change: for every `file:line` in the skill, check the
+line, and where it has moved, replace it with `file:symbol` rather than a new number. Then record
+the date the pass covered. Fix the `e2e/README.md` `continue-on-error` instruction **first**, since
+it is the one that causes an agent to make the tree worse.
+
+**Files.** `.skills/photoshop-tool-creation.md:492`, `:3774-3779`, `:3137`, `:3207-3208`, `:3553`,
+`:3766`, `:3770-3772`, `:4328`; `e2e/README.md:30`, `:73`, `:401-411`, `:564`;
+`e2e/OPEN_PROBLEMS.md:41-42`
+
+## 109. `.skills/hard-merge.md` cites eight source locations that have moved, three of them inside a paragraph that tells the reader to re-derive
+
+`.skills/hard-merge.md` has the strongest evidentiary discipline of any document here — it names the
+tree it was read against, and Appendix F is entirely about not trusting a citation. These are the
+ones that did not get re-derived:
+
+| line                   | claims                                                           | actually                                                                     |
+| ---------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `:433`                 | `git.mjs:183-224` is `mergeConflict`                             | `git.mjs:198` (`export function mergeConflict`)                              |
+| `:445`                 | "JSDoc at `git.mjs:193-196`"                                     | `:194-197`                                                                   |
+| `:445`                 | `return { conflict: null, … }` at `:226-231`                     | the two returns are at `:231` and `:233`                                     |
+| `:1129`                | `'toolbar-overflow'` present on `main` at `:859`                 | `scripts/lib/worktree-inventory/curated.mjs:947`                             |
+| `:1067`                | "of the last 200 merge commits on `main`, 50 carry a body"       | re-running the document's own command returns **62**                         |
+| `:851-853`, `:868-871` | "matches 83"; "78 times … and 5 in `HANDOFF.md`"                 | 92 uncorrected today: 79 in this skill, 7 in `HANDOFF.md`                    |
+| `:829-830`             | quotes `ef85d3ab`'s subject                                      | the real subject ends "**and shorten it**"; quoted with no ellipsis          |
+| `:1426`                | "See `docs/ORCHESTRATION.md:290-294`" for the expired-lease trap | that range is the `mustNotPrune` paragraph; the lease material is `:596-606` |
+
+The load-bearing claim — that the **corrected** pattern has **0** occurrences — still holds, so the
+rule the numbers support is intact. What is broken is every number a reader would copy.
+
+**Fix.** Correct the eight, and prefer the symbol over the line everywhere in this file, because
+Appendix F's own argument is that a line number is a property of a moment.
+
+**Files.** `.skills/hard-merge.md:433`, `:445`, `:829-830`, `:851-853`, `:868-871`, `:1067`,
+`:1129`, `:1426`; `scripts/lib/worktree-inventory/git.mjs:198`,
+`scripts/lib/worktree-inventory/curated.mjs:947`

@@ -147,13 +147,25 @@ vi.mock('@playwright/test', () => ({
 }));
 
 // The app arms this timer on pointerdown and opens the flyout when it fires
-// (`SidebarLeft.scheduleFlyoutOpen`). `LATE_TIMER_DELAY_MS` is not an app constant: it is the
-// same 300ms timer arriving late, which is what a busy renderer main thread does to it. The
-// old helper had to win a race against it with a 350ms sleep, so it lost on exactly this.
-const LONG_PRESS_THRESHOLD_MS = 300;
+// (`SidebarLeft.scheduleFlyoutOpen`, which exports it as `FLYOUT_LONG_PRESS_MS`).
+// `LATE_TIMER_DELAY_MS` is not an app constant: it is the same timer arriving late, which is
+// what a busy renderer main thread does to it. The old helper had to win a race against it
+// with a 350ms sleep, so it lost on exactly this.
+//
+// This constant and the helper's `LONG_PRESS_DELAY_MS` are the SAME value written twice,
+// because the `e2e` TypeScript project does not compile `src/` and cannot import the app's
+// export. The assertion in `verifyHoverDoesNotOpenFlyout` below is what stops the two copies
+// drifting apart, so it is load-bearing rather than decorative: change one and the other is
+// free to become wrong, which is exactly what happened when the app's threshold moved to
+// 250ms and this fake stayed at 300.
+const LONG_PRESS_THRESHOLD_MS = 250;
 const LATE_TIMER_DELAY_MS = 900;
 const FLYOUT_CLOSE_TIMEOUT_MS = 1000;
-const HOVER_SETTLE_MS = 400;
+// Derived from the threshold rather than written beside it: this is the helper's hover
+// settle budget, and the helper itself computes its own as `LONG_PRESS_DELAY_MS + 100` from
+// the same 100. Written as a literal it was a fourth copy of one number, and it was the copy
+// that had to change when the threshold did.
+const HOVER_SETTLE_MS = LONG_PRESS_THRESHOLD_MS + 100;
 
 const LEGACY_SELECT_AND_MOVE_LABEL = 'Select and Move';
 
@@ -1843,8 +1855,8 @@ describe('Toolbar Helpers', () => {
       await verifyHoverDoesNotOpenFlyout(dom.page, 'Select & Move');
 
       expect(dom.hovers).toEqual([button]);
-      // `LONG_PRESS_DELAY_MS` is the helper's mirror of the app's `setTimeout(..., 300)`
-      // (`SidebarLeft.scheduleFlyoutOpen`), and `HOVER_SETTLE_MS` is what
+      // `LONG_PRESS_DELAY_MS` is the helper's mirror of the app's `setTimeout(...)` on
+      // `FLYOUT_LONG_PRESS_MS` (`SidebarLeft.scheduleFlyoutOpen`), and `HOVER_SETTLE_MS` is what
       // `verifyHoverDoesNotOpenFlyout` ends up waiting for. Both are exported so this file
       // cannot hold a third copy of either number; these two assertions are what stop the
       // export from drifting away from the fake that models the app.

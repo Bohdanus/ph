@@ -20,7 +20,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Board, BoardError, IDLE_LIVE_MS, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
+import {
+  Board,
+  BoardError,
+  DEFAULT_LEASE_MS,
+  IDLE_LIVE_MS,
+  isImportedOrigin,
+  parseDuration,
+} from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
 
@@ -1872,5 +1879,182 @@ describe('the command line', () => {
     expect(report.report[0].free).toBe(false);
     expect(report.report[0].holders[0].agent_id).toBe('a');
     expect(report.report[1].free).toBe(true);
+  });
+});
+
+/**
+ * The two halves of `autoSweep` asking about the same row.
+ *
+ * `autoSweep` renews first and sweeps second, so that a working agent's lease is
+ * never the thing that gets reclaimed. That ordering only works if both halves
+ * agree on WHICH claim is "mine", and for a while they did not: identity is the
+ * git BRANCH, so two agents on one branch in different worktrees share an
+ * `agent_id`, and renewal asked about the CALLER's worktree while `doctor` asked
+ * about the ROW's. A live agent then extended a dead colleague's lease and
+ * released it in the same invocation.
+ */
+describe('lease renewal when two agents share a branch', () => {
+  const openAs = (agentId, worktree) =>
+    new Board({
+      dir,
+      identity: { agentId, kind: 'kilo', worktree, branch: agentId, sessionId: null, pid: 1, meta: {} },
+      now: () => clock,
+    }).open();
+
+  it("renews only the claims made from the caller's own worktree", () => {
+    const mine = join(dir, 'wt-shared-mine');
+    const theirs = join(dir, 'wt-shared-theirs');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(theirs, { recursive: true });
+
+    // Both are `agentId: 'feat/shared'`, because the branch is the identity.
+    const a = openAs('feat/shared', mine);
+    const b = openAs('feat/shared', theirs);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+
+    // Past the full lease, so "renewed" and "expired" are distinguishable: a
+    // lease that is merely ageing is still in the future and would make the
+    // assertion below pass for the wrong reason.
+    advance(DEFAULT_LEASE_MS + 1000);
+    const renewed = a.renewOwnClaims();
+
+    // Exactly one. The other worktree's claim is not this agent's to extend, and
+    // renewing it is what let the sweep below take a live lease away.
+    expect(renewed).toEqual(['ph-1']);
+    const leases = new Map(
+      a.db
+        .prepare('SELECT issue_id, lease_until FROM claims WHERE released_at IS NULL')
+        .all()
+        .map((r) => [r.issue_id, r.lease_until])
+    );
+    expect(Date.parse(leases.get('ph-1'))).toBeGreaterThan(clock);
+    expect(Date.parse(leases.get('ph-2'))).toBeLessThan(clock);
+  });
+
+  it("still releases the dead worktree's claim, and keeps the live one", () => {
+    // The other half of the contract, and the reason the ordering exists:
+    // scoping renewal must not make a dead colleague's claim immortal, AND a
+    // live agent's own claim must survive a sweep it triggered itself.
+    const mine = join(dir, 'wt-live');
+    const gone = join(dir, 'wt-dead');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(gone, { recursive: true });
+    const a = openAs('feat/x', mine);
+    const b = openAs('feat/x', gone);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+
+    rmSync(gone, { recursive: true, force: true });
+    const sweep = a.autoSweep();
+
+    expect(sweep.renewed).toEqual([]);
+    expect(sweep.released.map((f) => f.issue)).toEqual(['ph-2']);
+    expect(sweep.released[0].kind).toBe('dead-worktree');
+    // The survivor is the whole point of renewing before sweeping.
+    expect(a.db.prepare('SELECT COUNT(*) n FROM claims WHERE released_at IS NULL').get().n).toBe(1);
+  });
+
+  it('keeps renewing a claim that recorded no worktree', () => {
+    // A claim written before a worktree was known must not be converted into a
+    // silent 45-minute countdown by the scoping above.
+    const mine = join(dir, 'wt-nullcase');
+    mkdirSync(mine, { recursive: true });
+    const a = openAs('feat/y', mine);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    a.db.prepare('UPDATE claims SET worktree = NULL WHERE issue_id = ?').run('ph-1');
+
+    advance(DEFAULT_LEASE_MS * 0.75);
+    expect(a.renewOwnClaims()).toEqual(['ph-1']);
+  });
+});
+
+/**
+ * A sweep reclaims what has lapsed. It does not take anything from a live holder.
+ *
+ * This is the multi-holder case, and it is the one every existing test missed:
+ * all of them use one agent per path, so the guard that matters is never the one
+ * under load. Two live rows for one path are schema-legal — the key is
+ * `(path, agent_id)` — and arise without any `--force` from the ordinary
+ * 45-minute-gap sequence, so the test builds exactly that.
+ */
+describe('doctor with two holders of one path', () => {
+  /**
+   * Two agents, two worktrees that EXIST, one file.
+   *
+   * The worktrees have to exist on disk: `identityFor` points each agent at
+   * `wt-<id>`, and `doctor` reads a missing worktree as "dead agent", so a
+   * fixture that skips the directories has every claim swept before the lock
+   * question is even reached.
+   */
+  const twoHolders = (aLeaseMs, bLeaseMs) => {
+    mkdirSync(join(dir, 'wt-a'), { recursive: true });
+    mkdirSync(join(dir, 'wt-b'), { recursive: true });
+    const a = boardFor('a');
+    const b = boardFor('b');
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+    const path = 'src/contested.ts';
+    a.holdFiles([path], { issueId: 'ph-1', leaseMs: aLeaseMs });
+    advance(aLeaseMs + 1000); // A's lock has lapsed, so `liveLocks` drops it
+    b.holdFiles([path], { issueId: 'ph-2', leaseMs: bLeaseMs });
+    return { a, b, path };
+  };
+
+  const rowsFor = (board, path) =>
+    board.db.prepare('SELECT agent_id, released_at FROM file_locks WHERE path = ? ORDER BY agent_id').all(path);
+
+  it('releases the lapsed row and leaves the live holder alone', () => {
+    const { a, path } = twoHolders(60_000, 45 * 60 * 1000);
+    // Asserted on the TABLE, not on `liveLocks` — which excludes an expired row
+    // by definition, so it cannot show that the row still exists.
+    expect(rowsFor(a, path)).toEqual([
+      { agent_id: 'a', released_at: null },
+      { agent_id: 'b', released_at: null },
+    ]);
+
+    const lockFindings = a.doctor().filter((f) => f.path);
+    expect(lockFindings.map((f) => f.agent)).toEqual(['a']);
+    // A's stale row is gone. B's is not, and B still holds the file.
+    expect(rowsFor(a, path)).toEqual([
+      { agent_id: 'a', released_at: expect.any(String) },
+      { agent_id: 'b', released_at: null },
+    ]);
+    expect(a.liveLocks().map((l) => l.agent_id)).toEqual(['b']);
+    // The file is still not takeable. A sweep reclaims; it does not hand over.
+    expect(() => a.holdFiles([path])).toThrow(/held by/);
+  });
+
+  it('still collects a second holder once that one lapses too', () => {
+    // The fix must not turn `doctor` into a one-row sweep. Each expired row is
+    // its own finding, so a genuinely stale second holder is still reclaimed.
+    const { a, b, path } = twoHolders(60_000, 60_000);
+    // B's lease is still running here; A's has just lapsed.
+    expect(a.liveLocks().map((l) => l.agent_id)).toEqual(['b']);
+
+    advance(60_001);
+    const lockFindings = a.doctor().filter((f) => f.path);
+    expect(lockFindings.map((f) => f.agent).sort()).toEqual(['a', 'b']);
+    expect(rowsFor(a, path).every((r) => r.released_at !== null)).toBe(true);
+    // Nobody holds it, so it is takeable again — the sweep is not merely refusing.
+    expect(() => a.holdFiles([path])).not.toThrow();
+  });
+
+  it('deletes pairings only for the holder it released', () => {
+    // `releaseFiles` deletes `issue_locks` for `(path, agent_id)`, so a forced
+    // sweep also erased the LIVE holder's attribution: its `swarm show` reported
+    // `files: none locked` for a file it was holding.
+    const { a, path } = twoHolders(60_000, 45 * 60 * 1000);
+    a.doctor();
+    expect(a.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ? ORDER BY issue_id').all(path)).toEqual([
+      { issue_id: 'ph-2' },
+    ]);
   });
 });

@@ -11,7 +11,7 @@ import {
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { clickToolButton, resolveToolTile } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -169,10 +169,7 @@ test.describe('Keyboard shortcuts', () => {
     for (const { key, tool, bar } of SINGLE_TOOL_SHORTCUTS) {
       test(`${key.toUpperCase()} selects ${tool}`, async ({ page }) => {
         await page.keyboard.press(key);
-        await expect(await resolveToolTile(page, tool), 'the tile standing for the tool is lit').toHaveAttribute(
-          'aria-pressed',
-          'true'
-        );
+        await expectToolSelected(page, tool);
         await expect(page.locator(bar), 'the tile is lit for a tool of its own, not a neighbour of one').toBeVisible();
       });
     }
@@ -195,13 +192,10 @@ test.describe('Keyboard shortcuts', () => {
       // observation it was before the collapse: a tile that was not lit lights for a member
       // of the brush group that is not the group's own identity.
       await page.keyboard.press('v');
-      await expect(await resolveToolTile(page, 'brush'), 'the baseline leaves the brush group unlit').toHaveAttribute(
-        'aria-pressed',
-        'false'
-      );
+      await expectToolSelected(page, 'brush', false);
 
       await page.keyboard.press('e');
-      await expect(await resolveToolTile(page, 'brush')).toHaveAttribute('aria-pressed', 'true');
+      await expectToolSelected(page, 'brush');
       await expect(page.locator('#eraser-mode')).toBeVisible();
       await expect(page.locator('#brush-size'), 'the paint bar is not the one on screen').toHaveCount(0);
     });
@@ -335,8 +329,7 @@ test.describe('Keyboard shortcuts', () => {
       // asserting both halves of a single fact. The collapse is a SUFFIX of the rail's rows
       // (`fittedThrough` in `toolbar-overflow.ts`), so a tile below a collapsed row is
       // collapsed too — and Move is the first row, which is the last thing a suffix reaches.
-      const drawTile = await resolveToolTile(page, 'draw');
-      await expect(drawTile, 'the tile standing for the tool is lit').toHaveAttribute('aria-pressed', 'true');
+      await expectToolSelected(page, 'draw');
       // …and the Draw bar, because that tile was ALREADY lit before the click: the rail
       // starts on a tool the window folded away, so `aria-pressed` on the three-dots tile
       // cannot tell this precondition from the app's opening state. The bar is driven by
@@ -359,8 +352,8 @@ test.describe('Keyboard shortcuts', () => {
 
       await page.keyboard.press('v');
       await expect(width, 'V typed into the field changes nothing about it').toHaveValue('123');
-      await expect(drawTile, 'no tool switched while the field had focus').toHaveAttribute('aria-pressed', 'true');
-      await expect(await resolveToolTile(page, 'reposition')).toHaveAttribute('aria-pressed', 'false');
+      await expectToolSelected(page, 'draw');
+      await expectToolSelected(page, 'reposition', false);
     });
 
     test('a tool shortcut is ignored while a layer name is being edited', async ({ page }) => {
@@ -369,8 +362,7 @@ test.describe('Keyboard shortcuts', () => {
       // its own at this window, and `V` is what this test proves did not reach the shortcut.
       // The Move assertion is the other half of the same fact and cannot be the same
       // element, for the same suffix reason.
-      const textTile = await resolveToolTile(page, 'text');
-      await expect(textTile, 'the tile standing for the tool is lit').toHaveAttribute('aria-pressed', 'true');
+      await expectToolSelected(page, 'text');
       // The bar, for the same reason the Draw guard above states it: the three-dots tile
       // was already lit when this test began, so the tile cannot establish that `T` did
       // anything. What makes the rest of the test meaningful is the PAIR below — the tile
@@ -388,8 +380,8 @@ test.describe('Keyboard shortcuts', () => {
       await page.keyboard.type('v');
 
       await expect(name, 'the letter belongs to the name').toContainText('v');
-      await expect(textTile, 'V did not reach the reposition shortcut').toHaveAttribute('aria-pressed', 'true');
-      await expect(await resolveToolTile(page, 'reposition')).toHaveAttribute('aria-pressed', 'false');
+      await expectToolSelected(page, 'text');
+      await expectToolSelected(page, 'reposition', false);
     });
   });
 });

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { toolbarMap } from '../../../../toolbar-mapping.ts';
-import SidebarLeft from '../SidebarLeft.tsx';
+import SidebarLeft, { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
 
 const goToTool = vi.fn();
 const patchToolArgsMock = vi.fn();
@@ -84,7 +84,16 @@ vi.mock('../toolIcons.tsx', () => {
   };
 });
 
-const LONG_PRESS_DELAY = 300;
+/**
+ * The hold the app arms on `pointerdown`, read from the component rather than restated, so
+ * this suite cannot open a flyout the app has not opened yet.
+ *
+ * The advance stops AT the threshold, not past it: the timer fires on that tick, so the
+ * smallest advance that opens the menu is also the one that proves the app's own number
+ * opens it. The trailing click is delivered on purpose — it is the click `onPointerUp`
+ * marks to be ignored, so the menu is still open when the assertion reads it.
+ */
+const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
 
 const longPress = (button: HTMLElement) => {
   fireEvent.pointerDown(button, { button: 0 });
@@ -156,13 +165,15 @@ describe('SidebarLeft layout toggle', () => {
     // the top of the Tools panel switches to two columns to save vertical room, which only
     // means anything if one column is where you start.
     //
-    // Every assertion below is about the LAYOUT — the toggle's own state, the number of
-    // section lists, and the fact that one column is narrower than two — and none of them is
-    // about a Tailwind class or a pixel count. Both used to be here, and both are the wrong
-    // question: `w-14` is a name the stylesheet can change, and `56px` is a number a design
-    // change moves without the layout behaving differently at all. Pinning them made a
-    // one-column default cost five assertions and a rail width cost five more, none of which
-    // described anything a user can see.
+    // Every assertion below is about the LAYOUT: the toggle's own state, the number of
+    // section lists, the grid's track count, and the fact that one column is narrower than
+    // two. What is deliberately absent is the rail's width in ABSOLUTE terms — neither as the
+    // utility that spells it (`w-14` is a name the stylesheet can change) nor as a pixel count
+    // (`56px` is a number a design change moves without the layout behaving differently at
+    // all). Pinning those made a one-column default cost five assertions and a rail width cost
+    // five more, none of which described anything a user can see. `grid-cols-1`/`grid-cols-2`
+    // survive that rule because a track count is the layout's own shape rather than a size,
+    // and the width at the bottom is compared as a relation for the same reason.
     expect(toggle).toHaveAttribute('aria-label', 'Use two-column toolbar');
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     // One `<ul>` per toolbar section; the two-column rail interleaves them into one grid.
@@ -237,12 +248,14 @@ describe('SidebarLeft layout toggle', () => {
     // the class instead of on the reason.
     expect(tools).toHaveClass(declaredRailWidthRem(sidebar) === 3.5 ? 'w-14' : 'w-[6.75rem]');
 
-    // No horizontal padding on the column, and half the vertical padding it used to have. The
-    // horizontal half was provably inert: the tools box is as wide as the rail, so a padded,
-    // centred child overflows symmetrically and the padding moves nothing — it only ever
-    // squeezed the header row. What is left is what it costs: `py-4` spent 32px of window on
-    // air above and below the rail's only content, and the slot is `flex-1`, so that padding
-    // is a direct term in the fit's `availableHeight`.
+    // No horizontal padding on the column, and half the vertical padding it used to have: the
+    // column declares `py-2` where it used to declare `py-4`, and the assertion is on the
+    // `py-4` that must not come back rather than on the `py-2`. The horizontal half was
+    // provably inert: the tools box is as wide as the rail, so a padded, centred child
+    // overflows symmetrically and the padding moves nothing — it only ever squeezed the header
+    // row. What is left is what it costs: `py-4` spent 32px of window on air above and below
+    // the rail's only content, and the slot is `flex-1`, so that padding is a direct term in
+    // the fit's `availableHeight`.
     expect(column, 'the horizontal padding moved no box and only squeezed the header').not.toHaveClass('px-3');
     expect(column, '32px of vertical air is a real cost on the axis the fit measures').not.toHaveClass('py-4');
 

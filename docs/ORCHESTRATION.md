@@ -301,10 +301,24 @@ the list had to be re-derived by hand. Anything a human must decide lives in
 `scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
 entries are not interchangeable: `tsc-guard` has a `note` but no `issues` and no
 `landed`, while `paint-easy` carries an `issues` ref and a claimed `landed` state.
-Read the source file rather than copying a prose example. **When
-you create a worktree, add its entry in the same change** — an uncurated
-worktree is one nobody has written down what it is for, which is how a
-preservation branch gets mistaken for a disposable one.
+Read the source file rather than copying a prose example. **Curation is worth
+writing when you know something git cannot see**, which today means exactly one
+field: `mustNotPrune` on a branch git already calls disposable. Nothing else in
+an entry moves a verdict, and a test enforces that — `summary`, `note`,
+`liveNote`, `issues` and `landed` are documentation.
+
+**An uncurated worktree is not at risk**, and there is deliberately no rule that
+demands an entry for one. There was: every live worktree holding work had to
+have an entry, which is what an in-flight task looks like for the whole of its
+life, so it was red from an agent's first edit to its merge — in every other
+checkout too, since the generator reads the repository's worktrees and not the
+caller's. The table was re-derived by hand four times in one session against a
+fleet that kept moving. What protects that work is `classify`, on git's facts
+alone, and `worktree-inventory.test.mjs` asserts it over the live worktrees with
+the curated entry removed. Measured on 2026-09-30: 160 curated keys, 102 live
+in-repo worktrees, 26 with no entry, 13 holding work on no ref — every one of
+them reported `at-risk`. Write an entry when you have a judgement to record; the
+suite does not ask you for one per worktree.
 
 `readyToLand`, `disposalCandidates`, `atRisk`, `readUnfinished`, `workOnNoRef` and
 `readLostWorktree` are named at the top of the file so you do not have to filter
@@ -361,6 +375,73 @@ and the subagent died at zero tokens, so the fix is in the caller and there is
 nothing to salvage or redo. `active` is never reported abandoned: recency is
 checked before the shape of the last turn, because a live machine's most recent
 turn always ends in a tool call.
+
+### Who wrote here, who read it, and who is writing now
+
+`chats` is keyed on `session.directory` and is windowed, so it answers "who was
+in this directory recently" and nothing more. The call history answers different
+questions, and it is derived from the `part` table instead: the tool, the path it
+named, and the time it happened
+(`scripts/lib/worktree-inventory/writes.mjs`). It is in **three separate
+structures, because they have three different lifetimes**:
+
+| Field          | Tools                                           | Permanent?                     |
+| -------------- | ----------------------------------------------- | ------------------------------ |
+| `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **yes** — this is who built it |
+| `readHistory`  | `read`, `grep`, `glob`, `semantic_search`       | **no** — releasable            |
+| `shellHistory` | `bash`, `background_process`                    | no — the size of the gap below |
+
+Reading a worktree is interest, not authorship: reviewers, explorers and
+debugging agents all read directories they never touched, and a reader list that
+only grows stops answering "who is looking at this" while still claiming to.
+Keeping readers out of `writeHistory` is what makes the release possible — a
+release that preserved writers by filtering a _merged_ list would have to remember
+which entries were which, forever. Two lists need no memory.
+
+**Releasing readers is a watermark, not an event.** `--release-reads` (optionally
+`=<iso>`) sets `ownership.readsReleasedBefore`; a reader is emitted only when its
+last read is newer than that mark. The mark is read back from the existing file
+and combined with `Math.max`, so it only ever moves forward — a release cannot
+silently undo itself on the next regeneration, and it keeps no record of which
+entries it removed. Writers live in a different structure that nothing filters, so
+a release cannot reach them. On a run with `--release-reads=2026-09-29` on this
+repository: 407 readers became 139, and the 206 writers were unchanged.
+
+**A write is a stronger ownership claim than a message**, so
+`writeHistory.derivedChatIds` feeds the `in-use` verdict alongside the session and
+board signals. A chat that edited files here twenty minutes ago owns the
+directory even if it has been quiet since.
+
+**The write count is not complete, and the file says so.** A shell changes files
+with `sed -i`, a heredoc or `>`, and none of that appears in any tool's
+arguments — 61,795 commands ran with a workdir inside a worktree on this
+repository. `shellHistory.writeCapableCalls` is the size of that gap, not a count
+of writes. Likewise `readHistory.unlocatedCalls`: 4% of greps and 66% of globs
+record no path because they defaulted to the working directory, and they are
+counted rather than dropped. Calls that belong to no known worktree are counted
+**per kind** in `dataSources.calls`; a single mixed counter made the write total
+meaningless the moment a second kind existed. There is deliberately no `sessions`
+field — an earlier version reported every session on the machine, including the
+ones that never wrote, under a key that said `writes`.
+
+**A deleted worktree keeps its writers.** The registry loses a removed worktree,
+but the `.kilo/worktrees/<name>/` segment survives in the recorded path, so its
+history is reported under `goneWorktrees` at the top level rather than being filed
+under the main checkout — which is what a prefix match does, because the main
+checkout contains every worktree. It has to be a top-level list: the per-worktree
+loop only visits worktrees that still exist.
+
+**`ownership` at the top of the document is the liveness answer, and it carries
+its own provenance.** `liveWriterCount` of zero is ambiguous between "nobody is
+writing" and "every writer is dead", so `suppressed` and `reason` say which.
+Generate with `--no-live-writers "<why>"` to declare a hard state — an editor
+restart takes every chat with it, and the recency heuristics keep reporting an
+owner for half an hour afterwards. The override is auditable rather than silent:
+per worktree, `live` is the claim, `derivedLive` is what the signals said, and
+`derivedChatIds` names the chats that were overridden. **No `project_id` filter is
+applied when reading the session table**, deliberately: scoping to one project
+dropped 30 sessions that had made 774 completed writes into this checkout, and a
+writer that is absent is the one failure the structure cannot have.
 
 **`landed: true` is a curator's claim**, printed next to git's answer as
 `claimedLanded` against `mergedIntoMain`. A test re-derives it from
@@ -479,6 +560,55 @@ heartbeat` still exists and is still correct — it is the only thing that can
 
 It is a command, not a gate. Nothing in `.husky/` calls it, and no commit may be
 blocked on it.
+
+### Resource locking and releasing
+
+The board at `.git/agent-board/board.db` tracks three resources: issue claims
+(`claims`), file locks (`file_locks`) and agent presence (`agents`). All are keyed
+on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
+`AGENT_BOARD_AGENT`, then the branch, and nothing in this repository ever sets
+that variable. Two sessions on one branch are one agent to the board and cannot
+deny each other a file.
+
+**Liveness is recency only.** `agents.last_pid` and `session_id` are written and
+never read — the one process-level signal the schema carries is consulted nowhere.
+
+**The two readers disagree about a malformed timestamp, and the board side is the
+dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
+(`db.mjs:1065`) treats it as **free**, because `NaN > at` is false — so the
+inventory can show a file held while `swarm check` calls it free. Unreachable
+today, since every writer goes through `msFromNow`, but a resource's safety rests
+on an invariant the code does not hold. Claims fail the other way: `doctor` tests
+`Date.parse(lease_until) <= at`, also false for `NaN`, so a malformed lease is
+neither live nor reclaimable and `swarm health` reports an expired count
+`swarm doctor` cannot reduce.
+
+A **claim** renews itself while its worktree exists, and `autoSweep` renews
+before it sweeps. The limit of that ordering: `doctor` also reclaims on **expiry**,
+and renewal only fires when a `swarm` command runs, so it protects an agent that
+ran one inside the last half-lease — a long `npm run test` loses the claim to a
+peer's next command. Renewal and release must read the **same** row, and now do:
+both use the worktree in the claim, not the caller's. Because identity is the
+branch, two agents on one branch in different worktrees share an `agent_id`, and
+when renewal asked about the caller while `doctor` asked about the row, a live
+agent extended a dead colleague's lease and released it in one invocation.
+
+**A file lock has no renewal at all.** Every write to `file_locks` is an acquire,
+a release, or the expiry sweep, so a lock is a hard `DEFAULT_LEASE_MS` (45 min)
+TTL, and `doctor` — which runs on every command — strips an expired one whether or
+not its holder is working. Worse, that sweep calls `releaseFiles(..., {force:
+true})`, whose `force` skips the `agent_id !== who` guard and so releases **every**
+holder of the path, including one who acquired it after the first row lapsed. Holding a
+file past the TTL therefore loses it silently and hands it to a third agent; the
+log shows the pressure, 456 `lock.hold` against 832 `lock.deny`. Renewing on
+worktree presence is the obvious fix and the wrong one — a lock means _an agent is
+in this file_, not _this branch owns this directory_. It needs an activity
+signal.
+
+Hand-driven release is careful: `releaseClaim` walks the `issue_locks` pairing
+table so a file another live issue needs survives. The board is currently clean —
+zero unreleased claims, zero unreleased locks — but that is agents releasing their
+own work, not a sweep that could not have leaked.
 
 ### The board is cross-session, so a merge can announce itself
 
