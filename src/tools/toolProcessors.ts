@@ -57,6 +57,13 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
+  /**
+   * The tool's pixels or its retained presentation depend on `CanvasRenderingContext2D.filter`,
+   * which is not Baseline: caniuse records Safari 3.1 - 17.6 as unsupported (WebKit bug 198416,
+   * since resolved) and MDN states the feature is not Baseline. Set this on every such tool so the
+   * refusal in `src/util/canvas-filter.ts` has one place to read the answer from.
+   */
+  requiresCanvasFilter?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;
@@ -117,18 +124,21 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: reposition,
   },
   blur: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: blur,
   },
   color: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: colors,
   },
   levels: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.

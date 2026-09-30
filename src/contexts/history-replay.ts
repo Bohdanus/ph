@@ -11,6 +11,7 @@ import { createAffineLayerOperation, createLayerOperation, reorderLayers } from 
 import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
+import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
 import { deriveSelectionBaseline, type SelectionHistoryArgs } from './selection-baseline.ts';
@@ -158,6 +159,16 @@ export function replayHistory(
     if (!processor) continue;
 
     if (processor.commit === 'layer-operation') {
+      // A retained filter this browser cannot apply must not be re-appended: the layer would then
+      // present unchanged pixels that no replay reproduces, and `layer-renderer` would refuse to
+      // draw it at all. Skipping is the same refusal the commit path makes, at replay time.
+      if (processor.requiresCanvasFilter) {
+        try {
+          requireCanvasFilter(toolArgs.toolName);
+        } catch {
+          continue;
+        }
+      }
       layers = {
         ...layers,
         [layerId]: {
