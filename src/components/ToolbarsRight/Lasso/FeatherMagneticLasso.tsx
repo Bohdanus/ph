@@ -15,6 +15,19 @@ const SLIDER_CLASS = 'h-1.5 w-24 cursor-pointer appearance-none rounded-lg bg-gr
 const INFO_TOOLTIP_ID = 'feather-magnetic-lasso-settings-tooltip';
 const INFO_TOOLTIP_WIDTH = 384;
 
+/**
+ * How long the info tooltip stays mounted after focus or hover leaves, so a pointer
+ * can cross the gap between the button and the menu without losing it.
+ *
+ * Exported because the delay is behaviour with a value, and the test that covers it
+ * used to hard-code its own copy of that value. It was 200 in the test against 120
+ * here, and a `grep` could not tell which was the real one: a stale constant in a
+ * test is invisible until production changes. `eslint.config.js` sets
+ * `allowConstantExport: true` for exactly this, so a constant exported beside its
+ * component costs nothing.
+ */
+export const INFO_TOOLTIP_CLOSE_DELAY_MS = 120;
+
 const SETTING_HELP = [
   {
     label: 'Feather',
@@ -88,7 +101,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
     closeInfoTooltipTimerRef.current = window.setTimeout(() => {
       setIsInfoHovered(false);
       closeInfoTooltipTimerRef.current = null;
-    }, 120);
+    }, INFO_TOOLTIP_CLOSE_DELAY_MS);
   }, [clearInfoCloseTimer]);
 
   const updateInfoTooltipPosition = useCallback(() => {

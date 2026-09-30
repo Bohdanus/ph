@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import type { Selection } from '../../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../../util/constants.ts';
-import FeatherMagneticLasso from '../FeatherMagneticLasso.tsx';
+import FeatherMagneticLasso, { INFO_TOOLTIP_CLOSE_DELAY_MS } from '../FeatherMagneticLasso.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const patchToolArgsMock = vi.hoisted(() => vi.fn());
@@ -74,21 +74,21 @@ vi.mock('../../../../contexts/useSelectionClipboard.ts', () => ({
 
 const INFO_BUTTON_NAME = 'Feather Magnetic Lasso settings information';
 const SETTING_LABELS = ['Feather', 'Width', 'Contrast', 'Frequency', 'Snap', 'Smooth', 'Anti-alias', 'Preview feather'];
-// The toolbar keeps the info tooltip mounted for 120ms after focus/hover leaves the button
-// — a bare `120` literal in `hideInfoTooltipSoon` (`FeatherMagneticLasso.tsx:91`), which is
-// the value this test depends on and NOT the value it waits for.
+// The real delay, imported rather than retyped. This file used to hold its own copy,
+// and the two disagreed: production closed the tooltip after 120ms and the comment above
+// this constant said 120 while the constant said 200. Nothing tied either number to
+// production, so a change to the delay in `hideInfoTooltipSoon` was invisible here —
+// and a `grep` could not tell which of the two was the real one.
 //
-// The two used to be the same sentence in the wrong direction: the comment said 120 and the
-// constant said 200, with nothing tying either to the other, so the file read as a claim
-// about a 200ms delay and quietly tested a 120ms one. Waiting LONGER than production is
-// deliberate and is the safe direction — the assertion must not sit on the boundary, or it
-// fails on a machine where the 120ms timer has not quite landed. So 200 stays, and 200 is
-// headroom over 120 rather than a second claim about what the toolbar does.
-//
-// If the production literal changes, this still passes and stops testing the right window;
-// that is the accepted cost of not exporting a constant out of a component file, which is a
-// `react-refresh` lint warning for the sake of one test. Change both numbers together.
-const TOOLTIP_CLOSE_DELAY_MS = 200;
+// `TOOLTIP_CLOSE_DELAY_MS` is still larger than the production delay, and deliberately:
+// `waitOutTooltipCloseDelay` waits in REAL wall-clock time, so an assertion that has to
+// land exactly when the timer fires would sit on the boundary and fail on a machine
+// where it has not quite. That makes it an UPPER BOUND and nothing more — it pins "the
+// tooltip is gone by twice the grace period" and cannot notice a delay that shrank or
+// disappeared. What pins the delay itself is the fake-timer transition test below, which
+// asserts the value as a literal and then the transition around it; this helper is for
+// the tests that only care about the settled state.
+const TOOLTIP_CLOSE_DELAY_MS = INFO_TOOLTIP_CLOSE_DELAY_MS * 2;
 
 const setClipboardState = (
   state: { activeSelection?: { id: string; geometry: string } | null; hasClipboard?: boolean } = {}
@@ -302,6 +302,67 @@ describe('FeatherMagneticLasso toolbar', () => {
       // are skipped, so focus leaves the toolbar entirely.
       await user.tab();
       expect(document.body).toHaveFocus();
+    });
+
+    it('holds the info tooltip open for exactly the production grace period after hover leaves', async () => {
+      // THE ONLY TEST THAT PINS THE DELAY. Every other test here settles the tooltip
+      // through `waitOutTooltipCloseDelay`, which waits LONGER than production and can
+      // therefore only observe an upper bound: with the delay removed it still passed,
+      // because the tooltip was already gone. This one asserts the transition — still
+      // open one millisecond before the timer fires, gone on the millisecond it does —
+      // and it does that on fake timers, so there is no wall-clock boundary to sit on
+      // and no flake available in principle.
+      //
+      // `hover leaves` rather than focus leaving, because focus leaving while the info
+      // button is PINNED keeps the tooltip mounted indefinitely by a different rule
+      // (`isInfoOpen = isInfoHovered || isInfoPinned`), which is the behaviour the
+      // pin-survival test above covers.
+      //
+      // The clock is faked AFTER the tooltip is open, not before. An async query like
+      // `findByRole` under fake timers waits for something that will not happen until
+      // time is advanced, and deadlocks into a 5s timeout that looks like a slow
+      // machine. Opening on the real clock and faking only the close keeps every wait
+      // here synchronous.
+      render(<FeatherMagneticLasso />);
+      const infoButton = getInfoButton();
+      fireEvent.mouseEnter(infoButton);
+      expect(await screen.findByRole('tooltip')).toBeInTheDocument();
+
+      // The value the design calls for, asserted as a LITERAL even though the constant
+      // is imported — deliberately, and the reason is the trap this test was nearly
+      // built into. Everything below advances by the imported constant so that there is
+      // no boundary to sit on. If the EXPECTATION also used the constant, the test
+      // would advance by whatever it was given and would pass against any delay at all:
+      // injected as 400ms it stayed green, because 400-1ms still found the tooltip open
+      // and 400ms still found it gone. The test would have been asserting that a grace
+      // period exists and not what it is. Changing the grace period is a design change,
+      // and it should have to touch this line to land.
+      expect(INFO_TOOLTIP_CLOSE_DELAY_MS).toBe(120);
+
+      vi.useFakeTimers();
+      try {
+        fireEvent.mouseLeave(infoButton);
+
+        // One short of the grace period: still mounted. If the delay were longer than
+        // the production value, this is where it shows.
+        await act(async () => {
+          vi.advanceTimersByTime(INFO_TOOLTIP_CLOSE_DELAY_MS - 1);
+        });
+        expect(screen.getByRole('tooltip')).toBeInTheDocument();
+
+        // And on the grace period itself: gone. If the delay were shorter — or removed
+        // outright — this is where it shows.
+        await act(async () => {
+          vi.advanceTimersByTime(1);
+        });
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+      } finally {
+        // The restore belongs to `src/test/setup.ts:8`; doing it here as well would be
+        // belt-and-braces, but this test is the only one in the file that installs fake
+        // timers, so it is also the only one that could be blamed for the next test's
+        // clock. Cheap to be explicit about.
+        vi.useRealTimers();
+      }
     });
 
     it('keeps focus on each slider and patches the matching setting for arrow key changes', async () => {
