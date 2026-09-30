@@ -4358,3 +4358,44 @@ defect record was missing, and it is recorded nowhere on main
 (`git show main:e2e/OPEN_PROBLEMS.md | grep -i spray` → empty).
 
 **Files.** `e2e/helpers/canvas-helpers.ts:242`, `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`
+
+## 134. Three tool descriptions promise a scrubby slider that does not exist
+
+**Problem.** `main:src/tools/descriptions/paint.ts` promises the same thing three times — at `:37`
+(Opacity, Brush), `:44` (Flow) and `:170` (Opacity, Pencil):
+
+> "A label with a numeric field, **scrubbable by dragging the label**, 0 to 100 percent."
+
+There is no such behaviour. `git cat-file -e main:src/components/ToolbarHorizontal/ScrubbableField.tsx`
+fails, and a `git grep -il scrub main -- src/**` returns only the descriptions themselves plus
+unrelated hits (`AppKeyboardShortcuts`, `SharpenToolArea`, `useKeyboardEvents` — none a scrub
+handler). Nothing reads a drag on a label.
+
+**Why this class of gap matters more than a missing feature.** These description files are read by
+agents as ground truth about how the app works, and the repository already treats a description that
+outruns the product as a defect rather than a wish — see the other entries about false claims. An
+agent that trusts this sentence will write a test asserting a drag works, or will explain a user's
+"the slider doesn't scrub" report as the user being wrong.
+
+**The contract to implement, and it is small.** Adobe documents scrubby sliders in _Enter values in
+panels, dialog boxes, and the options bar_ (https://helpx.adobe.com/photoshop/using/panels-menus.html):
+the control is **hidden until the pointer is over the title**, the cursor becomes a **Hand**, and
+**holding Shift while dragging accelerates the scrub by a factor of 10**. A worked implementation
+exists on the abandoned `wip/ps-ux-chrome` branch (180-line `ScrubbableField.tsx` plus a
+`fieldPrecision.ts` carrying `SCRUB_SPEED_MULTIPLIER = 10`).
+
+That branch implements **only half** the contract, and the missing half is worth naming before anyone
+rebuilds from it: Adobe documents no Option/Alt modifier, but third-party documentation of the same
+control records _"Hold down the Option (PC: Alt) key as you drag and the sliders change at 1/10
+speed"_. So the Shift-10× rule is documented by Adobe and the Option-0.1× rule is documented
+elsewhere; do not treat the first as the whole contract without deciding about the second.
+
+**Do not land that branch as a whole.** It targets a **schema-driven single options bar**
+(`optionsBarSchema.ts`, 352 lines, plus `OptionsBar.tsx`) while `main` renders per-tool
+`ToolbarsRight/*` panels, and its `src/index.scss` is 817 lines against main's 164. It is a different
+architecture, so the `ScrubbableField` component and `fieldPrecision` are worth taking and the
+options-bar rewrite is not. Its `railPanelIcons.tsx` and ten icon edits are unexplained in any of its
+commit messages — read them before assuming they belong to this work.
+
+**Files.** `src/tools/descriptions/paint.ts:37,44,170`,
+`src/components/ToolbarHorizontal/` (no `ScrubbableField` on main)
