@@ -1973,3 +1973,88 @@ describe('lease renewal when two agents share a branch', () => {
     expect(a.renewOwnClaims()).toEqual(['ph-1']);
   });
 });
+
+/**
+ * A sweep reclaims what has lapsed. It does not take anything from a live holder.
+ *
+ * This is the multi-holder case, and it is the one every existing test missed:
+ * all of them use one agent per path, so the guard that matters is never the one
+ * under load. Two live rows for one path are schema-legal — the key is
+ * `(path, agent_id)` — and arise without any `--force` from the ordinary
+ * 45-minute-gap sequence, so the test builds exactly that.
+ */
+describe('doctor with two holders of one path', () => {
+  /**
+   * Two agents, two worktrees that EXIST, one file.
+   *
+   * The worktrees have to exist on disk: `identityFor` points each agent at
+   * `wt-<id>`, and `doctor` reads a missing worktree as "dead agent", so a
+   * fixture that skips the directories has every claim swept before the lock
+   * question is even reached.
+   */
+  const twoHolders = (aLeaseMs, bLeaseMs) => {
+    mkdirSync(join(dir, 'wt-a'), { recursive: true });
+    mkdirSync(join(dir, 'wt-b'), { recursive: true });
+    const a = boardFor('a');
+    const b = boardFor('b');
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+    const path = 'src/contested.ts';
+    a.holdFiles([path], { issueId: 'ph-1', leaseMs: aLeaseMs });
+    advance(aLeaseMs + 1000); // A's lock has lapsed, so `liveLocks` drops it
+    b.holdFiles([path], { issueId: 'ph-2', leaseMs: bLeaseMs });
+    return { a, b, path };
+  };
+
+  const rowsFor = (board, path) =>
+    board.db.prepare('SELECT agent_id, released_at FROM file_locks WHERE path = ? ORDER BY agent_id').all(path);
+
+  it('releases the lapsed row and leaves the live holder alone', () => {
+    const { a, path } = twoHolders(60_000, 45 * 60 * 1000);
+    // Asserted on the TABLE, not on `liveLocks` — which excludes an expired row
+    // by definition, so it cannot show that the row still exists.
+    expect(rowsFor(a, path)).toEqual([
+      { agent_id: 'a', released_at: null },
+      { agent_id: 'b', released_at: null },
+    ]);
+
+    const lockFindings = a.doctor().filter((f) => f.path);
+    expect(lockFindings.map((f) => f.agent)).toEqual(['a']);
+    // A's stale row is gone. B's is not, and B still holds the file.
+    expect(rowsFor(a, path)).toEqual([
+      { agent_id: 'a', released_at: expect.any(String) },
+      { agent_id: 'b', released_at: null },
+    ]);
+    expect(a.liveLocks().map((l) => l.agent_id)).toEqual(['b']);
+    // The file is still not takeable. A sweep reclaims; it does not hand over.
+    expect(() => a.holdFiles([path])).toThrow(/held by/);
+  });
+
+  it('still collects a second holder once that one lapses too', () => {
+    // The fix must not turn `doctor` into a one-row sweep. Each expired row is
+    // its own finding, so a genuinely stale second holder is still reclaimed.
+    const { a, b, path } = twoHolders(60_000, 60_000);
+    // B's lease is still running here; A's has just lapsed.
+    expect(a.liveLocks().map((l) => l.agent_id)).toEqual(['b']);
+
+    advance(60_001);
+    const lockFindings = a.doctor().filter((f) => f.path);
+    expect(lockFindings.map((f) => f.agent).sort()).toEqual(['a', 'b']);
+    expect(rowsFor(a, path).every((r) => r.released_at !== null)).toBe(true);
+    // Nobody holds it, so it is takeable again — the sweep is not merely refusing.
+    expect(() => a.holdFiles([path])).not.toThrow();
+  });
+
+  it('deletes pairings only for the holder it released', () => {
+    // `releaseFiles` deletes `issue_locks` for `(path, agent_id)`, so a forced
+    // sweep also erased the LIVE holder's attribution: its `swarm show` reported
+    // `files: none locked` for a file it was holding.
+    const { a, path } = twoHolders(60_000, 45 * 60 * 1000);
+    a.doctor();
+    expect(a.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ? ORDER BY issue_id').all(path)).toEqual([
+      { issue_id: 'ph-2' },
+    ]);
+  });
+});

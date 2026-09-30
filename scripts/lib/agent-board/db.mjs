@@ -1732,7 +1732,31 @@ export class Board {
     if (!dryRun) {
       for (const finding of findings) {
         if (finding.issue) this.releaseClaim(finding.issue, { agent: finding.agent, force: true });
-        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent, force: true });
+        /**
+         * NO `force` here, and that is the whole point of the line.
+         *
+         * `releaseFiles` skips any row whose `agent_id` is not the one named —
+         * UNLESS `force` is set, and `force` skips the check on EVERY row for
+         * the path, not just the offending one. A sweep therefore used to revoke
+         * live holders, not stale ones.
+         *
+         * The sequence needs no `--force` anywhere. A's lock on P lapses, so
+         * `liveLocks` stops seeing it and B is granted P; two live rows for one
+         * path are schema-legal, because the key is `(path, agent_id)`. Then ANY
+         * `swarm` command from ANY agent runs `autoSweep` — `agent-board.mjs`
+         * calls it on every command except `doctor` itself — and the sweep
+         * released A's stale row *and B's live one*, handing the file to a third
+         * agent while B was mid-edit.
+         *
+         * Without `force`, `finding.agent` is the holder of the row this sweep
+         * actually found expired, so the guard releases exactly that row and
+         * leaves every other holder alone. A separate finding is generated for
+         * each expired row, so a second stale holder is still collected.
+         *
+         * A sweep agent may reclaim what has lapsed. It may NOT take a file away
+         * from an agent that is still writing: only the operator stops a chat.
+         */
+        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent });
       }
     }
     return findings;
