@@ -2974,3 +2974,73 @@ first, so a citation into it silently rots, and its own rule says as much.
 section and, with `main` merged in, left the two routing lines at `AGENTS.md:205` and `:212` — the
 numbers above are re-derived against that file. Re-derive again when fixing; do not assume they
 survive another edit to `AGENTS.md`.
+
+---
+
+## 97. The fit charges a section separator it never measured, and the grid overflows its own budget at 703–709px
+
+**Problem.** `readRowMetrics` derives `sectionBreakHeight` from the **previously rendered** DOM, and
+returns `0` when that layout has only one non-empty section
+(`src/components/SidebarLeft/toolbar-fit-store.ts:109-121` — the `between > 0` guard needs a second
+non-empty `<ul>` and finds none). With `sectionBreakHeight` at 0 the planner accepts one row too many
+(`toolbar-overflow.ts:122-149`), that extra row is the first of `toolbarMap` section 1, and the
+section separator is then rendered for real. The plan is short by exactly the separator, which is
+`mt-1.5 border-t pt-1.5` = 13px over the 6px row gap = **7px**.
+
+**Measured in Chrome**, `1280` wide, one page resized 1px at a time, replicating
+`e2e/toolbar-fit.spec.ts`'s own `measure()` verbatim:
+
+```
+H=709 slot=437 budget=349.6 content=351 over=+1.4 tiles=7
+H=707 slot=435 budget=348.0 content=351 over=+3.0 tiles=7
+H=705 slot=433 budget=346.4 content=351 over=+4.6 tiles=7
+H=703 slot=431 budget=344.8 content=351 over=+6.2 tiles=7
+```
+
+Nothing else in `H=1000..380` exceeds the budget, and the degenerate band is never entered.
+
+**The app's own assertion already fails here; the sweep just does not look.** `e2e/toolbar-fit.spec.ts:165`
+is `expect(m.over).toBeLessThanOrEqual(0)`, and the `HEIGHTS` list at `:43` samples twelve heights,
+none of which lands in 703–709. This is the same class the file was written for — its own header
+(`:10-19`) records the previous separator bug as the 16-row rail modelled at 794px and measured
+822px — and the 20% headroom hid it a second time. The non-vacuity check at `:179`,
+`expect(any).toContain('sep=7')`, cannot catch it either: `any` is `rows.find('H=1400')` (`:173`),
+the one height where nothing collapses and every section is non-empty, so the measurement cannot
+read 0 there.
+
+**The documented invariant is false, and the test that claims it cannot see it.**
+`toolbar-fit-store.ts:21-25` states the plan "is a function of the slot and of nothing else".
+`SidebarLeft.overflow.test.tsx:329` pins exactly that. But the plan is a function of the slot **and
+of the previous render**: at `H=705` one run rendered 6 tiles (`content=294`) and another 7
+(`content=351`), same slot height, 433. jsdom cannot observe it — `getBoundingClientRect` is 0 for
+every box and `src/test/setup.ts:28-34` installs a no-op `ResizeObserver`, so the feedback loop is
+stubbed out and the measurement reads "unmeasurable", which `planToolbarOverflow` resolves to
+"show everything" (`toolbar-overflow.ts:116`).
+
+**Confirmed by re-deriving the planner, not by reading it.** At the violating heights the render
+reports `nonEmptySections=2/5` and 7 tiles, which is the plan computed with `sectionBreakHeight=0`
+(7 tiles); the plan computed with `sectionBreakHeight=7` gives 6. At the non-violating neighbours
+the render has `nonEmptySections=1/5` and 6 tiles, matching the `sep=7` plan. The planner therefore
+committed to a row count using a separator it could not see, and the DOM then charged it.
+
+**No user-visible harm, and that is why it is an entry and not a hotfix.** At the worst height the
+grid is 351px in a 433px slot, so nothing is clipped, the rail does not scroll, and every collapsed
+tool is still reachable under the three-dots tile. What is broken is the stated contract and the
+claim that the fit is settled.
+
+**Fix.** Stop deriving the separator from a layout that may not contain one. Either carry it forward
+once measured — the rail knows statically, from `ToolbarSlot.sectionIndex`, which rows open a new
+section, so the separator is needed exactly where the plan says it is and the measurement is only
+missing when the previous render had nothing to measure — or keep a section `<ul>` non-empty so the
+measurement is always available. Measuring it from computed style off a section list is the same fix
+as for `rowGap` and `tileHeight` and needs no new constant.
+
+**Test that fails without the fix.** Add `705` to `HEIGHTS` in `e2e/toolbar-fit.spec.ts:43`; `:165`
+then fails with `the grid overflowed its own budget`. A jsdom test cannot express this at all —
+it is the same reason that file exists, and the reason the rail's own `overflow` unit suite passes
+green over the defect.
+
+**Files.** `src/components/SidebarLeft/toolbar-fit-store.ts:109-121`,
+`src/components/SidebarLeft/toolbar-overflow.ts:122-149`,
+`src/components/SidebarLeft/SidebarLeft.tsx:869-898` (where the three-dots tile is placed in the
+section of the last visible row), `e2e/toolbar-fit.spec.ts:43` and `:165` and `:173-179`.
