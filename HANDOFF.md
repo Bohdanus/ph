@@ -3524,3 +3524,55 @@ Appendix F's own argument is that a line number is a property of a moment.
 **Files.** `.skills/hard-merge.md:433`, `:445`, `:829-830`, `:851-853`, `:868-871`, `:1067`,
 `:1129`, `:1426`; `scripts/lib/worktree-inventory/git.mjs:198`,
 `scripts/lib/worktree-inventory/curated.mjs:947`
+
+## 110. The worktree sweep is structurally blind to every branch that has no worktree, and one of those branches is the upstream reference implementation
+
+**Problem.** `scripts/worktree-inventory.mjs` derives its entire model from
+`git worktree list`; the only place any branch name is read is
+`scripts/lib/worktree-inventory/git.mjs:69`, which parses a `branch refs/heads/…` line out of that
+listing. A branch with no worktree is therefore not `land`, not `at-risk`, not `dispose` and not
+`goneWorktrees` — it does not appear in `WORKTREES.json` at all, so no reclaim or harvest run can
+ever reach it. There are **42** such branches in `refs/heads` today, and the one that matters is
+worse than merely unlisted.
+
+**`layers` is not this project's work.** `origin` is
+`https://github.com/drguz69/lightshopy.com.git`, and `main` is a rewrite of it that has diverged
+815 commits. `layers` is an upstream branch of the reference implementation, and it still carries
+**25 patches that are not on `main`**:
+
+```
+git merge-base main layers     # 894ee443b  "layers + history", 2026-03-20
+git cherry main layers         # 25 lines starting with '+'
+git merge-base --is-ancestor layers main   # NO
+```
+
+Its log is the author's original implementation of the areas this repository has since rewritten
+twice — `drag and drop done right`, `try to add back history [WIP]`, `fix Shape tool area
+calculation for square`, `correct circle selection`, `history eye`. `git cherry` therefore reports
+it as unlanded work, and a sweep that trusted that field the way `.skills/worktree-merge-harvest.md`
+step 1 tells a reader to — re-verify, then land — would merge the upstream implementation into the
+rewrite. Its value is as a **reference to read**, not as a branch to land, and nothing in the
+repository says so.
+
+**Reproduce.**
+
+```bash
+git worktree list --porcelain | grep 'branch refs/heads/layers'   # no output: no worktree
+git cherry main layers | grep -c '^+'                            # 25
+git remote get-url origin                                       # .../drguz69/lightshopy.com.git
+```
+
+**Fix.** Two separate problems, and the second is the cheaper one.
+
+1. Record that `layers` is the upstream reference and is not a merge candidate, next to the other
+   branch-state facts in §0, so the next sweep reads it before `git cherry` misleads it.
+2. Teach the inventory to enumerate branch-only refs. `git for-each-ref refs/heads` alongside
+   `git worktree list` is the whole change; a branch with no worktree should surface as an explicit
+   category rather than as silence. The 39 fully-merged branch-only refs
+   (`git merge-base --is-ancestor <b> main` → yes) are pure clutter today that no sweep will ever
+   collect, and the remaining three — `layers`, `ps-integration` (0 unlanded patches, not an
+   ancestor: merge commits only) and `fix-merge` (already on `main`) — are the ones a reader needs
+   warned about.
+
+**Files.** `scripts/lib/worktree-inventory/git.mjs:69`, `scripts/worktree-inventory.mjs`,
+`HANDOFF.md` §0
