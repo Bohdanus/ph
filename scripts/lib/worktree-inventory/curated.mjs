@@ -158,25 +158,6 @@ export const CURATED = {
     summary: 'Gives the spray pen a real dab instead of a grey blur.',
     issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged; the fix is a stamp loop with per-dab alpha' }],
   },
-  'document-reset-pin': {
-    summary:
-      'Pins the rule that creating a new image or opening a file kills the outgoing document history and layers. Adds one test file; the production behaviour it covers was already correct.',
-    issues: [
-      {
-        ref: 'HANDOFF.md#101',
-        title: 'a new blank image keeps the previous document fileName, so Save As proposes the old file',
-      },
-      {
-        ref: 'HANDOFF.md#102',
-        title: 'a failed raster open resizes the canvas and then keeps the old document',
-      },
-      {
-        ref: 'HANDOFF.md#103',
-        title: 'the REPLACE_DOCUMENT fast path is a second, untested copy of the reducer identity logic',
-      },
-    ],
-    note: 'No production file is modified, so this branch is a pure test and handoff addition. HANDOFF.md will conflict on merge: main carries two entries this branch is numbered after (§99, §100), and this branch is numbered after those on purpose so the numbers do not collide.',
-  },
   'fix-spray-cr': {
     summary:
       'Merges the spray-dab fix with the Color Replacement tool onto main. The only branch carrying both, and the one to take the colour-replacement work from.',
