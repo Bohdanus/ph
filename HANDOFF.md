@@ -2292,6 +2292,52 @@ into it silently rots, and its own rule says as much.
 
 ---
 
+## 98. The console log is the app's whole error channel, by decision
+
+**Decided 2026-09-30: the app gets no user-facing error surface.** Swallowing a failure is acceptable
+provided the console reports it. Every `alert()` was removed in favour of `console.error`
+(`155ba7b8`), and nothing replaced them: `git grep -iE "toast|snackbar|notif"` over production `src/`
+returns nothing, and `ErrorBoundary` is mounted at only two places (`src/App.tsx:92,96`), catches
+React render throws only, and covers neither `Menu`, `MobileMenuDrawer` nor `MobileHeader`.
+**Do not "fix" a silent failure by adding a dialog or a banner** without asking again — the reasoning
+that removed the alerts applies to whatever would replace them.
+
+**The accepted cost, which is real and deliberate.** A failed file open, save, export or selection
+copy is invisible on screen. Export is the sharpest case: `handleImageSave`'s `finally` closes the
+save dialog unconditionally (`src/contexts/useFile.tsx:133-136`), so a failure closes it exactly as a
+success does, and on desktop the screen is then byte-identical to success — `fileName` is rendered
+only at `src/components/Mobile/MobileMenuDrawer.tsx:110` and `src/components/Mobile/MobileHeader.tsx:107`,
+and `hasUnsavedChanges` is rendered nowhere, appearing in components only inside the three `confirm()`
+guards. This is reachable by decision, not by accident: entry 45 keeps the 80 MP AVIF ceiling, so an
+80–100 MP document is _supposed_ to fail to export.
+
+No data is lost. `useApp.handleImageSave` (`src/hooks/useApp.ts:67-71`) is the only writer of
+`hasUnsavedChanges: false` and of the rename, and it is guarded by `if (data)` at every call site, so
+a failed export leaves the document dirty and intact rather than half-saved.
+
+**What the decision required.** A report is only as good as the channel, so the console gap had to be
+closed for it to hold. `copyActiveSelection` returns `false` without throwing for every null-snapshot
+case (`src/contexts/useSelectionClipboard.ts:41-62`), and seven call sites used to discard that boolean
+in silence — `FreehandLasso.tsx`, `FeatherMagneticLasso.tsx`, `MagicWand.tsx`, `QuickSelection.tsx`,
+`EllipticalSelection.tsx`, `RectangularSelection.tsx` and the `AppKeyboardShortcuts.tsx` copy shortcut.
+All seven now log it, so no failure path is silent. The file and export sites also pass the caught
+value as a second argument instead of stringifying it, so a non-`Error` rejection reaches the log as
+its reason rather than as `[object Object]`.
+
+**What is not covered.** Each report is pinned by a unit test asserting the exact `console.error`
+call, including the non-`Error` cases. No Playwright spec drives a failed open, save, export or
+copy, so those four paths have no browser-level coverage. (Console and page errors are no longer
+unasserted in general: `e2e/helpers/console-police.ts` fails every spec on an unaccepted console
+error or page error. What remains true here is narrower — those four paths are never _reached_
+in a browser, so nothing there could produce a message for it to catch.)
+
+**Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
+`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
+`src/components/DesktopHeader/DesktopHeader.tsx` (File > Save handler),
+`src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
+`src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
+`src/util/selection.ts:430-442`.
+
 ## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
 
 **Problem.** The bedrock-frame assignment in `replayHistory` is now wrapped in `if (index === 0)`
@@ -4029,3 +4075,51 @@ scheduling changes, or it is a tripwire for a defect that cannot occur.
 **Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`, `src/components/SidebarLeft/SidebarLeft.tsx:1010`,
 `react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
 runs on a concurrent render that yielded — neither is a pre-paint refit).
+
+---
+
+## 149. The three-dots flyout reopens itself after the window crosses the edge where nothing collapses
+
+**Problem.** `openGroup` is reset when its tile is swallowed by a collapse, but only against
+`collapsedGroups` (`src/components/SidebarLeft/SidebarLeft.tsx:388`), and that set can only ever
+contain GROUP keys — `0-0`, `two-column-N`. The three-dots tile is keyed `OVERFLOW_GROUP_KEY`, the
+string `'overflow'` (`:133`), which no group key can equal. So `collapsedGroups.has('overflow')` is
+always false, the reset never fires for that tile, and `openGroup` outlives the unmount.
+
+**Reproduced.** Open the three-dots menu at 1280x700, grow the window to 1400 — the tile unmounts,
+because at 1400 all sixteen groups fit and nothing collapses — then shrink back to 700. The tile
+remounts with the flyout **already open**, and nothing was clicked in between:
+
+```
+AFTER GROW:   overflow tile count = 0
+AFTER SHRINK: the flyout is in the DOM with nothing clicked = 1
+```
+
+The user is shown a tool menu they did not open, over the tool they were reaching for.
+
+**Why the `lg`-crossing fix at `:388` does not cover it**, and is worth reading as the same class
+rather than the same bug: the two crossings both unmount tiles, and both leave `openGroup` naming a
+tile that is no longer rendered. The desktop↔tablet crossing is handled by deriving the adjustment
+from the layout; a COLLAPSE is handled by the `collapsedGroups` membership test; and the
+collapse↔no-collapse crossing belongs to a third condition that nothing checks — the fit going
+from `showOverflowTile: true` to `false` while `openGroup` is `'overflow'`.
+
+**Reachability moved with the fit's budget, which is why it is filed now.** Nothing collapses from a
+1094px window up, where before the budget change nothing collapsed from about 1300. The window has to
+be dragged 206px less far to reach the state, and the drag is the natural gesture a user performs
+while looking at an open flyout — to give the rail more room.
+
+**What would close it.** Reset `openGroup` when `overflowPlan.showOverflowTile` goes false, the same
+way the `lg` crossing does: derived from the state that changed, adjusted during render rather than
+in an effect. A test belongs with it — open the menu, resize past the edge, resize back, and assert
+the menu is not there — and **the height has to come from the rail's own arithmetic** (or from the
+edge `e2e/toolbar-fit.spec.ts` already pins at 1094/1093), not from a hardcoded window, or the next
+tile to be added moves it.
+
+**Do not fix it by clearing `openGroup` on every `ResizeObserver` publication.** The store publishes
+on plan changes only, and that is the point of the throttle; a subscriber that reset state on every
+version bump would re-open the same class of problem as the one the throttle closed.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:133,211,383-391,1227,1236`,
+`src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
+`e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).

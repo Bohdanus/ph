@@ -10,8 +10,8 @@ import type { ToolbarRowMetrics, ToolbarSlot } from '../toolbar-overflow.ts';
  * requirements that are invisible in the rendered DOM: it must publish a plan whenever the
  * plan changes, and it must NOT publish when the plan has not. The second is the throttle. A
  * `ResizeObserver` reports every frame of a window drag, the tile count is a step function
- * of the height, and a store that published every measurement would re-render sixteen tiles
- * about five hundred times to draw the same twenty rows. Both are properties of the store's
+ * of the height, and a store that published every measurement would re-render the rail's tiles
+ * about five hundred times to draw the same four rows. Both are properties of the store's
  * publishing, so they are tested here rather than through a render count.
  *
  * The geometry is stubbed rather than laid out: `getBoundingClientRect` is 0 for every box
@@ -276,7 +276,7 @@ describe('the toolbar fit store', () => {
   });
 
   it('keeps the section separator it measured when a later layout cannot see one', () => {
-    // `HANDOFF.md` §97. The separator is only in the DOM while a section after the first
+    // The defect `HANDOFF.md` recorded as §97. The separator is only in the DOM while a section after the first
     // still has a tile in it, so the layout that has collapsed sections 1 through 4 measures
     // zero of it — and a fit that plans with zero where the CSS charges seven accepts a row
     // the grid cannot render. So the last real reading is kept, which makes the plan a
@@ -295,7 +295,7 @@ describe('the toolbar fit store', () => {
     rail.setSlotHeight(250);
 
     expect(rail.metrics().sectionBreakHeight, 'the separator survives the layout that hides it').toBe(SEPARATOR);
-    // And the plan it produces is the one §97 says was false. At 250px the fourth row is the
+    // And the plan it produces is the one that defect said was false. At 250px the fourth row is the
     // first row of the second section: with the separator it costs 201px and the three-dots
     // tile takes it to 251, which does not fit; without the separator it costs 194px and 244,
     // which does. One row, and a 7px band of window heights that decides it.

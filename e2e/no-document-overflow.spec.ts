@@ -441,12 +441,15 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     // rows needed a 118px slot, a 390px window; filling the whole slot they need 94px, and the
     // top of the band is now a 365px window against a 93px slot.
     //
-    // The slot itself begins to overflow at a DIFFERENT, LOWER height — 37px lower, measured —
-    // and that edge is a property of the slot's own clamp rather than of the fit's arithmetic:
-    // the slot stops shrinking at 55px (a 327px window), and 55 cannot hold the 44px the lone
-    // three-dots row renders at **plus the 6px gap above it that the fit charged for a row it
-    // never rendered**, so from there down the slot scrolls. **The old detection
-    // watched this second edge and printed it as "THE DEGENERATE BAND"**, which made the test
+    // THE SLOT'S OWN EDGE NO LONGER EXISTS, and that is the whole of what the second search used
+    // to find. It used to be a DIFFERENT, LOWER height — 37px below this one, measured — and the
+    // edge was a property of the slot's own clamp rather than of the fit's arithmetic: the slot
+    // stopped shrinking at 55px (a 327px window) and 55 could not hold the lone three-dots row,
+    // which rendered at **57px** because the tile was being placed in the LAST section and that
+    // section's `<ul>` carries `mt-1.5 border-t pt-1.5`. Thirteen pixels of separator chrome for a
+    // separator with nothing above it, in the one state where the slot has no pixels to spare.
+    // The tile now goes in section 0, the lone row is 44px, and 44 fits 55. **The old detection
+    // watched that second edge and printed it as "THE DEGENERATE BAND"**, which made the test
     // state a falsehood about 37px of real band: at a 340px window the fit has already given up
     // on every tool row, and the test called 329 — a height that fits a tool row — "the tallest
     // height that still fits".
@@ -516,6 +519,17 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     const KNOWN_FIT = 1400;
     const SEARCH_FLOOR = 200;
     const DESCENT_FACTOR = 0.75;
+    /**
+     * Where the slot sweep drops to one pixel.
+     *
+     * The slot stops shrinking below a 327px window, so the only heights at which its content can
+     * possibly fail to fit are at and below it — and a seven-pixel band there is invisible to a
+     * 50px step, which is the defect class this file exists for. 400 is above that clamp with room
+     * to spare (the slot is 128px there against a 44px tile) and above the fit's give-up edge at
+     * 365, so everything below it is the region where "the slot must fit" is the only claim that
+     * could be false.
+     */
+    const CLAMP_PROBE_TOP = 400;
 
     /**
      * Descend to bracket, then bisect to a one-pixel bracket, for a band named by a predicate.
@@ -653,7 +667,8 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
         `boundary=${fitBand.boundary} lastFit=${fitBand.lastFit}`
     );
     console.log(
-      `SLOT SWEEP (1280 wide) heights=${SEARCH_FLOOR}..${KNOWN_FIT} step=50 overflowing=${slotOverHeights.length}`
+      `SLOT SWEEP (1280 wide) heights=${SEARCH_FLOOR}..${KNOWN_FIT} step=50 above ${CLAMP_PROBE_TOP}, ` +
+        `step=1 below it overflowing=${slotOverHeights.length}`
     );
 
     // The backstop is still there and still suppressed, so that IF the arithmetic is ever wrong

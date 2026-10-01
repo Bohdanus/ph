@@ -27,7 +27,8 @@ import {
  * out of whatever the previous render happened to leave on screen, so a render that had
  * collapsed every section but one measured a separator of `0` and committed to a row count
  * using a separator the DOM then charged it — a 7px overflow at one band of window heights
- * (`HANDOFF.md` §97, since fixed by the fallback documented on {@link readRowMetrics}). So the
+ * (the defect `HANDOFF.md` recorded as §97 and deleted once fixed, since corrected by the fallback
+ * documented on {@link readRowMetrics}). So the
  * plan is a function of the slot and of a CSS constant that is measured once and remembered,
  * and the store below is where that remembering happens.
  */
@@ -39,12 +40,15 @@ export type ToolbarFitStore = {
    *
    * This is the throttle. A `ResizeObserver` reports every frame of a window drag, and the
    * rail's tile count is a step function of the height — so on a 900-to-1400px drag the
-   * height changes about five hundred times and the count changes about twenty. Comparing
-   * raw measurements published all five hundred, each one re-rendering sixteen tiles, their
+   * height changes about five hundred times and the count changes FOUR. Comparing raw
+   * measurements published all five hundred, each one re-rendering up to sixteen tiles, their
    * flyout state, their tooltips and their refs, to arrive at the same plan every time.
-   * Comparing plans publishes twenty. Nothing is skipped and nothing is stale: the
-   * measurement still runs on every observation, and the plan that comes out of it is still
-   * compared against the one on screen.
+   * Comparing plans publishes four. Nothing is skipped and nothing is stale: the measurement
+   * still runs on every observation, and the plan that comes out of it is still compared
+   * against the one on screen.
+   *
+   * Four, not five, because fifteen tiles is unreachable: fifteen rows plus the three-dots row
+   * IS the full sixteen-row grid, so the step off "everything" lands on fourteen.
    *
    * Set from an effect rather than during render, because the store publishes synchronously
    * and a publish during render is a render-phase update.
@@ -97,10 +101,10 @@ const length = (value: string): number => {
  * policy decision rather than a layout fact.
  *
  * `rememberedSectionBreakHeight` is what it falls back on, and why it needs a fallback is
- * the whole of the `HANDOFF.md` §97 defect. The separator is only visible in the DOM while
+ * the whole of the defect `HANDOFF.md` recorded as §97. The separator is only visible in the DOM while
  * some section after the first still has a tile in it, so a layout that has collapsed
  * sections 1 through 4 cannot measure it — and a fit that then plans with `0` where the CSS
- * charges `7` accepts a row the grid cannot render, which is the overflow §97 measured. The
+ * charges `7` accepts a row the grid cannot render, which is the overflow that defect measured. The
  * fallback is not a fudge: the separator is a property of the class string, not of the
  * layout, so the last real reading of it stays true across every collapse the rail can make.
  */
@@ -113,10 +117,16 @@ const readRowMetrics = (
 
   // The slot bounds the TOOLS BOX, and the tools box carries its own padding and a border
   // inside that slot. Charging the fit for the full slot while the grid only gets what is
-  // left over makes the plan 14px light on every measurement, and a plan that is 14px light
-  // is a plan that overflows its own budget by 14px — invisible until a window height lands
-  // on the boundary. Measured from computed style rather than subtracted as a constant, so a
-  // padding change cannot silently reintroduce the same gap.
+  // left over makes the plan light by whatever that chrome costs — and a plan that is light is
+  // a plan that overflows its own budget by exactly that much, invisible until a window height
+  // lands on the boundary. Measured from computed style rather than subtracted as a constant,
+  // so a padding change cannot silently reintroduce the same gap.
+  //
+  // It reads ZERO today, and that is a real number rather than a no-op: the tools box is
+  // `flex flex-col gap-2` with no padding and no border, and the e2e sweep prints
+  // `slot == avail` at every height, so the subtraction is currently of nothing. The code is
+  // kept because the chrome was there once (`px-3 py-2`, `border-b`, 14px) and removing it
+  // from the JSX is a thing a spacing change does without asking this file.
   const toolsStyle = getComputedStyle(tools);
   const toolsChrome =
     length(toolsStyle.paddingTop) +

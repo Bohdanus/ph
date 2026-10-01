@@ -47,8 +47,8 @@ export type ToolbarOverflow = {
  * The snapshot is a version number and the plan is memoised on it, so the rail re-renders when the
  * PLAN changes and not on every frame of a window drag: `publish` measures each observation,
  * derives the plan from it, and notifies only when the plan differs from the one on screen. A
- * 900-to-1400px drag is about five hundred observations and about twenty renders, and nothing is
- * skipped — the measurement still runs on every one.
+ * 900-to-1400px drag is about five hundred observations and four renders, and nothing is skipped —
+ * the measurement still runs on every one.
  *
  * `setSlots` is a layout effect rather than a render-phase call because the store publishes
  * synchronously, and a publish during render is a render-phase update.

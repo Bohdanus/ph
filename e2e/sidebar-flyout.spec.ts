@@ -128,7 +128,9 @@ const flyoutItem = (page: Page, toolName: string, label: string) =>
  * which takes its chrome to 109 — so the same 720px window shows EIGHT tool tiles there, and a
  * 900px window is in that band rather than in the desktop one. What no width does is change the
  * rule: all sixteen groups are on the rail from 1094 tall, and a window under 680 shows fewer
- * than seven.
+ * than seven. At 720 the three-dots tile therefore lists the BRUSH group down where the 80% budget
+ * listed the Colors/Levels group down — one row deeper, so the first group to fold is no longer
+ * reachable by accident of how deep it sits in the map.
  *
  * So the height is the only number in this constant that carries weight, and 1500 leaves 406px
  * of slack over the 822 a full grid needs — eight more tool rows, at 50 a row, and 57 for one

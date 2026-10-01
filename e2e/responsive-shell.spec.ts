@@ -216,9 +216,10 @@ test.describe('Left tool rail reachability', () => {
     // that is at the bottom of the rail now.
     //
     // **THE MENU IS A SCROLL CONTAINER, NOT A CLIPPED ONE**, and that is the claim the rest of
-    // this block earns. At 600px the eleven folded groups are 31 items at a 25px pitch; the
-    // overlay opens at y=8, clamps itself to `max-height: 584px` and scrolls its own overflow, so
-    // the last item — at y=746, off a 600px window — is reached by scrolling the menu rather than
+    // this block earns. At 600px the eleven folded groups are 31 items at a 24.5px pitch — the row
+    // height `SidebarLeft.tsx:828` documents for every flyout — so the overlay opens at y=8, clamps
+    // itself to `max-height: 584px` and scrolls its own overflow, and the last item ends at
+    // y≈767, well off a 600px window, and is reached by scrolling the menu rather than
     // being lost. It used to be described here as 34 items standing 1374px tall with nothing to
     // scroll, which was stale twice over: the eleven folded groups are 31 tools (a four-tile rail
     // would have made it 32, so 34 was never either), and the height belonged to an overlay that

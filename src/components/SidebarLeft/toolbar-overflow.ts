@@ -21,24 +21,28 @@
  *
  * Rows are accepted WHOLE, so the count is a step function of the slot's height either way — that
  * part holds, and it is why the rail does not shimmer while a window is dragged. What the fraction
- * changed is the WIDTH OF THE STEPS. A row costs 50px, so with a budget of `0.8 × A` the count
- * moves every `50 / 0.8 = 62.5`px of window and with a budget of `A` it moves every 50px. The old
- * budget therefore bought 12.5px of extra tolerance for a drag, at the price of a fifth of the
- * rail — and 12.5px of tolerance is not what that trade was worth, because the price is visible
- * and permanent while the tolerance is felt only as an absence of flicker. It is also the wrong
- * trade for the SEQUENCE of a drag: the wider band means the rail holds a stale count for longer
- * as the window crosses each boundary, and a stale count here is not a number, it is a tool the
- * user cannot see.
+ * changed is the WIDTH OF THE STEPS, and by different amounts at different rows. A row inside a
+ * section costs 50px — a 44px tile and the grid's 6px gap — so with a budget of `0.8 × A` the
+ * count moved every `50 / 0.8 = 62.5`px of window and with a budget of `A` it moves every 50px: a
+ * quarter more tolerance for a drag. A row that OPENS A SECTION costs 57px, because the boundary
+ * adds its own 7px, and those steps went from `57 / 0.8 = 71.25` to 57. So of the fifteen gaps in
+ * this rail's map, eleven were 12.5px stickier and four were 14.25px stickier.
+ *
+ * That is not what the trade was worth. 12.5px of tolerance is felt only as an absence of flicker,
+ * while the price is visible and permanent, and it is the wrong trade for the SEQUENCE of a drag:
+ * a wider band means the rail holds a stale count for longer as the window crosses each boundary,
+ * and a stale count here is not a number, it is a tool the user cannot see.
  *
  * What the old budget actually cost, measured: on a 448px slot — an ordinary 1280x720 window — it
- * admitted six tool rows where seven fit and left 97px of the slot empty. The rail now leaves 40,
- * which is the fraction of a row no whole row can use. The three-dots tile still appears at 720,
- * and it now lists the Brush group down instead of the Crop group down.
+ * admitted six tool tiles where seven fit and left 97px of the slot empty. The rail now leaves 40,
+ * which is the fraction of a row no whole row can use. The three-dots tile still appears at 720, and
+ * it now lists the Brush group down instead of the Colors/Levels group down — one row further
+ * down the map, and the group that was first to fold is no longer reachable by accident of depth.
  *
  * **THE HEADROOM THAT IS REAL IS THE FLOOR, not the fraction.** {@link planToolbarOverflow} floors
  * the budget, so a slot is never shorter than the pixels it was measured at, and a fractional
  * device pixel cannot push the grid one row past a boundary the arithmetic had accepted. That is a
- * whole pixel of slack at most, against the eighth of the rail the fraction was spending.
+ * whole pixel of slack at most, against the fifth of the rail the fraction was spending.
  *
  * The parameter is still here because it is the policy seam, and a caller that wants a rail to
  * leave room below its tiles can ask for it. Nothing in this repository does.

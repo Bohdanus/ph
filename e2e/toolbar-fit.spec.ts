@@ -62,10 +62,16 @@ const SECTION_SEPARATOR_COST = 13;
  * in one column, and 420/400 are past the point where the budget cannot hold a tool row and the
  * three-dots tile's row — see `the degenerate band` below.
  *
- * `705` and `709` are here because `HANDOFF.md` §97 put them there: they are the band where the
- * old fit accepted a row it had charged no separator for, and neither of them was in this list, so
- * the file's own `over <= 0` assertion could not see the defect it was written for. A list of
- * heights that misses a seven-pixel band is a list, not a sweep.
+ * `705` and `709` are here because they are the band where the old fit accepted a row it had
+ * charged no separator for — the defect `HANDOFF.md` recorded as §97 and deleted once fixed — and
+ * neither of them was in this list, so the file's own `over <= 0` assertion could not see the
+ * defect it was written for. A list of heights that misses a seven-pixel band is a list, not a
+ * sweep.
+ *
+ * `340` and `360` are at the bottom, because the degenerate band is a band and a sweep whose
+ * lowest entry stops one row above it has never entered it: below 365 no tool tile fits at all and
+ * the three-dots tile is the whole rail. A height list that cannot reach the state the file has a
+ * branch for is a list with an unreachable branch in it.
  *
  * `1093` and `1094` are the other such pair, on the other side: 822px of tiles in a slot that is
  * the window height minus 272px of chrome, so nothing collapses from 1094 and the fit is already
@@ -74,7 +80,7 @@ const SECTION_SEPARATOR_COST = 13;
  * window left below it.
  */
 const HEIGHTS = [
-  1400, 1370, 1350, 1280, 1150, 1100, 1094, 1093, 1000, 900, 800, 720, 709, 705, 700, 600, 500, 420, 400,
+  1400, 1370, 1350, 1280, 1150, 1100, 1094, 1093, 1000, 900, 800, 720, 709, 705, 700, 600, 500, 420, 400, 360, 340,
 ] as const;
 
 type Measured = {
@@ -326,8 +332,8 @@ test.describe('Toolbar fit', () => {
     expect(counts.includes(ALL_GROUPS.length - 1), 'and 15 is unreachable, not merely unsampled').toBe(false);
     // And no 20px of window moves it by more than one tile. Row boundaries are 50px apart, so a
     // step that dropped two would mean the fit had decided something other than geometry — which
-    // is what a separator that reads 0 on one layout and 7 on the next does, and §97 was exactly
-    // that defect with a 7px band to hide in.
+    // is what a separator that reads 0 on one layout and 7 on the next does, and that was exactly
+    // the §97 defect, with a 7px band to hide in.
     //
     // There is exactly one legal exception, the one above: the step off "everything" goes to
     // fourteen, because fifteen plus the three-dots tile is the full grid and so no budget

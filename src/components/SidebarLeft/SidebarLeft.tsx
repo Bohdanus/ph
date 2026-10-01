@@ -44,10 +44,15 @@ const TOOL_BUTTON_INACTIVE_CLASS =
  * those images; what the documentation does say is only that the double arrows toggle the
  * layout, which is what the `aria-label` and `title` below carry.
  *
- * It was the other way round. `«` in one column says "press me and the rail moves left",
- * which is the opposite of what happens, and it was the opposite of the dock's own
- * collapse control too (`SidebarRight`'s `dock-collapse-toggle`), where the chevrons point
- * inward to collapse and outward to expand.
+ * It was the other way round, and nothing in the repository noticed: `«` in one column says
+ * "press me and the rail moves left", which is the opposite of what happens. That also made it
+ * the opposite of the dock's own collapse control, which draws `{isCollapsed ? '»' : '«'}`
+ * (`SidebarRight`'s `dock-collapse-toggle`) and therefore already used this mapping — outward to
+ * grow, inward to shrink. Two controls in one application pointing opposite ways at the same
+ * idea is the whole defect; the fix makes them agree rather than documenting that they differ.
+ *
+ * The glyph is pinned by `SidebarLeft.layout.test.tsx`, in both states, because a character in a
+ * JSX span is exactly the kind of thing a refactor silently swaps.
  */
 const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   <span aria-hidden="true" className="flex items-center justify-center text-lg leading-none font-black tracking-tight">
