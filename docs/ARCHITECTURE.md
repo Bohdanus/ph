@@ -228,8 +228,9 @@ Two registries with different key sets, which is easy to misread as one:
   processor and adds an `icon` and a `toolboxComponent`. This is the whole-tool
   map, including `eyedropper`, which has _only_ icon and component (`:125-127`),
   and the six pen-family `placeholderTool` entries (`:128-153`).
-- **`src/tools/toolProcessors.ts`** — 40 entries, `PixelToolName =
-Exclude<ToolName, 'eyedropper'>`. Each is curried: `(params) => (args) =>
+- **`src/tools/toolProcessors.ts`** — 40 entries, `PixelToolName` derived by
+  `Exclude` from `PIXEL_FREE_TOOLS` (`:88`, `:91`), which is how a tool that needs
+  no raster stays out of this registry. Each entry is curried: `(params) => (args) =>
 pixels`, where `params` carries the layer's raster and size and `args` the stroke
   (`:58-68`). `commit` is one of eight kinds (`:48-56`) and `replay` is a typed
   descriptor naming a durable operation.

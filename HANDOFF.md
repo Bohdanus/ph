@@ -3910,3 +3910,50 @@ line. **The entry at `:704` stands.** Do not edit it, and do not add a second AV
 
 **Files.** `e2e/OPEN_PROBLEMS.md:704`, `e2e/export/helpers.ts:408`,
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
+
+---
+
+## 144. The uncommitted-work guard misses the main worktree, and only the main worktree
+
+`scripts/__tests__/worktree-inventory.test.mjs` asserts that any worktree holding work git
+cannot see is classified `at-risk`. Run with a dirty main checkout it fails, and it names the main
+worktree:
+
+```
+ph (curated: NONE): ahead=0 onMain=true dirty=7 untracked=1 -> status=landed
+   recommendation=keep action=keep prunable=false — readable, so this must be
+   reported as at-risk, not as anything else
+```
+
+`status=landed` and `recommendation=keep` are the answers for a worktree with **nothing
+uncommitted in it**. The guard read `dirty=7 untracked=1` correctly, on the line above, and then
+classified a different shape. Verified by isolating `classify` with the shape the test hands it:
+`workingTree.modified: 7` returns `status=uncommitted-only recommendation=salvage action=at-risk`,
+which is what the test demands. So `classify` is right and **the facts object the guard passes it
+is not the one whose `workingTree` was counted**.
+
+The likely cause is the name join at `worktree-inventory.test.mjs:2302` —
+`worktrees.find((x) => x.name === r.name)` — against the shape `liveWorktreeFacts` builds at
+`:344-357`, which sets `mergedIntoBase` and `commitsAhead` rather than the `mergedIntoMain` the
+predicate at `:307` reads. A join that misses returns `undefined` and throws; one that matches a
+_different_ worktree with the same display name returns a clean shape and reads `landed`, which is
+the failure above.
+
+**Why it matters beyond the red.** This is the guard `HANDOFF.md` §136 and §137 lean on: §137 is
+`git worktree remove --force` after git has already refused, and §136 is that a clean tree is not
+evidence a worktree is abandoned. The guard exists so uncommitted work is never classified as
+safe. A miss on the main checkout is the one place uncommitted work is guaranteed to exist,
+because that is where agents work.
+
+Reproducible and deterministic: it passes on a clean tree and fails on any dirty one, so it is
+**not** flaky and not a pool artifact — it is red for every session with uncommitted work, which is
+every session until it commits.
+
+**Fix.** Compare the two shapes field by field at the join and assert they are the same object, so
+the failure names which field is missing rather than reporting a verdict. Then classify `r` itself
+rather than a name-matched lookup, since `buildInventory` already produced `r`. Add a case that
+constructs a dirty-mainworktree shape directly, so the guard does not depend on the developer's
+working tree to have anything to assert.
+
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs:307`, `:329-357`, `:2300-2336`,
+`scripts/lib/worktree-inventory/classify.mjs:105`, `:159`

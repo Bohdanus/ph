@@ -536,7 +536,7 @@ rule costs a real capability in one case, and building a menu system is a budget
 They are recorded here so they are not re-derived, and so nobody implements them as if they were
 engineering judgements.
 
-### The three adjustment "tools" must leave the rail, and that means building a menu
+### The three adjustment "tools" must leave the rail, and it is a two-list change
 
 `color` ("Colors"), `levels` ("Levels") and `transform` ("Transform") are `Image ▸ Adjustments` and
 `Edit ▸ Transform` commands. Photoshop's Tools panel contains no such entries. Adobe's name for
@@ -577,9 +577,10 @@ and is corrected here.** No menu has to be built. What is needed is the same thr
 currently reachable from a menu and not from the rail — the inverse of the three being fixed.
 
 **Why this is a decision and not a refactor.** Removing the rail entries does not relocate the
-functionality, it deletes it. Extracting these three means building a real menu bar first, and that is
-a build the operator owns. It is a three-id change across **two** hand-written lists, not a flag flip
-and not a routing change with a destination already in place.
+functionality, it deletes it. Nothing carries `color`, `levels` or `transform` anywhere else, and
+nothing needs to be built for them to leave: it is the same three-id change in the **two**
+hand-written lists named above, which is a routing edit rather than a flag flip — and a routing edit
+with no destination is a deletion, which is why the operator owns it.
 
 **DECIDED — 2026-10-01. The operator: "I decide to remove them."** All three come **out of the
 rail**, which is where Photoshop does not have them. The **processors are not deleted** — the
@@ -662,8 +663,8 @@ the roster counts that disagree — the 30 names this section used to carry agai
 add" in `HANDOFF.md` §74 (`HANDOFF.md:1757`) — and leaves the discrepancy unresolved for
 the operator. **One addition to its arithmetic, from this pass:** `HANDOFF.md` §74 names a
 **sixth** absent tool the 30 never listed, **Content-Aware Move** (`HANDOFF.md:1807`), so the
-union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` does
-not yet carry that name.
+union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` now carries
+that name, at its Selection row.
 
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
