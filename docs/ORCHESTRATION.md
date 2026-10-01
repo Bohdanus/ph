@@ -291,6 +291,60 @@ lost. A merge recommendation is as much a claim about the contents as a prune
 recommendation is, so a `land` entry carrying `mustNotPrune: true` is impossible
 by construction.
 
+### Removal goes through one program
+
+`dispose` in the table above is not advice. **`scripts/dispose-worktree.mjs` is
+the only sanctioned way to remove a worktree and its branch**, and it is a
+program rather than a paragraph for the reason `main-worktree-guard.mjs` is: the
+agent that needs the rule is mid-task, holding a list of paths, and will not
+re-read this file before the destructive command.
+
+It refuses, and says which signal refused, unless all of these hold:
+
+- the generated inventory is **less than 15 minutes old** and calls this
+  worktree `action: "dispose"`;
+- **no board claim, no board file lock and no live board agent** names it;
+- **no Kilo session** has it as its `directory` inside the live window;
+- its **working tree is clean** — re-read now, not taken from the inventory
+  snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
+  this exists for.
+
+Any one of those refuses on its own. `in-use` from two independent sources is the
+one that matters: `session.directory` records where a chat was **opened**, so its
+absence is never evidence of abandonment, and the board's `agents` table is what
+covers a chat that was opened in `main` and driven into a task worktree.
+
+Then it **anchors** the branch at `refs/keep/disposed/<name>` before deleting
+anything, so no `git gc` can make a disposed branch unreachable, and it
+**salvages** uncommitted work to `.git/worktree-salvage/<name>/` — a
+`git diff HEAD --binary` patch plus a `tar` of the untracked files, because no
+diff mentions a file git does not track. Finally it removes the worktree with
+**no `--force`** and deletes the branch with **`git branch -d`**, which refuses an
+unmerged branch.
+
+**There is no `--force`, deliberately.** `git worktree remove` already refuses a
+dirty tree and prints the modified and untracked paths — the cheapest inventory of
+uncommitted work in the repository, delivered before the only irreversible step.
+Re-running it with `--force` discards exactly what it just named. Treat that
+refusal as a finding: commit the work, carry it to a worktree as a patch, or leave
+it and file it.
+
+`kilo.jsonc` denies `git worktree remove --force` and `rm -rf` against a path
+containing `kilo/`, and puts `git branch -D` behind a prompt. The documented
+throwaway recipe (`git worktree remove --force /tmp/verify-main`) does not match
+those patterns and keeps working: that worktree was created minutes earlier by
+the same command and holds nothing but a checkout.
+
+**A merge subject naming a branch is not evidence that the branch is landed.**
+This is worth stating separately because it is what a sweep did on 2026-10-01: it
+read `git log --grep=fix/stale-citations`, found a fourteen-hour-old
+`merge(fix/stale-citations): …` of an unrelated dead branch, and disposed of a
+live worktree whose tip was not an ancestor of `main`. Every record now carries
+`nameCollisions` — the merges on `main` whose subject already carried that
+branch's name — as an advisory flag that changes no verdict. The fact is
+`mergedIntoMain`, and it is already computed. The name is the only thing that
+misleads, so the inventory now shows the name's history next to the fact.
+
 **Do not flag a worktree for holding work on no ref — that case is derived.** A
 branch at 0 ahead of main, already on it, with a dirty working tree is reported
 `uncommitted-only` and is never prunable whatever the curated table says, and

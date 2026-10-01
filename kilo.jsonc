@@ -69,6 +69,31 @@
       "*npx tsc*": "deny",
       "*npx tsc -b*": "allow",
       "*npx tsc --build*": "allow",
+
+      // Destroying a worktree. On 2026-10-01 a sweep removed a live chat's
+      // worktree with a hard-coded `git worktree remove` / `git branch -D` pair,
+      // and `node scripts/dispose-worktree.mjs` is now the path that checks the
+      // inventory's `action`, the board's claims and locks, and the session
+      // database before it deletes anything.
+      //
+      // The patterns are scoped to a path containing `kilo/`, which covers both
+      // `.kilo/worktrees/<name>` and the salvage worktrees under the temp
+      // `kilo/` directory. The documented throwaway recipe
+      // (`git worktree remove --force /tmp/verify-main`) does not match, so it
+      // keeps working — that worktree was created minutes earlier by the same
+      // command and holds nothing but a checkout.
+      //
+      // `-f` is listed beside `--force` because git accepts both, and a rule that
+      // only spelled one of them would be defeated by the other.
+      "*worktree remove*--force*kilo/*": "deny",
+      "*worktree remove*-f*kilo/*": "deny",
+      "*rm -rf*.kilo/worktrees*": "deny",
+
+      // `-d` refuses an unmerged branch, and that refusal is the guard on the
+      // irreversible step. `-D` overrides it, so it reaches a human rather than a
+      // silent block: a branch the inventory called `dispose` needs `-d`, and one
+      // it did not needs `scripts/dispose-worktree.mjs` to say so.
+      "*branch -D*": "ask",
     },
   },
 }
