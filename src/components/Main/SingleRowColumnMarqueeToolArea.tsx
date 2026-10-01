@@ -4,7 +4,11 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useContainScale } from '../../hooks/useContainScale.ts';
-import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
+import {
+  claimDocumentGesture,
+  releaseDocumentGesture,
+  type DocumentGestureKind,
+} from '../../hooks/document-gesture.ts';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import {
   createCommittedRectangleSelection,
@@ -17,9 +21,9 @@ import {
 import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
 import { resetOverlayAlpha } from '../../util/canvas.ts';
 import {
-  MARQUEE_THICKNESS_PX,
   SINGLE_COLUMN_MARQUEE_SOURCE_TOOL,
   SINGLE_ROW_MARQUEE_SOURCE_TOOL,
+  bandOrientation,
   isSingleRowOrColumnMarqueeRect,
   singleColumnMarqueeRect,
   singleRowMarqueeRect,
@@ -38,10 +42,18 @@ type SingleRowColumnMarqueeToolAreaProps = {
  * It matters here more than it does elsewhere: the committed selection spans the whole
  * document on one axis, so a press that misses the 1-pixel band is the ONLY way to draw a
  * new one, and the band-hit test below is what keeps the two apart.
+ *
+ * `preview` is the band this gesture has built SO FAR, and it is the only place the
+ * running state lives. There is deliberately no `origin` and no accumulating delta: the
+ * band is a pure function of where the pointer IS (see `movedBand`), so a drag that goes
+ * out and comes back ends where it started no matter how many frames it took. A field
+ * holding an advancing origin would look like the obvious way to extend the gesture and
+ * would reintroduce exactly the defect `EllipticalSelectionToolArea.test.tsx:318` pins
+ * for that tool, so it is not here to be found.
  */
 type MarqueeDrag =
   | { mode: 'create'; pointerId: number | null; axis: number }
-  | { mode: 'move'; pointerId: number | null; origin: Point; baseline: Selection; preview: Selection };
+  | { mode: 'move'; pointerId: number | null; baseline: Selection; preview: Selection };
 
 /**
  * The transient 1-pixel band, drawn as a dashed closed path.
@@ -88,6 +100,8 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
   const isColumn = toolName === 'single-column-marquee';
   const dragRef = useRef<MarqueeDrag | null>(null);
   const claimedPointerIdRef = useRef<number | null>(null);
+  /** The kind the OPEN claim was taken under, so the release cannot name a different one. */
+  const claimedKindRef = useRef<DocumentGestureKind | null>(null);
   const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid, releasePointer } =
     usePointerPosition({
       ref: containerRef,
@@ -128,23 +142,27 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     // The BAND's own orientation, not the active tool's. The hit test is deliberately
     // orientation-agnostic, so the column tool can be handed a row band to move; rebuilding that
     // band from `isColumn` would silently TRANSPOSE it into a column, which is not a move at all
-    // but a re-selection at a different shape. Reading the orientation off the rect the band
-    // already has is what makes the cross-tool gesture move the band the user grabbed.
-    const rect = getRectOf(baseline);
-    const thinInX = rect.x2 - rect.x1 === MARQUEE_THICKNESS_PX;
-    const thinInY = rect.y2 - rect.y1 === MARQUEE_THICKNESS_PX;
-    const bandIsColumn = thinInX && !thinInY;
-    const axis = bandIsColumn ? pointer.x : pointer.y;
+    // but a re-selection at a different shape.
+    //
+    // Asked through `bandOrientation` rather than off the rect's thickness, and that is the
+    // whole point: on a document ONE PIXEL WIDE a row band is also one pixel wide, so a
+    // thickness-only rule reads it as a column and turns a vertical drag into a transposed
+    // band. `bandOrientation` is the same function the hit test used to accept this press, so
+    // the two cannot disagree about what was grabbed.
+    const orientation = bandOrientation(getRectOf(baseline), totalSize) ?? (isColumn ? 'column' : 'row');
+    const axis = orientation === 'column' ? pointer.x : pointer.y;
 
     const rebuilt = createCommittedRectangleSelection({
       id: baseline.id,
-      rect: bandIsColumn ? singleColumnMarqueeRect(axis, totalSize) : singleRowMarqueeRect(axis, totalSize),
+      rect: orientation === 'column' ? singleColumnMarqueeRect(axis, totalSize) : singleRowMarqueeRect(axis, totalSize),
       imageSize: totalSize,
     });
 
     // Carried over rather than rebuilt: `isActive` is how the store decides which selection a
-    // later press grabs, and `movedAtVersion` is what every move builder bumps so the
-    // `hasSameSelectionGeometry` gate can tell a real move from a re-render.
+    // later press grabs. `movedAtVersion` is bumped per FRAME, not per commit, because this
+    // builder runs on every pointermove; its consumers only ever test it for inequality, so
+    // a five-frame drag leaving it five higher says nothing false — but read it as a frame
+    // counter, not a version of the document.
     return rebuilt
       ? {
           ...rebuilt,
@@ -213,9 +231,18 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
    * `releaseDocumentGesture` ignores a release that names no open claim, a different kind
    * or a different pointer, so every abort route can call this unconditionally — including
    * the unmount cleanup, which is what bounds a leaked claim to the mount that leaked it.
+   *
+   * The kind is computed from the gesture's own record rather than from `isColumn`, which
+   * reads the CURRENT `toolName`: both tools share one mounted component (Main.tsx maps
+   * them to one interaction mode), so a tool switch mid-gesture would otherwise release a
+   * kind the claim was never taken under and the claim would leak. A pointer press cannot
+   * switch tools — the claim refuses the document-mutating shortcuts — so this is a
+   * belt-and-braces read rather than a reachable case, and it costs one field.
    */
   function releaseDocumentClaim() {
-    releaseDocumentGesture(isColumn ? 'single-column-marquee' : 'single-row-marquee', claimedPointerIdRef.current);
+    const kind = claimedKindRef.current ?? (isColumn ? 'single-column-marquee' : 'single-row-marquee');
+    releaseDocumentGesture(kind, claimedPointerIdRef.current);
+    claimedKindRef.current = null;
     claimedPointerIdRef.current = null;
   }
 
@@ -233,7 +260,9 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     // The claim is taken BEFORE the two arms are decided, because the commit lands on
     // release either way and a shortcut pressed in between would clear or mutate the
     // document the pending commit then truncates.
-    if (claimDocumentGesture(isColumn ? 'single-column-marquee' : 'single-row-marquee', pointerId)) {
+    const gestureKind: DocumentGestureKind = isColumn ? 'single-column-marquee' : 'single-row-marquee';
+    if (claimDocumentGesture(gestureKind, pointerId)) {
+      claimedKindRef.current = gestureKind;
       claimedPointerIdRef.current = pointerId;
     }
 
@@ -241,7 +270,6 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
       dragRef.current = {
         mode: 'move',
         pointerId,
-        origin: documentStart,
         baseline: activeSelection as Selection,
         preview: activeSelection as Selection,
       };
@@ -292,7 +320,6 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     // is orientation-agnostic, so the column tool can be handed a row band, and re-deriving from
     // the previous frame's band is what keeps a row band a row band under the column tool.
     const preview = movedBand(drag.preview, documentPoint);
-    drag.origin = documentPoint;
     if (!preview) return;
     drag.preview = preview;
     redrawOverlay({ selectionOverride: selections.map((s) => (s.id === preview.id ? preview : s)) });
@@ -309,9 +336,12 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     releaseDocumentClaim();
 
     if (drag.mode === 'move') {
-      // Gated on GEOMETRY, not on the drag having happened: every move builder bumps
-      // `metadata.movedAtVersion`, so a deep comparison could never report "unchanged",
-      // and every `COMMIT_DOCUMENT_EDIT` marks the document dirty and adds an undo step.
+      // Gated on GEOMETRY — `pos` and `points`, nothing else — because the alternative
+      // answers the wrong question. A deep comparison can never report "unchanged" here, since
+      // `movedBand` bumps `metadata.movedAtVersion` on every frame; and every
+      // `COMMIT_DOCUMENT_EDIT` marks the document dirty and adds an undo step, so a drag that
+      // returned to where it started would leave an undo entry for a move that never happened.
+      // This is the arm that makes "drag out and drag back" commit nothing.
       if (!hasSameSelectionGeometry(drag.baseline, drag.preview)) {
         commitSelection(drag.preview, 'move');
       }
