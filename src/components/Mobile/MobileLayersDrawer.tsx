@@ -73,9 +73,9 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
     moveLayerAfter(sortedLayers[index].id, targetLayer.id);
   };
 
-  // The history tab's three dispatch paths — the row click, the row's Enter/Space,
-  // and the row's eye control — all reach `APPLY_HISTORY_REPLAY` through
-  // `useHistory`, which is the dispatch the keyboard refuses while a pointer
+  // The history tab's three entry points — a tap on a step, Enter or Space on that
+  // step's own control, and the step's eye toggle — all reach `APPLY_HISTORY_REPLAY`
+  // through `useHistory`, which is the dispatch the keyboard refuses while a pointer
   // gesture owns the document (`useKeyboardEvents.tsx:134`) and the Undo/Redo
   // buttons now refuse for the same reason (`HistoryControls.tsx`,
   // `MobileHeader.tsx`). The drawer's own tab had no gate on any of them.
@@ -101,8 +101,9 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
     resetHistoryTo(index);
   };
 
-  // `stopPropagation` runs first and unconditionally, so a refused eye click still
-  // does not travel to the row and rewind behind it.
+  // `stopPropagation` runs first and unconditionally, so a refused eye click reaches
+  // nothing else in the row: the title is a sibling control rather than an ancestor, and
+  // the gate cases assert that a refused toggle neither enables nor rewinds.
   const handleToggleDisabled = (event: React.MouseEvent, itemId: string) => {
     event.stopPropagation();
     if (isDocumentGestureOpen()) return;
@@ -341,19 +342,28 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
 
               return (
                 <li key={item.id}>
+                  {/* A plain `div`, NOT `role="button"` — the same call as the layer row
+                      above (`MobileLayersDrawer.tsx:224`).
+
+                      This row's two controls are the rewind and the eye, and a
+                      `role="button"` container makes its descendants presentational:
+                      assistive technology announces "button" and then drops the eye
+                      toggle inside it, leaving enable/disable unreachable. Nesting
+                      interactive content in a button is invalid ARIA.
+
+                      So the title is the rewind control: a real `<button>`, sibling of
+                      the eye rather than a child of a fake button, and therefore
+                      reachable by Tab and activatable by Enter and Space with no
+                      hand-rolled key handling. That retires the row's `onKeyDown` along
+                      with the `preventDefault` it carried — a native button suppresses
+                      Space's page scroll itself, as a property of the control instead of
+                      of the key — and retires the row's own `onClick` with it, so the
+                      title is the only rewind target. The gesture gate stays inside the
+                      dispatch, which is now the single path both the pointer and the
+                      keyboard take, and the eye's `stopPropagation` stops a refused toggle
+                      at the button that carries it. */}
                   <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleRewind(originalIndex)}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      // `preventDefault` stays unconditional once the key matches: it is
-                      // what stops Space from scrolling the page, which is a property of
-                      // the key and not of the gesture. The gate is inside the dispatch.
-                      event.preventDefault();
-                      handleRewind(originalIndex);
-                    }}
-                    className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
+                    className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
                       isCurrent
                         ? 'bg-blue-50 dark:bg-blue-900/40 border-blue-500 font-semibold text-blue-900 dark:text-blue-200'
                         : isPast
@@ -370,7 +380,18 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                       >
                         <EyeIcon open={!item.disabled} />
                       </button>
-                      <span className="truncate text-sm capitalize">{title}</span>
+                      {/* `getHistoryItemTitle` returns `undefined` for a `TOOL_ACTION`
+                          entry, whose args carry no `toolName`. As a bare span that was
+                          an empty row; as a focusable control it would be an unnamed
+                          button, so the nameless case is named. */}
+                      <button
+                        type="button"
+                        onClick={() => handleRewind(originalIndex)}
+                        aria-label={title ? undefined : 'Untitled history step'}
+                        className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center truncate rounded px-1 text-left"
+                      >
+                        <span className="truncate text-sm capitalize">{title}</span>
+                      </button>
                     </div>
 
                     {isCurrent && (
