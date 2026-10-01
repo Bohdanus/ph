@@ -58,7 +58,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const pointerEvents = useRect({
+  const { pointerHandlers } = useRect({
     imageSize: totalSize,
     initialRect: rect,
     containerRef,
@@ -80,5 +80,5 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     },
   });
 
-  return <div className={`${className} cursor-crop`} {...pointerEvents}></div>;
+  return <div className={`${className} cursor-crop`} {...pointerHandlers}></div>;
 };

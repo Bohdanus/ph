@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';

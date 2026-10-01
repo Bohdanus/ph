@@ -140,15 +140,37 @@ const Main = () => {
     if (toolOverlayRef.current) {
       resizeCanvas(toolOverlayRef.current, width, height);
 
-      toolCtxRef.current = toolOverlayRef.current.getContext('2d')!;
-      toolCtxRef.current.imageSmoothingEnabled = true;
-      toolCtxRef.current.imageSmoothingQuality = 'low';
+      // `getContext('2d')` returns null when the canvas has no 2D context, and the
+      // `!` here used to turn that into a TypeError on the next line. It threw inside
+      // this layout effect, so it escaped render and landed in the `Canvas`
+      // ErrorBoundary: the whole canvas region became the fallback, the layer stack
+      // and the tool rail stopped responding, and nothing retried.
+      //
+      // Nothing downstream needs it not to be null. `toolCtxRef` is declared
+      // `CanvasRenderingContext2D | null`, it is handed to the tool areas as
+      // `overlayCtxRef: RefObject<CanvasRenderingContext2D | null>`, and they all
+      // already handle the null case — `DrawToolArea.tsx:81` returns early and
+      // `DrawToolArea.tsx:146` optional-chains. So publishing the null is the
+      // contract; throwing on it was the bug.
+      //
+      // `e2e/error-boundary.spec.ts` reaches this line deliberately by making
+      // `getContext('2d')` return null, so the fallback's behaviour stays pinned
+      // while this line stops feeding it.
+      const toolCtx = toolOverlayRef.current.getContext('2d');
+      toolCtxRef.current = toolCtx;
+      if (toolCtx) {
+        toolCtx.imageSmoothingEnabled = true;
+        toolCtx.imageSmoothingQuality = 'low';
+      }
     }
 
     if (rectOverlayRef.current) {
       resizeCanvas(rectOverlayRef.current, width, height);
-      const rectCtx = rectOverlayRef.current.getContext('2d')!;
-      rectCtx.imageSmoothingEnabled = false;
+      // Same null-tolerance as the tool overlay above, and the same reason.
+      const rectCtx = rectOverlayRef.current.getContext('2d');
+      if (rectCtx) {
+        rectCtx.imageSmoothingEnabled = false;
+      }
     }
     if (selectionAntsOverlayRef.current) {
       resizeCanvas(selectionAntsOverlayRef.current, width, height);
