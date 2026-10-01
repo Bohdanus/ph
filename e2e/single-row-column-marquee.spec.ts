@@ -116,10 +116,14 @@ const SPAN_COVERAGE_FLOOR = 0.5;
  */
 const STROKE_TOLERANCE_PX = 1.5;
 
-/** The hint sentence the shared bar spells with `row` or with `column` (`SingleRowColumnMarquee.tsx:61`). */
-const rowBar = (page: Page) => page.getByText('Click or drag to select one row, then copy the selected bitmap line.');
-const columnBar = (page: Page) =>
-  page.getByText('Click or drag to select one column, then copy the selected bitmap line.');
+/**
+ * The hint sentence the shared bar spells with `row` or with `column`
+ * (`SingleRowColumnMarquee.tsx:61`). Matched on the opening clause only: it is the part that
+ * names the tool, and matching the whole sentence would make this locator break on any wording
+ * change to a bar that has nothing to do with which tool is selected.
+ */
+const rowBar = (page: Page) => page.getByText('Click to select one row');
+const columnBar = (page: Page) => page.getByText('Click to select one column');
 
 /** The contain fit the app computed, as published on the element it measured. */
 interface Fit {
