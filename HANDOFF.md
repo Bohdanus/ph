@@ -3858,26 +3858,86 @@ and the operator is ratifying the documented requirement rather than departing f
 
 **What the implementation has to settle, which the decision does not:**
 
-- **There is no menu to move them to, and the doc names a destination that does not exist.**
-  `docs/TOOLS-TOO-HARD.md` §"The three adjustment 'tools' must leave the rail, and that means
-  building a menu" and `docs/PHOTOSHOP-UX.md:42-43` both describe the outcome as
-  `Image ▸ Adjustments` and `Edit ▸ Transform` commands. **This app has no Image or Edit menu.**
-  `src/components/Menu/Menu.tsx` renders only `DesktopHeader` and `ToolbarHorizontal`.
-- **They are in a second surface already.** `src/components/DesktopHeader/DesktopHeader.tsx:27-32`
-  holds a `TOOL_MENU_ITEMS` list including `color`, `levels` and `transform`, under a header
-  comment (`:20-21`) saying "a tool missing from the Tools menu is a visible inconsistency". So
-  deleting the rail flyout alone leaves three live tool entries in the header, and the header
-  comment becomes the next thing to contradict Photoshop.
+- **The destination already exists, under the wrong name.** There is no `Image` menu — the app's
+  four menus are File, Tools, Edit, Window (`src/components/DesktopHeader/DesktopHeader.tsx:185`,
+  `:283`, `:309`, `:390`) — **but `Edit` is already an `Image ▸ Adjustments` host**: it carries
+  hard-coded items for `color`, `blur`, `levels`, `transform`, `draw` and `text`
+  (`DesktopHeader.tsx:319`, `:329`, `:339`, `:349`, `:359`, `:369`, dispatching through
+  `handleToolSelection` at `:121`-`:127`). So "extracting these three means building a real menu
+  bar first" is **wrong** — the menu exists, the items exist, and they call the same
+  `handleToolSelection` the rail calls. What is missing is that the menu is called `Edit` where
+  Adobe says `Image ▸ Adjustments`, and that `blur`/`draw`/`text` are real Tools-panel tools
+  sitting in a menu. **The rail removal and the menu relabelling are the same three-id change in
+  two hand-written lists**, not a menu build. This correction supersedes the earlier claim in
+  this entry that no menu exists to receive the three.
+- **The `imageProcessor` for two of the three is DEAD CODE.** `color` and `levels` are
+  `commit: 'layer-operation'`, and `useLayer.ts:576` returns before the `imageProcessor` call at
+  `useLayer.ts:603`. The visible effect comes from a CSS string assigned to the canvas —
+  `layer-renderer.ts:15-16` and `:17-18` build `buildColorsFilter` / `buildLevelsFilter` results,
+  applied by `ctx.filter = getLayerFilter(layer.operations)` at `layer-renderer.ts:77` — and
+  `functions.ts:60-62` is literally `grayscale(%) sepia(%) saturate(%)`. Their only callers are
+  `image-processors.test.ts`. `transform` is split: its affine path is bypassed
+  (`useLayer.ts:550-566`), its trapezoid path is live. **A restructure that moves these to a
+  menu should move the CSS-filter path, not the OffscreenCanvas path** — the latter is what a
+  reader would assume is the implementation, and it is not the one that paints.
+- **`levels` is a misnamed Brightness/Contrast, confirmed in code.**
+  `LevelsToolArgs = { brightness: number; contrast: number; toolName: 'levels' }`
+  (`src/tools/levels.ts:4`), and `functions.ts:66-70` emits `brightness(...) contrast(...)`.
+  Adobe's Levels is a three-point piecewise-linear remap with a channel selector and a histogram;
+  this is two global sliders. **The app has no Levels.** Note the consequence: renaming the
+  capability rather than moving it is a decision — the bar renders Brightness/Contrast controls
+  under a "Levels" label, so a menu called `Image ▸ Adjustments` with an item labelled `Levels`
+  would be a _new_ falsehood, and the honest item is `Brightness/Contrast`.
+- **They are in a second surface already, and the IDs are load-bearing beyond the UI.**
+  `src/components/DesktopHeader/DesktopHeader.tsx:27-32` holds a `TOOL_MENU_ITEMS` list including
+  all three, under a header comment (`:20-21`) saying "a tool missing from the Tools menu is a
+  visible inconsistency"; the same component hard-codes them as `Edit` items at `:319`-`:349`.
+  The claim that extraction is "routing only, with the history and durable paths untouched" is
+  **refuted**: `'color' | 'levels'` are a **durable schema type** at
+  `src/contexts/history-model.ts:75` (`DurableFilter`) and `src/contexts/layer-types.ts:28`
+  (`LayerOperationArgs`). ~50 non-test lines across ~20 `src/` files, ~185 test lines across ~30
+  test files, and 5 e2e specs — every one of which selects these three **through the rail flyout**,
+  so all five break. Zero keyboard shortcuts are bound to any of the three, so that part is free.
 - **`extraTools` is inert either way.** `toolbar-mapping.ts:164` exports it; its only reader is
   `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`, which checks it is
   disjoint from `shape`. Deleting the three makes the flag mean what its name says for the first
   time, or makes it dead code to remove.
-- **`levels` is the one with a capability question attached.** `LevelsToolArgs` is
-  `{brightness, contrast}` (`src/tools/levels.ts:4`, `:12`) — the app's "Levels" is
-  **Brightness/Contrast under the wrong name**, which `HANDOFF.md` §74's research records as
-  Note B in `.kilo/plans/ps-research/00-tool-inventory.md`. Removing the tile removes the app's
-  only surface for Brightness/Contrast. That is a real loss, and the operator owns it; it is
-  recorded here rather than argued.
+
+### The premise was falsified: adjustments DO reach Photoshop's Tools panel
+
+Research on 2026-10-01, after the decision above was recorded, established that the **justification
+was wrong even though the decision survives**. `docs/OVERRIDES.md` was correctly _not_ used, but
+the reasoning it was given does not hold:
+
+- **The Adjustment Brush Tool is a real Tools-panel entry.** Beta in Photoshop 25.9 (Feb 2024),
+  GA in **25.11 (July 2024)**, with its own toolbar slot in the Retouching & Painting Tools
+  group — deliberately promoted out of the Brush flyout because nesting broke the `B` cycle. It
+  has **no single-letter shortcut**; the widely-quoted `K` is the CS3-era Targeted Adjustment
+  Tool, a different and removed tool. Adobe: it is "non-destructive, as they generate a new
+  adjustment layer with a layer mask", created on mouse-release, painted area = mask.
+- **The Selection Brush Tool is also real**, GA in the same 25.11, in the **Lasso group**, reached
+  by cycling `L` then `Shift`+`L`. It only makes selections.
+- **So "adjustments are not tools" is false as a general statement.** Adobe ships a tool whose
+  output is an adjustment, not pixels. (Two other non-pixel tool outputs exist: Type, and the
+  shape tools, which create shape/fill layers.)
+- **The decision still stands**, because the narrow claim survives: `color` and `levels` here are
+  **whole-image adjustments with no mask**, and the Adjustment Brush can only apply an adjustment
+  where you paint. It cannot do what these two do. `transform` is untouched by any of this.
+- **The recorded justification must not stand as written.** This is the concrete harm: the entry
+  asserted a general claim that Adobe's own documentation contradicts, and a later session
+  auditing rail compliance against it would find the Adjustment Brush and conclude the app is
+  right and the doc is wrong — the exact inversion §117 exists to prevent.
+
+**What this changes for a restructure.** The honest target is not "move three things to a menu".
+It is: rename the `Edit` host to `Image ▸ Adjustments`, relabel `levels` to `Brightness/Contrast`
+because that is what it computes, keep `color`'s three CSS filters under a name that says what
+they are (`grayscale`/`sepia`/`saturate` is neither Black & White nor plain desaturation — there
+is no per-hue weighting anywhere), and treat **real Levels, real Curves and adjustment layers as
+unbuilt work.** The app has no adjustment-layer machinery at all:
+`psd-utils.ts:88-106` refuses `adjustment`, `mask` and `clipping` on import. What exists is a
+retained per-layer operation stack (`layer.operations[]` → `apply-filter`), which retains but
+cannot re-edit, and has no properties panel.
+
 - **The processors survive; the tool ids do not.** `src/tools/colors.ts`,
   `src/tools/levels.ts` and `src/tools/transform.ts` are fully implemented, and
   `docs/TOOLS-TOO-HARD.md` records the extraction as a **routing** change with the history and

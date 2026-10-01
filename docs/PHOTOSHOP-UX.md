@@ -49,33 +49,42 @@ violations on `main`.
   removing the three rail entries is unimplemented work, not a flag flip.
   `HANDOFF.md` §117 records exactly this and is open.
 
-  **The operator has decided: the three are deleted.** 2026-10-01, in their
-  words, "I decide to remove them." Not relabelled, not moved to a menu — removed
-  from the rail, and the rail slot closes. They have **no replacement tool**,
-  because Photoshop puts nothing there. `HANDOFF.md` §117 carries the decision and
-  what an implementation still has to settle, of which two are load-bearing: **this
-  app has no Image or Edit menu** for them to move to (`src/components/Menu/Menu.tsx`
-  renders only `DesktopHeader` and `ToolbarHorizontal`), and all three are **also**
-  live entries in the header's own tool menu
-  (`src/components/DesktopHeader/DesktopHeader.tsx:27-32`). Deleting the flyout
-  alone leaves that second surface contradicting Photoshop. The decision covers
-  these three ids only — `draw` above is a separate id and a separate decision.
-  - **They are ALSO live entries in a second place, and there is no menu to move them
-    to.** `src/components/Menu/Menu.tsx` renders only a `DesktopHeader` and a
-    `ToolbarHorizontal`, so the app has **no `Image` menu and no `Edit` menu at
-    all**, and `HANDOFF.md` §74's destination (`Image ▸`, `Edit ▸`) does not exist to
-    be routed into. Meanwhile `src/components/DesktopHeader/DesktopHeader.tsx:27-32`
-    carries a `TOOL_MENU_ITEMS` list whose `:29`, `:31` and `:32` are `color`,
-    `levels` and `transform` — so all three are **Tools-menu entries too**. The
-    extraction has to remove three ids from two surfaces and build the menu that
-    receives them.
-  - **`levels` is not Adobe's Levels.** `LevelsToolArgs` is `{ brightness, contrast }`
+  **The operator has decided: the three come out of the rail.** 2026-10-01, in
+  their words, "I decide to remove them." The **rail entries** go — Photoshop's
+  Tools panel has no such entries, and they have **no replacement tool** because
+  Photoshop puts nothing in their place. The **processors are not deleted**; the
+  capability is to be restructured, not dropped. `HANDOFF.md` §117 carries the
+  decision and what an implementation still has to settle.
+  - **The destination already exists, mislabelled.** The app's four menus are File,
+    Tools, **Edit**, Window (`DesktopHeader.tsx:185`, `:283`, `:309`, `:390`). `Edit`
+    is already an `Image ▸ Adjustments` host: it hard-codes items for `color`,
+    `blur`, `levels`, `transform`, `draw` and `text` (`DesktopHeader.tsx:319`-`:369`),
+    each dispatching through the same `handleToolSelection` the rail calls (`:121`-`:127`).
+    So the work is **the same three-id change in two hand-written lists** plus a menu
+    relabel — not a menu build. `DesktopHeader.tsx:27-32`'s `TOOL_MENU_ITEMS` also
+    carries all three, so the flyout and that list must change together.
+  - **`levels` is not Adobe's Levels, and moving it unchanged would be a new
+    falsehood.** `LevelsToolArgs` is `{ brightness, contrast }`
     (`src/tools/levels.ts:4`) and the processor emits one `ctx.filter` from those two
     (`src/tools/levels.ts:12`), so the app's "Levels" is **Brightness/Contrast under
     Photoshop's wrong name** — Adobe's Levels is a three-control-point piecewise-linear
     remap with a channel selector, a histogram, output levels and Auto. It is still an
     `Image ▸ Adjustments` command either way, so the rail verdict does not change; the label
     is the second defect.
+
+- **But "adjustments are not tools" is too strong, and a rail audit will catch it.** Adobe
+  ships a real Tools-panel entry whose output is an adjustment: the **Adjustment Brush
+  Tool**, beta in 25.9 (Feb 2024), GA in **25.11 (July 2024)**, in its own toolbar slot
+  in the Retouching & Painting Tools group, with no single-letter shortcut (the
+  widely-quoted `K` is the CS3-era Targeted Adjustment Tool, a different and removed
+  tool). Adobe: it is "non-destructive, as they generate a new adjustment layer with a
+  layer mask". The **Selection Brush Tool** is also real, GA in the same 25.11, in the
+  **Lasso group**, reached by cycling `L` then `Shift`+`L`.
+  **The removal decision above survives** — `color` and `levels` here are whole-image
+  adjustments with **no mask**, and the Adjustment Brush can only apply an adjustment
+  where you paint, so it cannot do what these two do. What does not survive is the
+  general claim. The `Image ▸ Adjustments` commands are not Tools-panel entries **as
+  commands**; one of them is additionally reachable as a tool, for the painted case.
 
 - **No pseudo-tool.** `shape` is a grouping container carrying a `figure`, and
   Adobe has no tool by that name. It is not uniquely undisplayed, which is the
