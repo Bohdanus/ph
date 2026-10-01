@@ -667,10 +667,11 @@ tile it asserts the tile's lit class instead — because `SidebarLeft.tsx:635` d
 over the WHOLE collapsed set (`:636`). So `expectToolSelected(page, 'eraser')` is answered by "is
 SOME collapsed tool selected", not by "is the eraser selected".
 
-**Measured at 1280x720, where it bites.** The only tiles on the rail are `reposition`,
-`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper` and `crop`. The default tool
-is `brush` (`src/tools/settings.ts:146`), and `brush` is itself in the collapsed set — so the
-three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
+**Measured at 1280x720, where it bites.** The tiles on the rail are `reposition`,
+`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper`, `crop` and `color` — the
+first seven of the sixteen groups, the rail filling its slot with whole rows. The tool the app
+opens with (`brush` in `src/tools/settings.ts`) is not among them, so it is in the collapsed set:
+the three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
 collapsed tool therefore passes before anything is selected.
 
 **This is not a regression from the `aria-pressed` conversion, and that distinction is the whole
@@ -906,12 +907,14 @@ most of those tiles are off-screen is gone. A user with a mouse and no trackpad 
 nothing left to drag: the bar is `position: fixed`, so the document behind it does not
 scroll either.
 
-This is the same trade the left tool rail makes, and the rail's version is deliberate and
+This is the same trade the left tool rail makes, and the rail's version was deliberate and
 pinned — the rail scrolls and stays reachable by wheel, arrows and touch. The difference
-is magnitude. The rail overflows by 71px at iPad 10.2" portrait (810×1080) and 5px at iPad
-mini landscape (1133×744); this bar overflows by 615px at the same width and by 969px on
-a phone. A 5px overflow hides a cue for something already within reach of a scroll; a
-969px one hides most of the tool list.
+is magnitude, and it is now starker than it was: **the rail no longer overflows at either
+size at all** — 0px at iPad 10.2" portrait (810×1080), whose slot is 834px against a 16-row
+grid of 822px, and 0px at iPad mini landscape (1133×744) — where it used to overflow by 71px
+and 5px respectively, before the fit stopped reserving a fifth of the slot it measures.
+This bar overflows by 615px at the same width and by 969px on a phone. A 5px overflow hides a
+cue for something already within reach of a scroll; a 969px one hides most of the tool list.
 
 **The CSS is pinned; the overflow is not.** `no-document-overflow.spec.ts` asserts this
 bar is a scroll container with `scrollbar-width: none`, which is a statement about the

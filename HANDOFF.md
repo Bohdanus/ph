@@ -1312,7 +1312,8 @@ the suite's default way to make a mark, **25 call sites across 14 e2e specs**, a
 tool goes, and the engine should be renamed to stop pretending to be one.
 
 **Cheapest real additions**, and they are parallelisable because they touch disjoint files: Single
-Row and Single Column Marquee (two lines of geometry reusing `rectangularSelection`), Sponge, Red
+Row and Single Column Marquee (SHIPPED 2026-10-01, `src/tools/singleRowColumnMarquee.ts`; the
+phrase "two lines of geometry reusing `rectangularSelection`" held up), Sponge, Red
 Eye, and Star (a new `FigureType` member plus a star-ratio branch). Next cheapest architecturally
 is the measurement band — Color Sampler, Ruler, Note, Count — because these are `PIXEL_FREE_TOOLS`
 like the Eyedropper, committing no pixels and needing no durable operation.
@@ -2290,73 +2291,7 @@ into it silently rots, and its own rule says as much.
 **Files.** `docs/LAYERS-PANEL.md:824-834`, `TEST-FLAKES.md:722`,
 `e2e/viewport-drawing.spec.ts:228`, `docs/DOCUMENTATION.md:103-117`
 
-## 97. The fit charges a section separator it never measured, and the grid overflows its own budget at 703–709px
-
-**Problem.** `readRowMetrics` derives `sectionBreakHeight` from the **previously rendered** DOM, and
-returns `0` when that layout has only one non-empty section
-(`src/components/SidebarLeft/toolbar-fit-store.ts:109-121` — the `between > 0` guard needs a second
-non-empty `<ul>` and finds none). With `sectionBreakHeight` at 0 the planner accepts one row too many
-(`toolbar-overflow.ts:122-149`), that extra row is the first of `toolbarMap` section 1, and the
-section separator is then rendered for real. The plan is short by exactly the separator, which is
-`mt-1.5 border-t pt-1.5` = 13px over the 6px row gap = **7px**.
-
-**Measured in Chrome**, `1280` wide, one page resized 1px at a time, replicating
-`e2e/toolbar-fit.spec.ts`'s own `measure()` verbatim:
-
-```
-H=709 slot=437 budget=349.6 content=351 over=+1.4 tiles=7
-H=707 slot=435 budget=348.0 content=351 over=+3.0 tiles=7
-H=705 slot=433 budget=346.4 content=351 over=+4.6 tiles=7
-H=703 slot=431 budget=344.8 content=351 over=+6.2 tiles=7
-```
-
-Nothing else in `H=1000..380` exceeds the budget, and the degenerate band is never entered.
-
-**The app's own assertion already fails here; the sweep just does not look.** `e2e/toolbar-fit.spec.ts:165`
-is `expect(m.over).toBeLessThanOrEqual(0)`, and the `HEIGHTS` list at `:43` samples twelve heights,
-none of which lands in 703–709. This is the same class the file was written for — its own header
-(`:10-19`) records the previous separator bug as the 16-row rail modelled at 794px and measured
-822px — and the 20% headroom hid it a second time. The non-vacuity check at `:179`,
-`expect(any).toContain('sep=7')`, cannot catch it either: `any` is `rows.find('H=1400')` (`:173`),
-the one height where nothing collapses and every section is non-empty, so the measurement cannot
-read 0 there.
-
-**The documented invariant is false, and the test that claims it cannot see it.**
-`toolbar-fit-store.ts:21-25` states the plan "is a function of the slot and of nothing else".
-`SidebarLeft.overflow.test.tsx:329` pins exactly that. But the plan is a function of the slot **and
-of the previous render**: at `H=705` one run rendered 6 tiles (`content=294`) and another 7
-(`content=351`), same slot height, 433. jsdom cannot observe it — `getBoundingClientRect` is 0 for
-every box and `src/test/setup.ts:28-34` installs a no-op `ResizeObserver`, so the feedback loop is
-stubbed out and the measurement reads "unmeasurable", which `planToolbarOverflow` resolves to
-"show everything" (`toolbar-overflow.ts:116`).
-
-**Confirmed by re-deriving the planner, not by reading it.** At the violating heights the render
-reports `nonEmptySections=2/5` and 7 tiles, which is the plan computed with `sectionBreakHeight=0`
-(7 tiles); the plan computed with `sectionBreakHeight=7` gives 6. At the non-violating neighbours
-the render has `nonEmptySections=1/5` and 6 tiles, matching the `sep=7` plan. The planner therefore
-committed to a row count using a separator it could not see, and the DOM then charged it.
-
-**No user-visible harm, and that is why it is an entry and not a hotfix.** At the worst height the
-grid is 351px in a 433px slot, so nothing is clipped, the rail does not scroll, and every collapsed
-tool is still reachable under the three-dots tile. What is broken is the stated contract and the
-claim that the fit is settled.
-
-**Fix.** Stop deriving the separator from a layout that may not contain one. Either carry it forward
-once measured — the rail knows statically, from `ToolbarSlot.sectionIndex`, which rows open a new
-section, so the separator is needed exactly where the plan says it is and the measurement is only
-missing when the previous render had nothing to measure — or keep a section `<ul>` non-empty so the
-measurement is always available. Measuring it from computed style off a section list is the same fix
-as for `rowGap` and `tileHeight` and needs no new constant.
-
-**Test that fails without the fix.** Add `705` to `HEIGHTS` in `e2e/toolbar-fit.spec.ts:43`; `:165`
-then fails with `the grid overflowed its own budget`. A jsdom test cannot express this at all —
-it is the same reason that file exists, and the reason the rail's own `overflow` unit suite passes
-green over the defect.
-
-**Files.** `src/components/SidebarLeft/toolbar-fit-store.ts:109-121`,
-`src/components/SidebarLeft/toolbar-overflow.ts:122-149`,
-`src/components/SidebarLeft/SidebarLeft.tsx:869-898` (where the three-dots tile is placed in the
-section of the last visible row), `e2e/toolbar-fit.spec.ts:43` and `:165` and `:173-179`.
+---
 
 ## 98. The console log is the app's whole error channel, by decision
 
@@ -2403,8 +2338,6 @@ in a browser, so nothing there could produce a message for it to catch.)
 `src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
 `src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
 `src/util/selection.ts:430-442`.
-
----
 
 ## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
 
@@ -3988,7 +3921,253 @@ working tree to have anything to assert.
 **Files.** `scripts/__tests__/worktree-inventory.test.mjs:307`, `:329-357`, `:2300-2336`,
 `scripts/lib/worktree-inventory/classify.mjs:105`, `:159`
 
-## 145. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
+## 145. The Dodge's and the Burn's tonal-range shortcuts are described as working, and are bound to nothing
+
+**Problem.** `src/tools/descriptions/focus.ts` carries six `shortcuts` rows that state, as fact, what
+`Shift+Alt+S`, `Shift+Alt+M` and `Shift+Alt+H` do to the Dodge and to the Burn — "Sets the stroke to
+the Shadows range while the Dodge tool is active" (`:275`, `:379` and its two siblings at `:280`,
+`:284`, `:384`, `:388`). **No keyboard handler anywhere in the app binds them.** The only two
+`alt: true` registrations in `src/components/Common/AppKeyboardShortcuts.tsx` are the Sponge's own
+mode keys, at `:596` and `:606`. The Range select is the only thing that writes
+`DodgeBurnToolArgs.range`, and it writes it from the user's click
+(`src/components/ToolbarsRight/Tonal/Tonal.tsx:107`).
+
+**Why it is a defect and not a gap.** A missing capability is filed `missing` per control. These rows
+are in the `shortcuts` array, which has **no status field at all** — a row there reads as a statement
+about what the app does, so a reader of the tooltip, of the generated `docs/TOOLS.md`, and of this
+file's own `implementationRefs` is told six keys work. The Dodge and the Burn are both filed
+`partial`, and their `appNotes` names the missing `Protect Tones` and `Airbrush` controls without
+once mentioning that three of their documented keys are inert.
+
+**How it became visible.** Building the Sponge forced the question. Adobe gives the Sponge
+`Shift+Alt+D` and `Shift+Alt+S` and gives the Dodge and the Burn `Shift+Alt+S/M/H` **on the same page
+of the same table** — Julieanne Kost's Adobe-blog post states both sets, and the Adobe-branded CS2
+sheet carries all five rows
+(<http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf>). Photoshop resolves the
+`Shift+Alt+S` collision by which tool is active, and the Sponge now does too
+(`enabled: toolName === 'sponge'`). That asymmetry is correct and is the whole point of the gate, but
+it leaves the pair's three keys as the only rows in the family describing something that does not
+happen.
+
+**Fix.** Bind all three for both tools in `selectTonalTool`'s neighbourhood, each gated on the active
+tool being `dodge` or `burn`, using `patchToolArgs(tool, { range })` — the same `alt`/`shift`
+registration shape the Sponge's two mode keys use. The three values already exist as
+`DODGE_BURN_RANGES`, so this is three registrations and a small table, with no new args field. Until
+then, either delete the six rows or add a `status` field to `ToolShortcut`
+(`src/tools/descriptions/types.ts:58-63`) so a documented key can be recorded as unbound; the second
+is the durable fix, because the field is the reason this could not be caught mechanically.
+
+**Files.** `src/tools/descriptions/focus.ts:275`, `:280`, `:284`, `:379`, `:384`, `:388`;
+`src/components/Common/AppKeyboardShortcuts.tsx:596`, `:606`;
+`src/components/ToolbarsRight/Tonal/Tonal.tsx:107`;
+`src/tools/descriptions/types.ts:58`
+
+## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
+
+**Problem.** The Sponge shipped with `mode: 'desaturate'` and `vibrance: true`
+(`src/tools/settings.ts:269`). **Neither is an Adobe default, because Adobe documents neither.** A
+dedicated search of Adobe's desktop Sponge page, its tool-techniques page, the CS4 manual and the
+CS2 Bible found no statement of which `Mode` the bar opens on and no statement of whether `Vibrance`
+ships checked. The app's two seeds rest on arguments, recorded at `SPONGE_MODE_DEFAULT`
+(`src/tools/sponge.ts:60`) and in the tool's `appNotes`:
+
+- `Desaturate` was chosen because it is the non-destructive direction, since a saturated stroke that
+  clips a channel cannot be painted back. **One non-Adobe source asserts it** and no second was found.
+- `Vibrance` **on** was chosen because Adobe documents the control as the thing that prevents
+  clipping. Against that: Adobe's sentence is an _action_ ("Select the Vibrance option to minimize
+  clipping"), which reads as an instruction to enable it and so points at **unchecked**, and one
+  2026 tutorial is consistent with unchecked.
+
+**Why it is filed rather than settled.** `docs/OVERRIDES.md` may not be edited by an agent, and there
+is nothing to override here in any case: **the source is silent, not contradicted**, so neither seed
+is a deviation from Adobe. That leaves an unverifiable default in shipped code, which is exactly the
+kind of thing a reviewer cannot check and an operator can settle in about ten seconds against a live
+Photoshop. If `Vibrance` is really unchecked, the tool's Saturate direction clips channel values that
+`Vibrance` was on precisely to protect; if `Mode` really opens on Saturate, a first stroke out of the
+box can clip.
+
+**Fix.** Confirm both against a live Photoshop and change `src/tools/settings.ts:269` if either is
+inverted. Nothing else needs to move — both are single values, both are already isolated as named
+constants, and both are already the subject of pinned unit tests. If the defaults cannot be
+confirmed, the alternative is to stop asserting either: render the `Mode` select unseeded and refuse
+the commit until the user chooses, which is worse and is not recommended.
+
+**Files.** `src/tools/settings.ts:269`; `src/tools/sponge.ts:60`, `:87`;
+`src/tools/descriptions/focus.ts` §sponge `appNotes`;
+`src/tools/descriptions/focus.notes.md` §Sponge Tool and items 15-16
+
+## 147. The app has no document colour modes, so every Photoshop rule scoped to one is unimplementable
+
+**Problem.** Adobe scopes behaviour to `Image > Mode` in several places, and this app has no such
+surface — a `grep -rni grayscale src` finds only `colors.ts`'s `grayscale` **filter amount**
+(`src/tools/colors.ts:5`, applied as a canvas `ctx.filter` at `:15`), the `color` tool's own
+`Grayscale` slider (`src/components/ToolbarsRight/Colors/Color.tsx:130`), a PSD-import warning
+(`src/contexts/psd-utils.ts:80`, "Grayscale PSD converted to RGB") and the Sponge's own prose.
+
+The Sponge is the case that surfaced it. Adobe: "When an image is in Grayscale mode, the tool
+increases or decreases contrast by moving gray levels away from or toward the middle gray"
+(<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and Photoshop
+Elements splits the direction — "In grayscale, Saturate increases contrast … In grayscale,
+Desaturate decreases contrast" (<https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html>).
+That rule is **deliberately not implemented** (`SPONGE_MIDDLE_GREY`, `src/tools/sponge.ts:110`), and
+the reasoning is sound: the rule is scoped to a document MODE, and on an RGB pixel with no chroma the
+chroma scale is already an exact no-op, so adding the pivot would make the tool behave the way
+Photoshop behaves in a mode this app cannot reach.
+
+**Why it is filed anyway.** The same trap is waiting for any future mode-scoped rule, and there is
+more than one: `Image > Mode` also governs what the Channels panel lists, what a Lab-document's
+`Image > Adjustments` behaves like, and how Photoshop's own Histogram reads a merged channel. An
+agent that finds one of those will read the Sponge's `appNotes` and conclude "no mode, so skip it",
+which is right here and would be wrong elsewhere — a greyscale document imported from a PSD is
+**already converted to RGB on import** (`psd-utils.ts:80`), so the pixels a mode-scoped rule would
+read as grey exist in the app today, as RGB pixels, and the mode-scoped rule would then be the
+Photoshop-correct answer for them. That inversion is the trap.
+
+**Fix.** Decide whether the app has document modes at all. If it does not, say so once in
+`docs/FEATURES.md` against the capability and treat mode-scoped Photoshop behaviour as unimplementable
+rather than absent — and change the Sponge's `appNotes` to say which way that reasoning runs, since it
+currently reads as "no mode, so nothing to do" when the imported-greyscale case is the opposite. If it
+should, `Image > Mode` is a document-level property with a PSD round trip attached, and the Sponge's
+grayscale branch is a small consumer of it rather than the reason to build it.
+
+**Files.** `src/tools/sponge.ts:110`; `src/tools/colors.ts:5`, `:15`;
+`src/components/ToolbarsRight/Colors/Color.tsx:130`; `src/contexts/psd-utils.ts:80`
+=======
+
+## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
+
+**Problem.** `useToolbarOverflow` (`src/components/SidebarLeft/use-toolbar-overflow.ts`) measures the
+rail from a ref callback, which runs during commit. React subscribes to an external store in a
+**passive** effect, so at that moment there is no listener to notify, and the `setSlots` layout
+effect publishes into the same empty set. The committed tree therefore holds the plan from _before_
+the measurement, and `planToolbarOverflow`'s own answer to an unmeasurable rail is
+`everythingVisible` — so the first committed rail is **every tool on screen**, sixteen tiles in a
+slot that fits eight at 1280x720, corrected on a later commit. `SidebarLeft` returns above the
+`<aside>` when there is no document while this hook sits above that check, so the hook survives and
+the sequence repeats on **every document close and open**, not only on the first page load.
+
+**It has not been observed failing, and that is measured rather than assumed.** A
+`MutationObserver` installed by `page.addInitScript` — before the app's own script, and with
+microtask callbacks, which run before the paint the mutation enables — recorded the first rail it
+ever saw as already fitted: eight tiles at 720. Chrome flushes React's passive effects inside the
+mounting task, so the refit lands before the first frame in practice. **In practice is not a
+promise**, and the promise is what a load-time flash of a full rail would rest on.
+
+**The obvious fix is refused by the repository's own rule.** A layout effect that re-renders when
+the snapshot has moved ahead of the render is exactly what closes the window, and
+`react-hooks/set-state-in-effect` rejects it: _"Calling setState synchronously within an effect can
+trigger cascading renders"_. That rule is right in general and the effect is a cascading render, so
+it was **not** suppressed to make the warning disappear. No gate was weakened and the rail behaves
+as it is measured to behave.
+
+**What would close it.** A decision, and this entry is the finding rather than the decision:
+either an `OVERRIDES.md` entry accepting one `set-state-in-effect` suppression on this file with
+the measurement above as its justification, or a design that does not need a pre-paint refit at all
+— a CSS-driven fit (`@container` queries, or the tile count derived from the slot's height with
+`overflow` doing the arithmetic) so there is no measurement to be late with. The second is the
+better answer and is a rewrite of this subsystem, not a patch.
+
+**Why there is no test.** A pin that could not fail was written, measured, and removed: the
+`MutationObserver` assertion above passes identically with and without the fix, because the browser
+never paints the unrefitted tree here. `e2e/toolbar-fit.spec.ts` deliberately has **no** test for
+this, and that absence is the honest state — if one is added it must be able to go red when the
+scheduling changes, or it is a tripwire for a defect that cannot occur.
+
+**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`, `src/components/SidebarLeft/SidebarLeft.tsx:1010`,
+`react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
+runs on a concurrent render that yielded — neither is a pre-paint refit).
+
+---
+
+## 149. The three-dots flyout reopens itself after the window crosses the edge where nothing collapses
+
+**Problem.** `openGroup` is reset when its tile is swallowed by a collapse, but only against
+`collapsedGroups` (`src/components/SidebarLeft/SidebarLeft.tsx:388`), and that set can only ever
+contain GROUP keys — `0-0`, `two-column-N`. The three-dots tile is keyed `OVERFLOW_GROUP_KEY`, the
+string `'overflow'` (`:133`), which no group key can equal. So `collapsedGroups.has('overflow')` is
+always false, the reset never fires for that tile, and `openGroup` outlives the unmount.
+
+**Reproduced.** Open the three-dots menu at 1280x700, grow the window to 1400 — the tile unmounts,
+because at 1400 all sixteen groups fit and nothing collapses — then shrink back to 700. The tile
+remounts with the flyout **already open**, and nothing was clicked in between:
+
+```
+AFTER GROW:   overflow tile count = 0
+AFTER SHRINK: the flyout is in the DOM with nothing clicked = 1
+```
+
+The user is shown a tool menu they did not open, over the tool they were reaching for.
+
+**Why the `lg`-crossing fix at `:388` does not cover it**, and is worth reading as the same class
+rather than the same bug: the two crossings both unmount tiles, and both leave `openGroup` naming a
+tile that is no longer rendered. The desktop↔tablet crossing is handled by deriving the adjustment
+from the layout; a COLLAPSE is handled by the `collapsedGroups` membership test; and the
+collapse↔no-collapse crossing belongs to a third condition that nothing checks — the fit going
+from `showOverflowTile: true` to `false` while `openGroup` is `'overflow'`.
+
+**Reachability moved with the fit's budget, which is why it is filed now.** Nothing collapses from a
+1094px window up, where before the budget change nothing collapsed from about 1300. The window has to
+be dragged 206px less far to reach the state, and the drag is the natural gesture a user performs
+while looking at an open flyout — to give the rail more room.
+
+**What would close it.** Reset `openGroup` when `overflowPlan.showOverflowTile` goes false, the same
+way the `lg` crossing does: derived from the state that changed, adjusted during render rather than
+in an effect. A test belongs with it — open the menu, resize past the edge, resize back, and assert
+the menu is not there — and **the height has to come from the rail's own arithmetic** (or from the
+edge `e2e/toolbar-fit.spec.ts` already pins at 1094/1093), not from a hardcoded window, or the next
+tile to be added moves it.
+
+**Do not fix it by clearing `openGroup` on every `ResizeObserver` publication.** The store publishes
+on plan changes only, and that is the point of the throttle; a subscriber that reset state on every
+version bump would re-open the same class of problem as the one the throttle closed.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:133,211,383-391,1227,1236`,
+`src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
+`e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).
+
+## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
+
+**Problem.** `SingleRowColumnMarqueeToolArea.tsx` wires both `onPointerLeave` and
+`onPointerCancel` to `abortDrag` (`:424`-`:425`), so a drag that leaves the tool element ends as
+a cancelled gesture that commits nothing. The geometry module documents the opposite behaviour
+three files away: `singleRowColumnMarquee.ts:65-73` advertises that an out-of-document pointer
+clamps to the first or last row, and cites Adobe's scripting API as the reason. Both statements
+cannot stand. Only the PRESS clamps. A drag past the canvas edge is discarded.
+
+`EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, so this is house convention
+rather than something these two tools introduced — but `RectangularSelectionToolArea.tsx:154`-`:160`
+wires `pointercancel` ALONE, so the rectangular marquee keeps tracking a drag off the edge. Three
+selection tools, two behaviours, and one of the two is undocumented.
+
+**Why it is reachable and not theoretical.** The tool element is the canvas area, so the abort
+fires as soon as the pointer crosses it. At zoom 1 with letterboxing that is the document edge;
+zoomed in past the fit, the document edge _is_ the container edge, so dragging toward a document
+boundary — which is exactly how a user aims at the last row — is dragging toward the abort.
+
+**What Photoshop does.** It keeps tracking. There is no published Adobe page for the GUI case,
+which is why this is filed as a defect in this repository's own consistency rather than as a
+deviation from Adobe: `docs/FEATURES.md` should record that the app drops the gesture.
+
+**What would close it.** Narrow the abort to `onPointerCancel` in
+`SingleRowColumnMarqueeToolArea.tsx` and `EllipticalSelectionToolArea.tsx`, so a leave ends the
+gesture only if the pointer capture has already been lost. That is one wiring change in each
+file, and it is deliberately NOT done here: `usePointerPosition`'s capture is what keeps `pointermove`
+delivered outside the element, so the abort is currently the only thing stopping an unbounded
+stream of moves from a pointer the user has visually left the tool. Decide it for the selection
+family at once, and add the case that pins whichever way it goes — press, move outside the
+element, move back, release — asserting the band lands where the release was.
+
+**Do not fix it by clearing the drag on `pointerleave` without also releasing the capture.**
+That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export): a surviving
+`activePointerId` refuses every later press, so the tool stops responding until it unmounts.
+`abortDrag` calls `releasePointer()` for that reason and must keep doing so.
+
+**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:424-425,390`,
+`src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
+`src/components/Main/RectangularSelectionToolArea.tsx:176`,
+`src/tools/singleRowColumnMarquee.ts:65-82`.
+
+## 151. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
 
 `src/contexts/ThemeContext.tsx:20` hard-codes `DEFAULT_THEME = 'dark'` and the
 `prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e

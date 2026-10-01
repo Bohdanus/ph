@@ -107,11 +107,15 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *   `best-practice` rules rather than WCAG A/AA, and they are left in on purpose: a
  *   rule that is switched off is a rule nobody reads the output of, and this
  *   repository does not weaken a gate to get green.
- * - **axe is a linter, not a judgement.** A violation on the toolbar's `«` collapse
- *   button is a contrast defect; whether that button NEEDS to be `«` rather than
- *   "Collapse panels" is an Adobe question, and `docs/OVERRIDES.md` is where that
- *   kind of decision belongs. Nothing in this file may be made to pass by adding an
- *   entry there.
+ * - **axe is a linter, not a judgement.** A violation on one of the rail's
+ *   chevron buttons is a contrast defect; whether that control's GLYPH should be
+ *   `»`/`«` at all rather than a word such as "Collapse panels" is an Adobe
+ *   question, and `docs/OVERRIDES.md` is where that kind of decision belongs.
+ *   (The glyph is not what the audit judges, and a button that needs a name it
+ *   does not have is not made to pass by drawing a different character: both
+ *   the rail's layout toggle and the dock's collapse toggle carry an
+ *   `aria-label` and are addressed by test id, never by the glyph they render.)
+ *   Nothing in this file may be made to pass by adding an entry there.
  * - **A pass is only as good as the census line it prints.** Every run logs
  *   `[axe] <label>: N violations, N incomplete, N passed rule(s) — audited N node(s)`.
  *   A scoped scan that stopped matching anything would also report zero violations,

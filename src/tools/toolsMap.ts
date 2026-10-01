@@ -24,7 +24,9 @@ import Pencil from '../components/ToolbarsRight/Pencil/Pencil.tsx';
 import QuickSelection from '../components/ToolbarsRight/QuickSelection/QuickSelection.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
 import Sharpen from '../components/ToolbarsRight/Sharpen/Sharpen.tsx';
+import SingleRowColumnMarquee from '../components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx';
 import Smudge from '../components/ToolbarsRight/Smudge/Smudge.tsx';
+import Sponge from '../components/ToolbarsRight/Sponge/Sponge.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import Tonal from '../components/ToolbarsRight/Tonal/Tonal.tsx';
 import { PlaceholderTool } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
@@ -88,6 +90,19 @@ export const toolsMap: ToolsMap = {
     icon: 'elliptical-selection',
     toolboxComponent: EllipticalSelection,
   },
+  // One panel for both, like `dodge`/`burn` on `Tonal` below: same three buttons, same
+  // sentence with one word changed, and `SingleRowColumnMarquee.tsx` reads `toolName` to
+  // pick that word.
+  'single-row-marquee': {
+    ...toolProcessors['single-row-marquee'],
+    icon: 'single-row-marquee',
+    toolboxComponent: SingleRowColumnMarquee,
+  },
+  'single-column-marquee': {
+    ...toolProcessors['single-column-marquee'],
+    icon: 'single-column-marquee',
+    toolboxComponent: SingleRowColumnMarquee,
+  },
   'quick-selection': {
     ...toolProcessors['quick-selection'],
     icon: 'quick-selection',
@@ -104,6 +119,12 @@ export const toolsMap: ToolsMap = {
   // twice would show the same bar with a hardcoded name.
   dodge: { ...toolProcessors.dodge, icon: 'dodge', toolboxComponent: Tonal },
   burn: { ...toolProcessors.burn, icon: 'burn', toolboxComponent: Tonal },
+  // The Sponge does NOT share `Tonal`, despite sharing the flyout tile: its bar is Mode /
+  // Flow / Vibrance / Size / Hardness where the pair's is Range / Exposure / Size /
+  // Hardness. `Tonal` renders both of its controls unconditionally and its test pins that
+  // count, so sharing would mean the Sponge shipped a Range and an Exposure it does not
+  // have — two dead controls, which is worse than two absent ones.
+  sponge: { ...toolProcessors.sponge, icon: 'sponge', toolboxComponent: Sponge },
   brush: {
     ...toolProcessors.brush,
     icon: 'brush',
