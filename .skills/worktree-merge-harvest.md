@@ -295,7 +295,7 @@ of the chat that wrote it.
   paid GPT id and killed the subagent at zero tokens with `Add credits to
 continue`. Two rules ride with that: **a free session must never launch a GPT
   subagent**, so the free default is
-  `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'`; and
+  `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'`; and
   `agent_manager` inherits the current turn's model unless both fields are set, so
   a main turn on a paid model silently spawns paid worktrees. The subagent also
   **inherits the working directory** — so launch reviews with the branch's absolute
