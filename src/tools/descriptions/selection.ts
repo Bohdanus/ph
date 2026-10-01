@@ -3,6 +3,8 @@ import type { ToolDescription } from './types.ts';
 export const selectionDescriptions: Record<
   | 'rectangular-selection'
   | 'elliptical-selection'
+  | 'single-row-marquee'
+  | 'single-column-marquee'
   | 'freehand-lasso'
   | 'polygonal-lasso'
   | 'feather-magnetic-lasso'
@@ -78,7 +80,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:41',
     ],
     appNotes:
-      'The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:400`-`:403`), and `adjustFreshPoint` (`:314`-`:329`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:502`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:156`-`:158`). The `M` key and Shift+M reach this tool and cycle the two marquees, and the app carries no single-row or single-column marquee, so the group behind that key holds the two tools the app actually ships and not the four Adobe documents. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.',
+      'The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:400`-`:403`), and `adjustFreshPoint` (`:314`-`:329`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:502`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:156`-`:158`). The `M` key and Shift+M reach this tool, and Shift+M cycles the four marquees the app ships, which are the four Adobe documents; whether the Shift+M cycle Adobe documents cycle covers is still unresolved and recorded in selection.notes.md. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/rectangular-marquee-tool.html',
@@ -173,6 +175,150 @@ export const selectionDescriptions: Record<
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/',
+    ],
+  },
+
+  'single-row-marquee': {
+    photoshopName: 'Single Row Marquee Tool',
+    summary: 'Click or drag to select one document row, one pixel tall and as wide as the image.',
+    purpose:
+      'The Single Row Marquee tool makes the narrowest selection Photoshop offers: one row of pixels, one pixel tall, spanning the entire width of the image. It is a one-click tool — "click near the area you want to select, and then drag the marquee to the exact location" — so the gesture is a placement rather than a shape, and the drag exists only to position the row that was clicked. Its counterpart is the Single Column Marquee tool, which is the same gesture on the other axis. Together they are how you isolate a scanline for a colour lookup, or seed an adjustment to one row.',
+    options: [
+      {
+        control: 'New / Add To / Subtract From / Intersect With',
+        detail:
+          'Four buttons that set how the next click combines with the selection already on the canvas: replace it, union with it, subtract it, or keep only the overlap. Adobe states the step without scoping it to a tool, so these tools carry the four modes, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four.',
+        status: 'missing',
+      },
+      {
+        control: 'Feather',
+        detail:
+          'Softens the border over a radius in pixels, default 0. Adobe applies the step to the marquee tools generally, but a control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectRow takes neither a feather nor an antiAlias parameter where selectRectangle takes both.',
+        status: 'missing',
+      },
+      {
+        control: 'Select and Mask',
+        detail:
+          'Opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush, a plain Brush, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors.',
+        status: 'missing',
+      },
+    ],
+    modifiers: [
+      {
+        keys: 'Shift',
+        action:
+          'Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.',
+      },
+      {
+        keys: 'Alt',
+        action: 'Sets the click to Subtract From Selection, for the same reason Shift is Add.',
+      },
+      {
+        keys: 'Shift+Alt',
+        action:
+          'Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row, so on a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable.',
+      },
+    ],
+    shortcuts: [
+      {
+        keys: 'M',
+        action:
+          'Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.',
+      },
+      {
+        keys: 'Shift+M',
+        action:
+          'Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.',
+      },
+    ],
+    implementation: 'implemented',
+    implementationRefs: [
+      'src/tools/singleRowColumnMarquee.ts:77',
+      'src/components/Main/SingleRowColumnMarqueeToolArea.tsx:199',
+      'src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:33',
+      'src/tools/toolProcessors.ts:228',
+      'toolbar-mapping.ts:48',
+    ],
+    appNotes:
+      'The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` because they are absent for every selection tool in the application, not because they were skipped here, and adding them to the two newest tools and not to the other five would be a worse inconsistency than the one that exists. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
+      'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
+      'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/selection/',
+    ],
+  },
+
+  'single-column-marquee': {
+    photoshopName: 'Single Column Marquee Tool',
+    summary: 'Click or drag to select one document column, one pixel wide and as tall as the image.',
+    purpose:
+      'The Single Column Marquee tool is the Single Row Marquee tool on the other axis: one column of pixels, one pixel wide, spanning the entire height of the image, placed by a click and positioned by an optional drag. It exists for the same reasons its counterpart does — isolating a scanline in the other direction, or seeding an adjustment to one column — and it shares its options bar, because Adobe gives the two tools the same controls.',
+    options: [
+      {
+        control: 'New / Add To / Subtract From / Intersect With',
+        detail:
+          'Four buttons that set how the next click combines with the selection already on the canvas. Adobe states the step without scoping it to a tool, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four.',
+        status: 'missing',
+      },
+      {
+        control: 'Feather',
+        detail:
+          'Softens the border over a radius in pixels, default 0. A control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectColumn takes neither a feather nor an antiAlias parameter where selectRectangle takes both.',
+        status: 'missing',
+      },
+      {
+        control: 'Select and Mask',
+        detail:
+          'Opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush, a plain Brush, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors.',
+        status: 'missing',
+      },
+    ],
+    modifiers: [
+      {
+        keys: 'Shift',
+        action:
+          'Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.',
+      },
+      {
+        keys: 'Alt',
+        action: 'Sets the click to Subtract From Selection, for the same reason Shift is Add.',
+      },
+      {
+        keys: 'Shift+Alt',
+        action:
+          'Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row.',
+      },
+    ],
+    shortcuts: [
+      {
+        keys: 'M',
+        action:
+          'Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.',
+      },
+      {
+        keys: 'Shift+M',
+        action:
+          'Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.',
+      },
+    ],
+    implementation: 'implemented',
+    implementationRefs: [
+      'src/tools/singleRowColumnMarquee.ts:90',
+      'src/components/Main/SingleRowColumnMarqueeToolArea.tsx:199',
+      'src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:33',
+      'src/tools/toolProcessors.ts:235',
+      'toolbar-mapping.ts:49',
+    ],
+    appNotes:
+      'The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` because they are absent for every selection tool in the application rather than skipped here. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html',
+      'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
+      'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/selection/',
     ],
   },
 

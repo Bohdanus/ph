@@ -88,6 +88,8 @@ vi.mock('../toolIcons.tsx', () => {
       reposition: Icon,
       'rectangular-selection': Icon,
       'elliptical-selection': Icon,
+      'single-row-marquee': Icon,
+      'single-column-marquee': Icon,
       'freehand-lasso': Icon,
       'polygonal-lasso': Icon,
       'feather-magnetic-lasso': Icon,

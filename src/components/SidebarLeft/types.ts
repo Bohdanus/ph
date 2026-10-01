@@ -4,6 +4,8 @@ export type ToolIconName =
   | 'reposition'
   | 'rectangular-selection'
   | 'elliptical-selection'
+  | 'single-row-marquee'
+  | 'single-column-marquee'
   | 'freehand-lasso'
   | 'polygonal-lasso'
   | 'feather-magnetic-lasso'

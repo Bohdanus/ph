@@ -24,6 +24,7 @@ import Pencil from '../components/ToolbarsRight/Pencil/Pencil.tsx';
 import QuickSelection from '../components/ToolbarsRight/QuickSelection/QuickSelection.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
 import Sharpen from '../components/ToolbarsRight/Sharpen/Sharpen.tsx';
+import SingleRowColumnMarquee from '../components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx';
 import Smudge from '../components/ToolbarsRight/Smudge/Smudge.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import Tonal from '../components/ToolbarsRight/Tonal/Tonal.tsx';
@@ -87,6 +88,19 @@ export const toolsMap: ToolsMap = {
     ...toolProcessors['elliptical-selection'],
     icon: 'elliptical-selection',
     toolboxComponent: EllipticalSelection,
+  },
+  // One panel for both, like `dodge`/`burn` on `Tonal` below: same three buttons, same
+  // sentence with one word changed, and `SingleRowColumnMarquee.tsx` reads `toolName` to
+  // pick that word.
+  'single-row-marquee': {
+    ...toolProcessors['single-row-marquee'],
+    icon: 'single-row-marquee',
+    toolboxComponent: SingleRowColumnMarquee,
+  },
+  'single-column-marquee': {
+    ...toolProcessors['single-column-marquee'],
+    icon: 'single-column-marquee',
+    toolboxComponent: SingleRowColumnMarquee,
   },
   'quick-selection': {
     ...toolProcessors['quick-selection'],

@@ -12,6 +12,7 @@ import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
+import type { SingleColumnMarqueeToolArgs, SingleRowMarqueeToolArgs } from './singleRowColumnMarquee.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
 import { ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
@@ -128,6 +129,13 @@ export const defaultSettings = {
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
+  // No settings at all, which is a statement about Photoshop and not a shortcut: the
+  // options bar for both of these carries no Style, no Width/Height and no Anti-alias,
+  // because Adobe scopes all three to the Rectangular and Elliptical Marquees by name.
+  'single-row-marquee': { toolName: 'single-row-marquee' } satisfies SingleRowMarqueeToolArgs,
+  'single-column-marquee': {
+    toolName: 'single-column-marquee',
+  } satisfies SingleColumnMarqueeToolArgs,
   brush: {
     alpha: 0.9,
     color: '#000000',

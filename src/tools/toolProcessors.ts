@@ -220,6 +220,25 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: ellipticalSelection,
   },
+  // The 1-pixel marquees are the Rectangular Marquee's processor verbatim: it is a
+  // pass-through that returns the document bitmap untouched, because a selection is
+  // geometry in the store and no pixels at all (`rectangularSelection.ts:9`-`:13`).
+  // Two separate `replay(...)` calls rather than one shared result, because
+  // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
+  'single-row-marquee': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: rectangularSelection,
+  },
+  'single-column-marquee': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: rectangularSelection,
+  },
   'quick-selection': {
     commit: 'selection',
     creator: true,

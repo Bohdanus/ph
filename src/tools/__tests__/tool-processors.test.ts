@@ -275,6 +275,8 @@ describe('toolProcessors registry', () => {
         'rectangle',
         'rectangular-selection',
         'shape',
+        'single-column-marquee',
+        'single-row-marquee',
         'text',
         'triangle',
       ].sort()
@@ -320,6 +322,8 @@ describe('toolProcessors registry', () => {
       'magic-wand': 'selection',
       'rectangular-selection': 'selection',
       'elliptical-selection': 'selection',
+      'single-row-marquee': 'selection',
+      'single-column-marquee': 'selection',
       'quick-selection': 'selection',
       brush: 'raster',
       pencil: 'raster',
@@ -734,19 +738,29 @@ describe('toolProcessors processor identity', () => {
       seen.set(imageProcessor, [...(seen.get(imageProcessor) ?? []), toolName]);
     }
 
-    // The only legitimate sharing is the lasso pair and the shape/figure family,
-    // which are the same module export wired to several tool names on purpose.
+    // The only legitimate sharing is the lasso pair, the shape/figure family and the
+    // rectangular-marquee family, which are the same module export wired to several tool
+    // names on purpose. `selection` covers the lasso pair because the three lasso tools
+    // commit the same `copyPolygonToCanvas` pass-through, and `rectangularSelection`
+    // covers the marquee family for the same reason at a different geometry: a selection
+    // commit changes no pixels, so the processor's whole body is "return the bitmap".
+    // Naming the third family is a DECLARATION, not a widening — the assertion below
+    // still pins the exact set of shared groups, so a fourth accidental one fails.
     const shared = [...seen.entries()]
       .filter(([, names]) => names.length > 1)
       .map(([processor, names]) => ({
         names: names.sort(),
-        isIntentional: processor === selection || processor === shape,
+        isIntentional: processor === selection || processor === shape || processor === rectangularSelection,
       }))
       .sort((a, b) => a.names[0].localeCompare(b.names[0]));
 
     expect(shared).toEqual([
       { names: ['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle'], isIntentional: true },
       { names: ['freehand-lasso', 'polygonal-lasso'], isIntentional: true },
+      {
+        names: ['rectangular-selection', 'single-column-marquee', 'single-row-marquee'],
+        isIntentional: true,
+      },
     ]);
   });
 });
@@ -783,6 +797,8 @@ describe('toolProcessors declared inner-processor arity', () => {
         'magic-wand',
         'rectangular-selection',
         'elliptical-selection',
+        'single-row-marquee',
+        'single-column-marquee',
         'quick-selection',
       ].sort()
     );
@@ -806,6 +822,8 @@ describe('toolProcessors declared inner-processor arity', () => {
         'magic-wand',
         'rectangular-selection',
         'elliptical-selection',
+        'single-row-marquee',
+        'single-column-marquee',
         'quick-selection',
       ].sort()
     );
@@ -847,6 +865,8 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['magic-wand', 'source-bitmap', 0, 0],
     ['rectangular-selection', 'source-bitmap', 0, 0],
     ['elliptical-selection', 'source-bitmap', 0, 0],
+    ['single-row-marquee', 'source-bitmap', 0, 0],
+    ['single-column-marquee', 'source-bitmap', 0, 0],
     ['quick-selection', 'source-bitmap', 0, 0],
     ['brush', 'canvas', 40, 24],
     ['pencil', 'canvas', 40, 24],
@@ -1071,6 +1091,8 @@ describe('toolsMap exhaustiveness', () => {
     ['magic-wand', 'magic-wand'],
     ['rectangular-selection', 'rectangular-selection'],
     ['elliptical-selection', 'elliptical-selection'],
+    ['single-row-marquee', 'single-row-marquee'],
+    ['single-column-marquee', 'single-column-marquee'],
     ['quick-selection', 'quick-selection'],
     ['brush', 'brush'],
     ['pencil', 'pencil'],
