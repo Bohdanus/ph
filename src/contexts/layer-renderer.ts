@@ -4,6 +4,7 @@ import type { ToolArgs, ToolName } from './tool-types.ts';
 import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import { CanvasFilterUnsupportedError, requireCanvasFilter } from '../util/canvas-filter.ts';
 import { getLayerAffineTransform, isIdentityAffineTransform } from './affine-transform.ts';
 import { resizeCanvas } from '../util/canvas.ts';
 
@@ -19,14 +20,32 @@ function filterForOperation(operation: Extract<LayerOperation, { args: unknown }
   }
 }
 
+function enabledFilterOperations(
+  operations: readonly LayerOperation[]
+): Array<Extract<LayerOperation, { args: unknown }>> {
+  return operations.filter(
+    (operation): operation is Extract<LayerOperation, { args: unknown }> =>
+      operation.enabled && operation.kind !== 'affine-transform' && 'args' in operation
+  );
+}
+
 export function getLayerFilter(operations: readonly LayerOperation[]): string {
-  const filters = operations
-    .filter(
-      (operation): operation is Extract<LayerOperation, { args: unknown }> =>
-        operation.enabled && operation.kind !== 'affine-transform' && 'args' in operation
-    )
-    .map(filterForOperation);
+  const filters = enabledFilterOperations(operations).map(filterForOperation);
   return filters.length ? filters.join(' ') : 'none';
+}
+
+/**
+ * Assigning `ctx.filter` on an engine that ignores the write leaves the layer drawn unfiltered,
+ * so the refusal happens before the assignment rather than after it. The label names the tool,
+ * not the composed CSS string, because the string is what the user cannot act on.
+ */
+function requireLayerFilterSupport(operations: readonly LayerOperation[]): void {
+  for (const operation of enabledFilterOperations(operations)) {
+    const toolName = operation.args.toolName;
+    if (findToolProcessor(toolName)?.requiresCanvasFilter) {
+      requireCanvasFilter(`Layer filter tool "${toolName}"`);
+    }
+  }
 }
 
 const vectorToolNames = new Set<ToolName>(['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']);
@@ -71,10 +90,13 @@ export function drawLayerSource(
   const bitmap = getLayerBitmap(layer, position);
   if (!bitmap || bitmap.width === 0 || bitmap.height === 0) return false;
 
+  const filter = getLayerFilter(layer.operations);
+  if (filter !== 'none') requireLayerFilterSupport(layer.operations);
+
   ctx.save();
   try {
     const affine = getLayerAffineTransform(layer);
-    ctx.filter = getLayerFilter(layer.operations);
+    ctx.filter = filter;
     const x = position.x - (documentFrame?.x ?? 0);
     const y = position.y - (documentFrame?.y ?? 0);
     if (isIdentityAffineTransform(affine)) {
@@ -125,7 +147,15 @@ export function drawLayersToCanvas(
   try {
     for (const layer of layers) {
       if (!layer.visible) continue;
-      if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
+      // Per layer, not per composition: one layer carrying a filter this browser refuses must not
+      // cost the document the other layers. The staging canvas is discarded by the return below,
+      // so the visible canvas keeps the presentation it already had.
+      try {
+        if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
+      } catch (error) {
+        if (!(error instanceof CanvasFilterUnsupportedError)) throw error;
+        console.error('skipped layer whose filter this browser cannot apply', layer.id, error);
+      }
     }
   } catch (error) {
     console.error('Unable to compose runtime layer presentation', error);

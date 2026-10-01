@@ -204,16 +204,26 @@ that a modifier released between the last move and the pointer-up governs the re
 committed. The handle RESIZE is deliberately untouched, which is what keeps the resize's
 aspect-ratio lock a separate feature from the marquee's Shift.
 
-**The `M` group has two members, not four.** `marqueeGroup` in
-`src/components/Common/AppKeyboardShortcuts.tsx:26` is `['rectangular-selection',
-'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:145`-`:146` lists
-under the marquee tile. Adobe documents four marquee tools — Rectangular, Elliptical, Single Row
-and Single Column — so two of Photoshop's four are real tools the app simply does not have, and
-an earlier version of the data file described the `M` cycle as running through
-"single-row/column variants" that do not exist in the app. Both entries now say the group is the
-rectangular and the elliptical marquee, and `appNotes` records that the app has no single-row or
-single-column marquee at all. This is a missing capability, **not** a claim that Photoshop lacks
-the tool.
+**The `M` group has four members, and which four was a real question.** `marqueeGroup` in
+`src/components/Common/AppKeyboardShortcuts.tsx` is `['rectangular-selection',
+'elliptical-selection', 'single-row-marquee', 'single-column-marquee']` and the same four names
+are what `toolbar-mapping.ts` lists under the marquee tile. That was NOT always so: until
+2026-10-01 the group held only the first two, and this section recorded the pair as the honest
+state — Adobe documents four marquee tools, so two were real tools the app did not have. The two
+1-pixel marquees are now implemented (`src/tools/singleRowColumnMarquee.ts`) and the group carries
+all four.
+
+Which is itself unsettled, and the app had to pick. Adobe publishes "Switch between marquee tools
+— SHIFT+M" (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`)
+without enumerating the tools the cycle covers, and its default-shortcut table names only the
+Rectangular and Elliptical Marquees against `M`. Third-party sources disagree outright:
+`guides.wmlcloud.com`, reproducing Adobe's own CS5 _Basic Selection Tools_ text, says Adobe never
+assigned `M` to the 1-pixel pair; `flylib.com`'s _Real World Adobe Photoshop CS2_ says the cycle
+covers all four. The app follows the group, on the reasoning that a tool the rail shows behind the
+very key a user has just pressed is a tool they will expect the key to reach. Neither 1-pixel tool
+gets a `shortcut` of its own in `toolbar-mapping.ts`, so nothing here claims Adobe assigns them
+one — `M` alone does not select them. This remains **unverified** against an Adobe page that
+enumerates the cycle's membership.
 
 ## Elliptical Marquee Tool — `elliptical-selection`
 

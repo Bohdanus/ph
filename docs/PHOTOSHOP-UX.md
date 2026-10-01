@@ -71,6 +71,17 @@ violations on `main`.
     remap with a channel selector, a histogram, output levels and Auto. It is still an
     `Image ▸ Adjustments` command either way, so the rail verdict does not change; the label
     is the second defect.
+  - **The capability is coming back, as real commands, and the requirements do not
+    exist yet.** 2026-10-01, after the decision above: Levels, Colors and the other
+    `Image ▸ Adjustments` commands "will be implemented". This **does not reopen the
+    rail decision** — the three ids still leave the rail, because Adobe's Tools panel
+    has no such entries. What it changes is the `levels` bullet: if real Levels is
+    built, the honest item is `Levels` computing Levels, so **do not relabel the
+    stand-in and do not move it into the menu** — a relabelled stand-in is the same
+    falsehood, made more permanent by being menu-launched. Adobe's pages are the
+    requirement; this sentence is not a spec, and an agent starting the work asks
+    for the requirements rather than deriving them from `src/tools/levels.ts`.
+    `HANDOFF.md` §117 and `docs/TOOLS-TOO-HARD.md` carry the routing.
 
 - **But "adjustments are not tools" is too strong, and a rail audit will catch it.** Adobe
   ships a real Tools-panel entry whose output is an adjustment: the **Adjustment Brush
@@ -123,13 +134,13 @@ violations on `main`.
     gives it its own tile at the end of the painting band, badged with Photoshop's own
     `B`, so the invented tool is not hidden in a flyout — it is a visible,
     keyboard-reachable tile. It is also the suite's default way to make a mark, which is
-    why `HANDOFF.md` §74 sequences it last: `clickToolButton(page, 'draw')` occurs
-    **40 times across 23 e2e spec files** (`grep -rc "clickToolButton([^)]*'draw'"
-e2e --include="*.spec.ts"`, excluding the two non-spec files that also call it),
-    and `e2e/pen-types.spec.ts` exists specifically to test it and dies with the tool.
-    Re-derive that number rather than quoting one — `HANDOFF.md` §74's own figure for
-    this ("25 call sites across 14 e2e specs") does not reproduce against this counting
-    rule and should not be copied forward.
+    why `HANDOFF.md` §74 sequences it last: `clickToolButton(page, 'draw')` occurs in
+    every `e2e/*.spec.ts` that makes a mark — count them with
+    `grep -rc "clickToolButton([^)]*'draw'" e2e --include="*.spec.ts"`, which excludes
+    the non-spec files that also call it — and `e2e/pen-types.spec.ts` exists
+    specifically to test it and dies with the tool. Re-derive that number rather than
+    quoting one: `HANDOFF.md` §74's own figure for this ("25 call sites across 14 e2e
+    specs") does not reproduce against this counting rule and must not be copied forward.
 
 ## What is not a tool
 

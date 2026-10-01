@@ -28,6 +28,14 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Drag an elliptical selection; Shift makes a circle, Alt draws from the center, Style locks ratio or size.',
     implementation: 'implemented',
   },
+  'single-row-marquee': {
+    summary: 'Click or drag to select one document row, one pixel tall and as wide as the image.',
+    implementation: 'implemented',
+  },
+  'single-column-marquee': {
+    summary: 'Click or drag to select one document column, one pixel wide and as tall as the image.',
+    implementation: 'implemented',
+  },
   'freehand-lasso': {
     summary: 'Drag a freehand selection border that goes exactly where the cursor goes and closes itself on release.',
     implementation: 'partial',
@@ -109,6 +117,11 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   burn: {
     summary:
       'Darkens the tonal range you choose as you paint, the way letting more light onto a print deepens its shadows.',
+    implementation: 'partial',
+  },
+  sponge: {
+    summary:
+      'Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.',
     implementation: 'partial',
   },
   gradient: {

@@ -77,6 +77,7 @@ const TOOLS_WITH_REAL_OPTIONS_BARS = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
   'color-replacement',
 ] as const;
 
