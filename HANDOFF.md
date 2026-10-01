@@ -3149,10 +3149,17 @@ git remote get-url origin                                       # .../drguz69/li
 1. Record that `layers` is the upstream reference and is not a merge candidate, so the next sweep
    reads it before `git cherry` misleads it. **There is no longer a branch-state section in this
    file to put it in** — the one this entry used to name opened with a 136-line block of branch
-   bookkeeping whose own pointers had rotted, and deleting it is correct. The durable home for a
-   statement about the repository's remotes is `docs/ORCHESTRATION.md`, which already carries the
-   upstream-rewrite rule this entry restates (`a branch rewrote the whole history of the app … is
-a remote-tracking ref, not a local branch`).
+   bookkeeping whose own pointers had rotted, and deleting it is correct. `docs/ORCHESTRATION.md`
+   is where a statement about the repository's remotes belongs, but it does **not** carry the
+   upstream-rewrite rule this entry restates. An earlier version of this entry claimed it did, and
+   quoted one — "a branch rewrote the whole history of the app … is a remote-tracking ref, not a
+   local branch" — that exists in no tracked document:
+   `grep -nE "remote-tracking|rewrote the whole history|refs/remotes" docs/ORCHESTRATION.md` returns
+   nothing, and `git log -S'rewrote the whole history' --all` names only `4833e740`, the commit
+   that introduced the citation. So the rule needs writing into `docs/ORCHESTRATION.md` as part of
+   this fix; the closest real content there is the landing rule at `:100-105` ("a branch merges into
+   `main` only after `main` has already been merged or rebased into the branch"), which is about
+   merge discipline and not about identifying an upstream reference.
 2. Teach the inventory to enumerate branch-only refs. `git for-each-ref refs/heads` alongside
    `git worktree list` is the whole change; a branch with no worktree should surface as an explicit
    category rather than as silence. The 39 fully-merged branch-only refs
@@ -3162,7 +3169,7 @@ a remote-tracking ref, not a local branch`).
    warned about.
 
 **Files.** `scripts/lib/worktree-inventory/git.mjs:69`, `scripts/worktree-inventory.mjs`,
-`docs/ORCHESTRATION.md` (the upstream-rewrite rule)
+`docs/ORCHESTRATION.md` (where the upstream-rewrite rule has to be written)
 
 ## 122. No pixel tool honours an active selection — the eraser, the magic eraser, the paint bucket and the clone stamp all ignore it
 
@@ -3555,93 +3562,6 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
 form of the same trap: they not only work, they work on the wrong files.
 
 **Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
-
-## 136. A sweep removed a live write chat's worktree and branch on the strength of a branch _name_ read out of a 14-hour-old merge subject
-
-**Problem.** `git worktree remove` followed by `git branch -D` is irreversible for a branch that is
-ahead of `main`, and nothing in the repository stops a second chat from running it against a worktree
-a live chat is still using. On 2026-10-01 this destroyed the only ref to a verified commit.
-
-**Observed.** Chat `ses_f0bdf3519ffep22jd3HjNdIF0t` created `.kilo/worktrees/stale-citations` on branch
-`fix/stale-citations` at 00:14:31 and committed `201e985b` at 00:15:18. At 00:44:32 chat
-`ses_f0bc046c9ffegfsk7DmCuzltkq` ("Overnight stale worktree cleanup") ran a **hard-coded nine-item
-list** that included `["stale-citations","fix/stale-citations",false]`, and for each entry executed
-`git worktree remove` then `git branch -D`. The victim chat ran `npm run test` **in that worktree six
-seconds later** (00:44:38) and found the directory emptied of `src` and `.skills`.
-
-**Why it believed the worktree was disposable.** `c983b8e7` (2026-09-30 10:57) is a merge on `main`
-whose subject is `merge(fix/stale-citations): two TEST-FLAKES citations no longer point at what they
-claim`, merging a long-dead branch. The live branch was created 14 hours later and is unrelated. At
-00:20:58 the sweep read that subject — "main shows a `merge(fix/stale-citations)` commit, so a live
-session may have made the same fix" — and at 00:21:17 concluded "No duplication — my fix is on main
-and unique". It inferred _already-landed_ from a **subject string**, never from ancestry. The live
-tip was not on `main`: at 00:45:57 the victim measured its own markers against `main` and got `0`.
-
-**Every signal that said `in-use` was present and unread.** The generator's own answer is `in-use`:
-`scripts/lib/worktree-inventory/classify.mjs:119` `hasLiveSession` (30-minute window; the victim's
-session was seconds old), `live → RECOMMENDATION.IN_USE`, and `docs/ORCHESTRATION.md:270` maps
-`in-use` to "leave it alone". The board held two unreleased locks naming the worktree and branch
-(timestamps UTC; this machine is UTC+2):
-
-```
-sqlite3 .git/agent-board/board.db \
-  "SELECT path,agent_id,worktree,acquired_at,released_at FROM file_locks WHERE worktree LIKE '%stale-citations%'"
-# .skills/hard-merge.md              fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
-# .skills/photoshop-tool-creation.md fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
-```
-
-The sweep's 00:44:25 pre-flight _did_ name `stale-citations` — but probed it with
-`git status --porcelain | wc -l`. That is a cleanliness check, and a clean tree reads identically for
-an abandoned worktree and a busy one. The signal it wanted was one column over.
-
-**Fix / convention.**
-
-1. **Never hand-write a disposal list.** Drive removal from
-   `node scripts/worktree-inventory.mjs` and refuse any entry whose `action` is not `dispose`
-   (`docs/ORCHESTRATION.md:269`). That single rule would have saved this worktree.
-2. **Use `git branch -d`, never `-D`.** `-d` refuses an unmerged branch, and that refusal is the
-   entire guard. Where `-D` is genuinely required, the precondition is
-   `git merge-base --is-ancestor <tip> main` — never a `git log --grep=<branch name>` match, which
-   matches any merge that ever mentioned the name.
-3. **A branch name that appears in any `main` merge subject must not be reused.** Put the chat id in
-   the branch name; a name is not an identity once a merge subject can outlive the branch.
-
-**Files.** `docs/ORCHESTRATION.md:269-287`, `scripts/lib/worktree-inventory/classify.mjs:119`,
-`scripts/lib/worktree-inventory/chats.mjs`, `.git/agent-board/board.db` (`file_locks`)
-
-## 137. `git worktree remove --force` is the reflex after git already refuses, and the refusal names exactly what is lost
-
-**Problem.** When `git worktree remove` refuses a dirty worktree it prints the modified and untracked
-paths and tells you to use `--force`. Re-running the same command with `--force` discards that work
-with no further prompt, and the output that named it has already scrolled past.
-
-**Observed.** 2026-10-01 00:14:05, in `.kilo/worktrees/reclaim-skill`:
-
-```
-fatal: '.kilo/worktrees/reclaim-skill' contains modified or untracked files, use --force to delete it
-```
-
-Six seconds later the same chat ran the identical command with `--force`. Git printed the inventory
-one last time —
-
-```
-M .skills/hard-merge.md  M .skills/photoshop-tool-creation.md
-```
-
-— and deleted the worktree. Two files of verified, gate-passing, never-committed edits were gone; the
-chat had to re-derive them from its own transcript. In the same incident, and in a _different_
-worktree, a concurrent sweep got the same decision right only because that tree happened to be clean.
-
-**Fix / convention.** Treat the refusal as a finding, not an obstacle: it is the cheapest inventory
-of uncommitted work in the repository, and it arrives before the only irreversible step. Before any
-`--force` removal, `git -C <worktree> status --short` and either commit, stash-free-copy
-(`git -C <worktree> diff > /tmp/<name>.patch`), or stop. If the answer is "the work is already
-landed", prove it with `git -C <worktree> diff main --stat` being empty for those paths — the
-modified-path list is a list of things that are **not** on `main` by definition. See §136 for the
-other half: a clean tree is not evidence that a worktree is abandoned.
-
-**Files.** `scripts/lib/worktree-inventory/git.mjs:126`, `AGENTS.md` (worktree rules)
-
 ---
 
 ## 138. Two tool options bars justify their clamping with a `localStorage` round trip that no code performs
@@ -3902,8 +3822,8 @@ predicate at `:307` reads. A join that misses returns `undefined` and throws; on
 _different_ worktree with the same display name returns a clean shape and reads `landed`, which is
 the failure above.
 
-**Why it matters beyond the red.** This is the guard `HANDOFF.md` §136 and §137 lean on: §137 is
-`git worktree remove --force` after git has already refused, and §136 is that a clean tree is not
+**Why it matters beyond the red.** This is the property `scripts/dispose-worktree.mjs` leans on: it is
+`git worktree remove --force` after git has already refused, and it is that a clean tree is not
 evidence a worktree is abandoned. The guard exists so uncommitted work is never classified as
 safe. A miss on the main checkout is the one place uncommitted work is guaranteed to exist,
 because that is where agents work.
@@ -4166,3 +4086,186 @@ That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export
 `src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
 `src/components/Main/RectangularSelectionToolArea.tsx:176`,
 `src/tools/singleRowColumnMarquee.ts:65-82`.
+
+---
+
+## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
+
+**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
+the root cause anywhere in the tree. `toolbar-mapping.ts` (repo root) has no `hand`, `zoom` or
+`rotate` entry. The store's view state is entirely commented out:
+
+- `src/contexts/StoreContext.tsx:142-143` — the context's `zoomDataRef` / `setZoomData` members,
+  commented out, with only the type left live.
+- `src/contexts/StoreContext.tsx:1171-1177` — the whole zoom block, `// const zoomDataRef =
+useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest.
+- `src/contexts/general-types.ts:14` — `export type ZoomData = { dx, dy, zoom }` is still a live
+  export with **zero** live consumers. A type with no consumer is the residue of the removal.
+
+**The `'zoom'` default is a trap, and it is the half nobody has written down.**
+`src/components/Main/Main.tsx:70` initialises `let interactionMode = 'zoom'` and the string `'zoom'`
+is assigned by **no branch** in the file — the chain runs `:72-273` and terminates
+`else EventHandler = DummyToolArea` at `:274`. So `'zoom'` is not a mode anything enters; it is the
+value every tool without its own arm falls through to, and it lands on a `display: none` div with no
+handlers. `Main.tsx:286` still carries the matching `// transform: translate(${dx}px, ${dy}px)
+scale(${zoom})`, and `src/components/Main/Main.scss:1-9`'s `.zoom-container` sets
+`transform-origin` with no `transform` to anchor.
+
+**A second, smaller finding in the same cause.** `src/components/SidebarLeft/SidebarLeft.tsx`
+has exactly one `<hr>` (`:1250`), and the comment at `:1243-1249` justifies it by describing a
+commented-out Zoom control: "The second `<hr>` this replaces stood between the colour cluster and
+NOTHING — the commented-out Zoom control that followed it was deleted with it". The control it
+reasons about is not in the file.
+
+**Why it is not a wiring bug.** There is no view transform to wire. `usePointerPosition` maps
+client coordinates to image pixels through a `scale` supplied by the host rather than owning a
+transform of its own.
+
+**Fix — start with the scope, not the Hand tool.** Three separate features each want one, and they
+want the same one: pan/zoom, the space-drag temporary-pan every tool inherits, and tool cursors that
+track the view (a brush tip circle is a screen-space circle). A `DocumentViewScope` owning
+`{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image conversion reading from it,
+is the shape the commented-out code was reaching for. Do not begin with a Hand tool; begin with the
+scope and the three tools fall out of it.
+
+Two smaller fixes that can land independently, and are cheap:
+
+1. Replace the `'zoom'` default with something honest — `DummyToolArea` itself, or an explicitly
+   named `UNHANDLED` — so the fallthrough is a decision rather than an accident that reads as a
+   feature. As written, a reader must diff the whole chain to learn that `'zoom'` is never assigned.
+2. Delete or reword the `<hr>` comment at `SidebarLeft.tsx:1243-1249`; the control it cites is
+   gone.
+
+**Why this is being refiled.** `4833e740` deleted the entry that carried it on the grounds that it
+was "already carried by a tracked document". It is not. `docs/TOOLS-INVENTORY.md:210-212` has
+catalogue rows for the three names and `:222` notes "The app has a zoom interaction mode on the
+canvas and no Zoom tool" — a description, not a filed defect. `docs/TOOLS-TOO-HARD.md:694-696`
+repeats that one sentence. `docs/PHOTOSHOP-UX.md:201` lists the three only as "not
+Adobe-table-confirmed". The one surviving mention of the root cause is `HANDOFF.md:1326-1329` in
+§74, framed as a roadmap step ("belongs on its own branch"), which never names the `'zoom'`
+fallthrough or the stale comment. Verified against `main@cf41f642`.
+
+**Files.** `toolbar-mapping.ts` (repo root), `src/contexts/StoreContext.tsx:142-143,1171-1177`,
+`src/contexts/general-types.ts:14`, `src/components/Main/Main.tsx:70,274,286`,
+`src/components/Main/Main.scss:1-9`, `src/components/SidebarLeft/SidebarLeft.tsx:1243-1250`,
+`src/hooks/usePointerPosition.ts`
+
+---
+
+## 152. A touch device at 768px and above cannot reorder layers, and no document records it
+
+**Problem.** Layer reordering is HTML5 drag-and-drop, and HTML5 drag does not fire on touch. At
+768px and above the only layer list the app renders is the desktop one, so on an iPad in landscape
+the rows cannot be reordered at all.
+
+- `src/components/SidebarRight/LayersTab.tsx:142` sets `draggable={editingLayerId !== layer.id}`,
+  with `onDragStart` at `:143` (reading `e.dataTransfer`), `onDragOver` at `:163` and `onDrop` at
+  `:171`. There is no pointer-events reorder path anywhere in the file.
+- The breakpoint is `src/hooks/useMediaQuery.ts:13` — `MOBILE_MEDIA_QUERY = '(width < 768px)'` —
+  and `src/components/SidebarRight/SidebarRight.tsx:321` hides the desktop aside below it. So the
+  residual window is exactly `width >= 768px`, which includes the 768-1024px tablet band this
+  suite already exercises (`e2e/OPEN_PROBLEMS.md:913-915` runs at 1133x744).
+
+**The phone case is not part of this and must not be claimed.** Below 768px the app ships explicit
+reorder controls: `src/components/Mobile/MobileLayersDrawer.tsx:299-311` and `:313-327` render ▲ and
+▼ buttons with `aria-label={`Move ${layer.name} up`}` / `down`, `disabled` at the ends of the list,
+on `min-h-11 min-w-11` (44px) targets, calling `moveLayerAfter`. An earlier version of this entry
+said layer rows "cannot be reordered on a phone", which that refutes. The tablet-width case is the
+one that is live, and it is the one an earlier version did not name.
+
+**Two companions, both still true.**
+
+1. **No stylus discrimination.** `pointerType` appears in production code in exactly two places,
+   both in a test fixture: `src/__tests__/fixtures/pointer.ts:10,41`. `usePointerPosition` reads
+   `button`, `pointerId` and `clientX/Y` and nothing else, and no tool reads `pressure`. So there is
+   no stylus-versus-palm rejection and no pinch-zoom.
+2. **Slider hit areas.** There is no `src/components/Common/TouchSlider.tsx`, and the options-bar
+   sliders are 4-6px tall — `h-1.5` in `Draw.tsx:151,157`, `Levels.tsx:111,116` and `Smudge.tsx:25`,
+   `h-1` in `Transform.tsx:184,189` and `:204,209`. The mobile tool sheet renders those same bars.
+
+**Why it is not a wiring bug.** Touch reordering needs a pointer-events drag with a gesture
+threshold, and the layers list has an existing HTML5 path with its own keyboard affordances to keep
+in step. Slider sizing is a component decision that applies to every bar at once, not one control.
+
+**Fix.** Three independent items, and the third is the only one with a worked answer.
+
+1. Add a pointer-events reorder path to `LayersTab.tsx` beside the HTML5 one — pointerdown on the
+   row's drag affordance, a movement threshold before it is a drag rather than a click, then the
+   same `moveLayerAfter` the mobile drawer calls. Reuse the threshold `SidebarLeft.tsx:499` already
+   uses for its own press-versus-drag decision rather than inventing a second number.
+2. Read `event.pointerType` in `usePointerPosition` and skip a pen/touch gesture that the tool
+   cannot use, so a palm resting on the canvas does not paint. This is the first consumer of
+   `pointerType` the app would have, which is why the fixture has it and nothing else does.
+3. Slider targets: a `TouchSlider` with a 44px touch box around the existing 6px track, applied to
+   the shared bar rather than to one control. A discarded `docs/responsive-design-plan` branch had
+   a 70-line candidate; **do not land that document** — its audit section is false, it asserts no
+   mobile drawer or hamburger exists, that all chrome is `max-md:hidden` leaving a blank canvas, and
+   that `BottomToolbar.tsx` is an unintegrated stub, while `main` has `MobileMenuDrawer.tsx`,
+   `MobileShell.tsx` and `e2e/mobile-shell.spec.ts`. Take the component, re-derive the document.
+
+**Why this is being refiled.** `4833e740` deleted the entry and named no reason for it. It is not
+routed anywhere: `e2e/OPEN_PROBLEMS.md:803-851` is a Playwright-configuration coverage entry (one
+project, zero `hasTouch`/`isMobile`/`touchscreen`) and never names `draggable`, layer reordering,
+`pointerType` or slider hit size. `docs/FEATURES.md:346-349` records the mobile gap as "No
+pinch-zoom and no two-finger pan" and asserts drawing works on touch, which is a different claim.
+Verified against `main@cf41f642`.
+
+**Files.** `src/components/SidebarRight/LayersTab.tsx:142,143,163,171`,
+`src/components/SidebarRight/SidebarRight.tsx:321`, `src/hooks/useMediaQuery.ts:13`,
+`src/components/Mobile/MobileLayersDrawer.tsx:299-327`, `src/hooks/usePointerPosition.ts`,
+`src/components/ToolbarsRight/Draw/Draw.tsx:151`, `src/components/ToolbarsRight/Levels/Levels.tsx:111`
+
+---
+
+## 153. The main-worktree guard runs after the edit, so a subagent fan-out rooted in main is still unstopped
+
+**Problem.** `docs/ORCHESTRATION.md:9-15` states the rule — tracked-file changes happen in a
+worktree, main is for reading and merging — and the commit path is now a program. The write path is
+not, and that asymmetry is the defect.
+
+`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit:17` and refuses a commit made
+from the main worktree (override `ALLOW_MAIN_COMMIT=1`, honoured only on an exact `1` at `:151`),
+pinned by `scripts/__tests__/main-worktree-guard.test.mjs` whose last describe asserts the guard is
+actually installed. The guard states its own limit at `:26-36`, headed "WHAT IT DOES NOT DO, because
+the limit is load-bearing":
+
+> It runs AFTER the edit, not before it. A session that writes into the main worktree and never
+> commits is not stopped here; its files are still uncommitted, and they are still in a checkout
+> every other session is reading. … Closing the write side is a process fix, not a program.
+
+`docs/ORCHESTRATION.md:78-82` says the same thing: "What it does **not** do is stop the write … the
+write side is the process rule above, and the guard is the floor under it."
+
+**Nothing fills the gap.** A `task` subagent inherits the calling session's working directory, and
+`AGENTS.md`'s headline instruction is "LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS" — so a fan-out
+rooted in a main-rooted chat is mechanically a write into `main`, and `main` is where most root
+chats sit. Two root-level defaults would close it, and neither exists:
+
+1. Nothing creates the worktree before the first edit. `task` cannot create one for itself, so this
+   has to happen at the root — and `kilo.jsonc` cannot express it, because tool permissions match a
+   path glob and have no term for the working directory. There is no pre-tool-use hook in
+   `kilo.jsonc` or in any tracked agent definition, and no script under `scripts/` runs
+   `git worktree add` (`scripts/worktree-inventory.mjs:126` runs only `git worktree list --porcelain`).
+2. Nothing stops `agent_manager` `mode: 'local'` from putting an editing session in the root
+   checkout. That mode exists by construction to start sessions in the caller's directory.
+
+Note the audit gap: `.kilo/` is gitignored (`.gitignore:49`), so an agent-definition or
+Agent Manager surface cannot be verified from a worktree. What is verifiable from the tracked tree
+is that `kilo.jsonc`'s `permission` block contains only the Playwright window-opening `deny` rules
+(`:31-69`) and no working-directory term.
+
+**Why this is being refiled, in this form.** `4833e740` deleted the entry and classified it under
+"fixed on main". Part one is fixed and demonstrably intact. Part two was the entry's own point —
+it said so in its own text ("Fix, part two — still open, and it is the larger half") — and it is
+still open. An entry that is half fixed is not an entry that is fixed.
+
+**Fix.** Both halves are defaults in a tool rather than rules in a document, which is the whole
+difficulty: (1) a root-level hook or launcher that provisions the task's worktree before any edit
+tool is available, and (2) a refusal, or at minimum a warning, for `agent_manager` `mode: 'local'`
+at a root checkout. Until those exist the guard is worth exactly what it says it is: a floor under a
+process rule, converting "rogue commits nobody can attribute" into "a dirty tree the next
+`git status` names".
+
+**Files.** `scripts/main-worktree-guard.mjs:26-36,151`, `.husky/pre-commit:17`,
+`scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
+`kilo.jsonc:31-69`, `AGENTS.md` (delegation section)

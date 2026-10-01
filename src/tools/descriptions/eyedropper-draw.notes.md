@@ -77,7 +77,7 @@ Eyedropper line number is the one the brief names (`:57`, and it resolves), but 
   choose" is the flyout-cycling gesture between two **tools**, so the two share a letter and a
   tile, not an options bar — and the current-version inventory confirms the Color Sampler is in the
   `I` group rather than in the Eyedropper's bar. **The app has no Color Sampler at all**, which
-  `HANDOFF.md` §51 (`HANDOFF.md:1080`) records; see the tool-union evidence in the census below.
+  `appNotes` records and `docs/TOOLS.md` inherits; see the tool-union evidence in the census below.
 
 ### Prose
 
@@ -295,7 +295,7 @@ sampler ring for the Eyedropper tool" and names no control. Putting an unverifie
 in `control` would break the field's own contract ("The control's name in Photoshop's options bar,
 verbatim"), so the row is left out and the reason is stated in `appNotes` instead, together with the
 fact that the app has no ring either way — the ring is a cursor, and this repo has no cursor registry
-at all (`HANDOFF.md` §51 (`HANDOFF.md:1080`)). This is item 7 in `Unverified`, which stays open.
+at all. This is item 7 in `Unverified`, which stays open.
 
 Three judgement calls worth stating, because each could reasonably have gone the other way:
 
@@ -820,8 +820,8 @@ is listed with the URL that came closest.
    `Sample`. **The decision, recorded so it cannot be read as an oversight:** no row, because
    `types.ts` requires `control` to be Adobe's name verbatim and no Adobe page supplies one; the
    omission and its reason are stated in the data file's `appNotes` instead, which also notes that the
-   app has no ring either way — the ring is a cursor and this repo has no cursor registry at all
-   (`HANDOFF.md` §51 (`HANDOFF.md:1080`)). A later pass that finds an Adobe name for the control should add the row;
+   app has no ring either way — the ring is a cursor and this repo has no cursor registry at all.
+   A later pass that finds an Adobe name for the control should add the row;
    this item then closes the way item 1 did. Closest:
    https://jkost.com/blog/2018/03/the-eyedropper-color-samplers-and-info-panel-in-photoshop-cc.html
 8. **A tool-preset picker leading the eyedropper's options bar.** The corpus's own table gives every
@@ -935,6 +935,13 @@ inside a `return` statement, and `Eyedropper.tsx:37` is a `};`.
 | `EyedropperToolArea.test:291`  | `EyedropperToolArea.test:314`  | the test that drives `sampleAllLayers` true                             |
 | `eyedropper.test.ts:12-18`     | `eyedropper.test.ts:12-18`     | already right; kept                                                     |
 | `SidebarLeft.tsx:258` / `:431` | `SidebarLeft.tsx:621` / `:951` | the two `shortcut` consumers — the **third** pair this file has carried |
+
+**One row of that table no longer resolves, and must not be followed.** The `HANDOFF.md:1017` ->
+`HANDOFF.md:1080` row pointed at §51, the eyedropper entry. **§51 was deleted** by `4833e740`, and
+`HANDOFF.md:1080` now lands inside an unrelated entry, so the pointer is struck rather than followed.
+The defect it recorded — no `Sample All Layers` control, a `sampleAllLayers` value refused with a
+named error, no sampling ring, no Color Sampler — is still live and still stated in full in
+`appNotes`, which is what `docs/TOOLS.md` is generated from.
 
 **The two that were not drift but wrong content.** `EyedropperToolArea.tsx:121` was cited as the only
 dispatch in the file, which is right in kind but wrong in content: the dispatch at `:133` is a

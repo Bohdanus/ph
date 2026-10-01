@@ -99,9 +99,17 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *   checks it could not decide — in the shell scan, `aria-allowed-role` on one node and
  *   `color-contrast` on two. Asserting it would fail on elements axe correctly admits
  *   it cannot judge, which is a false positive, not a defect. It is attached to the
- *   report in full, and its ids are logged on every run, so a reader can see it was
- *   there and was not counted. `violations` is the only bucket this file asserts on,
- *   and it is asserted EMPTY.
+ *   report in full, its ids are logged on every run, and the attachment records each
+ *   node's `targets`, so a reader can see it was there, was not counted, and can find
+ *   the element without re-running the scan. `violations` is the only bucket this file
+ *   asserts on, and it is asserted EMPTY.
+ *   **The `aria-allowed-role` x1 is the one to read by hand.** It goes incomplete when
+ *   an element's accessible role is ambiguous, which usually means the `role` and the
+ *   element disagree. The two `color-contrast` results land on the `SidebarRight`
+ *   `PanelGroup` header (`src/components/SidebarRight/PanelGroup.tsx:40-42`), whose
+ *   background is set by class rather than inline — text over a surface axe declines to
+ *   judge is usually a design decision, and belongs in `docs/OVERRIDES.md` rather than
+ *   in a test if it is deliberate.
  * - **No rule is disabled and no tag filter is applied.** The full default rule set
  *   runs, `best-practice` included. Two of the four failures below are
  *   `best-practice` rules rather than WCAG A/AA, and they are left in on purpose: a
@@ -299,11 +307,17 @@ async function expectNoViolations(
           occurrences: violation.nodes.length,
           targets: violation.nodes.map((node) => node.target),
         })),
-        // Attached so a reader can see it was considered and not silently dropped.
+        // Attached so a reader can see it was considered and not silently dropped. `targets` is
+        // recorded for the same reason the violations bucket records it at `:300`: without the
+        // element selector a rule id and a count say that axe stopped, and not WHERE. An
+        // `aria-allowed-role` that cannot be located without re-running the scan is not a
+        // hand-off, it is a to-do nobody can start.
         incompleteNotAsserted: results.incomplete.map((item) => ({
           id: item.id,
           impact: item.impact,
+          help: item.help,
           occurrences: item.nodes.length,
+          targets: item.nodes.map((node) => node.target),
         })),
         inapplicable: results.inapplicable.length,
         passes: results.passes.length,
