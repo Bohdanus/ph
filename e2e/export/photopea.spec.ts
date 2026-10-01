@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from '../fixtures/extended-test';
 import { exportFormats, setupExportTest, exportAndVerify, verifyPsdInPhotopea } from './helpers';
 
 import { THIRD_PARTY_PAGE_TEST_TIMEOUT_MS } from '../helpers/timeouts';

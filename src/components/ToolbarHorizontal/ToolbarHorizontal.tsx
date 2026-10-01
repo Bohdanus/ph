@@ -33,7 +33,15 @@ const ToolbarHorizontal = () => {
     //
     // Scrolling in the tablet band does clip vertically, which is why the font list is
     // portalled to `document.body` — see `src/components/ToolbarsRight/Text/FontSelect.tsx`.
-    <div className={`${TOOLBAR_BASE_CLASS} flex items-center px-4 overflow-visible max-lg:overflow-x-auto`}>
+    // `role="region"` + a name, because this strip is a direct child of the app grid and
+    // therefore outside every landmark. axe's `region` rule is right about that: a
+    // screen-reader user bypassing to the toolbar found nothing to land on. A landmark is
+    // the honest fix — `role="toolbar"` satisfies nothing here, being a widget role.
+    <div
+      role="region"
+      aria-label={`${toolName} tool options`}
+      className={`${TOOLBAR_BASE_CLASS} flex items-center px-4 overflow-visible max-lg:overflow-x-auto`}
+    >
       <div className="min-w-fit flex items-center max-lg:min-w-max">
         <ToolComponent key={toolName} />
       </div>
