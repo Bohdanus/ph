@@ -4124,3 +4124,45 @@ version bump would re-open the same class of problem as the one the throttle clo
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx:133,211,383-391,1227,1236`,
 `src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
 `e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).
+
+## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
+
+**Problem.** `SingleRowColumnMarqueeToolArea.tsx` wires both `onPointerLeave` and
+`onPointerCancel` to `abortDrag` (`:424`-`:425`), so a drag that leaves the tool element ends as
+a cancelled gesture that commits nothing. The geometry module documents the opposite behaviour
+three files away: `singleRowColumnMarquee.ts:65-73` advertises that an out-of-document pointer
+clamps to the first or last row, and cites Adobe's scripting API as the reason. Both statements
+cannot stand. Only the PRESS clamps. A drag past the canvas edge is discarded.
+
+`EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, so this is house convention
+rather than something these two tools introduced — but `RectangularSelectionToolArea.tsx:154`-`:160`
+wires `pointercancel` ALONE, so the rectangular marquee keeps tracking a drag off the edge. Three
+selection tools, two behaviours, and one of the two is undocumented.
+
+**Why it is reachable and not theoretical.** The tool element is the canvas area, so the abort
+fires as soon as the pointer crosses it. At zoom 1 with letterboxing that is the document edge;
+zoomed in past the fit, the document edge _is_ the container edge, so dragging toward a document
+boundary — which is exactly how a user aims at the last row — is dragging toward the abort.
+
+**What Photoshop does.** It keeps tracking. There is no published Adobe page for the GUI case,
+which is why this is filed as a defect in this repository's own consistency rather than as a
+deviation from Adobe: `docs/FEATURES.md` should record that the app drops the gesture.
+
+**What would close it.** Narrow the abort to `onPointerCancel` in
+`SingleRowColumnMarqueeToolArea.tsx` and `EllipticalSelectionToolArea.tsx`, so a leave ends the
+gesture only if the pointer capture has already been lost. That is one wiring change in each
+file, and it is deliberately NOT done here: `usePointerPosition`'s capture is what keeps `pointermove`
+delivered outside the element, so the abort is currently the only thing stopping an unbounded
+stream of moves from a pointer the user has visually left the tool. Decide it for the selection
+family at once, and add the case that pins whichever way it goes — press, move outside the
+element, move back, release — asserting the band lands where the release was.
+
+**Do not fix it by clearing the drag on `pointerleave` without also releasing the capture.**
+That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export): a surviving
+`activePointerId` refuses every later press, so the tool stops responding until it unmounts.
+`abortDrag` calls `releasePointer()` for that reason and must keep doing so.
+
+**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:424-425,390`,
+`src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
+`src/components/Main/RectangularSelectionToolArea.tsx:176`,
+`src/tools/singleRowColumnMarquee.ts:65-82`.
