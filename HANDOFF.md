@@ -4631,36 +4631,3 @@ parses `curated.mjs` and would catch a stale key.
 **Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
 `docs/README.md` ("Not maintained here"), `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
 `docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`
-
----
-
-## 140. `main` fails `lint:check`: two tracked markdown files are unformatted, so the `ci` job is red
-
-`npx prettier --check .` exits 1 on a clean tree, naming `docs/LAYERS-PANEL.md` and
-`MIGRATION_NEXT_STEPS_SUNDAY.md`. Both are committed and neither is modified in the working tree,
-so this is not an uncommitted-edit artefact — it is what `main` currently is.
-
-The `ci` job runs `lint:check` first on every push and PR (`AGENTS.md`, CI section), and
-`lint:check` includes `prettier --check .`. A red first step means the rest of the job never runs:
-`tsc`, the include-coverage assertion, the unit suite with coverage, and the production build are
-all behind a formatting failure in a file neither of them reads.
-
-The diff is table padding, not prose: `docs/LAYERS-PANEL.md:39` has a row one column wider than
-its neighbours, which prettier's markdown table alignment wants normalised.
-
-**This is why the gate table says nothing local runs `lint:check` any more.** lint-staged formats
-what is staged, so a file that reaches `main` unformatted — merged from a branch whose pre-commit
-hook did not see it, or reformatted by a tool that does not know the rule — stays unformatted
-forever, and nothing local ever finds out. `docs/LAYERS-PANEL.md` and
-`MIGRATION_NEXT_STEPS_SUNDAY.md` are both files that arrived by merge.
-
-**Fix.** `npx prettier --write docs/LAYERS-PANEL.md MIGRATION_NEXT_STEPS_SUNDAY.md`, as its own
-commit. Then check whether the other merge-heavy markdown is clean, because this is a class and
-these two are its current members — `prettier --check .` is the only way to see the class, and it is
-CI-only by design, so the answer arrives as a red build rather than as a list.
-
-Do not widen `.prettierignore` to make it green. These are two files; the finding is that CI has
-been reporting this and the report has not been read.
-
-**Files.** `docs/LAYERS-PANEL.md:39`, `MIGRATION_NEXT_STEPS_SUNDAY.md`, `package.json` (`lint:check`),
-`.github/workflows/ci.yml`
