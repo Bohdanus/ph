@@ -4,7 +4,8 @@
 architecture, we skip the implementation and record it here rather than shipping a fake or a
 half-version. A capability listed here is a decision, not a backlog item: nobody re-audits it, nobody
 estimates it, and nobody treats its absence as a defect. An entry is deleted only when the capability
-lands — see the lifecycle rule in `AGENTS.md`, "Verified fix: DELETE the entry".
+lands — see the lifecycle rule in `docs/DOCUMENTATION.md:145-158`: **fixed and verified DELETES the
+entry**, never rewrites it into a closed one.
 
 **Photoshop's documentation is the source of truth for what Photoshop does.** Every "What Photoshop
 does" line below cites the Adobe page. Where this app's behaviour and Adobe's disagree, Adobe is
@@ -162,7 +163,7 @@ resolving it. `hasHoles` is carried on the result and explained at `src/tools/qu
 > select the handle's background with it.
 
 The tool area acts on the flag and drops the stroke, logging the reason
-(`src/components/Main/QuickSelectionToolArea.tsx:202-206`):
+(`src/components/Main/QuickSelectionToolArea.tsx:204-208`):
 
 ```ts
 if (polygon?.hasHoles) {
@@ -200,8 +201,8 @@ const unimplemented = () => () => [null as never] as ToolResult;
 
 They are in the rail, with Adobe's names, because the rail is a clone and the grouping is the
 specification. None of them has a gesture surface: `Main`'s tool-area dispatch has no branch for any
-of them, so the default handler stands (`src/components/Main/Main.tsx:203`) and the same fallback
-closes the dispatch (`src/components/Main/Main.tsx:226`), which is the inert `display: none` surface
+of them, so the default handler stands (`src/components/Main/Main.tsx:213`) and the same fallback
+closes the dispatch (`src/components/Main/Main.tsx:236`), which is the inert `display: none` surface
 every unrouted tool gets.
 
 **Why it is too hard.** A work path is a first-class document object: anchors, bezier direction
@@ -228,7 +229,7 @@ library itself, and the authoring and management surfaces. None of the format's 
 and shipping a hardcoded star would be exactly the fake this policy refuses.
 
 **What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts:108-115`) and Star is the missing one, which `AGENTS.md` records as a
+(`toolbar-mapping.ts:109-116`) and Star is the missing one, which `AGENTS.md` records as a
 requirement rather than an omission to be filled by a placeholder.
 
 ### Live type
@@ -238,19 +239,23 @@ the box is resized, can be re-typed in place, and carries an on-canvas caret. Sc
 resample; it re-renders.
 
 **What this app does.** Text is baked to pixels at commit. The renderer writes the string with
-`fillText` (`src/tools/text.ts:49`) into a layer-sized raster, and the processor returns that raster
-as the tool's whole result (`src/tools/text.ts:69-74`):
+`fillText` (`src/tools/text.ts:55`) into a layer-sized raster, and the processor returns that raster
+as the tool's whole result (`src/tools/text.ts:72-81`):
 
 ```ts
-const canvas = new OffscreenCanvas(size.width, size.height);
-const ctx = canvas.getContext('2d')!;
+export const text =
+  ({ size }: CreatorToolParams) =>
+  (args: TextToolArgs) => {
+    const canvas = new OffscreenCanvas(size.width, size.height);
+    const ctx = canvas.getContext('2d')!;
 
-renderText(ctx, args);
+    renderText(ctx, args);
 
-return [canvas];
+    return [canvas];
+  };
 ```
 
-`renderText` is a measure-and-draw function over a string (`src/tools/text.ts:22`), and nothing
+`renderText` is a measure-and-draw function over a string (`src/tools/text.ts:28`), and nothing
 re-runs it against the committed pixels.
 
 **Why it is too hard.** It needs a text layout engine, font shaping and rasterisation, and an
@@ -272,7 +277,7 @@ commit on Enter. <https://helpx.adobe.com/photoshop/using/free-transformations-i
 `tempUpdateLayer` and nothing is committed until the user presses Apply —
 `src/components/ToolbarsRight/Transform/Transform.tsx:48` is the `tempUpdateLayer` call inside the
 throttled change handler, and the Apply button is at
-`src/components/ToolbarsRight/Transform/Transform.tsx:304`.
+`src/components/ToolbarsRight/Transform/Transform.tsx:303-305`.
 
 **Why it is too hard.** The bounding box is a gesture surface that owns the pointer for its duration
 and resolves to an arbitrary affine or projective transform. This app's transform path is
@@ -355,6 +360,13 @@ implementation is (`src/tools/dodgeBurn.ts:336-339`):
 > args instead, which is also what makes the registry's `requiresRaster: true` replay reproduce the
 > commit exactly.
 
+**Smudge is a different case and must not be folded into this entry's evidence.** The app's Smudge
+_does_ accumulate, along the stroke rather than over dwell time: `smudgeStroke` is a read-modify-write
+because "`blendPixel` composites over what is already there, and a smudge accumulates along the
+stroke" (`src/tools/smudge.ts:170-174`). What it has no build-up for is the same dwell half — how long
+the cursor rests in one place while the button is held — and that is the half this entry is about. The
+per-dab path accumulation is why the Smudge entry's own cost is memory, not commit discipline.
+
 **Why it is too hard, and the constraint is architectural rather than incidental.** This is the one
 entry in this file where the obstacle is not the algorithm — accumulating light is easy — but the
 replay contract. A `commit: 'raster'` tool's commit must be a pure function of its args, because
@@ -400,7 +412,7 @@ foreground colour.
 <https://helpx.adobe.com/photoshop/using/fill-and-stroke-shapes.html>
 
 **What this app does.** One `Filled` checkbox over the global foreground/background pair
-(`src/components/ToolbarsRight/Figures/Shape.tsx:204-213`):
+(`src/components/ToolbarsRight/Figures/Shape.tsx:209-222`):
 
 ```tsx
 <input
@@ -435,10 +447,12 @@ and the Eraser, and it mirrors every dab live as the stroke is drawn.
 <https://helpx.adobe.com/photoshop/using/paint-symmetry.html>
 
 **What this app does.** The names appear in `src/`, but only as strings in the generated description
-data — `src/tools/descriptions/paint.ts:85` lists `control: 'Symmetry'` in a table the docs
+data — `src/tools/descriptions/paint.ts:91` lists `control: 'Symmetry'` in a table the docs
 generator reads. There is no Symmetry symbol in any implementation, and no settings panel. The
 `Symmetry` identifier being greppable in `src/` is a property of the descriptions, not evidence of
-anything.
+anything: the only other hit outside `src/tools/descriptions/` is
+`src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx:157`, which asserts Symmetry's
+**absence**.
 
 **Why it is too hard.** The panel is a per-dab pipeline: jitter and dynamics are evaluated at each
 stamp, not at commit. The app's paint commit is a single `stroke()` per stroke
@@ -458,7 +472,7 @@ for the length of the drag. Airbrush erases continuously while the button is hel
 <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/erase-parts-of-an-image-with-the-eraser-tool.html>
 
 **What this app does.** Neither control is rendered, and the Eraser's tests pin the absence
-(`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:157`):
+(`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:201`):
 
 ```ts
 expect(screen.queryByLabelText(/Erase to History/i)).toBeNull();
@@ -477,15 +491,16 @@ never creates a layer, unlike the Brush.
 **What Photoshop does.** Every layer carries an opacity the user sets, and a brush stroke paints
 into the layer that is already there.
 
-**What this app does.** Layer opacity has no writer: `Layer.opacity` is a required field, PSD import
-populates it and materialization applies it, and nothing in the app ever writes it. The defect and its
-blast radius are `HANDOFF.md` §56 (`HANDOFF.md:1244`); it is recorded here only because closing it is
+**What this app does.** Layer opacity has no writer: `Layer.opacity` is a required field
+(`src/contexts/layer-types.ts:58`), PSD import populates it (`src/contexts/psd-utils.ts:159,229`) and
+materialization applies it, and nothing in the app ever writes it. The defect and its
+blast radius are `HANDOFF.md` §56 (`HANDOFF.md:1273`); it is recorded here only because closing it is
 not a small change.
 
 The paint model is the larger half. A brush stroke commits as a **new layer** rather than painting the
 active one. `DrawToolArea` calls `createLayerFromTool` on commit
 (`src/components/Main/DrawToolArea.tsx:143`), and the contrast with a tool that edits in place is
-written down at `src/components/Main/EraserToolArea.tsx:16-21`:
+written down at `src/components/Main/EraserToolArea.tsx:18-20`:
 
 > `DrawToolArea` commits through `createLayerFromTool`, which is right for a painting tool: a new
 > layer is the paint. It is wrong for the eraser, which subtracts alpha from the layer that is already
@@ -512,31 +527,68 @@ engineering judgements.
 ### The three adjustment "tools" must leave the rail, and that means building a menu
 
 `color` ("Colors"), `levels` ("Levels") and `transform` ("Transform") are `Image ▸ Adjustments` and
-`Edit ▸ Transform` commands. Photoshop's Tools panel contains no such entries — Adobe's name for
-`color` is Black and White, which is not a tool either. `AGENTS.md` requires they leave the rail, and
-that they have no replacement tool, because Photoshop puts nothing in their place.
+`Edit ▸ Transform` commands. Photoshop's Tools panel contains no such entries. Adobe's name for
+`color` is Black and White, which is not a tool either — and the app's `color` is not Black and White
+either, it is a three-filter CSS chain (the Black and White entry below), so the identification is
+unresolved in both directions. Adobe's name for what the app's `levels` actually implements is
+Brightness/Contrast: `LevelsToolArgs` is `{ brightness, contrast }` (`src/tools/levels.ts:4`) and the
+processor emits one `ctx.filter` from those two (`src/tools/levels.ts:12`), where Adobe's Levels is a
+three-control-point piecewise-linear remap with a channel selector, a histogram, output levels and
+Auto. Both are still `Image ▸ Adjustments` commands, so the rail verdict is the same for all three.
+`AGENTS.md` requires they leave the rail, and that they have no replacement tool, because Photoshop
+puts nothing in their place.
 
-**The extraction is half-staged and the flag has no consumer.**
-`toolbar-mapping.ts:163` already declares it:
+**The flag exists and has exactly one reader, which is a test.** `toolbar-mapping.ts:164` declares it:
 
 ```ts
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];
 ```
 
-Nothing in production reads `extraTools`. Only `AGENTS.md`'s prose and a test read it, so all three
-entries still render in the rail.
+The only reader in the repository is
+`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`, which asserts the list does not
+contain `shape`. Nothing in `src/` imports it, so all three entries still render in the rail, in the
+three-wide flyout at `toolbar-mapping.ts:62-64`.
+
+**They are also live entries in a second surface, and there is no menu to move them to.**
+`src/components/Menu/Menu.tsx` renders a `DesktopHeader` and a `ToolbarHorizontal` and nothing else
+(`src/components/Menu/Menu.tsx:1-13`), so the app has **no `Image` menu and no `Edit` menu** — the
+destination this decision names does not exist to be routed into. Meanwhile
+`src/components/DesktopHeader/DesktopHeader.tsx:27-32` declares a `TOOL_MENU_ITEMS` array whose
+`:29`, `:31` and `:32` are `color`, `levels` and `transform`, so all three are **Tools-menu entries**
+as well.
 
 **Why this is a decision and not a refactor.** Removing the rail entries does not relocate the
-functionality, it deletes it, and the destination is `Image ▸` and `Edit ▸` — which is
-`src/components/Menu/Menu.tsx`, a 13-line component rendering a header and a toolbar
-(`src/components/Menu/Menu.tsx:1-13`). Extracting these three means building a real menu bar first.
-That is a build, and the operator owns the decision to fund it.
+functionality, it deletes it. Extracting these three means building a real menu bar first, and that is
+a build the operator owns. It is a three-id change across **two** hand-written lists, not a flag flip
+and not a routing change with a destination already in place.
+
+**DECIDED — 2026-10-01. The operator: "I decide to remove them."** All three come out of the rail.
+Not relabelled, not moved to a menu, not kept alongside: **removed**, and the rail slot closes with
+no replacement, because Photoshop puts nothing there. `HANDOFF.md` §117 §"The operator has decided:
+delete the three" is the record.
+
+This is **not an override** and `docs/OVERRIDES.md` gains no entry. Its own definition
+(`docs/OVERRIDES.md:11-18`) is a decision to _not_ replicate Photoshop's behaviour; removing three ids
+Adobe's Tools panel does not contain moves this app _toward_ Adobe. What remains undecided is
+narrower than the whole entry above suggests, and is listed in `HANDOFF.md` §117:
+
+- the rail flyout at `toolbar-mapping.ts:62-64` goes, **and** so do the three `TOOL_MENU_ITEMS`
+  entries at `src/components/DesktopHeader/DesktopHeader.tsx:29`, `:31`, `:32` — a second surface
+  that would otherwise keep contradicting Photoshop after the first is gone;
+- `extraTools` (`toolbar-mapping.ts:164`) starts meaning something, or is deleted as dead;
+- **`levels` is the capability question.** The app's "Levels" is Brightness/Contrast
+  (`src/tools/levels.ts:4`, `:12`), so removing the tile removes the app's only surface for
+  Brightness/Contrast. The operator owns that loss; it is recorded, not argued.
+
+The processors in `src/tools/colors.ts`, `src/tools/levels.ts` and `src/tools/transform.ts` are
+untouched by the decision and are not dead — what changes is which surface reaches them, if any.
 
 ### Three invented controls on the Magnetic Lasso bar
 
 Photoshop's Magnetic Lasso bar carries `Stylus Pressure` and `Select and Mask`. This app puts three
 controls there instead: `Snap`, `Smooth` and `Preview feather`
-(`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:304-339`).
+(`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:323-358` — `Snap` at `:323-335`,
+`Smooth` at `:337-348`, and `Preview feather` at `:355-358`).
 
 **They are wired, and they work.** `Snap` is the cursor-pull strength: the weight given to the
 gradient search that picks the edge point the path locks onto
@@ -552,28 +604,29 @@ too hard (above), so one of the two Photoshop controls has no honest replacement
 
 ### The Adobe tools the rail omits
 
-The rail does not carry these Adobe tools. The list is a roadmap rather than a defect, and it is
-recorded so that nobody re-audits Adobe's Tools panel to rediscover it — most of it is
-placeholder-class work, or it depends on a capability this file records as too hard.
+The rail does not carry a number of Adobe tools. The full roster, keyed by Adobe's own
+identity for each tool — name, group, shortcut, headline options, and a source — is
+[`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md), which took this list over. That file also records
+the roster counts that disagree — the 30 names this section used to carry against "34 to
+add" in `HANDOFF.md` §74 (`HANDOFF.md:1757`) — and leaves the discrepancy unresolved for
+the operator. **One addition to its arithmetic, from this pass:** `HANDOFF.md` §74 names a
+**sixth** absent tool the 30 never listed, **Content-Aware Move** (`HANDOFF.md:1807`), so the
+union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` does
+not yet carry that name.
 
-**Selection:** Star, Object Selection, Single Row Marquee, Single Column Marquee.
-**Retouch:** Spot Healing Brush, Healing Brush, Patch, Red Eye, Background Eraser, Sponge.
-**Painting:** Mixer Brush, History Brush, Art History Brush, Pattern Stamp, Color Sampler.
-**Type:** Vertical Type, Vertical Type Mask, Horizontal Type Mask.
-**Navigation and measuring:** Ruler, Note, Count, Hand, Rotate View, Zoom, Frame, Slice, Slice Select,
-Perspective Crop.
-**Path:** Path Selection, Direct Selection.
+What follows is only why the absent tools follow from this file, not a restatement of the
+list itself.
 
-**Star is the notable one**, because it is not a missing tool so much as a missing entry: the shape
-flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:108-115`)
-and Star is the shape Adobe's list has that the flyout does not. It is listed here rather than filed
-separately because the same custom-shape work is recorded as too hard above, and a hardcoded star
-would be the fake this policy refuses.
+**Star is the notable one**, because it is not a missing tool so much as a missing entry: the
+shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
+(`toolbar-mapping.ts:109-116`) and Star is the shape Adobe's list has that the flyout does
+not. It is listed there rather than filed here separately because the same custom-shape work is
+recorded as too hard above, and a hardcoded star would be the fake this policy refuses.
 
-**The rest follow from this file.** The Pen family and Path Type are the work-path object that Path
-Selection and Direct Selection would edit. Object Selection needs an edge-following segmentation
-comparable to the Quick Selection entry. History Brush and Art History Brush need the retained-raster
-history model that Erase to History needs. Perspective Crop is the Crop entry's transform work. Zoom
-is worth one note of accuracy: the app has a zoom _interaction mode_ on the canvas, and no Zoom
-_tool_ — the registry at `src/contexts/tool-types.ts:28-78` has no entry for it, and the rail has
-none either.
+**The rest follow from this file.** The Pen family and Path Type are the work-path object that
+Path Selection and Direct Selection would edit. Object Selection needs an edge-following
+segmentation comparable to the Quick Selection entry. History Brush and Art History Brush
+need the retained-raster history model that Erase to History needs. Perspective Crop is the
+Crop entry's transform work. Zoom is worth one note of accuracy: the app has a zoom
+_interaction mode_ on the canvas, and no Zoom _tool_ — the registry at
+`src/contexts/tool-types.ts:28-79` has no entry for it, and the rail has none either.

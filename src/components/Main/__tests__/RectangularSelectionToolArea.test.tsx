@@ -49,11 +49,22 @@ vi.mock('../../../hooks/useRect.ts', () => ({
   useRect: (props: UseRectProps) => {
     useRectProps.current = props;
 
+    // Grouped to match the real hook's return. The component reads
+    // `pointerHandlers` for the div and `pointerState.isMouseDown` for the
+    // press, so a flat mock here silently starves both.
     return {
-      isMouseDown: useRectIsMouseDown,
-      onPointerDown: useRectPointerDownMock,
-      onPointerMove: vi.fn(),
-      onPointerUp: vi.fn(),
+      pointerHandlers: {
+        onPointerDown: useRectPointerDownMock,
+        onPointerMove: vi.fn(),
+        onPointerUp: vi.fn(),
+      },
+      rectHandles: {
+        redraw: vi.fn(),
+        clearSelection: vi.fn(),
+      },
+      pointerState: {
+        isMouseDown: useRectIsMouseDown,
+      },
     };
   },
 }));

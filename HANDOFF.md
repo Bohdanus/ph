@@ -3119,10 +3119,11 @@ value as a second argument instead of stringifying it, so a non-`Error` rejectio
 its reason rather than as `[object Object]`.
 
 **What is not covered.** Each report is pinned by a unit test asserting the exact `console.error`
-call, including the non-`Error` cases. There is no e2e coverage: no Playwright spec drives a failed
-open, save, export or copy, and none asserts on `console.error` or `pageerror`. That follows from the
-decision rather than overlooking it, but it does mean the e2e suite cannot distinguish a logged
-failure from a silent one.
+call, including the non-`Error` cases. No Playwright spec drives a failed open, save, export or
+copy, so those four paths have no browser-level coverage. (Console and page errors are no longer
+unasserted in general: `e2e/helpers/console-police.ts` fails every spec on an unaccepted console
+error or page error. What remains true here is narrower — those four paths are never _reached_
+in a browser, so nothing there could produce a message for it to catch.)
 
 **Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
 `src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
@@ -3841,6 +3842,56 @@ by a real rasteriser at `toolProcessors.ts:96-102`). Whether to carry out the ex
 operator's decision; the document's job is to stop asserting a false intermediate.
 
 **Files.** `docs/PHOTOSHOP-UX.md:32-45`, `toolbar-mapping.ts:61-65`, `:97`, `:164`
+
+### The operator has decided: delete the three
+
+**2026-10-01. The operator's decision, in their words: "I decide to remove them."** `color`,
+`levels` and `transform` come **out of the rail**. Not relabelled, not moved to a menu, not
+kept alongside — removed. This settles the question the Fix paragraph above left open, and it
+resolves it the way `docs/PHOTOSHOP-UX.md:32-45` already required.
+
+**This is not an override**, and `docs/OVERRIDES.md` must not gain an entry for it. That file's
+own definition (`:11-18`) is a decision that this app deliberately does **not** replicate
+Photoshop's behaviour. Removing three ids Adobe's Tools panel does not contain moves this app
+**toward** Adobe, so the precedence ladder in `docs/DOCUMENTATION.md:11-23` already decides it
+and the operator is ratifying the documented requirement rather than departing from it.
+
+**What the implementation has to settle, which the decision does not:**
+
+- **There is no menu to move them to, and the doc names a destination that does not exist.**
+  `docs/TOOLS-TOO-HARD.md` §"The three adjustment 'tools' must leave the rail, and that means
+  building a menu" and `docs/PHOTOSHOP-UX.md:42-43` both describe the outcome as
+  `Image ▸ Adjustments` and `Edit ▸ Transform` commands. **This app has no Image or Edit menu.**
+  `src/components/Menu/Menu.tsx` renders only `DesktopHeader` and `ToolbarHorizontal`.
+- **They are in a second surface already.** `src/components/DesktopHeader/DesktopHeader.tsx:27-32`
+  holds a `TOOL_MENU_ITEMS` list including `color`, `levels` and `transform`, under a header
+  comment (`:20-21`) saying "a tool missing from the Tools menu is a visible inconsistency". So
+  deleting the rail flyout alone leaves three live tool entries in the header, and the header
+  comment becomes the next thing to contradict Photoshop.
+- **`extraTools` is inert either way.** `toolbar-mapping.ts:164` exports it; its only reader is
+  `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`, which checks it is
+  disjoint from `shape`. Deleting the three makes the flag mean what its name says for the first
+  time, or makes it dead code to remove.
+- **`levels` is the one with a capability question attached.** `LevelsToolArgs` is
+  `{brightness, contrast}` (`src/tools/levels.ts:4`, `:12`) — the app's "Levels" is
+  **Brightness/Contrast under the wrong name**, which `HANDOFF.md` §74's research records as
+  Note B in `.kilo/plans/ps-research/00-tool-inventory.md`. Removing the tile removes the app's
+  only surface for Brightness/Contrast. That is a real loss, and the operator owns it; it is
+  recorded here rather than argued.
+- **The processors survive; the tool ids do not.** `src/tools/colors.ts`,
+  `src/tools/levels.ts` and `src/tools/transform.ts` are fully implemented, and
+  `docs/TOOLS-TOO-HARD.md` records the extraction as a **routing** change with the history and
+  durable paths untouched. Deleting the tool names is therefore cheap — the expensive part is
+  whatever surface ends up owning the processors, and there is currently none.
+- **What is NOT decided here.** `draw` is a separate id in the same section
+  (`docs/PHOTOSHOP-UX.md:32-37`) with its own history — 40 e2e call sites across 23 spec files,
+  and `e2e/pen-types.spec.ts` dies with it. The operator's decision covers the three adjustment
+  ids only. `HANDOFF.md` §74 remains the open entry for `draw`.
+
+**This entry is a decision record, not a changelog.** It stays until the three are gone from
+`toolbar-mapping.ts`, at which point the fix **deletes** it rather than rewording it
+(`docs/DOCUMENTATION.md:145-158`). Nothing in the codebase is changed on the strength of this
+entry alone.
 
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
@@ -4594,3 +4645,56 @@ parses `curated.mjs` and would catch a stale key.
 **Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
 `docs/README.md` ("Not maintained here"), `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
 `docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`
+---
+
+## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
+
+`index.html:18` and `index.html:35` load GTM container `GTM-WBWSB9XS` and `G-7F5V72YQ4K` from
+`googletagmanager.com`. Nothing in `e2e/` stubs, blocks or asserts on it.
+
+Three consequences, in increasing order of how much they matter:
+
+1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` records 1-8 aborted
+   `region1.google-analytics.com/g/collect` requests per test. It reports them and does not fail
+   on them, because a network call no test controls is not a defect in the app.
+2. **Every CI run contacts a third party.** A build gate that depends on Google's reachability
+   to stay green is a build gate with an extra failure mode it does not own.
+3. **Local development leaks to a production analytics property.** A developer's stroke, tool
+   switch and undo are reported to `G-7F5V72YQ4K` with no opt-in.
+
+Whether analytics belongs in a local editor at all is an operator decision and is not made here.
+
+**Fix.** Decide the policy first — absent, or opt-in behind an env flag that `e2e/` sets to
+nothing. Then either drop the two script tags from `index.html` or make them conditional on that
+flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googletagmanager.com`
+to `abort()` so the suite stops depending on them. The third point is the one worth resolving
+regardless of which policy is chosen.
+
+**Files.** `index.html:18,35`, `e2e/global-setup.ts`, `e2e/helpers/console-police.ts` (the
+report line that currently names them).
+
+---
+
+## 141. Two axe results are `incomplete` and therefore unasserted — one is a real role error
+
+`e2e/accessibility.spec.ts` attaches axe's `incomplete` array to the Playwright report and logs
+it, but deliberately does not assert on it: axe returns `incomplete` when it cannot decide, and
+failing on that would be a false positive. Two results recur on every run of the app-shell scan:
+
+- `aria-allowed-role` ×1 — a `role` on an element whose permitted roles exclude it. This is the
+  one to chase: `aria-allowed-role` goes incomplete when the element's accessible role is
+  ambiguous, which usually means the `role` and the element disagree.
+- `color-contrast` ×2 — axe declines to judge contrast where it cannot establish the text colour,
+  typically text over a background image or a gradient. Both land on the `SidebarRight`
+  `PanelGroup` header, whose background is set by class rather than inline.
+
+Neither is a finding on its own. Both are places where the automated checker has explicitly
+stopped, which is the category a reviewer should read by hand rather than a category a green run
+clears.
+
+**Fix.** Run the app-shell scan in both themes at a viewport where both regions are visible and
+read the two elements by hand. `role` on a non-matching element is a genuine a11y bug worth
+fixing; contrast over a gradient is usually a design decision, and belongs in `docs/OVERRIDES.md`
+rather than in a test if it is deliberate.
+
+**Files.** `e2e/accessibility.spec.ts` (the `incomplete` attachment), `src/components/SidebarRight/PanelGroup.tsx:42`.
