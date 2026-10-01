@@ -2290,73 +2290,7 @@ into it silently rots, and its own rule says as much.
 **Files.** `docs/LAYERS-PANEL.md:824-834`, `TEST-FLAKES.md:722`,
 `e2e/viewport-drawing.spec.ts:228`, `docs/DOCUMENTATION.md:103-117`
 
-## 97. The fit charges a section separator it never measured, and the grid overflows its own budget at 703–709px
-
-**Problem.** `readRowMetrics` derives `sectionBreakHeight` from the **previously rendered** DOM, and
-returns `0` when that layout has only one non-empty section
-(`src/components/SidebarLeft/toolbar-fit-store.ts:109-121` — the `between > 0` guard needs a second
-non-empty `<ul>` and finds none). With `sectionBreakHeight` at 0 the planner accepts one row too many
-(`toolbar-overflow.ts:122-149`), that extra row is the first of `toolbarMap` section 1, and the
-section separator is then rendered for real. The plan is short by exactly the separator, which is
-`mt-1.5 border-t pt-1.5` = 13px over the 6px row gap = **7px**.
-
-**Measured in Chrome**, `1280` wide, one page resized 1px at a time, replicating
-`e2e/toolbar-fit.spec.ts`'s own `measure()` verbatim:
-
-```
-H=709 slot=437 budget=349.6 content=351 over=+1.4 tiles=7
-H=707 slot=435 budget=348.0 content=351 over=+3.0 tiles=7
-H=705 slot=433 budget=346.4 content=351 over=+4.6 tiles=7
-H=703 slot=431 budget=344.8 content=351 over=+6.2 tiles=7
-```
-
-Nothing else in `H=1000..380` exceeds the budget, and the degenerate band is never entered.
-
-**The app's own assertion already fails here; the sweep just does not look.** `e2e/toolbar-fit.spec.ts:165`
-is `expect(m.over).toBeLessThanOrEqual(0)`, and the `HEIGHTS` list at `:43` samples twelve heights,
-none of which lands in 703–709. This is the same class the file was written for — its own header
-(`:10-19`) records the previous separator bug as the 16-row rail modelled at 794px and measured
-822px — and the 20% headroom hid it a second time. The non-vacuity check at `:179`,
-`expect(any).toContain('sep=7')`, cannot catch it either: `any` is `rows.find('H=1400')` (`:173`),
-the one height where nothing collapses and every section is non-empty, so the measurement cannot
-read 0 there.
-
-**The documented invariant is false, and the test that claims it cannot see it.**
-`toolbar-fit-store.ts:21-25` states the plan "is a function of the slot and of nothing else".
-`SidebarLeft.overflow.test.tsx:329` pins exactly that. But the plan is a function of the slot **and
-of the previous render**: at `H=705` one run rendered 6 tiles (`content=294`) and another 7
-(`content=351`), same slot height, 433. jsdom cannot observe it — `getBoundingClientRect` is 0 for
-every box and `src/test/setup.ts:28-34` installs a no-op `ResizeObserver`, so the feedback loop is
-stubbed out and the measurement reads "unmeasurable", which `planToolbarOverflow` resolves to
-"show everything" (`toolbar-overflow.ts:116`).
-
-**Confirmed by re-deriving the planner, not by reading it.** At the violating heights the render
-reports `nonEmptySections=2/5` and 7 tiles, which is the plan computed with `sectionBreakHeight=0`
-(7 tiles); the plan computed with `sectionBreakHeight=7` gives 6. At the non-violating neighbours
-the render has `nonEmptySections=1/5` and 6 tiles, matching the `sep=7` plan. The planner therefore
-committed to a row count using a separator it could not see, and the DOM then charged it.
-
-**No user-visible harm, and that is why it is an entry and not a hotfix.** At the worst height the
-grid is 351px in a 433px slot, so nothing is clipped, the rail does not scroll, and every collapsed
-tool is still reachable under the three-dots tile. What is broken is the stated contract and the
-claim that the fit is settled.
-
-**Fix.** Stop deriving the separator from a layout that may not contain one. Either carry it forward
-once measured — the rail knows statically, from `ToolbarSlot.sectionIndex`, which rows open a new
-section, so the separator is needed exactly where the plan says it is and the measurement is only
-missing when the previous render had nothing to measure — or keep a section `<ul>` non-empty so the
-measurement is always available. Measuring it from computed style off a section list is the same fix
-as for `rowGap` and `tileHeight` and needs no new constant.
-
-**Test that fails without the fix.** Add `705` to `HEIGHTS` in `e2e/toolbar-fit.spec.ts:43`; `:165`
-then fails with `the grid overflowed its own budget`. A jsdom test cannot express this at all —
-it is the same reason that file exists, and the reason the rail's own `overflow` unit suite passes
-green over the defect.
-
-**Files.** `src/components/SidebarLeft/toolbar-fit-store.ts:109-121`,
-`src/components/SidebarLeft/toolbar-overflow.ts:122-149`,
-`src/components/SidebarLeft/SidebarLeft.tsx:869-898` (where the three-dots tile is placed in the
-section of the last visible row), `e2e/toolbar-fit.spec.ts:43` and `:165` and `:173-179`.
+---
 
 ## 98. The console log is the app's whole error channel, by decision
 
@@ -2403,8 +2337,6 @@ in a browser, so nothing there could produce a message for it to catch.)
 `src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
 `src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
 `src/util/selection.ts:430-442`.
-
----
 
 ## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
 
@@ -4099,3 +4031,95 @@ grayscale branch is a small consumer of it rather than the reason to build it.
 
 **Files.** `src/tools/sponge.ts:110`; `src/tools/colors.ts:5`, `:15`;
 `src/components/ToolbarsRight/Colors/Color.tsx:130`; `src/contexts/psd-utils.ts:80`
+=======
+
+## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
+
+**Problem.** `useToolbarOverflow` (`src/components/SidebarLeft/use-toolbar-overflow.ts`) measures the
+rail from a ref callback, which runs during commit. React subscribes to an external store in a
+**passive** effect, so at that moment there is no listener to notify, and the `setSlots` layout
+effect publishes into the same empty set. The committed tree therefore holds the plan from _before_
+the measurement, and `planToolbarOverflow`'s own answer to an unmeasurable rail is
+`everythingVisible` — so the first committed rail is **every tool on screen**, sixteen tiles in a
+slot that fits eight at 1280x720, corrected on a later commit. `SidebarLeft` returns above the
+`<aside>` when there is no document while this hook sits above that check, so the hook survives and
+the sequence repeats on **every document close and open**, not only on the first page load.
+
+**It has not been observed failing, and that is measured rather than assumed.** A
+`MutationObserver` installed by `page.addInitScript` — before the app's own script, and with
+microtask callbacks, which run before the paint the mutation enables — recorded the first rail it
+ever saw as already fitted: eight tiles at 720. Chrome flushes React's passive effects inside the
+mounting task, so the refit lands before the first frame in practice. **In practice is not a
+promise**, and the promise is what a load-time flash of a full rail would rest on.
+
+**The obvious fix is refused by the repository's own rule.** A layout effect that re-renders when
+the snapshot has moved ahead of the render is exactly what closes the window, and
+`react-hooks/set-state-in-effect` rejects it: _"Calling setState synchronously within an effect can
+trigger cascading renders"_. That rule is right in general and the effect is a cascading render, so
+it was **not** suppressed to make the warning disappear. No gate was weakened and the rail behaves
+as it is measured to behave.
+
+**What would close it.** A decision, and this entry is the finding rather than the decision:
+either an `OVERRIDES.md` entry accepting one `set-state-in-effect` suppression on this file with
+the measurement above as its justification, or a design that does not need a pre-paint refit at all
+— a CSS-driven fit (`@container` queries, or the tile count derived from the slot's height with
+`overflow` doing the arithmetic) so there is no measurement to be late with. The second is the
+better answer and is a rewrite of this subsystem, not a patch.
+
+**Why there is no test.** A pin that could not fail was written, measured, and removed: the
+`MutationObserver` assertion above passes identically with and without the fix, because the browser
+never paints the unrefitted tree here. `e2e/toolbar-fit.spec.ts` deliberately has **no** test for
+this, and that absence is the honest state — if one is added it must be able to go red when the
+scheduling changes, or it is a tripwire for a defect that cannot occur.
+
+**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`, `src/components/SidebarLeft/SidebarLeft.tsx:1010`,
+`react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
+runs on a concurrent render that yielded — neither is a pre-paint refit).
+
+---
+
+## 149. The three-dots flyout reopens itself after the window crosses the edge where nothing collapses
+
+**Problem.** `openGroup` is reset when its tile is swallowed by a collapse, but only against
+`collapsedGroups` (`src/components/SidebarLeft/SidebarLeft.tsx:388`), and that set can only ever
+contain GROUP keys — `0-0`, `two-column-N`. The three-dots tile is keyed `OVERFLOW_GROUP_KEY`, the
+string `'overflow'` (`:133`), which no group key can equal. So `collapsedGroups.has('overflow')` is
+always false, the reset never fires for that tile, and `openGroup` outlives the unmount.
+
+**Reproduced.** Open the three-dots menu at 1280x700, grow the window to 1400 — the tile unmounts,
+because at 1400 all sixteen groups fit and nothing collapses — then shrink back to 700. The tile
+remounts with the flyout **already open**, and nothing was clicked in between:
+
+```
+AFTER GROW:   overflow tile count = 0
+AFTER SHRINK: the flyout is in the DOM with nothing clicked = 1
+```
+
+The user is shown a tool menu they did not open, over the tool they were reaching for.
+
+**Why the `lg`-crossing fix at `:388` does not cover it**, and is worth reading as the same class
+rather than the same bug: the two crossings both unmount tiles, and both leave `openGroup` naming a
+tile that is no longer rendered. The desktop↔tablet crossing is handled by deriving the adjustment
+from the layout; a COLLAPSE is handled by the `collapsedGroups` membership test; and the
+collapse↔no-collapse crossing belongs to a third condition that nothing checks — the fit going
+from `showOverflowTile: true` to `false` while `openGroup` is `'overflow'`.
+
+**Reachability moved with the fit's budget, which is why it is filed now.** Nothing collapses from a
+1094px window up, where before the budget change nothing collapsed from about 1300. The window has to
+be dragged 206px less far to reach the state, and the drag is the natural gesture a user performs
+while looking at an open flyout — to give the rail more room.
+
+**What would close it.** Reset `openGroup` when `overflowPlan.showOverflowTile` goes false, the same
+way the `lg` crossing does: derived from the state that changed, adjusted during render rather than
+in an effect. A test belongs with it — open the menu, resize past the edge, resize back, and assert
+the menu is not there — and **the height has to come from the rail's own arithmetic** (or from the
+edge `e2e/toolbar-fit.spec.ts` already pins at 1094/1093), not from a hardcoded window, or the next
+tile to be added moves it.
+
+**Do not fix it by clearing `openGroup` on every `ResizeObserver` publication.** The store publishes
+on plan changes only, and that is the point of the throttle; a subscriber that reset state on every
+version bump would re-open the same class of problem as the one the throttle closed.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:133,211,383-391,1227,1236`,
+`src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
+`e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).
