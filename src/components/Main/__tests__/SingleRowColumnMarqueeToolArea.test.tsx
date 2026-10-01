@@ -238,6 +238,34 @@ function columnBandSelection(column: number, id = 'selection-1'): Selection {
   };
 }
 
+/**
+ * The degenerate band: one document pixel on BOTH axes.
+ *
+ * Possible, and reachable through the store rather than only through a 1x1 document — a `pos`
+ * another writer has squeezed is exactly this rect. It is the shape the compound orientation test
+ * `thinInX && !thinInY` cannot classify: it is a COLUMN by being thin in X, and it is also a ROW by
+ * being thin in Y, so the compound reads `!thinInY` as "therefore not a column".
+ *
+ * `points` is consistent with the `pos` above it, so `getSelectionAbsolutePoints` and the ray cast
+ * agree about where the band is.
+ */
+function degenerateBandSelection(x: number, y: number, id = 'selection-1'): Selection {
+  return {
+    id,
+    isActive: true,
+    geometry: 'rectangle',
+    sourceTool: 'rectangular-selection',
+    lifecycle: 'committed',
+    pos: { x, y, width: MARQUEE_THICKNESS_PX, height: MARQUEE_THICKNESS_PX },
+    points: [
+      { x: 0, y: 0 },
+      { x: MARQUEE_THICKNESS_PX, y: 0 },
+      { x: MARQUEE_THICKNESS_PX, y: MARQUEE_THICKNESS_PX },
+      { x: 0, y: MARQUEE_THICKNESS_PX },
+    ],
+  };
+}
+
 /** A point in CANVAS space, so a case reads as the pixel the user pressed. */
 function canvas(x: number, y: number): { clientX: number; clientY: number } {
   return { clientX: x, clientY: y };
@@ -834,6 +862,71 @@ describe('SingleRowColumnMarqueeToolArea', () => {
       const [moved] = singleSelectionEdit().payload.updates.selections;
       expect(moved.id).toBe('selection-1');
       expect(moved.pos).toEqual({ x: 95, y: 0, width: 1, height: 120 });
+    });
+
+    it('keeps a 1x1 band a COLUMN on a document one pixel tall, where that band is its full height', () => {
+      // The document is ONE PIXEL TALL, and that is what makes a 1x1 band reachable at all:
+      // `isSingleRowOrColumnMarqueeRect` requires the long axis to SPAN the document, so on a
+      // 200x120 document a 1x1 band is not a band and `isPressOnActiveBand` refuses the press.
+      // Here the 1x1 band IS that document's full-height column, and it is one pixel tall as well.
+      storeState.toolName = 'single-column-marquee';
+      storeState.totalSize = { width: 200, height: MARQUEE_THICKNESS_PX };
+      storeState.selections = [degenerateBandSelection(40, 0)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Pressed inside the band's one and only pixel — column 40, row 0 — and dragged right along
+      // X to column 90 with Y untouched. A move, so no draft is opened.
+      gesture(toolArea, [canvas(40.5, 0.5), canvas(90.5, 0.5)]);
+
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      // Asserted WHOLE, so a failure shows the entire transposed shape rather than one coordinate
+      // of it: an orientation rule that reads this band as a ROW rebuilds it as a full-width row,
+      // which is a re-selection at a different shape rather than a move.
+      expect(moved.pos).toEqual({ x: 90, y: 0, width: MARQUEE_THICKNESS_PX, height: MARQUEE_THICKNESS_PX });
+      expect(moved.pos.x).toBe(90);
+    });
+
+    it('keeps a 1x1 band a ROW on a document one pixel wide, where that band is its full width', () => {
+      // The mirror of the case above, and the one a thickness-only rule gets wrong in the OTHER
+      // direction. Here the document is one pixel wide, so a legitimate row band is 1x1 — and it
+      // is ALSO one pixel wide, which is exactly what says "column" if the orientation is read
+      // off thickness instead of span. Dragged vertically it must stay a row; a rule that reads
+      // `width === 1` as column rebuilds it as a full-height column and the drag moves sideways.
+      storeState.toolName = 'single-row-marquee';
+      storeState.totalSize = { width: MARQUEE_THICKNESS_PX, height: 120 };
+      storeState.selections = [degenerateBandSelection(0, 60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Pressed on the band's only pixel (row 60) and dragged 30 rows down, X pinned at 0.
+      gesture(toolArea, [canvas(0, 60.5), canvas(0, 90.5)]);
+
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.pos).toEqual({ x: 0, y: 90, width: MARQUEE_THICKNESS_PX, height: MARQUEE_THICKNESS_PX });
+      expect(moved.pos.y).toBe(90);
+    });
+
+    it('still moves a full-width one-pixel-tall band vertically, so thin-in-X is read rather than assumed', () => {
+      // The other side of the rule the case above pins: a normal ROW band is NOT thin in X, so
+      // reading the band's orientation off the rect has to leave it a row. An implementation that
+      // answered `true` for every band — the over-correction the compound test avoids by accident
+      // rather than by design — turns this into a column and the drag moves it sideways.
+      storeState.toolName = 'single-row-marquee';
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Pressed on row 60 and dragged 30 rows down with X pinned at 100, so the only axis the band
+      // may follow is its own.
+      gesture(toolArea, [canvas(100, 60), canvas(100, 90)]);
+
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.id).toBe('selection-1');
+      expect(moved.pos).toEqual({ x: 0, y: 90, width: storeState.totalSize.width, height: MARQUEE_THICKNESS_PX });
     });
 
     it('replaces rather than moves when there is no active selection to grab', () => {

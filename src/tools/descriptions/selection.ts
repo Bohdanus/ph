@@ -207,16 +207,17 @@ export const selectionDescriptions: Record<
       {
         keys: 'Shift',
         action:
-          'Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.',
+          'In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here, and not a shortcut: this app has no selection modes for any selection tool, and the code reads no modifier at all.',
       },
       {
         keys: 'Alt',
-        action: 'Sets the click to Subtract From Selection, for the same reason Shift is Add.',
+        action:
+          'In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here.',
       },
       {
         keys: 'Shift+Alt',
         action:
-          'Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row, so on a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable.',
+          'In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. On a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable. NOT IMPLEMENTED here.',
       },
     ],
     shortcuts: [
@@ -240,7 +241,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:48',
     ],
     appNotes:
-      'The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` because they are absent for every selection tool in the application, not because they were skipped here, and adding them to the two newest tools and not to the other five would be a worse inconsistency than the one that exists. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.',
+      'The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` because they are absent for every selection tool in the application, not because they were skipped here, and the three modifiers above are not implemented for the same reason: the tool reads no `shiftKey` or `altKey`, so holding one changes nothing rather than selecting Add, Subtract or Intersect, and adding them to the two newest tools and not to the other five would be a worse inconsistency than the one that exists. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
@@ -279,16 +280,17 @@ export const selectionDescriptions: Record<
       {
         keys: 'Shift',
         action:
-          'Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.',
+          'In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here, and not a shortcut: this app has no selection modes for any selection tool, and the code reads no modifier at all.',
       },
       {
         keys: 'Alt',
-        action: 'Sets the click to Subtract From Selection, for the same reason Shift is Add.',
+        action:
+          'In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here.',
       },
       {
         keys: 'Shift+Alt',
         action:
-          'Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row.',
+          'In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. NOT IMPLEMENTED here.',
       },
     ],
     shortcuts: [
@@ -312,7 +314,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:49',
     ],
     appNotes:
-      'The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` because they are absent for every selection tool in the application rather than skipped here. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.',
+      'The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` because they are absent for every selection tool in the application rather than skipped here; the three modifiers above are not implemented either, and holding one changes nothing. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
