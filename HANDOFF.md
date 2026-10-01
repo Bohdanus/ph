@@ -3239,44 +3239,123 @@ has never been run to a verdict. Four production entry points, all of them live 
 4. the **mobile shell** — `MobileLayersDrawer.tsx:172` calls
    `createBlankLayer({ …, size: totalSize, isBedrock: true })` with NO `replaceDocument`
 
-**Entry point 4 has been closed since this entry was written, and it was the one with a live
-consequence.** `MobileLayersDrawer.tsx` no longer calls `createBlankLayer` at all; the shell's blank
-layer now goes through `applyRasterReplacement` (`MobileLayersDrawer.tsx:205-216`), which
-`useApp.ts:140-154` routes through `setBlankImage` and therefore **replaces the document**. The
-history shape a replay bedrock branch reacts to is gone from that path, so scenario D's premise no
-longer describes production. Keep the scenario — it still measures `totalSize` across commits, and
-the harness is the only thing that does — but its mobile half no longer reproduces the
-document-moves trigger, and a fix for the mobile shell is not what this entry now needs.
+**Entry point 4 is STILL OPEN, and a previous version of this entry said otherwise. That claim was
+false in three verifiable ways, and it is corrected here because it sent two sessions away from the
+one production path that still has the defect.**
 
-The other three entry points are unmeasured. **`applyRasterReplacement` is now a second place that
-decides document replacement by convention** (the first is the `REPLACE_DOCUMENT` fast path in
-§103), and neither it nor the mobile caller carries a comment saying the omission is deliberate —
-which is exactly the shape §142 describes for the main worktree.
+The deleted paragraph claimed that `MobileLayersDrawer.tsx` "no longer calls `createBlankLayer` at
+all", that the shell's blank layer "now goes through `applyRasterReplacement`
+(`MobileLayersDrawer.tsx:205-216`)", and that `src/hooks/useApp.ts:140-154` routes it through
+`setBlankImage`. Against the tree as it stands:
+
+1. `MobileLayersDrawer.tsx:174` **still** calls
+   `createBlankLayer({ color: '#ffffff', opacity: 1, size: totalSize, isBedrock: true })` — with **no**
+   `replaceDocument`, exactly the history shape this entry was written about. It is the only
+   production writer of a mid-timeline bedrock entry, and the sole reason `replayHistory` needs a
+   bedrock branch at all.
+2. **`applyRasterReplacement` does not exist.** `grep -rn applyRasterReplacement src e2e` returns
+   **zero** hits; the identifier appears only in this file and in the copies of this file inside
+   worktrees. `MobileLayersDrawer.tsx:205-216` is an `<li>` carrying a comment about `role="button"`.
+3. `src/hooks/useApp.ts:140-154` is the `REPLACE_DOCUMENT` payload of the **PSD** import branch plus
+   an `ADOPT_LAYER_BITMAPS` dispatch. `setBlankImage` is at `src/hooks/useApp.ts:77-80` and is
+   reached from `src/App.tsx:37` (the boot seed) and the New-document path — neither from the mobile
+   drawer.
+
+The premise was not merely stale; it was a wrong answer delivered with a `file:line`, and it is
+recorded here as the standing example of why a stale line number is worse than none.
+
+**What is left, stated as the tree actually is.** The mobile drawer commits a bedrock blank layer
+mid-history. `createLayerSource` forces `pos = { x: 0, y: 0, ...source.size }` for any bedrock
+source (`src/contexts/layer-utils.ts:171-173`), so after a crop to a frame whose origin is not
+`{0,0}` the new layer lands **off-canvas**: measured at `(-100, -80)` relative to the visible
+document for a crop to `{x:100,y:80,w:400,h:320}`. The `index === 0` gate in `history-replay.ts`
+stops the FRAME from moving on undo; it does nothing about the layer's position, which is why that
+gate was described as masking this defect rather than fixing it. **The fix is to commit a non-bedrock
+layer from the drawer** — it is a normal empty layer above the current one, not a document.
 
 **Reproduce.** The harness is committed on `salvage/probe-canvas-growth` (it was untracked in a
-detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it):
+detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it).
+**Run it from a worktree under `.kilo/` and never merge it** — see the landing shape below:
 
 ```bash
-git worktree add .kilo/worktrees/probe-checkout salvage/probe-canvas-growth
+git worktree add .kilo/worktrees/probe-checkout -b probe/display-growth
 cd .kilo/worktrees/probe-checkout
+ln -s /Users/bkalynovskyi/ph/node_modules node_modules   # Vite does not walk up; tsc and vitest do
+git show salvage/probe-canvas-growth:src/contexts/__tests__/probe-canvas-growth.test.tsx > src/contexts/__tests__/
+git show salvage/probe-canvas-growth:e2e/zzz-probe-canvas-growth.spec.ts > e2e/
 npx vitest run src/contexts/__tests__/probe-canvas-growth.test.tsx   # the per-cursor sweep
 npm run test:e2e -- e2e/zzz-probe-canvas-growth.spec.ts              # the four entry points
 ```
 
-**Not verified.** Whether the defect still reproduces at current `main` is UNKNOWN — the probes have
-never been run to a verdict, and 31+ commits have landed since they were written. Run them before
-acting on anything here. Scenarios D and E in the jsdom probe are deliberately assertion-light and
-only log a summary: they are diagnostic, not verdicts.
+**Landing shape, corrected.** The previous text warned that `probe-canvas-growth.test.tsx` is named
+`*.test.tsx` and is therefore collected by `npm run test`. **That warning was also false**:
+`vitest.config.ts:20` sets `exclude: [...configDefaults.exclude, '**/.kilo/**', 'e2e/**']`, and
+`.gitignore:49` ignores `.kilo`. A probe under `.kilo/worktrees/` is therefore invisible to both
+suites, which is exactly what the worktree is for. The `ln -s … node_modules` in the commands above is
+required for Vite (it does not walk up to a parent checkout) but makes three cases in
+`scripts/__tests__/tsc-guard.test.mjs` measure the root checkout instead — §135 — so those three
+failures are the symlink and not your work.
 
-**Careful with the landing shape.** `probe-canvas-growth.test.tsx` is named `*.test.tsx` and is
-therefore collected by `npm run test`, so it must not be merged as-is without deciding where the
-probes live — an `expected-fail` pin or a prose reproduction in this file. A probe that FAILS is a
-tripwire, and per the repo's own rule it is removed in the same change that fixes the defect; a probe
-that PASSES means the defect is gone and the file should be deleted, not kept as a passing test.
+**Verified 2026-10-01 against `main` `c8c27619`: the store-level half of this entry does NOT
+reproduce, and the numbers are in the plan.** Both probes are green, and that is structural rather
+than lucky: `totalSize` is recomputed only from `updates.documentFrame`
+(`src/contexts/StoreContext.tsx:353,357`), and of the eight `COMMIT_DOCUMENT_EDIT` dispatches in
+`src/contexts/useLayer.ts` exactly one carries a frame — `applyDocumentCrop` at `:719`, which cannot
+grow the document because `trimRect` clamps every edge into `[0, totalSize]`
+(`src/util/rect.ts:36-50`).
 
-**Files.** `src/components/Mobile/MobileLayersDrawer.tsx:172,205-216`,
-`src/contexts/useApp.ts:140-154`, `src/contexts/history-replay.ts`,
-the harness on `salvage/probe-canvas-growth`
+**What the green run does NOT cover, which is most of this entry.** Scenarios D and E are
+deliberately assertion-light: they assert only `expect(rows.length).toBeGreaterThan(0)`, a tautology,
+and `console.log` the rest. So they are diagnostic, not verdicts, and the run above must not be read
+as "the mobile path is fixed". Specifically, **the blank-layer flow holds the pre-crop size at every
+cursor only when no crop has been committed.** After a crop, scenario D logs
+`800×600` at cursor 0 and the **cropped** size at every cursor after it — which is correct for a crop,
+and is exactly why D asserts nothing. The off-canvas layer position above is measured directly and
+does not depend on that scenario.
+
+**So the remaining question is not the store — it is the DISPLAY, and it is unmeasured.** The
+workspace canvas is `h-full w-full object-contain` (`src/components/Main/Main.tsx:290-294`), so its
+CSS box is the `1fr` grid cell and the document raster is letterboxed inside it at
+`containFit(outer, image).scale` (`src/util/contain-fit.ts:33-50`). The element box and the on-screen
+document rect are two quantities neither probe reads, and **no test in the suite asserts that either
+is invariant across a commit.** The existing coverage reads the canvas box only across a dock toggle
+(`e2e/responsive-shell.spec.ts:449-461`) and the document size only across dialogs
+(`e2e/document-dialogs.spec.ts:341-346`). Measure those, per tool, before building anything on this
+entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
+tool list and the four independent quantities.
+
+## 125. The crop cannot extend the canvas, and Photoshop's crop can — the `Fill` control is unimplemented and unoverridden
+
+**Problem.** Photoshop's crop grows the canvas: drag the crop box past the image edge and the document
+extends, with the `Fill` control deciding what goes in the new area. Adobe's own page says it —
+
+> "Just click and drag beyond the borders of an image with the Crop tool, and then fill the extended
+> canvas with new content that blends with the existing image."
+
+— and `src/tools/descriptions/type-crop.ts:230` quotes exactly that sentence while declaring the `Fill`
+control itself `status: 'missing'` at `:231`. The app cannot do this: `trimRect` clamps every crop
+edge into `[0, totalSize]` (`src/util/rect.ts:36-50`), so extending a crop is impossible by
+construction, which `:302` states in the tool's own `appNotes`.
+
+**Why this is filed rather than fixed.** `docs/OVERRIDES.md` is empty and is written by the operator
+by hand; per `AGENTS.md`, where the code and Adobe disagree with no entry, **the code is the defect**
+and the decision is not an agent's. Implementing the extension, and the `Fill` control's behaviour,
+would be implementing an unoverridden Photoshop deviation. That finding is the agent's job; the
+override is the operator's.
+
+**Reproduce.** Drag the Crop tool's box past any document edge and release. The document shrinks to
+the clamped intersection instead of growing.
+
+**Fix.** Two separable parts, and only the second is a judgement call. The mechanical half is to let
+the crop rect carry an out-of-bounds region instead of clamping it, so a frame can grow; the product
+half is what fills the added area, which is what `Fill` is for and which has no answer without the
+operator. Do not pin the current clamp with a test — the clamp is the absence of the feature, and a
+pin on it fires red the moment someone implements `Fill` or `Image > Canvas Size`. The clamp is
+already covered as behaviour of `trimRect` at `src/util/__tests__/rect.test.ts:41-65`, and crop-to-frame
+at `src/contexts/__tests__/useLayer.lifecycle.test.tsx:702-730`.
+
+**Files.** `src/tools/descriptions/type-crop.ts:230-231,302`, `src/util/rect.ts:36-50`,
+`src/contexts/useLayer.ts:719`, `docs/OVERRIDES.md`
 
 ## 126. The five figure tools never see the foreground colour, because of one guard in the swatch
 
@@ -4124,3 +4203,45 @@ version bump would re-open the same class of problem as the one the throttle clo
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx:133,211,383-391,1227,1236`,
 `src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
 `e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).
+
+## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
+
+**Problem.** `SingleRowColumnMarqueeToolArea.tsx` wires both `onPointerLeave` and
+`onPointerCancel` to `abortDrag` (`:424`-`:425`), so a drag that leaves the tool element ends as
+a cancelled gesture that commits nothing. The geometry module documents the opposite behaviour
+three files away: `singleRowColumnMarquee.ts:65-73` advertises that an out-of-document pointer
+clamps to the first or last row, and cites Adobe's scripting API as the reason. Both statements
+cannot stand. Only the PRESS clamps. A drag past the canvas edge is discarded.
+
+`EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, so this is house convention
+rather than something these two tools introduced — but `RectangularSelectionToolArea.tsx:154`-`:160`
+wires `pointercancel` ALONE, so the rectangular marquee keeps tracking a drag off the edge. Three
+selection tools, two behaviours, and one of the two is undocumented.
+
+**Why it is reachable and not theoretical.** The tool element is the canvas area, so the abort
+fires as soon as the pointer crosses it. At zoom 1 with letterboxing that is the document edge;
+zoomed in past the fit, the document edge _is_ the container edge, so dragging toward a document
+boundary — which is exactly how a user aims at the last row — is dragging toward the abort.
+
+**What Photoshop does.** It keeps tracking. There is no published Adobe page for the GUI case,
+which is why this is filed as a defect in this repository's own consistency rather than as a
+deviation from Adobe: `docs/FEATURES.md` should record that the app drops the gesture.
+
+**What would close it.** Narrow the abort to `onPointerCancel` in
+`SingleRowColumnMarqueeToolArea.tsx` and `EllipticalSelectionToolArea.tsx`, so a leave ends the
+gesture only if the pointer capture has already been lost. That is one wiring change in each
+file, and it is deliberately NOT done here: `usePointerPosition`'s capture is what keeps `pointermove`
+delivered outside the element, so the abort is currently the only thing stopping an unbounded
+stream of moves from a pointer the user has visually left the tool. Decide it for the selection
+family at once, and add the case that pins whichever way it goes — press, move outside the
+element, move back, release — asserting the band lands where the release was.
+
+**Do not fix it by clearing the drag on `pointerleave` without also releasing the capture.**
+That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export): a surviving
+`activePointerId` refuses every later press, so the tool stops responding until it unmounts.
+`abortDrag` calls `releasePointer()` for that reason and must keep doing so.
+
+**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:424-425,390`,
+`src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
+`src/components/Main/RectangularSelectionToolArea.tsx:176`,
+`src/tools/singleRowColumnMarquee.ts:65-82`.
