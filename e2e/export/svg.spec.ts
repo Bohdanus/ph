@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from '../fixtures/extended-test';
 import { exportFormats, setupExportTest, exportAndVerify } from './helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';

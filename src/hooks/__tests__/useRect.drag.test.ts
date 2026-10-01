@@ -101,7 +101,7 @@ type DragApi = {
 
 function startDrag(api: DragApi, from: { x: number; y: number }, layer?: ReturnType<typeof createMockLayer>) {
   act(() => {
-    api.result.current.onPointerDown(api.event(from.x, from.y), layer);
+    api.result.current.pointerHandlers.onPointerDown(api.event(from.x, from.y), layer);
   });
   pointer.data.isMouseDown.current = true;
 }
@@ -161,7 +161,7 @@ describe('useRect mask drawing', () => {
     expect(ctx.clearRect).not.toHaveBeenCalled();
 
     act(() => {
-      result.current.redraw();
+      result.current.rectHandles.redraw();
     });
 
     expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
@@ -306,7 +306,7 @@ describe('useRect overlay teardown', () => {
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(200, 175));
+      result.current.pointerHandlers.onPointerMove(event(200, 175));
     });
     // A frame is queued and not fired, so the repaint is still pending.
     vi.mocked(ctx.clearRect).mockClear();
@@ -353,7 +353,7 @@ describe('useRect handle detection', () => {
 
     let handled: boolean | undefined;
     act(() => {
-      handled = result.current.onPointerDown(event(x as number, y as number));
+      handled = result.current.pointerHandlers.onPointerDown(event(x as number, y as number));
     });
 
     expect(handled).toBe(true);
@@ -365,7 +365,7 @@ describe('useRect handle detection', () => {
 
     let handled: boolean | undefined;
     act(() => {
-      handled = result.current.onPointerDown(event(200, 175));
+      handled = result.current.pointerHandlers.onPointerDown(event(200, 175));
     });
 
     // An interior click is reported as a handle grab so callers can tell the
@@ -388,7 +388,7 @@ describe('useRect handle detection', () => {
 
     let hovered: boolean | undefined;
     act(() => {
-      hovered = result.current.onPointerMove(event(x, y));
+      hovered = result.current.pointerHandlers.onPointerMove(event(x, y));
     });
 
     expect(hovered).toBe(true);
@@ -400,7 +400,7 @@ describe('useRect handle detection', () => {
 
     let hovered: boolean | undefined;
     act(() => {
-      hovered = result.current.onPointerMove(event(500, 400));
+      hovered = result.current.pointerHandlers.onPointerMove(event(500, 400));
     });
 
     expect(hovered).toBe(false);
@@ -413,13 +413,13 @@ describe('useRect handle detection', () => {
 
     // h2 = HANDLE_SIZE / scale / 2 = 3, so 103px is still on the left edge...
     act(() => {
-      result.current.onPointerMove(event(103, 175));
+      result.current.pointerHandlers.onPointerMove(event(103, 175));
     });
     expect(target.style.cursor).toBe(CURSOR_MAP.left);
 
     // ...while a point outside the rect has no edge at all.
     act(() => {
-      result.current.onPointerMove(event(104, 400));
+      result.current.pointerHandlers.onPointerMove(event(104, 400));
     });
     expect(target.style.cursor).toBe('');
   });
@@ -430,7 +430,7 @@ describe('useRect handle detection', () => {
 
     let handled: boolean | undefined;
     act(() => {
-      handled = result.current.onPointerDown(event(100, 100));
+      handled = result.current.pointerHandlers.onPointerDown(event(100, 100));
     });
 
     expect(handled).toBe(false);
@@ -449,7 +449,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 50, y: 60 });
     act(() => {
-      result.current.onPointerMove(event(150, 120));
+      result.current.pointerHandlers.onPointerMove(event(150, 120));
     });
     flushFrame();
 
@@ -462,7 +462,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 150, y: 120 });
     act(() => {
-      result.current.onPointerMove(event(50, 60));
+      result.current.pointerHandlers.onPointerMove(event(50, 60));
     });
     flushFrame();
 
@@ -475,7 +475,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 50, y: 60 });
     act(() => {
-      result.current.onPointerMove(event(50, 60));
+      result.current.pointerHandlers.onPointerMove(event(50, 60));
     });
     flushFrame();
 
@@ -489,7 +489,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 50, y: 60 });
     act(() => {
-      result.current.onPointerMove(event(-100, -50));
+      result.current.pointerHandlers.onPointerMove(event(-100, -50));
     });
     flushFrame();
 
@@ -503,10 +503,10 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 10, y: 10 });
     act(() => {
-      result.current.onPointerMove(event(20, 20));
+      result.current.pointerHandlers.onPointerMove(event(20, 20));
     });
     act(() => {
-      result.current.onPointerMove(event(30, 40));
+      result.current.pointerHandlers.onPointerMove(event(30, 40));
     });
     flushFrame();
 
@@ -520,7 +520,7 @@ describe('useRect drag geometry', () => {
     startDrag({ result, event }, { x: 10, y: 10 });
     pointer.state.moveValid = false;
     act(() => {
-      result.current.onPointerMove(event(20, 20));
+      result.current.pointerHandlers.onPointerMove(event(20, 20));
     });
     flushFrame();
 
@@ -533,7 +533,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 200, y: 175 });
     act(() => {
-      result.current.onPointerMove(event(220, 195));
+      result.current.pointerHandlers.onPointerMove(event(220, 195));
     });
     flushFrame();
 
@@ -551,7 +551,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: fromX, y: fromY });
     act(() => {
-      result.current.onPointerMove(event(toX, toY));
+      result.current.pointerHandlers.onPointerMove(event(toX, toY));
     });
     flushFrame();
 
@@ -569,7 +569,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 100, y: 100 });
     act(() => {
-      result.current.onPointerMove(event(toX, toY));
+      result.current.pointerHandlers.onPointerMove(event(toX, toY));
     });
     flushFrame();
 
@@ -582,7 +582,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 100, y: 200 });
     act(() => {
-      result.current.onPointerMove(event(60, 200));
+      result.current.pointerHandlers.onPointerMove(event(60, 200));
     });
     flushFrame();
 
@@ -596,7 +596,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 200, y: 100 });
     act(() => {
-      result.current.onPointerMove(event(200, 50));
+      result.current.pointerHandlers.onPointerMove(event(200, 50));
     });
     flushFrame();
 
@@ -610,7 +610,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 100, y: 100 });
     act(() => {
-      result.current.onPointerMove(event(300, 150));
+      result.current.pointerHandlers.onPointerMove(event(300, 150));
     });
     flushFrame();
 
@@ -625,10 +625,10 @@ describe('useRect drag geometry', () => {
     // The 200x100 selection implies 2:1, locked here with ctrlKey.
     startDrag({ result, event }, { x: 100, y: 100 });
     act(() => {
-      result.current.onPointerDown(event(100, 100, { ctrlKey: true }));
+      result.current.pointerHandlers.onPointerDown(event(100, 100, { ctrlKey: true }));
     });
     act(() => {
-      result.current.onPointerMove(event(200, 190));
+      result.current.pointerHandlers.onPointerMove(event(200, 190));
     });
     flushFrame();
 
@@ -641,11 +641,11 @@ describe('useRect drag geometry', () => {
     const { result, event, flushFrame } = setup({ initialRect: RATIO_RECT, onChange });
 
     act(() => {
-      result.current.onPointerDown(event(100, 100, { shiftKey: true }));
+      result.current.pointerHandlers.onPointerDown(event(100, 100, { shiftKey: true }));
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(280, 210));
+      result.current.pointerHandlers.onPointerMove(event(280, 210));
     });
     flushFrame();
 
@@ -658,11 +658,11 @@ describe('useRect drag geometry', () => {
     const { result, event, flushFrame } = setup({ initialRect: RATIO_RECT, onChange });
 
     act(() => {
-      result.current.onPointerDown(event(100, 100, { metaKey: true }));
+      result.current.pointerHandlers.onPointerDown(event(100, 100, { metaKey: true }));
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(320, 195));
+      result.current.pointerHandlers.onPointerMove(event(320, 195));
     });
     flushFrame();
 
@@ -675,18 +675,18 @@ describe('useRect drag geometry', () => {
     const { result, event, flushFrame } = setup({ initialRect: RATIO_RECT, onChange });
 
     act(() => {
-      result.current.onPointerDown(event(100, 100, { ctrlKey: true }));
+      result.current.pointerHandlers.onPointerDown(event(100, 100, { ctrlKey: true }));
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerUp(event(120, 110));
+      result.current.pointerHandlers.onPointerUp(event(120, 110));
     });
 
     // The committed rect anchors the next gesture, and the click below is
     // interior to it (not on a handle), so the selection is translated freely.
     startDrag({ result, event }, { x: 200, y: 150 });
     act(() => {
-      result.current.onPointerMove(event(220, 170));
+      result.current.pointerHandlers.onPointerMove(event(220, 170));
     });
     flushFrame();
 
@@ -701,14 +701,14 @@ describe('useRect drag geometry', () => {
     const { result, event, flushFrame, target } = setup({ onRepaint, onChange });
 
     act(() => {
-      result.current.onPointerDown(event(0, 0), layer);
+      result.current.pointerHandlers.onPointerDown(event(0, 0), layer);
     });
     expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
     expect(target.style.cursor).toBe(CURSOR_MAP.inside);
 
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(10, 20));
+      result.current.pointerHandlers.onPointerMove(event(10, 20));
     });
     flushFrame();
 
@@ -721,11 +721,11 @@ describe('useRect drag geometry', () => {
     const { result, event, flushFrame } = setup({ onChange });
 
     act(() => {
-      result.current.onPointerDown(event(10, 20), layer);
+      result.current.pointerHandlers.onPointerDown(event(10, 20), layer);
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(60, 80));
+      result.current.pointerHandlers.onPointerMove(event(60, 80));
     });
     flushFrame();
 
@@ -739,7 +739,7 @@ describe('useRect drag geometry', () => {
 
     startDrag({ result, event }, { x: 100, y: 100 }, layer);
     act(() => {
-      result.current.onPointerMove(event(80, 60));
+      result.current.pointerHandlers.onPointerMove(event(80, 60));
     });
     flushFrame();
 
@@ -758,10 +758,10 @@ describe('useRect pointer up and move tool', () => {
     const { result, event, flushFrame, target } = setup({ initialRect: RECT, onChange, onChangeEnd, onRepaint });
 
     act(() => {
-      result.current.onPointerDown(event(100, 100));
+      result.current.pointerHandlers.onPointerDown(event(100, 100));
     });
     act(() => {
-      result.current.onPointerUp(event(150, 120));
+      result.current.pointerHandlers.onPointerUp(event(150, 120));
     });
 
     expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 150, y1: 120, x2: 300, y2: 250 });
@@ -771,7 +771,7 @@ describe('useRect pointer up and move tool', () => {
     // The committed rect becomes the anchor for the next gesture.
     startDrag({ result, event }, { x: 200, y: 180 });
     act(() => {
-      result.current.onPointerMove(event(210, 190));
+      result.current.pointerHandlers.onPointerMove(event(210, 190));
     });
     flushFrame();
 
@@ -784,14 +784,14 @@ describe('useRect pointer up and move tool', () => {
     const { result, event, flushFrame } = setup({ initialRect: RECT, onChange, onChangeEnd });
 
     act(() => {
-      result.current.onPointerDown(event(100, 100));
+      result.current.pointerHandlers.onPointerDown(event(100, 100));
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(200, 150));
+      result.current.pointerHandlers.onPointerMove(event(200, 150));
     });
     act(() => {
-      result.current.onPointerUp(event(180, 140));
+      result.current.pointerHandlers.onPointerUp(event(180, 140));
     });
     flushFrame();
 
@@ -804,13 +804,13 @@ describe('useRect pointer up and move tool', () => {
     const { result, event, target } = setup({ initialRect: RECT, onChangeEnd });
 
     act(() => {
-      result.current.onPointerDown(event(200, 175));
+      result.current.pointerHandlers.onPointerDown(event(200, 175));
     });
     expect(target.style.cursor).toBe(CURSOR_MAP.inside);
 
     pointer.state.upValid = false;
     act(() => {
-      result.current.onPointerUp(event(180, 155));
+      result.current.pointerHandlers.onPointerUp(event(180, 155));
     });
 
     expect(onChangeEnd).not.toHaveBeenCalled();
@@ -823,15 +823,15 @@ describe('useRect pointer up and move tool', () => {
     const { result, event, flushFrame } = setup({ isMoveTool: true, onChange, onChangeEnd });
 
     act(() => {
-      result.current.onPointerDown(event(10, 10));
+      result.current.pointerHandlers.onPointerDown(event(10, 10));
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(50, 50));
+      result.current.pointerHandlers.onPointerMove(event(50, 50));
     });
     flushFrame();
     act(() => {
-      result.current.onPointerUp(event(60, 60));
+      result.current.pointerHandlers.onPointerUp(event(60, 60));
     });
 
     expect(onChange).not.toHaveBeenCalled();
@@ -844,7 +844,7 @@ describe('useRect pointer up and move tool', () => {
 
     startDrag({ result, event }, { x: 200, y: 175 });
     act(() => {
-      result.current.onPointerMove(event(210, 185));
+      result.current.pointerHandlers.onPointerMove(event(210, 185));
     });
     flushFrame();
 
@@ -858,14 +858,14 @@ describe('useRect pointer up and move tool', () => {
     onRepaint.mockClear();
 
     act(() => {
-      result.current.clearSelection();
+      result.current.rectHandles.clearSelection();
     });
     expect(onRepaint).not.toHaveBeenCalled();
     expect(ctx.clearRect).toHaveBeenLastCalledWith(0, 0, 800, 600);
 
     startDrag({ result, event }, { x: 10, y: 10 });
     act(() => {
-      result.current.onPointerMove(event(20, 30));
+      result.current.pointerHandlers.onPointerMove(event(20, 30));
     });
     flushFrame();
 
@@ -878,7 +878,7 @@ describe('useRect pointer up and move tool', () => {
     onRepaint.mockClear();
 
     act(() => {
-      result.current.redraw();
+      result.current.rectHandles.redraw();
     });
 
     expect(onRepaint).toHaveBeenCalledWith(RECT);
@@ -915,11 +915,11 @@ describe('useRect fresh-drag modifiers', () => {
     const { result, event, flushFrame } = setup({ ...props, onChange });
 
     act(() => {
-      result.current.onPointerDown(event(from.x, from.y, down));
+      result.current.pointerHandlers.onPointerDown(event(from.x, from.y, down));
     });
     pointer.data.isMouseDown.current = true;
     act(() => {
-      result.current.onPointerMove(event(to.x, to.y, move));
+      result.current.pointerHandlers.onPointerMove(event(to.x, to.y, move));
     });
     flushFrame();
 
