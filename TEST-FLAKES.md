@@ -90,6 +90,67 @@ that it is zero, and the coverage run in CI is a _different_ execution again
 of defect is still uninvestigated.** Closing this document because the code path
 that reported it was deleted would be closing it for the wrong reason.
 
+## 3a. A FIFTH observation, and the first with test NAMES — and it is not section 1
+
+**Status: OPEN. Mechanism identified by reading the code; not reproduced on demand.**
+
+Section 1 says that capturing the assertion text "next time" would make this
+diagnosable in one run. A later run did capture it, and the result is worth more
+than a closed entry: the failures are **not** in the app suite and **not** the
+pool reading timing-sensitive app state. They are in `scripts/__tests__/`, and
+they are **non-hermetic by construction** — they read live machine state that
+sibling agents mutate while the suite runs.
+
+Observed 2026-10-01 on branch `fix/alert-residue`, run 3 of 3 consecutive full
+`npm run test` runs (runs 1 and 2 green, 295 files / 7135 passed):
+
+```
+FAIL  scripts/__tests__/e2e-run.test.mjs > e2e-run: ports and arguments
+      > finds a port it can then bind itself, which is what "free" has to mean
+FAIL  scripts/__tests__/worktree-inventory.test.mjs > work git cannot see
+      > never offers a live worktree that holds uncommitted work on no ref for disposal
+FAIL  scripts/__tests__/worktree-inventory.test.mjs > work git cannot see
+      > protects that shape in a worktree NOBODY has written anything down about
+ Test Files  2 failed | 293 passed (295)
+      Tests  3 failed | 7132 passed | 31 expected fail | 1 skipped (7167)
+```
+
+Both files pass in isolation immediately afterwards (`npx vitest --run` on the
+two paths: 2 files, 194 passed).
+
+**The two mechanisms, read from the code.**
+
+- `scripts/__tests__/e2e-run.test.mjs:757-768` is a **TOCTOU race against the
+  machine**. It calls `findFreePort()`, asserts `isPortFree(port)`, then binds
+  the port — and `server.on('error', reject)` turns any process that claimed
+  the port in that window into a failure. The assertion is correct; the window
+  is not owned by the test. This is the same class as section 12's
+  `viewport-drawing` and section 13's repeated-load budget: the test measures
+  something real about a shared machine.
+- `scripts/__tests__/worktree-inventory.test.mjs` builds its fixtures from the
+  **real** repository. `liveWorktreeFacts()` (`:330`) calls `listWorktrees(cwd)`
+  twice and takes `listWorktrees(cwd)[0].path` as the main checkout, and
+  `liveInventory()` (`:372`) shells `git rev-parse main` in it. So the
+  inventory under test is built from `git worktree list` **as it is at that
+  instant** — while concurrent sessions add and remove worktrees. The two
+  failures are the ones whose names say the shape depends on which worktrees
+  exist and what state they hold.
+
+**Why this matters beyond the three tests.** A suite whose assertions depend on
+the machine's live state cannot be a gate on that machine, and the failure looks
+identical to a real regression: a red full run with named tests. This is a
+plausible member of section 1's uncaptured population — but it is **not**
+evidence about section 1's original observation, which was in the app suite and
+whose name was never captured. Do not merge the two tallies.
+
+**Fix.** Make both hermetic rather than re-run until green. The port test should
+ask the kernel for an ephemeral port (`listen(0)`) and assert on the port the
+kernel handed back, instead of asking "is this number free?" and racing the
+answer. The inventory fixtures should be written into a `git init` fixture
+repository of their own — the suite already does this for most of its cases
+(`:254` has a `g(...args)` helper doing exactly that) — and the two live-state
+cases should assert against that fixture instead of the operator's worktree list.
+
 ## 4. Why `src/util/draw.ts` is a place worth staring at
 
 The observation came from the file set that `src/util/draw.ts` fans out to, which

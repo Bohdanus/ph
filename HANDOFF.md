@@ -2297,20 +2297,25 @@ into it silently rots, and its own rule says as much.
 
 **Decided 2026-09-30: the app gets no user-facing error surface.** Swallowing a failure is acceptable
 provided the console reports it. Every `alert()` was removed in favour of `console.error`
-(`155ba7b8`), and nothing replaced them: `git grep -iE "toast|snackbar|notif"` over production `src/`
-returns nothing, and `ErrorBoundary` is mounted at only two places (`src/App.tsx:92,96`), catches
-React render throws only, and covers neither `Menu`, `MobileMenuDrawer` nor `MobileHeader`.
-**Do not "fix" a silent failure by adding a dialog or a banner** without asking again — the reasoning
-that removed the alerts applies to whatever would replace them.
+(`155ba7b8`), and nothing replaced them: no toast, snackbar or notification component exists in
+production `src/` (the only `notif` hits are the English verb in comments — `toolbar-fit-store.ts:297`,
+`use-toolbar-overflow.ts:30,49`, `useDevicePixelRatio.ts:9`), and `ErrorBoundary` is mounted at only
+two places (`src/App.tsx:92,96`), catches React render throws only, and covers neither `Menu`,
+`MobileMenuDrawer` nor `MobileHeader`. **Do not "fix" a silent failure by adding a dialog or a banner**
+without asking again — the reasoning that removed the alerts applies to whatever would replace them.
 
 **The accepted cost, which is real and deliberate.** A failed file open, save, export or selection
-copy is invisible on screen. Export is the sharpest case: `handleImageSave`'s `finally` closes the
-save dialog unconditionally (`src/contexts/useFile.tsx:133-136`), so a failure closes it exactly as a
-success does, and on desktop the screen is then byte-identical to success — `fileName` is rendered
-only at `src/components/Mobile/MobileMenuDrawer.tsx:110` and `src/components/Mobile/MobileHeader.tsx:107`,
-and `hasUnsavedChanges` is rendered nowhere, appearing in components only inside the three `confirm()`
-guards. This is reachable by decision, not by accident: entry 45 keeps the 80 MP AVIF ceiling, so an
-80–100 MP document is _supposed_ to fail to export.
+copy is invisible on screen. Export was the sharpest case and **no longer is**: this paragraph used to
+hold that `handleImageSave`'s `finally` closed the save dialog unconditionally, so a failure closed it
+exactly as a success does. There is no `finally` — the teardown moved into the success branch
+(`src/contexts/useFile.tsx:138-139`) precisely so a failure leaves the dialog open, with format,
+quality and filename intact and the attempt retryable, and `useFile.tsx:129-137` records that move as
+a deliberate fix. What survives here is narrower and still true: `hasUnsavedChanges` is rendered
+nowhere in JSX, appearing in components only inside the three `confirm()` guards, and `fileName` is
+rendered only on mobile (`src/components/Mobile/MobileMenuDrawer.tsx:110`,
+`src/components/Mobile/MobileHeader.tsx:111`), so on desktop a failed export is still an unremarkable
+silent no-op. It is reachable by decision, not by accident: entry 45 keeps the 80 MP AVIF ceiling, so
+an 80–100 MP document is _supposed_ to fail to export.
 
 No data is lost. `useApp.handleImageSave` (`src/hooks/useApp.ts:67-71`) is the only writer of
 `hasUnsavedChanges: false` and of the rename, and it is guarded by `if (data)` at every call site, so
@@ -2333,10 +2338,10 @@ error or page error. What remains true here is narrower — those four paths are
 in a browser, so nothing there could produce a message for it to catch.)
 
 **Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
-`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
+`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:217,394,408`,
 `src/components/DesktopHeader/DesktopHeader.tsx` (File > Save handler),
 `src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
-`src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
+`src/components/Mobile/MobileHeader.tsx:81,111`, `src/App.tsx:92,96`,
 `src/util/selection.ts:430-442`.
 
 **Silent catches this decision does not cover, which are load-bearing rather than residue.** The

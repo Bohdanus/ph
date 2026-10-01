@@ -188,7 +188,7 @@ rather than at the end.
 | `Stroke`           | outline swatch, same four contents                         | partial    | store `color` = `#000000`           | `StoreContext.tsx:324`      |
 | `Stroke width`     | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5              | `Figures/Shape.tsx:161`     |
 | `Stroke type`      | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins           | `Figures/Shape.tsx:227`     |
-| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | two `window.prompt` calls           | `ShapeToolArea.tsx:181-182` |
+| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | a click is refused and reported     | `ShapeToolArea.tsx:182-183` |
 | `Path Operations`  | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                   | —                           |
 | `Path Alignment`   | align and distribute components                            | missing    | —                                   | —                           |
 | `Path Arrangement` | bring forward / send back                                  | missing    | —                                   | —                           |
@@ -269,7 +269,7 @@ material already sat in the `rectangle` and `ellipse` `appNotes`. The `detail` d
 control and the click dialog; the app's version is now in the `appNotes` of every tool that renders
 the control — `shape`, `line`, `triangle` and `custom-shape` alongside the two that already had it.
 `src/components/Main/ShapeToolArea.tsx:180-186` is the whole of the app's version: a click is
-detected by `start.x === end.x && start.y === end.y`, and then two `window.prompt` calls run
+detected by `start.x === end.x && start.y === end.y`, and then the refusal is reported
 **sequentially**, Width first and Height second, and the shape is only committed if both parse to a
 number above zero. There is no Corner Radius field and no From Center anywhere in that path.
 
@@ -435,7 +435,7 @@ the separate Rounded Rectangle tool was removed in 22.3
 (`helpx.adobe.com/photoshop/using/modify-shapes.html`); `[` and `]` nudge the radius by 1 px, or
 10 px with Shift (`jkost.com`); and a click without a drag opens the Create Rectangle dialog with
 Width, Height, corner radii and From Center. That last sentence is **Photoshop's** dialog and belongs
-to the Photoshop column above; the app has no counterpart to it beyond the two `window.prompt` calls
+to the Photoshop column above; the app has no counterpart to it beyond reporting the refusal
 in the shared-surface section.
 
 **The `appNotes` used to contradict this entry's own `options` table, and the fix is a rewrite rather
@@ -627,7 +627,7 @@ gives it.
 
 **The app's click-with-no-drag path is named in this entry's `appNotes` because this is the figure
 where it costs the most.** Adobe's dialog offers Width, Height, Corner Radius, Equilateral and From
-Center; the app's two `window.prompt` calls offer the first two only, and the Radius this tool has
+Center; the app offers none of them on a click, and the Radius this tool has
 is the one the renderer ignores.
 
 ---
@@ -742,17 +742,17 @@ sentence.** This entry had inherited the shared `sharedFigureOptions` consts, wh
 **bar's** statuses and the shape bar's `appRef`s — for a tool that never renders that bar. Six of the
 nine rows below were `partial` and three were `missing`; the correct reading is:
 
-| Row               | Was     | Now       | Why                                                                                                                |
-| ----------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------ |
-| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                                    |
-| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                         |
-| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                                       |
-| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                                 |
-| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the two `window.prompt` calls the other five figures get never run here |
-| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                              |
-| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                             |
-| `Stroke type`     | partial | `missing` | same                                                                                                               |
-| `Opacity`         | partial | `missing` | same                                                                                                               |
+| Row               | Was     | Now       | Why                                                                                                        |
+| ----------------- | ------- | --------- | ---------------------------------------------------------------------------------------------------------- |
+| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                            |
+| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                 |
+| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                               |
+| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                         |
+| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the click refusal the other five figures report never runs here |
+| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                      |
+| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                     |
+| `Stroke type`     | partial | `missing` | same                                                                                                       |
+| `Opacity`         | partial | `missing` | same                                                                                                       |
 
 The `inert` / `missing` split is the whole point of the two statuses, and it is the same split the Pen
 family already makes. `inert` is "declared **or displayed**, and nothing is wired behind it", whose
@@ -795,7 +795,7 @@ the canvas area is `DummyToolArea`, a `display: none` div
 at the chip list and none at `Figures/Shape.tsx` or `src/tools/shape.ts`, and it is also why the three
 `modifiers` rows — Shift, Alt and Space — are bound to nothing: there is no drag for them to modify.
 The same absence is why the `Shape W&H` chip is `inert` rather than `partial`: the app's two
-`window.prompt` calls live in `ShapeToolArea`, which this tool never mounts, so a click with no drag
+click refusal lives in `ShapeToolArea`, which this tool never mounts, so a click with no drag
 does nothing rather than asking for a size.
 
 **Path Operations, corrected.** The real set is New Shape Layer (or Create New Shape Layer),
