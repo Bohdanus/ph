@@ -68,11 +68,12 @@ export const ACCEPTED_CONSOLE_ERRORS: readonly { match: string; reason: string }
       'case this allowlist exists for; without it no error-boundary spec could exist.',
   },
   {
-    match: "Cannot set properties of null (setting 'imageSmoothingEnabled')",
+    match: 'Injected fault: 2D context unavailable',
     reason:
-      "React's development-build report of the throw e2e/error-boundary.spec.ts " +
-      'deliberately provokes in the Canvas region. The message is V8 wording, so it only ' +
-      'appears under Chromium, which is the only browser this suite runs.',
+      'The fault e2e/error-boundary.spec.ts deliberately injects at the platform seam: ' +
+      'HTMLCanvasElement.prototype.getContext is made to throw a SecurityError for the tool ' +
+      'overlay canvas. React reports it in the development build, so this appears on every run ' +
+      'of that spec. Delete this entry when that spec is deleted.',
   },
 ];
 

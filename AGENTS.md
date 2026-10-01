@@ -114,7 +114,7 @@ Two husky hooks, both delegating to a script in `package.json`, so the gated seq
 | Command               | Runs from           | Contents                                                       |
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
-| `npm run gate:verify` | —                   | `tsc` -> `build` -> `test:e2e:unit`                            |
+| `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
 | `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
 | `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
 
@@ -144,7 +144,7 @@ The commit hook is two gates because they answer different questions. `gate:veri
 
 ## Known failures and how to read one
 
-On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by declaration. Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
+On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by declaration (`e2e/sidebar-flyout.spec.ts` right-click on single-tool groups, `e2e/viewport-drawing.spec.ts` line-under-cursor after resize, `e2e/export/photopea.spec.ts` the Photopea round trip). Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
 
 - The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
 - A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `expected-fail` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.

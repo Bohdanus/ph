@@ -15,22 +15,31 @@ import { expect, test } from './fixtures/extended-test';
  * pass and the app would still white-screen.
  *
  * THE TRIGGER, and why it is not a mock of the thing under test. The fault is injected at the
- * PLATFORM: `HTMLCanvasElement.prototype.getContext` is made to answer `null` for exactly one
- * element, the one carrying `data-testid="tool-overlay-canvas"`. Everything downstream is
- * production code, unmodified — the throw, the React error boundary, `getDerivedStateFromError`,
- * `componentDidCatch`, `ErrorBoundaryFallback`, its `useStore()` call, and every testid below.
- * The seam is chosen because it is a REAL unguarded line, not because it is convenient:
- * `src/components/Main/Main.tsx:143` asserts a 2D context with `!` and immediately dereferences
- * it on line 144 (`toolCtxRef.current.imageSmoothingEnabled = true`), inside the `useLayoutEffect`
- * that lives inside the `Canvas` boundary. Nine sibling call sites in the same codebase DO check
- * for the null — `src/contexts/layer-renderer.ts:120`, `src/contexts/raster-utils.ts:8`,
- * `src/contexts/useLayer.ts:181`, `src/contexts/materialization.ts:68`, `src/util/selection.ts:426`,
- * `src/hooks/useAnts.ts:61`, `src/hooks/useSelectionAnts.ts:91`, `src/hooks/useRect.ts:126`,
- * `src/components/Main/EyedropperToolArea.tsx:73` — which is precisely why a browser that
- * refuses a context is a real hazard here rather than a hypothetical one, and precisely why the
- * app's own redundancy decided not to guard this one. A narrower reading: the fault proves the
- * boundary CONTAINS this line. It does not prove that this line is the one a user is most likely
- * to hit, because that is not a question a test can answer.
+ * PLATFORM: `HTMLCanvasElement.prototype.getContext` is made to THROW a `SecurityError` for
+ * exactly one element, the one carrying `data-testid="tool-overlay-canvas"`. Everything
+ * downstream is production code, unmodified — the throw, the React error boundary,
+ * `getDerivedStateFromError`, `componentDidCatch`, `ErrorBoundaryFallback`, its `useStore()`
+ * call, and every testid below. Nothing about the boundary, the fallback or the store is
+ * stubbed, and there is no application code path added to make this reachable.
+ *
+ * THIS SEAM USED TO BE A REAL DEFECT, and the change is worth recording because it is the
+ * difference between testing a mechanism and testing a bug. `Main.tsx` asserted a 2D context
+ * with `!` and dereferenced it on the next line, inside the `useLayoutEffect` inside the
+ * `Canvas` boundary, so a browser refusing that context threw a `TypeError` and lost the whole
+ * canvas region. Nine sibling call sites already checked for the null — `src/contexts/
+ * layer-renderer.ts:120`, `src/contexts/raster-utils.ts:8`, `src/contexts/useLayer.ts:181`,
+ * `src/contexts/materialization.ts:68`, `src/util/selection.ts:426`, `src/hooks/useAnts.ts:61`,
+ * `src/hooks/useSelectionAnts.ts:91`, `src/hooks/useRect.ts:126`,
+ * `src/components/Main/EyedropperToolArea.tsx:73` — which is why a browser refusing a context
+ * was a real hazard here. Both `Main.tsx` sites are now null-tolerant, because `toolCtxRef` is
+ * declared `CanvasRenderingContext2D | null` and every tool area already handles the null case.
+ *
+ * So the null no longer throws, and borrowing it would have made this file green only while a
+ * defect happened to exist. A boundary is a DEFENCE, and a defence has to be testable when
+ * nothing is currently breaking it — so the failure is injected deliberately, at a platform
+ * seam, in a shape the platform can genuinely produce. A narrower reading: this proves the
+ * boundary CONTAINS a throw from the canvas region. It does not prove which real defect a user
+ * is most likely to hit, because that is not a question a test can answer.
  *
  * WHY NOT A FAULT-INJECTION HOOK. There is none to use. `src/` reads no query parameter, no
  * `location.search`, no `window` flag and no `import.meta.env` switch outside `import.meta.env.DEV`
@@ -77,15 +86,24 @@ import { expect, test } from './fixtures/extended-test';
  * `src/components/Main/Main.tsx:260` puts on the exact element whose context line 143 asserts, so
  * the script cannot drift onto a different canvas when the canvas set changes.
  */
-const denyToolOverlayTwoDimensionalContext = () => {
+const throwOnToolOverlayTwoDimensionalContext = () => {
   const proto = HTMLCanvasElement.prototype;
   const original = proto.getContext;
-  proto.getContext = function toolOverlayHasNo2DContext(
+  proto.getContext = function toolOverlay2DContextThrows(
     this: HTMLCanvasElement,
     contextId: string,
     ...rest: unknown[]
   ): RenderingContext | null {
-    if (this.dataset.testid === 'tool-overlay-canvas') return null;
+    // Throwing, not returning null. `getContext` really does throw — a `SecurityError`
+    // on a canvas whose origin or size makes a context unavailable is a documented
+    // outcome — and that is the shape this file needs. Returning `null` was the original
+    // seam here, back when `Main.tsx` dereferenced the result with `!` and turned the null
+    // into a TypeError. That dereference is fixed, so a null no longer reaches a boundary
+    // and the honest way to test a boundary is to inject the failure rather than borrow
+    // a defect that no longer exists.
+    if (this.dataset.testid === 'tool-overlay-canvas') {
+      throw new DOMException('Injected fault: 2D context unavailable', 'SecurityError');
+    }
     return (original as (...args: unknown[]) => RenderingContext | null).call(this, contextId, ...rest);
   } as typeof proto.getContext;
 };
@@ -128,7 +146,7 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
   });
 
   test('replaces the canvas region, and only the canvas region, with the labelled fallback', async ({ page }) => {
-    await page.addInitScript(denyToolOverlayTwoDimensionalContext);
+    await page.addInitScript(throwOnToolOverlayTwoDimensionalContext);
     await page.goto('/');
 
     // `role="alert"` is asserted alongside visibility because it is the only thing that tells a
@@ -148,13 +166,13 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
     // ship green.
     await expect(fallback.getByRole('heading')).toHaveText('Canvas stopped working');
 
-    // The message is the caught error's own `message`, not a canned apology, so it names the
-    // unguarded line from the header comment: `Main.tsx:144` writes `imageSmoothingEnabled` onto
-    // the context `Main.tsx:143` asserted non-null. Asserting the property name rather than the
-    // full sentence is deliberate — V8 and SpiderMonkey word this TypeError differently — while
-    // still being specific enough that a fallback showing `error.message` of something else, or a
-    // hardcoded string, cannot pass.
-    await expect(page.getByTestId('error-boundary-message')).toContainText('imageSmoothingEnabled');
+    // The message is the caught error's own `message`, not a canned apology. Asserting the
+    // injected fault's text is what makes that a test rather than a presence check: a fallback
+    // rendering a hardcoded string would fail here, and a fallback reporting a DIFFERENT error
+    // would fail here too. The string is this file's own, so it is asserted exactly — the
+    // cross-engine-wording concern that applied to the old `TypeError` does not apply to a
+    // `DOMException` message this file supplies.
+    await expect(page.getByTestId('error-boundary-message')).toContainText('Injected fault: 2D context unavailable');
 
     // The region is GONE, not covered. A fallback that merely painted over a live canvas would
     // leave all four canvas testids in the DOM and every pointer gesture would still reach a
@@ -175,7 +193,7 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
   });
 
   test('reports the durable status the live store holds, read through the fallback', async ({ page }) => {
-    await page.addInitScript(denyToolOverlayTwoDimensionalContext);
+    await page.addInitScript(throwOnToolOverlayTwoDimensionalContext);
     await page.goto('/');
     await expect(page.getByTestId('error-boundary-fallback')).toBeVisible();
 
@@ -204,7 +222,7 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
   });
 
   test('omits the diagnostics list when the store holds none, and keeps the store readable', async ({ page }) => {
-    await page.addInitScript(denyToolOverlayTwoDimensionalContext);
+    await page.addInitScript(throwOnToolOverlayTwoDimensionalContext);
     await page.goto('/');
     await expect(page.getByTestId('error-boundary-fallback')).toBeVisible();
 
@@ -240,7 +258,7 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
   });
 
   test('leaves the rest of the editor mounted, interactive, and inside its own boundaries', async ({ page }) => {
-    await page.addInitScript(denyToolOverlayTwoDimensionalContext);
+    await page.addInitScript(throwOnToolOverlayTwoDimensionalContext);
     await page.goto('/');
     await expect(page.getByTestId('error-boundary-fallback')).toBeVisible();
 

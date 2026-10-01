@@ -4634,46 +4634,7 @@ parses `curated.mjs` and would catch a stale key.
 `docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`
 ---
 
-## 140. `Main.tsx` dereferences a 2D context it never null-checks, so a null return loses the whole canvas region
-
-`src/components/Main/Main.tsx:143-144` does:
-
-```
-toolCtxRef.current = toolOverlayRef.current.getContext('2d')!;
-toolCtxRef.current.imageSmoothingEnabled = true;
-```
-
-The `!` is a promise the platform does not keep. `getContext('2d')` returns `null` when the
-canvas has no 2D context available — a context-loss event, a browser that has exhausted its
-canvas contexts, or a future migration of this overlay to WebGL. The first statement then
-assigns `null`, and the second throws `TypeError: Cannot set properties of null`.
-
-The throw happens inside a `useLayoutEffect`, so it escapes render and lands in the `Canvas`
-`ErrorBoundary` (`src/App.tsx:92`). The canvas region is replaced by the fallback, the layer
-stack and the toolbar stop responding, and there is no retry: the boundary is terminal by
-construction (`src/components/Common/ErrorBoundary.tsx:42-44`).
-
-Nine other call sites in this repo null-check the same API before using it —
-`src/utils/layer-renderer.ts:120`, `src/utils/raster-utils.ts:8`, `src/hooks/useLayer.ts:181`,
-`src/contexts/materialization.ts:68`, `src/hooks/useAnts.ts:61`, `src/hooks/useSelectionAnts.ts:91`,
-`src/hooks/useRect.ts:126`, `src/components/Main/EyedropperToolArea.tsx:73`,
-`src/contexts/selection.ts:426`. This one is the outlier.
-
-`e2e/error-boundary.spec.ts` reaches it deliberately (it makes `getContext('2d')` return `null`
-for the tool overlay via `page.addInitScript`) and asserts the fallback appears and the rest of
-the editor survives. That test pins the _boundary's_ behaviour. It does not make the deref safe,
-and it is not a substitute for fixing it: nothing in production currently prevents the throw.
-
-**Fix.** Drop the `!`, null-check the result, and decide what a missing tool context means —
-most likely leave `toolCtxRef.current` null and let the tool areas read it through the same
-optional chain the nine siblings already use, rather than throwing. A one-line guard is not
-enough on its own: whatever draws through `toolCtxRef` needs a defined answer for "no context".
-
-**Files.** `src/components/Main/Main.tsx:140-146`, and every consumer of `toolCtxRef`.
-
----
-
-## 141. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
+## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
 
 `index.html:18` and `index.html:35` load GTM container `GTM-WBWSB9XS` and `G-7F5V72YQ4K` from
 `googletagmanager.com`. Nothing in `e2e/` stubs, blocks or asserts on it.
@@ -4701,7 +4662,7 @@ report line that currently names them).
 
 ---
 
-## 142. Two axe results are `incomplete` and therefore unasserted — one is a real role error
+## 141. Two axe results are `incomplete` and therefore unasserted — one is a real role error
 
 `e2e/accessibility.spec.ts` attaches axe's `incomplete` array to the Playwright report and logs
 it, but deliberately does not assert on it: axe returns `incomplete` when it cannot decide, and
