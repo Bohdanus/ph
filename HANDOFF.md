@@ -3815,8 +3815,8 @@ predicate at `:307` reads. A join that misses returns `undefined` and throws; on
 _different_ worktree with the same display name returns a clean shape and reads `landed`, which is
 the failure above.
 
-**Why it matters beyond the red.** This is the guard `HANDOFF.md` §136 and §137 lean on: §137 is
-`git worktree remove --force` after git has already refused, and §136 is that a clean tree is not
+**Why it matters beyond the red.** This is the property `scripts/dispose-worktree.mjs` leans on: it is
+`git worktree remove --force` after git has already refused, and it is that a clean tree is not
 evidence a worktree is abandoned. The guard exists so uncommitted work is never classified as
 safe. A miss on the main checkout is the one place uncommitted work is guaranteed to exist,
 because that is where agents work.
