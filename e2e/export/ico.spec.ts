@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from '../fixtures/extended-test';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { INTEGRATION_TEST_TIMEOUT_MS, exportIcoAndVerify, setupIcoTest } from './helpers';

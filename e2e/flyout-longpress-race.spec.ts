@@ -34,7 +34,7 @@
  * the gate that actually gates. The constant is named rather than numbered throughout, so a
  * line shift under us points a reader at the function instead of at whatever slid into it.
  */
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures/extended-test';
 import type { Page } from '@playwright/test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { getPageScroll } from './helpers/canvas-helpers';

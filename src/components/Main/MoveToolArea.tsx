@@ -108,16 +108,16 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   }
 
   const {
-    // no initial rect here, instead passing rect in mouseDown
-    getLocalCoords,
-    isMouseDown,
-    pointerIdRef,
-    onPointerDown: handlePointerDown_useRect,
-    onPointerMove: handlePointerMove_useRect,
-    onPointerUp: handlePointerUp_useRect,
-    clearSelection,
+    pointerHandlers: {
+      onPointerDown: handlePointerDown_useRect,
+      onPointerMove: handlePointerMove_useRect,
+      onPointerUp: handlePointerUp_useRect,
+    },
+    rectHandles: { clearSelection },
+    pointerState: { getLocalCoords, isMouseDown, pointerIdRef },
   } = useRect({
     imageSize: totalSize,
+    // no initial rect here, instead passing rect in mouseDown
     initialRect: activeLayerRect,
     hideBlend: true,
     isMoveTool: true,

@@ -3119,10 +3119,11 @@ value as a second argument instead of stringifying it, so a non-`Error` rejectio
 its reason rather than as `[object Object]`.
 
 **What is not covered.** Each report is pinned by a unit test asserting the exact `console.error`
-call, including the non-`Error` cases. There is no e2e coverage: no Playwright spec drives a failed
-open, save, export or copy, and none asserts on `console.error` or `pageerror`. That follows from the
-decision rather than overlooking it, but it does mean the e2e suite cannot distinguish a logged
-failure from a silent one.
+call, including the non-`Error` cases. No Playwright spec drives a failed open, save, export or
+copy, so those four paths have no browser-level coverage. (Console and page errors are no longer
+unasserted in general: `e2e/helpers/console-police.ts` fails every spec on an unaccepted console
+error or page error. What remains true here is narrower — those four paths are never _reached_
+in a browser, so nothing there could produce a message for it to catch.)
 
 **Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
 `src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
@@ -3841,6 +3842,116 @@ by a real rasteriser at `toolProcessors.ts:96-102`). Whether to carry out the ex
 operator's decision; the document's job is to stop asserting a false intermediate.
 
 **Files.** `docs/PHOTOSHOP-UX.md:32-45`, `toolbar-mapping.ts:61-65`, `:97`, `:164`
+
+### The operator has decided: delete the three
+
+**2026-10-01. The operator's decision, in their words: "I decide to remove them."** `color`,
+`levels` and `transform` come **out of the rail**. Not relabelled, not moved to a menu, not
+kept alongside — removed. This settles the question the Fix paragraph above left open, and it
+resolves it the way `docs/PHOTOSHOP-UX.md:32-45` already required.
+
+**This is not an override**, and `docs/OVERRIDES.md` must not gain an entry for it. That file's
+own definition (`:11-18`) is a decision that this app deliberately does **not** replicate
+Photoshop's behaviour. Removing three ids Adobe's Tools panel does not contain moves this app
+**toward** Adobe, so the precedence ladder in `docs/DOCUMENTATION.md:11-23` already decides it
+and the operator is ratifying the documented requirement rather than departing from it.
+
+**What the implementation has to settle, which the decision does not:**
+
+- **The destination already exists, under the wrong name.** There is no `Image` menu — the app's
+  four menus are File, Tools, Edit, Window (`src/components/DesktopHeader/DesktopHeader.tsx:185`,
+  `:283`, `:309`, `:390`) — **but `Edit` is already an `Image ▸ Adjustments` host**: it carries
+  hard-coded items for `color`, `blur`, `levels`, `transform`, `draw` and `text`
+  (`DesktopHeader.tsx:319`, `:329`, `:339`, `:349`, `:359`, `:369`, dispatching through
+  `handleToolSelection` at `:121`-`:127`). So "extracting these three means building a real menu
+  bar first" is **wrong** — the menu exists, the items exist, and they call the same
+  `handleToolSelection` the rail calls. What is missing is that the menu is called `Edit` where
+  Adobe says `Image ▸ Adjustments`, and that `blur`/`draw`/`text` are real Tools-panel tools
+  sitting in a menu. **The rail removal and the menu relabelling are the same three-id change in
+  two hand-written lists**, not a menu build. This correction supersedes the earlier claim in
+  this entry that no menu exists to receive the three.
+- **The `imageProcessor` for two of the three is DEAD CODE.** `color` and `levels` are
+  `commit: 'layer-operation'`, and `useLayer.ts:576` returns before the `imageProcessor` call at
+  `useLayer.ts:603`. The visible effect comes from a CSS string assigned to the canvas —
+  `layer-renderer.ts:15-16` and `:17-18` build `buildColorsFilter` / `buildLevelsFilter` results,
+  applied by `ctx.filter = getLayerFilter(layer.operations)` at `layer-renderer.ts:77` — and
+  `functions.ts:60-62` is literally `grayscale(%) sepia(%) saturate(%)`. Their only callers are
+  `image-processors.test.ts`. `transform` is split: its affine path is bypassed
+  (`useLayer.ts:550-566`), its trapezoid path is live. **A restructure that moves these to a
+  menu should move the CSS-filter path, not the OffscreenCanvas path** — the latter is what a
+  reader would assume is the implementation, and it is not the one that paints.
+- **`levels` is a misnamed Brightness/Contrast, confirmed in code.**
+  `LevelsToolArgs = { brightness: number; contrast: number; toolName: 'levels' }`
+  (`src/tools/levels.ts:4`), and `functions.ts:66-70` emits `brightness(...) contrast(...)`.
+  Adobe's Levels is a three-point piecewise-linear remap with a channel selector and a histogram;
+  this is two global sliders. **The app has no Levels.** Note the consequence: renaming the
+  capability rather than moving it is a decision — the bar renders Brightness/Contrast controls
+  under a "Levels" label, so a menu called `Image ▸ Adjustments` with an item labelled `Levels`
+  would be a _new_ falsehood, and the honest item is `Brightness/Contrast`.
+- **They are in a second surface already, and the IDs are load-bearing beyond the UI.**
+  `src/components/DesktopHeader/DesktopHeader.tsx:27-32` holds a `TOOL_MENU_ITEMS` list including
+  all three, under a header comment (`:20-21`) saying "a tool missing from the Tools menu is a
+  visible inconsistency"; the same component hard-codes them as `Edit` items at `:319`-`:349`.
+  The claim that extraction is "routing only, with the history and durable paths untouched" is
+  **refuted**: `'color' | 'levels'` are a **durable schema type** at
+  `src/contexts/history-model.ts:75` (`DurableFilter`) and `src/contexts/layer-types.ts:28`
+  (`LayerOperationArgs`). ~50 non-test lines across ~20 `src/` files, ~185 test lines across ~30
+  test files, and 5 e2e specs — every one of which selects these three **through the rail flyout**,
+  so all five break. Zero keyboard shortcuts are bound to any of the three, so that part is free.
+- **`extraTools` is inert either way.** `toolbar-mapping.ts:164` exports it; its only reader is
+  `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`, which checks it is
+  disjoint from `shape`. Deleting the three makes the flag mean what its name says for the first
+  time, or makes it dead code to remove.
+
+### The premise was falsified: adjustments DO reach Photoshop's Tools panel
+
+Research on 2026-10-01, after the decision above was recorded, established that the **justification
+was wrong even though the decision survives**. `docs/OVERRIDES.md` was correctly _not_ used, but
+the reasoning it was given does not hold:
+
+- **The Adjustment Brush Tool is a real Tools-panel entry.** Beta in Photoshop 25.9 (Feb 2024),
+  GA in **25.11 (July 2024)**, with its own toolbar slot in the Retouching & Painting Tools
+  group — deliberately promoted out of the Brush flyout because nesting broke the `B` cycle. It
+  has **no single-letter shortcut**; the widely-quoted `K` is the CS3-era Targeted Adjustment
+  Tool, a different and removed tool. Adobe: it is "non-destructive, as they generate a new
+  adjustment layer with a layer mask", created on mouse-release, painted area = mask.
+- **The Selection Brush Tool is also real**, GA in the same 25.11, in the **Lasso group**, reached
+  by cycling `L` then `Shift`+`L`. It only makes selections.
+- **So "adjustments are not tools" is false as a general statement.** Adobe ships a tool whose
+  output is an adjustment, not pixels. (Two other non-pixel tool outputs exist: Type, and the
+  shape tools, which create shape/fill layers.)
+- **The decision still stands**, because the narrow claim survives: `color` and `levels` here are
+  **whole-image adjustments with no mask**, and the Adjustment Brush can only apply an adjustment
+  where you paint. It cannot do what these two do. `transform` is untouched by any of this.
+- **The recorded justification must not stand as written.** This is the concrete harm: the entry
+  asserted a general claim that Adobe's own documentation contradicts, and a later session
+  auditing rail compliance against it would find the Adjustment Brush and conclude the app is
+  right and the doc is wrong — the exact inversion §117 exists to prevent.
+
+**What this changes for a restructure.** The honest target is not "move three things to a menu".
+It is: rename the `Edit` host to `Image ▸ Adjustments`, relabel `levels` to `Brightness/Contrast`
+because that is what it computes, keep `color`'s three CSS filters under a name that says what
+they are (`grayscale`/`sepia`/`saturate` is neither Black & White nor plain desaturation — there
+is no per-hue weighting anywhere), and treat **real Levels, real Curves and adjustment layers as
+unbuilt work.** The app has no adjustment-layer machinery at all:
+`psd-utils.ts:88-106` refuses `adjustment`, `mask` and `clipping` on import. What exists is a
+retained per-layer operation stack (`layer.operations[]` → `apply-filter`), which retains but
+cannot re-edit, and has no properties panel.
+
+- **The processors survive; the tool ids do not.** `src/tools/colors.ts`,
+  `src/tools/levels.ts` and `src/tools/transform.ts` are fully implemented, and
+  `docs/TOOLS-TOO-HARD.md` records the extraction as a **routing** change with the history and
+  durable paths untouched. Deleting the tool names is therefore cheap — the expensive part is
+  whatever surface ends up owning the processors, and there is currently none.
+- **What is NOT decided here.** `draw` is a separate id in the same section
+  (`docs/PHOTOSHOP-UX.md:32-37`) with its own history — 40 e2e call sites across 23 spec files,
+  and `e2e/pen-types.spec.ts` dies with it. The operator's decision covers the three adjustment
+  ids only. `HANDOFF.md` §74 remains the open entry for `draw`.
+
+**This entry is a decision record, not a changelog.** It stays until the three are gone from
+`toolbar-mapping.ts`, at which point the fix **deletes** it rather than rewording it
+(`docs/DOCUMENTATION.md:145-158`). Nothing in the codebase is changed on the strength of this
+entry alone.
 
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
@@ -4631,6 +4742,111 @@ parses `curated.mjs` and would catch a stale key.
 **Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
 `docs/README.md` ("Not maintained here"), `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
 `docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`
+---
+
+## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
+
+`index.html:18` and `index.html:35` load GTM container `GTM-WBWSB9XS` and `G-7F5V72YQ4K` from
+`googletagmanager.com`. Nothing in `e2e/` stubs, blocks or asserts on it.
+
+Three consequences, in increasing order of how much they matter:
+
+1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` records 1-8 aborted
+   `region1.google-analytics.com/g/collect` requests per test. It reports them and does not fail
+   on them, because a network call no test controls is not a defect in the app.
+2. **Every CI run contacts a third party.** A build gate that depends on Google's reachability
+   to stay green is a build gate with an extra failure mode it does not own.
+3. **Local development leaks to a production analytics property.** A developer's stroke, tool
+   switch and undo are reported to `G-7F5V72YQ4K` with no opt-in.
+
+Whether analytics belongs in a local editor at all is an operator decision and is not made here.
+
+**Fix.** Decide the policy first — absent, or opt-in behind an env flag that `e2e/` sets to
+nothing. Then either drop the two script tags from `index.html` or make them conditional on that
+flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googletagmanager.com`
+to `abort()` so the suite stops depending on them. The third point is the one worth resolving
+regardless of which policy is chosen.
+
+**Files.** `index.html:18,35`, `e2e/global-setup.ts`, `e2e/helpers/console-police.ts` (the
+report line that currently names them).
+
+---
+
+## 141. Two axe results are `incomplete` and therefore unasserted — one is a real role error
+
+`e2e/accessibility.spec.ts` attaches axe's `incomplete` array to the Playwright report and logs
+it, but deliberately does not assert on it: axe returns `incomplete` when it cannot decide, and
+failing on that would be a false positive. Two results recur on every run of the app-shell scan:
+
+- `aria-allowed-role` ×1 — a `role` on an element whose permitted roles exclude it. This is the
+  one to chase: `aria-allowed-role` goes incomplete when the element's accessible role is
+  ambiguous, which usually means the `role` and the element disagree.
+- `color-contrast` ×2 — axe declines to judge contrast where it cannot establish the text colour,
+  typically text over a background image or a gradient. Both land on the `SidebarRight`
+  `PanelGroup` header, whose background is set by class rather than inline.
+
+Neither is a finding on its own. Both are places where the automated checker has explicitly
+stopped, which is the category a reviewer should read by hand rather than a category a green run
+clears.
+
+**Fix.** Run the app-shell scan in both themes at a viewport where both regions are visible and
+read the two elements by hand. `role` on a non-matching element is a genuine a11y bug worth
+fixing; contrast over a gradient is usually a design decision, and belongs in `docs/OVERRIDES.md`
+rather than in a test if it is deliberate.
+
+**Files.** `e2e/accessibility.spec.ts` (the `incomplete` attachment), `src/components/SidebarRight/PanelGroup.tsx:42`.
+
+## 142. `classify` reports the main worktree as `keep` while it holds the only copy of uncommitted work
+
+`scripts/lib/worktree-inventory/classify.mjs:236-243` returns for the primary worktree before any
+tree-state check runs:
+
+```js
+if (wt.isPrimary) {
+  recommendation = live ? RECOMMENDATION.IN_USE : RECOMMENDATION.KEEP;
+  reasons.push('the main worktree is never a deletion candidate');
+}
+```
+
+`KEEP` maps to `ACTION.KEEP` in the one-decision switch (`:334`), never `AT_RISK`. The
+`STATUS.UNMERGED_WORK`-with-`uncommitted` arm that produces `SALVAGE` → `AT_RISK` (`:294-299`) is
+downstream and never reached for the main checkout.
+
+**Observed, not inferred.** While correcting the §117 decision record, `npm run test` failed with:
+
+```
+ph (curated: NONE): ahead=0 onMain=true dirty=3 untracked=0
+  -> status=landed recommendation=keep action=keep prunable=false
+  — readable, so this must be reported as at-risk, not as anything else
+```
+
+Three modified files in main, in no commit on any branch, classified as **keep**. The guard at
+`scripts/__tests__/worktree-inventory.test.mjs:2326-2331` caught it and the suite went green the
+moment the files were committed — which is the correct behaviour of the guard and the defect in
+`classify` at the same time.
+
+**Why it matters.** The inventory's stated purpose is to point an operator at work that exists in no
+commit and can therefore be lost. Main is the **most** likely place for that, not the least:
+`docs/ORCHESTRATION.md:118-120` records that other sessions commit into it concurrently, and
+`:122-130` documents a merge that silently reverted 17 files through it. A `keep` verdict is read as
+"this checkout is fine" by anything consuming the inventory, and the one checkout whose loss is
+catastrophic gets the verdict that says nothing needs attention. The `isPrimary` exemption is
+correct for **deletion** — the comment at `:237-240` is right that main is the landing site — but
+the branch conflates "not a deletion candidate" with "nothing to report".
+
+**Fix.** Keep the primary worktree out of every prune and dispose verdict, and make the dirty case
+fall through to the salvage path rather than short-circuiting it. The narrowest correct shape is to
+compute `uncommitted` first and let a primary worktree with a dirty tree reach the same
+`AT_RISK` verdict a secondary one gets, while a clean primary still reports `keep` for the reason it
+already gives. `wt.isPrimary` then needs to gate the _prune_ decision rather than the whole
+recommendation.
+
+**This entry is not a request to weaken a test.** The failing assertion is the guard working. Do not
+touch `worktree-inventory.test.mjs:2326`; fix `classify`. Reproduce by editing any tracked file in
+main and running `npx vitest run scripts/__tests__/worktree-inventory.test.mjs`.
+
+**Files.** `scripts/lib/worktree-inventory/classify.mjs:236-243`, `:294-299`, `:314-338`,
+`scripts/__tests__/worktree-inventory.test.mjs:2300-2336`
 
     docs(handoff): the AVIF timeout is a symlink artefact, and main's entry is correct
 
@@ -4653,7 +4869,7 @@ form of the same trap: they not only work, they work on the wrong files.
 
 **Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
 
-## 140. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
+## 143. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
 
 **Problem.** Two audits of this sweep disagreed about the same thing, and the second one was wrong.
 Main's `e2e/OPEN_PROBLEMS.md:704` records the AVIF download timeout and states that **both specs pass
@@ -4670,10 +4886,9 @@ permits — so the run's own log says:
             is outside of Vite serving allow list.
 ```
 
-The wasm never loads, the encoder never finishes, and no download event fires. That is §135's
-symlinked-`node_modules` trap arriving through the _verification recipe_ rather than through the
-product, so the general fix is §135's and is not restated here. With the symlink removed and a real
-`npm ci` in the worktree, the same two specs on the same `main` commit:
+The wasm never loads, the encoder never finishes, and no download event fires. That is the symlinked
+\-`node_modules` trap, hitting through the _verification recipe_ rather than the product. With the
+symlink removed and a real `npm ci` in the worktree, the same two specs on the same `main` commit:
 
 ```
 ✓ raster-formats.spec.ts:8 › exports to AVIF (.avif) with pixel verification (1.1s)

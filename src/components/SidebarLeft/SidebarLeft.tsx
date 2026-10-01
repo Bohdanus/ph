@@ -1237,12 +1237,21 @@ const SidebarLeft = () => {
               data-testid="foreground-color-swatch"
             />
 
+            {/*
+              `opacity-0` hides PIXELS, not the accessibility tree and not the tab
+              order: `element.focus()` still lands on these, so without a name they
+              are two unlabelled "colour" controls a screen reader reaches between
+              the swatches. `e2e/accessibility.spec.ts` reports this as a CRITICAL
+              `label` violation, and all ~172 `getByRole` locators in `e2e/` miss it
+              because nothing ever queried them for an accessible name.
+            */}
             <input
               type="color"
               ref={colorInputRef}
               className="absolute opacity-0 pointer-events-none"
               value={color}
               onChange={handleColorChange}
+              aria-label="Foreground Color"
               data-testid="foreground-color-input"
             />
             <input
@@ -1251,13 +1260,15 @@ const SidebarLeft = () => {
               className="absolute opacity-0 pointer-events-none"
               value={backgroundColor}
               onChange={handleBgColorChange}
+              aria-label="Background Color"
               data-testid="background-color-input"
             />
           </div>
 
+          {/* gray-500 on the gray-100 panel measured 4.39:1, under WCAG AA's 4.5:1. */}
           <button
             onClick={handleSwapColors}
-            className="mt-1 text-[8px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 uppercase font-bold"
+            className="mt-1 text-[8px] text-gray-600 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-200 uppercase font-bold"
             title="Swap Colors"
             data-testid="swap-colors-button"
           >

@@ -60,9 +60,13 @@ vi.mock('../../../hooks/useRect.ts', () => ({
   useRect: (props: UseRectProps) => {
     useRectProps.current = props;
     return {
-      onPointerDown: pointerHandlers.onPointerDown,
-      onPointerMove: pointerHandlers.onPointerMove,
-      onPointerUp: pointerHandlers.onPointerUp,
+      pointerHandlers: {
+        onPointerDown: pointerHandlers.onPointerDown,
+        onPointerMove: pointerHandlers.onPointerMove,
+        onPointerUp: pointerHandlers.onPointerUp,
+      },
+      rectHandles: { redraw: vi.fn(), clearSelection: vi.fn() },
+      pointerState: {},
     };
   },
 }));
