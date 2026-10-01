@@ -4406,3 +4406,45 @@ the refusal message should say which of the three conditions matched. The
 a pruned worktree leaves one behind: nothing in the e2e runner cleans its own record.
 
 **Files.** `scripts/dispose-worktree.mjs` (argument resolution), `scripts/e2e-run.mjs:687`
+
+## 158. The worktree-inventory suite reads the shared main checkout, so its verdict depends on whether main happens to be clean
+
+**Problem.** `worktree-inventory.test.mjs` calls `liveWorktreeFacts()`, which reads every
+worktree git reports — including the MAIN checkout, located by `listWorktrees(cwd)[0].path`
+precisely so the answer does not depend on which worktree the suite was invoked from. Two
+consequences, and the second is the defect.
+
+`classify.mjs:210` marks the primary worktree `STATUS.LANDED` **unconditionally**, before any
+look at its working tree: `isPrimary` short-circuits ahead of the `uncommitted && ahead === 0`
+arm that would otherwise report `UNCOMMITTED_ONLY`. So the main checkout holding uncommitted
+work is still classified `landed`.
+
+The test `protects that shape in a worktree NOBODY has written anything down about`
+(`worktree-inventory.test.mjs:2268`) filters to `r.inRepo` and asserts nothing there is
+unreported. The main checkout is in that set. Its own comment claims "creating a worktree,
+and this agent's own worktree, change nothing here" — true of worktrees this agent creates,
+and false of the one worktree every agent shares.
+
+Measured on 2026-10-01: with two untracked files in the main checkout, the suite failed with
+`ph (curated: NONE): ahead=0 onMain=true dirty=0 untracked=2 -> status=landed ... expected [Array(1)]
+to deeply equal []`. Move those two files aside and it passes, with no code change. The suite
+is green or red depending on whether a concurrent session left a file in `main`.
+
+This is not a regression and it is not caused by any branch in flight; it reproduces on
+pristine `main` whenever main is dirty. It is reported here because the next session to hit
+it will read it as its own.
+
+**Fix.** Two separable decisions, and the second is a judgement call rather than a repair.
+
+1. Make the test hermetic. Either exclude the primary worktree from the derived set with a
+   stated reason — it is never a disposal candidate, and `dispose-worktree.mjs` refuses
+   `main-worktree` outright — or give the test its own fixture repository, which
+   `makeRepo()` in this same file already provides for the `git.mjs` cases.
+2. Decide whether `isPrimary` should short-circuit ahead of the working-tree facts. If the
+   main checkout is genuinely never a candidate, the current order is right and only the test
+   needs changing. If it should still report uncommitted work, the `isPrimary` arm has to
+   move below the `uncommitted` arm, which changes the inventory's output for every run and
+   belongs to whoever owns `WORKTREES.json`'s meaning.
+
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs:2268`,
+`scripts/lib/worktree-inventory/classify.mjs:209-212`
