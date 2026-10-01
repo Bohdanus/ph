@@ -420,7 +420,25 @@ git rev-list --count main.."$BRANCH" # must be 0
 git merge-base --is-ancestor "$BRANCH" main && echo on-main
 ```
 
-Delete the worktree **and** its branch, then regenerate the inventory.
+Delete the worktree **and** its branch, then regenerate the inventory — through
+the one program that will do it:
+
+```bash
+npm run dispose -- <name> --dry-run     # names the signal that refuses, if any
+npm run dispose -- <name>
+node scripts/worktree-inventory.mjs      # the verdict you acted on is now stale
+```
+
+**Never hand-write the list.** `dispose-worktree.mjs` re-reads the generated
+`action`, the board's claims and file locks, and the session database, and it
+anchors the branch at `refs/keep/disposed/<name>` before it deletes anything. A
+triage that classifies worktrees correctly and then deletes them from its own
+list has thrown the classification away, which is exactly what happened on
+2026-10-01: a sweep read a merge commit whose subject carried a branch's _name_
+and disposed of a worktree a live chat was using (the full account is in the
+header of `scripts/dispose-worktree.mjs`). The
+cleanliness probe it ran first — `git status --porcelain` — reads the same for an
+abandoned worktree and a busy one, so it could not have caught that.
 
 **0 commits ahead of `main` is not evidence a worktree is disposable.** It is the single most
 expensive mistake available here: such a branch can hold uncommitted work that exists on no ref
@@ -469,10 +487,14 @@ git log main.."$KEEP" --no-merges --format='%s'        # same commit list
 git branch --contains <drop-sha>                      # only the dropped ref
 ```
 
-Delete the worktree **and** its branch together, and confirm the survivor is untouched
-afterwards. Deleting the _other_ one, or both, destroys the only ref holding the content — a
-salvage commit is frequently the sole holder, with no tag and no remote-tracking ref. **Never
-delete both halves of a duplicate pair.**
+Delete the worktree **and** its branch together with `npm run dispose -- <name>`
+— one call per half, never a loop over a list you wrote — and confirm the
+survivor is untouched afterwards. Deleting the _other_ one, or both, destroys the
+only ref holding the content — a salvage commit is frequently the sole holder,
+with no tag and no remote-tracking ref. **Never delete both halves of a duplicate
+pair**, and note that `dispose` anchors whatever it removes at
+`refs/keep/disposed/<name>`, so a half you deleted by mistake is one `git branch`
+away.
 
 ### (c) Hard merge — mark it, move on, come back last
 

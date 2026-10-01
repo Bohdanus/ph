@@ -3555,93 +3555,6 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
 form of the same trap: they not only work, they work on the wrong files.
 
 **Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
-
-## 136. A sweep removed a live write chat's worktree and branch on the strength of a branch _name_ read out of a 14-hour-old merge subject
-
-**Problem.** `git worktree remove` followed by `git branch -D` is irreversible for a branch that is
-ahead of `main`, and nothing in the repository stops a second chat from running it against a worktree
-a live chat is still using. On 2026-10-01 this destroyed the only ref to a verified commit.
-
-**Observed.** Chat `ses_f0bdf3519ffep22jd3HjNdIF0t` created `.kilo/worktrees/stale-citations` on branch
-`fix/stale-citations` at 00:14:31 and committed `201e985b` at 00:15:18. At 00:44:32 chat
-`ses_f0bc046c9ffegfsk7DmCuzltkq` ("Overnight stale worktree cleanup") ran a **hard-coded nine-item
-list** that included `["stale-citations","fix/stale-citations",false]`, and for each entry executed
-`git worktree remove` then `git branch -D`. The victim chat ran `npm run test` **in that worktree six
-seconds later** (00:44:38) and found the directory emptied of `src` and `.skills`.
-
-**Why it believed the worktree was disposable.** `c983b8e7` (2026-09-30 10:57) is a merge on `main`
-whose subject is `merge(fix/stale-citations): two TEST-FLAKES citations no longer point at what they
-claim`, merging a long-dead branch. The live branch was created 14 hours later and is unrelated. At
-00:20:58 the sweep read that subject — "main shows a `merge(fix/stale-citations)` commit, so a live
-session may have made the same fix" — and at 00:21:17 concluded "No duplication — my fix is on main
-and unique". It inferred _already-landed_ from a **subject string**, never from ancestry. The live
-tip was not on `main`: at 00:45:57 the victim measured its own markers against `main` and got `0`.
-
-**Every signal that said `in-use` was present and unread.** The generator's own answer is `in-use`:
-`scripts/lib/worktree-inventory/classify.mjs:119` `hasLiveSession` (30-minute window; the victim's
-session was seconds old), `live → RECOMMENDATION.IN_USE`, and `docs/ORCHESTRATION.md:270` maps
-`in-use` to "leave it alone". The board held two unreleased locks naming the worktree and branch
-(timestamps UTC; this machine is UTC+2):
-
-```
-sqlite3 .git/agent-board/board.db \
-  "SELECT path,agent_id,worktree,acquired_at,released_at FROM file_locks WHERE worktree LIKE '%stale-citations%'"
-# .skills/hard-merge.md              fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
-# .skills/photoshop-tool-creation.md fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
-```
-
-The sweep's 00:44:25 pre-flight _did_ name `stale-citations` — but probed it with
-`git status --porcelain | wc -l`. That is a cleanliness check, and a clean tree reads identically for
-an abandoned worktree and a busy one. The signal it wanted was one column over.
-
-**Fix / convention.**
-
-1. **Never hand-write a disposal list.** Drive removal from
-   `node scripts/worktree-inventory.mjs` and refuse any entry whose `action` is not `dispose`
-   (`docs/ORCHESTRATION.md:269`). That single rule would have saved this worktree.
-2. **Use `git branch -d`, never `-D`.** `-d` refuses an unmerged branch, and that refusal is the
-   entire guard. Where `-D` is genuinely required, the precondition is
-   `git merge-base --is-ancestor <tip> main` — never a `git log --grep=<branch name>` match, which
-   matches any merge that ever mentioned the name.
-3. **A branch name that appears in any `main` merge subject must not be reused.** Put the chat id in
-   the branch name; a name is not an identity once a merge subject can outlive the branch.
-
-**Files.** `docs/ORCHESTRATION.md:269-287`, `scripts/lib/worktree-inventory/classify.mjs:119`,
-`scripts/lib/worktree-inventory/chats.mjs`, `.git/agent-board/board.db` (`file_locks`)
-
-## 137. `git worktree remove --force` is the reflex after git already refuses, and the refusal names exactly what is lost
-
-**Problem.** When `git worktree remove` refuses a dirty worktree it prints the modified and untracked
-paths and tells you to use `--force`. Re-running the same command with `--force` discards that work
-with no further prompt, and the output that named it has already scrolled past.
-
-**Observed.** 2026-10-01 00:14:05, in `.kilo/worktrees/reclaim-skill`:
-
-```
-fatal: '.kilo/worktrees/reclaim-skill' contains modified or untracked files, use --force to delete it
-```
-
-Six seconds later the same chat ran the identical command with `--force`. Git printed the inventory
-one last time —
-
-```
-M .skills/hard-merge.md  M .skills/photoshop-tool-creation.md
-```
-
-— and deleted the worktree. Two files of verified, gate-passing, never-committed edits were gone; the
-chat had to re-derive them from its own transcript. In the same incident, and in a _different_
-worktree, a concurrent sweep got the same decision right only because that tree happened to be clean.
-
-**Fix / convention.** Treat the refusal as a finding, not an obstacle: it is the cheapest inventory
-of uncommitted work in the repository, and it arrives before the only irreversible step. Before any
-`--force` removal, `git -C <worktree> status --short` and either commit, stash-free-copy
-(`git -C <worktree> diff > /tmp/<name>.patch`), or stop. If the answer is "the work is already
-landed", prove it with `git -C <worktree> diff main --stat` being empty for those paths — the
-modified-path list is a list of things that are **not** on `main` by definition. See §136 for the
-other half: a clean tree is not evidence that a worktree is abandoned.
-
-**Files.** `scripts/lib/worktree-inventory/git.mjs:126`, `AGENTS.md` (worktree rules)
-
 ---
 
 ## 138. Two tool options bars justify their clamping with a `localStorage` round trip that no code performs
@@ -3902,8 +3815,8 @@ predicate at `:307` reads. A join that misses returns `undefined` and throws; on
 _different_ worktree with the same display name returns a clean shape and reads `landed`, which is
 the failure above.
 
-**Why it matters beyond the red.** This is the guard `HANDOFF.md` §136 and §137 lean on: §137 is
-`git worktree remove --force` after git has already refused, and §136 is that a clean tree is not
+**Why it matters beyond the red.** This is the property `scripts/dispose-worktree.mjs` leans on: it is
+`git worktree remove --force` after git has already refused, and it is that a clean tree is not
 evidence a worktree is abandoned. The guard exists so uncommitted work is never classified as
 safe. A miss on the main checkout is the one place uncommitted work is guaranteed to exist,
 because that is where agents work.
