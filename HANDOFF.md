@@ -4795,3 +4795,55 @@ fixing; contrast over a gradient is usually a design decision, and belongs in `d
 rather than in a test if it is deliberate.
 
 **Files.** `e2e/accessibility.spec.ts` (the `incomplete` attachment), `src/components/SidebarRight/PanelGroup.tsx:42`.
+
+## 140. `classify` reports the main worktree as `keep` while it holds the only copy of uncommitted work
+
+`scripts/lib/worktree-inventory/classify.mjs:236-243` returns for the primary worktree before any
+tree-state check runs:
+
+```js
+if (wt.isPrimary) {
+  recommendation = live ? RECOMMENDATION.IN_USE : RECOMMENDATION.KEEP;
+  reasons.push('the main worktree is never a deletion candidate');
+}
+```
+
+`KEEP` maps to `ACTION.KEEP` in the one-decision switch (`:334`), never `AT_RISK`. The
+`STATUS.UNMERGED_WORK`-with-`uncommitted` arm that produces `SALVAGE` → `AT_RISK` (`:294-299`) is
+downstream and never reached for the main checkout.
+
+**Observed, not inferred.** While correcting the §117 decision record, `npm run test` failed with:
+
+```
+ph (curated: NONE): ahead=0 onMain=true dirty=3 untracked=0
+  -> status=landed recommendation=keep action=keep prunable=false
+  — readable, so this must be reported as at-risk, not as anything else
+```
+
+Three modified files in main, in no commit on any branch, classified as **keep**. The guard at
+`scripts/__tests__/worktree-inventory.test.mjs:2326-2331` caught it and the suite went green the
+moment the files were committed — which is the correct behaviour of the guard and the defect in
+`classify` at the same time.
+
+**Why it matters.** The inventory's stated purpose is to point an operator at work that exists in no
+commit and can therefore be lost. Main is the **most** likely place for that, not the least:
+`docs/ORCHESTRATION.md:118-120` records that other sessions commit into it concurrently, and
+`:122-130` documents a merge that silently reverted 17 files through it. A `keep` verdict is read as
+"this checkout is fine" by anything consuming the inventory, and the one checkout whose loss is
+catastrophic gets the verdict that says nothing needs attention. The `isPrimary` exemption is
+correct for **deletion** — the comment at `:237-240` is right that main is the landing site — but
+the branch conflates "not a deletion candidate" with "nothing to report".
+
+**Fix.** Keep the primary worktree out of every prune and dispose verdict, and make the dirty case
+fall through to the salvage path rather than short-circuiting it. The narrowest correct shape is to
+compute `uncommitted` first and let a primary worktree with a dirty tree reach the same
+`AT_RISK` verdict a secondary one gets, while a clean primary still reports `keep` for the reason it
+already gives. `wt.isPrimary` then needs to gate the _prune_ decision rather than the whole
+recommendation.
+
+**This entry is not a request to weaken a test.** The failing assertion is the guard working. Do not
+touch `worktree-inventory.test.mjs:2326`; fix `classify`. Reproduce by editing any tracked file in
+main and running `npx vitest run scripts/__tests__/worktree-inventory.test.mjs`.
+
+**Files.** `scripts/lib/worktree-inventory/classify.mjs:236-243`, `:294-299`, `:314-338`,
+`scripts/__tests__/worktree-inventory.test.mjs:2300-2336`
