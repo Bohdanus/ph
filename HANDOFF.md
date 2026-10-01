@@ -3987,3 +3987,79 @@ working tree to have anything to assert.
 
 **Files.** `scripts/__tests__/worktree-inventory.test.mjs:307`, `:329-357`, `:2300-2336`,
 `scripts/lib/worktree-inventory/classify.mjs:105`, `:159`
+
+## 145. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
+
+`src/contexts/ThemeContext.tsx:20` hard-codes `DEFAULT_THEME = 'dark'` and the
+`prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e
+suite pins itself to **light** (`e2e/fixtures/extended-test.ts`'s `pinnedTheme` auto fixture),
+because its pixel oracle — `hasDarkPixels`, `getStrokeAnalysis`, `measureInk` — reads "there is
+nothing here" out of a near-white pixel and is calibrated against the light workspace checkerboard.
+That pin is correct and its header says why. This entry is its cost, and the cost is not the pin.
+
+**The gap.** The one test that runs with the pin released
+(`e2e/document-dialogs.spec.ts:1132`, "with nothing stored the document starts dark") asserts the
+`dark` class on `<html>` and the string in `localStorage`. It reads **no pixel**, so it would stay
+green if every `dark:` Tailwind variant in the app stopped applying. No other spec exercises a
+single `dark:` class. **Nothing measures how dark renders.**
+
+**The defect that gap hides, measured.** The dock's collapse glyph is a single `«`/`»` character
+at `text-sm`, `src/components/SidebarRight/SidebarRight.tsx:359`:
+
+- light: `text-gray-500` (#6b7280) on `bg-gray-200` (#e5e7eb) = **3.90:1**
+- dark: `dark:text-gray-400` (#9ca3af) on `dark:bg-gray-700` (#374151) = **4.06:1**
+
+WCAG AA for normal text is **4.5:1**, so this fails in both themes. axe cannot judge it: it returns
+`incomplete` on both with "Element content is too short to determine if it is actual text
+content", and `e2e/accessibility.spec.ts:98` records that **`incomplete` is never asserted** —
+`:268`, "attached but NOT asserted". So this is a live AA failure that the only accessibility gate
+in the repository structurally cannot see, and it is not a dark-only problem: dark being the
+default raises its visibility, it does not create it.
+
+**Fix.** Either raise the glyph's contrast above 4.5:1 in both themes (`dark:text-gray-300` on
+`gray-700` is 7.00:1, and it is the value `PanelGroup.tsx:42` already uses for the same surface), or
+give the button a real accessible name with a visible label and stop rendering the glyph alone as
+the only text. Then either assert the `incomplete` bucket in the axe helper or assert that a
+specific node is absent from it — a gate that logs a bucket it never checks reports "0 violations"
+about a page whose failing control it printed.
+
+### Also live, and found while measuring the above
+
+Both reproduced in **light and dark**; neither is dark-specific.
+
+- **`region`, moderate**, on the flyout/tooltip portal wrapper, with the flyout open
+  (`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`). A real violation at 1115 audited
+  nodes, in a region the file's header lists as unscanned.
+- **`aria-allowed-role`, minor** and **`region`, moderate**, on
+  `<nav role="toolbar" data-testid="mobile-bottom-bar">` (`src/components/Mobile/MobileBottomBar.tsx:25-33`).
+  `role="toolbar"` is not permitted on `nav`. Visible at 500x800, 309 nodes audited.
+
+### `e2e/accessibility.spec.ts`'s header is stale in five places, and reading it costs the next session an hour
+
+Every one of these was fixed in the **same commit that added the file** (`6982cd35`), and the
+header describes the state that commit fixed:
+
+- `:75-83` says dark reports two extra `color-contrast` violations on the panel tab labels, citing
+  `dark:text-gray-400` at `PanelGroup.tsx:42`. That class is now `dark:text-gray-300`
+  (**7.00:1**), and a dark scan of the shell reports **0** violations. Measured: light and dark are
+  both clean in all three scanned regions — shell, New Image dialog, Draw options bar.
+- `:122-128` "**THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE**", and the four-violation
+  attribution block at `:429-480`, describe a red suite. `npm run test:e2e -- accessibility` is
+  **3 passed, 0 violation(s)**.
+- The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
+  File (New/Open/Save) and Tools menus only.
+- `:94` says the Save dialog is unscanned. It was measured here: 0 violations, 45 nodes, both
+  themes. (Not added to the gate, so the header is still right about the gate and wrong about the
+  state.)
+- Dark is **cleaner** than light by one node: `.text-lg > span` (the same `«`) is `incomplete` in
+  light and passes in dark.
+
+**Fix.** Rewrite the header to describe the current state and keep it a measurement rather than a
+narrative: state the three scanned regions, their node counts, that both themes report 0, and that
+`incomplete` is not asserted — which is what let the glyph through.
+
+**Files.** `src/components/SidebarRight/SidebarRight.tsx:359`, `:418`, `:433`,
+`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`,
+`src/components/Mobile/MobileBottomBar.tsx:25-33`,
+`e2e/accessibility.spec.ts:75-83`, `:94`, `:98`, `:122-128`, `:268`, `:429-480`,
+`e2e/fixtures/extended-test.ts` (`pinnedTheme`), `e2e/document-dialogs.spec.ts:1132`
