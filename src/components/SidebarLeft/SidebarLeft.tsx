@@ -1012,7 +1012,14 @@ const SidebarLeft = () => {
     // axes — one column has one row per group, so row 12 is in section 4 — and using one for
     // the other is how the tile ends up pushed off the end of the array.
     const lastVisibleRow = toolbarSlots[overflowPlan.fittedThrough - 1];
-    const target = lastVisibleRow?.sectionIndex ?? singleColumnSections.length - 1;
+    // The LAST SECTION is the wrong fallback for the row that is not there. With nothing
+    // fitted — the degenerate band, a window too short to hold a tool row and the three-dots
+    // tile's row together — `toolbarSlots[-1]` is undefined, and the fallback put the lone tile
+    // in section 4, whose `<ul>` carries `mt-1.5 border-t pt-1.5`. That is 13px of separator
+    // chrome for a separator with nothing above it, and the planner charges a lone tile
+    // `tileHeight` and nothing more, so the model was 13px short of the screen in exactly the
+    // state where the slot has no pixels to spare. Section 0 carries none of it.
+    const target = lastVisibleRow?.sectionIndex ?? 0;
     singleColumnSections[target].entries.push({ kind: 'overflow' });
   }
 

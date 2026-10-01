@@ -443,8 +443,9 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     //
     // The slot itself begins to overflow at a DIFFERENT, LOWER height — 37px lower, measured —
     // and that edge is a property of the slot's own clamp rather than of the fit's arithmetic:
-    // the slot stops shrinking at 55px (a 327px window), and 55 cannot hold the 57px the lone
-    // three-dots row renders at, so from there down the slot scrolls. **The old detection
+    // the slot stops shrinking at 55px (a 327px window), and 55 cannot hold the 44px the lone
+    // three-dots row renders at **plus the 6px gap above it that the fit charged for a row it
+    // never rendered**, so from there down the slot scrolls. **The old detection
     // watched this second edge and printed it as "THE DEGENERATE BAND"**, which made the test
     // state a falsehood about 37px of real band: at a 340px window the fit has already given up
     // on every tool row, and the test called 329 — a height that fits a tool row — "the tallest
@@ -515,24 +516,6 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     const KNOWN_FIT = 1400;
     const SEARCH_FLOOR = 200;
     const DESCENT_FACTOR = 0.75;
-
-    /**
-     * One rung of the second search: the same resize check, and whether the slot's own content
-     * no longer fits it. This is a statement about the SLOT, which is why it is a different
-     * predicate from the one above and is searched for separately.
-     */
-    const slotScrolls = async (height: number) => {
-      await open(page, 1280, height);
-      const state = await slot.evaluate((el) => ({
-        inner: window.innerHeight,
-        over: el.scrollHeight - el.clientHeight,
-      }));
-      expect(
-        state.inner,
-        `the ${height}px rung must actually be the viewport, or nothing below measures what it claims`
-      ).toBe(height);
-      return state.over > 0;
-    };
 
     /**
      * Descend to bracket, then bisect to a one-pixel bracket, for a band named by a predicate.
@@ -622,106 +605,87 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
       true
     );
 
-    // Band two, the slot's: the same state, 37px lower, and the only one where the slot itself
-    // has to scroll. It is searched for from the first band's boundary rather than from 1400,
-    // because that height is already known to be outside it — the fit has given up there, and
-    // the tile still fits inside a 93px slot without scrolling.
-    const scrollBand = await findBand('the slot must still be forced to scroll', slotScrolls, fitBand.boundary);
+    // AND THE SLOT NEVER SCROLLS ANYWHERE, which is the second half of this file's claim and was
+    // a separate search until the lone tile's 13px went away.
+    //
+    // There used to be a SECOND BAND, 37px below the fit's, where the slot itself was forced to
+    // scroll: at the bottom of the range the fit keeps only the three-dots tile, and it used to
+    // put that tile in the LAST section, whose `<ul>` carries `mt-1.5 border-t pt-1.5` — 13px of
+    // separator chrome for a separator with nothing above it. The planner charges a lone tile
+    // `tileHeight` and nothing more, so the model said 44px and the screen showed 57px, and a
+    // slot clamped at 55px could not hold it. The fit now puts the lone tile in section 0,
+    // which carries none of that, and 44px fits 55px. **The band does not exist.**
+    //
+    // Which is a stronger claim than the one it replaces, so it is asserted as one: a sweep over
+    // the whole range rather than a search for an edge. The slot's `overflow-y-auto` and its
+    // `scrollbar-none` remain as a backstop — a rail that could hide a tool would be worse than
+    // one that scrolls — but nothing in the rail's own geometry reaches them any more, and a
+    // backstop nothing can reach is a backstop nobody has evidence works.
+    const slotOverAt = async (height: number): Promise<{ inner: number; over: number }> => {
+      await open(page, 1280, height);
+      const state = await slot.evaluate((el) => ({
+        inner: window.innerHeight,
+        over: el.scrollHeight - el.clientHeight,
+      }));
+      expect(
+        state.inner,
+        `the ${height}px rung must actually be the viewport, or nothing below measures what it claims`
+      ).toBe(height);
+      return state;
+    };
+
+    const slotOverHeights: string[] = [];
+    for (let height = KNOWN_FIT; height >= SEARCH_FLOOR; height -= 50) {
+      const state = await slotOverAt(height);
+      if (state.over > 0) slotOverHeights.push(`H=${height} by ${state.over}px`);
+    }
+    expect(
+      slotOverHeights,
+      'the slot must not need its own scrollport at any window height, or the fit is charging a row it is not rendering'
+    ).toEqual([]);
 
     // Printed, for the same reason `e2e/toolbar-fit.spec.ts` prints its sweep: the figures are
     // results, not inputs, so nobody should have to re-derive them to check this file's header or
-    // to notice they moved. Each band is every window height at or below its boundary, and the
+    // to notice they moved. The band is every window height at or below its boundary, and the
     // tallest height outside it is one pixel above.
     console.log(
       `FIT BAND (1280 wide) descent=[${fitBand.descent.join(',')}] bisect=[${fitBand.bisected.join(',')}] ` +
         `boundary=${fitBand.boundary} lastFit=${fitBand.lastFit}`
     );
     console.log(
-      `SLOT SCROLL BAND (1280 wide) descent=[${scrollBand.descent.join(',')}] bisect=[${scrollBand.bisected.join(',')}] ` +
-        `boundary=${scrollBand.boundary} lastFit=${scrollBand.lastFit}`
+      `SLOT SWEEP (1280 wide) heights=${SEARCH_FLOOR}..${KNOWN_FIT} step=50 overflowing=${slotOverHeights.length}`
     );
 
-    // The two bands must not be the same band, which is the whole reason there are two searches.
-    // Asserting it is what stops this collapsing back into one predicate that reports whichever
-    // edge happens to be lower — the shape that printed the slot's edge as the fit's.
-    expect(
-      scrollBand.boundary,
-      'the slot must start scrolling strictly BELOW the height at which the fit gives up, or the two bands are one and the fit band is not being found'
-    ).toBeLessThan(fitBand.boundary);
-
-    // The bisection closes on a ONE-PIXEL bracket, so its last probe is whichever side of that
-    // bracket it visited last rather than necessarily the height it settled on — measured, one
-    // pixel above it. Entered explicitly, and re-checked on the way in: everything below asserts
-    // the scrolling state, and running it a pixel above the band would be exactly the vacuous
-    // assertion this whole block replaced.
-    expect(
-      await slotScrolls(scrollBand.boundary),
-      'the height the search settled on must itself overflow the slot, or the assertions below are running above the band'
-    ).toBe(true);
-
+    // The backstop is still there and still suppressed, so that IF the arithmetic is ever wrong
+    // the tools it misjudged are reachable rather than clipped out of existence. Asserted at the
+    // bottom of the range, where the tile is the only thing the rail has left.
     expect(
       await slot.evaluate((el) => getComputedStyle(el).scrollbarWidth),
-      `and at the discovered boundary (${scrollBand.boundary}px) the slot must suppress the scrollbar itself, not merely stop overflowing`
+      'the slot must suppress the scrollbar itself, not merely stop overflowing'
     ).toBe('none');
 
-    // The thing suppression is allowed to cost: reachability. A scrollable slot with hidden
-    // content would satisfy everything above, so the tile is scrolled into the slot's own
-    // scrollport and its rect is checked against the SLOT's client box.
-    //
-    // `scrollIntoViewIfNeeded` IS THE STIMULUS, NOT THE EVIDENCE. It resolves only once the
-    // element is in the viewport, and `boundingBox()` is viewport-relative, so the previous
-    // version's "and it ends up inside the window" was a restatement of the call — it read back
-    // the hundred-odd pixels of slack the call had just produced, on a rail that behaves
-    // identically with or without the line. What is independent of the call is that the SLOT
-    // scrolled, and that the tile's rect lands inside the slot's client box: the real claim is
-    // reachable INSIDE the scrolling slot, not merely somewhere on screen, which is all
-    // `toBeVisible` carries.
+    // Which leaves the one thing that matters at the bottom of the range: the tile is there, and
+    // it is inside the slot's own CLIENT box — the box that excludes borders and any scrollbar
+    // gutter, so this is the right comparison on a runner that draws classic scrollbars.
     const overflowTile = page.getByTestId('tool-overflow-tile');
-    await expect(overflowTile, 'the one reachable tile is still reachable inside the scrolling slot').toBeVisible();
-
-    const tileInSlot = () =>
-      slot.evaluate((el) => {
-        const tile = el.querySelector('[data-testid="tool-overflow-tile"]');
-        if (!tile) return null;
-        const slotBox = el.getBoundingClientRect();
-        const tileBox = tile.getBoundingClientRect();
-        // The CLIENT box, not the border box: `clientTop`/`clientHeight` exclude borders and
-        // any scrollbar gutter, so this stays the right comparison on a runner that draws
-        // classic scrollbars — which is the runner this file exists for.
-        const top = slotBox.top + el.clientTop;
-        const left = slotBox.left + el.clientLeft;
-        return {
-          scrollTop: el.scrollTop,
-          insideVertically: tileBox.top >= top && tileBox.bottom <= top + el.clientHeight,
-          insideHorizontally: tileBox.left >= left && tileBox.right <= left + el.clientWidth,
-        };
-      });
-
-    // Non-vacuity for the containment check, and the reason the containment check is worth
-    // anything at all: unclipped, the tile's bottom is BELOW the slot's client bottom — measured
-    // one pixel below it at the boundary, two at 300px — which is the overflow this band exists
-    // for. Asserting containment where the tile already fitted would be true before anything
-    // scrolled. It is also why the containment check runs at the SLOT's boundary and not the
-    // fit's: 37px higher the tile fits inside the slot without scrolling, and every assertion
-    // below would be true on the way in.
-    const unclipped = await tileInSlot();
-    expect(unclipped, 'the three-dots tile must be a child of the slot to be measured at all').not.toBeNull();
-    expect(
-      unclipped!.insideVertically,
-      `at ${scrollBand.boundary}px the tile must genuinely hang below the slot before anything scrolls, or the containment check below is already true and proves nothing`
-    ).toBe(false);
-
-    await overflowTile.scrollIntoViewIfNeeded();
-    const reached = await tileInSlot();
-    expect(reached, 'the three-dots tile must still be in the slot after scrolling it').not.toBeNull();
-    expect(
-      reached!.scrollTop,
-      'and the SLOT must be what moved it, or the tile only came into view because the call put it there'
-    ).toBeGreaterThan(unclipped!.scrollTop);
-    expect(
-      reached!.insideVertically,
-      'the one reachable tile must land inside the slot own vertical scrollport, not merely on screen somewhere'
-    ).toBe(true);
-    expect(reached!.insideHorizontally, 'and inside it across, or the rail is clipping sideways too').toBe(true);
+    await expect(overflowTile, 'the one reachable tile is still there at the bottom of the range').toBeVisible();
+    await expect
+      .poll(async () =>
+        slot.evaluate((el) => {
+          const tile = el.querySelector('[data-testid="tool-overflow-tile"]');
+          if (!tile) return false;
+          const slotBox = el.getBoundingClientRect();
+          const tileBox = tile.getBoundingClientRect();
+          const top = slotBox.top + el.clientTop;
+          const left = slotBox.left + el.clientLeft;
+          return (
+            tileBox.top >= top &&
+            tileBox.bottom <= top + el.clientHeight &&
+            tileBox.left >= left &&
+            tileBox.right <= left + el.clientWidth
+          );
+        })
+      )
+      .toBe(true);
   });
 });

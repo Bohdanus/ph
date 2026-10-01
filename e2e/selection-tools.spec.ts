@@ -507,10 +507,10 @@ test.describe('Eyedropper', () => {
 
   test('the eyedropper is reachable from its own sidebar tile', async ({ page }) => {
     // The window is NOT grown, and the test's NAME is why that is worth saying: it is about the
-    // eyedropper's OWN tile, and at the suite's 1280x720 the rail FILLS its slot, so its seven
-    // visible tiles are its first seven groups and the eyedropper — still the fifth of sixteen —
-    // is one of them. Measured by `e2e/toolbar-fit.spec.ts`, which sweeps the heights: 720 shows
-    // seven tool tiles.
+    // eyedropper's OWN tile, and at the suite's 1280x720 the rail fills its slot with whole rows,
+    // so its seven visible tiles are its first seven groups and the eyedropper is the fifth of
+    // those seven. Measured by `e2e/toolbar-fit.spec.ts`, which sweeps the heights: 720 shows
+    // seven tool tiles, leaving 40px of the slot that no whole row fits in.
     //
     // The window used to be grown to 900, because the budget reserved a fifth of the slot, only
     // four tiles fit at 720, and the collapse is a suffix, so the fifth group was already gone

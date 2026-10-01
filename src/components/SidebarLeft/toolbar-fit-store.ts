@@ -27,9 +27,9 @@ import {
  * out of whatever the previous render happened to leave on screen, so a render that had
  * collapsed every section but one measured a separator of `0` and committed to a row count
  * using a separator the DOM then charged it — a 7px overflow at one band of window heights
- * (`HANDOFF.md` §97, since fixed by {@link rememberSectionBreak}). The plan is a function of
- * the slot and of a CSS constant that is measured once and remembered, and the store below
- * is where that remembering happens.
+ * (`HANDOFF.md` §97, since fixed by the fallback documented on {@link readRowMetrics}). So the
+ * plan is a function of the slot and of a CSS constant that is measured once and remembered,
+ * and the store below is where that remembering happens.
  */
 export type ToolbarFitStore = {
   /** Handed the slot and the tools box by their ref callbacks. `null` detaches. */
@@ -52,6 +52,13 @@ export type ToolbarFitStore = {
   setSlots(slots: readonly ToolbarSlot[]): void;
   subscribe(onStoreChange: () => void): () => void;
   getSnapshot(): number;
+  /**
+   *
+   * The value is always the current one, and this comment exists because that is not obvious
+   * from the signature: `useSyncExternalStore` re-reads the snapshot after every render and
+   * re-renders when it changed, which is what keeps the rail's plan and the published
+   * measurement describing the same geometry.
+   */
   metricsFor(version: number): ToolbarRowMetrics;
 };
 
@@ -196,12 +203,20 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
   const listeners = new Set<() => void>();
   let observer: ResizeObserver | null = null;
 
-  // Two versions are kept, because that is all `useSyncExternalStore` can ask for: the
-  // current one, and the one it rendered with while the store moved underneath it.
+  // The snapshot is a version NUMBER, and the metrics live beside it in a one-entry table
+  // rather than in the snapshot itself. `useSyncExternalStore` re-reads its snapshot after every
+  // render and re-renders if the value changed, and a snapshot that were an object would have to
+  // be referentially stable to be compared — so the number is what React sees and
+  // {@link ToolbarFitStore.metricsFor} is how the render turns that number back into geometry.
+  //
+  // ONE entry, not two. `useSyncExternalStore` can only ask for the value `getSnapshot` returned
+  // in the render it is asking from, and nothing can publish between that call and the read in
+  // the same synchronous render, so `requested === version` always. A "previous version" table is
+  // therefore dead state with a reassuring name on it: a mutation that made the fallback return
+  // the wrong metrics passed every test in this repository, which is what a write-only table
+  // looks like from the outside.
   let published = UNMEASURED;
   let version = 0;
-  let previousVersion = -1;
-  let previous: ToolbarRowMetrics = UNMEASURED;
 
   // The row model, and whether the component has handed one over yet. It has not on the
   // first commit: the ref callbacks that attach the elements run before the effect that
@@ -239,8 +254,6 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
     // Nothing is published for a measurement that changes nothing the rail draws. A window
     // drag fires an observation per frame, and most of those frames do not change the fit.
     if (unchanged) return;
-    previousVersion = version;
-    previous = published;
     published = next;
     publishedPlan = nextPlan;
     version += 1;
@@ -277,21 +290,24 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
       if (observer === null) observe();
       return () => {
         listeners.delete(onStoreChange);
-        if (listeners.size === 0) observer?.disconnect();
+        // Both halves of the teardown, or the re-arm guard above is dead: a DISCONNECTED
+        // observer left non-null would make every later `subscribe` skip `observe()`, and the
+        // rail would silently stop refitting on resize with nothing in the console to say so.
+        // `attach` re-arms as well, which is what covers a React that remounts the element
+        // without unsubscribing first.
+        if (listeners.size === 0) {
+          observer?.disconnect();
+          observer = null;
+        }
       };
     },
     getSnapshot: () => version,
-    // A fallback, and honestly one. `useSyncExternalStore` normally asks for the current
-    // version or the one it last rendered with, and both are answered exactly; a THIRD,
-    // staler version can only come from a render React discarded, and a discarded render
-    // produces no output, so returning the current metrics is the safe answer and not a
-    // silent lie about the past. It is a fallback rather than an error because the cost of
-    // being wrong here is a re-derived plan on the next real measurement, not a wrong commit.
-    metricsFor(requested) {
-      if (requested === version) return published;
-      if (requested === previousVersion) return previous;
-      return published;
-    },
+    // The metrics behind a snapshot value. The value is only ever the current one — see the
+    // note where `published` is declared — so this is a lookup with one row, and saying so is
+    // the honest shape of it. It stays a function rather than a property so the memo in
+    // `useToolbarOverflow` can depend on the VERSION and re-read the geometry when it moves,
+    // while holding the same object identity for as long as it does not.
+    metricsFor: () => published,
   };
 };
 

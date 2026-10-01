@@ -2290,120 +2290,6 @@ into it silently rots, and its own rule says as much.
 **Files.** `docs/LAYERS-PANEL.md:824-834`, `TEST-FLAKES.md:722`,
 `e2e/viewport-drawing.spec.ts:228`, `docs/DOCUMENTATION.md:103-117`
 
-## 97. The fit charges a section separator it never measured, and the grid overflows its own budget at 703–709px
-
-**Problem.** `readRowMetrics` derives `sectionBreakHeight` from the **previously rendered** DOM, and
-returns `0` when that layout has only one non-empty section
-(`src/components/SidebarLeft/toolbar-fit-store.ts:109-121` — the `between > 0` guard needs a second
-non-empty `<ul>` and finds none). With `sectionBreakHeight` at 0 the planner accepts one row too many
-(`toolbar-overflow.ts:122-149`), that extra row is the first of `toolbarMap` section 1, and the
-section separator is then rendered for real. The plan is short by exactly the separator, which is
-`mt-1.5 border-t pt-1.5` = 13px over the 6px row gap = **7px**.
-
-**Measured in Chrome**, `1280` wide, one page resized 1px at a time, replicating
-`e2e/toolbar-fit.spec.ts`'s own `measure()` verbatim:
-
-```
-H=709 slot=437 budget=349.6 content=351 over=+1.4 tiles=7
-H=707 slot=435 budget=348.0 content=351 over=+3.0 tiles=7
-H=705 slot=433 budget=346.4 content=351 over=+4.6 tiles=7
-H=703 slot=431 budget=344.8 content=351 over=+6.2 tiles=7
-```
-
-Nothing else in `H=1000..380` exceeds the budget, and the degenerate band is never entered.
-
-**The app's own assertion already fails here; the sweep just does not look.** `e2e/toolbar-fit.spec.ts:165`
-is `expect(m.over).toBeLessThanOrEqual(0)`, and the `HEIGHTS` list at `:43` samples twelve heights,
-none of which lands in 703–709. This is the same class the file was written for — its own header
-(`:10-19`) records the previous separator bug as the 16-row rail modelled at 794px and measured
-822px — and the 20% headroom hid it a second time. The non-vacuity check at `:179`,
-`expect(any).toContain('sep=7')`, cannot catch it either: `any` is `rows.find('H=1400')` (`:173`),
-the one height where nothing collapses and every section is non-empty, so the measurement cannot
-read 0 there.
-
-**The documented invariant is false, and the test that claims it cannot see it.**
-`toolbar-fit-store.ts:21-25` states the plan "is a function of the slot and of nothing else".
-`SidebarLeft.overflow.test.tsx:329` pins exactly that. But the plan is a function of the slot **and
-of the previous render**: at `H=705` one run rendered 6 tiles (`content=294`) and another 7
-(`content=351`), same slot height, 433. jsdom cannot observe it — `getBoundingClientRect` is 0 for
-every box and `src/test/setup.ts:28-34` installs a no-op `ResizeObserver`, so the feedback loop is
-stubbed out and the measurement reads "unmeasurable", which `planToolbarOverflow` resolves to
-"show everything" (`toolbar-overflow.ts:116`).
-
-**Confirmed by re-deriving the planner, not by reading it.** At the violating heights the render
-reports `nonEmptySections=2/5` and 7 tiles, which is the plan computed with `sectionBreakHeight=0`
-(7 tiles); the plan computed with `sectionBreakHeight=7` gives 6. At the non-violating neighbours
-the render has `nonEmptySections=1/5` and 6 tiles, matching the `sep=7` plan. The planner therefore
-committed to a row count using a separator it could not see, and the DOM then charged it.
-
-**No user-visible harm, and that is why it is an entry and not a hotfix.** At the worst height the
-grid is 351px in a 433px slot, so nothing is clipped, the rail does not scroll, and every collapsed
-tool is still reachable under the three-dots tile. What is broken is the stated contract and the
-claim that the fit is settled.
-
-**Fix.** Stop deriving the separator from a layout that may not contain one. Either carry it forward
-once measured — the rail knows statically, from `ToolbarSlot.sectionIndex`, which rows open a new
-section, so the separator is needed exactly where the plan says it is and the measurement is only
-missing when the previous render had nothing to measure — or keep a section `<ul>` non-empty so the
-measurement is always available. Measuring it from computed style off a section list is the same fix
-as for `rowGap` and `tileHeight` and needs no new constant.
-
-**Test that fails without the fix.** Add `705` to `HEIGHTS` in `e2e/toolbar-fit.spec.ts:43`; `:165`
-then fails with `the grid overflowed its own budget`. A jsdom test cannot express this at all —
-it is the same reason that file exists, and the reason the rail's own `overflow` unit suite passes
-green over the defect.
-
-**Files.** `src/components/SidebarLeft/toolbar-fit-store.ts:109-121`,
-`src/components/SidebarLeft/toolbar-overflow.ts:122-149`,
-`src/components/SidebarLeft/SidebarLeft.tsx:869-898` (where the three-dots tile is placed in the
-section of the last visible row), `e2e/toolbar-fit.spec.ts:43` and `:165` and `:173-179`.
-
-## 98. The console log is the app's whole error channel, by decision
-
-**Decided 2026-09-30: the app gets no user-facing error surface.** Swallowing a failure is acceptable
-provided the console reports it. Every `alert()` was removed in favour of `console.error`
-(`155ba7b8`), and nothing replaced them: `git grep -iE "toast|snackbar|notif"` over production `src/`
-returns nothing, and `ErrorBoundary` is mounted at only two places (`src/App.tsx:92,96`), catches
-React render throws only, and covers neither `Menu`, `MobileMenuDrawer` nor `MobileHeader`.
-**Do not "fix" a silent failure by adding a dialog or a banner** without asking again — the reasoning
-that removed the alerts applies to whatever would replace them.
-
-**The accepted cost, which is real and deliberate.** A failed file open, save, export or selection
-copy is invisible on screen. Export is the sharpest case: `handleImageSave`'s `finally` closes the
-save dialog unconditionally (`src/contexts/useFile.tsx:133-136`), so a failure closes it exactly as a
-success does, and on desktop the screen is then byte-identical to success — `fileName` is rendered
-only at `src/components/Mobile/MobileMenuDrawer.tsx:110` and `src/components/Mobile/MobileHeader.tsx:107`,
-and `hasUnsavedChanges` is rendered nowhere, appearing in components only inside the three `confirm()`
-guards. This is reachable by decision, not by accident: entry 45 keeps the 80 MP AVIF ceiling, so an
-80–100 MP document is _supposed_ to fail to export.
-
-No data is lost. `useApp.handleImageSave` (`src/hooks/useApp.ts:67-71`) is the only writer of
-`hasUnsavedChanges: false` and of the rename, and it is guarded by `if (data)` at every call site, so
-a failed export leaves the document dirty and intact rather than half-saved.
-
-**What the decision required.** A report is only as good as the channel, so the console gap had to be
-closed for it to hold. `copyActiveSelection` returns `false` without throwing for every null-snapshot
-case (`src/contexts/useSelectionClipboard.ts:41-62`), and seven call sites used to discard that boolean
-in silence — `FreehandLasso.tsx`, `FeatherMagneticLasso.tsx`, `MagicWand.tsx`, `QuickSelection.tsx`,
-`EllipticalSelection.tsx`, `RectangularSelection.tsx` and the `AppKeyboardShortcuts.tsx` copy shortcut.
-All seven now log it, so no failure path is silent. The file and export sites also pass the caught
-value as a second argument instead of stringifying it, so a non-`Error` rejection reaches the log as
-its reason rather than as `[object Object]`.
-
-**What is not covered.** Each report is pinned by a unit test asserting the exact `console.error`
-call, including the non-`Error` cases. No Playwright spec drives a failed open, save, export or
-copy, so those four paths have no browser-level coverage. (Console and page errors are no longer
-unasserted in general: `e2e/helpers/console-police.ts` fails every spec on an unaccepted console
-error or page error. What remains true here is narrower — those four paths are never _reached_
-in a browser, so nothing there could produce a message for it to catch.)
-
-**Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
-`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
-`src/components/DesktopHeader/DesktopHeader.tsx` (File > Save handler),
-`src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
-`src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
-`src/util/selection.ts:430-442`.
-
 ---
 
 ## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
@@ -4099,3 +3985,47 @@ grayscale branch is a small consumer of it rather than the reason to build it.
 
 **Files.** `src/tools/sponge.ts:110`; `src/tools/colors.ts:5`, `:15`;
 `src/components/ToolbarsRight/Colors/Color.tsx:130`; `src/contexts/psd-utils.ts:80`
+=======
+
+## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
+
+**Problem.** `useToolbarOverflow` (`src/components/SidebarLeft/use-toolbar-overflow.ts`) measures the
+rail from a ref callback, which runs during commit. React subscribes to an external store in a
+**passive** effect, so at that moment there is no listener to notify, and the `setSlots` layout
+effect publishes into the same empty set. The committed tree therefore holds the plan from _before_
+the measurement, and `planToolbarOverflow`'s own answer to an unmeasurable rail is
+`everythingVisible` — so the first committed rail is **every tool on screen**, sixteen tiles in a
+slot that fits eight at 1280x720, corrected on a later commit. `SidebarLeft` returns above the
+`<aside>` when there is no document while this hook sits above that check, so the hook survives and
+the sequence repeats on **every document close and open**, not only on the first page load.
+
+**It has not been observed failing, and that is measured rather than assumed.** A
+`MutationObserver` installed by `page.addInitScript` — before the app's own script, and with
+microtask callbacks, which run before the paint the mutation enables — recorded the first rail it
+ever saw as already fitted: eight tiles at 720. Chrome flushes React's passive effects inside the
+mounting task, so the refit lands before the first frame in practice. **In practice is not a
+promise**, and the promise is what a load-time flash of a full rail would rest on.
+
+**The obvious fix is refused by the repository's own rule.** A layout effect that re-renders when
+the snapshot has moved ahead of the render is exactly what closes the window, and
+`react-hooks/set-state-in-effect` rejects it: _"Calling setState synchronously within an effect can
+trigger cascading renders"_. That rule is right in general and the effect is a cascading render, so
+it was **not** suppressed to make the warning disappear. No gate was weakened and the rail behaves
+as it is measured to behave.
+
+**What would close it.** A decision, and this entry is the finding rather than the decision:
+either an `OVERRIDES.md` entry accepting one `set-state-in-effect` suppression on this file with
+the measurement above as its justification, or a design that does not need a pre-paint refit at all
+— a CSS-driven fit (`@container` queries, or the tile count derived from the slot's height with
+`overflow` doing the arithmetic) so there is no measurement to be late with. The second is the
+better answer and is a rewrite of this subsystem, not a patch.
+
+**Why there is no test.** A pin that could not fail was written, measured, and removed: the
+`MutationObserver` assertion above passes identically with and without the fix, because the browser
+never paints the unrefitted tree here. `e2e/toolbar-fit.spec.ts` deliberately has **no** test for
+this, and that absence is the honest state — if one is added it must be able to go red when the
+scheduling changes, or it is a tripwire for a defect that cannot occur.
+
+**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`, `src/components/SidebarLeft/SidebarLeft.tsx:1010`,
+`react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
+runs on a concurrent render that yielded — neither is a pre-paint refit).

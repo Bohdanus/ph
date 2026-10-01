@@ -23,8 +23,15 @@ import type { ToolbarRowMetrics, ToolbarSlot } from '../toolbar-overflow.ts';
 
 const TILE = 44;
 const GAP = 6;
-/** `mt-1.5 border-t pt-1.5` between two toolbar sections, minus the grid's own row gap. */
-const SEPARATOR = 7;
+/** `pt-1.5` inside a section list — 6px of padding that sits BELOW the list's border-box top. */
+const SEPARATOR_PADDING = 6;
+/** `border-t` — 1px, also inside the box, which is the whole point of the harness below. */
+const SEPARATOR_BORDER = 1;
+/**
+ * What a section boundary costs the planner, on top of the grid's row gap:
+ * `mt-1.5 border-t pt-1.5` is 6 + 1 + 6 = 13, and 13 − 6 leaves 7.
+ */
+const SEPARATOR = SEPARATOR_PADDING + SEPARATOR_BORDER;
 
 /** One group per row. `sectionIndexes` places the section boundaries, which is the separator. */
 const rows = (count: number, sectionIndexes?: number[]): ToolbarSlot[] =>
@@ -57,33 +64,42 @@ const rect = (height: number, top: number) =>
  * Each list records its own tile count in `data-tiles` and its first tile's offset in
  * `data-test-top`, because those two are exactly the geometry `readRowMetrics` reads: the
  * tile's height, and the distance from the previous list's bottom to this one's first tile,
- * less the row gap. A stub that faked the SEPARATOR directly would be testing the stub.
+ * less the row gap.
+ *
+ * **THE LIST'S OWN BOX TOP IS NOT ITS FIRST TILE'S TOP, and the harness has to say so.** The
+ * separator's `pt-1.5` and `border-t` are inside the list's border box, so a list that opens a
+ * section starts `pt + border` = 7px ABOVE its first tile. Giving both the same `top` — which is
+ * what a first draft of this file did — makes the border-box bug invisible here: measuring to the
+ * list instead of the tile then produces the right answer by accident, and a mutation that
+ * reintroduced the very defect these tests exist for passed all five of them. The browser caught
+ * it (`e2e/toolbar-fit.spec.ts` reports `over=1.0`); this file has to be able to as well.
  */
 const renderSections = (tools: HTMLElement, counts: number[]): void => {
   tools.replaceChildren();
-  let top = 0;
+  let bottom = 0;
   for (const count of counts) {
     const list = tools.ownerDocument.createElement('ul');
     list.dataset.tiles = String(count);
     for (let index = 0; index < count; index += 1) {
       const tile = list.ownerDocument.createElement('button');
       tile.setAttribute('data-toolbar-tile', '');
-      // The FIRST tile of a list carries the list's own top, because that is the box the
-      // separator is measured to — the distance from the previous list's bottom to this
-      // one's first tile, less the row gap. A stub that returned every tile at the same top
-      // would measure no separator at all, which is the defect this harness has to avoid
-      // reproducing by accident.
+      // The FIRST tile of a list carries the list's own content-box top, because that is the box
+      // the separator is measured to — the distance from the previous list's bottom to this
+      // one's first tile, less the row gap.
       if (index === 0) {
-        // A section that is not the first costs the separator's margin, padding and border
-        // on top of the row gap; the first costs nothing above itself.
-        const breaks = top > 0 ? SEPARATOR + GAP : 0;
-        list.dataset.testTop = String(top + breaks);
-        tile.dataset.testTop = list.dataset.testTop;
+        // A section that is not the first costs the separator's margin, padding and border on
+        // top of the row gap; the first costs nothing above itself.
+        const breaks = bottom > 0 ? SEPARATOR + GAP : 0;
+        list.dataset.testTop = String(bottom + breaks - SEPARATOR_PADDING - SEPARATOR_BORDER);
+        tile.dataset.testTop = String(bottom + breaks);
       }
       list.append(tile);
     }
-    const listTop = top > 0 && count > 0 ? Number(list.dataset.testTop) : top;
-    top = listTop + (count === 0 ? 0 : count * TILE + Math.max(0, count - 1) * GAP);
+    const contentHeight = count === 0 ? 0 : count * TILE + Math.max(0, count - 1) * GAP;
+    const top = count === 0 ? bottom : Number(list.dataset.testTop);
+    // The list's border box reaches 7px further UP than its content when it opens a section.
+    list.dataset.borderTop = String(top - (count === 0 ? 0 : SEPARATOR_PADDING + SEPARATOR_BORDER));
+    bottom = top + contentHeight;
     tools.append(list);
   }
 };
@@ -101,6 +117,8 @@ type Harness = {
   setSlotHeight(height: number): void;
   /** Re-render the section lists, the way a collapse would, and notify. */
   setSections(counts: number[]): void;
+  /** Drop the harness's own subscriber, so `listeners.size` can reach zero. */
+  silence(): void;
   /** The plan for a row model, derived from the store's CURRENT metrics. */
   fittedThrough(slots: readonly ToolbarSlot[]): number;
   metrics(): ToolbarRowMetrics;
@@ -120,8 +138,15 @@ const harness = (initialSections: number[], initialSlotHeight: number): Harness 
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     if (this.tagName === 'UL') {
       const count = Number((this as HTMLElement).dataset.tiles ?? 0);
-      const top = Number((this as HTMLElement).dataset.testTop ?? 0);
-      return rect(count === 0 ? 0 : count * TILE + Math.max(0, count - 1) * GAP, top);
+      // The list's BORDER box, which for a section that opens a boundary reaches further up
+      // than its content: `pt-1.5` and `border-t` are inside it.
+      const top = Number((this as HTMLElement).dataset.borderTop ?? 0);
+      const contentHeight = count === 0 ? 0 : count * TILE + Math.max(0, count - 1) * GAP;
+      return rect(
+        contentHeight +
+          (top < Number((this as HTMLElement).dataset.testTop ?? 0) ? SEPARATOR_PADDING + SEPARATOR_BORDER : 0),
+        top
+      );
     }
     if (this.hasAttribute('data-toolbar-tile')) {
       return rect(TILE, Number((this as HTMLElement).dataset.testTop ?? 0));
@@ -142,7 +167,10 @@ const harness = (initialSections: number[], initialSlotHeight: number): Harness 
 
   const store = createToolbarFitStore();
   const published: number[] = [];
-  store.subscribe(() => published.push(store.getSnapshot()));
+  const collect = () => {
+    published.push(store.getSnapshot());
+  };
+  const releaseCollector = store.subscribe(collect);
   store.attach('slot', slot);
   store.attach('tools', tools);
 
@@ -164,6 +192,9 @@ const harness = (initialSections: number[], initialSlotHeight: number): Harness 
       sections.splice(0, sections.length, ...counts);
       renderSections(tools, counts);
       notify();
+    },
+    silence: () => {
+      releaseCollector();
     },
     fittedThrough: (slots) => planFor(slots, store.metricsFor(store.getSnapshot())).fittedThrough,
     metrics: () => store.metricsFor(store.getSnapshot()),
@@ -203,12 +234,14 @@ describe('the toolbar fit store', () => {
     const baseline = rail.published.length;
 
     // 100 pixels of drag. A row is 50px, so the count moves at 244 and at 294 and nowhere
-    // else — two notifications, not a hundred.
+    // else — two notifications, exactly, and the exact count is the assertion because a
+    // bound would still have passed a store that published on every OTHER frame.
     for (let height = 201; height <= 300; height += 1) rail.setSlotHeight(height);
 
     const notifications = rail.published.length - baseline;
-    expect(notifications, `the drag notified ${notifications} times`).toBeLessThanOrEqual(3);
-    expect(notifications, 'and the plan really did move during it').toBeGreaterThan(0);
+    expect(notifications, `the drag notified ${notifications} times over 100 pixels of window, and a row is 50px`).toBe(
+      2
+    );
     expect(rail.fittedThrough(model), 'five rows plus the tile is the most a 300px slot holds').toBe(5);
   });
 
@@ -217,6 +250,12 @@ describe('the toolbar fit store', () => {
     // claim. A store that stopped measuring between publishes would keep publishing the plan
     // it already had for a window that had grown past it, which is the defect a throttle
     // introduces when it is written at the wrong layer.
+    //
+    // Note what the store does and does not keep: a measurement whose plan matched the one on
+    // screen is NOT retained, so `metricsFor` hands back the metrics the published plan came
+    // from rather than the newest reading. That is correct for everything the rail draws — the
+    // two plans are identical, which is why nothing was published — and this test is therefore
+    // about the COUNT following the slot, not about the metrics.
     const rail = harness([10], 200);
     const model = rows(10);
     rail.store.setSlots(model);
@@ -230,8 +269,9 @@ describe('the toolbar fit store', () => {
     expect(countAt(240)).toBe(3);
     expect(countAt(193)).toBe(2);
     expect(countAt(290)).toBe(4);
-    // And the last step really was observed: the metrics are the latest ones, not the ones
-    // that happened to be published.
+    // And the last step really was published, which is the observable form of "it measured
+    // it": a 290px slot and a 200px slot produce different plans, so the metrics behind the
+    // final answer are the final reading and not the first.
     expect(rail.metrics().availableHeight).toBe(290);
   });
 
@@ -289,6 +329,61 @@ describe('the toolbar fit store', () => {
     rail.store.setSlots(model);
 
     expect(rail.published.length).toBe(baseline);
+  });
+
+  it('refits when the row model changes, which is what crossing the layout breakpoint is', () => {
+    // The handover that matters. The one-column rail mints `one-column-N` keys and one row per
+    // group; the two-column rail mints `two-column-N` keys and pairs groups into rows. Every row
+    // is therefore re-keyed and every row count changes, so a store that only honoured the FIRST
+    // model would keep planning one-column rows for the rest of the session — and it would do it
+    // silently, because the plan it derived from the wrong model is still a plan.
+    const rail = harness([5], 200);
+    rail.store.setSlots(rows(5));
+    const baseline = rail.published.length;
+
+    // Two columns: one row per PAIR of groups, which is half as many rows for the same tools.
+    const paired: ToolbarSlot[] = Array.from({ length: 8 }, (_unused, row) => ({
+      keys: [`two-column-${row * 2}`, `two-column-${row * 2 + 1}`],
+      sectionIndex: 0,
+    }));
+    rail.store.setSlots(paired);
+
+    expect(rail.published.length, 'a different row model is a publish').toBeGreaterThan(baseline);
+    // Five single rows fit a 200px slot; three paired rows do, and the plan has to be derived
+    // from the model that was handed over rather than the one that was first.
+    expect(rail.fittedThrough(paired), 'the new model is what the plan comes from').toBe(3);
+  });
+
+  it('re-arms the observer after the last subscriber goes away', () => {
+    // A DISCONNECTED observer left non-null would make the next `subscribe` skip `observe()`,
+    // and the rail would stop refitting on resize with nothing in the console to say so. The
+    // guard that re-arms is `observer === null`, so the teardown has to null it as well as
+    // disconnect it — and the only way to see that is to go quiet, resize, and come back.
+    const rail = harness([10], 200);
+    const model = rows(10);
+    rail.store.setSlots(model);
+    expect(rail.fittedThrough(model), 'three rows and the tile fit a 200px slot').toBe(3);
+
+    rail.silence();
+    // While nobody is listening the observer is torn down, so this resize is not seen. It is
+    // also not something the store has any obligation to report, which is why the test asserts
+    // on what happens AFTER the silence rather than during it. 700 is a height at which all ten
+    // rows fit, so the next step has somewhere to go.
+    rail.setSlotHeight(700);
+
+    // The subscriber of record for this test — the harness's own is gone, which is the point.
+    const notified: number[] = [];
+    const subscribe = rail.store.subscribe(() => notified.push(rail.store.getSnapshot()));
+    // Subscribing publishes once on its own account, so only what happens after it counts.
+    notified.length = 0;
+    rail.setSlotHeight(400);
+
+    expect(
+      notified.length,
+      'a resize after re-subscribing notified nobody, so the observer was left disconnected'
+    ).toBeGreaterThan(0);
+    expect(rail.fittedThrough(model), 'and the rail refits on it').toBe(7);
+    subscribe();
   });
 });
 
