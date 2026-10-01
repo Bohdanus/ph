@@ -50,11 +50,21 @@
  * ---------------------------------------------------
  * `preflight` refuses `dirty-tree` and `ignored-content` BEFORE `dispose()` runs,
  * and there is no `--force` and no override, so through this CLI `salvage()` is
- * only ever reached with a clean tree — where it correctly writes nothing. It is
- * a function for a caller that has already decided, not a stage of this program.
- * An earlier version of this file claimed it as the thing that made removal safe
- * after a human decision; that was a description of an intention, and the
- * document below repeated it as a guarantee. The refusal is the guarantee.
+ * only ever reached with a tree the refusal already cleared — where it correctly
+ * writes nothing. It is a function for a caller that has already decided, not a
+ * stage of this program.
+ *
+ * An earlier version of this file claimed salvage was the thing that made removal
+ * safe after a human decision, and `docs/ORCHESTRATION.md` repeated it as a
+ * guarantee. That was a description of an intention. It was also, for a while,
+ * accidentally FALSE in the other direction: while the ignored-content gate was
+ * parsing git's output with the wrong delimiter it reported one entry instead of
+ * 394, so a tree holding only gitignored content passed the refusal and reached
+ * `salvage()`. The salvage is what stopped that particular loss, by luck rather
+ * than by design, because `dispose()` records `SALVAGE INCOMPLETE` as a step and
+ * removes the worktree regardless. So: the refusal is the guarantee, the salvage
+ * is a backstop, and a backstop that a tar error can defeat is not one to rely
+ * on.
  *
  * THE ORDER OF OPERATIONS IS THE POINT
  * ------------------------------------
@@ -148,8 +158,6 @@ const REFUSALS = {
     `\`git status\` failed on this worktree (${detail}), so its cleanliness is UNKNOWN rather than clean. This program will not read an unreadable tree as an empty one; restore the worktree's git state, or ask the operator.`,
   'ignored-content': (count, paths) =>
     `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
-  'ambiguous-name': (target, paths) =>
-    `"${target}" is the basename of ${paths.length} worktrees, so the name does not identify one: ${paths.join(', ')}. Pass the full path — git refuses to create two worktrees at the same path, so a path is unique where a basename is not.`,
 };
 
 /**
@@ -177,24 +185,25 @@ const REFUSALS = {
  * regenerate is an entry that should not be here.
  *
  * Deliberately NOT on this list: \`.serena/\`, \`.vscode/*\`, \`*.local\`,
- * \`playwright/.auth\`, \`test-results/\`, \`playwright-report/\`. They are ignored,
- * which is a statement about version control and not about whether they are
- * worth anything — an auth state and a session index are both real work, and the
+ * \`playwright/.auth\`, \`.DS_Store\`, and \`*.log\`. They are ignored, which is a
+ * statement about version control and not about whether they are worth
+ * anything — an auth state and a session index are both real work, and the
  * inventory flagged \`.serena/\` alone as a reason a worktree was never free.
  */
 const REGENERABLE_IGNORED = [
-  { prefix: 'node_modules/', rebuild: 'npm ci' },
-  { prefix: 'dist/', rebuild: 'npm run build' },
-  { prefix: 'dist-ssr/', rebuild: 'npm run build' },
-  { prefix: 'coverage/', rebuild: 'npm run test -- --coverage' },
-  { prefix: 'coverage-e2e/', rebuild: 'npm run test:e2e:unit:coverage' },
-  { prefix: 'test-results/', rebuild: 'npm run test:e2e' },
-  { prefix: 'playwright-report/', rebuild: 'npm run test:e2e' },
-  { prefix: 'blob-report/', rebuild: 'npm run test:e2e' },
-  { prefix: 'playwright/.cache/', rebuild: 'npm run test:e2e' },
-  { prefix: '.vite/', rebuild: 'npm run dev' },
-  { prefix: '.vitest/', rebuild: 'npm run test' },
-  { prefix: '.kilo/', rebuild: 'this worktree is disposable; nothing in it is committed anywhere' },
+  { prefix: 'node_modules', rebuild: 'npm ci' },
+  { prefix: 'dist', rebuild: 'npm run build' },
+  { prefix: 'dist-ssr', rebuild: 'npm run build' },
+  { prefix: 'coverage', rebuild: 'npm run test -- --coverage' },
+  { prefix: 'coverage-e2e', rebuild: 'npm run test:e2e:unit:coverage' },
+  { prefix: 'test-results', rebuild: 'npm run test:e2e' },
+  { prefix: 'playwright-report', rebuild: 'npm run test:e2e' },
+  { prefix: 'blob-report', rebuild: 'npm run test:e2e' },
+  { prefix: 'playwright/.cache', rebuild: 'npm run test:e2e' },
+  { prefix: '.vite', rebuild: 'npm run dev' },
+  { prefix: '.vitest', rebuild: 'npm run test' },
+  { prefix: '.kilo', rebuild: 'this worktree is disposable; nothing in it is committed anywhere' },
+  { prefix: '.husky/_', rebuild: 'npm install' },
   { prefix: '.eslintcache', rebuild: 'npm run lint:check' },
   { prefix: 'tsconfig.tsbuildinfo', rebuild: 'npm run tsc' },
   { prefix: 'WORKTREES.json', rebuild: 'node scripts/worktree-inventory.mjs' },
@@ -209,7 +218,31 @@ const REGENERABLE_IGNORED = [
  * cleanup sweep most often throws away by accident.
  */
 export function isRegenerableIgnored(path) {
-  return REGENERABLE_IGNORED.some((entry) => path === entry.prefix || path.startsWith(entry.prefix));
+  return REGENERABLE_IGNORED.some((entry) => coversPath(entry.prefix, path));
+}
+
+/**
+ * Whether `prefix` covers `path` at a SEGMENT boundary.
+ *
+ * `startsWith` alone is how `dist-secrets/keys.txt` ended up treated as
+ * regenerable output of `dist/` — a sibling directory one character away, and a
+ * place a secret plausibly lives. The boundary is what keeps the allowlist an
+ * allowlist: `dist` covers `dist` and `dist/assets/x.js`, and nothing else.
+ *
+ * The prefix is matched anywhere in the path, not only at the start, because git
+ * matches these patterns at any depth and a worktree's `node_modules` is nested
+ * inside the checkout that contains it.
+ */
+function coversPath(prefix, path) {
+  let from = 0;
+  for (;;) {
+    const at = path.indexOf(prefix, from);
+    if (at === -1) return false;
+    const before = at === 0 ? '/' : path[at - 1];
+    const after = path[at + prefix.length];
+    if ((before === '/' || before === undefined) && (after === '/' || after === undefined)) return true;
+    from = at + 1;
+  }
 }
 
 /** The ignored paths a disposal would destroy, with the command for each that rebuilds one. */
@@ -219,7 +252,7 @@ export function nonRegenerableIgnored(paths) {
 
 /** The rebuild command for an ignored path, or null when nothing rebuilds it. */
 export function rebuildCommand(path) {
-  const entry = REGENERABLE_IGNORED.find((e) => path === e.prefix || path.startsWith(e.prefix));
+  const entry = REGENERABLE_IGNORED.find((e) => coversPath(e.prefix, path));
   return entry ? entry.rebuild : null;
 }
 
@@ -454,7 +487,14 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     // gitignored paths, and they are then split by whether a command rebuilds
     // them: a tree holding only `dist/` and `node_modules/` is empty of work,
     // while a tree holding only `.env` is a secret on no ref at all.
-    const ignored = run(absolutePath, ['ls-files', '--others', '--ignored', '--exclude-standard']).stdout;
+    const ignored = run(absolutePath, [
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '-z',
+      '--directory',
+    ]).stdout;
     ignoredPaths = ignored.split('\0').filter(Boolean);
   } catch (err) {
     // `modified` and `untracked` stay 0, which is what made a prunable worktree
@@ -901,7 +941,7 @@ function main(argv) {
     // already contains the answer.
     if (gitState.ambiguous) {
       process.stderr.write(
-        `dispose: refusing "${gitState.target}" — it names ${gitState.candidates.length} worktrees.\n  ${gitState.candidates.join('\n  ')}\n\nPass the full path. Nothing was changed.\n`
+        `dispose: "${gitState.target}" is the basename of ${gitState.candidates.length} worktrees, so the name does not identify one:\n  ${gitState.candidates.join('\n  ')}\n\nPass the full path. Git refuses to create two worktrees at the same PATH, so a path is unique where a basename is not. Nothing was changed.\n`
       );
       return 3;
     }
@@ -1011,8 +1051,15 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
   // to a commit, so comparing it to `source` would never be equal and would
   // suffix every re-anchor of a branch that had been disposed once already.
   if (tip && current === tip) return '';
+  // HASHED OVER THE TIP, NOT THE NAME. Hashing the branch name fixed two
+  // different names that slug alike and left the reachable case open: dispose
+  // `feat/marble` at 457bfd4, let `git branch -d` refuse because the branch is
+  // unmerged, advance it, and dispose it again at a4d9306. Same name, same
+  // hash, so the second disposal OVERWROTE the first's only recovery point and
+  // a4d9306 became unreachable from any anchor. The tip is what tells two
+  // anchors of one branch apart, and it is the value the ref already points at.
   const hash = createHash('sha256')
-    .update(String(source ?? ''))
+    .update(`${source ?? ''} ${tip ?? ''}`)
     .digest('hex')
     .slice(0, 9);
   return `-g${hash}`;

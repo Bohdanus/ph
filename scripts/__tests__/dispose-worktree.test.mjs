@@ -72,6 +72,8 @@ function greenState(overrides = {}) {
     untracked: 0,
     dirtyPaths: [],
     statusError: null,
+    ignoredPaths: [],
+    ignoredWork: [],
     ...overrides,
   };
 }
@@ -716,5 +718,140 @@ describe('the anchor is the only recovery point, so it may not be overwritten', 
     dispose('/repo', greenState({ branch: 'fix/task', tip: 'abc1234' }), { run: h.run, fs: h.fs });
     const written = h.calls.find((c) => c[0] === 'update-ref');
     expect(written[1]).toBe(`${KEEP_REF_PREFIX}fix-task`);
+  });
+});
+
+/**
+ * The ignored-file WIRING, through `readGitState` rather than around it.
+ *
+ * These exist because the first version of this rule had no test at all, and a
+ * reviewer's mutation run proved why that mattered: eight mutants were tried and
+ * four survived, including parsing the git output with the WRONG delimiter. Every
+ * earlier case injected `ignoredWork` directly, so the code that turns git's
+ * stdout into a list of paths was never executed by a single test — and it
+ * returned ONE element where there were 394, so the gate consulted the
+ * lexicographically first path and passed whenever that one happened to be
+ * allowlisted. A guard that is only tested through a hand-built verdict is a
+ * guard whose seam is untested.
+ */
+describe('readGitState reads the ignored content it is supposed to refuse on', () => {
+  const stateWith = (lsFilesStdout) =>
+    readGitState('/repo', 'task', {
+      list: () => [{ path: '/repo/.kilo/worktrees/task', branch: 'fix/task' }],
+      run: (cwd, args) => {
+        if (args[0] === 'status') return { stdout: '' };
+        if (args[0] === 'ls-files') return { stdout: lsFilesStdout };
+        return { stdout: 'abc1234' };
+      },
+    });
+
+  it('asks git for NUL-separated output, and passes --directory', () => {
+    // Without `-z` git emits NEWLINE-separated paths, and a NUL split of that
+    // is a single element containing every path joined by newlines. The gate then
+    // tested one blob against the allowlist instead of 394 paths. `--directory`
+    // collapses `node_modules/` to one entry, which is both correct for a nested
+    // directory and the difference between 1000 lines and 1.
+    const seen = [];
+    readGitState('/repo', 'task', {
+      list: () => [{ path: '/repo/.kilo/worktrees/task', branch: 'fix/task' }],
+      run: (cwd, args) => {
+        if (args[0] === 'ls-files') seen.push(args);
+        return { stdout: args[0] === 'ls-files' ? '' : 'abc1234' };
+      },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('-z');
+    expect(seen[0]).toContain('--directory');
+    expect(seen[0]).toContain('--ignored');
+  });
+
+  it('separates a real path list, not one joined blob', () => {
+    // The exact shape that defeated the first version: the FIRST entry sorts
+    // before the rest and is allowlisted, so a blob made the gate pass.
+    const state = stateWith('coverage/lcov.info\0node_modules\0run.log\0');
+    expect(state.ignoredPaths).toEqual(['coverage/lcov.info', 'node_modules', 'run.log']);
+    // And the refusal is computed from that list.
+    expect(state.ignoredWork).toEqual(['run.log']);
+  });
+
+  it('refuses the tree it just read, through preflight', () => {
+    const state = stateWith('coverage/lcov.info\0node_modules\0run.log\0');
+    const verdict = preflight({
+      target: 'task',
+      nowMs: NOW,
+      gitState: state,
+      inventory: greenInventory(),
+      board: greenBoard,
+      sessions: greenSessions,
+    });
+    expect(codes(verdict)).toContain('ignored-content');
+    const message = verdict.failures.find((f) => f.code === 'ignored-content').message;
+    // Both halves of the count have to agree, or the operator is told "1 path"
+    // and shown three.
+    expect(message).toMatch(/^The working tree holds 1 gitignored path/);
+    expect(message).toContain('run.log');
+  });
+
+  it('permits a tree whose ignored content a command rebuilds', () => {
+    // The shape of every real worktree: node_modules and dist and a buildinfo.
+    const state = stateWith('node_modules\0dist\0tsconfig.tsbuildinfo\0coverage\0.kilo/\0');
+    expect(state.ignoredWork).toEqual([]);
+    expect(state.ignoredPaths.length).toBe(5);
+  });
+
+  it('does not let a regenerable name cover a sibling that merely starts with it', () => {
+    // `--directory` reports `dist-secrets/` as one entry. It is one character
+    // away from the build output and is exactly where a secret would live.
+    expect(stateWith('dist-secrets/\0').ignoredWork).toEqual(['dist-secrets/']);
+    expect(stateWith('node_modules_backup/\0').ignoredWork).toEqual(['node_modules_backup/']);
+    expect(stateWith('dist/\0').ignoredWork).toEqual([]);
+  });
+
+  it('recognises a nested path inside a regenerable directory', () => {
+    // git matches these patterns at any depth, so a worktree's own
+    // node_modules sits inside the checkout that contains it.
+    expect(isRegenerableIgnored('packages/app/node_modules/react/index.js')).toBe(true);
+    expect(isRegenerableIgnored('src/dist-secrets/keys.txt')).toBe(false);
+  });
+});
+
+describe('the anchor survives two disposals of one branch name', () => {
+  const runner = (existing) => {
+    const calls = [];
+    const run = (cwd, args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse' && args[1] === '--verify') return { stdout: existing ?? '' };
+      return { stdout: '' };
+    };
+    return { run, fs: { mkdirSync() {}, writeFileSync() {} }, calls };
+  };
+
+  it('writes a DIFFERENT ref each time the same branch advances to a new tip', () => {
+    // Reachable: `git branch -d` refuses an unmerged branch, so the branch
+    // survives a disposal, gets more work, and is disposed again. Hashing the
+    // branch NAME gave every one of those disposals the same suffix, so the
+    // second overwrote the first's only recovery point.
+    //
+    // THREE disposals, not two, and that is the point: a two-disposal test
+    // passes under a name-only hash by accident, because the FIRST disposal
+    // finds a free slug and writes the bare name. The collision needs the slug
+    // already taken, which is only true from the second disposal onward.
+    const refsFor = (existing, tip) => {
+      const r = runner(existing);
+      dispose('/repo', greenState({ branch: 'feat/marble', tip }), r);
+      return r.calls.find((c) => c[0] === 'update-ref')[1];
+    };
+
+    const first = refsFor('', '457bfd4');
+    expect(first).toBe(`${KEEP_REF_PREFIX}feat-marble`);
+
+    const second = refsFor(first === `${KEEP_REF_PREFIX}feat-marble` ? '457bfd4' : first, 'a4d9306');
+    expect(second).toMatch(new RegExp(`^${KEEP_REF_PREFIX}feat-marble-g[0-9a-f]{9}$`));
+
+    // The bare ref still points at the FIRST tip, so the third disposal also
+    // finds the slug taken — and must not land on the second's ref.
+    const third = refsFor('457bfd4', 'f8d779a');
+    expect(third).not.toBe(second);
+    expect(third).toMatch(new RegExp(`^${KEEP_REF_PREFIX}feat-marble-g[0-9a-f]{9}$`));
   });
 });

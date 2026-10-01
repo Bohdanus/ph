@@ -335,11 +335,11 @@ Then it **anchors** the branch at `refs/keep/disposed/<name>` before deleting
 anything, so no `git gc` can make a disposed branch unreachable, and it
 **salvages** uncommitted work to `.git/worktree-salvage/<name>/` — a
 `git diff HEAD --binary` patch plus a `tar` of the untracked and the gitignored
-files, because no diff mentions a file git does not track. That salvage is for a
-caller that reaches `dispose()` directly; **the CLI never needs it**, because it
-refuses a dirty or ignored-content tree first and there is no override. Finally
-it removes the worktree with **no `--force`** and deletes the branch with
-**`git branch -d`**, which refuses an unmerged branch.
+files, because no diff mentions a file git does not track. That salvage is a
+backstop for a caller that reaches `dispose()` directly; **the CLI does not rely
+on it**, because it refuses a dirty or ignored-content tree first and there is no
+override. Finally it removes the worktree with **no `--force`** and deletes the
+branch with **`git branch -d`**, which refuses an unmerged branch.
 
 **There is no `--force`, deliberately.** `git worktree remove` already refuses a
 dirty tree and prints the modified and untracked paths — the cheapest inventory of
