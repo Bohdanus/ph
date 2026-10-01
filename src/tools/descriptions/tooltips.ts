@@ -28,6 +28,14 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Drag an elliptical selection; Shift makes a circle, Alt draws from the center, Style locks ratio or size.',
     implementation: 'implemented',
   },
+  'single-row-marquee': {
+    summary: 'Click or drag to select one document row, one pixel tall and as wide as the image.',
+    implementation: 'implemented',
+  },
+  'single-column-marquee': {
+    summary: 'Click or drag to select one document column, one pixel wide and as tall as the image.',
+    implementation: 'implemented',
+  },
   'freehand-lasso': {
     summary: 'Drag a freehand selection border that goes exactly where the cursor goes and closes itself on release.',
     implementation: 'partial',

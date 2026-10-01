@@ -40,6 +40,13 @@ export const toolbarMap = [
     [
       { label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' },
       { label: 'Elliptical Marquee Tool', name: 'elliptical-selection' },
+      // The two 1-pixel marquees share this flyout and therefore carry no shortcut of
+      // their own: Adobe's published default table assigns `M` to the Rectangular and
+      // Elliptical Marquees only, and neither 1-pixel tool has a key. `Shift+M` still
+      // reaches them, because the cycle is over the whole group (see `marqueeGroup` in
+      // `AppKeyboardShortcuts.tsx`), which is a weaker and separately-labelled claim.
+      { label: 'Single Row Marquee Tool', name: 'single-row-marquee' },
+      { label: 'Single Column Marquee Tool', name: 'single-column-marquee' },
     ],
     [
       { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
@@ -144,6 +151,8 @@ export const availableTools: readonly ToolName[] = [
   'transform',
   'rectangular-selection',
   'elliptical-selection',
+  'single-row-marquee',
+  'single-column-marquee',
   'freehand-lasso',
   'polygonal-lasso',
   'feather-magnetic-lasso',

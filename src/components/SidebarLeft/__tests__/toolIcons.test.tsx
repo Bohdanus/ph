@@ -31,6 +31,8 @@ const toolIconNames = [
   'feather-magnetic-lasso',
   'magic-wand',
   'quick-selection',
+  'single-row-marquee',
+  'single-column-marquee',
   'eyedropper',
   'eraser',
   'clone-stamp',
