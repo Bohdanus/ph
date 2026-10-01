@@ -48,6 +48,18 @@ violations on `main`.
   therefore not half-staged extraction, it is a declaration with no consumer —
   removing the three rail entries is unimplemented work, not a flag flip.
   `HANDOFF.md` §117 records exactly this and is open.
+
+  **The operator has decided: the three are deleted.** 2026-10-01, in their
+  words, "I decide to remove them." Not relabelled, not moved to a menu — removed
+  from the rail, and the rail slot closes. They have **no replacement tool**,
+  because Photoshop puts nothing there. `HANDOFF.md` §117 carries the decision and
+  what an implementation still has to settle, of which two are load-bearing: **this
+  app has no Image or Edit menu** for them to move to (`src/components/Menu/Menu.tsx`
+  renders only `DesktopHeader` and `ToolbarHorizontal`), and all three are **also**
+  live entries in the header's own tool menu
+  (`src/components/DesktopHeader/DesktopHeader.tsx:27-32`). Deleting the flyout
+  alone leaves that second surface contradicting Photoshop. The decision covers
+  these three ids only — `draw` above is a separate id and a separate decision.
   - **They are ALSO live entries in a second place, and there is no menu to move them
     to.** `src/components/Menu/Menu.tsx` renders only a `DesktopHeader` and a
     `ToolbarHorizontal`, so the app has **no `Image` menu and no `Edit` menu at
@@ -64,6 +76,7 @@ violations on `main`.
     remap with a channel selector, a histogram, output levels and Auto. It is still an
     `Image ▸ Adjustments` command either way, so the rail verdict does not change; the label
     is the second defect.
+
 - **No pseudo-tool.** `shape` is a grouping container carrying a `figure`, and
   Adobe has no tool by that name. It is not uniquely undisplayed, which is the
   trap in deleting it: `rectangle`, `ellipse`, `triangle`, `polygon` and `line`

@@ -562,6 +562,27 @@ functionality, it deletes it. Extracting these three means building a real menu 
 a build the operator owns. It is a three-id change across **two** hand-written lists, not a flag flip
 and not a routing change with a destination already in place.
 
+**DECIDED — 2026-10-01. The operator: "I decide to remove them."** All three come out of the rail.
+Not relabelled, not moved to a menu, not kept alongside: **removed**, and the rail slot closes with
+no replacement, because Photoshop puts nothing there. `HANDOFF.md` §117 §"The operator has decided:
+delete the three" is the record.
+
+This is **not an override** and `docs/OVERRIDES.md` gains no entry. Its own definition
+(`docs/OVERRIDES.md:11-18`) is a decision to _not_ replicate Photoshop's behaviour; removing three ids
+Adobe's Tools panel does not contain moves this app _toward_ Adobe. What remains undecided is
+narrower than the whole entry above suggests, and is listed in `HANDOFF.md` §117:
+
+- the rail flyout at `toolbar-mapping.ts:62-64` goes, **and** so do the three `TOOL_MENU_ITEMS`
+  entries at `src/components/DesktopHeader/DesktopHeader.tsx:29`, `:31`, `:32` — a second surface
+  that would otherwise keep contradicting Photoshop after the first is gone;
+- `extraTools` (`toolbar-mapping.ts:164`) starts meaning something, or is deleted as dead;
+- **`levels` is the capability question.** The app's "Levels" is Brightness/Contrast
+  (`src/tools/levels.ts:4`, `:12`), so removing the tile removes the app's only surface for
+  Brightness/Contrast. The operator owns that loss; it is recorded, not argued.
+
+The processors in `src/tools/colors.ts`, `src/tools/levels.ts` and `src/tools/transform.ts` are
+untouched by the decision and are not dead — what changes is which surface reaches them, if any.
+
 ### Three invented controls on the Magnetic Lasso bar
 
 Photoshop's Magnetic Lasso bar carries `Stylus Pressure` and `Select and Mask`. This app puts three
