@@ -1,5 +1,29 @@
 Photoshop clone production-grade photo editor
 
+## Worktree FIRST — no tracked edit happens outside one
+
+**100% of work that changes a tracked file happens in its own worktree, on its own
+branch. `main` is for reading and merging.** The exceptions are enumerated, none of
+them a judgement call, in
+[`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
+
+```bash
+git rev-parse --show-toplevel                        # FIRST. Every time. Non-negotiable.
+# `git worktree list` puts the MAIN checkout first, and $MAIN is absolute: the new
+# worktree lands under the main checkout and never nests inside the one you are in.
+MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
+git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
+```
+
+- **A commit from `main` is refused**, not warned about: `scripts/main-worktree-guard.mjs`
+  runs first in `.husky/pre-commit`, and the refusal names this recipe. It is the floor
+  under the rule rather than the rule: it runs after the edit, so a session that writes
+  into `main` and never commits is not stopped by it. What stops the write is the process
+  above.
+
+The three traps that follow from having a worktree are in **Worktrees and dev servers**
+below.
+
 ## Subagents INSTRUCTION
 
 LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.
@@ -38,7 +62,7 @@ task({
 ### Rules of delegation
 
 - **NEVER MORE THAN 15 SUBAGENTS RUNNING AT ONCE, IN ANY COMBINATION** — `task` subagents plus Agent Manager sessions plus background processes you have running. Fan-out is good; a fan-out that saturates the host is not, and 16 is past that point on this machine. Queue the remainder and launch as results land, or split the concern further. The cap is on **simultaneously running**, not on total: a hundred subagents in waves of fifteen is fine.
-- **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** If this chat is in `main`, every subagent you launch writes into `main` — 1398 of them did in seven days, and no permission can stop it. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work. `docs/ORCHESTRATION.md`.
+- **A `task` subagent INHERITS YOUR WORKING DIRECTORY** and cannot create a worktree of its own, so the worktree has to exist before the fan-out and not after it. Its cwd only moves relative `bash`, so put the worktree's absolute path in every brief.
 - **NEVER TWO SUBAGENTS ON THE SAME FILE.** Split by concern, not by convenience.
 - **Self-contained briefs.** A subagent has a fresh context: give it the goal, your constraints, whether it may edit code, and exactly what its final message must contain. "Return file:line for every match" beats "investigate the caching layer".
 - **Ask for evidence.** A claim without `file:line` or command output is not verified. Have subagents report candidate results _and_ how they got them, then check the load-bearing ones yourself.
@@ -94,7 +118,8 @@ npm run probe:console   # playwright, HEADLESS - one page load, reports console 
 
 ## Worktrees and dev servers
 
-One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
+The three traps that follow from having one, each a consequence of a second checkout of
+the same repository:
 
 - **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **A run starts its own dev server, on a port of its own.** `scripts/e2e-run.mjs` picks a free port, so `test:e2e` never tests a checkout it did not start. Never set `PLAYWRIGHT_REUSE_EXISTING_SERVER`: `playwright.config.ts` hard-codes `reuseExistingServer: false` and the runner refuses that variable on TRUTHINESS, so even `=false` exits with an error. A bare `npx playwright test` skips the port picker and collides with whatever holds :5173 — use `npm run test:e2e`, or pass `PLAYWRIGHT_PORT=<free>`.
@@ -106,7 +131,7 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
-- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds one `auto` fixture, `ConsolePolice`, which fails a test on any unaccepted console error or page error. It is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds two `auto` fixtures: `consolePolice`, which fails a test on any unaccepted console error or page error, and `pinnedTheme`, which seeds `localStorage.theme` so the suite's pixel oracles keep the light backdrop they are calibrated for under the app's dark default. `auto` is the load-bearing part — it is opt-out, not opt-in. `consolePolice` is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
 - Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates
