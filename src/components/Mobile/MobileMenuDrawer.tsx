@@ -18,7 +18,7 @@ const ITEM_CLASS =
   'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800 disabled:opacity-40 disabled:pointer-events-none';
 
 export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onClose }) => {
-  const [{ canvasRef, currentArgs, fileName, totalSize, hasImage, hasUnsavedChanges, documentFrame }] = useStore();
+  const [{ currentArgs, fileName, totalSize, hasImage, hasUnsavedChanges, documentFrame }] = useStore();
   const { setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
   const { commitDirtyTool } = useLayers();
@@ -64,14 +64,13 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
   const handleSave = async () => {
     onClose();
     try {
-      if (!hasImage || !canvasRef.current) return;
+      if (!hasImage) return;
       let exportLayers!: ReturnType<typeof commitDirtyTool>;
       // `flushSync` so the commit lands before the dialog reads `layers`.
       flushSync(() => {
         exportLayers = commitDirtyTool();
       });
       const data = await openSaveImageDialog({
-        canvas: canvasRef.current,
         fileName,
         layers: exportLayers,
         size: totalSize,

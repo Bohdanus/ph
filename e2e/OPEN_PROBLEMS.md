@@ -845,9 +845,12 @@ presentation.
 
 So a 2x project would raise the floor of what fails, but on its own it would not _pin_ backing
 store resolution; that needs its own assertion — a `canvas.width === box.width × dpr` check that
-exists nowhere today. The app side, including the blocker that has to be cleared first (the
-visible workspace canvas is the raster export source, so the display cannot be scaled until it is
-decoupled from export), is in `CANVAS-RESOLUTION-PLAN.md`.
+exists nowhere today. (It would also have to be the binding axis of the contain fit, not the
+width axis: the workspace canvas is `object-contain`, so at 1280x720 the fit is height-limited and
+the naive width form is red today.) The app side, and the app work that has to land first, is in
+`CANVAS-RESOLUTION-PLAN.md`. The display/export decoupling that used to gate raising the display
+resolution is done: export renders its own surface from `(layers, size, documentFrame)` in
+`src/contexts/export-canvas.ts` and no longer reads the visible canvas.
 
 ## P3 — re-verification: the tablet band's option-row floor is no longer the panel's measured width
 

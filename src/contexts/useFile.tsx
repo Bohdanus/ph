@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
+import { renderExportCanvas } from './export-canvas.ts';
 import type { PsdDocument } from './psd-utils.ts';
 import type { LayersRecord } from './layer-types.ts';
 import type { Size } from './general-types.ts';
@@ -17,7 +18,6 @@ export type ImageUploadResponse =
     };
 
 export type ImageSaveInput = {
-  canvas: HTMLCanvasElement;
   fileName: string;
   format?: string;
   layers: LayersRecord;
@@ -116,13 +116,15 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
     try {
-      const { canvas, layers, size, documentFrame } = fileInput!;
+      const { layers, size, documentFrame } = fileInput!;
       if (format === 'psd') {
         const { savePsd } = await import('./psd-utils.ts');
         const buffer = documentFrame ? await savePsd(layers, size, documentFrame) : await savePsd(layers, size);
         downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), fileName, 'psd');
       } else {
-        await saveImageToDisk(canvas, fileName, format, quality);
+        // Rendered here rather than handed in, so the encoded pixels are the DOCUMENT at
+        // DOCUMENT resolution whatever the display canvas is doing. See export-canvas.ts.
+        await saveImageToDisk(renderExportCanvas(layers, size, documentFrame), fileName, format, quality);
       }
       saveResolverRef.current?.(quality === undefined ? { fileName, format } : { fileName, format, quality });
       saveResolverRef.current = null;
@@ -131,10 +133,10 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       // the dialog down on a failure exactly as it does on a success: the user lost the
       // chance to change format/quality and retry, and had to redo the whole export.
       // Leaving both calls here is also what makes a retry work at all — `fileInput` stays
-      // staged, so the second attempt encodes the same `{ canvas, layers, size,
-      // documentFrame }`, and the dialog's `key` is derived from `fileInput.fileName`, so
-      // an unchanged input means no remount and the user's own `fileName`/`format`/
-      // `jpegQuality` edits are still on screen.
+      // staged, so the second attempt encodes the same `{ layers, size, documentFrame }`,
+      // and the dialog's `key` is derived from `fileInput.fileName`, so an unchanged input
+      // means no remount and the user's own `fileName`/`format`/`jpegQuality` edits are
+      // still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
     } catch (e) {
