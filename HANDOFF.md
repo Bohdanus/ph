@@ -4276,3 +4276,40 @@ entry open.
 **Files.** `src/contexts/psd-utils.ts:88-106`, `src/contexts/layer-types.ts:31-46`,
 `src/contexts/layer-renderer.ts:32`, `src/contexts/history-model.ts`, `AGENTS.md` §Architecture
 status, `docs/TOOLS-TOO-HARD.md` (the adjustment-layers entry), `docs/FEATURES.md`
+
+## 156. `color`, `levels` and `transform` are unreachable below 768px, because the rail is not the only thing `toolbarMap` drives
+
+**Problem.** The rail removal deleted one three-wide group from `toolbarMap`, and `toolbarMap` is also
+the source for the **mobile** tool bar and tool sheet: `src/components/Mobile/mobile-tools.ts` derives
+`mobileToolGroups` from it (`:50`), consumed by `MobileBottomBar.tsx:33` and `MobileToolSheet.tsx:24`.
+So the three left mobile as a side effect of a decision that was about the rail.
+
+Their only new host is `Image ▸ Adjustments` and `Edit ▸ Free Transform` in
+`src/components/DesktopHeader/DesktopHeader.tsx`, and the header is `max-md:hidden` (`:302`). The
+mobile drawer (`MobileMenuDrawer.tsx`) carries New / Open / Save / Theme and nothing else. The
+breakpoint is pinned at `md` = 768px (`src/index.scss:37`, `src/hooks/useMediaQuery.ts:14`), so
+**at every viewport width under 768px there is no UI path to any of the three.** Before this change
+they were in the mobile tool sheet (`git show 9a99fe2a:toolbar-mapping.ts` lines 62-64), so this is a
+capability regression, not a pre-existing gap.
+
+This contradicts the decision's own terms — `docs/PHOTOSHOP-UX.md`'s rail bullet records "the
+capability is to be restructured, **not dropped**" — and the tablet band (768-1023px) is unaffected
+because the header is visible from 768 up.
+
+**Why it is filed and not fixed.** The operator's 2026-10-01 instruction: file it, do not fix it.
+Mobile parity is a separate piece of work from the rail removal, and every fix trades against a
+regression the operator should choose between.
+
+**Fix — three options, none free.** (a) Have `mobileToolGroups` append a command group built from
+`extraTools`; it needs labels re-authored, because `extraTools` is a bare `readonly ToolName[]`, and
+it lengthens a bar already measured overflowing its own width by 542px at 744px. (b) Add
+`Image ▸ Adjustments` and `Edit ▸ Free Transform` to `MobileMenuDrawer` — most faithful to Photoshop
+and keeps mobile a command surface, but needs `ADJUSTMENTS_ITEMS` extracted out of
+`DesktopHeader.tsx` into a module both hosts import, plus a two-level submenu inside a modal drawer
+that closes on every action. (c) Split the rail's view of `toolbarMap` from the mobile view across
+four read sites in `SidebarLeft.tsx`; cheapest, and it re-creates the two-lists divergence this
+change closed.
+
+**Files.** `toolbar-mapping.ts`, `src/components/Mobile/mobile-tools.ts:50`,
+`src/components/Mobile/MobileBottomBar.tsx:33`, `src/components/Mobile/MobileToolSheet.tsx:24`,
+`src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx:302`
