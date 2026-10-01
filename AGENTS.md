@@ -13,14 +13,14 @@ ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE
 1. A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION
 2. A GPT SESSION MAY LAUNCH GPT SUBAGENTS
 3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is correct provider for GPT models, "kilo", is CORRECT provider for SpaceBunny.
-4. `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless.
+4. `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless. The `kilo` provider also lists it as plain `Space Bunny Alpha`; the dated spelling is the one that resolves on this gateway.
 5. Cost doubles past 200k of context FOR GPT Luna, and doubles above 270k of context for GPT Terra and Sol. Space Bunny does not have such restriction. IMPORTANT THAT GPT MODELS stay below threshold!
 6. `agent_manager`: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
 
 ```ts
 task({
   subagent_type: 'explore', // or 'general'
-  model: 'Space Bunny Alpha (new)',
+  model: 'Space Bunny Alpha (retires Oct 5)',
   provider: 'kilo',
   variant: 'max',
   prompt: '...',
@@ -33,10 +33,12 @@ task({
 
 ### Rules of delegation
 
+- **NEVER MORE THAN 15 SUBAGENTS RUNNING AT ONCE, IN ANY COMBINATION** — `task` subagents plus Agent Manager sessions plus background processes you have running. Fan-out is good; a fan-out that saturates the host is not, and 16 is past that point on this machine. Queue the remainder and launch as results land, or split the concern further. The cap is on **simultaneously running**, not on total: a hundred subagents in waves of fifteen is fine.
 - **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** If this chat is in `main`, every subagent you launch writes into `main` — 1398 of them did in seven days, and no permission can stop it. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work. `docs/ORCHESTRATION.md`.
 - **NEVER TWO SUBAGENTS ON THE SAME FILE.** Split by concern, not by convenience.
 - **Self-contained briefs.** A subagent has a fresh context: give it the goal, your constraints, whether it may edit code, and exactly what its final message must contain. "Return file:line for every match" beats "investigate the caching layer".
 - **Ask for evidence.** A claim without `file:line` or command output is not verified. Have subagents report candidate results _and_ how they got them, then check the load-bearing ones yourself.
+- **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.** Its bash layer denies every invocation, so an explore agent asked to run `npm run test`, `npx playwright test --list` or `git log` reports a permission error instead of a result. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
 
@@ -57,6 +59,18 @@ The e2e suite is headless by default and must stay that way.
 
 `kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. If something only reproduces visually, that is the operator's call; ask them to run `npm run test:e2e:headed` themselves.
 
+### Looking at a live page is allowed, and does not need a window
+
+A visible browser is not how you look at this app. `npm run probe:console` loads a page
+headlessly and reports every console error, page error and failed request, deduplicated with
+counts — which is how the nine invalid props on a `<div>` in `useRect` were found, on a suite
+of 339 tests that could not see them. `--url`, `--viewport`, `--dsf` and `--allow` are its only
+options; `headless` is hardcoded in the script and is not read from the environment.
+
+Do not add a browser MCP server to get this. `permission.bash` globs match shell commands and
+`global-setup.ts` only runs inside a Playwright process, so an `mcp_*_navigate_page` call is
+neither and would reopen the window these two layers exist to close.
+
 ## Commands
 
 ```bash
@@ -66,6 +80,7 @@ npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
+npm run probe:console   # playwright, HEADLESS - one page load, reports console + page errors
 ```
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
@@ -87,6 +102,8 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds one `auto` fixture, `ConsolePolice`, which fails a test on any unaccepted console error or page error. It is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates
 
@@ -97,7 +114,7 @@ Two husky hooks, both delegating to a script in `package.json`, so the gated seq
 | Command               | Runs from           | Contents                                                       |
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
-| `npm run gate:verify` | —                   | `tsc` -> `build` -> `test:e2e:unit`                            |
+| `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
 | `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
 | `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
 
@@ -115,18 +132,19 @@ The commit hook is two gates because they answer different questions. `gate:veri
 
 ### CI (Node 24 from `.nvmrc`, which is also what `engines` requires)
 
-Four gating jobs on every push and PR to `main`, plus `workflow_dispatch`:
+**One workflow, three gating jobs.** `.github/workflows/ci.yml` is the only workflow file, and all three jobs run on every push and PR to `main` plus `workflow_dispatch`. None of them declares `needs:`, so they are three independent gates and a red one does not skip the others.
 
-- `ci` — `lint:check` -> `npm audit --audit-level=high` -> `tsc` -> an assertion that every tracked `.ts`/`.tsx` is inside some project's `include` -> `test --coverage` -> `build`. Uploads `coverage/`.
-- `e2e-unit` — `test:e2e:unit` -> `test:e2e:unit:coverage`, uploads `coverage-e2e/`. Separate from `ci` so a break in the app pipeline cannot skip the only gate on `e2e/`.
-- `e2e` — the Playwright specs. It used to be `continue-on-error`, justified by five failing specs that are now fixed; the job was reporting a state the suite no longer had, so it is a gate. What it does not rest on: the CDP capture assertions are mode- and host-independent by construction, so the disjoint per-mode failing sets that justified `continue-on-error` are empty by design, not by observation.
-- `dependency-review` — pull requests only. Enforces `.github/dependency-review-config.yml`: denies GPL-3.0-only and AGPL-3.0-only, fails on a high-severity advisory, allowlists MIT, Apache-2.0, BSD-2/3-Clause, ISC, MPL-2.0, CC0-1.0, Unlicense, WTFPL, Zlib, CC-BY-4.0 and CC-BY-SA-4.0. That list was written when nothing read the file, so no dependency has ever been checked against it; tightening it is a policy call, not a cleanup.
+- `ci` — `lint:check` -> `npm audit --audit-level=high` -> `tsc` -> an assertion that every tracked `.ts`/`.tsx` is inside some project's `include` -> `test --coverage` -> `build`. Uploads `coverage/`. `lint:check` is its FIRST step, so an unformatted committed file fails the job before `tsc`, the suite and the build ever run.
+- `e2e-unit` — `test:e2e:unit` -> `test:e2e:unit:coverage`, uploads `coverage-e2e/`. A separate job rather than a step in `ci`, so a break in the app pipeline cannot skip the only gate on the e2e helpers.
+- `e2e` — the Playwright specs, headless. It used to be `continue-on-error`, justified by five failing specs that are now fixed, so it is a gate.
+
+**One thing CI does NOT gate: dependency licences.** The `dependency-review` job and `.github/dependency-review-config.yml` are both gone. `npm audit --audit-level=high` in `ci` is the vulnerability half and it is real; the licence half is written down in `DEPENDENCIES.md` and nothing enforces it.
 
 **DO NOT WEAKEN A GATE TO GET GREEN: no skips, no raised thresholds, no deleted assertions, no re-recorded visual baselines.** Each is either a real defect with a named fix, or a recording decision that belongs to the operator.
 
 ## Known failures and how to read one
 
-On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by declaration. Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
+On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by declaration (`e2e/sidebar-flyout.spec.ts` right-click on single-tool groups, `e2e/viewport-drawing.spec.ts` line-under-cursor after resize, `e2e/export/photopea.spec.ts` the Photopea round trip). Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
 
 - The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
 - A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `expected-fail` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.
@@ -134,22 +152,23 @@ On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by dec
 - Baselines are now genuinely compared: `visual-regression.spec.ts` re-records only under an explicit `--update-snapshots`, so a green run means the pixels matched.
 - Read a failure from disk, never from a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record (in CI it also writes `test-results/results.json`). A `trace.zip` needs the trace viewer, which is a window — ask the operator.
 
+## Documentation
+
+`docs/README.md` is the index — every tracked document, the one job it has, and which one wins. `docs/DOCUMENTATION.md` is the rule. Read it before adding a document or treating one as correct.
+
+**The ladder: operator -> Adobe -> this repository -> judgement. Stop at the first that speaks.**
+
+- **Anything about what Photoshop does** — an option, a modifier, a default, a menu, a shortcut — **Adobe's documentation is the source of truth.** Where this repo disagrees with Adobe, Adobe is right and this repo is wrong. Re-derive from Adobe, not from a document here.
+- **Anything about this code** — reviewing, refactoring, improving — **the in-app documents are the source of truth.** The code is the last word on what it currently does; the docs are the word on what it must do. Where they disagree that is a finding, not a licence to reconcile it whichever way is cheaper.
+- **If something cannot be done in a browser, say so in the docs** — in `docs/FEATURES.md`, against the capability, with the reason. Three different claims get called "impossible": a platform limit, a decision (`docs/TOOLS-TOO-HARD.md`), and a backlog item dressed up as one. Keep them distinct; only the first is true.
+
+**OVERRIDES.** `docs/OVERRIDES.md` is written by the operator, by hand. An agent must not add, edit, reorder or delete an entry there, and must not ask for one — record the finding in `HANDOFF.md` and stop, without implementing the other behaviour meanwhile. An agent that believes an override is warranted has found something real; the finding is the agent's job, the decision is not. **An agent must not implement a Photoshop deviation that is not in `OVERRIDES.md`.** If the code and Adobe disagree and there is no entry, the code is the defect.
+
+**One fact, one home.** Link, do not restate. A duplicate is a defect — report it. Never edit `docs/TOOLS.md`: it is generated by `npm run docs:tools` and a test fails on drift.
+
 ## Handoff documents
 
-`HANDOFF.md`, `.kilo/plans/` and `e2e/OPEN_PROBLEMS.md` are strictly problem-focused and todo-oriented: **NO changelog, NO "work completed", NO status summaries.** Each entry is a validated issue with a problem statement, the affected files, and an actionable fix. Verify every claim against the working tree first — stale line numbers send the next session after a bug that does not exist.
-
-### Writing is the default, not a favour
-
-**LEAVE A HANDOFF DOC, OR EDIT THE EXISTING ONE, WHENEVER YOU FIND A validated ISSUE, a strong recommendation, or a finding worth preserving. DO NOT ASK PERMISSION.** The strongest case by far is a confirmed defect: you investigated, it is real, and nobody else knows. Not finding anything is the only reason to leave the doc alone.
-
-**Handoff docs are maintained like source: THEY SHIP WITH THE CODE.** The edit belongs in the same commit as the work that produced the finding. A stale entry is not neutral — the next session spends a full investigation on a bug that is already gone, and a missing entry loses the only record of a real one.
-
-### Lifecycle: entries die, they never get reworded
-
-- **Fixed and verified DELETES the entry.** The same change that fixes an issue removes it.
-- **NEVER rewrite an open problem into a closed one.** "issue X fixed in abc123" is a new entry wearing the old one's name. Delete it.
-- **A trail of fixed issues is pollution.** Retained "fixed" notes are prose the next session reads instead of a problem it can act on, and they bury the problems still open. The only residue a fix may leave is a tripwire in the test code, not a paragraph in the doc.
-- **Unverified is not closed.** A fix that landed without a check leaves the entry alive: tighten it to say exactly what still needs verifying, and let that verification delete it.
+`HANDOFF.md`, `.kilo/plans/` and `e2e/OPEN_PROBLEMS.md` are strictly problem-focused and todo-oriented: **NO changelog, NO "work completed", NO status summaries.** Each entry is a validated issue with a problem statement, the affected files, and an actionable fix. Verify every claim against the working tree first — stale line numbers send the next session after a bug that does not exist. The lifecycle rule is in `docs/DOCUMENTATION.md`; it is one line: **fixed and verified deletes the entry.**
 
 ## Architecture status
 

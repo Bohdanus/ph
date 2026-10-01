@@ -3119,10 +3119,11 @@ value as a second argument instead of stringifying it, so a non-`Error` rejectio
 its reason rather than as `[object Object]`.
 
 **What is not covered.** Each report is pinned by a unit test asserting the exact `console.error`
-call, including the non-`Error` cases. There is no e2e coverage: no Playwright spec drives a failed
-open, save, export or copy, and none asserts on `console.error` or `pageerror`. That follows from the
-decision rather than overlooking it, but it does mean the e2e suite cannot distinguish a logged
-failure from a silent one.
+call, including the non-`Error` cases. No Playwright spec drives a failed open, save, export or
+copy, so those four paths have no browser-level coverage. (Console and page errors are no longer
+unasserted in general: `e2e/helpers/console-police.ts` fails every spec on an unaccepted console
+error or page error. What remains true here is narrower — those four paths are never _reached_
+in a browser, so nothing there could produce a message for it to catch.)
 
 **Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
 `src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
@@ -4471,3 +4472,216 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
 form of the same trap: they not only work, they work on the wrong files.
 
 **Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
+
+## 136. A sweep removed a live write chat's worktree and branch on the strength of a branch _name_ read out of a 14-hour-old merge subject
+
+**Problem.** `git worktree remove` followed by `git branch -D` is irreversible for a branch that is
+ahead of `main`, and nothing in the repository stops a second chat from running it against a worktree
+a live chat is still using. On 2026-10-01 this destroyed the only ref to a verified commit.
+
+**Observed.** Chat `ses_f0bdf3519ffep22jd3HjNdIF0t` created `.kilo/worktrees/stale-citations` on branch
+`fix/stale-citations` at 00:14:31 and committed `201e985b` at 00:15:18. At 00:44:32 chat
+`ses_f0bc046c9ffegfsk7DmCuzltkq` ("Overnight stale worktree cleanup") ran a **hard-coded nine-item
+list** that included `["stale-citations","fix/stale-citations",false]`, and for each entry executed
+`git worktree remove` then `git branch -D`. The victim chat ran `npm run test` **in that worktree six
+seconds later** (00:44:38) and found the directory emptied of `src` and `.skills`.
+
+**Why it believed the worktree was disposable.** `c983b8e7` (2026-09-30 10:57) is a merge on `main`
+whose subject is `merge(fix/stale-citations): two TEST-FLAKES citations no longer point at what they
+claim`, merging a long-dead branch. The live branch was created 14 hours later and is unrelated. At
+00:20:58 the sweep read that subject — "main shows a `merge(fix/stale-citations)` commit, so a live
+session may have made the same fix" — and at 00:21:17 concluded "No duplication — my fix is on main
+and unique". It inferred _already-landed_ from a **subject string**, never from ancestry. The live
+tip was not on `main`: at 00:45:57 the victim measured its own markers against `main` and got `0`.
+
+**Every signal that said `in-use` was present and unread.** The generator's own answer is `in-use`:
+`scripts/lib/worktree-inventory/classify.mjs:119` `hasLiveSession` (30-minute window; the victim's
+session was seconds old), `live → RECOMMENDATION.IN_USE`, and `docs/ORCHESTRATION.md:270` maps
+`in-use` to "leave it alone". The board held two unreleased locks naming the worktree and branch
+(timestamps UTC; this machine is UTC+2):
+
+```
+sqlite3 .git/agent-board/board.db \
+  "SELECT path,agent_id,worktree,acquired_at,released_at FROM file_locks WHERE worktree LIKE '%stale-citations%'"
+# .skills/hard-merge.md              fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
+# .skills/photoshop-tool-creation.md fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
+```
+
+The sweep's 00:44:25 pre-flight _did_ name `stale-citations` — but probed it with
+`git status --porcelain | wc -l`. That is a cleanliness check, and a clean tree reads identically for
+an abandoned worktree and a busy one. The signal it wanted was one column over.
+
+**Fix / convention.**
+
+1. **Never hand-write a disposal list.** Drive removal from
+   `node scripts/worktree-inventory.mjs` and refuse any entry whose `action` is not `dispose`
+   (`docs/ORCHESTRATION.md:269`). That single rule would have saved this worktree.
+2. **Use `git branch -d`, never `-D`.** `-d` refuses an unmerged branch, and that refusal is the
+   entire guard. Where `-D` is genuinely required, the precondition is
+   `git merge-base --is-ancestor <tip> main` — never a `git log --grep=<branch name>` match, which
+   matches any merge that ever mentioned the name.
+3. **A branch name that appears in any `main` merge subject must not be reused.** Put the chat id in
+   the branch name; a name is not an identity once a merge subject can outlive the branch.
+
+**Files.** `docs/ORCHESTRATION.md:269-287`, `scripts/lib/worktree-inventory/classify.mjs:119`,
+`scripts/lib/worktree-inventory/chats.mjs`, `.git/agent-board/board.db` (`file_locks`)
+
+## 137. `git worktree remove --force` is the reflex after git already refuses, and the refusal names exactly what is lost
+
+**Problem.** When `git worktree remove` refuses a dirty worktree it prints the modified and untracked
+paths and tells you to use `--force`. Re-running the same command with `--force` discards that work
+with no further prompt, and the output that named it has already scrolled past.
+
+**Observed.** 2026-10-01 00:14:05, in `.kilo/worktrees/reclaim-skill`:
+
+```
+fatal: '.kilo/worktrees/reclaim-skill' contains modified or untracked files, use --force to delete it
+```
+
+Six seconds later the same chat ran the identical command with `--force`. Git printed the inventory
+one last time —
+
+```
+M .skills/hard-merge.md  M .skills/photoshop-tool-creation.md
+```
+
+— and deleted the worktree. Two files of verified, gate-passing, never-committed edits were gone; the
+chat had to re-derive them from its own transcript. In the same incident, and in a _different_
+worktree, a concurrent sweep got the same decision right only because that tree happened to be clean.
+
+**Fix / convention.** Treat the refusal as a finding, not an obstacle: it is the cheapest inventory
+of uncommitted work in the repository, and it arrives before the only irreversible step. Before any
+`--force` removal, `git -C <worktree> status --short` and either commit, stash-free-copy
+(`git -C <worktree> diff > /tmp/<name>.patch`), or stop. If the answer is "the work is already
+landed", prove it with `git -C <worktree> diff main --stat` being empty for those paths — the
+modified-path list is a list of things that are **not** on `main` by definition. See §136 for the
+other half: a clean tree is not evidence that a worktree is abandoned.
+
+**Files.** `scripts/lib/worktree-inventory/git.mjs:126`, `AGENTS.md` (worktree rules)
+
+---
+
+## 138. Two tool options bars justify their clamping with a `localStorage` round trip that no code performs
+
+`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:111-112` and
+`src/components/ToolbarsRight/Smudge/Smudge.tsx:114` both carry the same comment:
+
+> A persisted args object can hold a value outside Photoshop's range — settings are round-tripped
+> through `localStorage` and restored before anything clamps them — and a controlled `<input
+type="range">` whose `value` is out of its own `min`/`max` pins the thumb to the bound while
+> reporting the raw value, so the readout and the thumb disagree.
+
+The reasoning is sound and the clamping is correct. **The premise is false.** `saveLastSettings`
+(`src/contexts/useCurrentTool.tsx:62`) writes to `src/tools/settings.ts:343`, a module-level
+singleton, seeded from `defaultSettings` (`src/tools/settings.ts:51-314`). Grepping `localStorage`
+across `src/` returns exactly two keys — `panelLayout` (`src/contexts/PanelLayout.tsx:229`, `:304`)
+and `theme` (`src/contexts/ThemeContext.tsx:14`, `:28`). Nothing reaches the disk.
+
+So the comment's stated scenario cannot occur, and a reader who believes it will reason about a
+restore path that does not exist when changing the clamping. It is worse than a harmless lie for a
+second reason: if tool settings _were_ persisted, `settings.ts` would be the wrong home for them,
+because it is a module singleton a reload discards by construction. The comment describes the
+architecture the code should have and does not.
+
+**Fix.** Correct the comment to say settings are per-session module state, which is the fact, and
+keep the clamping — it is right for a different reason: `defaultSettings` is `satisfies
+ToolArgsByName`, so a hand-edited default outside Photoshop's range would produce exactly the
+disagreeing readout. If cross-reload persistence is wanted, that is a feature, it belongs in a
+`localStorage` layer with a versioned schema, and the two comments become true. Neither is a
+cleanup; pick deliberately.
+
+**Files.** `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:111-112`,
+`src/components/ToolbarsRight/Smudge/Smudge.tsx:114`, `src/contexts/useCurrentTool.tsx:62`,
+`src/util/settings.ts:22-155`, `src/tools/settings.ts:343`
+
+---
+
+## 139. The superseded point-in-time reports cannot be moved without editing a data file
+
+`AUDIT-STASHED-DOCS.md`, `FOCUSED-REVIEW-2026-09-28.md`, `MIGRATION_NEXT_STEPS_SUNDAY.md`,
+`TEST_ISSUES.md` and `CANVAS-RESOLUTION-PLAN.md` sit at the repository root and are not part of any
+documentation hierarchy: all five are point-in-time reports, and two carry banners saying they are
+obsolete (`TEST_ISSUES.md:3-8`, `docs/save-settings-inconsistency.md:3-11`, `docs/next-target-useLayer.md:3-8`).
+`docs/README.md` now names all seven — those five plus the two recovered `docs/*.md` subjects — and
+excludes them explicitly.
+
+The obvious cleanup — move them to `docs/archive/` — **breaks `curated.mjs`**, which is why it has
+not happened. `scripts/lib/worktree-inventory/curated.mjs` keys `ref:` values on these exact
+paths, 9 references in all: `TEST_ISSUES.md` at `:300,313,324`, `AUDIT-STASHED-DOCS.md` at
+`:299,315,326`, `FOCUSED-REVIEW-2026-09-28.md` at `:244,254`, and `MIGRATION_NEXT_STEPS_SUNDAY.md`
+at `:341`. Beyond
+that, `TEST_ISSUES.md` and `AUDIT-STASHED-DOCS.md` reference each other, and the two obsolete
+`docs/*.md` files each point at `AUDIT-STASHED-DOCS.md`. Thirty further prose occurrences name
+them: 16 in this file, 11 in `AUDIT-STASHED-DOCS.md`, and one each in `TEST_ISSUES.md` and the two
+`docs/*.md` files. **`.skills/` names none of them** — an earlier draft of this entry put "roughly
+twenty prose references across `.skills/`" here, and `grep -rl` over `.skills/*.md` returns zero for
+all four names, so the migration touches no skill file at all.
+
+Two of the seven are genuinely dead and can go without ceremony: `TEST_ISSUES.md` says "do not add to
+it", and `docs/next-target-useLayer.md` says "do not work from it" — both contradict their own
+bodies, which still read as open plans, which is the residue §"fixed and verified deletes the
+entry" exists to prevent.
+
+**Fix.** Do it as its own change, not inside a documentation change: delete `TEST_ISSUES.md` and
+`docs/next-target-useLayer.md`, then move the remaining root reports to `docs/archive/` and update
+the four `ref:` key sets in `curated.mjs` plus the prose references. `CANVAS-RESOLUTION-PLAN.md` has
+no `ref:` key, so it moves on prose references alone. Verify by grepping for each old path
+afterwards, and by running `npm run test:e2e:unit` — `scripts/__tests__/worktree-inventory.test.mjs`
+parses `curated.mjs` and would catch a stale key.
+
+**Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
+`docs/README.md` ("Not maintained here"), `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
+`docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`
+---
+
+## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
+
+`index.html:18` and `index.html:35` load GTM container `GTM-WBWSB9XS` and `G-7F5V72YQ4K` from
+`googletagmanager.com`. Nothing in `e2e/` stubs, blocks or asserts on it.
+
+Three consequences, in increasing order of how much they matter:
+
+1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` records 1-8 aborted
+   `region1.google-analytics.com/g/collect` requests per test. It reports them and does not fail
+   on them, because a network call no test controls is not a defect in the app.
+2. **Every CI run contacts a third party.** A build gate that depends on Google's reachability
+   to stay green is a build gate with an extra failure mode it does not own.
+3. **Local development leaks to a production analytics property.** A developer's stroke, tool
+   switch and undo are reported to `G-7F5V72YQ4K` with no opt-in.
+
+Whether analytics belongs in a local editor at all is an operator decision and is not made here.
+
+**Fix.** Decide the policy first — absent, or opt-in behind an env flag that `e2e/` sets to
+nothing. Then either drop the two script tags from `index.html` or make them conditional on that
+flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googletagmanager.com`
+to `abort()` so the suite stops depending on them. The third point is the one worth resolving
+regardless of which policy is chosen.
+
+**Files.** `index.html:18,35`, `e2e/global-setup.ts`, `e2e/helpers/console-police.ts` (the
+report line that currently names them).
+
+---
+
+## 141. Two axe results are `incomplete` and therefore unasserted — one is a real role error
+
+`e2e/accessibility.spec.ts` attaches axe's `incomplete` array to the Playwright report and logs
+it, but deliberately does not assert on it: axe returns `incomplete` when it cannot decide, and
+failing on that would be a false positive. Two results recur on every run of the app-shell scan:
+
+- `aria-allowed-role` ×1 — a `role` on an element whose permitted roles exclude it. This is the
+  one to chase: `aria-allowed-role` goes incomplete when the element's accessible role is
+  ambiguous, which usually means the `role` and the element disagree.
+- `color-contrast` ×2 — axe declines to judge contrast where it cannot establish the text colour,
+  typically text over a background image or a gradient. Both land on the `SidebarRight`
+  `PanelGroup` header, whose background is set by class rather than inline.
+
+Neither is a finding on its own. Both are places where the automated checker has explicitly
+stopped, which is the category a reviewer should read by hand rather than a category a green run
+clears.
+
+**Fix.** Run the app-shell scan in both themes at a viewport where both regions are visible and
+read the two elements by hand. `role` on a non-matching element is a genuine a11y bug worth
+fixing; contrast over a gradient is usually a design decision, and belongs in `docs/OVERRIDES.md`
+rather than in a test if it is deliberate.
+
+**Files.** `e2e/accessibility.spec.ts` (the `incomplete` attachment), `src/components/SidebarRight/PanelGroup.tsx:42`.

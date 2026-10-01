@@ -3364,7 +3364,7 @@ exception:
 - **A free session must never launch a GPT subagent.** Every GPT model is paid, and the failure is
   an `APIError: Add credits to continue` at zero tokens — the subagent dies before it does
   anything, and the orchestrator that launched it was itself free.
-- **The default is `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'`.** The
+- **The default is `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'`.** The
   `variant: 'max'` pairing is the one to copy for anything adversarial or architecture-shaped.
 - **`agent_manager` inherits the current turn's model** unless both `model` and `provider` are set,
   so a main turn on a paid model silently spawns paid worktrees.
