@@ -176,13 +176,12 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
 
     const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
     const end = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
-    // A click creates a precise shape, matching Photoshop's single-click workflow.
+    // A click with no drag has no size to commit. It used to ask for one through two
+    // `window.prompt` calls; the refusal is now reported on the console, in line with the
+    // other user-facing alerts in this app, so a click never opens a browser dialog.
     if (start.x === end.x && start.y === end.y) {
-      const width = Number(window.prompt('Width (px)', '100'));
-      const height = Number(window.prompt('Height (px)', '100'));
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-      end.x += width;
-      end.y += height;
+      console.error(`${args.figure} needs a drag: a click with no movement has no size to draw`);
+      return;
     }
 
     const pos = shapeGeometryBounds({ start, end }, args.lineWidth);
