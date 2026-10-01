@@ -2,6 +2,7 @@ import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { draw, type DrawToolArgs, type DrawToolSettings, type PenType } from '../../../tools/draw.ts';
 import { savedDrawPerPen } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
+import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
 import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
@@ -14,6 +15,7 @@ const Draw: React.FC<{}> = () => {
   const [{ color, containerRef, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const [brushScale, setBrushScale] = useState<number>(0);
+  const dpr = useDevicePixelRatio();
   const previewRef = useRef<HTMLCanvasElement | null>(null);
 
   const args = toolArgs as DrawToolArgs;
@@ -89,13 +91,18 @@ const Draw: React.FC<{}> = () => {
     ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const scaledWidth = PREVIEW_WIDTH / brushScale;
-    const scaledHeight = PREVIEW_HEIGHT / brushScale;
+    // `brushScale` is the workspace contain fit (CSS px per document px), so the thumbnail is a
+    // miniature of the stroke at the size it will actually have on the canvas. `dpr` multiplies
+    // every length below: the raster is rendered at DEVICE resolution and then drawn 1:1 into a
+    // dpr-sized backing store. Drawing it scaled instead would put back exactly the softness this
+    // removes, because the source would be a low-resolution bitmap blown up.
+    const scaledWidth = (PREVIEW_WIDTH * dpr) / brushScale;
+    const scaledHeight = (PREVIEW_HEIGHT * dpr) / brushScale;
 
     const arcPoints: Point[] = [];
-    const radius = PREVIEW_HEIGHT / 2.2 / brushScale; // Adjust radius based on brush scale
-    const centerX = PREVIEW_WIDTH / 2.1 / brushScale;
-    const centerY = PREVIEW_HEIGHT / 2.4 / brushScale;
+    const radius = (PREVIEW_HEIGHT / 2.2 / brushScale) * dpr; // Adjust radius based on brush scale
+    const centerX = (PREVIEW_WIDTH / 2.1 / brushScale) * dpr;
+    const centerY = (PREVIEW_HEIGHT / 2.4 / brushScale) * dpr;
 
     // Generate points for an arc from 0 to 90 degrees
     for (let angle = -1 / 2; angle <= Math.PI / 2 + 1.2; angle += Math.PI / 2) {
@@ -104,14 +111,14 @@ const Draw: React.FC<{}> = () => {
       arcPoints.push({ x, y });
     }
 
-    const previewArgs = { ...args, color, points: arcPoints };
+    const previewArgs = { ...args, color, points: arcPoints, lineWidth: args.lineWidth * dpr };
 
     // Draw the toolCanvas into previewCanvas with scaling and centering
     const [toolCanvas] = draw({ size: { width: scaledWidth, height: scaledHeight } })(previewArgs);
 
-    // Draw the toolCanvas into previewCanvas with scaling and centering
-    ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-  }, [args, brushScale, color]);
+    // 1:1, because `scaledWidth`/`scaledHeight` were already multiplied by `dpr` above.
+    ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH * dpr, PREVIEW_HEIGHT * dpr);
+  }, [args, brushScale, color, dpr]);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
@@ -218,7 +225,7 @@ const Draw: React.FC<{}> = () => {
           isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
         }`}
       >
-        <canvas ref={previewRef} width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} />
+        <canvas ref={previewRef} width={PREVIEW_WIDTH * dpr} height={PREVIEW_HEIGHT * dpr} className="h-12 w-24" />
       </div>
     </div>
   );

@@ -25,7 +25,7 @@ import {
 import type { HistoryItem } from './history-types.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
-import type { ToolArgs } from './tool-types.ts';
+import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
 import type { ActionType } from '../util/constants.ts';
 import {
@@ -240,6 +240,36 @@ function frameFromLegacy(
         : documentFrameFromSize(initialSize);
 }
 
+/**
+ * The frame the FIRST entry establishes when it is a bedrock source rather than a
+ * document source — the shape `File > New` produces, where `createBlankLayer(params,
+ * true)` replaces the document and writes a single `NEW_LAYER` entry carrying
+ * `{ isBedrock: true, size }` (`useLayer.ts:242`, `history-utils.ts:22-23`).
+ *
+ * The baseline describes the document at cursor -1, and for that history the bedrock
+ * size IS that document, so reading it here is what makes the shadow agree with the
+ * authority instead of coinciding with it. It has to be read, because the converter's
+ * create-layer arm cannot reach it: it publishes the layer and deliberately leaves
+ * `currentFrame` alone, which is right for every LATER entry and wrong for the one
+ * that opened the document.
+ *
+ * It outranks `options.initialFrame` deliberately, and for the same reason legacy
+ * replay does: that option is the store's CURRENT frame, which a later crop has
+ * already moved, while legacy replay restores the bedrock size when the cursor walks
+ * back to index 0. A converter that preferred it would describe cursor -1 as the
+ * cropped document, so the two models would disagree at exactly the cursor where the
+ * user can undo into the un-cropped original.
+ */
+function frameFromFirstEntryBedrock(item: HistoryItem | undefined): DocumentFrame | undefined {
+  if (!item || item.documentSource) return undefined;
+  const source = item.layerSource ?? asLegacyLayerSource(item.args);
+  if (source?.isBedrock) return documentFrameFromSize(source.size);
+  if ((item.args as NewBedrockSize | undefined)?.isBedrock) {
+    return documentFrameFromSize((item.args as NewBedrockSize).size);
+  }
+  return undefined;
+}
+
 function entry<Op extends DurableOperation>(id: string, operation: Op, enabled = true): DurableHistoryEntry<Op> {
   return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
 }
@@ -270,7 +300,7 @@ export function deriveSetDocumentFrameEntry(
  * Structural guard for a durable selection snapshot.
  *
  * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
- * as `next?.activeSelectionId ?? null` (`history-replay.ts:102`): a snapshot that
+ * as `next?.activeSelectionId ?? null` (`history-replay.ts:122`): a snapshot that
  * omits the id still retains its selections and only loses the active id.
  * Rejecting that shape here would make the shadow clear selections that legacy
  * replay keeps. The guard only asks whether the value can be read as a snapshot
@@ -558,7 +588,7 @@ export function legacyHistoryToDurable(
   // `durable-replay.ts` applies only each operation's `after`.
   const selectionBaseline = deriveSelectionBaseline(legacyHistory);
   const initial = snapshotFromDocumentSource(first, documentId, registry) ?? {
-    frame: options.initialFrame ?? documentFrameFromSize(initialSize),
+    frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
     layers: [],
     activeLayerId: null,
   };
@@ -636,7 +666,7 @@ export function legacyHistoryToDurable(
         const layerToMoveId = args?.layerToMoveId;
         const afterWhichLayerId = args?.afterWhichLayerId;
         // `replayHistory` skips the move entirely when either id is absent
-        // (`history-replay.ts:127`), leaving the order untouched, so conversion
+        // (`history-replay.ts:147`), leaving the order untouched, so conversion
         // records nothing and leaves `currentLayers` alone. A named but missing
         // anchor is not a placement at the bottom: `remaining.indexOf` would be
         // -1, and `+ 1` would record a move to index 0 that the document never
@@ -674,17 +704,16 @@ export function legacyHistoryToDurable(
           if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
         } else {
           // `replayHistory` drops a frame action whose `nextFrame` is not a valid
-          // frame too (`history-replay.ts:99-105` guards the assignment on
+          // frame too (`history-replay.ts:111-117` guards the assignment on
           // `isValidDocumentFrame`), so for an enabled entry the shadow stays in
           // PARITY with legacy replay and there is no disagreement to fail closed
-          // over. (Two shapes are not parity and are not claimed to be: a
-          // DISABLED entry, which legacy replay skips without an opinion
-          // (`history-replay.ts:74`), and a bedrock source on the INITIAL document
-          // entry, which still establishes the legacy frame
-          // (`history-replay.ts:91-97`) while the create-layer arm never touches
-          // `currentFrame`. A bedrock commit at any LATER index is not a
-          // disagreement: legacy replay ignores it too, so both sides hold the
-          // frame the baseline established.)
+          // over. (One shape is not parity and is not claimed to be: a DISABLED
+          // entry, which legacy replay skips without an opinion
+          // (`history-replay.ts:74`). A bedrock source is parity at every index —
+          // legacy replay honours it only for the initial document entry
+          // (`history-replay.ts:103-109`) and `frameFromFirstEntryBedrock` reads the
+          // same entry for the baseline, so a bedrock commit at any LATER index
+          // moves neither side.)
           // But parity alone is not observability: this branch cannot throw, so
           // without a diagnostic the conversion reports `status: 'current'`
           // while silently losing a document-frame change, and the only other

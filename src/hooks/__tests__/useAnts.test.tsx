@@ -47,15 +47,76 @@ describe('useMarchingAnts', () => {
     act(() => pending.forEach((callback) => callback(0)));
   }
 
-  function setup() {
+  function setup(scale?: number) {
     const canvas = document.createElement('canvas');
     const ctx = createMockCanvasContext(canvas);
     vi.spyOn(canvas, 'getContext').mockReturnValue(ctx);
     const overlayRef = { current: canvas as HTMLCanvasElement | null };
     const containerRef = { current: document.createElement('div') };
-    const hook = renderHook(() => useMarchingAnts({ overlayRef, containerRef }));
-    return { ...hook, ctx, overlayRef, containerRef };
+    const scaleRef = scale === undefined ? undefined : { current: scale };
+    const hook = renderHook(() => useMarchingAnts({ overlayRef, containerRef, scaleRef }));
+    return { ...hook, ctx, overlayRef, containerRef, scaleRef };
   }
+
+  /**
+   * The ants are drawn into a DOCUMENT-sized overlay that CSS displays with `object-contain`, so
+   * the context draws in document px. `DASH_LENGTH` and friends are CSS px, which means they are
+   * only the right size at scale 1 — below it the outline is sub-pixel and smears, and the crawl
+   * rate slows down with it. This is the whole of defect D3: the marquee in `useRect` has always
+   * divided by the contain fit (`2 / scale`), and these two painters did not.
+   */
+  it('divides its dash, gap and line width by the contain scale', () => {
+    const { result, ctx } = setup(0.5);
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 40, y: 25 },
+      ])
+    );
+    frame();
+
+    // At scale 0.5 the document is drawn at half size, so a 6 CSS px dash is 12 document px.
+    expect(ctx.setLineDash).toHaveBeenCalledWith([12, 12]);
+    expect(ctx.lineWidth).toBe(2);
+  });
+
+  it('keeps the crawl rate a screen speed, so the ants do not slow down when zoomed out', () => {
+    const scaled = setup(0.5);
+    const offsets: number[] = [];
+    vi.mocked(scaled.ctx.stroke).mockImplementation(() => offsets.push(scaled.ctx.lineDashOffset));
+    act(() =>
+      scaled.result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 40, y: 25 },
+      ])
+    );
+    frame();
+    frame();
+
+    // SPEED 1 CSS px per frame is 2 document px at scale 0.5, and the black/white half-shift is
+    // the whole dash (12), not the undivided 6.
+    expect(offsets).toEqual([0, 12, -2, 10]);
+  });
+
+  it('pads the erase by the scaled line width, so the clear covers what was stroked', () => {
+    const { result, ctx } = setup(0.5);
+    // The same three points as the scale-1 test above, so the bounds are identical (10,20,30x30)
+    // and the only difference between the two clearRects is the padding.
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 40, y: 25 },
+        { x: 15, y: 50 },
+      ])
+    );
+    frame();
+    // The first frame paints and records what it painted; the erase runs at the top of the next
+    // one, so a second frame is what actually issues the clearRect.
+    frame();
+
+    // The undivided version clears (9, 19, 32, 32); at scale 0.5 the 2px line needs 2px of padding.
+    expect(ctx.clearRect).toHaveBeenCalledWith(8, 18, 34, 34);
+  });
 
   it('closes arbitrary contours and animates both strokes without changing the cursor', () => {
     const { result, ctx, containerRef } = setup();

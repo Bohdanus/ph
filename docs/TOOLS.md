@@ -2097,7 +2097,7 @@ Implementation:
 - `src/tools/toolProcessors.ts:126`
 - `src/contexts/useLayer.ts:536`
 - `src/contexts/useLayer.ts:345`
-- `src/contexts/history-replay.ts:152`
+- `src/contexts/history-replay.ts:172`
 - `src/contexts/layer-renderer.ts:16`
 - `src/contexts/materialization.ts:78`
 - `src/test/setup.ts:320`
@@ -2164,7 +2164,7 @@ Implementation:
 - `src/tools/toolProcessors.ts:132`
 - `src/contexts/useLayer.ts:536`
 - `src/contexts/useLayer.ts:345`
-- `src/contexts/history-replay.ts:152`
+- `src/contexts/history-replay.ts:172`
 - `src/contexts/layer-renderer.ts:18`
 - `src/contexts/materialization.ts:84`
 - `src/test/setup.ts:320`

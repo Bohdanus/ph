@@ -573,8 +573,12 @@ heartbeat` still exists and is still correct — it is the only thing that can
   claimed or not claimable · 4 file held by another agent · 5 self-verification
   refused.
 
-It is a command, not a gate. Nothing in `.husky/` calls it, and no commit may be
-blocked on it.
+It is a command, not a gate, and no commit may be blocked on it. Exactly one thing
+calls it: `.husky/post-merge` runs `scripts/merge-release.mjs`, which releases the
+claims and locks of every worktree the merge put on `main` — non-blocking, because
+the merge is already recorded by the time a post-merge hook runs. Nothing else in
+`.husky/` reads the board, and nothing runs it on worktree creation or on a chat
+stopping.
 
 ### Resource locking and releasing
 

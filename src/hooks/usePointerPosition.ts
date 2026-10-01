@@ -1,16 +1,9 @@
 import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
+import { containFit, type ContainDimensions } from '../util/contain-fit.ts';
 import type { Point, Pos, Size } from '../contexts/general-types.ts';
 
-export type ContainDimensions = {
-  innerWidth: number; // inner image
-  innerHeight: number;
-  outerWidth: number; // container
-  outerHeight: number;
-  offsetX: number; // gap between image and container
-  offsetY: number;
-  scale: number; // how much is image scaled to be contained
-};
+export type { ContainDimensions } from '../util/contain-fit.ts';
 
 /**
  * The `data-*` attributes this hook publishes on its container, and what each one is.
@@ -138,27 +131,8 @@ export function usePointerPosition<T extends HTMLElement>(
       if (!rect) return;
 
       const { width: outerWidth, height: outerHeight } = rect;
-      const { width: imageWidth, height: imageHeight } = imageSize;
 
-      const scaleX = outerWidth / imageWidth;
-      const scaleY = outerHeight / imageHeight;
-
-      const scale = Math.min(scaleX, scaleY);
-
-      const innerWidth = imageWidth * scale;
-      const innerHeight = imageHeight * scale;
-      const offsetX = (outerWidth - innerWidth) / 2;
-      const offsetY = (outerHeight - innerHeight) / 2;
-
-      dimensionsRef.current = {
-        innerWidth,
-        innerHeight,
-        outerWidth,
-        outerHeight,
-        offsetX,
-        offsetY,
-        scale,
-      };
+      dimensionsRef.current = containFit({ width: outerWidth, height: outerHeight }, imageSize);
 
       publishFit(dimensionsRef.current, rect, imageSize);
       onResizeRef.current?.(dimensionsRef.current);
