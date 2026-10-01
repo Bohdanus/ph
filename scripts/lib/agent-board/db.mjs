@@ -339,38 +339,47 @@ export class Board {
       throw new BoardError(`no board at ${this.path}`, { code: 2 });
     }
     this.db = new DatabaseSync(this.path);
-    // ORDER MATTERS, and setting the timeout first is NECESSARY BUT NOT
-    // SUFFICIENT.
+    // A THROW ANYWHERE IN HERE MUST NOT LEAVE A HALF-OPEN BOARD. `this.db` is
+    // assigned on the line above, and the first line of this method is
+    // `if (this.db) return this`, so a caller that catches the failure and
+    // retries — the natural reaction to an error message that says exactly what
+    // to fix — got a board back on the second call with the rest of `open()`
+    // never run and no error, because the short-circuit returned the object that
+    // was already holding a live handle. Measured before this: open threw, a
+    // second `open()` returned NORMALLY, and the caller held a usable unmigrated
+    // board.
     //
-    // The timeout first: without it, a second process opening a board gets
-    // SQLITE_BUSY immediately instead of waiting.
-    //
-    // The retry: SQLite does not run the busy handler for the exclusive lock a
-    // journal-mode conversion needs, so on a board that does not exist yet — the
-    // moment the whole swarm opens it at once — one process in three hundred
-    // still lost that lock and died with "database is locked". Reordering alone
-    // turned a 12% failure rate into a 0.2% one, which is worse than a fix
-    // because it looks like a fix.
-    //
-    // Giving up is survivable: WAL is what lets a reader run while a writer
-    // holds the write lock, and without it SQLite falls back to the rollback
-    // journal, where the same BEGIN IMMEDIATE transactions and the same
-    // busy_timeout still make every claim exclusive. Correctness comes from the
-    // transactions, not from this line; this line buys concurrency, and a board
-    // that stays on the rollback journal is slower, not wrong.
-    this.db.exec('PRAGMA busy_timeout = 5000');
-    this.enableWriteAheadLog();
-    this.db.exec('PRAGMA foreign_keys = ON');
-    // A THROW HERE MUST NOT LEAVE A HALF-OPEN BOARD. `this.db` is assigned
-    // above, and the first line of this method is `if (this.db) return this`, so
-    // a caller that catches the refusal and retries — the natural reaction to an
-    // error message that says exactly what to fix — got a board back on the
-    // second call with `migrate()` never re-run and no error, because the
-    // short-circuit returned the object that was already holding a live handle.
-    // Measured before this: open threw, then a second `open()` returned normally
-    // and the board was usable and unmigrated.
+    // THE `try` STARTS IMMEDIATELY AFTER THE ASSIGNMENT, and that placement is
+    // the whole fix. Wrapping only `migrate()` left the same leak reachable by
+    // every statement between here and there: on a corrupt `board.db`,
+    // `new DatabaseSync` succeeds and the first `PRAGMA` throws, so `migrate()`
+    // is never reached and the try/catch never runs. Verified against both the
+    // previous commit and main — same half-open board, same silent second open.
     try {
+      // ORDER MATTERS, and setting the timeout first is NECESSARY BUT NOT
+      // SUFFICIENT.
+      //
+      // The timeout first: without it, a second process opening a board gets
+      // SQLITE_BUSY immediately instead of waiting.
+      //
+      // The retry: SQLite does not run the busy handler for the exclusive lock a
+      // journal-mode conversion needs, so on a board that does not exist yet —
+      // the moment the whole swarm opens it at once — one process in three
+      // hundred still lost that lock and died with "database is locked".
+      // Reordering alone turned a 12% failure rate into a 0.2% one, which is
+      // worse than a fix because it looks like a fix.
+      //
+      // Giving up is survivable: WAL is what lets a reader run while a writer
+      // holds the write lock, and without it SQLite falls back to the rollback
+      // journal, where the same BEGIN IMMEDIATE transactions and the same
+      // busy_timeout still make every claim exclusive. Correctness comes from
+      // the transactions, not from this line; this line buys concurrency, and a
+      // board that stays on the rollback journal is slower, not wrong.
+      this.db.exec('PRAGMA busy_timeout = 5000');
+      this.enableWriteAheadLog();
+      this.db.exec('PRAGMA foreign_keys = ON');
       this.migrate();
+      return this;
     } catch (err) {
       try {
         this.db.close();
@@ -381,7 +390,6 @@ export class Board {
       this.db = null;
       throw err;
     }
-    return this;
   }
 
   /**
