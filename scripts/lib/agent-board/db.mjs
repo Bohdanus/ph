@@ -55,6 +55,46 @@ export const IDLE_LIVE_MS = 6 * 60 * 60 * 1000;
 /** "No cap" for an internal aggregation, as opposed to a displayed page. */
 export const NO_LIMIT = Number.MAX_SAFE_INTEGER;
 
+/**
+ * The longest a single board MESSAGE may be, in characters.
+ *
+ * The board is a log, not a document. A note is a pointer — "ph-12 fixed, files
+ * A and B" — and the finding it points at belongs in a handoff document, where
+ * it can be linked, reviewed and kept. `watch` prints one line per event, so an
+ * unbounded message is one unbounded line: a 5000-character note turns the log
+ * into a wall, and every reader after it has to scroll past.
+ *
+ * It REJECTS rather than truncates, which is the whole point. This repository has
+ * already paid for the alternative: `truncate()` exists because a title clipped
+ * with `slice(0, 70)` and no ellipsis read as a finished sentence, and an agent
+ * working from half a message cannot tell that is what it has. A note that was
+ * silently clipped at 4096 characters is the same defect wearing a larger number,
+ * and it is worse here because the author would never see it happen.
+ *
+ * 4096 is chosen to match Kilo's own `board_post` limit, so a finding that
+ * survives one channel survives the other, and an agent that learned the number
+ * in one place is right in the other.
+ */
+export const MAX_MESSAGE_CHARS = 4096;
+
+/**
+ * One guard for every text-carrying event, at the single point they all pass
+ * through.
+ *
+ * `note`, `comment`, `claim --note`, `resolve --note`, `close`, `defer` and
+ * `reopen` all reach `addEvent`, so a cap anywhere else could be bypassed by
+ * adding a command. The error names the limit, the field and the way out.
+ */
+function assertMessageLength(kind, message) {
+  if (message.length <= MAX_MESSAGE_CHARS) return;
+  throw new BoardError(
+    `${kind}: ${message.length} characters is over the ${MAX_MESSAGE_CHARS}-character board limit, ` +
+      `so nothing was written. The finding belongs in a handoff document — put its path in a note of ` +
+      `at most ${MAX_MESSAGE_CHARS} characters and the next agent can follow it. Nothing is truncated.`,
+    { code: 1 }
+  );
+}
+
 const PRIORITY_ORDER = { critical: 0, high: 1, normal: 2, low: 3 };
 export const PRIORITIES = Object.keys(PRIORITY_ORDER);
 
@@ -560,6 +600,9 @@ export class Board {
   // --- events -------------------------------------------------------------
 
   addEvent(kind, fields = {}) {
+    if (typeof fields.message === 'string') {
+      assertMessageLength(kind, fields.message);
+    }
     const result = this.db
       .prepare(
         `INSERT INTO events (ts, agent_id, kind, issue_id, path, message, data)

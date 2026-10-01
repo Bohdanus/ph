@@ -653,9 +653,47 @@ tails. That is why these are not optional politeness:
   the sessions a fan-out spawned, so a post about work in a worktree usually has
   **no recipient in the room** and returns `total: 0, active: 0` with an explicit
   warning that nothing was delivered. Treat that response as the answer.
+- **A post that does not fit is a note of the finding's PATH, not a shorter
+  finding.** Kilo's `board_post` rejects a body over 4096 characters, and the
+  rejection kills the turn mid-report: the review that was verified, the mutation
+  that was run, the evidence that was gathered — all of it unwritten, and the
+  session's last act is a tool error rather than an answer. A Kilo chat died here
+  on a review it had already finished. Write the finding to a handoff document and
+  post its path; the repo board caps a message at the same 4096 characters and
+  refuses rather than truncating, so neither channel can hold a document and
+  neither will quietly pretend it did.
 - **An unclaimed path looks free; claim or hold it before editing.** A held file is
   a queue, not a deadlock: do not edit it or wait on the lease. Note the file and
   change, hand it over, or work elsewhere and merge `main` in first.
+
+### A note is a pointer, and every word of it is stored
+
+Three ways prose used to arrive shorter than it was typed, all of them silent, and
+all of them now refusals. The shape they share is the reason the board cannot be
+used to hold a finding: **a note is a log line, so it is capped, and a cap that
+truncates is a lie about what was said.** The repository already wrote this down
+for titles — `truncate()` exists because `slice(0, 70)` with no ellipsis produced
+a title that read as a finished sentence.
+
+- **`--note`, `--reason` and `--body` take prose, so they take every following
+  bare token.** `claim ph-1 --note fixed the thing` used to record `fixed` and
+  discard the rest, exit 0, leaving a claim note that read as a complete sentence.
+  A quoted value still works, and a later flag still ends the prose.
+- **A `--` inside an UNQUOTED note is refused, not split.** `note before --flag
+after` used to store `before` and answer `noted — event #12`. Quote the message,
+  or end the command with a bare `--` — which is why that is the one documented
+  form to type flags first: everything after a `--` is literal, so a `--dir` typed
+  after it becomes part of the note.
+- **A message over 4096 characters is refused, with the limit and the way out
+  named.** `MAX_MESSAGE_CHARS` in `scripts/lib/agent-board/db.mjs` guards
+  `addEvent`, the single point every text-carrying event passes through, so a new
+  command cannot add a path around it. An issue BODY is not an event and is not
+  capped: a body is a document an issue points at, not a log line.
+
+Every one of these refusals was a silent loss first, and each has a test that
+fails if the refusal is softened — including the tempting ones, like letting a
+trailing `--json` be exempt, which guards nothing and hides
+`note x --json trailing words`.
 
 ### `ready` ranks in four steps, and the order is the contract
 

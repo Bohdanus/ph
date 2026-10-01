@@ -41,6 +41,7 @@ task({
 - **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.** Its bash layer denies every invocation, so an explore agent asked to run `npm run test`, `npx playwright test --list` or `git log` reports a permission error instead of a result. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
+- **A post that will not fit is a path, not a shorter post.** `board_post` rejects a body over 4096 characters and the rejection ABORTS THE TURN — a finished review, its mutations and all its evidence, gone, ending on a tool error. Write the finding to a handoff document and post the path. `docs/ORCHESTRATION.md` has the cap and the rest of the swarm text rules.
 
 ## NEVER OPEN A BROWSER WINDOW
 

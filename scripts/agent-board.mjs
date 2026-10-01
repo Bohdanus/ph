@@ -77,6 +77,10 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   check <path...>        who holds these files  (exit 1 if any is held)
   comment <id> <text>    say something on an issue
   note <text>            say something to the swarm
+                          quote the text, or end it with --: a bare -- inside an
+                          UNQUOTED note is refused rather than cut (nothing is dropped
+                          silently), and a message over 4096 characters is refused —
+                          put the finding in a handoff document and note the path
   resolve <id>           the work is done       --note
   close <id>             verified by YOU, done
   defer <id>             park it                --reason --until
@@ -98,6 +102,9 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   --json                 machine-readable output on every command except help and --version,
                          and \`watch --follow\`, which is an unbounded stream: it prints one
                          line per event instead, and says so above
+  --note --reason --body  PROSE, and prose is more than one word: every bare token
+                          after one of these belongs to it, so an unquoted
+                          \`claim ph-1 --note fixed the thing\` records the whole sentence
   --agent <id>           act as somebody else (default: the current git branch)
   --dir <path>           use another board database (default: $(git rev-parse --git-common-dir)/agent-board)
 
@@ -144,6 +151,24 @@ const VALUE_FLAGS = new Set([
 const LIST_FLAGS = new Set(['files', 'dep', 'file']);
 
 /**
+ * Flags whose value is PROSE, and which therefore swallow every following token
+ * that is not itself a flag, joining them back with spaces.
+ *
+ * `--note fixed the thing` recorded `fixed` and dropped the rest of the sentence
+ * on the floor, with exit 0 and no warning: `claim`, `resolve` and `close` took a
+ * single-token value, so every note an agent typed without quotes arrived
+ * truncated at its first space, and the board read back a finished-looking
+ * sentence that was not what was written. `defer --reason waiting on ph-9` lost
+ * everything after `waiting`.
+ *
+ * These take prose, so they behave like `--files a.ts b.ts` rather than like a
+ * single token: greedily, then rejoined. The text a flag value is documented to
+ * hold has to survive being typed without quotes, or the documentation is a lie
+ * about the length of a sentence.
+ */
+const TEXT_FLAGS = new Set(['note', 'reason', 'body']);
+
+/**
  * A dependency-free argument parser, because an agent's first command in a
  * fresh context is often `--help` and a tool that cannot be run without a
  * working `node_modules` is a tool that will not be run. Unknown flags are kept
@@ -155,12 +180,21 @@ export function parseArgs(argv) {
   const positional = [];
   /** The positional arguments that appeared BETWEEN the command and the first flag after it. */
   const leading = [];
+  /**
+   * The tokens typed after a bare `--`, which are LITERAL: never a flag, never a
+   * value, never a title. They are kept apart from `leading` because a command
+   * that reads prose has to be able to tell "this text was quoted" from "this
+   * text was swallowed as a flag value", and only one of those is what the author
+   * meant.
+   */
+  const literal = [];
   let seenFlag = false;
   let seenCommand = false;
   let i = 0;
   while (i < argv.length) {
     const token = argv[i];
     if (token === '--') {
+      literal.push(...argv.slice(i + 1));
       positional.push(...argv.slice(i + 1));
       break;
     }
@@ -177,14 +211,18 @@ export function parseArgs(argv) {
       if (value === undefined) {
         const next = argv[i + 1];
         if (VALUE_FLAGS.has(name) && next !== undefined && !next.startsWith('--')) {
-          if (LIST_FLAGS.has(name)) {
-            // A list flag is greedy: every following bare token belongs to it.
+          if (LIST_FLAGS.has(name) || TEXT_FLAGS.has(name)) {
+            // A list or prose flag is greedy: every following bare token belongs
+            // to it. A list keeps its tokens apart; prose rejoins them with
+            // spaces, because `--note fixed the thing` is one sentence and not
+            // three words.
             const values = [];
             while (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
               values.push(argv[i + 1]);
               i += 1;
             }
-            value = values.length > 0 ? values : true;
+            value =
+              values.length === 0 ? true : TEXT_FLAGS.has(name) ? values.join(' ') : values.length > 0 ? values : true;
           } else {
             value = next;
             i += 1;
@@ -207,7 +245,36 @@ export function parseArgs(argv) {
     }
     i += 1;
   }
-  return { flags, positional, leading };
+  return { flags, positional, leading, literal };
+}
+
+/**
+ * `note` and `comment` take PROSE, and prose contains `--`.
+ *
+ * `note before --flag after` stored `before` and reported `noted — event #12`:
+ * the tail became a flag, the message was cut at the first `--`, and nothing said
+ * so. The same sentence the author could see in their own shell arrived on the
+ * board shorter than it was written, and `swarm watch` printed the short version
+ * as though it were the whole.
+ *
+ * So a `--` inside a note's own text is a REFUSAL, not a silent split: the
+ * author quotes it, or ends the command with `--`. The cost is one error where
+ * there used to be a lie.
+ *
+ * `positional` is longer than `leading` exactly when a bare token arrived after a
+ * flag, which is the shape of the loss. No flag is exempt, because a global flag
+ * is not the exception it looks like: `note my finding --json` is fine — nothing
+ * follows the flag — while `note my finding --json trailing words` drops `trailing
+ * words` just as silently as a note flag would, and exempting `--json` would have
+ * exempted that too.
+ */
+function assertNoAbandonedText(command, abandoned) {
+  if (abandoned <= 0) return;
+  throw new BoardError(
+    `${command}: ${abandoned} word(s) after a -- flag were dropped, not written. ` +
+      `Quote the message ("${command} \\"…\\"") or put it after a bare -- so a -- inside the text is text.`,
+    { code: 1 }
+  );
 }
 
 /**
@@ -362,7 +429,7 @@ export async function run(
   argv,
   { cwd = process.cwd(), env = process.env, out = process.stdout, err = process.stderr } = {}
 ) {
-  const { flags, positional, leading } = parseArgs(argv);
+  const { flags, positional, leading, literal } = parseArgs(argv);
   // `leading` is every bare token before the first flag, which includes the
   // command name. The title of `new` is the rest of that run.
   const leadingArgs = leading.slice(1);
@@ -742,16 +809,20 @@ export async function run(
 
       case 'comment': {
         const id = leadingArgs[0];
-        const message = leadingArgs.slice(1).join(' ').trim();
+        const message = [...leadingArgs.slice(1), ...literal].join(' ').trim();
         if (!id || !message) throw new BoardError('comment needs an id and a message', { code: 1 });
+        assertNoAbandonedText(command, positional.length - leading.length - literal.length);
         board.comment(id, message);
         emit({ id, message }, `commented on ${id}`);
         return 0;
       }
 
       case 'note': {
-        const message = leadingArgs.join(' ').trim();
+        const message = [...leadingArgs, ...literal].join(' ').trim();
         if (!message) throw new BoardError('note needs a message', { code: 1 });
+        // Every word typed must be a word STORED. `note x --flag y` used to keep
+        // `x`, discard `--flag y`, and answer `noted — event #12`.
+        assertNoAbandonedText(command, positional.length - leading.length - literal.length);
         const result = board.note(message);
         // The seq comes back because a note you cannot FIND is a note you
         // cannot confirm. This board read its own log from the wrong end for

@@ -25,6 +25,7 @@ import {
   BoardError,
   DEFAULT_LEASE_MS,
   IDLE_LIVE_MS,
+  MAX_MESSAGE_CHARS,
   isImportedOrigin,
   parseDuration,
 } from '../lib/agent-board/db.mjs';
@@ -1035,6 +1036,75 @@ describe('the event log is the swarm talking', () => {
     expect(event.issue_id).toBeNull();
     expect(event.message).toBe('I am touching StoreContext for the next hour');
   });
+
+  /**
+   * A note is a POINTER, and a pointer has to fit.
+   *
+   * Nothing capped a message at any layer, so a 5000-character note was stored
+   * whole and `watch` printed it as ONE 5100-character line — the log becomes a
+   * wall that every later reader scrolls past. The obvious repair is to truncate,
+   * and that is exactly what this repository has already written down as a defect
+   * in `truncate()`: `slice(0, 70)` with no ellipsis produced a title that read as
+   * a finished sentence, and an agent working from half a message cannot tell
+   * that is what it has. So the cap REJECTS, names the limit, and says where the
+   * finding belongs.
+   */
+  it('refuses an over-long message instead of truncating it', () => {
+    const board = boardFor('a');
+    expect(MAX_MESSAGE_CHARS).toBe(4096);
+    // Exactly at the limit is allowed: a cap that rejects the boundary value
+    // would be off by one against every author who counted.
+    const atLimit = board.note('x'.repeat(MAX_MESSAGE_CHARS));
+    expect(board.events({ since: 0, kind: 'note' }).map((event) => event.message)).toEqual([
+      'x'.repeat(MAX_MESSAGE_CHARS),
+    ]);
+    expect(atLimit.seq).toBeGreaterThan(0);
+    // One character over is refused, and NOTHING is written.
+    expect(() => board.note('x'.repeat(MAX_MESSAGE_CHARS + 1))).toThrow(BoardError);
+    expect(() => board.note('x'.repeat(MAX_MESSAGE_CHARS + 1))).toThrow(/4096-character board limit/);
+    expect(board.events({ since: 0, kind: 'note' })).toHaveLength(1);
+    // The error must not read as a truncated message would: it says nothing was
+    // written, and where the finding goes instead.
+    try {
+      board.note('x'.repeat(MAX_MESSAGE_CHARS + 1));
+      expect.unreachable('the over-long note should have been refused');
+    } catch (error) {
+      expect(error.message).toMatch(/nothing was written/);
+      expect(error.message).toMatch(/handoff document/);
+      expect(error.message).toMatch(/Nothing is truncated/);
+    }
+  });
+
+  it('caps every text-carrying EVENT, because they all pass through one place', () => {
+    const board = boardFor('a');
+    const { id } = board.createIssue({ title: 'capped' });
+    const over = 'x'.repeat(MAX_MESSAGE_CHARS + 1);
+    // claim, comment, defer, reopen, resolve and close all carry prose, and all of
+    // them reach addEvent. The test names them so a future command cannot quietly
+    // add a path around the one guard.
+    expect(() => board.claimIssue(id, { note: over })).toThrow(/board limit/);
+    expect(() => board.comment(id, over)).toThrow(/board limit/);
+    expect(() => board.deferIssue(id, { reason: over })).toThrow(/board limit/);
+    // resolve and close need the live claim first, which the refused claim above
+    // did not take — so take it with a short note.
+    board.claimIssue(id, { note: 'taking it' });
+    expect(() => board.resolveIssue(id, { note: over })).toThrow(/board limit/);
+    // `close` refuses an unresolved issue before it reaches the guard, and refuses
+    // the resolver as verifier, so resolve for real and let ANOTHER agent try to
+    // close it — which is the only way `closeIssue` is reachable at all.
+    board.resolveIssue(id, { note: 'resolved for real' });
+    expect(() => board.closeIssue(id, { agent: 'b', note: over })).toThrow(/board limit/);
+    // Nothing was written by any of them: the issue is still open-and-resolved
+    // rather than closed, and the only note on the board is the short one.
+    expect(board.getIssue(id).status).toBe('resolved');
+    // The refused `claim --note` left no claim.acquire behind, and the short note
+    // that was allowed is the only prose on the board.
+    expect(board.events({ kind: 'claim.acquire' }).map((event) => event.message)).toEqual(['claimed: taking it']);
+    expect(board.events({ kind: 'note' })).toHaveLength(0);
+    // An issue BODY is not an event, and is not capped: a body is a document an
+    // issue points at, not a log line, so it has no reader to protect.
+    expect(() => board.createIssue({ title: 'with a long body', body: over })).not.toThrow();
+  });
 });
 
 describe('the schema this script writes', () => {
@@ -1865,6 +1935,108 @@ describe('the command line', () => {
     expect(watched.code).toBe(0);
     expect(watched.out).toContain('issue.create');
     expect(watched.out).toContain('a line the swarm reads');
+  });
+
+  /**
+   * Every word typed must be a word stored, or the board is not telling the
+   * truth about what anybody said.
+   *
+   * `note before --flag after` stored `before`, discarded `--flag after`, and
+   * answered `noted — event #12` — exit 0, a sequence number, and a `watch` line
+   * carrying a finished-looking sentence that was not the sentence typed. The
+   * words were dropped in `parseArgs`, before any board call, so no check on the
+   * stored message could ever have caught it.
+   *
+   * Prose contains `--`, so the repair is a REFUSAL rather than a guess: quote
+   * the message, or end the command with a bare `--`. Both of those are pinned
+   * here, and the shape is pinned for a GLOBAL flag too — an earlier draft
+   * exempted `--json` and `--agent`, which reads right and is wrong: nothing
+   * follows a trailing global flag, so the exemption guarded nothing, while
+   * `note my finding --json trailing words` drops `trailing words` exactly as
+   * silently as any other flag does. An exemption that guards nothing and hides
+   * a loss is worse than no exemption.
+   */
+  it('refuses a note whose words a -- swallowed, instead of storing the half it kept', async () => {
+    // The quoted form, and the bare `--` form, both store the WHOLE sentence.
+    const quoted = await cli(['note', 'before --flag after', '--json']);
+    expect(quoted.code, quoted.err).toBe(0);
+    expect(JSON.parse(quoted.out).message).toBe('before --flag after');
+    // The helper appends `--dir`/`--agent` LAST, so a bare `--` inside the
+    // arguments would swallow them and leave the board with no home. This one puts
+    // the flags FIRST, the way the CLI has to be typed for a `--` to be usable.
+    const terminated = await (async () => {
+      const out = [];
+      const err = [];
+      const code = await run(['note', '--json', '--dir', dir, '--agent', 'a', '--', 'before --flag after'], {
+        cwd: dir,
+        out: { write: (chunk) => out.push(chunk) },
+        err: { write: (chunk) => err.push(chunk) },
+      });
+      return { code, out: out.join(''), err: err.join('') };
+    })();
+    expect(terminated.code, terminated.err).toBe(0);
+    expect(JSON.parse(terminated.out).message).toBe('before --flag after');
+    // And the unquoted form is refused rather than shortened.
+    const split = await cli(['note', 'before', '--flag', 'after', '--json']);
+    expect(split.code).toBe(1);
+    expect(split.err).toMatch(/dropped, not written/);
+    // The refusal must not have written the half it could read.
+    expect(JSON.parse((await cli(['watch', '--since', '0', '--json'])).out).events.map((e) => e.message)).toEqual([
+      'before --flag after',
+      'before --flag after',
+    ]);
+    // A trailing global flag configures the run and must NOT trip the refusal:
+    // nothing follows it, so no word is lost. `note x --json` is legitimate.
+    const global = await cli(['note', 'a plain finding here', '--json']);
+    expect(global.code, global.err).toBe(0);
+    expect(JSON.parse(global.out).message).toBe('a plain finding here');
+    // But words AFTER a global flag are the same loss as any other, and an
+    // exemption here would have hidden it — this is the case the exemption missed.
+    const afterGlobal = await cli(['note', 'a finding', '--json', 'trailing', 'words']);
+    expect(afterGlobal.code).toBe(1);
+    expect(afterGlobal.err).toMatch(/dropped, not written/);
+    // `comment` takes the same prose and gets the same protection.
+    const { id } = JSON.parse((await cli(['new', 'split text', '--json'])).out);
+    expect((await cli(['comment', id, 'tail', '--flag', 'head'])).code).toBe(1);
+    expect((await cli(['comment', id, 'tail --flag head', '--json'])).code).toBe(0);
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).events.map((e) => e.message)).toContain(
+      'tail --flag head'
+    );
+  });
+
+  /**
+   * Prose in a FLAG takes more than one word, or the flag documents a sentence it
+   * cannot hold.
+   *
+   * `--note`, `--reason` and `--body` were single-token value flags, so
+   * `claim ph-1 --note fixed the thing` recorded `fixed` and threw away the rest,
+   * with exit 0. The board then held a claim note that read as a complete
+   * sentence — `fixed` — and no way for the next agent to know an author had
+   * written four words. `--files a.ts b.ts` had exactly this shape once already and
+   * was fixed by making the parser learn the documented form, so the documented
+   * form here is the same one.
+   */
+  it('keeps an unquoted --note whole, rather than the first word of it', async () => {
+    const { id } = JSON.parse((await cli(['new', 'prose in a flag', '--json'])).out);
+    const claimed = await cli(['claim', id, '--note', 'fixed', 'the', 'thing', 'entirely', '--json']);
+    expect(claimed.code, claimed.err).toBe(0);
+    expect(
+      JSON.parse((await cli(['watch', '--since', '0', '--json'])).out).events.find(
+        (event) => event.kind === 'claim.acquire'
+      ).message
+    ).toContain('fixed the thing entirely');
+    // Quoting still works, and a later flag still ends the prose.
+    expect((await cli(['claim', id, '--note', 'quoted note', '--lease', '30m'])).code).toBe(0);
+    // `--reason` and `--body` carry prose through the same path.
+    const deferred = await cli(['defer', id, '--reason', 'waiting', 'on', 'ph-9', '--json']);
+    expect(deferred.code, deferred.err).toBe(0);
+    expect(JSON.parse(deferred.out).status).toBe('deferred');
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.defer_reason).toBe('waiting on ph-9');
+    const filed = await cli(['new', 'a body in words', '--body', 'several', 'words', 'of', 'body', '--json']);
+    expect(filed.code, filed.err).toBe(0);
+    expect(JSON.parse((await cli(['show', JSON.parse(filed.out).id, '--json'])).out).issue.body).toBe(
+      'several words of body'
+    );
   });
 
   /**
