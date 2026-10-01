@@ -330,6 +330,6 @@ between them is `documentPointsToLayerLocal`.
 
 This is the codebase's most reliable defect class, and also the one with the
 largest false-positive rate: `HANDOFF.md` §132 investigated exactly this and
-concluded the three conversions in the shape path were already correct, pinned by
-a test. Read the conversion at both call sites before assuming the other one is
-wrong.
+concluded the three conversions in the shape path were already correct. It
+derives the arithmetic; it is not pinned by a test. Read the conversion at both
+call sites before assuming the other one is wrong.

@@ -346,6 +346,18 @@ The app has no such conversion routine; it composes a string and hands it to the
 **What the app does instead.** Grayscale, a sepia tone and a saturation trim, applied as a CSS filter
 chain. It desaturates correctly, and that is the whole of the overlap.
 
+**This entry will be deleted rather than rewritten when the capability lands, and the operator has
+signalled it will.** 2026-10-01: Levels, Colors and the other `Image ▸ Adjustments` commands "will be
+implemented". The requirements are **not written down**, so nothing here is a spec and nobody should
+build against this entry — the "why it is too hard" above describes the CSS-filter mechanism this
+implementation happens to use, which is exactly what a per-hue conversion replaces rather than
+constrains. What survives the rewrite is Adobe's six-sextant behaviour, which is the product
+requirement and is unchanged by anything an agent decides about the mechanism.
+
+**Not a handoff item.** The gap is real but it is recorded here as a capability decision, and per
+this file's own policy nobody treats its absence as a defect. The rail entries for the two ids are
+`HANDOFF.md` §117's, which is a separate decision.
+
 ### Dodge, Burn and Smudge build-up while the button is held
 
 **What Photoshop does.** Dodge, Burn and Smudge accumulate for as long as the button is held. The
@@ -603,6 +615,16 @@ Brush exposes and the app cannot imitate. `psd-utils.ts:88-106` refuses `adjustm
 a committed adjustment and no properties panel. Real **Levels** (three-point piecewise remap,
 channel selector, histogram) and real **Curves** (spline) are therefore unbuilt, and belong in this
 file rather than in a restructure of what exists.
+
+**The operator has signalled these will be built** (2026-10-01: Levels, Colors and the other
+`Image ▸ Adjustments` commands "will be implemented"), so this paragraph records a **known gap with
+a known destination**, not a decision to skip. The requirements are not written down, so this is
+still not a spec — but it changes what a future session may conclude from this file. Under this
+file's own policy an entry here means "nobody re-audits it, nobody estimates it"; that is **suspended
+for the `Image ▸ Adjustments` family**, because the operator has put it back on the list. Adobe's
+behaviour in each entry below remains the requirement and is unchanged by that signal — an agent
+implementing from the requirement, not from the app's current CSS-filter chain, is implementing it
+correctly.
 
 **One correction the decision did not survive on its stated premise.** Adobe's **Adjustment Brush
 Tool** is a real Tools-panel entry — GA in Photoshop 25.11 (July 2024), own toolbar slot, no
