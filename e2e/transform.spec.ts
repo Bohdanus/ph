@@ -83,9 +83,17 @@ function bands(box: BoundingBox): Bands {
   return { top: band(TOP_BAR_Y_RATIO), bottom: band(BOTTOM_BAR_Y_RATIO) };
 }
 
+/**
+ * Selects the transform tool through `Edit ▸ Free Transform`.
+ *
+ * Two clicks, and both are necessary: the `Edit` host is a button that opens a menu, and
+ * `Free Transform` is the only item inside it. `transform` has no rail tile and no
+ * `tools-menu-transform-button` — Photoshop has no such tool, and this app's Tools rail and
+ * Tools menu now agree with it — so the header menu is the only surface that selects it.
+ */
 async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
   await page.getByTestId('header-edit-menu-button').click();
-  await page.getByTestId('edit-menu-transform-button').click();
+  await page.getByTestId('edit-menu-free-transform-button').click();
   // The toolbox swaps in with the tool; its sliders are what the specs drive next.
   await expect(page.locator('#trapezoid-slider')).toBeVisible();
   await expect(page.locator('#rotate-slider')).toBeVisible();

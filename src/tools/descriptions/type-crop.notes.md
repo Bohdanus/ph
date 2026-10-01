@@ -120,7 +120,7 @@ The type tool has a flyout: the four tools Photoshop 2024–2026 ships are Horiz
 Vertical Type, Horizontal Type Mask and Vertical Type Mask, with the mask variants creating
 a selection outline in the shape of the type instead of a type layer. `T` selects the tool
 and `Shift+T` cycles the group. **The app has one entry for that four-tool group**
-(`toolbar-mapping.ts:108`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
+(`toolbar-mapping.ts:101`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
 the record now says so in its `appNotes`, because an entry that names Adobe's exact string
 for one of four tools otherwise reads as a complete stand-in. Vertical Type sets type
 top-to-bottom, and the two mask variants are not a variant of the entry the app has at all —
@@ -277,7 +277,7 @@ begins at `:146`; `toolProcessors.ts:159` was the `shape` processor, and the tex
 begins at `:160`. Every other entry was opened and confirmed to be what its record claims —
 `crop.ts:26` the crop creator, `rect.ts:36` `trimRect`, `useRect.ts:223` the 0.7 fill,
 `layer-renderer.ts:32` the six-name `vectorToolNames` set, `toolbar-mapping.ts:59` the
-single crop entry, `toolbar-mapping.ts:107` the single type entry.
+single crop entry, `toolbar-mapping.ts:101` the single type entry.
 
 **The numbers in the two paragraphs above are themselves history: they describe the pass
 before this one, and the lines have moved again.** Every `path:NNN` in both files was
@@ -286,7 +286,7 @@ census tables above and in `type-crop.ts`. Where they moved, and by how much:
 
 | Was                                                | Is                                         | What moved                                       |
 | -------------------------------------------------- | ------------------------------------------ | ------------------------------------------------ |
-| `toolbar-mapping.ts:107`                           | `toolbar-mapping.ts:108`                   | the text tile sits after a closing `],`          |
+| `toolbar-mapping.ts:107`                           | `toolbar-mapping.ts:101`                   | the text tile sits after a closing `],`          |
 | `Text.tsx:123` / `:136` / `:189` / `:175` / `:210` | `:136` / `:149` / `:195` / `:195` / `:230` | the textarea and five control rows all shifted   |
 | `useRect.ts:167`                                   | `useRect.ts:223` (fill at `:226`)          | `drawMask` grew; `:167` is now a handle hit-test |
 | `useLayer.ts:349`                                  | `useLayer.ts:369`                          | the `toolName === 'text'` branch                 |
@@ -434,7 +434,7 @@ Photoshop rows the previous pass carried were all unbound, and two of them contr
 sentence already in the same file:
 
 - `Shift+T` "cycle the type tools in the flyout group" — the type tile is a **single entry**
-  (`toolbar-mapping.ts:108`), and the `t` registration passes no `shift`
+  (`toolbar-mapping.ts:101`), and the `t` registration passes no `shift`
   (`AppKeyboardShortcuts.tsx:384-389`), so `Shift+T` simply re-selects the same tool. The
   file says so in its own comment at `:451-452`: "there is nothing to cycle, so a
   `shift: true` twin would select the same tool twice". The data file now carries that as a

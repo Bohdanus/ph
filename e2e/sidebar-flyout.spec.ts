@@ -19,9 +19,9 @@ import {
  *
  * The left rail is one column by default and fits sixteen rows of a 44px tile into 80% of
  * the slot it has left after its own chrome. At an ordinary 1280x720 window the rows that
- * do not fit — everything from the Colour group down — move into a three-dots tile, so the
- * Colour, Brush, Pen, Type and Shape tiles are not on the rail at all. That is the product contract
- * and not a defect: a tool is always reachable from exactly one of a tile of its own or the
+ * do not fit move into a three-dots tile, so the Brush, Pen, Type and Shape tiles are not on
+ * the rail at all. That is the product contract and not a defect: a tool is always reachable
+ * from exactly one of a tile of its own or the
  * three-dots flyout (`e2e/toolbar-overflow.spec.ts` pins that arithmetic). What it means for
  * THIS file is that two questions must not be confused:
  *
@@ -43,9 +43,16 @@ import {
  *       flyout at all, which is what leaves exactly ONE test below needing (b).
  *   (b) `selecting shape from flyout updates primary and patches figure`, and only that one,
  *       grows the window until the rail collapses nothing at all.
- *   (c) two tests — the pen group and the colors group — go the OTHER way and ask for the
- *       three-dots flyout on purpose, because their claim is that a collapsed group still
- *       lists every one of its tools. Their names say "present in flyout", not "on a tile".
+ *   (c) ONE test — the pen group — goes the OTHER way and asks for the three-dots flyout on
+ *       purpose, because its claim is that a collapsed group still lists every one of its
+ *       tools. Its name says "present in flyout", not "on a tile".
+ *
+ * The lasso test above is the same kind of claim and rides on a group that keeps a tile at
+ * this window, so it needs no such thing. There used to be a second (c) test, for the
+ * `[Colors, Levels, Transform]` group; that group is gone, because those three are
+ * `Image ▸ Adjustments` and `Edit ▸ Transform` COMMANDS in Photoshop rather than Tools-panel
+ * entries, and they now live in `src/components/DesktopHeader/DesktopHeader.tsx` — so the
+ * claim it made has no rail equivalent to make and no menu equivalent to be rewritten onto.
  *
  * The fourth thing worth stating once, because several tests below are only meaningful with
  * it: `toBeVisible()` does not test CLIPPING. The rail is `overflow-y-auto`, which makes CSS
@@ -529,18 +536,6 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await expect(flyout).toContainText('Add Anchor Point Tool');
     await expect(flyout).toContainText('Delete Anchor Point Tool');
     await expect(flyout).toContainText('Convert Point Tool');
-  });
-
-  test('all colors tools present in flyout', async ({ page }) => {
-    // As the pen test above: the Colors group is a collapsed row too, and this is the
-    // assertion that its three entries stay together in one menu rather than being split
-    // across a tile and a flyout.
-    await openToolFlyout(page, 'color');
-
-    const flyout = page.getByRole('menu');
-    await expect(flyout).toContainText('Colors');
-    await expect(flyout).toContainText('Levels');
-    await expect(flyout).toContainText('Transform');
   });
 
   test('pending long-press cancels on pointer leave', async ({ page }) => {

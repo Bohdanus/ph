@@ -206,7 +206,7 @@ aspect-ratio lock a separate feature from the marquee's Shift.
 
 **The `M` group has two members, not four.** `marqueeGroup` in
 `src/components/Common/AppKeyboardShortcuts.tsx:26` is `['rectangular-selection',
-'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:145`-`:146` lists
+'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:138`-`:139` lists
 under the marquee tile. Adobe documents four marquee tools — Rectangular, Elliptical, Single Row
 and Single Column — so two of Photoshop's four are real tools the app simply does not have, and
 an earlier version of the data file described the `M` cycle as running through

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DesktopHeader from '../DesktopHeader.tsx';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
@@ -80,8 +80,19 @@ function stubConfirm(result: boolean) {
   return confirm;
 }
 
-function openMenu(name: 'File' | 'Tools' | 'Edit') {
+function openMenu(name: 'File' | 'Tools' | 'Image' | 'Edit') {
   fireEvent.click(screen.getByRole('button', { name }));
+}
+
+/**
+ * `Image ▸ Adjustments` is a two-level menu, so reaching an item needs the host opened and
+ * then the submenu parent clicked. There is no hover affordance on purpose — a hover-only
+ * submenu is unreachable by keyboard — so a spec that skips the second click is asserting
+ * against a menu that does not exist.
+ */
+function openAdjustments() {
+  openMenu('Image');
+  fireEvent.click(screen.getByTestId('image-menu-adjustments-button'));
 }
 
 function pathDataOf(accessibleName: string) {
@@ -121,12 +132,14 @@ afterEach(() => {
 });
 
 describe('DesktopHeader', () => {
-  it('renders File, Tools, and Edit menu buttons', () => {
+  it('renders the File, Tools, Image, Edit and Window menu buttons', () => {
     render(<DesktopHeader />);
 
     expect(screen.getByRole('button', { name: 'File' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Image' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Window' })).toBeInTheDocument();
   });
 
   it('shows all available tools in the Tools menu', () => {
@@ -134,10 +147,7 @@ describe('DesktopHeader', () => {
 
     openMenu('Tools');
 
-    expect(screen.getByTestId('tools-menu-color-button')).toBeInTheDocument();
     expect(screen.getByTestId('tools-menu-blur-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-levels-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-transform-button')).toBeInTheDocument();
     expect(screen.getByTestId('tools-menu-crop-button')).toBeInTheDocument();
     expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
     expect(screen.getByTestId('tools-menu-shape-button')).toBeInTheDocument();
@@ -162,6 +172,23 @@ describe('DesktopHeader', () => {
     expect(screen.getByTestId('tools-menu-custom-shape-button')).toBeInTheDocument();
   });
 
+  /**
+   * The Tools menu lists TOOLS. `color`, `levels` and `transform` are `Image ▸ Adjustments`
+   * and `Edit ▸ Transform` commands, so a Tools-menu entry for any of them would be the
+   * same falsehood the rail carried — in the other direction, and in the surface whose own
+   * header comment calls a missing tool "a visible inconsistency". `toolbar-mapping.ts`'s
+   * `extraTools` names them; this is the pin that keeps the two in step.
+   */
+  it('keeps the three non-tool commands out of the Tools menu', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Tools');
+
+    expect(screen.queryByTestId('tools-menu-color-button')).toBeNull();
+    expect(screen.queryByTestId('tools-menu-levels-button')).toBeNull();
+    expect(screen.queryByTestId('tools-menu-transform-button')).toBeNull();
+  });
+
   it('toggles the file menu open and closed', () => {
     render(<DesktopHeader />);
 
@@ -180,26 +207,87 @@ describe('DesktopHeader', () => {
     const editButton = screen.getByRole('button', { name: 'Edit' });
 
     fireEvent.click(editButton);
-    expect(screen.getByTestId('edit-menu-colors-button')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-menu-free-transform-button')).toBeInTheDocument();
 
     fireEvent.click(editButton);
-    expect(screen.queryByTestId('edit-menu-colors-button')).toBeNull();
+    expect(screen.queryByTestId('edit-menu-free-transform-button')).toBeNull();
   });
 
-  it('goes to the correct tool when edit menu items are clicked', () => {
+  it('goes to the correct tool when the Image menu adjustment is clicked', () => {
     render(<DesktopHeader />);
 
-    const editButton = screen.getByRole('button', { name: 'Edit' });
-
-    fireEvent.click(editButton);
-    fireEvent.click(screen.getByTestId('edit-menu-colors-button'));
+    openAdjustments();
+    fireEvent.click(screen.getByTestId('image-menu-adjustments-photo-filter-button'));
     expect(app.goToTool).toHaveBeenCalledWith('color');
 
     vi.clearAllMocks();
 
-    fireEvent.click(editButton);
-    fireEvent.click(screen.getByTestId('edit-menu-blur-button'));
-    expect(app.goToTool).toHaveBeenCalledWith('blur');
+    openAdjustments();
+    fireEvent.click(screen.getByTestId('image-menu-adjustments-brightness-contrast-button'));
+    expect(app.goToTool).toHaveBeenCalledWith('levels');
+  });
+
+  it('toggles the Adjustments submenu open and closed on its own button', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Image');
+    expect(screen.queryByTestId('image-menu-adjustments')).toBeNull();
+
+    const submenuButton = screen.getByTestId('image-menu-adjustments-button');
+    expect(submenuButton).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(submenuButton);
+    expect(screen.getByTestId('image-menu-adjustments')).toBeInTheDocument();
+    expect(submenuButton).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(submenuButton);
+    expect(screen.queryByTestId('image-menu-adjustments')).toBeNull();
+  });
+
+  /**
+   * A disabled item is the recorded shape of a capability this app does not have, so the
+   * whole Adobe list has to be present with the unbuilt ones inert. If a label is dropped
+   * the gap stops being visible; if one is wrongly enabled the app does something it
+   * cannot do.
+   */
+  it("carries Adobe's Adjustments list with only the two implemented commands enabled", () => {
+    render(<DesktopHeader />);
+
+    openAdjustments();
+
+    const enabled = within(screen.getByTestId('image-menu-adjustments'))
+      .getAllByRole('button')
+      .filter((button) => !(button as HTMLButtonElement).disabled)
+      .map((button) => button.textContent);
+    expect(enabled).toEqual(['Brightness/Contrast', 'Photo Filter']);
+
+    for (const label of [
+      'Levels',
+      'Curves',
+      'Exposure',
+      'Black and White',
+      'Hue/Saturation',
+      'Desaturate',
+      'Invert',
+      'Color Balance',
+      'Channel Mixer',
+      'Selective Color',
+      'Shadows/Highlights',
+      'Gradient Map',
+      'Posterize',
+      'Threshold',
+    ]) {
+      expect(screen.getByRole('button', { name: label })).toBeDisabled();
+    }
+  });
+
+  it('does not select a tool when a disabled adjustment is clicked', () => {
+    render(<DesktopHeader />);
+
+    openAdjustments();
+    fireEvent.click(screen.getByTestId('image-menu-adjustments-levels-button'));
+
+    expect(app.goToTool).not.toHaveBeenCalled();
   });
 
   it('renders theme toggle button', () => {
@@ -285,9 +373,13 @@ describe('DesktopHeader menu lifecycle', () => {
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
     expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
 
-    openMenu('Edit');
+    openMenu('Image');
     expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
-    expect(screen.getByTestId('edit-menu-colors-button')).toBeInTheDocument();
+    expect(screen.getByTestId('image-menu-adjustments-button')).toBeInTheDocument();
+
+    openMenu('Edit');
+    expect(screen.queryByTestId('image-menu-adjustments-button')).toBeNull();
+    expect(screen.getByTestId('edit-menu-free-transform-button')).toBeInTheDocument();
   });
 
   it('closes the tools menu on a second click of the Tools button', () => {
@@ -303,7 +395,8 @@ describe('DesktopHeader menu lifecycle', () => {
   it.each([
     ['File', 'header-file-new-button'],
     ['Tools', 'tools-menu-draw-button'],
-    ['Edit', 'edit-menu-colors-button'],
+    ['Image', 'image-menu-adjustments-button'],
+    ['Edit', 'edit-menu-free-transform-button'],
   ] as const)('closes the open %s menu when a mousedown lands outside of it', (menu, itemTestId) => {
     render(<DesktopHeader />);
 
@@ -331,7 +424,8 @@ describe('DesktopHeader menu lifecycle', () => {
 
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
     expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
-    expect(screen.queryByTestId('edit-menu-colors-button')).toBeNull();
+    expect(screen.queryByTestId('image-menu-adjustments-button')).toBeNull();
+    expect(screen.queryByTestId('edit-menu-free-transform-button')).toBeNull();
   });
 
   it('stops reacting to outside mousedowns after unmount', () => {
@@ -344,22 +438,52 @@ describe('DesktopHeader menu lifecycle', () => {
   });
 });
 
-describe('DesktopHeader Edit menu actions', () => {
+describe('DesktopHeader menu commands', () => {
+  it.each([['edit-menu-free-transform-button', 'transform']])(
+    'routes %s to exactly one goToTool call and closes the menu',
+    (testId, toolName) => {
+      render(<DesktopHeader />);
+
+      openMenu('Edit');
+      fireEvent.click(screen.getByTestId(testId));
+
+      expect(app.goToTool).toHaveBeenCalledExactlyOnceWith(toolName);
+      expect(screen.queryByTestId(testId)).toBeNull();
+    }
+  );
+
   it.each([
-    ['edit-menu-colors-button', 'color'],
-    ['edit-menu-blur-button', 'blur'],
-    ['edit-menu-levels-button', 'levels'],
-    ['edit-menu-transform-button', 'transform'],
-    ['edit-menu-draw-button', 'draw'],
-    ['edit-menu-text-button', 'text'],
-  ] as const)('routes %s to exactly one goToTool call and closes the menu', (testId, toolName) => {
+    ['image-menu-adjustments-brightness-contrast-button', 'levels'],
+    ['image-menu-adjustments-photo-filter-button', 'color'],
+  ] as const)('routes %s to exactly one goToTool call and closes the whole menu', (testId, toolName) => {
     render(<DesktopHeader />);
 
-    openMenu('Edit');
+    openAdjustments();
     fireEvent.click(screen.getByTestId(testId));
 
     expect(app.goToTool).toHaveBeenCalledExactlyOnceWith(toolName);
     expect(screen.queryByTestId(testId)).toBeNull();
+    expect(screen.queryByTestId('header-image-menu')).toBeNull();
+  });
+
+  /**
+   * Adobe's `Edit` menu holds `Free Transform` at the top level, not inside a `Transform`
+   * submenu, and a menu whose items are all tool switches is not Adobe's `Edit` at all.
+   * `blur`, `draw` and `text` are all Tools-panel tools, so none of them may appear here.
+   */
+  it('holds no tool switches in the Edit menu', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Edit');
+
+    expect(
+      within(screen.getByTestId('header-edit-menu'))
+        .getAllByRole('button')
+        .map((button) => button.textContent)
+    ).toEqual(['Free Transform']);
+    for (const toolName of ['blur', 'draw', 'text']) {
+      expect(screen.queryByTestId(`edit-menu-${toolName}-button`)).toBeNull();
+    }
   });
 
   it('opens one Tools menu entry and closes the menu', () => {

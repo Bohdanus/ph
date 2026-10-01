@@ -1788,9 +1788,13 @@ deleted, not kept.** Separately: `SidebarLeft.tsx:130` does `toolbarMap.flat()`,
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
-**Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands; their
-processors are reused unchanged, so this is a **routing** change, not a processing change, and the
-history and durable paths are untouched. `shape` dissolves into the five figure `ToolName`s that
+**Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands, and their
+processors are reused unchanged — but this is **not** the pure routing change with "the history and
+durable paths untouched" that this line used to claim, and the claim was refuted before it shipped:
+`'color' | 'levels'` are a **durable schema type** (`src/contexts/history-model.ts:75`,
+`src/contexts/layer-types.ts:28`), so every already-committed operation of either crosses the durable
+boundary whether or not the surface it was minted from moves. `shape` dissolves into the five figure
+`ToolName`s that
 already have processors and are already dispatched. `draw` is last and is the expensive one: it is
 the suite's default way to make a mark, **25 call sites across 14 e2e specs**, and
 `e2e/pen-types.spec.ts` is specifically about it and dies with the tool. Its engine does not die —
@@ -3798,161 +3802,6 @@ is the defect that says the hiding was incomplete.
 **Files.** `src/components/Common/AppKeyboardShortcuts.tsx:33`,
 `src/components/DesktopHeader/DesktopHeader.tsx:56-58`, `src/components/SidebarLeft/toolIcons.tsx:74-79`
 
-## 117. `docs/PHOTOSHOP-UX.md` says the rail entries for `color`, `levels` and `transform` do not exist, and they are live tiles
-
-`docs/PHOTOSHOP-UX.md:38-45`, §"Adjustments are not tools":
-
-> "These three are to leave the rail and become menu commands. They have **no replacement
-> tool** … `toolbar-mapping.ts` already exports `extraTools = ['color', 'levels', 'transform']`,
-> so the extraction is half-staged: **the flag exists, the rail entries do not.**"
-
-Both halves of that are now false.
-
-```bash
-sed -n '61,65p' toolbar-mapping.ts
-#     [
-#       { label: 'Colors', name: 'color' },
-#       { label: 'Levels', name: 'levels' },
-#       { label: 'Transform', name: 'transform' },
-#     ],
-git grep -n extraTools -- src e2e '*.ts' '*.tsx'
-# toolbar-mapping.ts:164:export const extraTools = ['color','levels','transform'] as const …
-# src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:2,97,98   <- its own test only
-```
-
-So the three render as a live rail flyout, all three are fully implemented
-(`src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/transform.ts`), and **`extraTools`
-gates nothing in the application** — it is declared and consumed only by the test that checks
-it is disjoint from `shape`. The half-staged extraction it describes was never started, or was
-undone; either way the flag is inert and the doc reads as a completed step.
-
-**Why this is worth filing rather than editing.** The same section orders `draw` **deleted**
-(`:37`: "**It is to be deleted**, not relabelled") and names five ids the app declares that
-Photoshop has no counterpart for. That decision may well still be the operator's intent — it is
-a written product ruling and deleting on the strength of it is not an agent's call. But a
-reader auditing rail compliance against this list will look for four absent tools, find four
-present and working ones, and has to decide for itself whether to delete them. Two of the
-failures that invites are ugly: deleting a working tool, or concluding the doc outranks the
-tree and stopping there.
-
-**Fix.** Restate `:38-45` as _pending_ extraction that names what is actually true — the three
-are live tiles today, `extraTools` exists and gates nothing, and nothing consumes it — and mark
-`:37`'s `draw` ruling with its current state (`draw` is live at `toolbar-mapping.ts:97`, backed
-by a real rasteriser at `toolProcessors.ts:96-102`). Whether to carry out the extraction is the
-operator's decision; the document's job is to stop asserting a false intermediate.
-
-**Files.** `docs/PHOTOSHOP-UX.md:32-45`, `toolbar-mapping.ts:61-65`, `:97`, `:164`
-
-### The operator has decided: delete the three
-
-**2026-10-01. The operator's decision, in their words: "I decide to remove them."** `color`,
-`levels` and `transform` come **out of the rail**. Not relabelled, not moved to a menu, not
-kept alongside — removed. This settles the question the Fix paragraph above left open, and it
-resolves it the way `docs/PHOTOSHOP-UX.md:32-45` already required.
-
-**This is not an override**, and `docs/OVERRIDES.md` must not gain an entry for it. That file's
-own definition (`:11-18`) is a decision that this app deliberately does **not** replicate
-Photoshop's behaviour. Removing three ids Adobe's Tools panel does not contain moves this app
-**toward** Adobe, so the precedence ladder in `docs/DOCUMENTATION.md:11-23` already decides it
-and the operator is ratifying the documented requirement rather than departing from it.
-
-**What the implementation has to settle, which the decision does not:**
-
-- **The destination already exists, under the wrong name.** There is no `Image` menu — the app's
-  four menus are File, Tools, Edit, Window (`src/components/DesktopHeader/DesktopHeader.tsx:185`,
-  `:283`, `:309`, `:390`) — **but `Edit` is already an `Image ▸ Adjustments` host**: it carries
-  hard-coded items for `color`, `blur`, `levels`, `transform`, `draw` and `text`
-  (`DesktopHeader.tsx:319`, `:329`, `:339`, `:349`, `:359`, `:369`, dispatching through
-  `handleToolSelection` at `:121`-`:127`). So "extracting these three means building a real menu
-  bar first" is **wrong** — the menu exists, the items exist, and they call the same
-  `handleToolSelection` the rail calls. What is missing is that the menu is called `Edit` where
-  Adobe says `Image ▸ Adjustments`, and that `blur`/`draw`/`text` are real Tools-panel tools
-  sitting in a menu. **The rail removal and the menu relabelling are the same three-id change in
-  two hand-written lists**, not a menu build. This correction supersedes the earlier claim in
-  this entry that no menu exists to receive the three.
-- **The `imageProcessor` for two of the three is DEAD CODE.** `color` and `levels` are
-  `commit: 'layer-operation'`, and `useLayer.ts:576` returns before the `imageProcessor` call at
-  `useLayer.ts:603`. The visible effect comes from a CSS string assigned to the canvas —
-  `layer-renderer.ts:15-16` and `:17-18` build `buildColorsFilter` / `buildLevelsFilter` results,
-  applied by `ctx.filter = getLayerFilter(layer.operations)` at `layer-renderer.ts:77` — and
-  `functions.ts:60-62` is literally `grayscale(%) sepia(%) saturate(%)`. Their only callers are
-  `image-processors.test.ts`. `transform` is split: its affine path is bypassed
-  (`useLayer.ts:550-566`), its trapezoid path is live. **A restructure that moves these to a
-  menu should move the CSS-filter path, not the OffscreenCanvas path** — the latter is what a
-  reader would assume is the implementation, and it is not the one that paints.
-- **`levels` is a misnamed Brightness/Contrast, confirmed in code.**
-  `LevelsToolArgs = { brightness: number; contrast: number; toolName: 'levels' }`
-  (`src/tools/levels.ts:4`), and `functions.ts:66-70` emits `brightness(...) contrast(...)`.
-  Adobe's Levels is a three-point piecewise-linear remap with a channel selector and a histogram;
-  this is two global sliders. **The app has no Levels.** Note the consequence: renaming the
-  capability rather than moving it is a decision — the bar renders Brightness/Contrast controls
-  under a "Levels" label, so a menu called `Image ▸ Adjustments` with an item labelled `Levels`
-  would be a _new_ falsehood, and the honest item is `Brightness/Contrast`.
-- **They are in a second surface already, and the IDs are load-bearing beyond the UI.**
-  `src/components/DesktopHeader/DesktopHeader.tsx:27-32` holds a `TOOL_MENU_ITEMS` list including
-  all three, under a header comment (`:20-21`) saying "a tool missing from the Tools menu is a
-  visible inconsistency"; the same component hard-codes them as `Edit` items at `:319`-`:349`.
-  The claim that extraction is "routing only, with the history and durable paths untouched" is
-  **refuted**: `'color' | 'levels'` are a **durable schema type** at
-  `src/contexts/history-model.ts:75` (`DurableFilter`) and `src/contexts/layer-types.ts:28`
-  (`LayerOperationArgs`). ~50 non-test lines across ~20 `src/` files, ~185 test lines across ~30
-  test files, and 5 e2e specs — every one of which selects these three **through the rail flyout**,
-  so all five break. Zero keyboard shortcuts are bound to any of the three, so that part is free.
-- **`extraTools` is inert either way.** `toolbar-mapping.ts:164` exports it; its only reader is
-  `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`, which checks it is
-  disjoint from `shape`. Deleting the three makes the flag mean what its name says for the first
-  time, or makes it dead code to remove.
-
-### The premise was falsified: adjustments DO reach Photoshop's Tools panel
-
-Research on 2026-10-01, after the decision above was recorded, established that the **justification
-was wrong even though the decision survives**. `docs/OVERRIDES.md` was correctly _not_ used, but
-the reasoning it was given does not hold:
-
-- **The Adjustment Brush Tool is a real Tools-panel entry.** Beta in Photoshop 25.9 (Feb 2024),
-  GA in **25.11 (July 2024)**, with its own toolbar slot in the Retouching & Painting Tools
-  group — deliberately promoted out of the Brush flyout because nesting broke the `B` cycle. It
-  has **no single-letter shortcut**; the widely-quoted `K` is the CS3-era Targeted Adjustment
-  Tool, a different and removed tool. Adobe: it is "non-destructive, as they generate a new
-  adjustment layer with a layer mask", created on mouse-release, painted area = mask.
-- **The Selection Brush Tool is also real**, GA in the same 25.11, in the **Lasso group**, reached
-  by cycling `L` then `Shift`+`L`. It only makes selections.
-- **So "adjustments are not tools" is false as a general statement.** Adobe ships a tool whose
-  output is an adjustment, not pixels. (Two other non-pixel tool outputs exist: Type, and the
-  shape tools, which create shape/fill layers.)
-- **The decision still stands**, because the narrow claim survives: `color` and `levels` here are
-  **whole-image adjustments with no mask**, and the Adjustment Brush can only apply an adjustment
-  where you paint. It cannot do what these two do. `transform` is untouched by any of this.
-- **The recorded justification must not stand as written.** This is the concrete harm: the entry
-  asserted a general claim that Adobe's own documentation contradicts, and a later session
-  auditing rail compliance against it would find the Adjustment Brush and conclude the app is
-  right and the doc is wrong — the exact inversion §117 exists to prevent.
-
-**What this changes for a restructure.** The honest target is not "move three things to a menu".
-It is: rename the `Edit` host to `Image ▸ Adjustments`, relabel `levels` to `Brightness/Contrast`
-because that is what it computes, keep `color`'s three CSS filters under a name that says what
-they are (`grayscale`/`sepia`/`saturate` is neither Black & White nor plain desaturation — there
-is no per-hue weighting anywhere), and treat **real Levels, real Curves and adjustment layers as
-unbuilt work.** The app has no adjustment-layer machinery at all:
-`psd-utils.ts:88-106` refuses `adjustment`, `mask` and `clipping` on import. What exists is a
-retained per-layer operation stack (`layer.operations[]` → `apply-filter`), which retains but
-cannot re-edit, and has no properties panel.
-
-- **The processors survive; the tool ids do not.** `src/tools/colors.ts`,
-  `src/tools/levels.ts` and `src/tools/transform.ts` are fully implemented, and
-  `docs/TOOLS-TOO-HARD.md` records the extraction as a **routing** change with the history and
-  durable paths untouched. Deleting the tool names is therefore cheap — the expensive part is
-  whatever surface ends up owning the processors, and there is currently none.
-- **What is NOT decided here.** `draw` is a separate id in the same section
-  (`docs/PHOTOSHOP-UX.md:32-37`) with its own history — 40 e2e call sites across 23 spec files,
-  and `e2e/pen-types.spec.ts` dies with it. The operator's decision covers the three adjustment
-  ids only. `HANDOFF.md` §74 remains the open entry for `draw`.
-
-**This entry is a decision record, not a changelog.** It stays until the three are gone from
-`toolbar-mapping.ts`, at which point the fix **deletes** it rather than rewording it
-(`docs/DOCUMENTATION.md:145-158`). Nothing in the codebase is changed on the strength of this
-entry alone.
-
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
 `src/tools/toolProcessors.ts` registers all three against the same rasteriser:
@@ -4004,8 +3853,8 @@ was never merged.
 `toolbar-mapping.ts` declares the same shortcut twice:
 
 ```
- 73: { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
- 97: [{ label: 'Draw Tool',   name: 'draw',   shortcut: 'B' }],
+ 66: { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
+ 90: [{ label: 'Draw Tool',   name: 'draw',   shortcut: 'B' }],
 ```
 
 No key binding routes to `draw`. `src/components/Common/AppKeyboardShortcuts.tsx:347-352` and
@@ -4022,7 +3871,7 @@ properties for other groups but nothing asserts that two tiles do not claim the 
 **Fix.** Give `draw` a distinct shortcut or drop `shortcut` from its entry, and add a test that
 no two visible tile identities claim the same letter.
 
-**Files.** `toolbar-mapping.ts:73`, `:97`,
+**Files.** `toolbar-mapping.ts:66`, `:90`,
 `src/components/Common/AppKeyboardShortcuts.tsx:19`, `:347-360`,
 `src/components/SidebarLeft/SidebarLeft.tsx:597`, `:621`,
 `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts`
@@ -4775,7 +4624,8 @@ if (wt.isPrimary) {
 `STATUS.UNMERGED_WORK`-with-`uncommitted` arm that produces `SALVAGE` → `AT_RISK` (`:294-299`) is
 downstream and never reached for the main checkout.
 
-**Observed, not inferred.** While correcting the §117 decision record, `npm run test` failed with:
+**Observed, not inferred.** While correcting the `color`/`levels`/`transform` rail-removal decision
+record, `npm run test` failed with:
 
 ```
 ph (curated: NONE): ahead=0 onMain=true dirty=3 untracked=0
@@ -4875,3 +4725,158 @@ line. **The entry at `:704` stands.** Do not edit it, and do not add a second AV
 
 **Files.** `e2e/OPEN_PROBLEMS.md:704`, `e2e/export/helpers.ts:408`,
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
+
+## 144. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
+
+**Problem.** `Edit` carries exactly one item, `Free Transform`
+(`src/components/DesktopHeader/DesktopHeader.tsx:485-494`), because that is where Adobe puts it at
+the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt, and it is
+where a user who knows Photoshop looks for eleven commands. Adobe's own page enumerates them —
+"You can find these commands under `Edit > Transform`" —
+<https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html>
+(fetched 200 on 2026-10-01 with a default `curl` User-Agent; it 403s a browser-shaped one):
+
+| Adobe's item    | Adobe's description                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------- |
+| Scale           | "Resizes the selected content horizontally, vertically, or both."                              |
+| Rotate          | "Rotates the selection around a reference point."                                              |
+| Skew            | "Slants the content vertically or horizontally by moving its sides."                           |
+| Distort         | "Stretches or compresses content freely by moving individual corners or edges."                |
+| Perspective     | "Applies perspective by moving one corner, causing the opposite corner to move symmetrically." |
+| Warp            | "Bends and reshapes content using a customizable grid or preset warp styles."                  |
+| Rotate 180°     | "Rotates the object by 180 degrees."                                                           |
+| Rotate 90° CW   | "Rotates the object 90 degrees clockwise."                                                     |
+| Rotate 90° CCW  | "Rotates the object 90 degrees counterclockwise."                                              |
+| Flip Horizontal | "Flips the selection along the vertical axis."                                                 |
+| Flip Vertical   | "Flips the selection along the horizontal axis."                                               |
+
+A twelfth, **`Again`** — Adobe's repeat-the-last-transform command — belongs in the same submenu and is
+**attested rather than page-confirmed**: Adobe's current helpx page does not list it, and the source
+that does is Adobe's own Photoshop user manual ("Repeat a transformation": "Choose `Edit > Transform >
+Again`"). Re-derive the membership before building the item; do not add it because this entry says so.
+
+**Two constraints, and the first one blocks every item including the ones that already exist here.**
+
+1. **`patchToolArgs` alone does not update the canvas.** It is the only setter a menu item can reach
+   from outside a tool bar, and it is pure state: `patchToolArgs` is
+   `src/contexts/useCurrentTool.tsx:75-81`, and all it does is call `_setToolArgs` (`:56-66`), which
+   writes the `currentArgs` ref, saves `lastSavedSettings` and publishes React state. Nothing in that
+   chain touches a layer. **The pixels move only when `tempUpdateLayer` runs**
+   (`src/contexts/useLayer.ts:565`), which the options bar calls explicitly on **every** control
+   change, immediately before `setToolArgs`:
+
+   ```ts
+   const throttledOnChange = (newArgs: TransformToolArgs) => {
+     // This is a transient preview. History is created only when the dirty
+     // layer is committed, so applying the latest value synchronously cannot
+     // create one history entry per slider frame.
+     tempUpdateLayer({ toolArgs: newArgs });
+     setToolArgs(newArgs);
+   };
+   ```
+
+   `src/components/ToolbarsRight/Transform/Transform.tsx:44-50`. So a `Scale` menu item that presets
+   args and stops there moves the options bar and nothing else — and every item is the same "preset the
+   args" operation, so this is not one item's problem. **`Warp` is a second, separate gap**: it is a
+   grid deformation, and `TransformToolArgs` has no warp member at all. `resetArgs`
+   (`Transform.tsx:18-28`) is `rotate` / `mirrorH` / `mirrorV` / `skewX` / `skewY` / `trapezoid` /
+   `resizeX` / `resizeY` and nothing more.
+
+2. **`Rotate 180°` is outside the rotate slider's range.** The slider is `min={-90}` `max={90}`
+   (`Transform.tsx:183-190`). The bar's own `180°` button does not go through the slider — it writes
+   `rotate: (rotate + 180) % 360` (`Transform.tsx:168`) — so a value the slider cannot represent is
+   already reachable, and a menu item that presets `rotate: 180` lands the options bar in a state its
+   own control cannot display. `Scale` has the mirror problem: `resizeX`/`resizeY` are percentages, so
+   Adobe's absolute Width/Height percentages need a document-size read the menu does not currently do.
+
+**Fix.** Solve both, in that order, and only then add items. Constraint 1 is load-bearing: either a menu
+item reaches `tempUpdateLayer` the way the bar does, or the args-preset path grows a preview step — and
+that decision collides with the transient-preview contract in the comment at `Transform.tsx:45-47`, which
+is what keeps a slider drag from writing one history entry per frame. Constraint 2 is a control question,
+not a computation one: reconcile the slider's range with the `±90` button pair at
+`Transform.tsx:95-105`, which already wraps through 360.
+
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:465-497`,
+`src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:168`, `:183-190`,
+`src/contexts/useCurrentTool.tsx:56-81`, `src/contexts/useLayer.ts:565`
+
+## 145. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
+
+**Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
+(`DesktopHeader.tsx:155`), and selecting it shows the `color` command's options bar, which renders
+three sliders — **Grayscale**, **Sepia**, **Saturation**
+(`src/components/ToolbarsRight/Colors/Color.tsx:126-180`) — wired to `buildColorsFilter`
+(`src/tools/functions.ts:60-63`), which emits `grayscale(%) sepia(%) saturate(%)`.
+
+Adobe's Photo Filter is a hue adjustment applied "from a preset filter or a custom color filter", with
+a **Density** slider and a **Preserve Luminosity** option, reachable at `Image > Adjustments > Photo
+Filter`.
+<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html> (200 on 2026-10-01).
+Two of the app's three controls are defensible against that: **`sepia` picks a fixed warm tone**, which
+is what Adobe's colour choice is for — its colour-conversion presets are "Warming Filter (85)" /
+"Cooling Filter (80)" and its light-balancing presets "Warming Filter (81)" / "Cooling Filter (82)"
+(<https://helpx.adobe.com/photoshop-elements/desktop/guided-edits-effects-and-filters/adjustment-filters.html>,
+Adobe's Photo **Elements** page, which is where Adobe still enumerates those preset names) — and
+**`saturation` is the trim that Preserve Luminosity performs**, in a form Adobe does not expose as a
+slider. **`grayscale` has no counterpart in Photo Filter at all**: it is a conversion to luminance, not
+a hue adjustment, and it is the one control on the bar that the menu's own name does not cover. The item
+is enabled under a name that promises a capability its bar does not have, in the one menu a user opens
+precisely to find out what the app can do.
+
+**The control cannot simply be deleted without a decision, and that is the operator's call.** This bar
+is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (`DesktopHeader.tsx:161`) is
+**disabled**, because no second command owns desaturation. `Black and White` is disabled too (`:154`) —
+it needs per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
+
+**Exactly two honest answers, and this entry does not pick between them:**
+
+- **Drop the `grayscale` control.** The bar becomes Sepia + Saturation, which is Adobe's colour choice
+  plus its Density and Preserve Luminosity behaviour under different names — a defensible
+  `Photo Filter`. The cost is that desaturating a whole image, which the app does today, becomes
+  unreachable from any menu, because nothing else hosts it.
+- **Move it to `Desaturate`.** Enable `Image ▸ Adjustments ▸ Desaturate` on the `color` id and accept
+  that its bar's three controls do not match Adobe's Photo Filter. That is the same bounded divergence
+  already accepted for the `Black and White` naming decision, and `docs/OVERRIDES.md` is where a
+  deliberate Photoshop deviation belongs — **this entry does not add one and does not ask for one.**
+
+**Do not** give `Photo Filter` Adobe's Density and Preserve Luminosity while it computes
+`grayscale(%) sepia(%) saturate(%)`. That is a fake control dressed in Adobe's words, which is the one
+thing this repo's policy refuses, and doing it in a menu is worse than doing it in a rail.
+
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:131-137`, `:147-170`,
+`src/components/ToolbarsRight/Colors/Color.tsx:121-180`, `src/tools/functions.ts:60-63`,
+`src/tools/colors.ts`
+
+## 146. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
+
+**Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
+(`DesktopHeader.tsx:283`, `:384`, `:413`, `:472`, `:512`). Adobe's is eleven: File, Edit, Image, Layer,
+Type, Select, Filter, 3D, View, Window, Help. Two of the five that exist are nearly empty: `Edit` holds
+one item, and `Image` holds one submenu.
+
+The gap is not cosmetic. A user who knows Photoshop reaches for `Select > Deselect`,
+`Select > Modify > Feather`, `Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds
+nothing. Worse, several of those are **unreachable entirely**, not merely unreachable from a menu: the
+app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a selection
+(`src/util/selection.ts` exports no such function), and no adjustment layers at all
+(`src/contexts/psd-utils.ts:88-106` warns `adjustment`, `mask` and `clipping` are unsupported and not
+preserved on import).
+
+**The documentation consequence is the part to fix first.** `docs/TOOLS-TOO-HARD.md` files the Select
+gaps as capability absences and justifies them with a menu that does not exist — "There is no menu
+surface that could host them". There **is** a menu bar now; there is no `Select` menu on it. Adding that
+menu is separable work from the selection-model work, and conflating the two is how a menu gap got filed
+as an algorithm gap in the first place.
+
+**Fix.** Add the missing top-level menus in Adobe's order, each carrying the commands the app can
+already do and a **disabled** item for each it cannot — the shape `Image ▸ Adjustments` already uses
+(`DesktopHeader.tsx:109-112`, `:450`), where an item is enabled by having a `toolName` and nothing else.
+Start with **`Select`**: its honest contents are the smallest, because Select All and Deselect are
+trivial and Feather / Grow / Modify / Inverse are `disabled` items until the model work lands. Then
+**`Layer`**, almost all of it disabled while adjustment layers do not exist. **`View`** and **`Filter`**
+follow the same rule. **`Type`** last of the plausible ones; **`3D`** is a candidate for never shipping
+at all, and should be decided rather than deferred.
+
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:275-532`, `:109-112`, `:147-170`,
+`src/util/selection.ts`, `src/contexts/psd-utils.ts:88-106`,
+`docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`

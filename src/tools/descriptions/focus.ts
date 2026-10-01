@@ -309,7 +309,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'src/components/ToolbarsRight/Tonal/Tonal.tsx:156',
       'src/components/Main/DodgeToolArea.tsx:50',
       'src/components/Common/AppKeyboardShortcuts.tsx:437',
-      'toolbar-mapping.ts:94',
+      'toolbar-mapping.ts:87',
       'src/tools/toolProcessors.ts:238',
     ],
     appNotes:
@@ -407,7 +407,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'src/components/ToolbarsRight/Tonal/Tonal.tsx:139',
       'src/components/Main/BurnToolArea.tsx:56',
       'src/components/Common/AppKeyboardShortcuts.tsx:437',
-      'toolbar-mapping.ts:94',
+      'toolbar-mapping.ts:88',
       'src/tools/toolProcessors.ts:244',
     ],
     appNotes:

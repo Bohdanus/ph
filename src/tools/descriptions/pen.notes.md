@@ -69,7 +69,7 @@ can actually do with the tool, and they are the ones that survive a screenshot o
   `ToolbarsRight/Transform/Transform.tsx:37`. The Escape branch in `TextToolArea.tsx:114` is commented
   out, which is why the text tool is not in that list.
 - **The keyboard reaches three of the six.** The rail's Pen flyout lists six tools
-  (`toolbar-mapping.ts:101-106`) and `penGroup` holds three
+  (`toolbar-mapping.ts:94-99`) and `penGroup` holds three
   (`src/components/Common/AppKeyboardShortcuts.tsx:33`), so `Shift+P` never reaches Add Anchor Point,
   Delete Anchor Point or Convert Point — they are reachable from **no** key in the app, which is a
   stronger statement than "they have no shortcut of their own" and the one the data file now makes.

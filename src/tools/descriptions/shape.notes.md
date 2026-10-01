@@ -31,7 +31,7 @@ map, each verified by printing the line:
 | `src/tools/shape.ts:71` / `:79`        | **:93** / **:103** | `normalizeShapeGeometry` and its `if (shiftKey)` arm       |
 | `src/tools/settings.ts:271…306`        | **:278…313**       | the six figure blocks, each 7 lines lower                  |
 | `src/components/Main/Main.tsx:74`      | **:82**            | `toolName === 'shape' \|\|`, first arm of the dispatch     |
-| `toolbar-mapping.ts:109-114`           | **:110-115**       | the six fly-out entries                                    |
+| `toolbar-mapping.ts:109-114`           | **:103-108**       | the six fly-out entries                                    |
 | `AppKeyboardShortcuts.tsx:76-78`       | **:116-118**       | `orderedFigures` and the index arithmetic                  |
 | `AppKeyboardShortcuts.tsx:89-95`       | **:129-135**       | the `U` handler: keep, else force `rectangle`              |
 
@@ -397,7 +397,7 @@ Pixels mode is identical to Shape mode, there is no separate Fill/Stroke swatch 
 app's fly-out is six entries where Photoshop's group is seven.
 
 **The missing Star tool is the app's gap, and it is recorded in `shape`'s `appNotes` rather than
-left to be inferred.** The app's fly-out is `toolbar-mapping.ts:110-115` — Rectangle, Ellipse,
+left to be inferred.** The app's fly-out is `toolbar-mapping.ts:103-108` — Rectangle, Ellipse,
 Line, Triangle, Polygon, Custom Shape — and there is no `star` `ToolName`, no `FigureType` for it
 (`src/tools/shape.ts:5`), and no gear menu in which its points and radii could be set. The
 `polygon` `appNotes` used to read "the star is not this tool's to draw in the current release, so
@@ -704,7 +704,7 @@ so there is nothing here to compare a star Ratio against", which put a missing c
 voice of a Photoshop statement — a reader could take it for a claim that 26.10 moved the control and
 not for a note that this app cannot draw a star at all. It now says the app has no Star tool. The
 absence is recorded on the `shape` entry as well, because that is where the group's membership lives
-(`toolbar-mapping.ts:110-115`, six entries against Photoshop's seven); see the `shape` section above.
+(`toolbar-mapping.ts:103-108`, six entries against Photoshop's seven); see the `shape` section above.
 
 App verdict: **partial**. The drag-defined model is right; the side count and the rotation are not
 there, and the app has no Star tool to compare a star Radius against.
@@ -890,9 +890,9 @@ Shift+U from the Triangle or the Polygon "restarts at the rectangle instead of a
 
 **Plain `U` is not "always jumps to the rectangle" either, and that was the other half of the same
 mistake.** The five geometric figures in the rail all carry `name: 'shape'` and differ only by
-`figure` (`toolbar-mapping.ts:110-114`, applied at `SidebarLeft.tsx:567-582`), so
+`figure` (`toolbar-mapping.ts:103-107`, applied at `SidebarLeft.tsx:567-582`), so
 `toolName === 'shape'` for all five and the early return at `AppKeyboardShortcuts.tsx:129-131` keeps the
-figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-mapping.ts:115`), so
+figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-mapping.ts:108`), so
 `U` from there is the one case that does force the rectangle. Both halves are now in the row rather
 than only in this table.
 

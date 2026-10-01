@@ -527,7 +527,7 @@ for the current label verbatim. The recovered research's `Protect Texture` is a 
 attributed to Adobe's iPad documentation, which I could not open — see `## Unverified`.
 
 `O` selects the Dodge tool and `Shift+O` cycles the flyout, which is confirmed twice independently.
-The app binds `O` the same way — the tile declares it (`toolbar-mapping.ts:94`) and the handler is
+The app binds `O` the same way — the tile declares it (`toolbar-mapping.ts:87`) and the handler is
 `src/components/Common/AppKeyboardShortcuts.tsx:437`, whose cycle branch is `selectTonalTool` at
 `:177`.
 
@@ -854,8 +854,8 @@ runs `selectFillTool(false)`, which lands on `'paint-bucket'`
 (`src/components/Common/AppKeyboardShortcuts.tsx:166-175`, handler registered at `:421-426`); the
 Gradient is what the cycle reaches, via the `Shift+G` binding at `:428-434` into `selectFillTool`'s
 cycle branch. The tile declarations agree: the Paint Bucket
-declares `shortcut: 'G'` (`toolbar-mapping.ts:80`) and the Gradient tile declares none at all
-(`toolbar-mapping.ts:92`). The data file's `shortcuts` row now says exactly that rather than
+declares `shortcut: 'G'` (`toolbar-mapping.ts:73`) and the Gradient tile declares none at all
+(`toolbar-mapping.ts:85`). The data file's `shortcuts` row now says exactly that rather than
 "pressing it again cycles to that tool", which described a first press that selects the other tool.
 Third-party walkthroughs routinely say "`G` selects the Gradient tool", which is the CS-era ordering
 where the Gradient was the tile's own letter; wikihood's 2007 text spells the current behaviour out
@@ -1006,7 +1006,7 @@ a binding is **absent**, which is the stronger form of the same objection.
     names no letter, and the current Sharpen page could not be opened, so neither carries an `R`
     row — the same rule the other five controls in this file follow, where a claim goes in the data
     file only if a page puts it on that tool. The app binds none of the three
-    (`toolbar-mapping.ts:86-88`), so this is an accuracy question, not an app-fidelity one.
+    (`toolbar-mapping.ts:79-81`), so this is an accuracy question, not an app-fidelity one.
 12. **`Dither`'s and `Reverse`'s defaults, and the removal of `Reverse`'s.** The data file used to
     say "On by default" for `Dither` and "Off by default" for `Reverse`, and both were silence
     dressed as a fact. They are now both gone from the `detail` text and the rows say that no page

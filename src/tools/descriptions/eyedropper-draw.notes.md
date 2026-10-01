@@ -452,9 +452,9 @@ have been citing an absence.
 or annotation tool, not a distinct painting mode, and not a pen in the Photoshop sense. The chain
 that settles it, in order:
 
-1. `toolbar-mapping.ts:97` — `[{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }]`, its own
-   single-tool tile, in the tonal group after Dodge/Burn. (`:95` is Burn and `:96` closes the
-   preceding group, so the `:96` this file used to cite is the closing bracket.)
+1. `toolbar-mapping.ts:90` — `[{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }]`, its own
+   single-tool tile, in the tonal group after Dodge/Burn. (`:88` is Burn and `:89` closes the
+   preceding group, so the closing bracket this file used to cite is now `:89`.)
 2. `src/contexts/tool-types.ts:35` — `draw: DrawToolArgs`, and `:2` imports both `DrawToolArgs` and
    `PaintToolArgs`, so the two are separate arg types rather than one shared paint type. The split is
    real: `src/tools/draw.ts:69` defines `PaintToolArgs` as `Omit<DrawToolArgs, 'toolName' |
@@ -701,7 +701,7 @@ Brush as well, leaving the Draw Tool reachable by pointer only. Because no key r
 spring-loaded hold-and-switch cannot reach it either.
 
 The collision the brief asked about is still real and still in the data:
-`toolbar-mapping.ts:73` (Brush, `'B'`) and `toolbar-mapping.ts:97` (Draw, `'B'`), two
+`toolbar-mapping.ts:66` (Brush, `'B'`) and `toolbar-mapping.ts:90` (Draw, `'B'`), two
 different tiles in the same `toolbarMap`. `bruceblinn`'s CS3 table gives `B, Shift-B` to "Brush,
 pencil, and color replacement tools", and `thedigitalprocess` says the same in prose: "You can
 activate the brush, pencil or replacement brush at any time by pressing the letter B, and cycle
@@ -954,7 +954,7 @@ opened the code rather than re-running `grep`.
 | `DrawToolArea.tsx:110`  | `DrawToolArea.tsx:143`  | `createLayerFromTool(fullArgs)` — the commit           |
 | `toolProcessors.ts:151` | `toolProcessors.ts:152` | `draw: {`                                              |
 | `settings.ts:32`        | `settings.ts:37`        | `savedDrawPerPen`                                      |
-| `toolbar-mapping.ts:96` | `toolbar-mapping.ts:97` | the Draw tile (`:96` closes the tonal group)           |
+| `toolbar-mapping.ts:96` | `toolbar-mapping.ts:90` | the Draw tile (`:96` closes the tonal group)           |
 | `brush.ts:101`          | `brush.ts:109`          | `smoothStrokePoints`                                   |
 | `util/draw.ts:157`      | `util/draw.ts:190`      | `drawSpray` (`:157` is a doc comment)                  |
 | `Draw.tsx:122-131`      | `Draw.tsx:126-135`      | the Pen Type select                                    |
@@ -966,7 +966,7 @@ opened the code rather than re-running `grep`.
 | `Draw.tsx:49-52`        | `Draw.tsx:51-53`        | `handleAlphaChange`                                    |
 | `Draw.tsx:29-33`        | `Draw.tsx:31-35`        | the foreground-colour sync effect                      |
 | `Paint.tsx:168-182`     | `Paint.tsx:182-196`     | the paint bar's working `Mode` select (`:168` is Size) |
-| `toolbar-mapping.ts:72` | `toolbar-mapping.ts:73` | the Brush tile                                         |
+| `toolbar-mapping.ts:72` | `toolbar-mapping.ts:66` | the Brush tile                                         |
 
 The first pass's table follows, unchanged:
 

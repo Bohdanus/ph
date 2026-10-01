@@ -611,7 +611,10 @@ modifier table:
 The app binds none of the three. `t` alone selects the Text tool
 (`src/components/Common/AppKeyboardShortcuts.tsx:384-389`; the `:277-282` an earlier version cited is
 inside the `Cmd+C` copy handler) and there is no `Cmd+T` registration
-anywhere; the tool has no accelerator at all in `toolbar-mapping.ts:64`.
+anywhere; the tool has no accelerator at all, and no rail entry to declare one on —
+`extraTools` (`toolbar-mapping.ts:174`) is where `color`, `levels` and `transform` are recorded as
+carrying no Tools-rail entry, and `Edit ▸ Free Transform` in the header is what reaches the id
+instead (`toolbar-mapping.ts:163-164`).
 
 **`Enter` is now Adobe's, and it was third-party before this pass.** Adobe's Free Transform page
 does not print it, but the Feb 23 2026 reference-point page does, in the imperative: "Press **Enter
@@ -755,7 +758,10 @@ work with grayscale images**". Both rows were already right; they are now right 
 | ------- | ----------------------------------------------------------------------------------------------- |
 | `Cmd+L` | apply Levels; `Cmd+Option+L` re-applies with the last settings used; `Cmd+Shift+L` is Auto Tone |
 
-The app binds no shortcut for `levels` (`toolbar-mapping.ts:63`).
+The app binds no shortcut for `levels`. The id has no Tools-rail entry to badge one on —
+`extraTools` (`toolbar-mapping.ts:174`) is where `color`, `levels` and `transform` are recorded as
+carrying none — and `Image ▸ Adjustments` in the header is what reaches it
+(`toolbar-mapping.ts:163-164`).
 
 **The `Cmd+Shift+L` claim in that row was wrong and is corrected above.** Adobe's shipped sheets do
 not put Levels on `Shift+Cmd`; see `## Unverified` #15. This is the one place in this family where
@@ -812,9 +818,13 @@ writes the command, the panel and the adjustment layer with an ampersand — `Im
 Black & White`, the Properties icon, `Layer > New Adjustment Layer > Black & White` — and its own
 help text says "choose **Black & White** from the list". The phrase without the ampersand is prose
 English, not a product name, and `types.ts` requires the name verbatim, so `photoshopName`, the
-`summary` and `purpose` now use the ampersand. **`Colors` is this app's own tile label and is not an
-Adobe name at all** — `toolbar-mapping.ts:62` and the Tools menu both spell it "Colors", and
-`appNotes` now says so on the record rather than only implying it by naming the entry.
+`summary` and `purpose` now use the ampersand. **`Colors` was this app's own tile label and was not
+an Adobe name at all** — and the label went out with the entry. The flyout that carried `color`,
+`levels` and `transform` is gone from `toolbarMap`; `extraTools` (`toolbar-mapping.ts:174`) is
+where the three ids are recorded as carrying no Tools-rail entry, and `color` is reached now from
+`Image ▸ Adjustments ▸ Photo Filter` (`toolbar-mapping.ts:163-164`). Nothing in `src/` spells it
+"Colors" any more, so `appNotes` records the rail absence and the Photo Filter host rather than the
+old name.
 
 **The `On-image adjustment icon` row moved up two positions, and its detail was wrong about the
 mechanism while it was wrong about the position.** It was listed last, after `Reset`; the control
@@ -1138,20 +1148,24 @@ the durable materializer — see the `ctx.filter` section above.
     adjustment icon and the reset icon — **no Preview** — which is why the `color` table has seven
     rows and not eight.
 
-## A fourth rail finding this pass turned up, for the coordinator
+## A fourth rail finding this pass turned up — resolved, kept because it shaped the fix
 
-`HANDOFF.md` §117 files that `color`, `levels` and `transform` are live rail tiles and that
-`extraTools` gates nothing. **The same three are also live _Tools menu_ entries, in a second place,
-and that place is not named in §117.** `src/components/DesktopHeader/DesktopHeader.tsx:27-32`
-declares a flat `TOOL_MENU_ITEMS` list — a "Tools" menu — containing `{ toolName: 'color', label:
-'Colors' }`, `{ toolName: 'levels', label: 'Levels' }` and `{ toolName: 'transform', label:
-'Transform' }`, and the comment above it gives the reason a tool missing from that menu is treated
-as a bug: "**a tool missing from the Tools menu is a visible inconsistency the user has to notice
-and work around.**" So the app presents all three as tools in **two** surfaces, and the second one
-exists precisely because the first one was assumed to be the only one. There is **no** Image or
-Edit menu in the application to move them to: `src/components/Menu/Menu.tsx` renders only
-`DesktopHeader` and `ToolbarHorizontal`, and nothing under `src/` matches "Adjustments" as a menu
-group. Any extraction has to build the menu, not just delete three rows from `toolbarMap`.
+The same three were **also** live _Tools menu_ entries, in a second surface, which is the half of
+the problem that made a menu rename necessary rather than a row deletion. `TOOL_MENU_ITEMS` in
+`src/components/DesktopHeader/DesktopHeader.tsx` listed all three beside the comment "**a tool
+missing from the Tools menu is a visible inconsistency the user has to notice and work around.**"
+— so a non-tool in that list is the same defect one level up, and the inverse of the comment's
+invariant, which is why both surfaces had to change together.
+
+Two conclusions in the original finding were **wrong and did not survive**: that `Edit` was not a
+menu, and that extraction had to build a menu bar. `Edit` existed and already dispatched all three
+through the same handler the rail calls; it was simply carrying tool switches under a command
+menu's name. The extraction added an `Image ▸ Adjustments` submenu and reshaped `Edit` to Adobe's
+own single `Free Transform` item, and it removed `color`, `levels` and `transform` from the Tools
+menu in the same change. A test now pins that absence.
+
+What did survive is the reason the first surface was not the only one: a tool list is not a single
+surface, and "delete three rows from `toolbarMap`" was never going to be sufficient on its own.
 
 The same list also names the Move tool **"Reposition"** (`:28`) where `toolbar-mapping.ts:39` names
 it **"Move Tool"**, so the app already disagrees with itself about one of this family's names. Not

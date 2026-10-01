@@ -33,10 +33,9 @@ const leftRail = (page: Page) => page.getByTestId('left-sidebar');
  * Select a tool through the header's Tools menu.
  *
  * `clickToolButton` looks for a sidebar tile, and a tile exists only for a group's PRIMARY
- * tool and only while the group is not collapsed: `transform` is the second member of
- * `[Colors, Levels, Transform]`, and the Type group is one of the ones a 600px window folds
- * into the three-dots tile. The header menu lists every tool, and the header is visible at
- * every width this spec uses.
+ * tool and only while the group is not collapsed: the Type group is one of the ones a 600px
+ * window folds into the three-dots tile. The header menu lists every tool, and the header is
+ * visible at every width this spec uses.
  *
  * Addressed by the menu's OWN test id, taking the tool's name — which is what it was not.
  * It used to be addressed by accessible name, and the menu and the rail are two different
@@ -46,10 +45,29 @@ const leftRail = (page: Page) => page.getByTestId('left-sidebar');
  * The tile then collapsed, and the same call became a 60-second wait for a button that was
  * never coming. A name that the menu does not use is a selector that resolves somewhere
  * unintended or nowhere, and both look like a pass or a hang rather than a mistake.
+ *
+ * ONLY the tools that have a Tools-menu entry. `color`, `levels` and `transform` are
+ * `Image ▸ Adjustments` and `Edit ▸ Transform` COMMANDS in Photoshop, have no Tools-panel
+ * entry, and are gone from this menu along with the `[Colors, Levels, Transform]` rail
+ * flyout that used to hold them — so there is no `tools-menu-transform-button` for
+ * `selectToolFromMenu` to address. {@link selectFreeTransform} is the path for that one.
  */
 async function selectToolFromMenu(page: Page, toolName: string) {
   await page.getByTestId('header-tools-menu-button').click();
   await page.getByTestId(`tools-menu-${toolName}-button`).click();
+}
+
+/**
+ * Selects the transform tool through `Edit ▸ Free Transform`.
+ *
+ * Two clicks, both necessary: `header-edit-menu-button` opens the menu, and
+ * `Free Transform` is the only item in it. Its options bar is the subject of the test that
+ * calls this, so the same reason it lives on a header command rather than a rail tile — the
+ * panel is not a Tools-panel surface — is why this cannot be `selectToolFromMenu`.
+ */
+async function selectFreeTransform(page: Page) {
+  await page.getByTestId('header-edit-menu-button').click();
+  await page.getByTestId('edit-menu-free-transform-button').click();
 }
 const railWidth = async (page: Page) => await leftRail(page).evaluate((el) => el.getBoundingClientRect().width);
 
@@ -472,7 +490,7 @@ test.describe('Desktop band is unchanged', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
-    await selectToolFromMenu(page, 'transform');
+    await selectFreeTransform(page);
     const toolbar = page.locator('[class*="grid-area:toolbar"]').first();
     const overflowX = await toolbar.evaluate((el) => getComputedStyle(el).overflowX);
     expect(overflowX, 'desktop must not become a scroll container').toBe('visible');
