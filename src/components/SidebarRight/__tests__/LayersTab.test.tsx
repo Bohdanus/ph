@@ -540,13 +540,13 @@ describe('LayersTab inline rename', () => {
     expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
   });
 
-  // Product bug — src/components/SidebarRight/LayersTab.tsx:76-82.
-  // `handleNameChange` refuses to commit a blank name, but unlike the Escape branch at
-  // LayersTab.tsx:207 it never writes the previous name back into the contentEditable
-  // span. Because the span is no longer editable the DOM text is no longer owned by
-  // React, so the row keeps showing the blank label until some later store render
-  // happens to rewrite it — the user sees a nameless layer that still exists.
-  it.fails('restores the previous label in the row when a blank rename is rejected', () => {
+  // Regression — src/components/SidebarRight/LayersTab.tsx:90-104.
+  // `handleNameChange` refuses to commit a blank name, and because the span is no longer
+  // editable the DOM text is no longer owned by React, so the refused path has to write the
+  // stored name back itself — exactly as the Escape branch at LayersTab.tsx:231 does. Without
+  // that write React re-renders with the same text child, changes nothing, and the row keeps
+  // showing the blank label: a nameless layer that still exists.
+  it('restores the previous label in the row when a blank rename is rejected', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
     act(() => {
