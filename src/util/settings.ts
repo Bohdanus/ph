@@ -83,8 +83,18 @@ export function saveLastSettings(args: ToolArgs) {
     // Typed rather than bare even though nothing here is geometric: Sample Size is a real user
     // choice, and the bare group exists for tools whose only setting is that they exist.
     lastSavedSettings.eyedropper = cloneDeep({ ...args });
-  } else if (toolName === 'rectangular-selection') {
-    lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
+  } else if (
+    toolName === 'rectangular-selection' ||
+    toolName === 'single-row-marquee' ||
+    toolName === 'single-column-marquee'
+  ) {
+    // Typed rather than falling through to the bare group below, because a tool with NO
+    // settings still has to persist its identity: an unmatched `toolName` never reaches
+    // `lastSavedSettings` at all, and `cloneSavedToolArgs` then seeds the bar from
+    // `defaultSettings` on every switch. Harmless for these three today, and the reason
+    // this arm exists rather than a note is that it stops being harmless the day one of
+    // them grows a control.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ toolName });
   } else if (toolName === 'triangle' || toolName === 'polygon') {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
       withNormalizedFigure(omit(args as unknown as ShapeToolArgs, 'start', 'end'))
@@ -131,10 +141,11 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'smudge' ||
     toolName === 'dodge' ||
     toolName === 'burn' ||
+    toolName === 'sponge' ||
     toolName === 'clone-stamp' ||
     toolName === 'eraser'
   ) {
-    // These five are brushes, so `points` is the stroke that was just committed and not
+    // These six are brushes, so `points` is the stroke that was just committed and not
     // a setting: reseeding it would hand the next drag the previous one. Emptied the
     // way `draw` (:27) and `feather-magnetic-lasso` (:44) empty theirs. Note that
     // `clone-stamp.source` survives — a source point is a setting, and losing it is the

@@ -358,19 +358,31 @@ requirement and is unchanged by anything an agent decides about the mechanism.
 this file's own policy nobody treats its absence as a defect. The rail entries for the two ids are
 `HANDOFF.md` §117's, which is a separate decision.
 
-### Dodge, Burn and Smudge build-up while the button is held
+### Dodge, Burn, Sponge and Smudge build-up while the button is held
 
-**What Photoshop does.** Dodge, Burn and Smudge accumulate for as long as the button is held. The
-result depends on how long the cursor rested in each place, which is the entire point of the tool —
-it is a hand-mixed exposure, not a filter.
+**What Photoshop does.** Dodge, Burn, Sponge and Smudge accumulate for as long as the button is
+held. The result depends on how long the cursor rested in each place, which is the entire point of
+the tool — it is a hand-mixed exposure, not a filter. **On the Sponge it is worse than an
+inconvenience**, because Flow is a per-DAB rate there rather than a per-pass one: the CS-era
+documentation calls Flow "the opacity of each spot of colour a tool delivers", and every tutorial
+retouches with a low Flow and repeated passes, so a one-shot commit at Flow 50% is not the tool at
+a setting — it is half the whole effect in one pass.
 
 **What this app does.** One commit per stroke, on pointer-up. The reason is written down where the
-implementation is (`src/tools/dodgeBurn.ts:336-339`):
+implementation is (`src/tools/dodgeBurn.ts:292-296`, and the same paragraph restated at
+`src/tools/sponge.ts:351-356`):
 
 > There is no build-up. Photoshop's dodge and burn accumulate for as long as the button is held, which
 > is a per-frame effect with no single end value; a one-shot commit has to be a pure function of its
 > args instead, which is also what makes the registry's `requiresRaster: true` replay reproduce the
 > commit exactly.
+
+**The Sponge's own cost is a wrong meaning for a labelled control, which is a stronger form of the
+same gap than the other three carry.** Flow means "the strength of one dab" in Photoshop and "the
+entire effect of the stroke" here, and the two coincide only at 100%. A user who sets 20% and paints
+once gets a fifth of what Photoshop gives them at the same number, with nothing on the bar saying
+so. The control is present, named Photoshop's, and does not do what its name says — which is the
+half-version this file's policy refuses.
 
 **Smudge is a different case and must not be folded into this entry's evidence.** The app's Smudge
 _does_ accumulate, along the stroke rather than over dwell time: `smudgeStroke` is a read-modify-write
@@ -389,9 +401,9 @@ converse recorded: `saveLayerCanvas()` promoting cached canvases outside reducer
 reason not to start the single-writer cutover. Changing the commit discipline for dwell tools is a
 history-architecture change with a migration attached, not a processor edit.
 
-**What the app does instead.** One application of the effect at the tool's Exposure value, committed
-on release. Exposure is a per-stroke setting, which is what the bar shows and what the commit can
-honour.
+**What the app does instead.** One application of the effect at the tool's Exposure value — or, on the
+Sponge, at its Flow value — committed on release. Both are per-stroke settings, which is what the bar
+shows and what the commit can honour.
 
 ### Path Type = Path for the shape tools
 
