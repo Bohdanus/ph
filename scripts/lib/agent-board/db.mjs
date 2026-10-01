@@ -465,9 +465,35 @@ export class Board {
   runMigrations(fromVersion) {
     const steps = { 1: () => this.migrateFileLockAttribution() };
     const step = steps[fromVersion];
+    /**
+     * A MISSING STEP IS A BUG IN THIS SCRIPT, and it used to pass for a
+     * successful open.
+     *
+     * `SCHEMA_VERSION` was raised to 3 by two branches that both called their
+     * first step "v2", while main's `steps` still started at 1 — so a board
+     * stamped 2 found no `steps[2]`, got `false`, and the caller read that as
+     * "no migration ran", which is precisely the value that WITHHOLDS the
+     * version stamp. The board stayed at 2 with the new table created empty by
+     * `exec(SCHEMA)` and nothing anywhere reporting an error.
+     *
+     * `integration/merge-sweep` shipped exactly that: v3, an `issue_files`
+     * table, and no `steps[2]`. It reproduces on demand — open a main-written v2
+     * board with it and you get version 2, an empty `issue_files`, and exit 0.
+     *
+     * So a version this script claims to migrate, with no step to migrate it,
+     * now REFUSES. The failure a caller can act on beats the one it cannot:
+     * "fix the board script" is answerable, "your index is empty and nothing
+     * said so" is not.
+     */
+    if (!step) {
+      throw new BoardError(
+        `board schema is v${fromVersion} and this script writes v${SCHEMA_VERSION}, but it has no v${fromVersion} migration step; add the step to runMigrations() in db.mjs`,
+        { code: 1 }
+      );
+    }
     // RETURNED, not just called: `if (step) step();` discarded it, the version
     // row never advanced, and every open re-ran the migration.
-    return step ? step() : false;
+    return step();
   }
 
   currentSchemaVersion() {
@@ -1114,9 +1140,9 @@ export class Board {
    * `liveLocks`, and never through this.
    */
   locksFor(issueId, at = this.now()) {
-    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path} ${lock.agent_id}`, lock]));
+    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path}\0${lock.agent_id}`, lock]));
     return this.issueLocks(issueId, at)
-      .map((pairing) => live.get(`${pairing.path} ${pairing.agent_id}`))
+      .map((pairing) => live.get(`${pairing.path}\0${pairing.agent_id}`))
       .filter(Boolean);
   }
 

@@ -1150,6 +1150,72 @@ describe('the schema this script writes', () => {
     // And nothing was silently moved on its way past.
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issue_locks').get().n).toBe(0);
   });
+
+  /**
+   * The schema COLLISION, and it is the reason the number alone is not a guard.
+   *
+   * Two branches each raised `SCHEMA_VERSION` to 3 and each called their own
+   * first step "v2" — the same version main had already spent on something
+   * else. A board stamped 2 by main therefore meant two different schemas, and
+   * nothing in the format could tell them apart.
+   *
+   * What turned that into silent data loss is the SECOND half, and it is the
+   * half a version guard does not cover: `runMigrations` answered `false` for a
+   * version it had no step for. `false` is the caller's signal for "a migration
+   * ran and had nothing to do", and it is the value that withholds the version
+   * stamp — so the board sat at 2 with the new table created empty by
+   * `exec(SCHEMA)` and no error anywhere. `integration/merge-sweep` shipped
+   * exactly this and is still unmerged.
+   *
+   * The fixture is built by raising this script's OWN version rather than by
+   * simulating a branch, because that is the shape that has to be caught: a
+   * script that adds a table, bumps the number, and forgets the step.
+   */
+  const buildCollidingBoard = (target, version) => {
+    const db = new DatabaseSync(join(target, 'board.db'));
+    db.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE issues (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT 'prod', status TEXT NOT NULL DEFAULT 'open',
+        priority TEXT NOT NULL DEFAULT 'normal', origin TEXT, created_by TEXT NOT NULL,
+        resolver TEXT, resolved_at TEXT, verified_by TEXT, verified_at TEXT,
+        defer_reason TEXT, defer_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE file_locks (
+        path TEXT NOT NULL, agent_id TEXT NOT NULL, issue_id TEXT, worktree TEXT,
+        acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL, released_at TEXT,
+        PRIMARY KEY (path, agent_id));
+      CREATE TABLE issue_locks (
+        issue_id TEXT NOT NULL, path TEXT NOT NULL, agent_id TEXT NOT NULL,
+        created_at TEXT NOT NULL, PRIMARY KEY (issue_id, path, agent_id));
+      CREATE TABLE events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent_id TEXT NOT NULL,
+        kind TEXT NOT NULL, issue_id TEXT, path TEXT, message TEXT, data TEXT);
+    `);
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schema_version', String(version));
+    db.close();
+  };
+
+  it('refuses a version it claims to migrate but has no step for', () => {
+    buildCollidingBoard(dir, 2);
+    const board = new Board({ dir, identity: 'a' });
+
+    // This script writes v2 and its `steps` holds only `1`, so `runMigrations(2)`
+    // is precisely the call a v3 branch makes when it forgot to add `steps[2]`.
+    // It used to answer `false` — the value that withholds the version stamp —
+    // and the open reported success with the new table created and empty.
+    expect(() => board.runMigrations(2)).toThrow(/no v2 migration step/);
+    board.close();
+  });
+
+  it('still migrates the version it does have a step for', () => {
+    // The guard must not become a blanket refusal: v1 is a version this script
+    // genuinely knows how to move, and refusing it would strand every v1 board.
+    buildV1Board(dir);
+    const board = boardFor('a');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    board.close();
+  });
 });
 
 describe('one board is shared by every worktree', () => {
