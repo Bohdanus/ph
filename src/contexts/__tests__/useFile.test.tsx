@@ -983,6 +983,44 @@ describe('FileProvider document frame and non-Error failures', () => {
     expect(console.error).toHaveBeenCalledWith('Failed to save image:', 'encoder exploded');
   });
 
+  it('renders the export surface from the staged documentFrame, not from size alone', async () => {
+    // The frame is what carries a document's ORIGIN, and the origin is what a crop
+    // changes (`canvasRectToDocumentFrame`). `size` cannot express it: the store derives
+    // `totalSize` from the frame's extent, so the two agree on width and height and
+    // disagree only on x/y. Dropping the frame from this call site leaves every suite in
+    // the repository green — nothing below `renderExportCanvas` observes it — and a
+    // cropped document exports at the correct size with its content shoved to the
+    // top-left. So the frame is given a non-zero origin AND an extent that disagrees with
+    // `size`, and both must survive to the encoded surface.
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef
+        .current!.openSaveImageDialog({
+          fileName: 'cropped.png',
+          layers: {},
+          size: { width: 10, height: 10 },
+          documentFrame: { x: 40, y: 25, width: 640, height: 480 },
+        })
+        .then(resolved);
+    });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith({ fileName: 'cropped (copy)', format: 'image/png' }));
+    // 640x480, not the 10x10 that `size` implies and not the 300x150 canvas default.
+    expect(saveImageToDisk).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 640, height: 480 }),
+      'cropped (copy)',
+      'image/png',
+      undefined
+    );
+  });
+
   it('proposes a bare copy name when the requested file name is empty', async () => {
     vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
     render(

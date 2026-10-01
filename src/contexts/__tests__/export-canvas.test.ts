@@ -46,7 +46,12 @@ const blankLayer = (overrides: Partial<Layer> = {}): Layer =>
 const record = (...layers: Layer[]): LayersRecord => Object.fromEntries(layers.map((l) => [l.id, l]));
 
 afterEach(() => {
-  drawLayersToCanvasMock.mockClear();
+  // `mockReset`, not `mockClear`: `mockClear` discards recorded calls but leaves a queued
+  // `mockReturnValueOnce`/`mockImplementationOnce` in force, so a case that skips or
+  // duplicates the compositor call silently hands its stub to the NEXT case — which then
+  // passes or fails for the wrong reason. Because this mock wraps the real implementation,
+  // `mockReset` is also what restores it.
+  drawLayersToCanvasMock.mockReset();
 });
 
 describe('renderExportCanvas', () => {
@@ -64,14 +69,22 @@ describe('renderExportCanvas', () => {
     expect({ width: canvas.width, height: canvas.height }).toEqual({ width: 640, height: 480 });
   });
 
-  it('passes the document frame through to the compositor, which supplies both extent and origin', () => {
+  it('paints the surface it hands back, rather than a correctly sized blank one', () => {
     const frame = { x: 5, y: 6, width: 800, height: 600 };
-    renderExportCanvas(record(blankLayer()), { width: 800, height: 600 }, frame);
+    const returned = renderExportCanvas(record(blankLayer()), { width: 800, height: 600 }, frame);
+
+    // IDENTITY, not shape, and `toHaveBeenCalledExactlyOnceWith(returned, …)` does NOT
+    // supply it: Vitest deep-equals its arguments, so a second canvas of the same size
+    // satisfies it. Composite onto a scratch surface, return a fresh one that is merely
+    // resized, and every other case in this file still passes while the export encodes a
+    // blank document at the right dimensions — a silent data-loss bug wearing a green
+    // suite. Only this pins that the canvas returned is the one the compositor painted.
+    expect(drawLayersToCanvasMock).toHaveBeenCalledTimes(1);
+    expect(drawLayersToCanvasMock.mock.calls[0][0]).toBe(returned);
 
     // `drawLayersToCanvas` stamps every layer at `pos.x - frame.x`, `pos.y - frame.y`
-    // (layer-renderer.ts:78-79). A frame normalised away or defaulted here would shift
-    // every exported layer, so the frame must arrive as the caller gave it.
-    expect(drawLayersToCanvasMock).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.anything(), frame);
+    // (layer-renderer.ts:78-79), so the frame supplies the origin as well as the extent.
+    expect(drawLayersToCanvasMock.mock.calls[0][2]).toEqual(frame);
   });
 
   it('sorts layers by order before compositing, so the export z-order matches the document', () => {
