@@ -1216,6 +1216,44 @@ describe('the schema this script writes', () => {
     expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
     board.close();
   });
+
+  it('leaves no half-open board when a migration refuses', () => {
+    // `open()` assigns `this.db` before `migrate()` runs, and its first line is
+    // `if (this.db) return this`. So a refusal that left the handle in place
+    // meant the natural recovery — catch, fix, retry — got a board back on the
+    // second call with `migrate()` never re-run and NO error, which is the
+    // unmigrated board the guard exists to prevent.
+    // A v1 board, so `existing` is inside (0, SCHEMA_VERSION) and the guard is
+    // reached at all — a fresh board is 0 and is stamped without migrating.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    // Stand in for a script whose steps do not cover v1.
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    expect(board.db).toBeNull();
+    // And the retry actually retries, rather than short-circuiting.
+    delete board.migrationSteps;
+    const reopened = board.open();
+    expect(reopened.db).not.toBeNull();
+    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    reopened.close();
+  });
+
+  it('refuses before it creates anything, not after', () => {
+    // The two refusals in `migrate()` have to agree: a newer board is refused
+    // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a
+    // missing migration step must not re-create that hazard one line later.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    const tables = after.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    // Only the v1 board's own tables: nothing from this script's SCHEMA.
+    expect(tables.map((row) => row.name)).not.toContain('issue_locks');
+    expect(tables.map((row) => row.name)).not.toContain('claims');
+    after.close();
+  });
 });
 
 describe('one board is shared by every worktree', () => {
