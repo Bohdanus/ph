@@ -85,8 +85,24 @@
       //
       // `-f` is listed beside `--force` because git accepts both, and a rule that
       // only spelled one of them would be defeated by the other.
+      //
+      // AND THE REVERSED ORDER, which is the same bug twice. git takes
+      // `worktree remove [<options>] <path>` and `<path>` first, so
+      // `git worktree remove .kilo/worktrees/alpha --force` is the form a model
+      // writes by habit — and it matched NONE of the rules above, which all
+      // require the flag before `kilo/`, falling through to the catch-all
+      // `"*": "allow"` at the top of this table. Verified against this rule list:
+      // path-then-flag returned `allow` for both `--force` and `-f`.
+      //
+      // `-f` in the reversed position is written with its leading space, and that
+      // space is load-bearing. As a bare substring `-f` also occurs inside any
+      // worktree name containing it, so `*worktree remove*kilo/*-f*` would DENY the
+      // ordinary disposal of `.kilo/worktrees/fix-oracle`. Anchored to ` -f` the
+      // pattern matches the flag as a token and leaves names alone.
       "*worktree remove*--force*kilo/*": "deny",
       "*worktree remove*-f*kilo/*": "deny",
+      "*worktree remove*kilo/*--force*": "deny",
+      "*worktree remove*kilo/* -f*": "deny",
       "*rm -rf*.kilo/worktrees*": "deny",
 
       // `-d` refuses an unmerged branch, and that refusal is the guard on the

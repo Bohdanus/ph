@@ -31,7 +31,10 @@ import {
   MAX_INVENTORY_AGE_MS,
   PLACEHOLDER_BRANCHES,
   dispose,
+  isRegenerableIgnored,
   preflight,
+  readGitState,
+  rebuildCommand,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
 // Imported from its own module, not re-exported: the test asserts against the
@@ -559,5 +562,159 @@ describe('dispose execution', () => {
     const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs });
     expect(h.calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
     expect(result.branchDeleted).toBe(false);
+  });
+});
+
+/**
+ * The four fail-open holes, each with the command that produced it.
+ *
+ * Every one of these was a direction where an ABSENT signal became an EMPTY one,
+ * and empty is what "safe" looks like to the next gate.
+ */
+describe('a signal that could not be read is not an empty signal', () => {
+  it('refuses when git status failed, rather than reading zero counts as clean', () => {
+    // `statusError` was written at three places and read at none, so a status
+    // call that failed for ANY reason left modified and untracked at 0 — and 0
+    // is exactly what a clean tree reports. Nothing downstream could tell them
+    // apart, because the only difference was in a field nobody looked at.
+    const verdict = green({ gitState: greenState({ statusError: 'fatal: not a git repository' }) });
+    expect(codes(verdict)).toContain('dirty-tree-unreadable');
+    expect(verdict.ok).toBe(false);
+    expect(verdict.failures.find((f) => f.code === 'dirty-tree-unreadable').message).toMatch(
+      /UNKNOWN rather than clean/
+    );
+  });
+
+  it('still permits a clean tree, so the unreadable rule is not a blanket refusal', () => {
+    expect(green().ok).toBe(true);
+    expect(codes(green({ gitState: greenState({ statusError: null }) }))).toEqual([]);
+  });
+
+  it('refuses on gitignored content that no command rebuilds', () => {
+    // `git status --porcelain` honours .gitignore, and `ls-files --others
+    // --exclude-standard` — which is what salvage() reads — honours it too. So a
+    // worktree holding only a `.env` reported zero dirty paths, passed the gate,
+    // and was archived by nothing, and `git worktree remove` deleted it.
+    const verdict = green({ gitState: greenState({ ignoredWork: ['.env', 'notes.local'] }) });
+    expect(codes(verdict)).toContain('ignored-content');
+    expect(verdict.failures.find((f) => f.code === 'ignored-content').message).toMatch(
+      /no commit, no ref and no reflog/
+    );
+  });
+
+  it('permits a worktree holding only what a command rebuilds', () => {
+    // THE CONSTRAINT THAT SHAPED THIS RULE. Measured on a real worktree in this
+    // repository: 53 ignored entries, of which 33 under node_modules/ and 18
+    // under dist/. A guard with no exceptions refuses every worktree, and an
+    // earlier review here already shipped that mistake with the board database.
+    const verdict = green({
+      gitState: greenState({
+        ignoredPaths: ['node_modules/vite/index.js', 'dist/assets/x.js', 'tsconfig.tsbuildinfo'],
+        ignoredWork: [],
+      }),
+    });
+    expect(verdict.ok).toBe(true);
+  });
+});
+
+describe('the regenerable-ignored rule', () => {
+  it('treats every ignore pattern it does not name as content', () => {
+    // The allowlist is the exception, not the rule: an unlisted path is work.
+    for (const path of [
+      '.serena/index.db',
+      '.vscode/settings.json',
+      'playwright/.auth/state.json',
+      'run.log',
+      'scratch.local',
+    ]) {
+      expect(isRegenerableIgnored(path), `${path} must not be treated as regenerable`).toBe(false);
+    }
+  });
+
+  it('names a rebuild command for everything it does treat as regenerable', () => {
+    for (const path of ['node_modules/a.js', 'dist/assets/x.css', 'coverage/lcov.info', 'tsconfig.tsbuildinfo']) {
+      expect(isRegenerableIgnored(path)).toBe(true);
+      expect(rebuildCommand(path), `${path} must name how it is rebuilt`).toBeTruthy();
+    }
+  });
+
+  it('does not let a regenerable prefix cover a sibling that merely starts with it', () => {
+    // `dist/` must not exempt `dist-secrets/`, or adding a dot to the prefix
+    // would quietly widen what a disposal is allowed to destroy.
+    expect(isRegenerableIgnored('dist-secrets/keys.txt')).toBe(false);
+    expect(isRegenerableIgnored('node_modules/.cache/x')).toBe(true);
+  });
+});
+
+describe('a bare name that identifies two worktrees identifies neither', () => {
+  it('refuses rather than disposing the first match', () => {
+    // Git refuses two worktrees at the same PATH, so a path is unique; it says
+    // nothing about a basename, and this repo registers worktrees under
+    // .kilo/worktrees/ AND under the temp directory. `Array.find` returned the
+    // first and printed "dispose: gamma disposed. EXIT=0" — the wrong worktree,
+    // reported as success.
+    const entries = [
+      { path: '/private/tmp/vC/other/gamma', branch: 'c' },
+      { path: '/repo/.kilo/worktrees/gamma', branch: 'fix/task' },
+    ];
+    const state = readGitState('/repo', 'gamma', {
+      list: () => entries,
+      run: () => ({ stdout: 'abc1234' }),
+    });
+    expect(state.found).toBe(false);
+    expect(state.ambiguous).toBe(true);
+    expect(state.candidates).toEqual(['/private/tmp/vC/other/gamma', '/repo/.kilo/worktrees/gamma']);
+  });
+
+  it('still resolves a bare name that identifies exactly one worktree', () => {
+    const state = readGitState('/repo', 'task', {
+      list: () => [{ path: '/repo/.kilo/worktrees/task', branch: 'fix/task' }],
+      run: () => ({ stdout: 'abc1234' }),
+    });
+    expect(state.found).toBe(true);
+    expect(state.absolutePath).toBe('/repo/.kilo/worktrees/task');
+  });
+});
+
+describe('the anchor is the only recovery point, so it may not be overwritten', () => {
+  const harness = (answers = {}) => {
+    const calls = [];
+    const run = (cwd, args) => {
+      calls.push(args);
+      const answer = answers[args.join(' ')] ?? '';
+      if (answer instanceof Error) throw answer;
+      return { stdout: typeof answer === 'string' ? answer : '' };
+    };
+    const fs = { mkdirSync() {}, writeFileSync() {} };
+    return { run, fs, calls };
+  };
+
+  it('keeps the bare slug when the ref is free, so no written-down path moves', () => {
+    const h = harness();
+    dispose('/repo', greenState({ branch: 'feat/marble' }), { run: h.run, fs: h.fs });
+    const written = h.calls.find((c) => c[0] === 'update-ref');
+    expect(written[1]).toBe(`${KEEP_REF_PREFIX}feat-marble`);
+  });
+
+  it('disambiguates when a DIFFERENT branch already owns that slug', () => {
+    // refSlug collapses '/', ' ' and every other run to one '-', and '-' is legal
+    // in a branch name, so feat/marble, 'feat marble' and feat-marble all slug
+    // to feat-marble. Two collisions overwrite the first disposal's only
+    // recovery point, and `git branch recover` then hands back the wrong commit.
+    const occupied = 'a1b2c3d4e5';
+    const h = harness({ [`rev-parse --verify --quiet ${KEEP_REF_PREFIX}feat-marble`]: occupied });
+    dispose('/repo', greenState({ branch: 'feat-marble', tip: 'deadbeef' }), { run: h.run, fs: h.fs });
+    const written = h.calls.find((c) => c[0] === 'update-ref');
+    expect(written[1]).not.toBe(`${KEEP_REF_PREFIX}feat-marble`);
+    expect(written[1]).toMatch(new RegExp(`^${KEEP_REF_PREFIX}feat-marble-g[0-9a-f]{9}$`));
+    // And it did not silently move the existing one.
+    expect(h.calls.some((c) => c[0] === 'update-ref' && c[1] === `${KEEP_REF_PREFIX}feat-marble`)).toBe(false);
+  });
+
+  it('re-anchors the SAME branch without a suffix, because there is nothing to protect', () => {
+    const h = harness({ [`rev-parse --verify --quiet ${KEEP_REF_PREFIX}fix-task`]: 'abc1234' });
+    dispose('/repo', greenState({ branch: 'fix/task', tip: 'abc1234' }), { run: h.run, fs: h.fs });
+    const written = h.calls.find((c) => c[0] === 'update-ref');
+    expect(written[1]).toBe(`${KEEP_REF_PREFIX}fix-task`);
   });
 });

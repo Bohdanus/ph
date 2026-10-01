@@ -307,20 +307,39 @@ It refuses, and says which signal refused, unless all of these hold:
 - **no Kilo session** has it as its `directory` inside the live window;
 - its **working tree is clean** — re-read now, not taken from the inventory
   snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
-  this exists for.
+  this exists for;
+- it holds **no gitignored content that no command rebuilds**. `git status`
+  honours `.gitignore`, so a tree holding only a `.env` reports itself clean and
+  `git worktree remove` deletes it unconditionally. Build and dependency output
+  is exempt by an explicit list — `node_modules/`, `dist/`, `coverage/`,
+  `tsconfig.tsbuildinfo` and the rest, each carrying the command that rebuilds it
+  — because a real worktree here carries 53 ignored entries and a rule with no
+  exceptions refuses every worktree. **The list is the exception; an ignored path
+  it does not name counts as work.** `.serena/`, `playwright/.auth`, `*.local`
+  and `*.log` are deliberately absent from it.
 
 Any one of those refuses on its own. `in-use` from two independent sources is the
 one that matters: `session.directory` records where a chat was **opened**, so its
 absence is never evidence of abandonment, and the board's `agents` table is what
 covers a chat that was opened in `main` and driven into a task worktree.
 
+**A signal that could not be read is not an empty signal.** A `git status` that
+fails refuses as `dirty-tree-unreadable` rather than leaving the counts at zero,
+a board database that is present but unreadable refuses, and a bare name that is
+the basename of two worktrees refuses rather than disposing the first match —
+git guarantees two worktrees cannot share a _path_, which is not the same thing.
+Each of those three was a direction where a failed lookup produced the same
+value as a clean answer.
+
 Then it **anchors** the branch at `refs/keep/disposed/<name>` before deleting
 anything, so no `git gc` can make a disposed branch unreachable, and it
 **salvages** uncommitted work to `.git/worktree-salvage/<name>/` — a
-`git diff HEAD --binary` patch plus a `tar` of the untracked files, because no
-diff mentions a file git does not track. Finally it removes the worktree with
-**no `--force`** and deletes the branch with **`git branch -d`**, which refuses an
-unmerged branch.
+`git diff HEAD --binary` patch plus a `tar` of the untracked and the gitignored
+files, because no diff mentions a file git does not track. That salvage is for a
+caller that reaches `dispose()` directly; **the CLI never needs it**, because it
+refuses a dirty or ignored-content tree first and there is no override. Finally
+it removes the worktree with **no `--force`** and deletes the branch with
+**`git branch -d`**, which refuses an unmerged branch.
 
 **There is no `--force`, deliberately.** `git worktree remove` already refuses a
 dirty tree and prints the modified and untracked paths — the cheapest inventory of

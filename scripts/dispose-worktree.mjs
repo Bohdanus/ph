@@ -43,8 +43,18 @@
  * that incident was a chat re-running the identical command with `--force` six
  * seconds after that refusal. So this program does not accept the flag: a dirty
  * tree is a finding to report, not an obstacle to route around. Work that must
- * be preserved is preserved by `salvage()` below, which writes it somewhere
- * durable first, and by refusing when the inventory says the work is unlanded.
+ * be preserved is preserved by refusing, and by `salvage()` below for the
+ * caller who reaches it directly.
+ *
+ * WHY THE SALVAGE IS NOT A SAFETY NET YOU CAN RELY ON
+ * ---------------------------------------------------
+ * `preflight` refuses `dirty-tree` and `ignored-content` BEFORE `dispose()` runs,
+ * and there is no `--force` and no override, so through this CLI `salvage()` is
+ * only ever reached with a clean tree — where it correctly writes nothing. It is
+ * a function for a caller that has already decided, not a stage of this program.
+ * An earlier version of this file claimed it as the thing that made removal safe
+ * after a human decision; that was a description of an intention, and the
+ * document below repeated it as a guarantee. The refusal is the guarantee.
  *
  * THE ORDER OF OPERATIONS IS THE POINT
  * ------------------------------------
@@ -62,6 +72,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -133,7 +144,84 @@ const REFUSALS = {
     `${rows} Kilo session(s) have this worktree as their directory and were active inside the last ${LIVE_WINDOW_MS / 60000} min. A session's \`directory\` is where it was OPENED, so its absence is not evidence of abandonment — only its presence is evidence of life.`,
   'dirty-tree': (modified, untracked, paths) =>
     `The working tree holds ${modified} modified and ${untracked} untracked path(s), so uncommitted work exists in no commit and no ref: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. Commit it, carry it to a worktree as a patch, or let the inventory classify it — do not remove the directory.`,
+  'dirty-tree-unreadable': (detail) =>
+    `\`git status\` failed on this worktree (${detail}), so its cleanliness is UNKNOWN rather than clean. This program will not read an unreadable tree as an empty one; restore the worktree's git state, or ask the operator.`,
+  'ignored-content': (count, paths) =>
+    `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
+  'ambiguous-name': (target, paths) =>
+    `"${target}" is the basename of ${paths.length} worktrees, so the name does not identify one: ${paths.join(', ')}. Pass the full path — git refuses to create two worktrees at the same path, so a path is unique where a basename is not.`,
 };
+
+/**
+ * Ignored paths this program treats as absent, because a command rebuilds them.
+ *
+ * THE GAP THIS CLOSES. \`git status --porcelain\` honours \`.gitignore\`, and so
+ * does \`ls-files --others --exclude-standard\`, which is what \`salvage()\` reads.
+ * So a worktree whose ONLY uncommitted content is gitignored reads CLEAN to the
+ * dirty-tree gate and is ARCHIVED BY NOTHING — and \`git worktree remove\` deletes
+ * it unconditionally. Reproduced on a scratch repo: a worktree holding a \`.env\`
+ * and a \`dist/\` reported zero modified and zero untracked, and the tool printed
+ * \`dispose: live disposed. EXIT=0\`; the secret was then gone from every ref and
+ * from the object store, unrecoverable.
+ *
+ * WHY NOT SIMPLY REFUSE ON ANY IGNORED FILE. Because that refuses every
+ * worktree in this repository. Measured on a real one at 53 ignored entries:
+ * 33 under \`node_modules/\`, 18 under \`dist/\`, one \`tsconfig.tsbuildinfo\`, one
+ * \`.kilo/\`. A guard with no exceptions is a guard nobody runs — and an earlier
+ * review already shipped that mistake here, making the tool refuse on any absent
+ * board until the happy path in a plain clone stopped working.
+ *
+ * SO THE ALLOWLIST IS THE EXCEPTION, AND EVERYTHING ELSE COUNTS AS DIRT. The
+ * default is protection: a path not named here is treated as real work. Each
+ * entry carries the command that rebuilds it, because an entry nobody can
+ * regenerate is an entry that should not be here.
+ *
+ * Deliberately NOT on this list: \`.serena/\`, \`.vscode/*\`, \`*.local\`,
+ * \`playwright/.auth\`, \`test-results/\`, \`playwright-report/\`. They are ignored,
+ * which is a statement about version control and not about whether they are
+ * worth anything — an auth state and a session index are both real work, and the
+ * inventory flagged \`.serena/\` alone as a reason a worktree was never free.
+ */
+const REGENERABLE_IGNORED = [
+  { prefix: 'node_modules/', rebuild: 'npm ci' },
+  { prefix: 'dist/', rebuild: 'npm run build' },
+  { prefix: 'dist-ssr/', rebuild: 'npm run build' },
+  { prefix: 'coverage/', rebuild: 'npm run test -- --coverage' },
+  { prefix: 'coverage-e2e/', rebuild: 'npm run test:e2e:unit:coverage' },
+  { prefix: 'test-results/', rebuild: 'npm run test:e2e' },
+  { prefix: 'playwright-report/', rebuild: 'npm run test:e2e' },
+  { prefix: 'blob-report/', rebuild: 'npm run test:e2e' },
+  { prefix: 'playwright/.cache/', rebuild: 'npm run test:e2e' },
+  { prefix: '.vite/', rebuild: 'npm run dev' },
+  { prefix: '.vitest/', rebuild: 'npm run test' },
+  { prefix: '.kilo/', rebuild: 'this worktree is disposable; nothing in it is committed anywhere' },
+  { prefix: '.eslintcache', rebuild: 'npm run lint:check' },
+  { prefix: 'tsconfig.tsbuildinfo', rebuild: 'npm run tsc' },
+  { prefix: 'WORKTREES.json', rebuild: 'node scripts/worktree-inventory.mjs' },
+];
+
+/**
+ * True when no command rebuilds this ignored path.
+ *
+ * A \`*.log\` file is on neither side of this: it is not in the list, so it counts
+ * as content, and that is the intended reading — a log is the record of what a
+ * dead session was doing when it died, and it is the one ignored file class a
+ * cleanup sweep most often throws away by accident.
+ */
+export function isRegenerableIgnored(path) {
+  return REGENERABLE_IGNORED.some((entry) => path === entry.prefix || path.startsWith(entry.prefix));
+}
+
+/** The ignored paths a disposal would destroy, with the command for each that rebuilds one. */
+export function nonRegenerableIgnored(paths) {
+  return paths.filter((path) => !isRegenerableIgnored(path));
+}
+
+/** The rebuild command for an ignored path, or null when nothing rebuilds it. */
+export function rebuildCommand(path) {
+  const entry = REGENERABLE_IGNORED.find((e) => path === e.prefix || path.startsWith(e.prefix));
+  return entry ? entry.rebuild : null;
+}
 
 /**
  * Is an ownership source ABSENT, or is it present and unreadable?
@@ -229,8 +317,22 @@ export function preflight({
   // Re-read the tree rather than trusting the inventory's snapshot: the whole
   // incident is a verdict generated at 23:38 acted on at 00:44. A worktree can
   // be committed to, or made dirty, in the interval between the two.
+  //
+  // The unreadable case comes FIRST, because it is the one that makes the check
+  // below meaningless: a `git status` that failed leaves the counts at zero, and
+  // zero is what a clean tree reports. Checking dirtiness against counts that a
+  // failure could have produced is how an unreadable tree became a clean one.
+  if (gitState.statusError) {
+    refuse('dirty-tree-unreadable', gitState.statusError);
+  }
+
   if ((gitState.modified ?? 0) + (gitState.untracked ?? 0) > 0) {
     refuse('dirty-tree', gitState.modified, gitState.untracked, gitState.dirtyPaths ?? []);
+  }
+
+  // The content `git status` cannot see, minus what a command rebuilds.
+  if ((gitState.ignoredWork ?? []).length > 0) {
+    refuse('ignored-content', gitState.ignoredWork.length, gitState.ignoredWork);
   }
 
   // Ownership, from three independent sources. ANY of them means somebody is
@@ -293,9 +395,28 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   // A bare NAME is what the inventory, the curated table and every document use,
   // and resolving it against cwd is wrong whenever cwd is itself a worktree: from
   // inside `.kilo/worktrees/task`, `task` resolves to a path that cannot exist.
-  // So a name with no separator falls back to matching the basename, which is
-  // unambiguous because git will not create two worktrees at the same path.
-  if (!match && !target.includes('/')) match = entries.find((e) => basename(e.path) === target);
+  // So a name with no separator falls back to matching the basename.
+  //
+  // WHICH MUST NOT BE `find`. Git refuses to create two worktrees at the same
+  // PATH, so a path is unique; it says nothing about a BASENAME, and this repo
+  // registers worktrees under `.kilo/worktrees/` AND under the temp directory,
+  // where `a` and `b` can both hold a `verify`. `Array.find` returned the first
+  // and disposed it while printing `dispose: gamma disposed. EXIT=0` — the wrong
+  // worktree, reported as success. More than one match is now its own answer,
+  // because a name that identifies two things identifies neither.
+  if (!match && !target.includes('/')) {
+    const byName = entries.filter((e) => basename(e.path) === target);
+    if (byName.length > 1) {
+      return {
+        found: false,
+        ambiguous: true,
+        target,
+        candidates: byName.map((e) => e.path),
+        known: entries.map((e) => basename(e.path)),
+      };
+    }
+    match = byName[0];
+  }
   if (!match) return { found: false, known: entries.map((e) => basename(e.path)) };
 
   const absolutePath = match.path;
@@ -317,6 +438,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   let untracked = 0;
   let dirtyPaths = [];
   let statusError = null;
+  let ignoredPaths = [];
   try {
     tip = run(absolutePath, ['rev-parse', 'HEAD']).stdout.trim();
   } catch {
@@ -328,13 +450,24 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     dirtyPaths = lines.map((l) => l.slice(3));
     modified = lines.filter((l) => !l.startsWith('??')).length;
     untracked = lines.filter((l) => l.startsWith('??')).length;
+    // The half of "clean" that `git status` cannot see. `--ignored` adds the
+    // gitignored paths, and they are then split by whether a command rebuilds
+    // them: a tree holding only `dist/` and `node_modules/` is empty of work,
+    // while a tree holding only `.env` is a secret on no ref at all.
+    const ignored = run(absolutePath, ['ls-files', '--others', '--ignored', '--exclude-standard']).stdout;
+    ignoredPaths = ignored.split('\0').filter(Boolean);
   } catch (err) {
     // `modified` and `untracked` stay 0, which is what made a prunable worktree
     // read as clean. They are not reported as clean: `tip === null` and
     // `prunableReason` are separate refusals, and `no-tip` catches the rest.
+    // `statusError` is READ, not merely recorded — it used to be written at three
+    // places and consumed at none, so a `git status` that failed for any reason
+    // left the counts at zero and every gate above read that as clean.
     dirtyPaths = [];
     statusError = String(err?.message ?? err).split('\n')[0];
   }
+
+  const ignoredWork = nonRegenerableIgnored(ignoredPaths);
 
   return {
     found: true,
@@ -351,6 +484,8 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     untracked,
     dirtyPaths,
     statusError,
+    ignoredPaths,
+    ignoredWork,
   };
 }
 
@@ -525,7 +660,10 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
   const source = gitState.branch && !PLACEHOLDER_BRANCHES.has(gitState.branch) ? gitState.branch : gitState.name;
   const slug = refSlug(source);
   if (!slug) return null;
-  const ref = `${KEEP_REF_PREFIX}${slug}`;
+  // The suffix is resolved through the INJECTED runner and the caller's cwd, so a
+  // dry run and the real disposal agree on the ref name, and a suite that
+  // injects its runner does not spawn a real `git` to find that out.
+  const ref = `${KEEP_REF_PREFIX}${slug}${anchorDisambiguation(cwd, slug, source, gitState.tip, run)}`;
   try {
     run(cwd, ['check-ref-format', ref]);
   } catch {
@@ -543,9 +681,12 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
  * apply, which is worse than no salvage. Untracked files are archived with
  * `tar`, because no diff mentions a file git does not track.
  *
- * This is what makes it safe to remove a tree that is dirty *after* a human
- * decision, and it is deliberately not automatic: the refusal still stands. A
- * dirty tree is something to look at, and this is where to look.
+ * This exists for a caller that reaches `dispose()` directly, which is what the
+ * tests do. Through the CLI it is unreachable with anything to write, because
+ * `preflight` refuses a dirty or ignored-content tree first and nothing
+ * overrides that. Gitignored paths are archived here too, and separately, because
+ * `--exclude-standard` above omits them by design and a `.env` is on no ref and
+ * in no diff — so nothing else in this function would ever carry it.
  */
 function salvage(cwd, gitState, { run = defaultRun, fs = defaultFs, tar = defaultTar } = {}) {
   if (!gitState.commonDir) return null;
@@ -580,6 +721,29 @@ function salvage(cwd, gitState, { run = defaultRun, fs = defaultFs, tar = defaul
     }
   } catch (err) {
     failed.push(`untracked.tar: ${firstLine(err)}`);
+  }
+
+  // The gitignored half, which `--exclude-standard` above deliberately omits —
+  // and its omission is why this archive exists separately. A `.env` is on no
+  // ref and in no diff, so nothing else here would ever carry it.
+  try {
+    const ignored = run(gitState.absolutePath, [
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '-z',
+    ]).stdout;
+    const worth = ignored
+      .split('\0')
+      .filter(Boolean)
+      .filter((path) => !isRegenerableIgnored(path));
+    if (worth.length) {
+      tar(gitState.absolutePath, join(dir, 'ignored.tar'), worth.map((p) => `${p}\0`).join(''));
+      written.push('ignored.tar');
+    }
+  } catch (err) {
+    failed.push(`ignored.tar: ${firstLine(err)}`);
   }
 
   if (failed.length) return { dir, written, failed };
@@ -732,6 +896,15 @@ function main(argv) {
   const nowMs = Date.now();
   const gitState = readGitState(cwd, target);
   if (!gitState.found) {
+    // An ambiguous name is NOT "no worktree named X". It is several, and
+    // reporting that as absence would send the caller off to re-read a list that
+    // already contains the answer.
+    if (gitState.ambiguous) {
+      process.stderr.write(
+        `dispose: refusing "${gitState.target}" — it names ${gitState.candidates.length} worktrees.\n  ${gitState.candidates.join('\n  ')}\n\nPass the full path. Nothing was changed.\n`
+      );
+      return 3;
+    }
     process.stderr.write(
       `dispose: no worktree "${target}". Known:\n${(gitState.known ?? []).map((n) => `  ${n}`).join('\n')}\n`
     );
@@ -787,19 +960,62 @@ function main(argv) {
  * would WRITE the ref, and a `--dry-run` that mutates the repository is not a dry
  * run. The slug rule lives in `refSlug()` for that reason.
  */
-function anchorRefFor(gitState) {
+function anchorRefFor(gitState, { run = defaultRun, cwd = process.cwd() } = {}) {
   const source = gitState.branch && !PLACEHOLDER_BRANCHES.has(gitState.branch) ? gitState.branch : gitState.name;
   const slug = refSlug(source);
-  return slug ? `${KEEP_REF_PREFIX}${slug}` : null;
+  return slug ? `${KEEP_REF_PREFIX}${slug}${anchorDisambiguation(cwd, slug, source, gitState.tip, run)}` : null;
 }
 
-/** The ref-name slug rule, in one place so the dry run and `anchor()` agree. */
+/**
+ * The ref-name slug rule, in one place so the dry run and `anchor()` agree.
+ *
+ * NOT INJECTIVE, and that is the point of `anchorDisambiguation`. `/`, a space
+ * and a run of anything else all collapse to one `-`, and `-` is itself a legal
+ * branch character, so `feat/marble`, `feat marble` and `feat-marble` all slug
+ * to `feat-marble`. The anchor is the ONLY recovery point for a disposed branch,
+ * so two collisions mean the second disposal overwrites the first's — and
+ * `git branch recover refs/keep/disposed/feat-marble` hands back the wrong
+ * commit, which is worse than handing back nothing.
+ */
 function refSlug(source) {
   return (
     String(source ?? '')
       .replace(/[^A-Za-z0-9._-]+/g, '-')
       .replace(/^[.-]+|[.-]+$/g, '') || ''
   );
+}
+
+/**
+ * The suffix that makes a slug unique, or '' when the slug is already free.
+ *
+ * A HASH, not a counter: it does not depend on what this process has seen, so
+ * two disposals in two processes cannot both conclude the slug is free. `-g<hash>`
+ * is 9 hex characters of the exact branch name, which is enough that a
+ * deliberate collision is not what anyone is defending against.
+ */
+function anchorDisambiguation(cwd, slug, source, tip, run) {
+  if (!slug) return '';
+  const ref = `${KEEP_REF_PREFIX}${slug}`;
+  let current = null;
+  try {
+    current = run(cwd, ['rev-parse', '--verify', '--quiet', ref]).stdout.trim();
+  } catch {
+    current = null;
+  }
+  // A free slug stays bare, so the common case writes the same ref it always
+  // did and no recovery path anyone has written down moves.
+  if (!current) return '';
+  // Re-anchoring the SAME COMMIT re-anchors it: the ref already points where it
+  // is about to point, and there is nothing to protect. The comparison is
+  // against the tip, not the branch name — `rev-parse --verify` resolves a ref
+  // to a commit, so comparing it to `source` would never be equal and would
+  // suffix every re-anchor of a branch that had been disposed once already.
+  if (tip && current === tip) return '';
+  const hash = createHash('sha256')
+    .update(String(source ?? ''))
+    .digest('hex')
+    .slice(0, 9);
+  return `-g${hash}`;
 }
 
 if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(new URL(import.meta.url).pathname)) {
