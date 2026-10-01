@@ -4269,3 +4269,140 @@ process rule, converting "rogue commits nobody can attribute" into "a dirty tree
 **Files.** `scripts/main-worktree-guard.mjs:26-36,151`, `.husky/pre-commit:17`,
 `scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
 `kilo.jsonc:31-69`, `AGENTS.md` (delegation section)
+
+## 154. `.serena` is not in the disposal allowlist, so seven dead worktrees cannot be cleaned, and the obvious allowlist entry is wrong
+
+Seven worktrees — `audit-s69-eraser`, `audit-s70-71-settings`, `audit-s72-draw`,
+`audit-s73-colors`, `audit-s74-rail`, `audit-s75-stash`, `audit-s76-closure` — are dead by
+every signal available: each owner session is a finished root with no subagents, 12.3h old;
+each tree is clean, each branch is an ancestor of `main` with `git cherry main <branch>`
+empty. `npm run dispose -- <name>` refuses all seven on one ground: each tree holds exactly
+one gitignored path, `.serena/`, and `.serena` is absent from `REGENERABLE_IGNORED`.
+
+The contents are 20K of Serena MCP scaffolding and nothing else: a boilerplate
+`project.yml` whose only field of consequence is `project_name`, plus empty `cache/` and
+`memories/` directories. `find <wt>/.serena -type f` outside `project.yml` returns zero files
+in all seven.
+
+**The naive fix is a trap.** `coversPath` matches a prefix at a segment boundary anywhere
+in the path, so `{ prefix: '.serena', rebuild: ... }` would also cover
+`.serena/memories/*.md` — and Serena's `memories/` directory is exactly where an agent
+writes notes that exist in no commit and no reflog. The same reasoning that keeps `*.log`
+off this list keeps agent memory off it: a note is the record of what a dead session was
+thinking when it died.
+
+**Fix.** Allowlist the regenerable parts, not the tool: `{ prefix: '.serena/cache', … }` and
+`{ prefix: '.serena/project.yml', … }`, leaving `.serena/memories` counted as content. That
+keeps a worktree whose agent wrote Serena memories refused — correctly, since those notes
+are unrecoverable once the directory goes — while letting the seven empty ones through. A
+blanket `.serena` entry is a one-line change that makes a whole class of unrecoverable note
+sweepable, which is the failure this list exists to prevent.
+
+**Files.** `scripts/dispose-worktree.mjs:205-215` (`REGENERABLE_IGNORED`),
+`scripts/dispose-worktree.mjs:225-227` (`isRegenerableIgnored`),
+`scripts/dispose-worktree.mjs:241-250` (`coversPath`), `.gitignore:50`
+
+## 155. The export branch validates the composited canvas against the document frame's WIDTH and never checks its HEIGHT
+
+`fix/export-decouple-display` decouples the export surface from the visible workspace
+canvas, which is the right change and unblocks the retina work. Its one real defect is a
+half-written guard in the new module. `renderExportCanvas` composites into a canvas and
+then asserts it got the right shape:
+
+```ts
+if (!published || canvas.width !== documentFrameSize(documentFrame).width) {
+  throw new Error('Unable to render the document for export');
+}
+```
+
+The height is never compared. A compositor that sized the target to the correct width and
+the wrong height passes this check, and the encoder then writes a file of the wrong
+dimensions from a surface that reported success.
+
+**The file exists on no other ref.** `git cat-file -e main:src/contexts/export-canvas.ts`
+fails — the branch is the only holder of the module, the `useFile.tsx` call site and the
+three header call sites. Deleting the worktree, or letting a sweep dispose it as
+`0 commits ahead`, loses all of it: the branch reads as disposable by commit count and
+merged-by-`git cherry` means neither that it is safe to drop nor that it is already landed.
+`git cherry main fix/export-decouple-display` reports `+` for both patches.
+
+**Fix.** Add the height disjunct so the guard is a shape check and not a width check:
+
+```ts
+const { width, height } = documentFrameSize(documentFrame);
+if (!published || canvas.width !== width || canvas.height !== height) {
+```
+
+Add the wrong-height-only case beside the existing wrong-width one, so the guard is pinned
+by a test that fails without the disjunct.
+
+**Files.** `fix/export-decouple-display:src/contexts/export-canvas.ts:55`
+
+## 156. `fix/overnight-test-red` restores an attribute a written prohibition forbids, and narrows a machine-wide gate to one worktree
+
+The branch is 12 commits that fixed a genuinely red suite, and it should not be merged:
+two of its changes are decisions the operator has to make, and both are visible in the diff
+rather than hidden in it.
+
+**(a) It reverses `1dcc25cb`.** `renderToolGroup` in `SidebarLeft.tsx` changes
+
+```
+-  aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
++  aria-pressed={isGroupActive}
+```
+
+`identity` present _is_ the three-dots tile — the code's own comment says the tile is the
+one caller that passes an `identity` — so the branch adds `aria-pressed` to the overflow
+tile. `e2e/OPEN_PROBLEMS.md:699-701` forbids this in bold: restoring `aria-pressed` there
+"would announce a pressed toggle for whichever hidden tool happens to be selected, on a
+control whose only job is to open a menu — the exact defect `1dcc25cb` corrected." The same
+file, at `:695-697`, calls it a product change to be decided deliberately, with no
+`docs/OVERRIDES.md` entry. Per `AGENTS.md` the prohibition outranks the branch, and an agent
+may not add an override to settle it.
+
+**(b) It narrows a gate from the machine to the pusher.** In
+`scripts/__tests__/worktree-inventory.test.mjs` the assertion `gives every non-primary
+worktree a curated entry, so none is undocumented` is replaced by `requires a curated entry
+for the worktree this suite runs from, if it holds work`. A machine-wide invariant becomes a
+statement about one directory. The branch's own comment is candid that the old form "made
+the push gate unpassable" because it reddened on other agents' worktrees, and it adds a
+synthetic-worktree block arguing the git-derived refusal covers the gap. The argument is
+plausible; narrowing a guard is still the operator's call and not a merge.
+
+**Fix.** Do not merge the branch. Land the uncontested work as fresh commits on `main`:
+`index.html` (drops the GTM container, the Roboto stylesheet and two preconnects that put
+two third-party hosts on the `load` event the suite waits on), the `runRecordPath` option in
+`scripts/e2e-run.mjs` with its tests, the `toolbar-fit` 1→8 split, `setTypeColor` in
+`e2e/text-tool.spec.ts`, and the `TEST-FLAKES.md` renumber. Then re-derive (a) and (b) as
+their own commits, each with the decision recorded — and note that the branch's `AGENTS.md`
+hunk rewrites the local-gate table to an OLDER shape than main's, dropping `test:e2e:unit`
+from `gate:verify` and removing `test:staged` from the commit hook, so it must not be
+merged for the docs either.
+
+**Files.** `fix/overnight-test-red:src/components/SidebarLeft/SidebarLeft.tsx` (`renderToolGroup`),
+`fix/overnight-test-red:scripts/__tests__/worktree-inventory.test.mjs:76,1877`,
+`e2e/OPEN_PROBLEMS.md:695-701`, `AGENTS.md` (model policy, overrides)
+
+## 157. A worktree directory git no longer tracks is unreachable by the disposal path, because disposal only accepts registered worktrees
+
+`.kilo/worktrees/stale-citations` is a 28K directory holding no source, no `.git` and no
+branch: `node_modules/.vite/vitest` (empty scratch) and `.kilo/e2e-last-run.json`, a run
+record naming `runId 2026-09-30T22-44-59-212Z-70299`, pid 70299, port 53969 — a dev server
+that died about 24h ago. The directory's birth time is 2026-10-01T00:44, matching the run
+record, so it was a real worktree that was pruned out of `git worktree list` while the
+directory itself stayed.
+
+`npm run dispose -- stale-citations` answers `no worktree "stale-citations"`, because it
+resolves its argument against the registered set. So the one class of leftover the sweep
+exists to remove is the one class it cannot name, and the directory stays forever holding a
+port number from a dead server.
+
+**Fix.** Give disposal a second resolution path: when the argument is not a registered
+worktree, fall back to `lstat` on the literal path and refuse only if it is missing, is not
+a directory, or is not under `.kilo/worktrees/`. Report what it found before removing it —
+a directory with tracked-looking content and no `.git` is a finding, not an obstacle, and
+the refusal message should say which of the three conditions matched. The
+`e2e-last-run.json` writer is `scripts/e2e-run.mjs:687`, keyed on `REPO_ROOT`, which is why
+a pruned worktree leaves one behind: nothing in the e2e runner cleans its own record.
+
+**Files.** `scripts/dispose-worktree.mjs` (argument resolution), `scripts/e2e-run.mjs:687`
