@@ -367,6 +367,27 @@ re-blurred, re-levelled or re-coloured without rasterising.
 
 **Status:** `divergent`
 
+### Platform limits on filters
+
+**Capability:** Blur, Colors and Levels — every adjustment this app mints by
+re-rendering a `CanvasRenderingContext2D.filter` string.
+
+`CanvasRenderingContext2D.filter` is **not Baseline**. caniuse records Safari
+`3.1 - 17.6: Not supported`, and MDN's own page states that the feature "is not
+Baseline because it does not work in some of the most widely-used browsers." No
+CSS filter kernel exists to fall back on: the property is the whole mechanism.
+
+**On such a browser this app REFUSES the edit and logs the refusal** rather than
+applying it as a no-op. The refusal is loud precisely because the alternative
+looks like success: a silent no-op would present and then record the unchanged
+bitmap as if it were the edit, and no replay could reproduce those pixels.
+Photoshop applies a real kernel on every platform, so the divergence is visible,
+not silent.
+
+**Status:** `platform` for the Safari half. Everywhere else these three tools
+behave as Photoshop does, and the absence of a CPU-side implementation is not
+recorded here — that is a backlog item, not a limit.
+
 ## What is not a platform limit
 
 Recorded so that the `platform` status above stays honest. All of these are

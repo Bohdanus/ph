@@ -4255,43 +4255,6 @@ on how many worktrees the operator happens to have.
 
 **Files.** `scripts/__tests__/worktree-inventory.test.mjs`, `scripts/worktree-inventory.mjs`
 
-## 130. `ctx.filter` is set with no capability check, so a Safari blur silently becomes a no-op that history then records as pixels
-
-**Problem.** `main:src/tools/blur.ts:11` is `ctx.filter = \`blur(${radius}px)\`;`and there is **no**
-capability guard anywhere in`main` (`git grep -c "supportsCanvasFilter\|requireCanvasFilter" main
--- src/`returns nothing). The same unguarded pattern is in`src/tools/colors.ts`and`src/tools/levels.ts`.
-
-`CanvasRenderingContext2D.filter` is **not Baseline**. caniuse records Safari `3.1 - 17.6: Not
-supported` (implementation: WebKit bug 198416, since resolved), and MDN's own page states "This
-feature is not Baseline because it does not work in some of the most widely-used browsers." So on
-Safari a Blur, a colour adjustment or a Levels adjustment applies **nothing**, and the app presents
-and records the unchanged bitmap. That is the worst shape of failure: a silent no-op that
-materializes into history as if it were the edit, and that no replay can reproduce.
-
-**Fix.** A capability gate, not a polyfill. Probe once by writing `grayscale(100%)` and reading it
-back, and when it is absent **refuse the filter rather than applying it as a no-op** — the refusal has
-to be loud precisely because the alternative looks like success. Then guard all four points where a
-filtered result is minted or consumed: `blur.ts` / `colors.ts` / `levels.ts` at the write; a
-`requiresCanvasFilter?: boolean` on `ToolProcessorDefinition` in `toolProcessors.ts`, set on the
-three; `history-replay.ts` skips a `requiresCanvasFilter` operation when support is absent; and
-`layer-renderer.ts` catches per layer so one unsupported layer logs instead of killing composition.
-`materialization.ts` guards the durable `operationFilter` too.
-
-A working implementation is on branch `wip/photoshop-fidelity` (commit `9394c998`), in a
-48-line `src/util/canvas-filter.ts` plus those guards. Two of that branch's other changes are
-already on main and must not be re-landed: `creator: true` on the shape family, and its
-`ShapeToolArea.tsx` (an ancestor of main's larger version).
-
-**Note for whoever lands it:** main's own canvas mock already makes the probe return true —
-`src/__tests__/canvas-mock.ts:64-65` makes `ctx.filter` a readable data property and
-`src/test/setup.ts:318-320` sets `filter: ''` — so no existing test goes red. The branch ships a
-richer mock of its own; take the guard, and take the richer mock only if it does not weaken any
-assertion elsewhere.
-
-**Files.** `src/tools/blur.ts:11`, `src/tools/colors.ts`, `src/tools/levels.ts`,
-`src/tools/toolProcessors.ts`, `src/contexts/history-replay.ts`,
-`src/contexts/layer-renderer.ts`, `src/contexts/materialization.ts`
-
 ## 131. The Crop tooltip promises `Esc` restores the framing, in two copies, and the crop is a destructive raster operation
 
 **Problem.** The same sentence ships twice, and it is false:
