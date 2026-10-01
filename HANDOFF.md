@@ -4128,14 +4128,14 @@ version bump would re-open the same class of problem as the one the throttle clo
 ## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
 
 **Problem.** `SingleRowColumnMarqueeToolArea.tsx` wires both `onPointerLeave` and
-`onPointerCancel` to `abortDrag` (`:424`-`:425`), so a drag that leaves the tool element ends as
+`onPointerCancel` to `abortDrag` (`:436`-`:437`), so a drag that leaves the tool element ends as
 a cancelled gesture that commits nothing. The geometry module documents the opposite behaviour
 three files away: `singleRowColumnMarquee.ts:65-73` advertises that an out-of-document pointer
 clamps to the first or last row, and cites Adobe's scripting API as the reason. Both statements
 cannot stand. Only the PRESS clamps. A drag past the canvas edge is discarded.
 
 `EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, so this is house convention
-rather than something these two tools introduced — but `RectangularSelectionToolArea.tsx:154`-`:160`
+rather than something these two tools introduced — but `RectangularSelectionToolArea.tsx:176`
 wires `pointercancel` ALONE, so the rectangular marquee keeps tracking a drag off the edge. Three
 selection tools, two behaviours, and one of the two is undocumented.
 
@@ -4162,7 +4162,7 @@ That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export
 `activePointerId` refuses every later press, so the tool stops responding until it unmounts.
 `abortDrag` calls `releasePointer()` for that reason and must keep doing so.
 
-**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:424-425,390`,
+**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:393-410,436-437`,
 `src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
 `src/components/Main/RectangularSelectionToolArea.tsx:176`,
 `src/tools/singleRowColumnMarquee.ts:65-82`.

@@ -149,7 +149,15 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     // thickness-only rule reads it as a column and turns a vertical drag into a transposed
     // band. `bandOrientation` is the same function the hit test used to accept this press, so
     // the two cannot disagree about what was grabbed.
-    const orientation = bandOrientation(getRectOf(baseline), totalSize) ?? (isColumn ? 'column' : 'row');
+    //
+    // `null` means no move, and it is deliberately NOT a fallback to the active tool: this
+    // function is unreachable with a rect the predicate rejects — `isPressOnActiveBand` gated
+    // the press on the same call — but a fallback to `isColumn` would re-introduce exactly the
+    // transposition the paragraph above rules out, silently, the day that gate ever drifts.
+    // Returning null makes the drift a dropped drag instead.
+    const orientation = bandOrientation(getRectOf(baseline), totalSize);
+    if (!orientation) return null;
+
     const axis = orientation === 'column' ? pointer.x : pointer.y;
 
     const rebuilt = createCommittedRectangleSelection({
