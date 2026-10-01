@@ -10,6 +10,7 @@ import type { DurableFilter, DurableLayerSource, DurableOperation } from './hist
 import { AssetRegistry, type MaterializationLease } from './asset-registry.ts';
 import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
+import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
 import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 
@@ -100,6 +101,11 @@ function operationFilter(operations: readonly DurableOperation[]): string {
         if (!processor || processor.replay.version !== operation.filter.version) {
           throw new Error(`Unsupported filter ${operation.filter.toolName} v${operation.filter.version}`);
         }
+        // The durable record already holds this operation, so materialization is the last place
+        // that can refuse it before a bitmap is published. Refusing rejects the lease rather than
+        // caching an unfiltered presentation: `operationFilter` has no way to express "skip this
+        // one", and emitting the layer unfiltered is exactly the silent no-op the error names.
+        if (processor.requiresCanvasFilter) requireCanvasFilter(operation.filter.toolName);
         return filterForOperation(operation.filter);
       })
       .join(' ') || 'none'

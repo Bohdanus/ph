@@ -1596,6 +1596,51 @@ describe('the command line', () => {
     expect(onlyLive.out).not.toMatch(/^nothing ready/m);
   });
 
+  it('pages the ready queue with `--limit`, and refuses a `--limit` that is not a count', async () => {
+    // Fifty-five ready issues, so the default page of 50 reads as a PAGE and not
+    // as a board that ran out of work.
+    const board = boardFor('a');
+    for (let index = 0; index < 55; index += 1) board.createIssue({ title: `queued work ${index}` });
+    board.close();
+    const page = async (...args) => JSON.parse((await cli(['ready', ...args, '--json'])).out).issues;
+
+    expect(await page()).toHaveLength(50);
+    expect(await page('--limit', '1')).toHaveLength(1);
+    // A page is the head of the RANKED queue, never a different order.
+    expect((await page('--limit', '1'))[0].id).toBe((await page())[0].id);
+    // A page larger than the board is still one page, and the whole board.
+    expect(await page('--limit', '1000')).toHaveLength(55);
+
+    // Five ways of asking for a page that is not a count. Every one of them used
+    // to exit 0 on a silently empty or wrongly sliced queue — `abc` and `0` are
+    // `NaN` and `0` to `slice`, and `-1` is a legal slice that drops the LAST
+    // row instead of the first. The exit-code table reserves 1 for exactly this,
+    // and the empty-page message then told the reader there was no startable
+    // work on a board of fifty-five.
+    for (const bad of ['abc', '0', '-1', '1.5', '']) {
+      const refused = await cli(['ready', '--limit', bad]);
+      expect(refused.code, `--limit ${bad}`).toBe(1);
+      expect(refused.err, `--limit ${bad}`).toMatch(/--limit needs a positive whole number/);
+      expect(refused.out, `--limit ${bad}`).not.toMatch(/nothing ready/);
+    }
+  });
+
+  it('refuses an unanswerable `--limit` on `list` too, which is its other reader', async () => {
+    await cli(['new', 'a filed issue', '--json']);
+    // `list` read the flag with the same unvalidated `Number()` and printed an
+    // empty board at exit 0: a status report that reports nothing and says the
+    // board has no issues in it.
+    for (const bad of ['abc', '0', '-1']) {
+      const refused = await cli(['list', '--limit', bad]);
+      expect(refused.code, `--limit ${bad}`).toBe(1);
+      expect(refused.err, `--limit ${bad}`).toMatch(/--limit needs a positive whole number/);
+    }
+    // And a `--limit` that IS a count still pages the list, and its absence
+    // still means the whole board.
+    expect(JSON.parse((await cli(['list', '--limit', '1', '--json'])).out).issues).toHaveLength(1);
+    expect(JSON.parse((await cli(['list', '--json'])).out).issues).toHaveLength(1);
+  });
+
   it('exits 1 from `check` when a file is taken, so a shell can gate on it', async () => {
     await cli(['hold', 'src/taken.ts']);
     // Asked as a different agent: your own lock is not a conflict with yourself.

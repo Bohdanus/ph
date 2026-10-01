@@ -19,13 +19,14 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
-import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
+import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
   type CreatorToolParams,
   findToolProcessor,
   type ProcessorToolParams,
   type ToolResult,
 } from '../tools/toolProcessors.ts';
+import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import { reduceRect, sortRect, sortedRectToPos, trimRect } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
@@ -83,6 +84,21 @@ async function immutableRaster(bitmap: ImageLayerSource['bitmap']): Promise<Imag
     throw new Error('createImageBitmap is required to import a mutable raster source');
   }
   return globalThis.createImageBitmap(bitmap as CanvasImageSource);
+}
+
+/**
+ * The refusal as a value, so a caller decides what to do with it rather than unwinding through
+ * `requireCanvasFilter` itself: `tempUpdateLayer` runs on every pointer move, where a throw would
+ * escape into a React event handler.
+ */
+function canvasFilterRefusal(candidateToolName: ToolName): Error | null {
+  if (!findToolProcessor(candidateToolName)?.requiresCanvasFilter) return null;
+  try {
+    requireCanvasFilter(candidateToolName);
+    return null;
+  } catch (error) {
+    return error as Error;
+  }
 }
 
 /**
@@ -334,6 +350,15 @@ export const useLayers = () => {
     if (isLayerLocked(layers[id])) return;
     if (processor.commit === 'document-operation') return;
 
+    // Same reason as the lock above, and checked here for the same reason: `updateLayerByTool` is
+    // the function that appends the `TOOL_ACTION` history entry, so a tool refused only at the
+    // pixel write would still get a history state with no pixel change behind it.
+    const refusal = canvasFilterRefusal(toolArgsToolName);
+    if (refusal) {
+      console.error(refusal);
+      return;
+    }
+
     // Whole-document merging is not a transparent step inside a tool, and there is
     // no processor flag that asks for one: `mergeAllLayers` below is reached by the
     // user pressing `Merge all` in `ToolbarsRight/Move/Reposition.tsx` or
@@ -343,7 +368,7 @@ export const useLayers = () => {
     // runtime — a branch nothing verified.
 
     // should mark layer dirty
-    tempUpdateLayer({ id, toolArgs });
+    if (!tempUpdateLayer({ id, toolArgs })) return;
     // should pick that dirty later and do all hardening
     const committedLayers = commitDirtyTool(true);
     const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
@@ -388,6 +413,16 @@ export const useLayers = () => {
 
     const pendingToolEdits: Array<{ layerId: LayerId; args: ToolArgs | object }> = [];
     for (const [id, preview] of Object.entries(previewLayersRef.current)) {
+      // The publication boundary, not a second copy of the preview guard: `commitDirtyTool` is
+      // reached from the tool switch, the merge and the new-document paths as well as from
+      // `updateLayerByTool`, so this is where a preview that no longer renders stops becoming a
+      // published layer and a history state.
+      const previewToolName = (preview.toolArgs as ToolArgs | undefined)?.toolName;
+      const previewRefusal = previewToolName ? canvasFilterRefusal(previewToolName) : null;
+      if (previewRefusal) {
+        console.error(previewRefusal);
+        continue;
+      }
       const layer = { ...preview.layer, pos: { ...preview.layer.pos }, operations: [...preview.layer.operations] };
       committedLayers[id] = layer;
       hasPreviewLayers = true;
@@ -522,35 +557,52 @@ export const useLayers = () => {
   };
 
   // THE MAIN POINT IS THAT THIS method does not leave any trace in history and REACT lifecycle
-  function tempUpdateLayer({ id = activeLayerId, toolArgs }: LayerEditParams) {
-    if (!id) return;
+  //
+  // The `boolean` is load-bearing: `updateLayerByTool` appends the `TOOL_ACTION` history entry
+  // right after calling this, and `normalizeCommittedToolArgs` returns a non-transform tool's args
+  // unchanged, so a `false` here that the caller ignored would still record a history state with
+  // no layer change behind it.
+  function tempUpdateLayer({ id = activeLayerId, toolArgs }: LayerEditParams): boolean {
+    if (!id) return false;
 
     const layer = layers[id];
-    if (!layer) return;
+    if (!layer) return false;
 
     // The ONE place a tool's pixels or geometry reach a layer, which is what makes this the guard
     // for all thirteen `commit: 'raster'` tools at once rather than thirteen copies of the check.
     // Above every `commit` branch below it, because the flag a PSD round-trips is composite AND
     // position protection — see `isLayerLocked`.
-    if (isLayerLocked(layer)) return;
+    if (isLayerLocked(layer)) return false;
 
     const { toolName: toolArgsToolName } = toolArgs;
     const processor = findToolProcessor(toolArgsToolName);
-    if (!processor) return;
+    if (!processor) return false;
+
+    // A `ctx.filter` assignment the engine discards leaves the layer unchanged, so the tool is
+    // refused here rather than previewed as a no-op that `commitDirtyTool` later records. Above
+    // the `commit` branches because the flag belongs to the tool, not to how it commits, and the
+    // live-slider bars (Blur, Colors, Levels) reach the preview through this function alone.
+    if (processor.requiresCanvasFilter) {
+      const refusal = canvasFilterRefusal(toolArgsToolName);
+      if (refusal) {
+        console.error(refusal);
+        return false;
+      }
+    }
 
     if (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0) {
       try {
-        if (!isTrapezoidOnlyTransform(toolArgs)) return;
+        if (!isTrapezoidOnlyTransform(toolArgs)) return false;
       } catch (error) {
         console.error(error);
-        return;
+        return false;
       }
     }
 
     if (isTransformArgs(toolArgs) && toolArgs.trapezoid === 0) {
       try {
         const transform = transformToolArgsToAffine(toolArgs, layer.pos);
-        if (!transform) return;
+        if (!transform) return false;
         const previewLayer = {
           ...layer,
           operations: [...layer.operations, createAffineLayerOperation(transform)],
@@ -558,10 +610,10 @@ export const useLayers = () => {
         };
         previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
         drawAllLayers();
-        return;
+        return true;
       } catch (error) {
         console.error(error);
-        return;
+        return false;
       }
     }
 
@@ -573,23 +625,23 @@ export const useLayers = () => {
       };
       previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
       drawAllLayers();
-      return;
+      return true;
     }
 
     if (processor.commit === 'geometry') {
       const { move, resize } = toolArgs as RepositionToolArgs;
       const positionPatch = resize ?? move;
-      if (!positionPatch) return;
+      if (!positionPatch) return false;
       const previewLayer = { ...layer, pos: { ...layer.pos, ...positionPatch }, tmpCanvas: null };
       previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
       drawAllLayers();
-      return;
+      return true;
     }
 
     const bitmap = layer.tmpCanvas ?? layer.bitmap;
     if (!bitmap && !processor.creator) {
       console.error('No active layer or bitmap to update preview');
-      return;
+      return false;
     }
 
     // This is the call every live pointer move reaches, so it is the one that has to be
@@ -605,7 +657,7 @@ export const useLayers = () => {
       );
     } catch (error) {
       console.error(error);
-      return;
+      return false;
     }
 
     const [canvas, positionPatch] = result;
@@ -621,6 +673,7 @@ export const useLayers = () => {
     previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
 
     drawAllLayers();
+    return true;
   }
 
   function cancelLayerPreview(id = activeLayerId) {

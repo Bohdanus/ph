@@ -5,6 +5,24 @@ Burn tonal tools, and the Gradient tool. Every `file:line` below was re-derived 
 working tree in this worktree; every Photoshop claim below traces to a URL in that tool's
 **Sources** list, or is admitted as unverified in the `## Unverified` section at the end.
 
+**What the re-audit pass changed, so a reader knows what to distrust.** A second pass re-derived
+every `file:line` in the data file against this worktree and re-opened Adobe's current pages for the
+bar enumerations. Two classes of thing turned up. The first is stale line numbers: **six of the
+forty-seven `implementationRefs` in `focus.ts` pointed at the wrong line** — five `settings.ts`
+seeds, all off by a few lines, and the one `toolbar-mapping.ts` line, which was off by one and
+pointed at the `Burn` row's neighbour rather than the `O` declaration it was cited for — and
+**eighteen more in this file's prose**. They are corrected, and the corrections are the point: the
+audit that only checks that a path resolves would not have found any of them, because every one of
+these paths resolves. The second is claims that were wrong rather than merely thin, and there are
+four: the Gradient's `[`/`]` style-cycling rows, which **contradicted** Adobe's own keyboard list;
+the claim that no page says the Blur's `Mode` list is restricted, which was itself wrong in the
+other direction; the claim that four keys are "registered on no keyboard handler at all" when two of
+them are; and the Smudge's `Mode` default. Three `shortcuts` gaps were closed at the same time (the
+Smudge's `R`, the Dodge's and the Burn's tonal-range trio, the brush-size pair on all three). The
+reasoning behind the `partial` verdict is now written into each `appNotes` rather than living only
+here, which is where it belongs — three tools inheriting one verdict from a notes file is how a
+verdict quietly becomes an unexamined default.
+
 **How the recovered session findings were treated.** A later pass recovered Photoshop research
 from past sessions that never reached disk, and it was used in preference to re-deriving. Each
 load-bearing claim in it was then re-checked with a live search. The ones that survived are folded in;
@@ -148,27 +166,60 @@ restricted. See `## Unverified` 13.
 (`src/tools/blur.ts:11`) — a true Gaussian, so the closest thing in this editor to
 `Filter > Blur > Gaussian Blur`, wearing the Blur tool's name. There is no gesture surface, and
 the surface it gets is **`DummyToolArea`**, not the Sharpen's: `Main`'s tool-area dispatch has no
-`blur` branch, so blur falls through to the default (`src/components/Main/Main.tsx:226`), which
+`blur` branch, so blur falls through to the default (`src/components/Main/Main.tsx:236`), which
 renders `display: none` (`src/components/Main/DummyToolArea.tsx:15`). The Sharpen is a different
 component that reaches the same rendering on purpose — it mounts its own `SharpenToolArea`
 (`src/components/Main/SharpenToolArea.tsx:46`), and that file's own JSDoc is what says blur "has no
-tool area at all and falls through to `DummyToolArea`" (`:32`). Identical rendering, two
+tool area at all and falls through to `DummyToolArea`" (`:33`). Identical rendering, two
 components; "the same surface the Sharpen uses" was wrong. It is registered as a `layer-operation`,
 not a `raster` (`src/tools/toolProcessors.ts:119`), and its single seeded arg is a radius
 (`src/tools/settings.ts:52`). All four recorded controls are `missing`, none `partial`: there is
 nothing here for a partial rating to attach to. The recovered `Flow` control is missing too, and
 structurally so — the app has no per-dab/per-stroke opacity pair to express one with.
 
+**Why `partial` and not `placeholder`.** `placeholder` is defined (`types.ts:84-85`) as _selectable
+but committing nothing_ — no gesture surface, `commit: 'unimplemented'`, an `imageProcessor` that
+returns `null`. The app's blur does commit: it returns a real convolved canvas
+(`src/tools/blur.ts:14`) under `commit: 'layer-operation'`, and `commitDirtyTool` bakes it into a
+layer plus a history entry. So it is not a placeholder, and it is not `implemented` either, because
+what it commits is a whole-layer Gaussian filter rather than a per-stroke brush. `partial` — "the
+app does something Photoshop's tool also does, but not the same something" — is the only value
+left. The same argument carries the Sharpen and the Gradient, and is now stated in each of their
+`appNotes` too, because three tools inheriting one verdict is exactly where a reviewer should
+expect the reasoning to be written down.
+
+**The `Mode` row is softer than it was, because one page does claim a restriction.** An earlier
+draft said no page claims the list is restricted; one does. The University of Idaho's CS-era
+walkthrough of this very bar says of the Mode dropdown that "this tool only offers a limited number
+of blends to choose from" (<https://www.webpages.uidaho.edu/larc246/toolBarPages/blur.htm>), and
+Wikiversity says the same of "the latest edition". Neither says _to what_, so the row now reads as
+"one of them says the dropdown only offers a limited number of blends, but no page states to what
+the list is restricted". See `## Unverified` 13.
+
 **The slider previews; it does not commit.** The bar routes through `tempUpdateLayer`
 (`src/components/ToolbarsRight/Blur/Blur.tsx:36`), the only writer of `previewLayersRef`, and the
-history entry is written later by `commitDirtyTool` (`src/contexts/useLayer.ts:345`) on tool switch
-(`src/hooks/useApp.ts:169`), on export (`src/components/DesktopHeader/DesktopHeader.tsx:243`) and
-in `mergeAllLayers` (`src/contexts/useLayer.ts:643`). "Blurred as soon as the slider moves"
+history entry is written later by `commitDirtyTool` (`src/contexts/useLayer.ts:365`) on tool switch
+(`src/hooks/useApp.ts:169`), on export (`src/components/DesktopHeader/DesktopHeader.tsx:249`) and
+in `mergeAllLayers` (`src/contexts/useLayer.ts:674`). "Blurred as soon as the slider moves"
 overstates it: the layer is blurred in a preview, and the undoable edit lands at the commit.
+
+**Adobe's own current page is the source now, not the retired one.** The bar's own enumeration —
+Brush Settings for Size and Hardness, Strength with "10–30% for subtle softening, 50% or higher for
+stronger blur", Sample All Layers, and "intensifying the effect with each stroke" — comes from
+<https://helpx.adobe.com/photoshop/desktop/effects-filters/blur-sharpen-filters/blur-specific-areas-with-the-blur-tool.html>,
+which is the page that replaced the `using/tool-techniques/blur-tool.html` URL this file used to
+cite. That page also settles the **build-up while the button is held** question for the family: it
+does not say it, so the build-up claim for the focus trio rests on the CS-era sources and on
+Photoshop's own definition of Airbrush ("as you move the pointer over an area, paint builds up as
+you hold down the mouse button", <https://helpx.adobe.com/photoshop/using/painting-tools.html>).
+That same page is also where the Blur and Smudge are named as members of the painting family
+("Tools like the Eraser tool, Blur tool, and Smudge tool modify the existing colors in the image"),
+which is the closest Adobe comes to grouping the three.
 
 **Sources**
 
-- <https://helpx.adobe.com/photoshop/using/tool-techniques/blur-tool.html>
+- <https://helpx.adobe.com/photoshop/desktop/effects-filters/blur-sharpen-filters/blur-specific-areas-with-the-blur-tool.html>
+- <https://helpx.adobe.com/photoshop/using/painting-tools.html>
 - <https://helpx.adobe.com/photoshop/desktop/whats-new/photoshop-on-desktop-release-notes.html>
 - <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=210>
 - <https://www.oreilly.com/library/view/adobe-photoshop-cs2/9780240520025/20_Chapter17.html>
@@ -176,6 +227,9 @@ overstates it: the layer is blurred in a preview, and the undoable edit lands at
 - <https://flylib.com/books/en/2.816.1.14/1/>
 - <https://www.photoshopgurus.com/forum/threads/why-doesnt-the-blur-tool-ever-work.22153/>
 - <https://www.bwillcreative.com/how-to-use-the-blur-tool-in-photoshop/>
+- <https://www.webpages.uidaho.edu/larc246/toolBarPages/blur.htm>
+- <https://en.wikiversity.org/wiki/Adobe_Photoshop/Blur_Tool>
+- <https://expertphotography.com/blur-tool-photoshop>
 - <https://www.dummies.com/article/technology/software/adobe-products/photoshop/using-the-blur-tool-to-soften-image-areas-in-photoshop-elements-9-205964/>
 - <https://www.adobe.com/products/photoshop/smooth-edges.html>
 
@@ -239,25 +293,50 @@ about a version range the desktop bar has long since settled. `## Unverified` 5 
 
 **App verdict: the Unsharp Mask filter under the tool's name.** The bar is `Amount`
 (`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:125`, 0–500%, seeded 50% at
-`src/tools/settings.ts:238`) and `Radius` (`:143`, 0–100 px, seeded 1) — the Unsharp Mask's own
+`src/tools/settings.ts:245`) and `Radius` (`:143`, 0–100 px, seeded 1) — the Unsharp Mask's own
 control names, not the tool's — and there is no brush and no gesture
-(`src/components/Main/SharpenToolArea.tsx:46`). The kernel is a two-pass separable **box** blur
-subtracted from the source (`src/tools/sharpen.ts:90` is the horizontal pass; `:243` is the
-`amount / 100` multiplier), and `src/tools/sharpen.ts:76` says "THE KERNEL IS A BOX, NOT A
-GAUSSIAN, AND THAT IS THE POINT" in caps. That is where this implementation is furthest from the
-tool it claims to be, **but not for the reason a first reading suggests.** It is tempting to write
-that "a box kernel is the one thing this Sharpen does not have" — which is false and
-self-contradicting, because it has one, deliberately. The gap is the **falloff, not the kernel
-class**: a real unsharp mask subtracts a _Gaussian_-blurred copy, whose response decays smoothly
-away from an edge, whereas a box window responds flatly across its full width and stops dead at its
-boundary. At small radii the two are nearly interchangeable; at a wide one the app hardens a band
-the full width of the window with a step at its edge, where Photoshop tapers. So the wider-radius
-unsharp-like falloff the addendum says distinguishes the Sharpen from the Blur is exactly what the
-app does not reproduce, and the Blur/Sharpen pair differs here in radius and magnitude rather than
-in the shape of the kernel's response. The one thing it does better than the reference filter is
-real: the blur runs on premultiplied colour with alpha unsharp-masked on its own 0–255 scale, so a
-transparent hole cannot bleed a ring into the opaque side. Registered as `raster`
-(`src/tools/toolProcessors.ts:226`).
+(`src/components/Main/SharpenToolArea.tsx:46`).
+
+**The Radius is a second instance of the Gradient's Opacity defect, and it is the sharper one,
+because Photoshop's tool has no radius control at all.** The write-up on the CS5 rebuild is
+explicit: "The tool has no radius control, so it's really just for screen sharpening"
+(<https://www.deke.com/content/advanced-sharpening-techniques-or-close-to-the-edge-part-deux>), and
+the bar Adobe enumerates runs brush Size and Hardness, Strength, Protect Detail and Sample All
+Layers with no radius among them. A slider for a control the tool does not have is the same shape
+of defect as a slider in a place Photoshop moved the control out of, and it is now called out in
+the Sharpen's `appNotes` for that reason. The same page is also the second source for
+**`Protect Detail` defaulting on** — "By default, the check box is on, and that's the way you
+should use it" — which closes half of what `## Unverified` 5 used to cover for the other control.
+
+The kernel is a two-pass separable **box** blur subtracted from the source
+(`src/tools/sharpen.ts:90` is the horizontal pass; `:243` is the `amount / 100` multiplier), and
+`src/tools/sharpen.ts:76` says "THE KERNEL IS A BOX, NOT A GAUSSIAN, AND THAT IS THE POINT" in caps.
+That is where this implementation is furthest from the tool it claims to be, **but not for the
+reason a first reading suggests.** It is tempting to write that "a box kernel is the one thing this
+Sharpen does not have" — which is false and self-contradicting, because it has one, deliberately.
+The gap is the **falloff, not the kernel class**: a real unsharp mask subtracts a _Gaussian_-blurred
+copy, whose response decays smoothly away from an edge, whereas a box window responds flatly across
+its full width and stops dead at its boundary. At small radii the two are nearly interchangeable;
+at a wide one the app hardens a band the full width of the window with a step at its edge, where
+Photoshop tapers. So the wider-radius unsharp-like falloff the addendum says distinguishes the
+Sharpen from the Blur is exactly what the app does not reproduce, and the Blur/Sharpen pair differs
+here in radius and magnitude rather than in the shape of the kernel's response. The one thing it
+does better than the reference filter is real: the blur runs on premultiplied colour with alpha
+unsharp-masked on its own 0–255 scale, so a transparent hole cannot bleed a ring into the opaque
+side. Registered as `raster` (`src/tools/toolProcessors.ts:226`).
+
+**Why `partial` and not `placeholder`:** the processor returns a real convolved canvas and
+`commitDirtyTool` writes a history entry, so the tool reaches the document and is not a
+placeholder; what it commits is the filter's, not the tool's. Same argument as the Blur's, now
+written into the data file rather than left in this file alone.
+
+**The bar order rests on one page, and the CS-era sources disagree with it.** Adobe's current
+desktop page is the only enumeration that puts `Protect Detail` **between** `Strength` and
+`Sample All Layers`, which is the order the `options` array uses. The CS3 manual and most of the
+walkthroughs print the reverse — brush tip, blending mode and strength, then `Sample All Layers`,
+then `Protect Detail` — and the array's `Mode` row has no Adobe order to defer to at all, because
+that page never mentions a `Mode`. Both facts are recorded here so a reader who checks a
+twenty-year-old manual does not read the array as a transcription error.
 
 **The slider previews; it does not commit.** Same route as the Blur: `tempUpdateLayer`
 (`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:92`) then `commitDirtyTool` on tool switch, on
@@ -268,6 +347,7 @@ entry lands at the commit.
 
 - <https://helpx.adobe.com/photoshop/desktop/effects-filters/smart-filters/sharpen-a-selection.html>
 - <https://helpx.adobe.com/photoshop/desktop/whats-new/photoshop-on-desktop-release-notes.html>
+- <https://www.deke.com/content/advanced-sharpening-techniques-or-close-to-the-edge-part-deux>
 - <https://insider.kelbyone.com/living-on-the-edge-an-exploration-of-the-sharpening-tools-in-photoshop-by-scott-valentine/>
 - <https://www.macphun.com/hans/how-to/how-to-sharpen-your-image-in-photoshop>
 - <https://helpx.adobe.com/nz/photoshop/using/filter-effects-reference.html>
@@ -336,29 +416,66 @@ Three controls are `missing` for structural reasons the component itself states.
 because **no control anywhere in the app edits a layer's blend mode** — the earlier wording here
 said "a layer's blend mode is a layer property the Layers panel owns", and that was false: a grep
 for `blendMode` across `src/components/` returns only the paint tool's own `Mode` select
-(`src/components/ToolbarsRight/Paint/Paint.tsx:173`). `Layer.blendMode` is a data field written
-from paint-tool args (`src/tools/brush.ts:93`) and set by the PSD importer
-(`src/contexts/psd-utils.ts:161`), and nothing else can change it. Finger Painting is missing
-because `SmudgeToolArgs` has no field for it and Sample All Layers because the processor is handed
-one layer's bitmap. The preset picker is `partial` rather than absent because this editor has one
-tip shape and no presets, though Size and Hardness — the preset's two live parameters — are both
-there. `Alt` is not bound.
+(`src/components/ToolbarsRight/Paint/Paint.tsx:182`), and the Layers panel has no blend-mode control
+at all. `Layer.blendMode` is a data field written from paint-tool args by
+`src/contexts/layer-utils.ts:230` and set by the PSD importer (`src/contexts/psd-utils.ts:161`), and
+nothing else can change it. Finger Painting is missing because `SmudgeToolArgs` has no field for it
+and Sample All Layers because the processor is handed one layer's bitmap. The preset picker is
+`partial` rather than absent because this editor has one tip shape and no presets, though Size and
+Hardness — the preset's two live parameters — are both there. `Alt` is not bound.
+
+**`R` is on the Smudge's bar, and Adobe's own current page says so.** The page reads "Select the
+Smudge tool (R) from the toolbar" and goes on to enumerate the bar as brush tip, blend mode,
+`Sample All Layers` and `Finger Painting` — the same five controls the table carries, in the same
+order the CS3 manual gives them, with `Strength` and the tip's `Size`/`Hardness` carried by the
+brush rather than enumerated
+(<https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html>). That is a first-party
+attribution, so the `R` row is in the data file and the `## Unverified` 11 caveat is gone. The same
+page also states what `Alt` does in Adobe's own words, matching the CS2 Bible: "Press Alt (Windows)
+or Option (Mac OS) as you drag with the Smudge tool to use the Finger Painting option"
+(<https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/215>) — _use_, which is
+the same toggle the Bible describes as _reversing_, so the `modifiers` row is now doubly sourced.
+
+**`[` and `]` are brush-size keys in Photoshop, and the app already implements them here.** Three
+independent reproductions of Adobe's default-keyboard list all give `Decrease Brush Size` = `[` and
+`Increase Brush Size` = `]`, one pixel per press and repeating
+(<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
+<https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>). The app binds exactly that, on the
+`repeat: true` registrations at `src/components/Common/AppKeyboardShortcuts.tsx:518` and `:526`, and
+the Smudge is in `tipSizeField` (`src/components/Common/AppKeyboardShortcuts.tsx:49`) so both keys
+are live while it is selected. Rows for both are therefore in the data file — and the same two rows
+are now on the Dodge and the Burn, which are also `tipSizeField` members
+(`src/components/Common/AppKeyboardShortcuts.tsx:50-51`). The same list gives `{` and `}` to brush
+hardness, which the app does not bind; that is a capability gap, not a claim this file makes, and
+it is not given a row because there is no Photoshop `control` to hang it on.
+
+**`Mode`'s default is no longer claimed.** The row used to say "Normal by default", which no page
+put on this bar. Adobe's own page says only "Choose a brush tip and and blend mode options in the
+options bar" — no default named — so the row now says that, and notes that Normal is what every
+painting tool starts on.
 
 **Why `partial` and not `implemented`.** There is no build-up while the button is held. The shared
 stroke hook appends a point to the gesture in `handlePointerMove`
 (`src/hooks/usePaintStroke.ts:202`) and nowhere else, and there is no `setInterval`, `setTimeout` or
-rAF dwell in the hook or in `SmudgeToolArea.tsx`, so holding the brush still deposits nothing. That
-is the _same_ absence the Dodge's and the Burn's `appNotes` in `focus.ts` call "the tool's defining
-interaction", and those two are `partial` for it. (This sentence used to cite them by line number —
-`focus.ts:265` and `focus.ts:342` — which is a citation into the very file these notes document, and
-so moved on every edit above it. The field name is what the claim is actually about.) Applying one
-bar to one absence, the Smudge is
-`partial` too. The drag itself is otherwise faithful, which is what makes this `partial` and not
-`placeholder`.
+rAF dwell in the hook or in `SmudgeToolArea.tsx`, so holding the brush still deposits nothing. (This
+sentence used to cite the Dodge's and the Burn's `appNotes` by line number, which is a citation into
+the very file these notes document, and so moved on every edit above it. The field name is what the
+claim is actually about.) Applying one bar to one absence, the Smudge is `partial` too — but the
+**load-bearing** reason is the `Strength` floor, not the dwell, and it is worth saying which is
+which. `types.ts:90` lists "a wrong default" as a `partial` trigger, and the floor here is wrong: the
+app's minimum is 0 where the sources put it at 1. The dwell is the weaker of the two arguments for
+this tool specifically, because Photoshop's own Smudge semantics are about what happens along a
+drag — at `Strength` 100% the tool "pushes a color from the beginning of your drag until you release
+your mouse button" — rather than about dwelling, and the app's drag reproduces that part exactly.
+The drag itself is otherwise faithful, which is what makes this `partial` and not `placeholder`: the
+processor returns a real raster and the stroke writes a real history entry.
 
 **Sources**
 
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html>
 - <https://www.adobe.com/products/photoshop/blend-colors.html>
+- <https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>
+- <https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>
 - <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=210>
 - <https://flylib.com/books/en/2.817.1.103/1/>
 - <https://flylib.com/books/en/2.816.1.11/1/>
@@ -410,7 +527,36 @@ for the current label verbatim. The recovered research's `Protect Texture` is a 
 attributed to Adobe's iPad documentation, which I could not open — see `## Unverified`.
 
 `O` selects the Dodge tool and `Shift+O` cycles the flyout, which is confirmed twice independently.
-The app binds `O` the same way (`toolbar-mapping.ts:93`).
+The app binds `O` the same way — the tile declares it (`toolbar-mapping.ts:94`) and the handler is
+`src/components/Common/AppKeyboardShortcuts.tsx:437`, whose cycle branch is `selectTonalTool` at
+`:177`.
+
+**Three more bindings Adobe has and the app does not: `Shift+Alt+S`, `Shift+Alt+M` and
+`Shift+Alt+H` set the tonal range while the tool is held.** They sit in Adobe's
+default-keyboard list under the painting section, immediately after the Sponge's own
+`Desaturate`/`Saturate` pair, and read "Dodge/Burn Shadows", "Dodge/Burn Midtones", "Dodge/Burn
+Highlights" — the wording itself names both tools, so it is one row covering both
+(<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>, corroborated by
+<https://shortcutkeys.net/adobe-photoshop-shortcut-keys/> and
+<https://shortcuts.design/data/design/toolspage-adobephotoshop-windows>). Both tools' `shortcuts`
+arrays now carry all three, plus `0`, which the same list gives to "set opacity, tolerance, strength,
+or exposure" on any painting or editing tool, and the `[`/`]` brush-size pair the app already
+implements. **Adobe's own default-keyboard page was not opened** — these are reproductions of it,
+which is why `## Unverified` 14 keeps the provenance open — but the bindings are in the published
+list, so they are on the bar in the data file rather than in the unverified section.
+
+**Adobe's current page lists the Range menu in a different order than the app does.** It reads
+"Midtones – affects mid-range grays. Shadows – affect darker areas. Highlights – affects lighter
+areas", where the app's `DODGE_BURN_RANGES` is Shadows, Midtones, Highlights. The CS-era sources
+print the app's order, and the descriptions do not claim a bar order for the dropdown's own
+options, so nothing in the data file changes; it is recorded here because it is the kind of
+one-word divergence that is easy to act on and worth knowing about.
+
+**`Airbrush` "Off by default" is convention, not a sourced default.** Adobe documents Airbrush as
+a toggle and never says which state it ships in, on this bar or any other. It is left in the row
+because a build-up accelerator that shipped on would be the surprise, and hedging every checkbox
+in the family would make the table unreadable. It is the same species of claim as `## Unverified` 5
+and it is flagged as such here.
 
 | Control             | Photoshop behaviour                               | Default / range | App status | App `file:line`                                            |
 | ------------------- | ------------------------------------------------- | --------------- | ---------- | ---------------------------------------------------------- |
@@ -418,7 +564,7 @@ The app binds `O` the same way (`toolbar-mapping.ts:93`).
 | Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`         |
 | Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`         |
 | Protect Tones       | Stop lightening desaturating and clipping         | on              | `missing`  | —                                                          |
-| Airbrush            | Keep building while the brush rests               | off             | `missing`  | —                                                          |
+| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                          |
 
 **App verdict: Range and Exposure are real; the defining interaction is absent.** Range writes a
 field the processor reads, and Exposure drives a per-pixel amount rather than a display-only value,
@@ -440,17 +586,23 @@ full Exposure value in a single pass, because a one-shot commit has to be a pure
 args — which is also what makes the registry's `requiresRaster` replay reproduce it exactly. The
 phrase matters in one respect: the per-pixel amount a commit emits is a **curve** of the Exposure
 value, not the value itself. `tonalAmount` (`src/tools/dodgeBurn.ts:177`) returns
-`band ** (level * 4) * level * coverage`, so at the default Exposure of 50 the peak of the chosen
-band shifts a pixel by 0.5 and a quarter of the way down the band by a far smaller amount; the
-"full Exposure value" is the slider's setting being honoured end to end, not the whole value being
-written to every pixel. Holding the button still does nothing, and the tool's whole reason for
-existing is what happens while you hold it. Airbrush, which exists precisely to make that build-up
-automatic when you cannot hold still, is missing for the same reason.
+`band ** (level * EXPOSURE_EXPONENT) * level * EXPOSURE_GAIN * paint` with the exponent at `:87` and
+the gain at `:73`, both 4 and 1, so at the default Exposure of 50 the peak of the chosen band shifts
+a pixel by 0.5 and a quarter of the way down the band by a far smaller amount; the "full Exposure
+value" is the slider's setting being honoured end to end, not the whole value being written to every
+pixel. Holding the button still does nothing — there is no `setInterval`, `setTimeout` or rAF dwell
+anywhere in `src/hooks/usePaintStroke.ts` or in this file's tool area — and the tool's whole reason
+for existing is what happens while you hold it. Airbrush, which exists precisely to make that
+build-up automatic when you cannot hold still, is missing for the same reason. **This, not any
+control, is what makes the verdict `partial` rather than `implemented`**, and it is also what keeps
+it off `placeholder`: a real raster and a real history entry come out of the other end.
 
 **Sources**
 
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html>
+- <https://helpx.adobe.com/photoshop/using/painting-tools.html>
 - <https://www.peachpit.com/articles/article.aspx?p=3104540>
+- <https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>
 - <https://fstoptraining.com/dodge-burn-tools/>
 - <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=211>
 - <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217>
@@ -470,9 +622,11 @@ explicit that **burn is not the inverse of dodge**: with `q` the amount, `burn(d
 axis, not a pair that cancels.
 
 Everything said about the Dodge above applies here unchanged, including the shared component, the
-two `missing` controls, the `partial` preset picker and the absent build-up — and the absence of a
+two `missing` controls, the `partial` preset picker, the absent build-up — and the absence of a
 `Mode` row, for the same reason: there is no such control on the bar, and the blend mode is fixed.
-`Shift+O` is how you reach the Burn tool from the Dodge.
+`Shift+O` is how you reach the Burn tool from the Dodge, and the three `Shift+Alt+…` range
+bindings and the `[`/`]` brush-size pair apply to it exactly as they do to the Dodge. The app binds
+none of the four.
 
 | Control             | Photoshop behaviour                               | Default / range | App status | App `file:line`                                            |
 | ------------------- | ------------------------------------------------- | --------------- | ---------- | ---------------------------------------------------------- |
@@ -480,7 +634,7 @@ two `missing` controls, the `partial` preset picker and the absent build-up — 
 | Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`         |
 | Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`         |
 | Protect Tones       | Stop darkening raising saturation or clipping     | on              | `missing`  | —                                                          |
-| Airbrush            | Keep building while the brush rests               | off             | `missing`  | —                                                          |
+| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                          |
 
 **App verdict: same processor, other endpoint, same gaps — including the `partial` verdict.** Burn
 is `applyDodgeBurn(..., false)` against the dodge's `true` (`src/tools/dodgeBurn.ts:394`), so the
@@ -488,20 +642,109 @@ pixel rule is `c' = c - c * amount` where the dodge's is `c' = c + (255 - c) * a
 Exposure are genuinely wired to per-pixel work through the same band function. Registered as
 `raster` (`src/tools/toolProcessors.ts:244`); the gesture is
 `src/components/Main/BurnToolArea.tsx:56`, a deliberate duplicate of the Dodge's own file. The
-seeded args are `src/tools/settings.ts:248`. The absent build-up is the same absence and gets the
+seeded args are `src/tools/settings.ts:255`. The absent build-up is the same absence and gets the
 same phrasing: one stroke, one commit, at the slider's full Exposure value in a single pass, with
-the emitted per-pixel amount a curve of that value rather than the value itself.
+the emitted per-pixel amount a curve of that value rather than the value itself, and no dwell
+anywhere in the stroke hook to accumulate more.
 
 **Sources**
 
 - <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html>
+- <https://helpx.adobe.com/photoshop/using/painting-tools.html>
 - <https://www.peachpit.com/articles/article.aspx?p=3104540>
+- <https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>
 - <https://fstoptraining.com/dodge-burn-tools/>
 - <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=211>
 - <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217>
 - <https://flylib.com/books/en/2.816.1.11/1/>
 - <https://www.lenscraft.co.uk/photo-editing-tutorials/tutorial-mastering-the-photoshop-dodge-and-burn-tool/>
 - <https://www.dummies.com/article/technology/software/adobe-products/photoshop/using-the-dodge-and-burn-tools-in-photoshop-elements-9-205974/>
+
+## Sponge Tool
+
+The seventh member of this family, and the only **chroma** operation in it. Where the Dodge and the
+Burn scale a channel towards white or black inside a chosen tonal band, the Sponge scales a pixel's
+distance from its own luminance — which is exactly why its bar carries `Mode` and `Flow` where the
+pair carry `Range` and `Exposure`, and why this family's notes had to be reopened rather than
+extended: nothing here transfers.
+
+**The bar, in Adobe's order: Mode ▾ · Flow ▾ · Vibrance ☐ · and the brush preset's Size and
+Hardness.** Adobe's desktop page enumerates it as the brush tip, `Mode`, `Flow` and `Vibrance`
+(<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and the
+tool-techniques page repeats the set (<https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html>).
+`Vibrance` is the CS4 addition — the release that reworked all three toning tools at once, giving
+the Dodge and the Burn `Protect Tones` in the same pass
+(<https://jnack.com/blog/2008/11/02/cs4_whats_in_it_for_photographers/>) — and a 2009 CS4 Mac
+shortcut sheet already carries it, so it predates every current release by a long way.
+
+**Two controls are deliberately absent from the data file's `options` array rather than filed as
+`missing`,** and the reason is the array's own inclusion rule: it lists what Photoshop places in
+**this tool's** options bar.
+
+- **`Protect Texture`** is a **Brush-panel** checkbox, not a Sponge-bar control. It is described as
+  ensuring "the same texture is used for every brush with a texture"
+  (<https://www.smashingmagazine.com/2009/11/brushing-up-on-photoshops-brush-tool/>) and community
+  enumerations place the Sponge among the painting tools that use brush settings — but no source
+  shows the checkbox on the Sponge's own bar.
+- **`Tolerance`** is not on this tool's bar **at all**, and the common belief that it is a Dodge/Burn
+  control is wrong too. Photoshop's Action Manager descriptor for this tool carries only `flow`
+  (`SaturationToolOptionsDescriptor { flow }`, against `DodgeBurnToolOptionsDescriptor { exposure }`,
+  <https://github.com/simonhenke/photoshop-types/blob/main/types/Tool.d.ts>); `tolerance` appears on
+  the Magic Wand and the Color Replacement. One Grinnell course PDF puts an "EXPOSURE option" beside
+  the Saturate/Desaturate box and is simply wrong about this tool.
+
+**The algorithm is inferred, not published, and this file says so where it is used.** Adobe documents
+no per-pixel specification. What is established is that the tool is a **chroma scale about a luma
+pivot**, and the one community reimplementation of this family states the rule directly — "Sponge
+scales chroma around fixed Rec. 709 luma, optionally reducing the effect for already-saturated
+colors" (<https://github.com/SethRobinson/Patchy/blob/main/docs/brushes.md>). The module implements
+`c' = L + (c - L) * (1 ± amount)` in the **encoded** sRGB the editor stores, on the same grounds as
+`dodgeBurn.ts` gives for its own pivot, and pins the choice in a unit test.
+
+**`Vibrance` is implemented as a gamut-headroom cap**, from Adobe's only sentence about it: "Select
+the Vibrance option to minimize clipping for fully saturated or desaturated colors". Capping the
+chroma scale at the pixel's own boundary is the strictest reading of "minimize clipping" — the
+result then cannot clip at all — and it is the only geometric quantity that sentence names. It binds
+**only in the Saturate direction**, and that is a property of the arithmetic rather than a
+simplification: Desaturate moves every channel _toward_ the pixel's own luma, so its result is the
+convex combination of two in-range values and provably cannot leave `[0, 255]`. A test pins that
+equality rather than leaving it as a claim.
+
+**Adobe's Grayscale-mode rule is real and is NOT implemented**, which is the one place this family
+meets a platform limit rather than a missing feature. Adobe: "When an image is in Grayscale mode, the
+tool increases or decreases contrast by moving gray levels away from or toward the middle gray"
+(<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and Photoshop
+Elements splits the direction: "In grayscale, Saturate increases contrast … In grayscale, Desaturate
+decreases contrast" (<https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html>).
+The rule is scoped to a document **MODE**, and this app has no `Image > Mode` surface at all —
+`color`'s `grayscale` is a per-layer filter amount, and a layer made grey by it is still an RGB layer,
+where the rule does not apply. On an RGB pixel with no chroma the chroma scale is already an exact
+no-op, so implementing the pivot anyway would make the tool behave the way Photoshop behaves in a mode
+this app cannot reach. `docs/OVERRIDES.md` may not be edited by an agent, so the gap is recorded in
+`HANDOFF.md` instead.
+
+**The one place `Vibrance`'s behaviour diverges from what a tutorial says.** A 2026 walkthrough
+describes it as "adjusts the intensity of subtle colors in an image while minimizing the effect on
+highly saturated colors" (<https://glensmith.co.uk/photoshop/sponge-tool>) — a _saturation-weighted_
+easing, which is the Lightroom Vibrance semantic, not a clip guard. Adobe's own sentence is the
+opposite shape, and Adobe is the higher authority in the ladder, so the clip guard is what shipped.
+The alternative reading is in `## Unverified` below.
+
+### Sources
+
+- <https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html> — the Grayscale-mode sentence; `Mode` semantics; `Flow` as "the rate of saturation change"; `Vibrance`'s only description; `O` on the Sponge page.
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html> — the desktop bar enumeration including `Vibrance`; "select and hold the Dodge tool to show the other related tools".
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html> — the Dodge/Burn bar as `Range`/`Exposure`/`Airbrush`/`Protect Tones`, and the negative that `Tolerance` appears nowhere.
+- <https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html> — the per-mode grayscale contrast split.
+- <https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html> — `Shift+Alt+D` → Desaturate and `Shift+Alt+S` → Saturate, from an Adobe Principal Evangelist, plus the Dodge/Burn `S`/`M`/`H` collision on the same page. Carries her own "these views are my own" disclaimer.
+- <http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf> — the Adobe-branded table rows "Dodge / Burn / Sponge Tool O", "Cycle Dodge / Burn / Sponge Tools Shift+O", "Desaturate (Sponge Tool) Alt+Shift+D", "Saturate (Sponge Tool) Alt+Shift+S".
+- <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=646> — the CS3 manual's shortcut table, the same two rows.
+- <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217> — the CS4 bar listing, which already carries `Vibrance`.
+- <https://flylib.com/books/en/2.816.1.14/1/> — the CS2 Bible on Flow as the per-dab amount and on the digits stepping Flow.
+- <https://www.glensmith.co.uk/photoshop/sponge-tool> — Flow's 50% default, and the alternative reading of `Vibrance` recorded above as rejected.
+- <https://jnack.com/blog/2008/11/02/cs4_whats_in_it_for_photographers/> — the CS4 rework of all three toning tools at once.
+- <https://github.com/simonhenke/photoshop-types/blob/main/types/Tool.d.ts> — `SaturationToolOptionsDescriptor { flow }` and the absence of `tolerance` on this tool.
+- <https://github.com/SethRobinson/Patchy/blob/main/docs/brushes.md> — the one published statement of the per-pixel rule, and `Protect Texture`'s meaning.
 
 ## Gradient Tool
 
@@ -565,6 +808,35 @@ raster layer after checking these checkboxes". That asymmetry is a Tool Mode que
 exactly why the recovery's flat "Transparency default OFF" does not describe the tool this file is
 about.
 
+**`photoshopName` is singular, and Adobe's own painting table prints the plural.** The data file
+says `Gradient Tool`, which is what the Tools panel tooltip prints and what every other page I
+opened says. Adobe's painting-tools table is the exception: it lists the tile as **"The gradient
+tools"**, plural, in the same row where the Blur, Sharpen and Smudge entries are the Focus tools and
+the Dodge/Burn pair is the Toning tools — a table that is naming _groups_ by other rules while the
+row itself pluralises a tool that has exactly one tile. That is an Adobe-side inconsistency, not a
+choice this file gets to make silently, so it is recorded here and the data file keeps the singular.
+The Tools panel has printed `Gradient Tool` in every version I could check, and `G` selects the
+Paint Bucket in current versions precisely because the Gradient is not the tile's own letter.
+
+**`[`/`]`, `,`/`.` are gone from the `shortcuts` array, and two of the four rows were wrong rather
+than merely unsourced.** The array used to claim that `[` and `]` "cycle backwards/forwards through
+the gradient styles" and that `,` and `.` select the previous/next gradient preset. Three
+reproductions of Adobe's own default-keyboard list give those four keys to the brush instead:
+`Decrease Brush Size` = `[`, `Increase Brush Size` = `]`, `Decrease Brush Hardness` = `{`,
+`Increase Brush Hardness` = `}`, and `Select previous/next brush` = `,` and `.`
+(<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
+<https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>,
+<https://keycombiner.com/collections/photoshop/>). Nothing in Adobe's list makes any of the four a
+gradient control, and the two style-cycling rows **contradicted** it rather than merely outrunning
+it — which is the stronger of the two failure modes, and the reason they are deleted rather than
+moved to `## Unverified`. The `,`/`.` rows are deleted on the weaker charge: a context-sensitive
+reading in which they cycle gradients while the Gradient tool is selected is plausible and widely
+repeated, but no page I opened says so, so they go the same way. What survives is the app-side
+fact, which is in the `appNotes`: `,` and `.` are on no keyboard handler in the app at all, and `[`
+and `]` are registered but gated to `tipSizeField`, which the Gradient is not a member of. An
+earlier version of this file said the four keys were "registered on no keyboard handler at all",
+which was wrong about two of them.
+
 **The load-bearing control is not in the options bar.** From 24.5, the tool creates a live gradient
 on the canvas and the gradient line itself is editable in place: two round handles mark the ends and
 a small diamond between them sets the midpoint. Adobe's own Learn walkthrough describes dragging
@@ -575,19 +847,36 @@ the correction: the data file used to carry a `Cmd`-drag row for it, sourced fro
 Photoshop's own canvas and says no key is involved — "A selected gradient adjustment layer's gradient
 line appears in the document window as a straight line with two dot icons at either end … **To move
 the entire gradient line, click and drag the gradient line, avoiding any dot or diamond icons on the
-line, in the document window**" (<https://www.teachucomp.com/how-to-edit-a-gradient-adjustment-in-photoshop-instructions/>)
-— and the glensmith walkthrough says the same in a caption, "Click on the line and drag to move it"
+line, in the document window**"
+(<https://www.teachucomp.com/how-to-edit-a-gradient-adjustment-in-photoshop-instructions/>) — and the
+glensmith walkthrough says the same in a caption, "Click on the line and drag to move it"
 (<https://glensmith.co.uk/photoshop/gradient-tool>). The `Cmd` row is gone and the plain line drag
 now sits in the `On-canvas gradient handles` row, which is where a reader of the bar will look for
 it. `Delete` removing a stop stays in `shortcuts` as a third-party-corroborated binding, but the
-"not below two stops" floor is gone with it; see `## Unverified`. The `[`/`]` style cycling and
-`,`/`.` preset cycling are also unverified, and listed there.
+"not below two stops" floor is gone with it; see `## Unverified`.
+
+**The `Shift` constraint is Adobe's own sentence, on the page the file already cites.** "Press Shift
+while dragging to constrain the angle to multiples of 45°"
+(<https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/apply-gradient-fill.html>,
+read 2026-04-28) — the same page that gives the five types by name, "Linear, Radial, Angular,
+Reflected, or Diamond", and both checkboxes. That page is the current, first-party source for the
+bar's shape, and it names neither `Method` nor `Tool Mode` nor an `Opacity` control, which is worth
+recording next to the claim that the latter two are present in 24.5+: Adobe's own bar documentation
+is not exhaustive, and the rows that rest on the teachucomp walkthrough rest on it because it is the
+page that photographs the whole bar.
+
+**`Tool Mode` is 24.5, and one source says "2023".** The teachucomp walkthrough of 24.5's bar and
+Adobe's 24.5 announcement put the Tool Mode dropdown in **24.5** (May 2023), and the data file says
+"24.5 and later". A later third-party walkthrough calls it "new as of Photoshop 2023"
+(<https://www.photoshopessentials.com/photo-effects/add-a-vignette-to-a-photo-with-photoshops-live-gradients/>),
+which is the same year and a looser version label rather than a contradiction. Noted so a reviewer
+who meets the second phrasing is not surprised; no change.
 
 | Control                    | Photoshop behaviour                                                                                    | Default / range       | App status | App `file:line`                                          |
 | -------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------- | ---------- | -------------------------------------------------------- |
 | Tool Preset Picker         | The saved-tool-preset drop-down at the left end of the bar; ships one, "Circular Rainbow"              | 1 preset              | `missing`  | —                                                        |
 | Tool Mode                  | Live gradient vs Classic gradient; changes which options follow (24.5+)                                | Gradient              | `missing`  | —                                                        |
-| Gradient preset picker     | Click the swatch for the Gradient Editor, its arrow for the presets library                            | 5 presets ship        | `missing`  | —                                                        |
+| Gradient preset picker     | Click the swatch for the Gradient Editor, its arrow for the presets library                            | the shipped library   | `missing`  | —                                                        |
 | Gradient Type              | Linear, Radial, Angular, Reflected, Diamond                                                            | Linear                | `partial`  | `src/components/ToolbarsRight/Gradient/Gradient.tsx:13`  |
 | Mode                       | Blend mode the gradient composites with — **Classic tool only**                                        | Normal                | `missing`  | —                                                        |
 | Opacity                    | Opacity of the whole fill, multiplied over the gradient's own alpha ramp — **Classic tool only**       | 100%, 0–100           | `partial`  | `src/components/ToolbarsRight/Gradient/Gradient.tsx:129` |
@@ -605,15 +894,18 @@ reason for most of the rows above. The `Type` select carries **two** entries, Li
 (`src/components/ToolbarsRight/Gradient/Gradient.tsx:13`); Angle, Reflected and Diamond have no
 representation in a fixed `from`/`to` pair. `Method` is the most consequential omission of the three
 missing options, because the app interpolates the two stops as plain
-per-channel RGB, which is closest to the Classic behaviour Photoshop stopped defaulting to in 23.0
-— so every gradient this editor paints is one dropdown away from a different ramp. `Opacity` is the
-one control the app carries that the current tool's bar does not: Photoshop has moved it onto the
-Gradient Fill layer, and the app still shows it as a bar slider, which is what its `partial` status
+per-channel RGB (`src/tools/gradient.ts:36`, one stop sampled at `t` in each channel), which is
+closest to the Classic behaviour Photoshop stopped defaulting to in 23.0 — so every gradient this
+editor paints is one dropdown away from a different ramp. `Opacity` is the
+one control the app carries that the current tool's bar does not: Photoshop has moved it onto
+the Gradient Fill layer, and the app still shows it as a bar slider, which is what its `partial` status
 records. The preset picker and the Gradient Editor are absent entirely, so there are
 no multi-stop gradients, no per-stop opacity or position, no midpoints, and no gradient styles. The
 two stops are two colour inputs in the bar (`Gradient.tsx:146`, `:159`) rather than a picker, and
 they are the tool's only gradient state — there is no Foreground-to-Background preset and nothing
-to reset to.
+to reset to. **The verdict is `partial` and not `placeholder`** because the fill does reach the
+document as a real raster with a real history entry; what it commits is simply a narrower, uneditable
+gradient than Photoshop's tool commits, which is the definition `partial` is for.
 
 **The handles are genuinely absent, and I checked carefully.** `GradientToolArea` accepts
 `overlayCtxRef` and **never draws to it** — the file says so at
@@ -622,11 +914,14 @@ to reset to.
 nothing else. There is no pointer-down handler for a handle anywhere in the component, and no
 second gesture surface. So once a fill is committed its geometry cannot be changed at all without
 painting a second gradient over it. Photoshop's live-preview gradient is not a refinement of that;
-it is the difference between a fill and an editable object. `Shift` is not bound either,
-and neither is any of the four preset keys: `[`, `]`, `,` and `.` are registered on no keyboard
-handler in the app, and the only `Delete` bindings belong to the two lasso tool areas
-(`src/components/Main/FeatherMagneticLassoToolArea.tsx:565` and
-`src/components/Main/PolygonClickToolArea.tsx:945`), so no key removes a gradient stop.
+it is the difference between a fill and an editable object. `Shift` is not bound either — there is
+no `shiftKey` read anywhere in `GradientToolArea.tsx` or in `src/hooks/usePaintStroke.ts` — and
+neither `,` nor `.` is on any keyboard handler. `[` and `]` are registered, but as the shared
+tip-size nudge at `src/components/Common/AppKeyboardShortcuts.tsx:518` and `:526`, gated to
+`tipSizeField` (`:44-53`), and the Gradient is not a member, so both are dead while this tool is
+selected. The only `Delete` bindings belong to the two lasso tool areas
+(`src/components/Main/FeatherMagneticLassoToolArea.tsx:574` and
+`src/components/Main/PolygonClickToolArea.tsx:953`), so no key removes a gradient stop.
 
 **The Radial's "Photoshop mirrors" clause is gone, and the sentence it was attached to was doing two
 jobs.** The data file asserted that the app's Radial "holds its end colour past the circle through
@@ -640,14 +935,18 @@ sentence still lives at `src/tools/gradient.ts:102-103`** — "Photoshop mirrors
 this does not, and a mirrored radial has no representation in the fixed `from`/`to` args" — and that
 file is outside this family's two, so it is reported rather than fixed.
 
-**`G` does not select the Gradient, which the data file used to claim.** A plain `G` runs
-`selectFillTool(false)`, which lands on `'paint-bucket'`
-(`src/components/Common/AppKeyboardShortcuts.tsx:134`); the Gradient is what the second press of the
-cycle reaches, via the `Shift+G` binding at `:321-326` into `selectFillTool`'s cycle branch
-(`:126-135`). The tile declarations agree: the Paint Bucket
-declares `shortcut: 'G'` (`toolbar-mapping.ts:79`) and the Gradient tile declares none at all
-(`toolbar-mapping.ts:91`). The data file's `shortcuts` row now says exactly that rather than
+**`G` does not reach the Gradient on a first press, which the data file used to claim.** A plain `G`
+runs `selectFillTool(false)`, which lands on `'paint-bucket'`
+(`src/components/Common/AppKeyboardShortcuts.tsx:166-175`, handler registered at `:421-426`); the
+Gradient is what the cycle reaches, via the `Shift+G` binding at `:428-434` into `selectFillTool`'s
+cycle branch. The tile declarations agree: the Paint Bucket
+declares `shortcut: 'G'` (`toolbar-mapping.ts:80`) and the Gradient tile declares none at all
+(`toolbar-mapping.ts:92`). The data file's `shortcuts` row now says exactly that rather than
 "pressing it again cycles to that tool", which described a first press that selects the other tool.
+Third-party walkthroughs routinely say "`G` selects the Gradient tool", which is the CS-era ordering
+where the Gradient was the tile's own letter; wikihood's 2007 text spells the current behaviour out
+("If the Paint Bucket Tool … is selected, press Shift-G until the Gradient tool is selected"), and it
+is also why the shortcut row's wording leads with what a second press does.
 
 **Sources**
 
@@ -725,8 +1024,12 @@ a binding is **absent**, which is the stronger form of the same objection.
    state is the weaker half: `fstoptraining` is the only source, and Adobe's current page does not
    state a default for it. The data file asserts it anyway, because a positive third-party
    statement beats silence, but this is the item to close if someone opens the bar and finds it
-   off. The Elements-era `Protect Detail` question this item used to hold is gone: see the header
-   above.
+   off. The CS5 write-up behind the Sharpen's `Protect Detail` does say that control's box is on by
+   default (<https://www.deke.com/content/advanced-sharpening-techniques-or-close-to-the-edge-part-deux>),
+   which is a different product's control and does not transfer. The `Airbrush` rows on both tools
+   carry the same species of unsourced default and the same reasoning, and the Dodge table now marks
+   it "off (unsourced)" so the reader can see it. The Elements-era `Protect Detail` question this
+   item used to hold is gone: see the header above.
 6. **The Blur tool's `Sample Size` control.** The only source that puts "Sample Size" near the Blur
    tool is the `flylib` CS2 reference, whose Blur section carries a stray bullet "Double-check the
    Sample Size pop-up menu" immediately after the Blur controls — but the same book documents
@@ -776,29 +1079,89 @@ a binding is **absent**, which is the stronger form of the same objection.
     Photoshop gradient property the app has no counterpart for; it is a Properties-panel control
     rather than an options-bar one, so it has no row, and it is noted here because the brief asked
     about the Methods and this is the other half of their behaviour.
-11. **The `R` keyboard shortcut for the Blur/Sharpen/Smudge group in current Photoshop.** Two
-    CS-era sources give the group `R` (`flylib`, and the CS2 keyboard sheet on
-    <https://alexandru2882.wordpress.com/wp-content/uploads/2016/10/2074975-adobe-photoshop-cs2-tools-and-basics.pdf>),
-    and `flylib` adds the `Shift-R` cycle. Current Photoshop's default-keyboard reference was not
-    opened, so the data file lists no shortcut for any of the three rather than assert a legacy one.
-    The app also binds none of them (`toolbar-mapping.ts:85-87`), so this is not an app-fidelity
-    question — only an accuracy one.
-12. **`Dither`'s default.** The data file used to say "On by default". **No source states a
-    default.** The two third-party positions disagree: `photoshopessentials` tells you to "ensure
-    Reverse is turned off, Dither is turned on (to reduce color banding)", while Chip O'Toole's 2011
-    write-up treats it as something to switch on, and teachucomp says only "check the 'Dither'
-    checkbox". Adobe says nothing either way. The default has been removed from the row's `detail`
-    and is recorded here instead. **The same applies to `Reverse`,** whose "Off by default" is in
-    the same position and comes from the same silence — it is left in place because it was not in
-    scope for this pass, and it should be removed or sourced on the same grounds.
-13. **The Dodge/Burn rebuild version, resolved; the Blur `Mode` restriction, not.** The first half
-    of this item used to ask which version shipped the rebuild. **That is answered**: `Protect Tones`
-    is **CS4** (October 2008) and the rebuild is **CS5** (2010), and the version table now carries
-    them as two rows with the CS4 launch coverage, the CS4 manual and the CS5 retrospective as
-    evidence. What is still open is the second half, and it is unchanged in substance: the Blur's
-    `Mode` list is said to be "restricted to the modes that make sense for a blur". The seven modes
-    themselves are attested (`expertphotography`, `dummies`). That the list is a _restriction_ — that
-    other blend modes are deliberately absent — is stated by no opened page, and every source gives
-    the seven without saying what else, if anything, the dropdown offers. The row is kept, because
-    `Mode` itself is on the bar by three independent enumerations; the data file's `detail` no
-    longer claims the list is restricted, and names the seven as third-party attributions.
+11. **The `R` keyboard shortcut for the Blur and the Sharpen, and only those two.** This item used
+    to ask about the whole group. **It is answered for the Smudge**: Adobe's current page for the
+    tool states "Select the Smudge tool (R) from the toolbar"
+    (<https://helpx.adobe.com/photoshop/using/tool-techniques/smudge-tool.html>), and Photoshop
+    Elements' reference prints `R` for the three-tool group
+    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>), so
+    the row is in the Smudge's `shortcuts`. The two CS-era sources that give the group `R`
+    (`flylib`, and the CS2 keyboard sheet on
+    <https://alexandru2882.wordpress.com/wp-content/uploads/2016/10/2074975-adobe-photoshop-cs2-tools-and-basics.pdf>)
+    now only corroborate it. **Still open: the Blur and the Sharpen.** Adobe's current Blur page
+    names no letter, and the current Sharpen page could not be opened, so neither carries an `R`
+    row — the same rule the other five controls in this file follow, where a claim goes in the data
+    file only if a page puts it on that tool. The app binds none of the three
+    (`toolbar-mapping.ts:86-88`), so this is an accuracy question, not an app-fidelity one.
+12. **`Dither`'s and `Reverse`'s defaults, and the removal of `Reverse`'s.** The data file used to
+    say "On by default" for `Dither` and "Off by default" for `Reverse`, and both were silence
+    dressed as a fact. They are now both gone from the `detail` text and the rows say that no page
+    I opened states a default. The evidence now points the other way for `Dither` and is worth
+    having: a 2023 walkthrough says "Leave Dither turned on and the Method set to Perceptual.
+    **Both are the default settings**"
+    (<https://www.photoshopessentials.com/photo-effects/add-a-vignette-to-a-photo-with-photoshops-live-gradients/>),
+    while an earlier write-up tells the reader to ensure Dither is _turned on_ as a step, and
+    teachucomp says only "check the 'Dither' checkbox". Adobe says nothing either way. One
+    third-party statement of a default is not two, so the row keeps the honest phrasing and the
+    citation is the third party's. `Reverse` has no statement at all in any direction.
+13. **The Blur `Mode` restriction, narrowed but not closed.** The Blur's `Mode` list is said by two
+    pages to be restricted: the University of Idaho's CS-era walkthrough says the dropdown "only
+    offers a limited number of blends to choose from"
+    (<https://www.webpages.uidaho.edu/larc246/toolBarPages/blur.htm>), and Wikiversity says "In the
+    latest edition of Adobe Photoshop there are seven blur tool modes" and enumerates them. The
+    seven modes are also attested by `expertphotography` and `dummies`. What no page says is what
+    else, if anything, the dropdown offers — so "restricted to these seven" remains unestablished
+    and the `detail` now attributes the restriction claim to the page that makes it while saying it
+    does not name the restriction's extent. The row is kept, because `Mode` itself is on the bar by
+    several independent enumerations.
+14. **The provenance of the keyboard bindings, which are reproductions rather than Adobe's page.**
+    The Smudge's `R`, the Dodge's and the Burn's `Shift+Alt+S/M/H`, the `0` for Exposure and the
+    `[`/`]` brush-size pair are all in Adobe's published default-keyboard list, and three
+    independent reproductions of it agree on the wording
+    (<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
+    <https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>,
+    <https://shortcuts.design/data/design/toolspage-adobephotoshop-windows>). **Adobe's own
+    default-keyboard page was not opened**, so the rows carry a third-party citation for a
+    first-party fact. The Smudge's `R` is the one that is not in this category: Adobe's current
+    tool page states it in the body text ("Select the Smudge tool (R) from the toolbar"), so that
+    row is first-party. What is still open under this item is the `R` for the **Blur** and the
+    **Sharpen**: Adobe's current Blur page names no letter, and the current Sharpen page could not
+    be opened, so neither tool's `shortcuts` array carries `R` even though they share the flyout
+    and Photoshop Elements' own reference prints `R` for all three
+    (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
+
+15. **Which `Mode` the Sponge's bar opens on. Adobe states no default, and one source is not
+    enough.** `helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html` is
+    imperative throughout — "Select Saturate or Desaturate from the Mode option as per your
+    requirement" — which is equally consistent with either default. A dedicated second search found
+    **no Adobe statement of a default and no second independent source** for the one non-Adobe
+    claim that it is `Desaturate`. Julieanne Kost's "set the Sponge tool to Desaturate" and the
+    SitePoint/Tuts+ walkthroughs are _instructions_, not default claims; the Weingart tutorial
+    instructs `Saturate`. The app seeds `Desaturate` and says so at `SPONGE_MODE_DEFAULT` — the
+    choice is the non-destructive direction, since a saturated stroke that clips a channel cannot be
+    painted back — and the gap is in `HANDOFF.md`, not here, because it is an operator's call against
+    a live Photoshop rather than a research defect.
+16. **Whether Adobe ships the Sponge's `Vibrance` checked.** Adobe's sentence is an _action_ ("Select
+    the Vibrance option to minimize clipping"), which reads as an instruction to enable it and so
+    points at unchecked, while the two indirect signals — the CS4 framing that the tool "can now
+    saturate or de-saturate with the intelligence of the Vibrance logic", and the web-app page's
+    "Vibrance on by default" — point at checked. **Neither was confirmed**, and the web-app page's
+    body could not be retrieved by the crawler, so do not treat that phrase as verified. The app
+    seeds it **on**, because a control Adobe documents as the thing that prevents clipping should
+    not ship in a state that allows it.
+17. **`Flow`'s default and range.** 50% and 1-100% are one third-party walkthrough and the CS2 Bible
+    respectively; Adobe describes `Flow` only as "the rate of saturation change" and gives neither.
+18. **`Airbrush` on this bar.** The checkbox is documented as a general Airbrush behaviour
+    (<https://www.smashingmagazine.com/2009/11/brushing-up-on-photoshops-brush-tool/>) and one
+    Sponge-specific tutorial names it, but **Adobe's own enumeration of this bar does not include
+    it**. It is filed `missing` on the strength of the Adobe bar census being incomplete rather than
+    on a first-party statement that the control exists.
+19. **The colour space the tool works in.** Nothing from Adobe: Lab is asserted for the Vibrance
+    adjustment _layer_ by some sources and denied by others, HSB is asserted by others, and the one
+    published statement of the per-pixel rule names Rec. 709 luma in a third-party clone's own
+    implementation rather than as a Photoshop fact. The app's choice — encoded sRGB, on the grounds
+    `dodgeBurn.ts` gives — is recorded at `spongeLuma` and pinned by a test.
+20. **The alternative reading of `Vibrance`, rejected rather than adopted.** See §Sponge Tool: a
+    tutorial describes it as boosting _subtle_ colours more than saturated ones, which is the
+    Lightroom semantic, against Adobe's own "minimize clipping". Recorded because a future reader
+    meeting that tutorial will otherwise think the app got it wrong.

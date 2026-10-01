@@ -971,27 +971,30 @@ describe('ShapeToolArea', () => {
       expect(fullArgs.args.figure).toBe('oval');
     });
 
-    it('prompts for dimensions on a click with no movement and expands the shape', () => {
+    // The two `window.prompt` calls this used to make are gone: a click with no movement now
+    // reports the refusal on the console and commits nothing, so a click never opens a dialog.
+    it('reports a click with no movement on the console instead of prompting, and commits nothing', () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       promptMock.mockReturnValue('100');
 
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
+      try {
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
 
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
+        act(() => {
+          fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        });
+        act(() => {
+          fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        });
 
-      expect(promptMock).toHaveBeenCalledTimes(2);
-      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
-      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
-      // Click at (10,20) → prompt returns 100 for width/height
-      // end = (40+100, 60+100) = (140, 160), adjusted by pos {x:38, y:58} → (102, 102)
-      expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
-      expect(fullArgs.args.end).toEqual({ x: 102, y: 102 });
-      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 104, height: 104 });
+        expect(promptMock).not.toHaveBeenCalled();
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(String(consoleError.mock.calls[0][0])).toContain('needs a drag');
+        expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      } finally {
+        consoleError.mockRestore();
+      }
     });
 
     it('does not create a layer when the prompt returns null', () => {

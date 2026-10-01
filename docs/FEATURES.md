@@ -211,7 +211,7 @@ Actions, Measurement Log — dockable, with panel groups.
 (`src/contexts/PanelLayout.tsx:89`). They dock, drag-reorder, resize, collapse to
 icons and roll up (`src/contexts/PanelLayout.tsx:330-344`,
 `src/components/SidebarRight/PanelGroup.tsx`), and Window has Reset Workspace
-(`src/components/DesktopHeader/DesktopHeader.tsx:394`).
+(`src/components/DesktopHeader/DesktopHeader.tsx:403`).
 
 **Status:** `partial`
 
@@ -255,7 +255,7 @@ screen-mode switching.
 **This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
 scaleY)` with centring offsets (`src/hooks/usePointerPosition.ts:135`,
 `src/util/contain-fit.ts:33-51`). The
-zoom transform is commented out (`src/components/Main/Main.tsx:248`) and so is
+zoom transform is commented out (`src/components/Main/Main.tsx:270`) and so is
 the store's zoom state (`src/contexts/StoreContext.tsx:142-143`, `:1171-1174`).
 There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-118`).
 
@@ -366,6 +366,27 @@ every draw (`src/contexts/layer-renderer.ts:22-30`, `:77`). A layer can be
 re-blurred, re-levelled or re-coloured without rasterising.
 
 **Status:** `divergent`
+
+### Platform limits on filters
+
+**Capability:** Blur, Colors and Levels — every adjustment this app mints by
+re-rendering a `CanvasRenderingContext2D.filter` string.
+
+`CanvasRenderingContext2D.filter` is **not Baseline**. caniuse records Safari
+`3.1 - 17.6: Not supported`, and MDN's own page states that the feature "is not
+Baseline because it does not work in some of the most widely-used browsers." No
+CSS filter kernel exists to fall back on: the property is the whole mechanism.
+
+**On such a browser this app REFUSES the edit and logs the refusal** rather than
+applying it as a no-op. The refusal is loud precisely because the alternative
+looks like success: a silent no-op would present and then record the unchanged
+bitmap as if it were the edit, and no replay could reproduce those pixels.
+Photoshop applies a real kernel on every platform, so the divergence is visible,
+not silent.
+
+**Status:** `platform` for the Safari half. Everywhere else these three tools
+behave as Photoshop does, and the absence of a CPU-side implementation is not
+recorded here — that is a backlog item, not a limit.
 
 ## What is not a platform limit
 

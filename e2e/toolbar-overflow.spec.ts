@@ -1,13 +1,16 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool } from '../toolbar-mapping.ts';
 
 /**
  * The rail's overflow rule, end to end.
  *
- * The rail measures the slot its tiles live in, and when the tiles would take more than 80%
- * of it, the rows that do not fit move into a three-dots tile. This file pins the four
- * claims that rule makes, in a browser, because every one of them is a LAYOUT claim and
+ * The rail measures the slot its tiles live in, and when the tiles do not fit inside it, the
+ * rows that do not move into a three-dots tile. The budget IS the slot — the fit used to keep
+ * a fifth of it back as "headroom", which bought no stability it did not already have (rows are
+ * accepted whole, so the count steps with the height either way) and left a hand's width of
+ * empty panel with the next row's tool sitting inside the three-dots tile. This file pins the
+ * four claims the rule makes, in a browser, because every one of them is a LAYOUT claim and
  * jsdom measures nothing:
  *
  * 1. the rule fires on height, and only on height;
@@ -15,6 +18,9 @@ import { slugifyToolLabel, toolbarMap, type ToolbarTool } from '../toolbar-mappi
  * 3. every tool stays reachable, from exactly one place, including the tools nested inside a
  *    collapsed group;
  * 4. the three-dots tile is a grouped tile like any other, so it opens the same four ways.
+ *
+ * `e2e/toolbar-fit.spec.ts` owns the arithmetic — the budget, the separator and the maximality
+ * of the fit — and this file owns the four claims above. Neither restates the other.
  *
  * Plus the one that was a real defect while this file was being written: the three-dots menu
  * is as tall as its contents, and a `position: fixed` overlay clamps its position and never
@@ -29,12 +35,12 @@ import { slugifyToolLabel, toolbarMap, type ToolbarTool } from '../toolbar-mappi
  * A window tall enough that the whole rail fits, and a short one.
  *
  * TALL is much taller than a desktop window on purpose, and the number is derived rather than
- * picked. One column is sixteen rows of a 44px tile with a 6px gap and four section
- * separators, which is about 846px of tiles, and the budget is 80% of whatever the slot is —
- * so the window has to be about 1250px tall before nothing collapses at all. A 900px window
- * is a perfectly ordinary laptop and it DOES collapse; the first version of this constant
- * said otherwise and the test failed on its own first assertion. Which is the useful thing
- * to know: there is no desktop window at which a one-column rail shows all sixteen groups.
+ * picked. One column is sixteen rows of a 44px tile with a 6px gap and four section separators
+ * of 7px each — 16x44 + 15x6 + 4x7 = 822px of tiles — and the budget is the whole slot, so a
+ * window has to be 1094px tall before nothing collapses at all. A 900px window is a perfectly
+ * ordinary laptop and it DOES collapse: it shows eleven of the sixteen, with the rest in the
+ * three-dots tile. Which is the useful thing to know — the fit's reach is a HEIGHT, not a
+ * layout, and no amount of desktop width buys a taller rail.
  */
 const TALL = { width: 1280, height: 1400 };
 const SHORT = { width: 1280, height: 600 };

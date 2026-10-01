@@ -56,6 +56,18 @@
       // variable inside package.json, which Kilo never inspects.
       "*PLAYWRIGHT_ALLOW_HEADED*": "deny",
 
+      // `scripts/probe-console.mjs` hardcodes `headless: true` and refuses a
+      // `--headed` flag or the variable above, exiting 2 with an explanation. These
+      // rules stop the same attempt before the process starts, and they cover the
+      // browser a script could launch on its own - which no Playwright-side guard
+      // can see, because that guard only runs inside a Playwright process.
+      //
+      // This is the whole reason the probe is a script and not an MCP server: a
+      // `permission.bash` glob matches this command, and an `mcp_*_navigate_page`
+      // call matches nothing at all.
+      "*probe-console*--headed*": "deny",
+      "*PLAYWRIGHT_HEADLESS=false*": "deny",
+
       // A bare `npx tsc` at this repo's root type-checks ZERO files and exits 0,
       // because the root tsconfig is a solution stub - indistinguishable from a
       // clean typecheck, and something a model that never read a doc will run.
@@ -110,6 +122,46 @@
       // silent block: a branch the inventory called `dispose` needs `-d`, and one
       // it did not needs `scripts/dispose-worktree.mjs` to say so.
       "*branch -D*": "ask",
+    },
+  },
+
+  // Chrome DevTools, scoped to this project rather than the global config, and
+  // headless because of the rule above.
+  //
+  // WHY IT IS HERE AND NOT `browser_open`: nothing in the 36 Playwright specs measures
+  // time or memory. For a Canvas 2D editor that replays history and materializes
+  // layers, long tasks during a stroke and heap growth across undo/redo are the one
+  // axis with no instrument at all. That is a gap `npm run probe:console` cannot close:
+  // it reports what the page logged, not what it cost.
+  //
+  // WHY A SERVER RATHER THAN A SCRIPT, given that a browser MCP call bypasses every
+  // permission rule in this file: `permission.bash` matches shell commands and
+  // `global-setup.ts` only runs inside a Playwright process, so neither constrains an
+  // `mcp_*` call. That is a real hole and it is why `--headless` is passed here rather
+  // than relied upon, and why the flags below are not optional.
+  //
+  //   --headless               no window, per the rule at the top of this file
+  //   --no-performance-crux    stops the server sending a trace URL to a Google
+  //                            endpoint, which is the whole reason a performance tool
+  //                            needs a flag
+  //   --no-usage-statistics    the server collects anonymous usage data by default
+  //
+  // DELIBERATELY NOT `--slim`: it reduces the server to three tools — navigation,
+  // JavaScript execution and screenshots — which is exactly the set that measures
+  // nothing. It would have disabled the performance tools this server exists for.
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--headless",
+        "--no-performance-crux",
+        "--no-usage-statistics",
+      ],
+      "enabled": true,
+      "timeout": 60000,
     },
   },
 }

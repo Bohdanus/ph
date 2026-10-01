@@ -28,6 +28,14 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Drag an elliptical selection; Shift makes a circle, Alt draws from the center, Style locks ratio or size.',
     implementation: 'implemented',
   },
+  'single-row-marquee': {
+    summary: 'Click or drag to select one document row, one pixel tall and as wide as the image.',
+    implementation: 'implemented',
+  },
+  'single-column-marquee': {
+    summary: 'Click or drag to select one document column, one pixel wide and as tall as the image.',
+    implementation: 'implemented',
+  },
   'freehand-lasso': {
     summary: 'Drag a freehand selection border that goes exactly where the cursor goes and closes itself on release.',
     implementation: 'partial',
@@ -112,6 +120,11 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Darkens the tonal range you choose as you paint, the way letting more light onto a print deepens its shadows.',
     implementation: 'partial',
   },
+  sponge: {
+    summary:
+      'Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.',
+    implementation: 'partial',
+  },
   gradient: {
     summary:
       'Fills a selection or layer with a gradient you define by dragging: the click sets the first colour stop, the release the second.',
@@ -192,17 +205,17 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   transform: {
     summary:
-      "Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, warps or tilts a layer in one continuous drag on its bounding box.",
+      "Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, adds perspective or warps a layer in one continuous operation.",
     implementation: 'partial',
   },
   levels: {
     summary:
-      "Photoshop's Levels remaps an image's tonal range through a black point, a gamma midtone and a white point, per channel, read against a histogram.",
+      "Photoshop's Levels remaps an image's tonal range through a histogram, a gamma pivot and per-channel black, white and output points.",
     implementation: 'partial',
   },
   color: {
     summary:
-      "Photoshop's Black and White converts a color image to monochrome with six independent hue-sextant sliders, optionally tinted with a tone color.",
+      "Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.",
     implementation: 'partial',
   },
   eyedropper: {
