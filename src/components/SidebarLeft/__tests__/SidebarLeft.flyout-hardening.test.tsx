@@ -47,6 +47,8 @@ vi.mock('../toolIcons.tsx', () => {
       'feather-magnetic-lasso': Icon,
       'magic-wand': Icon,
       'quick-selection': Icon,
+      'single-row-marquee': Icon,
+      'single-column-marquee': Icon,
       eyedropper: Icon,
       eraser: Icon,
       'clone-stamp': Icon,

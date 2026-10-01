@@ -624,11 +624,15 @@ describe('AppKeyboardShortcuts tool cycling', () => {
 
   it.each([
     ['rectangular-selection', 'elliptical-selection'],
-    ['elliptical-selection', 'rectangular-selection'],
+    ['elliptical-selection', 'single-row-marquee'],
+    ['single-row-marquee', 'single-column-marquee'],
+    ['single-column-marquee', 'rectangular-selection'],
   ])('cycles Shift+M from %s to %s', (from, to) => {
-    // `M` is the MARQUEE tile, and the marquee tile holds the rectangular and elliptical
-    // marquees. The magic wand moved to the object-selection tile on `W` when the quick
-    // selection joined it, so `M` no longer reaches it — `AppKeyboardShortcuts.tsx:25`.
+    // `M` is the MARQUEE tile, and the marquee tile holds all four of Adobe's marquee tools
+    // in flyout order: rectangular, elliptical, single row, single column
+    // (`toolbar-mapping.ts:43`-`:47`). The magic wand moved to the object-selection tile on
+    // `W` when the quick selection joined it, so `M` no longer reaches it —
+    // `AppKeyboardShortcuts.tsx:25`. The cycle wraps, so the last member returns to the first.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 

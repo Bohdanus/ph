@@ -9,6 +9,7 @@ import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { LassoToolArgs } from '../tools/polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from '../tools/rectangularSelection.ts';
+import type { SingleColumnMarqueeToolArgs, SingleRowMarqueeToolArgs } from '../tools/singleRowColumnMarquee.ts';
 import type { FeatherMagneticLassoToolArgs } from '../tools/featherMagneticLasso.ts';
 import type { MagicWandToolArgs } from '../tools/magicWand.ts';
 import type { EraserToolArgs } from '../tools/eraser.ts';
@@ -40,6 +41,8 @@ export type ToolArgsByName = {
   'feather-magnetic-lasso': FeatherMagneticLassoToolArgs;
   'magic-wand': MagicWandToolArgs;
   'rectangular-selection': RectangularSelectionToolArgs;
+  'single-row-marquee': SingleRowMarqueeToolArgs;
+  'single-column-marquee': SingleColumnMarqueeToolArgs;
   'elliptical-selection': EllipticalSelectionToolArgs;
   'quick-selection': QuickSelectionToolArgs;
   gradient: GradientToolArgs;

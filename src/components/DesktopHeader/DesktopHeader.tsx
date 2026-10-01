@@ -41,6 +41,8 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'quick-selection', label: 'Quick Selection Tool' },
   { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
   { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
+  { toolName: 'single-row-marquee', label: 'Single Row Marquee Tool' },
+  { toolName: 'single-column-marquee', label: 'Single Column Marquee Tool' },
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },

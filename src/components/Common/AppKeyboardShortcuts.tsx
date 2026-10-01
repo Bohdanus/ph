@@ -22,8 +22,27 @@ const lassoGroup = [
   'polygonal-lasso',
   'feather-magnetic-lasso',
 ] as const satisfies readonly ToolName[];
-/** `M`: the marquee tile — rectangular and elliptical, NOT the wand, which moved to `W`. */
-const marqueeGroup = ['rectangular-selection', 'elliptical-selection'] as const satisfies readonly ToolName[];
+/**
+ * `M`: the marquee tile — all four of Adobe's marquee tools, NOT the wand, which moved to `W`.
+ *
+ * The order is the flyout order from `toolbar-mapping.ts`, and it is what `Shift+M` walks.
+ * Adobe publishes "Switch between marquee tools — SHIFT+M"
+ * (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`)
+ * without enumerating which tools the cycle covers, and its default-shortcut table names
+ * only the Rectangular and Elliptical Marquees against `M`. Two third-party sources
+ * disagree on whether the 1-pixel pair is inside the cycle at all
+ * (`guides.wmlcloud.com`, reproducing Adobe's own CS5 "Basic Selection Tools", says they were
+ * never assigned `M`; `flylib.com`'s Real World Adobe Photoshop CS2 says the cycle covers
+ * four). This app follows the group: the cycle is the marquee tile, and a tool the rail
+ * shows behind the same key that a user has just pressed is a tool they will expect the key
+ * to reach. Recorded as unresolved in `selection.notes.md`.
+ */
+const marqueeGroup = [
+  'rectangular-selection',
+  'elliptical-selection',
+  'single-row-marquee',
+  'single-column-marquee',
+] as const satisfies readonly ToolName[];
 /** `W`: the object-selection tile — the wand and the quick selection, which now share it. */
 const objectSelectionGroup = ['magic-wand', 'quick-selection'] as const satisfies readonly ToolName[];
 /** `G`: paint bucket and gradient, one tile, one fill gesture between a click and a drag. */
