@@ -57,7 +57,7 @@ The e2e suite is headless by default and must stay that way.
 | `PLAYWRIGHT_ALLOW_HEADED=1`     | the human's opt-in, not yours                              |
 | `test.use({ headless: false })` | a live window                                              |
 
-`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. 
+`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set.
 
 ### Looking at a live page is allowed, and does not need a window
 
