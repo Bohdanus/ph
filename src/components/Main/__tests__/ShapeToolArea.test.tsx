@@ -211,8 +211,10 @@ describe('ShapeToolArea', () => {
     drawShapeMock.mockClear();
     setShapeCtxMock.mockClear();
     promptMock.mockReset();
+    // Kept as a SPY only: two tests below assert it was never called, which is
+    // the regression pin — a bare click must never open a dialog. A return value
+    // would configure a call that must not happen.
     vi.spyOn(globalThis, 'prompt').mockImplementation(promptMock);
-    promptMock.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -878,7 +880,6 @@ describe('ShapeToolArea', () => {
     });
 
     it('creates a layer from a bare pointer-up without prompting or previewing', () => {
-      promptMock.mockReturnValue(null);
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -887,8 +888,8 @@ describe('ShapeToolArea', () => {
       });
       // Releasing at a different position with no pointermove leaves
       // originalShapeRef null, so handlePointerUp re-derives the geometry from
-      // the release coordinate. That makes start != end, which skips the
-      // click-size prompt and commits a drag the user never previewed.
+      // the release coordinate. That makes start != end, which is a drag rather
+      // than the bare click that is refused, and commits one the user never previewed.
       act(() => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 200, clientY: 260 });
       });
@@ -975,7 +976,6 @@ describe('ShapeToolArea', () => {
     // reports the refusal on the console and commits nothing, so a click never opens a dialog.
     it('reports a click with no movement on the console instead of prompting, and commits nothing', () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      promptMock.mockReturnValue('100');
 
       try {
         const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
@@ -995,53 +995,6 @@ describe('ShapeToolArea', () => {
       } finally {
         consoleError.mockRestore();
       }
-    });
-
-    it('does not create a layer when the prompt returns null', () => {
-      promptMock.mockReturnValue(null);
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
-
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-
-      expect(createLayerFromToolMock).not.toHaveBeenCalled();
-    });
-
-    it('does not create a layer when prompt values are zero or negative', () => {
-      promptMock.mockReturnValueOnce('0').mockReturnValueOnce('100');
-
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
-
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-
-      expect(createLayerFromToolMock).not.toHaveBeenCalled();
-    });
-
-    it('does not create a layer when prompt values are non-numeric', () => {
-      promptMock.mockReturnValueOnce('abc').mockReturnValueOnce('100');
-
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
-
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-
-      expect(createLayerFromToolMock).not.toHaveBeenCalled();
     });
 
     it('cancels a pending animation frame on pointer up', () => {
@@ -1569,8 +1522,7 @@ describe('ShapeToolArea', () => {
 
     it('releases the claim before the commit path, so a release that commits nothing still frees the keyboard', () => {
       // The release is the first statement inside the `isPointerUpValid` branch, which is what covers
-      // the prompt early-return below: a click the user dismisses must not leave the keyboard dead.
-      promptMock.mockReturnValue(null);
+      // the early return below: a bare click, which commits nothing, must not leave the keyboard dead.
       const { toolArea } = renderToolArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });

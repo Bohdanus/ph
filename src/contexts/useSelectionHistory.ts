@@ -141,11 +141,17 @@ export function appendSelectionClear({
       currentSelections: previousSelectionState,
     });
     dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
-  } catch {
+  } catch (error) {
     // The plan never published, so nothing was appended and nothing was
     // cleared. Re-dispatch the same edit with no durable plan rather than
     // letting a shadow-projection failure reject a valid deselect; the store
     // rebuilds durable state from the legacy timeline instead.
+    //
+    // Reported with the error VALUE because HANDOFF.md §98 makes the console the
+    // app's only error channel, so a recovery that is silent here is a lost edit
+    // the user can never learn about. One line per deselect, which is one user
+    // intent, so it cannot scrub.
+    console.error(error);
     dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item, id) } });
   }
 }
@@ -297,11 +303,17 @@ export const useSelectionHistory = () => {
           currentSelections: previousSelectionState,
         });
         dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
-      } catch {
+      } catch (error) {
         // The plan never published, so nothing was appended and the gesture's
         // selection did not land. Re-dispatch the same edit with no durable plan
         // rather than letting a shadow-projection failure reject a valid
         // selection; the store rebuilds durable state from the legacy timeline.
+        //
+        // Reported with the error VALUE, for the reason HANDOFF.md §98 gives: the
+        // console is the app's only error channel, and the selection the user
+        // just drew is precisely what they would otherwise never learn is not
+        // durable. One line per commit, and a commit is one user intent.
+        console.error(error);
         dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item, id) } });
       }
     },

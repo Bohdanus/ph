@@ -499,12 +499,19 @@ export const useLayers = () => {
         currentFrame: documentFrame,
       });
       dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
-    } catch {
+    } catch (error) {
       // The plan is a projection, so a failure in it must not reject a valid
       // removal. Re-dispatch the same edit with no durable plan, exactly as the
       // selection writers do; the store rebuilds durable state from the legacy
       // timeline instead. Nothing has been appended and no layer has left the
       // record yet, so this is the whole edit rather than a repair of it.
+      //
+      // The recovery is silent by design, and that is the one thing HANDOFF.md §98
+      // does not permit: the console is the whole error channel, so the failure is
+      // reported with the error VALUE, matching `canvasFilterRefusal`'s handling at
+      // :356 and keeping the stack. One line per removal attempt, and a removal is
+      // one user intent, so this cannot scrub.
+      console.error(error);
       dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item) } });
     }
 

@@ -24,7 +24,6 @@ function Consumer() {
 describe('FileProvider PSD integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -211,7 +210,6 @@ describe('FileProvider PSD integration', () => {
     });
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
     expect(loadDocumentFile).not.toHaveBeenCalled();
-    expect(window.alert).not.toHaveBeenCalled();
     expect(console.error).not.toHaveBeenCalled();
   });
 });
@@ -766,7 +764,6 @@ describe('FileProvider save dialog after a failed export', () => {
 describe('FileProvider openLoadImageDialog edge cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -851,7 +848,6 @@ describe('FileProvider openLoadImageDialog edge cases', () => {
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
     expect(loadDocumentFile).not.toHaveBeenCalled();
-    expect(window.alert).not.toHaveBeenCalled();
     expect(console.error).not.toHaveBeenCalled();
   });
 

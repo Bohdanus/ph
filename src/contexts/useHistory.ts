@@ -128,6 +128,17 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      // Reported HERE rather than inside `replayHistory`, which collects instead
+      // of logging (see `ReplayDiagnostic`): replay runs on every undo, redo and
+      // history-panel click, so a per-item log inside that loop would re-emit the
+      // same refusal on every navigation. One line per refused entry per replay,
+      // naming the code and passing the error VALUE so the stack survives —
+      // matching the throw report below. HANDOFF.md §98 is why this exists at all:
+      // skipping a malformed entry is correct, and doing it silently is a user
+      // edit that vanished unnoticed.
+      for (const diagnostic of replay.diagnostics) {
+        console.error(`History replay skipped an entry (${diagnostic.code})`, diagnostic.error);
+      }
     } catch (error) {
       const item = _history[targetIndex];
       const reason = error instanceof Error ? error.message : String(error);

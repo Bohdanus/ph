@@ -2339,6 +2339,39 @@ in a browser, so nothing there could produce a message for it to catch.)
 `src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
 `src/util/selection.ts:430-442`.
 
+**Silent catches this decision does not cover, which are load-bearing rather than residue.** The
+decision says a swallow is acceptable _provided the console reports it_, so a `catch` that reports
+nothing is only acceptable where the refusal is already reported, unreachable, or impossible. These
+four are not, and none may be given a `console.error` — each needs the stated alternative:
+
+- `src/contexts/history-adapter.ts:800` and `:880`, `src/contexts/StoreContext.tsx:683` collect a
+  `MigrationDiagnostic` and return it, and `DevStatusStrip` renders it — but that component is
+  `import.meta.env.DEV`-gated (`src/components/DevStatusStrip/DevStatusStrip.tsx:65`), so in a
+  production bundle these conversions are silent. They cannot simply be logged either:
+  `buildDurableDocument` runs on **every** history append (`StoreContext.tsx:549,921,978,1027,1070`),
+  so logging per diagnostic is a scrub. **Fix:** emit one aggregated report per conversion, the way
+  `useHistory.ts` does for replay diagnostics, and decide whether the strip's dev-only gate should
+  stay — a diagnostic channel that vanishes in production is not the channel §98 names.
+- `src/contexts/history-replay.ts` — the trapezoid arm's `catch { continue; }` around
+  `isTrapezoidOnlyTransform` is **unreachable**: that function
+  (`src/contexts/affine-transform.ts:216-227`) only compares plain properties against `??` defaults
+  and calls `Number.isFinite`, none of which throws, and the caller has already excluded a null
+  `toolArgs`. A `console.error` there would be dead code. **Fix:** delete the try/catch, so the
+  straight-line call is what the code says.
+- `src/contexts/history-replay.ts` — the canvas-filter arm's refusal is unreachable in production and
+  already reported where it is reachable: `useLayer.ts:356-359` refuses and logs **before** any
+  `TOOL_ACTION` history item exists, history is in-memory only, and `overrideCanvasFilterSupport` has
+  no non-test caller. It is now collected as a `ReplayDiagnostic` rather than logged, which is
+  correct: a per-item log would re-emit on every undo. No further change.
+- `src/contexts/replay-coordinator.ts` and `src/util/clipboard.ts:45` carry silent catches in **dead
+  code** — `new ReplayCoordinator` appears only in its two test files, and `copyRectToClipboard` has
+  no production caller. `replay-coordinator.ts` also RETURNS its error (`{ state: 'failed', error }`),
+  so logging inside it would double-report once a caller exists. **Fix:** delete both, or wire
+  `ReplayCoordinator` up and decide what a caller does with the error it is handed.
+
+**Files.** `src/contexts/history-adapter.ts:800,880`, `src/contexts/StoreContext.tsx:683`,
+`src/contexts/history-replay.ts`, `src/contexts/replay-coordinator.ts`, `src/util/clipboard.ts:45`.
+
 ## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
 
 **Problem.** The bedrock-frame assignment in `replayHistory` is now wrapped in `if (index === 0)`
