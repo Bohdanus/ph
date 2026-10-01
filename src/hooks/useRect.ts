@@ -517,19 +517,42 @@ export function useRect({
     drawMask();
   };
 
+  // The return is GROUPED, and the grouping is the point.
+  //
+  // It used to be one flat object that three components spread straight onto a
+  // `<div>`: `<div {...pointerEvents}>`. That put nine members of this hook's
+  // internal API on a DOM node, and React logged an error for each of them on
+  // every render of the Crop, Rectangular Selection and Text tools:
+  //
+  //   "Invalid value for prop `redraw` on <div> tag"        (a function)
+  //   "React does not recognize the `clearSelection` prop"  ... and the same for
+  //   `dimensionsRef`, `getLocalCoords`, `isMouseDown`, `isPointerDownValid`,
+  //   `isPointerMoveValid`, `isPointerUpValid` and `pointerIdRef`.
+  //
+  // No test could see it: `e2e/` had no `console` listener. It was found by a
+  // headless probe (scripts/probe-console.mjs) and is now pinned by the shared
+  // `ConsolePolice` fixture.
+  //
+  // `pointerHandlers` is the only group any caller may spread onto an element,
+  // and it holds only the three DOM handlers. The other two are named so that
+  // spreading the hook's result is a type error rather than nine console errors.
   return {
-    ...pointerPositionData,
-    onPointerDown: handlePointerDown,
-    onPointerMove: handlePointerMove,
-    onPointerUp: handlePointerUp,
-    redraw: () => drawMask(),
-    clearSelection: () => {
-      startRectRef.current = null;
-      rectUnsortedRef.current = null;
-      currentEdgeRef.current = null;
-      customAspectRatioRef.current = null;
-      Object.assign(freshDragModifiersRef.current, NO_MODIFIERS);
-      drawMask();
+    pointerHandlers: {
+      onPointerDown: handlePointerDown,
+      onPointerMove: handlePointerMove,
+      onPointerUp: handlePointerUp,
     },
+    rectHandles: {
+      redraw: () => drawMask(),
+      clearSelection: () => {
+        startRectRef.current = null;
+        rectUnsortedRef.current = null;
+        currentEdgeRef.current = null;
+        customAspectRatioRef.current = null;
+        Object.assign(freshDragModifiersRef.current, NO_MODIFIERS);
+        drawMask();
+      },
+    },
+    pointerState: { ...pointerPositionData },
   };
 }

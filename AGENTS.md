@@ -38,6 +38,7 @@ task({
 - **NEVER TWO SUBAGENTS ON THE SAME FILE.** Split by concern, not by convenience.
 - **Self-contained briefs.** A subagent has a fresh context: give it the goal, your constraints, whether it may edit code, and exactly what its final message must contain. "Return file:line for every match" beats "investigate the caching layer".
 - **Ask for evidence.** A claim without `file:line` or command output is not verified. Have subagents report candidate results _and_ how they got them, then check the load-bearing ones yourself.
+- **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.** Its bash layer denies every invocation, so an explore agent asked to run `npm run test`, `npx playwright test --list` or `git log` reports a permission error instead of a result. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
 
@@ -58,6 +59,18 @@ The e2e suite is headless by default and must stay that way.
 
 `kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. If something only reproduces visually, that is the operator's call; ask them to run `npm run test:e2e:headed` themselves.
 
+### Looking at a live page is allowed, and does not need a window
+
+A visible browser is not how you look at this app. `npm run probe:console` loads a page
+headlessly and reports every console error, page error and failed request, deduplicated with
+counts — which is how the nine invalid props on a `<div>` in `useRect` were found, on a suite
+of 339 tests that could not see them. `--url`, `--viewport`, `--dsf` and `--allow` are its only
+options; `headless` is hardcoded in the script and is not read from the environment.
+
+Do not add a browser MCP server to get this. `permission.bash` globs match shell commands and
+`global-setup.ts` only runs inside a Playwright process, so an `mcp_*_navigate_page` call is
+neither and would reopen the window these two layers exist to close.
+
 ## Commands
 
 ```bash
@@ -67,6 +80,7 @@ npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
+npm run probe:console   # playwright, HEADLESS - one page load, reports console + page errors
 ```
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
@@ -88,6 +102,8 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds one `auto` fixture, `ConsolePolice`, which fails a test on any unaccepted console error or page error. It is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates
 
@@ -98,7 +114,7 @@ Two husky hooks, both delegating to a script in `package.json`, so the gated seq
 | Command               | Runs from           | Contents                                                       |
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
-| `npm run gate:verify` | —                   | `tsc` -> `build` -> `test:e2e:unit`                            |
+| `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
 | `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
 | `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
 
@@ -128,7 +144,7 @@ The commit hook is two gates because they answer different questions. `gate:veri
 
 ## Known failures and how to read one
 
-On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by declaration. Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
+On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by declaration (`e2e/sidebar-flyout.spec.ts` right-click on single-tool groups, `e2e/viewport-drawing.spec.ts` line-under-cursor after resize, `e2e/export/photopea.spec.ts` the Photopea round trip). Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
 
 - The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
 - A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `expected-fail` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.

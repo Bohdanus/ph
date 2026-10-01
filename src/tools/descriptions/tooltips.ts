@@ -192,17 +192,17 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   transform: {
     summary:
-      "Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, warps or tilts a layer in one continuous drag on its bounding box.",
+      "Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, adds perspective or warps a layer in one continuous operation.",
     implementation: 'partial',
   },
   levels: {
     summary:
-      "Photoshop's Levels remaps an image's tonal range through a black point, a gamma midtone and a white point, per channel, read against a histogram.",
+      "Photoshop's Levels remaps an image's tonal range through a histogram, a gamma pivot and per-channel black, white and output points.",
     implementation: 'partial',
   },
   color: {
     summary:
-      "Photoshop's Black and White converts a color image to monochrome with six independent hue-sextant sliders, optionally tinted with a tone color.",
+      "Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.",
     implementation: 'partial',
   },
   eyedropper: {
