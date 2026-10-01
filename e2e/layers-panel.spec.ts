@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from './fixtures/extended-test';
 import {
   type BoundingBox,
   drawLine,

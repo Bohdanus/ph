@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/extended-test';
 import { captureCanvasScreenshot } from './cdp-helpers';
 import { loadImageData, screenshotBoundsToCss, type ImageDataResult } from './canvas-helpers';
 

@@ -3119,10 +3119,11 @@ value as a second argument instead of stringifying it, so a non-`Error` rejectio
 its reason rather than as `[object Object]`.
 
 **What is not covered.** Each report is pinned by a unit test asserting the exact `console.error`
-call, including the non-`Error` cases. There is no e2e coverage: no Playwright spec drives a failed
-open, save, export or copy, and none asserts on `console.error` or `pageerror`. That follows from the
-decision rather than overlooking it, but it does mean the e2e suite cannot distinguish a logged
-failure from a silent one.
+call, including the non-`Error` cases. No Playwright spec drives a failed open, save, export or
+copy, so those four paths have no browser-level coverage. (Console and page errors are no longer
+unasserted in general: `e2e/helpers/console-police.ts` fails every spec on an unaccepted console
+error or page error. What remains true here is narrower — those four paths are never _reached_
+in a browser, so nothing there could produce a message for it to catch.)
 
 **Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
 `src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
@@ -4631,3 +4632,56 @@ parses `curated.mjs` and would catch a stale key.
 **Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
 `docs/README.md` ("Not maintained here"), `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
 `docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`
+---
+
+## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
+
+`index.html:18` and `index.html:35` load GTM container `GTM-WBWSB9XS` and `G-7F5V72YQ4K` from
+`googletagmanager.com`. Nothing in `e2e/` stubs, blocks or asserts on it.
+
+Three consequences, in increasing order of how much they matter:
+
+1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` records 1-8 aborted
+   `region1.google-analytics.com/g/collect` requests per test. It reports them and does not fail
+   on them, because a network call no test controls is not a defect in the app.
+2. **Every CI run contacts a third party.** A build gate that depends on Google's reachability
+   to stay green is a build gate with an extra failure mode it does not own.
+3. **Local development leaks to a production analytics property.** A developer's stroke, tool
+   switch and undo are reported to `G-7F5V72YQ4K` with no opt-in.
+
+Whether analytics belongs in a local editor at all is an operator decision and is not made here.
+
+**Fix.** Decide the policy first — absent, or opt-in behind an env flag that `e2e/` sets to
+nothing. Then either drop the two script tags from `index.html` or make them conditional on that
+flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googletagmanager.com`
+to `abort()` so the suite stops depending on them. The third point is the one worth resolving
+regardless of which policy is chosen.
+
+**Files.** `index.html:18,35`, `e2e/global-setup.ts`, `e2e/helpers/console-police.ts` (the
+report line that currently names them).
+
+---
+
+## 141. Two axe results are `incomplete` and therefore unasserted — one is a real role error
+
+`e2e/accessibility.spec.ts` attaches axe's `incomplete` array to the Playwright report and logs
+it, but deliberately does not assert on it: axe returns `incomplete` when it cannot decide, and
+failing on that would be a false positive. Two results recur on every run of the app-shell scan:
+
+- `aria-allowed-role` ×1 — a `role` on an element whose permitted roles exclude it. This is the
+  one to chase: `aria-allowed-role` goes incomplete when the element's accessible role is
+  ambiguous, which usually means the `role` and the element disagree.
+- `color-contrast` ×2 — axe declines to judge contrast where it cannot establish the text colour,
+  typically text over a background image or a gradient. Both land on the `SidebarRight`
+  `PanelGroup` header, whose background is set by class rather than inline.
+
+Neither is a finding on its own. Both are places where the automated checker has explicitly
+stopped, which is the category a reviewer should read by hand rather than a category a green run
+clears.
+
+**Fix.** Run the app-shell scan in both themes at a viewport where both regions are visible and
+read the two elements by hand. `role` on a non-matching element is a genuine a11y bug worth
+fixing; contrast over a gradient is usually a design decision, and belongs in `docs/OVERRIDES.md`
+rather than in a test if it is deliberate.
+
+**Files.** `e2e/accessibility.spec.ts` (the `incomplete` attachment), `src/components/SidebarRight/PanelGroup.tsx:42`.
