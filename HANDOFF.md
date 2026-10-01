@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 119, 125, 127, 131, 141 — deleted
+### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3116,6 +3116,36 @@ was never merged.
 
 **Files.** `src/tools/toolProcessors.ts:96`, `:259-262`, `:267-275`,
 `src/tools/brush.ts:143-154`, `AGENTS.md` §Architecture status, `docs/PHOTOSHOP-UX.md:32-37`
+
+## 119. The Draw tile and the Brush tile both advertise `B`, and no keypress selects the Draw tool
+
+**Problem.** Two tiles print the same key. `toolbar-mapping.ts:73` declares the Brush with
+`shortcut: 'B'` and `toolbar-mapping.ts:97` declares the Draw tile with `shortcut: 'B'`, so the rail
+renders `B` on both.
+
+The key answers to the Brush. `AppKeyboardShortcuts.tsx:348-360` registers `b` and `shift+b` against
+`selectBrushTool` and registers nothing for `draw`, so the Draw tool cannot be reached by the key its
+own tile prints. That is worse than a tile printing no key: the reader has been told a shortcut
+exists, and pressing it goes somewhere else.
+
+**Nothing asserts this, which is why it survived.** `toolbar-mapping.test.ts` checks shortcut shape
+inside the figure flyout only — `:82` ("only declares U as the shape shortcut") and `:107`. No test
+compares shortcuts across the rail, so a second declaration of a live key is invisible to the suite
+however it arrives.
+
+**Not decided here: which tile keeps `B`.** That is a question about what Photoshop does, and
+`docs/DOCUMENTATION.md`'s ladder makes Adobe's documentation the authority — this entry does not
+answer it and no change may be made on this paragraph alone. What is decided is the invariant: a
+tile may only print a key the handler answers, and no two tiles may print the same one. Whichever
+way the first question resolves, both halves of that have to hold afterwards.
+
+**Fix.** Resolve the Adobe question, then make the surviving declaration match the handler rather
+than the other way round, and add a rail-wide uniqueness assertion over `toolbarMap` so the second
+declaration of a key cannot land again. The assertion is the part that outlives the decision: it
+fails on any duplicate, whichever tile the duplicate is on.
+
+**Files.** `toolbar-mapping.ts:73`, `:97`, `src/components/Common/AppKeyboardShortcuts.tsx:348-360`,
+`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts`
 
 ## 120. The Move tool has nine documented missing controls and no entry tracking them as work
 
