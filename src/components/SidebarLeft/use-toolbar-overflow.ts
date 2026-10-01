@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { createToolbarFitStore, planFor } from './toolbar-fit-store.ts';
 import type { ToolbarOverflowPlan, ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -31,6 +31,19 @@ export type ToolbarOverflow = {
  * when the MEASUREMENT changes and not on a per-frame basis while a window is being dragged:
  * `publish` refuses to bump the version for a re-measure that reads the same, and a
  * drag that does not change the slot height does not change the fit.
+ *
+ * **THAT LAST CLAIM IS TOO WEAK, and this is where it is fixed.** A window drag that DOES
+ * change the slot height publishes on every frame, because every frame's measurement
+ * differs from the last by a pixel — while the plan, which is a step function of the height,
+ * is identical for fifty consecutive frames. The store is therefore handed the row model
+ * (`setSlots`) and judges each measurement by the PLAN it produces rather than by itself, so
+ * the count is recalculated on every observation and the rail re-renders only on the
+ * observations that change what it draws.
+ *
+ * A layout effect, not a render-phase call: the store publishes synchronously, and a publish
+ * during render is a render-phase update. Ref callbacks attach the elements in the same
+ * commit and one step earlier, which is why the store falls back to comparing raw
+ * measurements until this has run once.
  */
 export const useToolbarOverflow = (slots: readonly ToolbarSlot[]): ToolbarOverflow => {
   const [store] = useState(createToolbarFitStore);
@@ -47,6 +60,10 @@ export const useToolbarOverflow = (slots: readonly ToolbarSlot[]): ToolbarOverfl
     },
     [store]
   );
+
+  useLayoutEffect(() => {
+    store.setSlots(slots);
+  }, [store, slots]);
 
   const version = useSyncExternalStore(store.subscribe, store.getSnapshot, () => 0);
   // `metricsFor` hands back the SAME object for a given version, which is what makes this

@@ -12,16 +12,35 @@
  */
 
 /**
- * The share of the rail's tool slot the tiles are allowed to occupy.
+ * The share of the rail's tool slot the tiles may occupy.
  *
- * Not a tolerance: the point of collapsing is that the rail must stop demanding
- * vertical room, and a rail that filled 100% of its slot would be one scrollbar
- * away from the defect this exists to prevent. The remaining fifth is headroom, so
- * the rule does not flip on the last pixel of a window drag — the same shape as
- * Photoshop's own answer to a short window, which is a two-column toolbar that
- * leaves the panel shorter than the screen rather than one that exactly fills it.
+ * **One.** It was `0.8`, on the stated grounds that "the remaining fifth is headroom, so
+ * the rule does not flip on the last pixel of a window drag", and that reasoning was wrong
+ * in a way worth recording because the wrongness is invisible in the number and obvious in
+ * the screen.
+ *
+ * The number of tiles the rail shows is a STEP FUNCTION of the slot's height either way,
+ * because rows are accepted WHOLE — never half a row, never a fraction of one. With a
+ * budget of `0.8 × A` the count steps where `0.8 × A` crosses a row, i.e. at
+ * `A = rowHeight / 0.8`; with a budget of `A` it steps at `A = rowHeight`. The steps are
+ * 50px wide in `A` in both cases, so the property the old comment claimed — the count
+ * cannot flip on the last pixel of a drag — held at 0.8 and holds at 1. The fraction moved
+ * the steps; it never widened them. What it did was throw away a fifth of the rail: on a
+ * 448px slot an 80% budget admits four tool rows where six fit, and the leftover is not
+ * subtle, it is a hand's width of empty panel between the deepest tile and the colour
+ * swatches, with tools the user is looking for sitting one row further down inside the
+ * three-dots tile.
+ *
+ * **THE HEADROOM THAT IS REAL IS THE FLOOR, not the fraction.** {@link planToolbarOverflow}
+ * floors the budget, so a slot is never shorter than the pixels it was measured at, and a
+ * fractional device pixel cannot push the grid one row past a boundary the arithmetic had
+ * accepted. That is a whole pixel of slack at most, against 50px of it under the old
+ * fraction.
+ *
+ * The parameter is still here because it is the policy seam, and a caller that wants a
+ * rail to leave room below its tiles can ask for it. Nothing in this repository does.
  */
-export const TOOLBAR_HEIGHT_BUDGET = 0.8;
+export const TOOLBAR_HEIGHT_BUDGET = 1;
 
 /**
  * One ROW of the tool grid, which is not the same thing as one tool group.
@@ -117,7 +136,13 @@ export const planToolbarOverflow = (
   if (metrics.tileHeight <= 0 || metrics.availableHeight <= 0) return everythingVisible(0, 0, slots.length);
 
   const { tileHeight, rowGap, sectionBreakHeight, availableHeight } = metrics;
-  const budget = availableHeight * budgetFraction;
+  // FLOORED, and that is the whole of the safety margin. `availableHeight` is a measured
+  // `getBoundingClientRect` height, so it can be fractional, and a budget of exactly that
+  // fraction compares a sum of whole rows against a number the grid will then lay out
+  // against the same fraction — which is sound arithmetic and one device pixel away from a
+  // scrollbar. Flooring spends at most one pixel and cannot move a row boundary that is not
+  // already a pixel away, which is why it replaces the fifth the fraction used to spend.
+  const budget = Math.floor(availableHeight * budgetFraction);
 
   /** The space that goes ABOVE row `index`, which is what makes the total more than rows x height. */
   const gapAbove = (index: number): number => {

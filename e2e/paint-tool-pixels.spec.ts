@@ -20,13 +20,16 @@ import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout }
  * flyout can *select* them and stopped there, and Color Replacement was not named in any
  * spec at all.
  *
- * All three live in one flyout group. `toolbar-mapping.ts:71-73` lists them as
+ * All three live in one flyout group. `toolbar-mapping.ts:73-75` lists them as
  * `[Brush Tool / brush, Pencil Tool / pencil, Color Replacement Tool / color-replacement]`,
- * so the group's primary is `brush` and `openToolFlyout(page, 'brush')` is the long-press
- * that opens it. The per-item test ids come from the labels
- * `Brush Tool -> brush-tool`, `Pencil Tool -> pencil-tool`,
+ * so the group's primary is `brush`, and `openToolFlyout(page, 'brush')` is the address this
+ * file gives whether or not that group has a tile of its own. At 1280x720 it does not: the Brush
+ * group is the first the rail folds, so the helper takes its collapse branch, right-clicks the
+ * three-dots tile, and hands back a menu that carries Brush — which is the menu
+ * `selectFromFlyout` then picks the tool out of, unchanged. The per-item test ids come from the
+ * labels `Brush Tool -> brush-tool`, `Pencil Tool -> pencil-tool`,
  * `Color Replacement Tool -> color-replacement-tool`
- * (`SidebarLeft.tsx:670` mints `tool-flyout-item-${name}-${slug}`).
+ * (`SidebarLeft.tsx:965` mints `tool-flyout-item-${name}-${slug}`).
  *
  * `Main.tsx:55` routes all three to `interactionMode === 'draw'`, so the same
  * `DrawToolArea` collects the gesture for each of them, and `toolProcessors.ts:165-193`
@@ -175,11 +178,12 @@ async function measureStroke(screenshot: Buffer): Promise<Stroke | null> {
  * workspace canvas box to draw into.
  *
  * The proof is the SELECTION state on the tile that REPRESENTS the tool, not on a tile of its own
- * and not on the tile's text. At 1280x720 a one-column rail shows five tiles and everything from the
- * Crop down — Brush, Pencil, Color Replacement, Eraser, Magic Eraser and Paint Bucket among them
- * — lives in the three-dots tile, so `tool-button-brush` reported zero elements and this helper
- * threw before the gesture. `expectToolSelected` is the assertion for a question about a TOOL: it
- * answers at every window, reading `aria-pressed` off the tool's own tile when the rail still shows
+ * and not on the tile's text. At 1280x720 a one-column rail shows seven tiles, ending with the
+ * Colors group, and the Brush group is the first one folded — Brush, Pencil, Color Replacement,
+ * Eraser, Magic Eraser and Paint Bucket among them — so `tool-button-brush` reports zero elements
+ * and this helper throws before the gesture. `expectToolSelected` is the assertion for a
+ * question about a TOOL: it answers at every window, reading `aria-pressed` off the tool's own
+ * tile when the rail still shows
  * one and the tile's lit class off the three-dots tile when it does not. Its label is the tile's own
  * ("More Tools"), which is why the old `verifyPrimaryTool(page, name, label)` — a `toContainText` on
  * that tile — could never pass once the group collapsed, and reading the selection state replaces it
@@ -256,12 +260,19 @@ for (const tool of PAINT_TOOLS) {
 test('selecting a paint tool releases the previously primary tool button', async ({ page }) => {
   // This one test needs the two tools on DIFFERENT tiles, so it asks for a window tall enough
   // that nothing collapses. That is a requirement of the claim, not a convenience: the collapse
-  // folds a suffix of the rail, and Draw (the seventeenth group) and Brush (the fifth) land in the
-  // same three-dots tile at 1280x720 — one element, whose `aria-pressed` is true whenever ANY
-  // collapsed tool is current. The assertion "Draw is released when Brush is selected" would then
-  // be reading one tile against itself and could never fail. `toolbar-overflow.spec.ts` derives
-  // the same number from the rail's own geometry (about 846px of tiles against an 80% budget,
-  // which needs roughly 1250px of window).
+  // folds a suffix of the rail, and at 1280x720 the seven tiles on screen stop at the Colors
+  // group, so Brush (the eighth group of sixteen) and Draw (the thirteenth) both land in the same
+  // three-dots tile — one element, whose `aria-pressed` is true whenever ANY collapsed tool is
+  // current. The assertion "Draw is released when Brush is selected" would then be reading one
+  // tile against itself and could never fail.
+  //
+  // 1400 is deliberately well past the boundary rather than just over it. The whole sixteen-row
+  // grid is 822px of content — sixteen 44px tiles, fifteen 6px row gaps, four 7px section
+  // separators — and the fit budgets the WHOLE slot now, where it used to take four fifths of it,
+  // so the first window height at which nothing collapses is 1094: measured, that is where the
+  // slot itself is 822px, the exact height the grid needs, one pixel short of which the fit still
+  // folds the tail. A window a few pixels above that would turn this test into a measurement of
+  // the boundary rather than of the claim it is making.
   await page.setViewportSize({ width: 1280, height: 1400 });
   await page.goto('/');
   await expect(getWorkspaceCanvas(page)).toBeVisible();
@@ -275,9 +286,9 @@ test('selecting a paint tool releases the previously primary tool button', async
   await openToolFlyout(page, 'brush');
   await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
 
-  // `aria-pressed` is `group.some(tool => tool.name === toolName)` (SidebarLeft.tsx:475),
+  // `aria-pressed` is `group.some(tool => tool.name === toolName)` (SidebarLeft.tsx:653),
   // so it moves between groups rather than following one tile: Draw is its own group
-  // (toolbar-mapping.ts:96) and Brush a different one, so selecting Brush has to clear Draw.
+  // (toolbar-mapping.ts:97) and Brush a different one, so selecting Brush has to clear Draw.
   await expect(drawButton, 'Draw must not stay pressed after a different tool group takes over').toHaveAttribute(
     'aria-pressed',
     'false'

@@ -498,7 +498,8 @@ export async function resolveToolTile(page: Page, toolName: string): Promise<Loc
  * IT IS GROUP-LEVEL FOR A COLLAPSED TOOL, and a caller that needs to name the tool cannot rely on
  * it alone. The class is `group.some(...)` over the whole collapsed set (SidebarLeft.tsx:636), so
  * `expectToolSelected(page, 'eraser')` is answered by "is SOME collapsed tool selected". At 1280x720
- * that is true from page load, because the default tool (`brush`) is itself collapsed. The
+ * that is true from page load, because the default tool (`draw`, the thirteenth of the sixteen
+ * groups) is itself folded at that height. The
  * `aria-pressed` this replaced was the same predicate on the same tile, so this is not a weakening —
  * but a test that must prove a SPECIFIC tool is up needs a second, per-tool assertion: that tool's
  * own options-bar control (`keyboard-shortcuts.spec.ts:173`) or an effect only that tool produces.

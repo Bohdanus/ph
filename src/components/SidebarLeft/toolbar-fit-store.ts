@@ -22,10 +22,34 @@ import {
  * function of the slot and of nothing else.** Not of the window, not of the rail's own box,
  * not of the grid's row in the shell. A panel the user has dragged off the left edge and
  * resized is an element with a height, and it would be measured by this same code.
+ *
+ * "Nothing else" is load-bearing and it was FALSE once. `sectionBreakHeight` used to be read
+ * out of whatever the previous render happened to leave on screen, so a render that had
+ * collapsed every section but one measured a separator of `0` and committed to a row count
+ * using a separator the DOM then charged it — a 7px overflow at one band of window heights
+ * (`HANDOFF.md` §97, since fixed by {@link rememberSectionBreak}). The plan is a function of
+ * the slot and of a CSS constant that is measured once and remembered, and the store below
+ * is where that remembering happens.
  */
 export type ToolbarFitStore = {
   /** Handed the slot and the tools box by their ref callbacks. `null` detaches. */
   attach(key: 'slot' | 'tools', element: HTMLElement | null): void;
+  /**
+   * Handed the row model, so a measurement can be judged by the PLAN it produces.
+   *
+   * This is the throttle. A `ResizeObserver` reports every frame of a window drag, and the
+   * rail's tile count is a step function of the height — so on a 900-to-1400px drag the
+   * height changes about five hundred times and the count changes about twenty. Comparing
+   * raw measurements published all five hundred, each one re-rendering sixteen tiles, their
+   * flyout state, their tooltips and their refs, to arrive at the same plan every time.
+   * Comparing plans publishes twenty. Nothing is skipped and nothing is stale: the
+   * measurement still runs on every observation, and the plan that comes out of it is still
+   * compared against the one on screen.
+   *
+   * Set from an effect rather than during render, because the store publishes synchronously
+   * and a publish during render is a render-phase update.
+   */
+  setSlots(slots: readonly ToolbarSlot[]): void;
   subscribe(onStoreChange: () => void): () => void;
   getSnapshot(): number;
   metricsFor(version: number): ToolbarRowMetrics;
@@ -37,6 +61,9 @@ const UNMEASURED: ToolbarRowMetrics = {
   rowGap: 0,
   sectionBreakHeight: 0,
 };
+
+/** The row model before the component has handed one over. Distinct from an empty rail. */
+const NO_SLOTS: readonly ToolbarSlot[] = [];
 
 /**
  * A computed length, or 0.
@@ -59,11 +86,23 @@ const length = (value: string): number => {
  * height, the grid's row gap and the section separator are CSS values a design change can
  * move at any time, and a planner fed a hard-coded `44` and a `6` would quietly disagree
  * with the screen the moment the class strings changed. So the planner is handed what the
- * DOM says, and the only constant left in the pipeline is the 80% budget, which is a policy
- * decision rather than a layout fact.
+ * DOM says, and the only constant left in the pipeline is the budget fraction, which is a
+ * policy decision rather than a layout fact.
+ *
+ * `rememberedSectionBreakHeight` is what it falls back on, and why it needs a fallback is
+ * the whole of the `HANDOFF.md` §97 defect. The separator is only visible in the DOM while
+ * some section after the first still has a tile in it, so a layout that has collapsed
+ * sections 1 through 4 cannot measure it — and a fit that then plans with `0` where the CSS
+ * charges `7` accepts a row the grid cannot render, which is the overflow §97 measured. The
+ * fallback is not a fudge: the separator is a property of the class string, not of the
+ * layout, so the last real reading of it stays true across every collapse the rail can make.
  */
-const readRowMetrics = (slot: HTMLElement | null, tools: HTMLElement | null): ToolbarRowMetrics => {
-  if (!slot || !tools) return UNMEASURED;
+const readRowMetrics = (
+  slot: HTMLElement | null,
+  tools: HTMLElement | null,
+  rememberedSectionBreakHeight: number
+): ToolbarRowMetrics => {
+  if (!slot || !tools) return { ...UNMEASURED, sectionBreakHeight: rememberedSectionBreakHeight };
 
   // The slot bounds the TOOLS BOX, and the tools box carries its own padding and a border
   // inside that slot. Charging the fit for the full slot while the grid only gets what is
@@ -82,10 +121,10 @@ const readRowMetrics = (slot: HTMLElement | null, tools: HTMLElement | null): To
   // without anything here knowing. Any rendered tile answers, including the three-dots tile,
   // so the measurement survives a collapse that empties every group.
   const tile = tools.querySelector<HTMLElement>('[data-toolbar-tile]');
-  if (!tile) return { ...UNMEASURED, availableHeight };
+  if (!tile) return { ...UNMEASURED, availableHeight, sectionBreakHeight: rememberedSectionBreakHeight };
 
   const tileHeight = tile.getBoundingClientRect().height;
-  if (tileHeight <= 0) return { ...UNMEASURED, availableHeight };
+  if (tileHeight <= 0) return { ...UNMEASURED, availableHeight, sectionBreakHeight: rememberedSectionBreakHeight };
 
   const lists = Array.from(tools.querySelectorAll<HTMLElement>(':scope > ul'));
   const rowGap = lists.length > 0 ? length(getComputedStyle(lists[0]).rowGap) : 0;
@@ -120,7 +159,17 @@ const readRowMetrics = (slot: HTMLElement | null, tools: HTMLElement | null): To
     }
   }
 
-  return { availableHeight, tileHeight, rowGap, sectionBreakHeight };
+  // A fresh reading wins and a missing one falls back, so this only ever moves from 0 to the
+  // CSS value. A design change that REMOVED the separator would read 0 every time and be
+  // indistinguishable from "not measurable" — which costs the planner 7px of headroom it no
+  // longer needs, the safe direction, and is why the direction of that error matters more
+  // than its size.
+  return {
+    availableHeight,
+    tileHeight,
+    rowGap,
+    sectionBreakHeight: sectionBreakHeight || rememberedSectionBreakHeight,
+  };
 };
 
 const sameMetrics = (a: ToolbarRowMetrics, b: ToolbarRowMetrics): boolean =>
@@ -128,6 +177,19 @@ const sameMetrics = (a: ToolbarRowMetrics, b: ToolbarRowMetrics): boolean =>
   a.tileHeight === b.tileHeight &&
   a.rowGap === b.rowGap &&
   a.sectionBreakHeight === b.sectionBreakHeight;
+
+/**
+ * Whether two plans would RENDER the same rail.
+ *
+ * Only the three fields the render reads, and deliberately not `budget` or `naturalHeight`:
+ * those are diagnostics that move with every pixel of a window drag, and comparing them would
+ * defeat the throttle by publishing every measurement after all.
+ */
+const samePlan = (a: ToolbarOverflowPlan, b: ToolbarOverflowPlan): boolean =>
+  a.showOverflowTile === b.showOverflowTile &&
+  a.fittedThrough === b.fittedThrough &&
+  a.collapsedKeys.length === b.collapsedKeys.length &&
+  a.collapsedKeys.every((key, index) => key === b.collapsedKeys[index]);
 
 export const createToolbarFitStore = (): ToolbarFitStore => {
   const elements: { slot: HTMLElement | null; tools: HTMLElement | null } = { slot: null, tools: null };
@@ -141,6 +203,21 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
   let previousVersion = -1;
   let previous: ToolbarRowMetrics = UNMEASURED;
 
+  // The row model, and whether the component has handed one over yet. It has not on the
+  // first commit: the ref callbacks that attach the elements run before the effect that
+  // supplies the rows, so the first two publishes of a mount are judged on their
+  // measurements alone. That is the right way round — a measurement with no row model cannot
+  // be turned into a plan to compare — and the model is there by the third publish.
+  let slots: readonly ToolbarSlot[] = NO_SLOTS;
+  let hasSlots = false;
+  let publishedPlan: ToolbarOverflowPlan | null = null;
+
+  /**
+   * The separator, remembered across the layouts that cannot measure it. See
+   * {@link readRowMetrics} for why the fallback exists and which way it errs.
+   */
+  let rememberedSectionBreakHeight = 0;
+
   const observe = () => {
     observer?.disconnect();
     observer = null;
@@ -151,13 +228,21 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
   };
 
   function publish() {
-    const next = readRowMetrics(elements.slot, elements.tools);
-    // Nothing is published for a measurement that reads the same. A window drag fires an
-    // observation per frame, and most of those frames do not change the fit.
-    if (sameMetrics(next, published)) return;
+    const next = readRowMetrics(elements.slot, elements.tools, rememberedSectionBreakHeight);
+    if (next.sectionBreakHeight > 0) rememberedSectionBreakHeight = next.sectionBreakHeight;
+    // With no row model yet the measurements are what there is to compare, because there is
+    // no plan to compare them through. That is the mount path, and it has to publish or the
+    // rail would never be fitted at all.
+    const nextPlan = hasSlots ? planToolbarOverflow(slots, next) : null;
+    const unchanged =
+      nextPlan === null ? sameMetrics(next, published) : publishedPlan !== null && samePlan(nextPlan, publishedPlan);
+    // Nothing is published for a measurement that changes nothing the rail draws. A window
+    // drag fires an observation per frame, and most of those frames do not change the fit.
+    if (unchanged) return;
     previousVersion = version;
     previous = published;
     published = next;
+    publishedPlan = nextPlan;
     version += 1;
     for (const listener of listeners) listener();
   }
@@ -171,6 +256,18 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
       // overflowing first frame and collapsing on the next one.
       publish();
       observe();
+    },
+    setSlots(nextSlots) {
+      if (hasSlots && nextSlots === slots) return;
+      slots = nextSlots;
+      hasSlots = true;
+      // Published rather than compared here, because the row model changing is itself a
+      // reason the plan can change — crossing `lg` re-keys every row — and the comparison
+      // inside `publish` is what decides whether that is worth a render. Suppressed for an
+      // identical array, which is every render that did not re-derive it: `toolbarSlots` is
+      // memoised on the layout, so a colour change or a flyout opening re-renders the rail
+      // without touching the model.
+      publish();
     },
     subscribe(onStoreChange) {
       listeners.add(onStoreChange);

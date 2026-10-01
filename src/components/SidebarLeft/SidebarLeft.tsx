@@ -31,9 +31,27 @@ const TOOL_BUTTON_ACTIVE_CLASS =
 const TOOL_BUTTON_INACTIVE_CLASS =
   'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
+/**
+ * The one/two-column toggle's glyph, and WHICH WAY IT POINTS.
+ *
+ * It points the way the rail is about to MOVE, not the way it is currently arranged:
+ * a one-column rail grows a second column to the right when this is pressed, so it shows
+ * `»`, and a two-column rail shrinks back to one and shows `«`. That is Photoshop's own
+ * mapping, read off its toolbar screenshots in both states — a one-column Tools panel shows
+ * a right-pointing double chevron at the top of the rail, and the same button shows a
+ * left-pointing one once the toolbar has been expanded to two columns. Adobe's documentation
+ * does not describe the control's direction in words anywhere, so the glyph here rests on
+ * those images; what the documentation does say is only that the double arrows toggle the
+ * layout, which is what the `aria-label` and `title` below carry.
+ *
+ * It was the other way round. `«` in one column says "press me and the rail moves left",
+ * which is the opposite of what happens, and it was the opposite of the dock's own
+ * collapse control too (`SidebarRight`'s `dock-collapse-toggle`), where the chevrons point
+ * inward to collapse and outward to expand.
+ */
 const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   <span aria-hidden="true" className="flex items-center justify-center text-lg leading-none font-black tracking-tight">
-    <span>{singleColumn ? '«' : '»'}</span>
+    <span>{singleColumn ? '»' : '«'}</span>
   </span>
 );
 
@@ -1136,7 +1154,8 @@ const SidebarLeft = () => {
           // `overflow-y-auto`, not `overflow-hidden`, and the difference is the difference
           // between a tile that is somewhere else and a tile that is gone. The fit already
           // keeps the tiles inside the slot — it reserves a row for the three-dots tile and
-          // then fills no more than the 80% budget — so this scrollbar never appears. It is
+          // then fills the budget with whole rows, so what is left over is the fraction of a
+          // row that no tile can use — so this scrollbar never appears. It is
           // here so that IF the arithmetic is ever wrong, the tools it misjudged are still
           // reachable by scrolling rather than clipped out of existence. A rail that could
           // hide a tool is a worse failure than a rail that scrolls.
