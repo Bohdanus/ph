@@ -346,19 +346,43 @@ The app has no such conversion routine; it composes a string and hands it to the
 **What the app does instead.** Grayscale, a sepia tone and a saturation trim, applied as a CSS filter
 chain. It desaturates correctly, and that is the whole of the overlap.
 
-### Dodge, Burn and Smudge build-up while the button is held
+**This entry will be deleted rather than rewritten when the capability lands, and the operator has
+signalled it will.** 2026-10-01: Levels, Colors and the other `Image ▸ Adjustments` commands "will be
+implemented". The requirements are **not written down**, so nothing here is a spec and nobody should
+build against this entry — the "why it is too hard" above describes the CSS-filter mechanism this
+implementation happens to use, which is exactly what a per-hue conversion replaces rather than
+constrains. What survives the rewrite is Adobe's six-sextant behaviour, which is the product
+requirement and is unchanged by anything an agent decides about the mechanism.
 
-**What Photoshop does.** Dodge, Burn and Smudge accumulate for as long as the button is held. The
-result depends on how long the cursor rested in each place, which is the entire point of the tool —
-it is a hand-mixed exposure, not a filter.
+**Not a handoff item.** The gap is real but it is recorded here as a capability decision, and per
+this file's own policy nobody treats its absence as a defect. The rail entries for the two ids are
+`HANDOFF.md` §117's, which is a separate decision.
+
+### Dodge, Burn, Sponge and Smudge build-up while the button is held
+
+**What Photoshop does.** Dodge, Burn, Sponge and Smudge accumulate for as long as the button is
+held. The result depends on how long the cursor rested in each place, which is the entire point of
+the tool — it is a hand-mixed exposure, not a filter. **On the Sponge it is worse than an
+inconvenience**, because Flow is a per-DAB rate there rather than a per-pass one: the CS-era
+documentation calls Flow "the opacity of each spot of colour a tool delivers", and every tutorial
+retouches with a low Flow and repeated passes, so a one-shot commit at Flow 50% is not the tool at
+a setting — it is half the whole effect in one pass.
 
 **What this app does.** One commit per stroke, on pointer-up. The reason is written down where the
-implementation is (`src/tools/dodgeBurn.ts:336-339`):
+implementation is (`src/tools/dodgeBurn.ts:292-296`, and the same paragraph restated at
+`src/tools/sponge.ts:351-356`):
 
 > There is no build-up. Photoshop's dodge and burn accumulate for as long as the button is held, which
 > is a per-frame effect with no single end value; a one-shot commit has to be a pure function of its
 > args instead, which is also what makes the registry's `requiresRaster: true` replay reproduce the
 > commit exactly.
+
+**The Sponge's own cost is a wrong meaning for a labelled control, which is a stronger form of the
+same gap than the other three carry.** Flow means "the strength of one dab" in Photoshop and "the
+entire effect of the stroke" here, and the two coincide only at 100%. A user who sets 20% and paints
+once gets a fifth of what Photoshop gives them at the same number, with nothing on the bar saying
+so. The control is present, named Photoshop's, and does not do what its name says — which is the
+half-version this file's policy refuses.
 
 **Smudge is a different case and must not be folded into this entry's evidence.** The app's Smudge
 _does_ accumulate, along the stroke rather than over dwell time: `smudgeStroke` is a read-modify-write
@@ -377,9 +401,9 @@ converse recorded: `saveLayerCanvas()` promoting cached canvases outside reducer
 reason not to start the single-writer cutover. Changing the commit discipline for dwell tools is a
 history-architecture change with a migration attached, not a processor edit.
 
-**What the app does instead.** One application of the effect at the tool's Exposure value, committed
-on release. Exposure is a per-stroke setting, which is what the bar shows and what the commit can
-honour.
+**What the app does instead.** One application of the effect at the tool's Exposure value — or, on the
+Sponge, at its Flow value — committed on release. Both are per-stroke settings, which is what the bar
+shows and what the commit can honour.
 
 ### Path Type = Path for the shape tools
 
@@ -524,7 +548,7 @@ rule costs a real capability in one case, and building a menu system is a budget
 They are recorded here so they are not re-derived, and so nobody implements them as if they were
 engineering judgements.
 
-### The three adjustment "tools" must leave the rail, and that means building a menu
+### The three adjustment "tools" must leave the rail, and it is a two-list change
 
 `color` ("Colors"), `levels` ("Levels") and `transform` ("Transform") are `Image ▸ Adjustments` and
 `Edit ▸ Transform` commands. Photoshop's Tools panel contains no such entries. Adobe's name for
@@ -549,23 +573,31 @@ The only reader in the repository is
 contain `shape`. Nothing in `src/` imports it, so all three entries still render in the rail, in the
 three-wide flyout at `toolbar-mapping.ts:62-64`.
 
-**They are also live entries in a second surface, and there is no menu to move them to.**
+**They are also live entries in a second surface — and the menu to receive them already exists.**
 `src/components/Menu/Menu.tsx` renders a `DesktopHeader` and a `ToolbarHorizontal` and nothing else
-(`src/components/Menu/Menu.tsx:1-13`), so the app has **no `Image` menu and no `Edit` menu** — the
-destination this decision names does not exist to be routed into. Meanwhile
-`src/components/DesktopHeader/DesktopHeader.tsx:27-32` declares a `TOOL_MENU_ITEMS` array whose
-`:29`, `:31` and `:32` are `color`, `levels` and `transform`, so all three are **Tools-menu entries**
-as well.
+(`src/components/Menu/Menu.tsx:1-13`), so the app has **no `Image` menu**. It **does** have an
+`Edit` menu, and that menu is already an `Image ▸ Adjustments` host: `DesktopHeader.tsx:313-375`
+hard-codes items for `color`, `blur`, `levels`, `transform`, `draw` and `text`
+(`:319`, `:329`, `:339`, `:349`, `:359`, `:369`), each calling the same `handleToolSelection` the
+rail calls (`:121`-`:127`). `DesktopHeader.tsx:27-32` additionally declares a `TOOL_MENU_ITEMS`
+array whose `:29`, `:31` and `:32` are `color`, `levels` and `transform`.
+
+**So the earlier claim here — that extraction "means building a real menu bar first" — was wrong,
+and is corrected here.** No menu has to be built. What is needed is the same three-id change in
+**two** hand-written lists (the rail flyout and `TOOL_MENU_ITEMS`), a relabel of `Edit` to
+`Image ▸ Adjustments`, and a decision about `blur`/`draw`/`text`, which are real Tools-panel tools
+currently reachable from a menu and not from the rail — the inverse of the three being fixed.
 
 **Why this is a decision and not a refactor.** Removing the rail entries does not relocate the
-functionality, it deletes it. Extracting these three means building a real menu bar first, and that is
-a build the operator owns. It is a three-id change across **two** hand-written lists, not a flag flip
-and not a routing change with a destination already in place.
+functionality, it deletes it. Nothing carries `color`, `levels` or `transform` anywhere else, and
+nothing needs to be built for them to leave: it is the same three-id change in the **two**
+hand-written lists named above, which is a routing edit rather than a flag flip — and a routing edit
+with no destination is a deletion, which is why the operator owns it.
 
-**DECIDED — 2026-10-01. The operator: "I decide to remove them."** All three come out of the rail.
-Not relabelled, not moved to a menu, not kept alongside: **removed**, and the rail slot closes with
-no replacement, because Photoshop puts nothing there. `HANDOFF.md` §117 §"The operator has decided:
-delete the three" is the record.
+**DECIDED — 2026-10-01. The operator: "I decide to remove them."** All three come **out of the
+rail**, which is where Photoshop does not have them. The **processors are not deleted** — the
+capability is restructured, not dropped. `HANDOFF.md` §117 §"The operator has decided: delete the
+three" is the record.
 
 This is **not an override** and `docs/OVERRIDES.md` gains no entry. Its own definition
 (`docs/OVERRIDES.md:11-18`) is a decision to _not_ replicate Photoshop's behaviour; removing three ids
@@ -577,11 +609,43 @@ narrower than the whole entry above suggests, and is listed in `HANDOFF.md` §11
   that would otherwise keep contradicting Photoshop after the first is gone;
 - `extraTools` (`toolbar-mapping.ts:164`) starts meaning something, or is deleted as dead;
 - **`levels` is the capability question.** The app's "Levels" is Brightness/Contrast
-  (`src/tools/levels.ts:4`, `:12`), so removing the tile removes the app's only surface for
-  Brightness/Contrast. The operator owns that loss; it is recorded, not argued.
+  (`src/tools/levels.ts:4`, `functions.ts:66-70`), so moving the tile unchanged puts
+  `Brightness/Contrast` under a `Levels` label in the menu — a new falsehood in a new place. The
+  honest item is `Brightness/Contrast`; real Levels is **unbuilt** (see below).
 
-The processors in `src/tools/colors.ts`, `src/tools/levels.ts` and `src/tools/transform.ts` are
-untouched by the decision and are not dead — what changes is which surface reaches them, if any.
+**The processors in `src/tools/colors.ts` and `src/tools/levels.ts` are DEAD CODE, and that changes
+what a restructure moves.** Both are `commit: 'layer-operation'`, and `useLayer.ts:576` returns
+before the `imageProcessor` call at `useLayer.ts:603`. What actually paints is a CSS string:
+`layer-renderer.ts:15-18` builds it, `ctx.filter = getLayerFilter(layer.operations)` at
+`layer-renderer.ts:77` applies it, and `functions.ts:60-62` is literally
+`grayscale(%) sepia(%) saturate(%)`. Their only callers are `image-processors.test.ts`.
+`transform` is split — affine bypassed at `useLayer.ts:550-566`, trapezoid live.
+
+**And the app has no adjustment-layer machinery at all**, which is the capability the Adjustment
+Brush exposes and the app cannot imitate. `psd-utils.ts:88-106` refuses `adjustment`, `mask` and
+`clipping` on import. What exists is a retained per-layer operation stack
+(`layer.operations[]` → `apply-filter`) — non-destructive in retention, but with no way to re-edit
+a committed adjustment and no properties panel. Real **Levels** (three-point piecewise remap,
+channel selector, histogram) and real **Curves** (spline) are therefore unbuilt, and belong in this
+file rather than in a restructure of what exists.
+
+**The operator has signalled these will be built** (2026-10-01: Levels, Colors and the other
+`Image ▸ Adjustments` commands "will be implemented"), so this paragraph records a **known gap with
+a known destination**, not a decision to skip. The requirements are not written down, so this is
+still not a spec — but it changes what a future session may conclude from this file. Under this
+file's own policy an entry here means "nobody re-audits it, nobody estimates it"; that is **suspended
+for the `Image ▸ Adjustments` family**, because the operator has put it back on the list. Adobe's
+behaviour in each entry below remains the requirement and is unchanged by that signal — an agent
+implementing from the requirement, not from the app's current CSS-filter chain, is implementing it
+correctly.
+
+**One correction the decision did not survive on its stated premise.** Adobe's **Adjustment Brush
+Tool** is a real Tools-panel entry — GA in Photoshop 25.11 (July 2024), own toolbar slot, no
+single-letter shortcut — and it generates an adjustment layer with a layer mask. So "adjustments
+are not tools" is false as a general statement. The decision stands anyway, because `color` and
+`levels` here are whole-image adjustments with **no mask** and the Adjustment Brush can only apply
+an adjustment where you paint. `HANDOFF.md` §117 records the falsified premise so a later rail audit
+does not invert the doc and the tree.
 
 ### Three invented controls on the Magnetic Lasso bar
 
@@ -611,8 +675,8 @@ the roster counts that disagree — the 30 names this section used to carry agai
 add" in `HANDOFF.md` §74 (`HANDOFF.md:1757`) — and leaves the discrepancy unresolved for
 the operator. **One addition to its arithmetic, from this pass:** `HANDOFF.md` §74 names a
 **sixth** absent tool the 30 never listed, **Content-Aware Move** (`HANDOFF.md:1807`), so the
-union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` does
-not yet carry that name.
+union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` now carries
+that name, at its Selection row.
 
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.

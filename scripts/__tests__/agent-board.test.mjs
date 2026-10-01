@@ -15,7 +15,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1220,6 +1220,105 @@ describe('the schema this script writes', () => {
     // And nothing was silently moved on its way past.
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issue_locks').get().n).toBe(0);
   });
+
+  /**
+   * The schema COLLISION, and it is the reason the number alone is not a guard.
+   *
+   * Two branches each raised `SCHEMA_VERSION` to 3 and each called their own
+   * first step "v2" — the same version main had already spent on something
+   * else. A board stamped 2 by main therefore meant two different schemas, and
+   * nothing in the format could tell them apart.
+   *
+   * What turned that into silent data loss is the SECOND half, and it is the
+   * half a version guard does not cover: `runMigrations` answered `false` for a
+   * version it had no step for. `false` is the caller's signal for "a migration
+   * ran and had nothing to do", and it is the value that withholds the version
+   * stamp — so the board sat at 2 with the new table created empty by
+   * `exec(SCHEMA)` and no error anywhere. `integration/merge-sweep` shipped
+   * exactly this and is still unmerged.
+   *
+   * Raised on this script's OWN `migrationSteps` rather than by building a
+   * branch's schema, because that is the shape that has to be caught: a script
+   * that adds a table, bumps the number, and forgets the step. Going through
+   * `open()` rather than calling `runMigrations` directly is the point — the
+   * defect only ever reached a caller that OPENED a board, and the first
+   * version of this case called the method instead, so it exercised the guard
+   * without exercising anything that could produce it.
+   */
+  it('refuses to open a version it claims to migrate but has no step for', () => {
+    // A real v1 board, so `existing` is inside (0, SCHEMA_VERSION) and the
+    // migration path is reached. This script writes v2 and its steps hold only
+    // `1`; emptying them is precisely the state a v3 branch ships when it forgot
+    // to add `steps[2]`. Before the guard, this opened successfully and reported
+    // nothing.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    // And the version was NOT stamped, which is what `false` used to cause.
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    after.close();
+  });
+
+  it('still migrates the version it does have a step for', () => {
+    // The guard must not become a blanket refusal: v1 is a version this script
+    // genuinely knows how to move, and refusing it would strand every v1 board.
+    buildV1Board(dir);
+    const board = boardFor('a');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    board.close();
+  });
+
+  it('leaves no half-open board when a migration refuses', () => {
+    // `open()` assigns `this.db` before `migrate()` runs, and its first line is
+    // `if (this.db) return this`. So a refusal that left the handle in place
+    // meant the natural recovery — catch, fix, retry — got a board back on the
+    // second call with `migrate()` never re-run and NO error, which is the
+    // unmigrated board the guard exists to prevent.
+    // A v1 board, so `existing` is inside (0, SCHEMA_VERSION) and the guard is
+    // reached at all — a fresh board is 0 and is stamped without migrating.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    // Stand in for a script whose steps do not cover v1.
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    expect(board.db).toBeNull();
+    // And the retry actually retries, rather than short-circuiting.
+    delete board.migrationSteps;
+    const reopened = board.open();
+    expect(reopened.db).not.toBeNull();
+    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    reopened.close();
+  });
+
+  it('leaves no half-open board when the statements BEFORE migrate() fail', () => {
+    // The gap a `try` that wrapped only `migrate()` left open. `new
+    // DatabaseSync` SUCCEEDS on a corrupt file — the handle is allocated and
+    // only fails when a statement runs — so the first `PRAGMA` throws and
+    // `migrate()` is never reached. Verified against the previous commit and
+    // against main: same half-open board, same silent second `open()`.
+    writeFileSync(join(dir, 'board.db'), 'this is not a sqlite database');
+    const board = new Board({ dir, identity: identityFor('a') });
+    expect(() => board.open()).toThrow();
+    expect(board.db, 'a failed open left a live handle, so a retry short-circuits').toBeNull();
+  });
+
+  it('refuses before it creates anything, not after', () => {
+    // The two refusals in `migrate()` have to agree: a newer board is refused
+    // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a
+    // missing migration step must not re-create that hazard one line later.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    const tables = after.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    // Only the v1 board's own tables: nothing from this script's SCHEMA.
+    expect(tables.map((row) => row.name)).not.toContain('issue_locks');
+    expect(tables.map((row) => row.name)).not.toContain('claims');
+    after.close();
+  });
 });
 
 describe('one board is shared by every worktree', () => {
@@ -1664,6 +1763,51 @@ describe('the command line', () => {
     expect(onlyLive.out).toMatch(/--live: nothing ready, because all 1 ready issues are handoff imports/);
     // The queue is not empty. Saying "nothing ready" here would be the old lie.
     expect(onlyLive.out).not.toMatch(/^nothing ready/m);
+  });
+
+  it('pages the ready queue with `--limit`, and refuses a `--limit` that is not a count', async () => {
+    // Fifty-five ready issues, so the default page of 50 reads as a PAGE and not
+    // as a board that ran out of work.
+    const board = boardFor('a');
+    for (let index = 0; index < 55; index += 1) board.createIssue({ title: `queued work ${index}` });
+    board.close();
+    const page = async (...args) => JSON.parse((await cli(['ready', ...args, '--json'])).out).issues;
+
+    expect(await page()).toHaveLength(50);
+    expect(await page('--limit', '1')).toHaveLength(1);
+    // A page is the head of the RANKED queue, never a different order.
+    expect((await page('--limit', '1'))[0].id).toBe((await page())[0].id);
+    // A page larger than the board is still one page, and the whole board.
+    expect(await page('--limit', '1000')).toHaveLength(55);
+
+    // Five ways of asking for a page that is not a count. Every one of them used
+    // to exit 0 on a silently empty or wrongly sliced queue — `abc` and `0` are
+    // `NaN` and `0` to `slice`, and `-1` is a legal slice that drops the LAST
+    // row instead of the first. The exit-code table reserves 1 for exactly this,
+    // and the empty-page message then told the reader there was no startable
+    // work on a board of fifty-five.
+    for (const bad of ['abc', '0', '-1', '1.5', '']) {
+      const refused = await cli(['ready', '--limit', bad]);
+      expect(refused.code, `--limit ${bad}`).toBe(1);
+      expect(refused.err, `--limit ${bad}`).toMatch(/--limit needs a positive whole number/);
+      expect(refused.out, `--limit ${bad}`).not.toMatch(/nothing ready/);
+    }
+  });
+
+  it('refuses an unanswerable `--limit` on `list` too, which is its other reader', async () => {
+    await cli(['new', 'a filed issue', '--json']);
+    // `list` read the flag with the same unvalidated `Number()` and printed an
+    // empty board at exit 0: a status report that reports nothing and says the
+    // board has no issues in it.
+    for (const bad of ['abc', '0', '-1']) {
+      const refused = await cli(['list', '--limit', bad]);
+      expect(refused.code, `--limit ${bad}`).toBe(1);
+      expect(refused.err, `--limit ${bad}`).toMatch(/--limit needs a positive whole number/);
+    }
+    // And a `--limit` that IS a count still pages the list, and its absence
+    // still means the whole board.
+    expect(JSON.parse((await cli(['list', '--limit', '1', '--json'])).out).issues).toHaveLength(1);
+    expect(JSON.parse((await cli(['list', '--json'])).out).issues).toHaveLength(1);
   });
 
   it('exits 1 from `check` when a file is taken, so a shell can gate on it', async () => {
@@ -2275,5 +2419,41 @@ describe('doctor with two holders of one path', () => {
     expect(a.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ? ORDER BY issue_id').all(path)).toEqual([
       { issue_id: 'ph-2' },
     ]);
+  });
+});
+
+/**
+ * The file this suite imports must be a TEXT file.
+ *
+ * Two raw NUL bytes were committed inside template literals in `db.mjs`, where
+ * backticks had been replaced by \x00. Nothing caught it: the result is valid
+ * JavaScript, every test in this file passed, `tsc` passed, and `build` passed.
+ * The cost was that every TEXT tool — `file`, the read tool, `grep`, diff — reads
+ * the board's central file as binary, which is how it went unnoticed until an
+ * agent could not read the file it needed to change.
+ *
+ * Nothing can assert this behaviourally, because `\0` and a raw NUL are the same
+ * string: restoring both raw bytes leaves all 127 tests green. That was measured
+ * before this case existed. So it is asserted at the byte level, which is the
+ * only level at which the difference is visible.
+ *
+ * `.gitattributes` sets `text=auto`, whose binary sniffing keys on exactly this
+ * byte — so a NUL arriving through any normal git path is what let one in.
+ */
+describe('the board module is a text file', () => {
+  const DB_MODULE = resolve(process.cwd(), 'scripts/lib/agent-board/db.mjs');
+
+  it('contains no NUL byte', () => {
+    const bytes = readFileSync(DB_MODULE);
+    const at = bytes.indexOf(0);
+    expect(at, `a NUL byte at offset ${at} makes every text tool read this file as binary`).toBe(-1);
+  });
+
+  it('uses the escape, not the raw byte, where a NUL is meant', () => {
+    // Pins the intent rather than the absence alone: the composite lock key
+    // joins path and agent_id with a NUL, which is the one byte a POSIX path
+    // cannot contain, so a path can never be made to impersonate another pair.
+    const source = readFileSync(DB_MODULE, 'utf8');
+    expect(source).toContain('${lock.path}\\0${lock.agent_id}');
   });
 });

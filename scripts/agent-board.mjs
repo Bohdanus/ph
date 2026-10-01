@@ -278,6 +278,28 @@ function assertNoAbandonedText(command, abandoned) {
 }
 
 /**
+ * A page size from `--limit`, or `fallback` when the flag was not given.
+ *
+ * The page size is a COUNT, and the exit-code table above reserves 1 for a usage
+ * error, so a value that is not a positive whole number is refused instead of
+ * coerced. It used to be `Number(flags.limit)`, which is a silent lie three ways:
+ * `--limit abc` is `NaN` and `--limit 0` is `0`, so `slice` returned nothing and
+ * the run exited 0 — and the empty-page sentence then explained itself from the
+ * import count, so `ready --limit abc` on a board with fifty-seven ready issues
+ * printed "all 57 ready issues are handoff imports", exit 0, on a board full of
+ * work. `--limit -1` is worse than a lie, because it is a legal `slice`: it
+ * quietly drops the LAST row instead of the first fifty.
+ */
+function limitFlag(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+    throw new BoardError(`--limit needs a positive whole number, not ${raw}`, { code: 1 });
+  }
+  return Number(raw);
+}
+
+/**
  * Turns a flag into a list. An absent flag is an empty list and never the
  * string "undefined": `--files` and `--dep` are optional, and a caller that
  * passes nothing must not end up asking the board to hold a file called
@@ -536,7 +558,7 @@ export async function run(
           scope: flags.scope ? list(flags.scope) : null,
           files: flags.files ? list(flags.files) : null,
           claimedBy: typeof flags.claimed_by === 'string' ? flags.claimed_by : null,
-          limit: flags.limit ? Number(flags.limit) : NO_LIMIT,
+          limit: limitFlag(flags.limit, NO_LIMIT),
         });
         const rows = issues.map((issue) => [
           issue.id,
@@ -620,10 +642,8 @@ export async function run(
             : 'none startable now: every live issue is inside a file another agent holds',
         ].join(' · ');
 
-        const chosen = (flags.live ? ranked.filter((issue) => detail.get(issue.id).live) : ranked).slice(
-          0,
-          flags.limit ? Number(flags.limit) : 50
-        );
+        const limit = limitFlag(flags.limit, 50);
+        const chosen = (flags.live ? ranked.filter((issue) => detail.get(issue.id).live) : ranked).slice(0, limit);
         const rows = chosen.map((issue) => {
           const { files: named, held } = detail.get(issue.id);
           return [
@@ -656,7 +676,13 @@ export async function run(
           chosen.length === 0
             ? all.length === 0
               ? 'nothing ready: everything open is claimed, blocked, or closed'
-              : `--live: nothing ready, because all ${all.length} ready issues are handoff imports`
+              : // ONLY `--live` can empty a page the board still has work for, so
+                // only `--live` gets a sentence here. There is no third branch
+                // naming `--limit`: `limitFlag` refuses anything below 1, and
+                // `ranked` is a permutation of `all`, so without `--live` an
+                // empty page MEANS an empty board. A `--limit` sentence here
+                // would be unreadable.
+                `--live: nothing ready, because all ${all.length} ready issues are handoff imports`
             : [columns(rows, ['ID', 'PRIORITY', 'SCOPE', 'ORIGIN', 'FILES', 'TITLE']), '', summary].join('\n')
         );
         return 0;

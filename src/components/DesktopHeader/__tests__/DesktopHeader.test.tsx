@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import DesktopHeader from '../DesktopHeader.tsx';
+import DesktopHeader, { MENUS_EXCLUDE } from '../DesktopHeader.tsx';
+import { availableTools } from '../../../../toolbar-mapping.ts';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 import type { TextToolArgs } from '../../../tools/text.ts';
@@ -134,32 +135,15 @@ describe('DesktopHeader', () => {
 
     openMenu('Tools');
 
-    expect(screen.getByTestId('tools-menu-color-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-blur-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-levels-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-transform-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-crop-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-shape-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-text-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-polygonal-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-freehand-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-feather-magnetic-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-magic-wand-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-rectangular-selection-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-reposition-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-brush-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-pencil-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-color-replacement-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-freeform-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-curvature-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-rectangle-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-ellipse-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-triangle-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-polygon-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-line-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-custom-shape-button')).toBeInTheDocument();
+    // Derived from the registry rather than written out by hand. This was a literal list of
+    // 24 names that never included the Dodge, the Burn, the Smudge, the Sharpen or the eraser
+    // family, so it could not have caught a tool missing from `TOOL_MENU_ITEMS` — which is
+    // exactly how the Sponge shipped without a menu entry. Every `availableTools` name now has
+    // to produce a row, so the next omission fails here instead of in the app.
+    const missing = availableTools
+      .filter((tool) => !MENUS_EXCLUDE.includes(tool))
+      .filter((tool) => screen.queryByTestId(`tools-menu-${tool}-button`) === null);
+    expect(missing, `tools absent from the Tools menu: ${missing.join(', ')}`).toEqual([]);
   });
 
   it('toggles the file menu open and closed', () => {

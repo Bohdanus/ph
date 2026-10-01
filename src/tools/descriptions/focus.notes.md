@@ -660,6 +660,92 @@ anywhere in the stroke hook to accumulate more.
 - <https://www.lenscraft.co.uk/photo-editing-tutorials/tutorial-mastering-the-photoshop-dodge-and-burn-tool/>
 - <https://www.dummies.com/article/technology/software/adobe-products/photoshop/using-the-dodge-and-burn-tools-in-photoshop-elements-9-205974/>
 
+## Sponge Tool
+
+The seventh member of this family, and the only **chroma** operation in it. Where the Dodge and the
+Burn scale a channel towards white or black inside a chosen tonal band, the Sponge scales a pixel's
+distance from its own luminance — which is exactly why its bar carries `Mode` and `Flow` where the
+pair carry `Range` and `Exposure`, and why this family's notes had to be reopened rather than
+extended: nothing here transfers.
+
+**The bar, in Adobe's order: Mode ▾ · Flow ▾ · Vibrance ☐ · and the brush preset's Size and
+Hardness.** Adobe's desktop page enumerates it as the brush tip, `Mode`, `Flow` and `Vibrance`
+(<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and the
+tool-techniques page repeats the set (<https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html>).
+`Vibrance` is the CS4 addition — the release that reworked all three toning tools at once, giving
+the Dodge and the Burn `Protect Tones` in the same pass
+(<https://jnack.com/blog/2008/11/02/cs4_whats_in_it_for_photographers/>) — and a 2009 CS4 Mac
+shortcut sheet already carries it, so it predates every current release by a long way.
+
+**Two controls are deliberately absent from the data file's `options` array rather than filed as
+`missing`,** and the reason is the array's own inclusion rule: it lists what Photoshop places in
+**this tool's** options bar.
+
+- **`Protect Texture`** is a **Brush-panel** checkbox, not a Sponge-bar control. It is described as
+  ensuring "the same texture is used for every brush with a texture"
+  (<https://www.smashingmagazine.com/2009/11/brushing-up-on-photoshops-brush-tool/>) and community
+  enumerations place the Sponge among the painting tools that use brush settings — but no source
+  shows the checkbox on the Sponge's own bar.
+- **`Tolerance`** is not on this tool's bar **at all**, and the common belief that it is a Dodge/Burn
+  control is wrong too. Photoshop's Action Manager descriptor for this tool carries only `flow`
+  (`SaturationToolOptionsDescriptor { flow }`, against `DodgeBurnToolOptionsDescriptor { exposure }`,
+  <https://github.com/simonhenke/photoshop-types/blob/main/types/Tool.d.ts>); `tolerance` appears on
+  the Magic Wand and the Color Replacement. One Grinnell course PDF puts an "EXPOSURE option" beside
+  the Saturate/Desaturate box and is simply wrong about this tool.
+
+**The algorithm is inferred, not published, and this file says so where it is used.** Adobe documents
+no per-pixel specification. What is established is that the tool is a **chroma scale about a luma
+pivot**, and the one community reimplementation of this family states the rule directly — "Sponge
+scales chroma around fixed Rec. 709 luma, optionally reducing the effect for already-saturated
+colors" (<https://github.com/SethRobinson/Patchy/blob/main/docs/brushes.md>). The module implements
+`c' = L + (c - L) * (1 ± amount)` in the **encoded** sRGB the editor stores, on the same grounds as
+`dodgeBurn.ts` gives for its own pivot, and pins the choice in a unit test.
+
+**`Vibrance` is implemented as a gamut-headroom cap**, from Adobe's only sentence about it: "Select
+the Vibrance option to minimize clipping for fully saturated or desaturated colors". Capping the
+chroma scale at the pixel's own boundary is the strictest reading of "minimize clipping" — the
+result then cannot clip at all — and it is the only geometric quantity that sentence names. It binds
+**only in the Saturate direction**, and that is a property of the arithmetic rather than a
+simplification: Desaturate moves every channel _toward_ the pixel's own luma, so its result is the
+convex combination of two in-range values and provably cannot leave `[0, 255]`. A test pins that
+equality rather than leaving it as a claim.
+
+**Adobe's Grayscale-mode rule is real and is NOT implemented**, which is the one place this family
+meets a platform limit rather than a missing feature. Adobe: "When an image is in Grayscale mode, the
+tool increases or decreases contrast by moving gray levels away from or toward the middle gray"
+(<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and Photoshop
+Elements splits the direction: "In grayscale, Saturate increases contrast … In grayscale, Desaturate
+decreases contrast" (<https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html>).
+The rule is scoped to a document **MODE**, and this app has no `Image > Mode` surface at all —
+`color`'s `grayscale` is a per-layer filter amount, and a layer made grey by it is still an RGB layer,
+where the rule does not apply. On an RGB pixel with no chroma the chroma scale is already an exact
+no-op, so implementing the pivot anyway would make the tool behave the way Photoshop behaves in a mode
+this app cannot reach. `docs/OVERRIDES.md` may not be edited by an agent, so the gap is recorded in
+`HANDOFF.md` instead.
+
+**The one place `Vibrance`'s behaviour diverges from what a tutorial says.** A 2026 walkthrough
+describes it as "adjusts the intensity of subtle colors in an image while minimizing the effect on
+highly saturated colors" (<https://glensmith.co.uk/photoshop/sponge-tool>) — a _saturation-weighted_
+easing, which is the Lightroom Vibrance semantic, not a clip guard. Adobe's own sentence is the
+opposite shape, and Adobe is the higher authority in the ladder, so the clip guard is what shipped.
+The alternative reading is in `## Unverified` below.
+
+### Sources
+
+- <https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html> — the Grayscale-mode sentence; `Mode` semantics; `Flow` as "the rate of saturation change"; `Vibrance`'s only description; `O` on the Sponge page.
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html> — the desktop bar enumeration including `Vibrance`; "select and hold the Dodge tool to show the other related tools".
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html> — the Dodge/Burn bar as `Range`/`Exposure`/`Airbrush`/`Protect Tones`, and the negative that `Tolerance` appears nowhere.
+- <https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html> — the per-mode grayscale contrast split.
+- <https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html> — `Shift+Alt+D` → Desaturate and `Shift+Alt+S` → Saturate, from an Adobe Principal Evangelist, plus the Dodge/Burn `S`/`M`/`H` collision on the same page. Carries her own "these views are my own" disclaimer.
+- <http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf> — the Adobe-branded table rows "Dodge / Burn / Sponge Tool O", "Cycle Dodge / Burn / Sponge Tools Shift+O", "Desaturate (Sponge Tool) Alt+Shift+D", "Saturate (Sponge Tool) Alt+Shift+S".
+- <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=646> — the CS3 manual's shortcut table, the same two rows.
+- <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217> — the CS4 bar listing, which already carries `Vibrance`.
+- <https://flylib.com/books/en/2.816.1.14/1/> — the CS2 Bible on Flow as the per-dab amount and on the digits stepping Flow.
+- <https://www.glensmith.co.uk/photoshop/sponge-tool> — Flow's 50% default, and the alternative reading of `Vibrance` recorded above as rejected.
+- <https://jnack.com/blog/2008/11/02/cs4_whats_in_it_for_photographers/> — the CS4 rework of all three toning tools at once.
+- <https://github.com/simonhenke/photoshop-types/blob/main/types/Tool.d.ts> — `SaturationToolOptionsDescriptor { flow }` and the absence of `tolerance` on this tool.
+- <https://github.com/SethRobinson/Patchy/blob/main/docs/brushes.md> — the one published statement of the per-pixel rule, and `Protect Texture`'s meaning.
+
 ## Gradient Tool
 
 The bar, left to right: **tool-preset picker · Tool Mode ▾ · gradient swatch ▾ · the five type
@@ -1043,3 +1129,39 @@ a binding is **absent**, which is the stronger form of the same objection.
     be opened, so neither tool's `shortcuts` array carries `R` even though they share the flyout
     and Photoshop Elements' own reference prints `R` for all three
     (<https://help.adobe.com/archive/en/photoshop-elements/11/photoshop-elements_reference.pdf>).
+
+15. **Which `Mode` the Sponge's bar opens on. Adobe states no default, and one source is not
+    enough.** `helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html` is
+    imperative throughout — "Select Saturate or Desaturate from the Mode option as per your
+    requirement" — which is equally consistent with either default. A dedicated second search found
+    **no Adobe statement of a default and no second independent source** for the one non-Adobe
+    claim that it is `Desaturate`. Julieanne Kost's "set the Sponge tool to Desaturate" and the
+    SitePoint/Tuts+ walkthroughs are _instructions_, not default claims; the Weingart tutorial
+    instructs `Saturate`. The app seeds `Desaturate` and says so at `SPONGE_MODE_DEFAULT` — the
+    choice is the non-destructive direction, since a saturated stroke that clips a channel cannot be
+    painted back — and the gap is in `HANDOFF.md`, not here, because it is an operator's call against
+    a live Photoshop rather than a research defect.
+16. **Whether Adobe ships the Sponge's `Vibrance` checked.** Adobe's sentence is an _action_ ("Select
+    the Vibrance option to minimize clipping"), which reads as an instruction to enable it and so
+    points at unchecked, while the two indirect signals — the CS4 framing that the tool "can now
+    saturate or de-saturate with the intelligence of the Vibrance logic", and the web-app page's
+    "Vibrance on by default" — point at checked. **Neither was confirmed**, and the web-app page's
+    body could not be retrieved by the crawler, so do not treat that phrase as verified. The app
+    seeds it **on**, because a control Adobe documents as the thing that prevents clipping should
+    not ship in a state that allows it.
+17. **`Flow`'s default and range.** 50% and 1-100% are one third-party walkthrough and the CS2 Bible
+    respectively; Adobe describes `Flow` only as "the rate of saturation change" and gives neither.
+18. **`Airbrush` on this bar.** The checkbox is documented as a general Airbrush behaviour
+    (<https://www.smashingmagazine.com/2009/11/brushing-up-on-photoshops-brush-tool/>) and one
+    Sponge-specific tutorial names it, but **Adobe's own enumeration of this bar does not include
+    it**. It is filed `missing` on the strength of the Adobe bar census being incomplete rather than
+    on a first-party statement that the control exists.
+19. **The colour space the tool works in.** Nothing from Adobe: Lab is asserted for the Vibrance
+    adjustment _layer_ by some sources and denied by others, HSB is asserted by others, and the one
+    published statement of the per-pixel rule names Rec. 709 luma in a third-party clone's own
+    implementation rather than as a Photoshop fact. The app's choice — encoded sRGB, on the grounds
+    `dodgeBurn.ts` gives — is recorded at `spongeLuma` and pinned by a test.
+20. **The alternative reading of `Vibrance`, rejected rather than adopted.** See §Sponge Tool: a
+    tutorial describes it as boosting _subtle_ colours more than saturated ones, which is the
+    Lightroom semantic, against Adobe's own "minimize clipping". Recorded because a future reader
+    meeting that tutorial will otherwise think the app got it wrong.

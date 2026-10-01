@@ -75,6 +75,16 @@ export const ACCEPTED_CONSOLE_ERRORS: readonly { match: string; reason: string }
       'overlay canvas. React reports it in the development build, so this appears on every run ' +
       'of that spec. Delete this entry when that spec is deleted.',
   },
+  {
+    match: 'The Line tool needs a drag',
+    reason:
+      'The deliberate refusal at src/components/Main/ShapeToolArea.tsx, emitted when the Line ' +
+      'tool is clicked rather than dragged. Adobe documents drag-and-release only for the Line ' +
+      'tool and never names a Create Line dialog ' +
+      '(https://helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html), while the other ' +
+      'four figures get one — so this message is the Line half of that contract rather than ' +
+      'noise. Delete this entry together with the refusal if the Line ever grows a click dialog.',
+  },
 ];
 
 const accepted = (text: string): boolean => ACCEPTED_CONSOLE_ERRORS.some((entry) => text.includes(entry.match));

@@ -624,11 +624,15 @@ describe('AppKeyboardShortcuts tool cycling', () => {
 
   it.each([
     ['rectangular-selection', 'elliptical-selection'],
-    ['elliptical-selection', 'rectangular-selection'],
+    ['elliptical-selection', 'single-row-marquee'],
+    ['single-row-marquee', 'single-column-marquee'],
+    ['single-column-marquee', 'rectangular-selection'],
   ])('cycles Shift+M from %s to %s', (from, to) => {
-    // `M` is the MARQUEE tile, and the marquee tile holds the rectangular and elliptical
-    // marquees. The magic wand moved to the object-selection tile on `W` when the quick
-    // selection joined it, so `M` no longer reaches it — `AppKeyboardShortcuts.tsx:25`.
+    // `M` is the MARQUEE tile, and the marquee tile holds all four of Adobe's marquee tools
+    // in flyout order: rectangular, elliptical, single row, single column
+    // (`toolbar-mapping.ts:43`-`:47`). The magic wand moved to the object-selection tile on
+    // `W` when the quick selection joined it, so `M` no longer reaches it —
+    // `AppKeyboardShortcuts.tsx:25`. The cycle wraps, so the last member returns to the first.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
@@ -664,15 +668,68 @@ describe('AppKeyboardShortcuts tool cycling', () => {
 
   it.each([
     ['dodge', 'burn'],
-    ['burn', 'dodge'],
+    ['burn', 'sponge'],
+    ['sponge', 'dodge'],
   ])('cycles Shift+O from %s to %s', (from, to) => {
-    // `O` is the dodge/burn tile, whose two tools share one options bar.
+    // `O` is the whole toning flyout - Dodge, Burn and Sponge, in Adobe's order - so the
+    // cycle wraps over THREE tools. Only the first two share an options bar; the Sponge has
+    // Mode and Flow where the pair has Range and Exposure, which is why it gets its own.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
     press('o', { shiftKey: true });
 
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it('gives the Sponge Alt+Shift+S, which the Clone Stamp bare S would otherwise swallow', () => {
+    // The Clone Stamp registers `key: 's', mod: false` and DECLARES no `shift` or `alt`.
+    // `matchesShortcut` only compares a modifier a registration actually declares
+    // (`src/hooks/useKeyboardEvents.tsx:70-77`), so that registration matches Alt+Shift+S as
+    // readily as a bare `s`, and dispatch is last-registered-wins
+    // (`useKeyboardEvents.tsx:109` walks the array backwards). Registered before it, the
+    // Sponge's Saturate key silently reached the Clone Stamp instead — found by an e2e run,
+    // not by any unit test, which is why this one exists.
+    //
+    // Asserted as an ORDER claim: the Sponge wins, the Clone Stamp does not move, and the
+    // Sponge's own mode is written. A second row below proves the inverse direction still
+    // reaches the Clone Stamp, so this cannot be made green by disabling it wholesale.
+    storeState.toolName = 'sponge';
+    renderShortcuts();
+
+    press('s', { shiftKey: true, altKey: true });
+
+    expect(goToTool).not.toHaveBeenCalled();
+    expect(patchToolArgs).toHaveBeenCalledWith('sponge', { mode: 'saturate' });
+  });
+
+  it('still selects the Clone Stamp on a bare S and on Shift+S', () => {
+    // The other half of the row above: pinning that the Sponge's chord takes precedence must
+    // not have been achieved by narrowing the Clone Stamp's own registration.
+    storeState.toolName = 'brush';
+    renderShortcuts();
+
+    press('s');
+    expect(goToTool).toHaveBeenCalledWith('clone-stamp');
+
+    storeState.toolName = 'brush';
+    goToTool.mockClear();
+    renderShortcuts();
+
+    press('s', { shiftKey: true });
+    expect(goToTool).toHaveBeenCalledWith('clone-stamp');
+  });
+
+  it('keeps the Sponge selected on a bare O, because it is in the group', () => {
+    // The bare-key arm of `selectTonalTool` keeps the current tool when it is already in the
+    // group and otherwise falls to the group's anchor. The Sponge is in the group now, so it
+    // is the third member that a bare O can stay on rather than only ever be cycled away from.
+    storeState.toolName = 'sponge';
+    renderShortcuts();
+
+    press('o');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('sponge');
   });
 
   it.each([
