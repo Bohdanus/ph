@@ -32,6 +32,7 @@ import {
   PLACEHOLDER_BRANCHES,
   dispose,
   isRegenerableIgnored,
+  locateInventory,
   preflight,
   readGitState,
   rebuildCommand,
@@ -433,7 +434,10 @@ describe('dispose execution', () => {
     const removeAt = calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
     expect(anchorAt).toBeGreaterThanOrEqual(0);
     expect(removeAt).toBeGreaterThan(anchorAt);
-    expect(calls[anchorAt]).toEqual(['update-ref', `${KEEP_REF_PREFIX}fix-task`, 'deadbeef']);
+    // The EMPTY OLD VALUE is the create-if-absent, and it is what makes this
+    // atomic in git rather than a read-then-write in this process. Without it,
+    // two concurrent disposals both read "free" and both wrote the bare ref.
+    expect(calls[anchorAt]).toEqual(['update-ref', `${KEEP_REF_PREFIX}fix-task`, 'deadbeef', '']);
   });
 
   it('anchors under the BRANCH, slugged, and validates the ref before writing it', () => {
@@ -447,6 +451,7 @@ describe('dispose execution', () => {
       'update-ref',
       `${KEEP_REF_PREFIX}feat-space-branch`,
       'abc1234',
+      '',
     ]);
     // `check-ref-format` must be asked BEFORE `update-ref`, not after it throws.
     expect(calls.findIndex((c) => c[0] === 'check-ref-format')).toBeLessThan(
@@ -495,12 +500,16 @@ describe('dispose execution', () => {
 
     expect(result.salvage.written.sort()).toEqual(['tracked.patch', 'untracked.tar']);
     expect(result.salvage.failed).toEqual([]);
-    expect(result.salvage.dir).toBe('/repo/.git/worktree-salvage/task');
-    expect(h.writes.map((w) => w.p)).toEqual(['/repo/.git/worktree-salvage/task/tracked.patch']);
+    // Keyed by the SLUGGED FULL PATH plus the name, not by the bare basename:
+    // two worktrees can share a basename here, and `mkdirSync(recursive: true)`
+    // had the second overwrite the first's archive.
+    const SALVAGE_DIR = '/repo/.git/worktree-salvage/repo-.kilo-worktrees-task-task';
+    expect(result.salvage.dir).toBe(SALVAGE_DIR);
+    expect(h.writes.map((w) => w.p)).toEqual([`${SALVAGE_DIR}/tracked.patch`]);
     // `tar`, never `git tar` — verified `git: 'tar' is not a git command`. The
     // swallowed failure made a partial salvage report itself as a success.
     expect(tars).toHaveLength(1);
-    expect(tars[0][1]).toBe('/repo/.git/worktree-salvage/task/untracked.tar');
+    expect(tars[0][1]).toBe(`${SALVAGE_DIR}/untracked.tar`);
     expect(h.calls.some((c) => c.includes('tar'))).toBe(false);
   });
 
@@ -853,5 +862,152 @@ describe('the anchor survives two disposals of one branch name', () => {
     const third = refsFor('457bfd4', 'f8d779a');
     expect(third).not.toBe(second);
     expect(third).toMatch(new RegExp(`^${KEEP_REF_PREFIX}feat-marble-g[0-9a-f]{9}$`));
+  });
+});
+
+/**
+ * The salvage half of the ignored-content rule, which had no test at all.
+ *
+ * Deleting the entire `ignored.tar` block left all 67 tests green, because every
+ * salvage case only ever produced `tracked.patch` and `untracked.tar` — nothing
+ * fed a non-regenerable ignored path to `ls-files --ignored`, so the code that
+ * archives a `.env` was never executed. The refusal in `preflight` is what makes
+ * the loss impossible through the CLI; this covers the direct `dispose()` caller
+ * that the refusal does not protect.
+ *
+ * It also pins the allowlist filter INSIDE `salvage`, which is a second,
+ * independent copy of the rule from the one in `preflight`. Two copies of a
+ * safety rule is one more than there should be, and neither was tested.
+ */
+describe('salvage archives the ignored content a rebuild cannot replace', () => {
+  const harnessWith = (answers) => {
+    const calls = [];
+    const writes = [];
+    const run = (cwd, args) => {
+      calls.push(args);
+      const answer = answers[args.join(' ')] ?? '';
+      if (answer instanceof Error) throw answer;
+      return { stdout: typeof answer === 'string' ? answer : '' };
+    };
+    const fs = {
+      mkdirSync() {},
+      writeFileSync(p, data) {
+        writes.push({ p, bytes: data.length });
+      },
+    };
+    return { run, fs, calls, writes };
+  };
+
+  it('tars the ignored paths that no command rebuilds, and skips the ones that are rebuilt', () => {
+    const h = harnessWith({
+      'diff HEAD --binary': '',
+      'ls-files --others --exclude-standard -z': '',
+      'ls-files --others --ignored --exclude-standard -z --directory':
+        'node_modules\0dist\0.env\0.serena/index.db\0run.log\0',
+    });
+    const tars = [];
+    const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs, tar: (...a) => tars.push(a) });
+
+    expect(result.salvage.written).toContain('ignored.tar');
+    expect(result.salvage.failed).toEqual([]);
+    // Exactly the two that matter: the regenerable entries are filtered here too,
+    // and archiving 20k of node_modules would be its own problem.
+    expect(tars).toHaveLength(1);
+    const listed = tars[0][2].split('\0').filter(Boolean);
+    expect(listed).toEqual(['.env', '.serena/index.db', 'run.log']);
+    // And the list is NUL-TERMINATED, which is what `tar --null -T -` needs.
+    // A path containing a newline is why the delimiter is load-bearing at all.
+    expect(tars[0][2].endsWith('\0')).toBe(true);
+  });
+
+  it('reports a failed ignored archive instead of reporting a partial salvage as success', () => {
+    const h = harnessWith({
+      'diff HEAD --binary': '',
+      'ls-files --others --exclude-standard -z': '',
+      'ls-files --others --ignored --exclude-standard -z --directory': '.env\0',
+    });
+    const result = dispose('/repo', greenState(), {
+      run: h.run,
+      fs: h.fs,
+      tar: () => {
+        throw new Error('tar: .env: Cannot stat: No such file or directory');
+      },
+    });
+    expect(result.salvage.failed).toHaveLength(1);
+    expect(result.salvage.failed[0]).toContain('ignored.tar');
+    // AND the failure is reported in a form an operator can act on. `firstLine()`
+    // used to drop the first line of the error, which is the line that said what
+    // went wrong, so every single-line failure became `unknown error`.
+    expect(result.salvage.failed[0]).toContain('Cannot stat');
+    expect(result.salvage.failed[0]).not.toContain('unknown error');
+    expect(result.steps.join('\n')).toContain('SALVAGE INCOMPLETE');
+  });
+});
+
+/**
+ * The inventory is read from the MAIN checkout, not from wherever this ran.
+ *
+ * This is the difference between a guard that works and a guard nobody runs.
+ * `.gitignore` anchors the rule to `/WORKTREES.json` precisely so that each
+ * worktree does not accumulate its own stale copy of a repository-wide document
+ * — so reading `join(cwd, 'WORKTREES.json')` found nothing in every worktree
+ * this repository actually uses. Measured: from a task worktree, with a valid
+ * 66-worktree inventory in the main checkout and a target that inventory calls
+ * `action: "dispose"`, every disposal refused `WORKTREES.json is absent` — and
+ * the refusal's own advice is to run the generator, which writes the second copy
+ * the ignore rule exists to prevent.
+ */
+describe('locating the inventory', () => {
+  const gitSays = (commonDir) => (cwd, args) => ({ stdout: `${commonDir}\n` });
+
+  it('resolves it in the main checkout, from a worktree', () => {
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: gitSays('/repo/.git'),
+      exists: (p) => p === '/repo/WORKTREES.json',
+    });
+    expect(resolved).toBe('/repo/WORKTREES.json');
+  });
+
+  it('does not fall back to the worktree copy when the main one is there', () => {
+    // The failure is silent: a path that exists but is not the authoritative one
+    // reads as a stale or absent inventory, and either way the disposal refuses.
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: gitSays('/repo/.git'),
+      exists: (p) => p === '/repo/WORKTREES.json' || p === '/repo/.kilo/worktrees/task/WORKTREES.json',
+    });
+    expect(resolved).not.toContain('.kilo');
+  });
+
+  it('falls back to cwd outside a repository, so the injected suite still resolves', () => {
+    const resolved = locateInventory('/somewhere', {
+      run: () => {
+        throw new Error('not a git repository');
+      },
+      exists: () => false,
+    });
+    expect(resolved).toBe('/somewhere/WORKTREES.json');
+  });
+
+  it('falls back to cwd when the main checkout has no inventory yet', () => {
+    // A fresh clone, or a machine that has never run the generator. The refusal
+    // is then `inventory-missing`, which is the honest answer.
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: gitSays('/repo/.git'),
+      exists: () => false,
+    });
+    expect(resolved).toBe('/repo/.kilo/worktrees/task/WORKTREES.json');
+  });
+
+  it('asks git for the COMMON dir, which is the one answer available from anywhere', () => {
+    const asked = [];
+    locateInventory('/repo/.kilo/worktrees/task', {
+      run: (cwd, args) => {
+        asked.push(args);
+        return { stdout: '/repo/.git\n' };
+      },
+      exists: () => true,
+    });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain('--git-common-dir');
   });
 });

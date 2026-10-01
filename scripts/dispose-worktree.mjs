@@ -84,7 +84,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
@@ -154,8 +154,8 @@ const REFUSALS = {
     `${rows} Kilo session(s) have this worktree as their directory and were active inside the last ${LIVE_WINDOW_MS / 60000} min. A session's \`directory\` is where it was OPENED, so its absence is not evidence of abandonment — only its presence is evidence of life.`,
   'dirty-tree': (modified, untracked, paths) =>
     `The working tree holds ${modified} modified and ${untracked} untracked path(s), so uncommitted work exists in no commit and no ref: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. Commit it, carry it to a worktree as a patch, or let the inventory classify it — do not remove the directory.`,
-  'dirty-tree-unreadable': (detail) =>
-    `\`git status\` failed on this worktree (${detail}), so its cleanliness is UNKNOWN rather than clean. This program will not read an unreadable tree as an empty one; restore the worktree's git state, or ask the operator.`,
+  'dirty-tree-unreadable': (detail, command) =>
+    `\`${command ?? 'git status'}\` failed on this worktree (${detail}), so what it would have reported is UNKNOWN rather than clean. This program will not read an unreadable tree as an empty one; restore the worktree's git state, or ask the operator.`,
   'ignored-content': (count, paths) =>
     `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
 };
@@ -189,6 +189,12 @@ const REFUSALS = {
  * statement about version control and not about whether they are worth
  * anything — an auth state and a session index are both real work, and the
  * inventory flagged \`.serena/\` alone as a reason a worktree was never free.
+ *
+ * An entry here that git does not actually ignore is dead weight: \`ls-files
+ * --ignored\` can never report it, so it relaxes nothing. \`.husky/_\` was one,
+ * removed after \`git check-ignore -v .husky/_\` reported it unignored — as
+ * untracked-but-not-ignored it already trips \`dirty-tree\`, which is the correct
+ * place for it.
  */
 const REGENERABLE_IGNORED = [
   { prefix: 'node_modules', rebuild: 'npm ci' },
@@ -203,7 +209,6 @@ const REGENERABLE_IGNORED = [
   { prefix: '.vite', rebuild: 'npm run dev' },
   { prefix: '.vitest', rebuild: 'npm run test' },
   { prefix: '.kilo', rebuild: 'this worktree is disposable; nothing in it is committed anywhere' },
-  { prefix: '.husky/_', rebuild: 'npm install' },
   { prefix: '.eslintcache', rebuild: 'npm run lint:check' },
   { prefix: 'tsconfig.tsbuildinfo', rebuild: 'npm run tsc' },
   { prefix: 'WORKTREES.json', rebuild: 'node scripts/worktree-inventory.mjs' },
@@ -356,7 +361,11 @@ export function preflight({
   // zero is what a clean tree reports. Checking dirtiness against counts that a
   // failure could have produced is how an unreadable tree became a clean one.
   if (gitState.statusError) {
-    refuse('dirty-tree-unreadable', gitState.statusError);
+    // NAMES THE COMMAND THAT FAILED, because the try block covers `status` AND
+    // `ls-files`. Reporting every failure as "`git status` failed" produced the
+    // self-contradicting `git status failed (Command failed: git ls-files ...)`.
+    const command = String(gitState.failedCommand ?? '').match(/git (status|ls-files)\b/)?.[1] ?? 'git status';
+    refuse('dirty-tree-unreadable', gitState.statusError, `git ${command}`);
   }
 
   if ((gitState.modified ?? 0) + (gitState.untracked ?? 0) > 0) {
@@ -471,6 +480,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   let untracked = 0;
   let dirtyPaths = [];
   let statusError = null;
+  let failedCommand = null;
   let ignoredPaths = [];
   try {
     tip = run(absolutePath, ['rev-parse', 'HEAD']).stdout.trim();
@@ -503,8 +513,13 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     // `statusError` is READ, not merely recorded — it used to be written at three
     // places and consumed at none, so a `git status` that failed for any reason
     // left the counts at zero and every gate above read that as clean.
-    dirtyPaths = [];
-    statusError = String(err?.message ?? err).split('\n')[0];
+    // `dirtyPaths` is NOT cleared here. The counts above are only zero when
+    // `status` itself threw; when `ls-files` threw after `status` succeeded they
+    // hold the real numbers, and blanking the list produced a refusal reading
+    // "holds 1 modified and 1 untracked path(s) ... : " with nothing after the
+    // colon, which names a count and no evidence for it.
+    statusError = firstLine(err);
+    failedCommand = String(err?.message ?? err).split('\n')[0];
   }
 
   const ignoredWork = nonRegenerableIgnored(ignoredPaths);
@@ -524,9 +539,49 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     untracked,
     dirtyPaths,
     statusError,
+    failedCommand,
     ignoredPaths,
     ignoredWork,
   };
+}
+
+/**
+ * WHERE THE INVENTORY IS, which is not where this program was invoked.
+ *
+ * `WORKTREES.json` describes EVERY worktree in the repository, so exactly one
+ * copy is the right one: the main checkout's. `.gitignore` says so explicitly —
+ * the rule is `/WORKTREES.json`, anchored to the root, precisely so that each
+ * worktree does not accumulate its own stale copy of a repository-wide document.
+ *
+ * Reading `join(cwd, 'WORKTREES.json')` therefore found nothing wherever the work
+ * actually happens. Measured: from `.kilo/worktrees/dispose-guard`, with a valid
+ * 66-worktree inventory sitting in the main checkout and a target it classifies
+ * `action: "dispose"`, every disposal refused `WORKTREES.json is absent` — and
+ * the refusal's own advice is to run the generator, which writes a second copy
+ * into the worktree, which is the thing the `.gitignore` rule exists to prevent.
+ * A guard that cannot be run from a worktree is a guard nobody runs.
+ *
+ * `git rev-parse --path-format=absolute --git-common-dir` is the one git call
+ * that answers this from anywhere in the repository, and the inventory is
+ * written beside that common dir's worktree root, which is the main checkout.
+ * Falls back to `cwd` so a caller with an injected runner and no repository —
+ * the test suite — still resolves a path it controls.
+ */
+export function locateInventory(cwd, { run = defaultRun, exists = existsSync } = {}) {
+  try {
+    const commonDir = realpathIfExists(
+      run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
+    );
+    if (commonDir) {
+      // `--git-common-dir` is the `.git` DIRECTORY; its parent is the checkout.
+      const mainRoot = dirname(commonDir);
+      const candidate = join(mainRoot, 'WORKTREES.json');
+      if (exists(candidate)) return candidate;
+    }
+  } catch {
+    /* not a repository, or git could not answer; `cwd` below is the fallback */
+  }
+  return join(cwd, 'WORKTREES.json');
 }
 
 /**
@@ -537,7 +592,7 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
  * with different messages, because "absent" and "stale" call for different
  * next steps.
  */
-function readInventory(cwd, gitState, { nowMs = Date.now(), path = join(cwd, 'WORKTREES.json') } = {}) {
+function readInventory(cwd, gitState, { nowMs = Date.now(), path = locateInventory(cwd) } = {}) {
   if (!existsSync(path)) return { ok: false, reason: 'missing', path };
   let doc;
   try {
@@ -709,7 +764,32 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
   } catch {
     return null;
   }
-  run(cwd, ['update-ref', ref, gitState.tip]);
+  // CREATE-IF-ABSENT, so the read above and this write are one atomic step in
+  // git rather than two steps in this process.
+  //
+  // The empty old-value is the whole mechanism: `git update-ref <ref> <new> ''`
+  // succeeds only if `<ref>` does not exist, and exits 128 if it does. Without
+  // it this was a read-then-write with a window between them, and the comment on
+  // `anchorDisambiguation` claimed a cross-process guarantee the code could not
+  // deliver. Proven on a scratch repo with two concurrent processes: both read
+  // "the slug is free", both wrote the BARE ref, and the loser's commit was gone
+  // from every ref — with `dispose` reporting a successful anchor for both.
+  try {
+    run(cwd, ['update-ref', ref, gitState.tip, '']);
+  } catch {
+    // Lost the race, or the ref appeared between the read and here. Fall back to
+    // a name derived from this tip, which cannot be the one that just won, and
+    // write that unconditionally — there is nothing left to collide with,
+    // because a losing tip has never been an anchor.
+    const fallback = `${ref}-g${createHash('sha256').update(`${source} ${gitState.tip}`).digest('hex').slice(0, 9)}`;
+    try {
+      run(cwd, ['check-ref-format', fallback]);
+    } catch {
+      return null;
+    }
+    run(cwd, ['update-ref', fallback, gitState.tip]);
+    return fallback;
+  }
   return ref;
 }
 
@@ -730,7 +810,18 @@ function anchor(cwd, gitState, { run = defaultRun } = {}) {
  */
 function salvage(cwd, gitState, { run = defaultRun, fs = defaultFs, tar = defaultTar } = {}) {
   if (!gitState.commonDir) return null;
-  const dir = join(gitState.commonDir, 'worktree-salvage', gitState.name);
+  // The salvage directory is named by the worktree's FULL PATH, slugged, not by
+  // its basename. Two worktrees with the same basename are a real shape here —
+  // this repository registers worktrees under `.kilo/worktrees/` and under the
+  // temp directory, which is why `readGitState` refuses an ambiguous bare name —
+  // and keying salvage by basename had the second one overwrite the first's
+  // archive with `mkdirSync(recursive: true)`. The exact collision class this
+  // program added a refusal for, reproduced inside itself.
+  const dir = join(
+    gitState.commonDir,
+    'worktree-salvage',
+    `${refSlug(gitState.absolutePath)}-${refSlug(gitState.name)}`
+  );
   fs.mkdirSync(dir, { recursive: true });
   const written = [];
   // Failures are REPORTED, not swallowed. `git tar` does not exist — verified:
@@ -773,6 +864,11 @@ function salvage(cwd, gitState, { run = defaultRun, fs = defaultFs, tar = defaul
       '--ignored',
       '--exclude-standard',
       '-z',
+      // `--directory` as in `readGitState`, for the same reason and the same
+      // reason it was missing here was a bug: without it this enumerates every
+      // FILE under `node_modules/` — 18,901 of them on a real worktree — only to
+      // filter all of them out one entry later.
+      '--directory',
     ]).stdout;
     const worth = ignored
       .split('\0')
@@ -796,16 +892,26 @@ function defaultTar(cwd, archive, input) {
 }
 
 /** git's first line of a failure, which is the part that says what went wrong. */
+/**
+ * git's first line of a failure, which is the part that says what went wrong.
+ *
+ * `slice(1)` DROPPED that line, which is the opposite of what the name says and
+ * made every single-line error report `unknown error` — including a real
+ * observed one, `SALVAGE INCOMPLETE — ignored.tar: unknown error`, for a failure
+ * whose actual message was on the first line. The module's own design note holds
+ * that output an operator cannot act on is indistinguishable from a bug, and
+ * this was manufacturing exactly that.
+ */
 function firstLine(err) {
-  return (
-    String(err?.message ?? err)
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .slice(1)
-      .join(' ')
-      .slice(0, 200) || 'unknown error'
-  );
+  const message = String(err?.message ?? err)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(' ');
+  if (!message) return 'unknown error';
+  // A node child_process failure prefixes the real line with
+  // `Command failed: <cmd>` — keep the command AND what it said.
+  return message.slice(0, 200) || 'unknown error';
 }
 
 /**
@@ -823,7 +929,11 @@ export function dispose(cwd, gitState, { run = defaultRun, fs = defaultFs, tar =
   if (ref) steps.push(`anchored ${gitState.tip} at ${ref}`);
 
   const saved = salvage(cwd, gitState, { run, fs, tar });
-  if (saved) steps.push(`salvaged ${saved.written.join(', ')} to ${saved.dir}`);
+  // NAMES WHAT, or says there was nothing. `salvaged  to /path` — an empty join
+  // printed directly above a `SALVAGE INCOMPLETE` line — read as a truncated
+  // sentence rather than as "the salvage produced no files".
+  if (saved && saved.written?.length) steps.push(`salvaged ${saved.written.join(', ')} to ${saved.dir}`);
+  else if (saved) steps.push(`salvaged nothing to ${saved.dir} (no patch and no archive had content)`);
   if (saved?.failed?.length) steps.push(`SALVAGE INCOMPLETE — ${saved.failed.join('; ')}`);
 
   // Catching git's refusal rather than propagating it. An uncaught throw here
@@ -1032,6 +1142,24 @@ function refSlug(source) {
  * two disposals in two processes cannot both conclude the slug is free. `-g<hash>`
  * is 9 hex characters of the exact branch name, which is enough that a
  * deliberate collision is not what anyone is defending against.
+ */
+/**
+ * The suffix that makes a slug unique, or '' when the slug is already free.
+ *
+ * ONLY A HINT, and `anchor()` does not trust it. This reads the ref and decides;
+ * the write that follows is create-if-absent, so a loser of the race is refused
+ * by git and falls back to a tip-derived name. The claim that a HASH "does not
+ * depend on what this process has seen, so two disposals in two processes cannot
+ * both conclude the slug is free" was true of the hash and false of the function:
+ * a read followed by an unconditional write is a race whatever the hash is
+ * derived from. The hash stays because it produces a good NAME; the atomicity
+ * comes from `update-ref <ref> <new> ''`.
+ *
+ * `refSlug` is NOT injective, which is why any suffix exists at all: '/', a space
+ * and a run of anything else all collapse to one '-', and '-' is legal in a
+ * branch name, so `feat/marble`, `feat marble` and `feat-marble` all slug to
+ * `feat-marble`. The anchor is the ONLY recovery point for a disposed branch, so
+ * two collisions mean the second overwrites the first's.
  */
 function anchorDisambiguation(cwd, slug, source, tip, run) {
   if (!slug) return '';

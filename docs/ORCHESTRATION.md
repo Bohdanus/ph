@@ -313,7 +313,9 @@ It refuses, and says which signal refused, unless all of these hold:
   `git worktree remove` deletes it unconditionally. Build and dependency output
   is exempt by an explicit list — `node_modules/`, `dist/`, `coverage/`,
   `tsconfig.tsbuildinfo` and the rest, each carrying the command that rebuilds it
-  — because a real worktree here carries 53 ignored entries and a rule with no
+  — because a real worktree here carries a handful of ignored entries once
+  whole directories are collapsed (53 before `--directory`, 66 worktrees and 290
+  entries across the repository) and a rule with no
   exceptions refuses every worktree. **The list is the exception; an ignored path
   it does not name counts as work.** `.serena/`, `playwright/.auth`, `*.local`
   and `*.log` are deliberately absent from it.
