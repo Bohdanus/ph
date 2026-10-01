@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { slugifyToolLabel, toolbarMap } from '../toolbar-mapping.ts';

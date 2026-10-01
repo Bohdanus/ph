@@ -45,15 +45,16 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Working practice
 
-| Document                                             | Its one job                                                          |
-| ---------------------------------------------------- | -------------------------------------------------------------------- |
-| [`../AGENTS.md`](../AGENTS.md)                       | Rules every agent reads first                                        |
-| [`ORCHESTRATION.md`](ORCHESTRATION.md)               | Worktrees, delegation, the swarm board, dead-agent recovery          |
-| [`CODE-REVIEW.md`](CODE-REVIEW.md)                   | The verbatim prompt and rules for the mandatory review subagent      |
-| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md) | The protocol a per-tool-family research agent works under            |
-| [`TESTING.md`](TESTING.md)                           | Every gate, what it proves, and what to read when it fails           |
-| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)           | The dependency licence policy, and the fact that nothing enforces it |
-| [`../README.md`](../README.md)                       | Install, run, test, and the CI jobs — for a new clone                |
+| Document                                             | Its one job                                                             |
+| ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| [`../AGENTS.md`](../AGENTS.md)                       | Rules every agent reads first                                           |
+| [`ORCHESTRATION.md`](ORCHESTRATION.md)               | Worktrees, delegation, the swarm board, dead-agent recovery             |
+| [`KILO.md`](KILO.md)                                 | The agent-facing Kilo config, including the parts no tracked file holds |
+| [`CODE-REVIEW.md`](CODE-REVIEW.md)                   | The verbatim prompt and rules for the mandatory review subagent         |
+| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md) | The protocol a per-tool-family research agent works under               |
+| [`TESTING.md`](TESTING.md)                           | Every gate, what it proves, and what to read when it fails              |
+| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)           | The dependency licence policy, and the fact that nothing enforces it    |
+| [`../README.md`](../README.md)                       | Install, run, test, and the CI jobs — for a new clone                   |
 
 ## Open problems
 

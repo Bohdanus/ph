@@ -170,6 +170,12 @@ const DesktopHeader = () => {
 
   return (
     <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950">
+      {/* The document's top-level heading, so a screen-reader user has something to
+          navigate by and axe's `page-has-heading-one` has something to find. It sits
+          INSIDE the header landmark: a bare grid child would fail axe's `region` rule
+          instead, which is the rule that caught it here. `sr-only` keeps it out of the
+          visual design. `MobileHeader` carries the same heading for the mobile shell. */}
+      <h1 className="sr-only">Photo App</h1>
       <ul className="mr-auto flex list-none items-center p-0">
         <li className="relative" ref={fileMenuRef}>
           <button

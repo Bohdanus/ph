@@ -62,7 +62,7 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     [activeRectangleSelection, documentFrame]
   );
 
-  const pointerEvents = useRect({
+  const { pointerHandlers, pointerState } = useRect({
     imageSize: totalSize,
     initialRect: activeRectangleRect,
     containerRef,
@@ -131,10 +131,10 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     // after which the flag can no longer tell the two apart either. A right-click
     // that claimed the document would refuse every shortcut until some later
     // drag happened to release it.
-    const startsGesture = event.button === 0 && !pointerEvents.isMouseDown.current;
+    const startsGesture = event.button === 0 && !pointerState.isMouseDown.current;
     const pointerId = getPointerId(event);
 
-    const isEditingCommittedSelection = pointerEvents.onPointerDown(event);
+    const isEditingCommittedSelection = pointerHandlers.onPointerDown(event);
     isEditingCommittedSelectionRef.current = isEditingCommittedSelection;
 
     if (!isEditingCommittedSelection) {
@@ -171,7 +171,7 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   return (
     <div
       className={`${className} cursor-crosshair`}
-      {...pointerEvents}
+      {...pointerHandlers}
       onPointerDown={handlePointerDown}
       onPointerCancel={handlePointerCancel}
     ></div>

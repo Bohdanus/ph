@@ -97,7 +97,26 @@ const Shape: React.FC = () => {
     handleChange({ ...args, lineCap: event.target.value as ShapeLineCap });
   };
 
-  const { alpha, hasFill, lineWidth, figure, lineDash, cornerRadius = 0, lineCap = 'butt', toolMode = 'shape' } = args;
+  // `hasFill` defaults to false, and the default is load-bearing rather than tidy.
+  // Without it the Filled checkbox renders `checked={undefined}` on a tool whose
+  // args were never set, which is an UNCONTROLLED input; the first click then makes
+  // it controlled and React logs "A component is changing an uncontrolled input to
+  // be controlled". `e2e/shape-tools.spec.ts` saw that on every run and could not
+  // report it, because nothing in `e2e/` attached a console listener until
+  // `ConsolePolice` (e2e/helpers/console-police.ts).
+  //
+  // Photoshop's Rectangle/Shape tools default to unfilled, so false is also the
+  // correct value rather than merely a defined one.
+  const {
+    alpha,
+    hasFill = false,
+    lineWidth,
+    figure,
+    lineDash,
+    cornerRadius = 0,
+    lineCap = 'butt',
+    toolMode = 'shape',
+  } = args;
 
   useEffect(() => {
     if (!previewRef.current || !brushScale) return;
