@@ -204,16 +204,26 @@ that a modifier released between the last move and the pointer-up governs the re
 committed. The handle RESIZE is deliberately untouched, which is what keeps the resize's
 aspect-ratio lock a separate feature from the marquee's Shift.
 
-**The `M` group has two members, not four.** `marqueeGroup` in
-`src/components/Common/AppKeyboardShortcuts.tsx:26` is `['rectangular-selection',
-'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:150`-`:139` lists
-under the marquee tile. Adobe documents four marquee tools — Rectangular, Elliptical, Single Row
-and Single Column — so two of Photoshop's four are real tools the app simply does not have, and
-an earlier version of the data file described the `M` cycle as running through
-"single-row/column variants" that do not exist in the app. Both entries now say the group is the
-rectangular and the elliptical marquee, and `appNotes` records that the app has no single-row or
-single-column marquee at all. This is a missing capability, **not** a claim that Photoshop lacks
-the tool.
+**The `M` group has four members, and which four was a real question.** `marqueeGroup` in
+`src/components/Common/AppKeyboardShortcuts.tsx` is `['rectangular-selection',
+'elliptical-selection', 'single-row-marquee', 'single-column-marquee']` and the same four names
+are what `toolbar-mapping.ts` lists under the marquee tile. That was NOT always so: until
+2026-10-01 the group held only the first two, and this section recorded the pair as the honest
+state — Adobe documents four marquee tools, so two were real tools the app did not have. The two
+1-pixel marquees are now implemented (`src/tools/singleRowColumnMarquee.ts`) and the group carries
+all four.
+
+Which is itself unsettled, and the app had to pick. Adobe publishes "Switch between marquee tools
+— SHIFT+M" (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`)
+without enumerating the tools the cycle covers, and its default-shortcut table names only the
+Rectangular and Elliptical Marquees against `M`. Third-party sources disagree outright:
+`guides.wmlcloud.com`, reproducing Adobe's own CS5 _Basic Selection Tools_ text, says Adobe never
+assigned `M` to the 1-pixel pair; `flylib.com`'s _Real World Adobe Photoshop CS2_ says the cycle
+covers all four. The app follows the group, on the reasoning that a tool the rail shows behind the
+very key a user has just pressed is a tool they will expect the key to reach. Neither 1-pixel tool
+gets a `shortcut` of its own in `toolbar-mapping.ts`, so nothing here claims Adobe assigns them
+one — `M` alone does not select them. This remains **unverified** against an Adobe page that
+enumerates the cycle's membership.
 
 ## Elliptical Marquee Tool — `elliptical-selection`
 
@@ -384,7 +394,7 @@ field, so a feather can be typed before the next trace. Nothing in the app binds
 **Modifier gap.** None of this tool's Photoshop modifiers is implemented, and neither is the
 `Space`-to-Hand mid-trace binding. The freehand lasso is drawn by `PolygonClickToolArea` — the
 same component as the polygonal lasso, reached through the shared `interactionMode === 'lasso'`
-branch at `src/components/Main/Main.tsx:87`/`:210` — and that file reads no modifier key at all.
+branch at `src/components/Main/Main.tsx:85`/`:210` — and that file reads no modifier key at all.
 The `modifiers[]` rows are kept because the file describes Photoshop; the absence is stated in
 `appNotes` rather than by deleting the rows.
 
@@ -602,7 +612,7 @@ the exact definition of a defect a documentation pass should not call `present`.
 
 `7f3b0d19` made the latent branch reachable, and this record was not updated. `contiguous` is now
 a declared field of `MagicWandToolArgs` carrying Adobe's own sentence as its doc comment
-(`src/tools/magicWand.ts:7`-`:12`), seeded `true` in `settings.ts:137` so that no default click
+(`src/tools/magicWand.ts:7`-`:12`), seeded `true` in `settings.ts:127` so that no default click
 changes what is selected, and rendered as a checkbox wired to `patchToolArgs`
 (`MagicWand.tsx:76`-`:79`), sitting where Adobe puts it — straight after `Tolerance`. The commit
 notes the placement decision, and the status is `present`: the control is rendered, it is wired,
@@ -704,7 +714,7 @@ unchanged and the bare-letter rows are the ones that were wrong.
 `W` is correct for the Quick Selection — Adobe's own how-to page opens with "Select the Quick
 Selection tool (W)" — and it is the same key as the Magic Wand because the two share one Tools-panel
 flyout; Adobe's wand page likewise opens "Select the Magic Wand
-tool (W)". The app binds `W` to the Magic Wand tile (`toolbar-mapping.ts:59`) and gives the Quick
+tool (W)". The app binds `W` to the Magic Wand tile (`toolbar-mapping.ts:52`) and gives the Quick
 Selection tile no badge of its own (`:53`), which puts the badge on the flyout's primary rather
 than on the second item. That is a presentation difference, not a wrong key.
 

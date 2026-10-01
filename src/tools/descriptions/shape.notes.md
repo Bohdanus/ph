@@ -181,23 +181,23 @@ arrangement, and Additional shape and path options"
 that bar at all and come last, and the Path-mode-only `Operation` row sits with the path rows
 rather than at the end.
 
-| Photoshop control  | Photoshop behaviour                                        | App status | App default                         | App site                    |
-| ------------------ | ---------------------------------------------------------- | ---------- | ----------------------------------- | --------------------------- |
-| `Mode`             | Shape / Path / Pixels, default Shape                       | partial    | `shape`                             | `Figures/Shape.tsx:137`     |
-| `Fill`             | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff` | `StoreContext.tsx:325`      |
-| `Stroke`           | outline swatch, same four contents                         | partial    | store `color` = `#000000`           | `StoreContext.tsx:324`      |
-| `Stroke width`     | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5              | `Figures/Shape.tsx:161`     |
-| `Stroke type`      | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins           | `Figures/Shape.tsx:227`     |
-| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | two `window.prompt` calls           | `ShapeToolArea.tsx:181-182` |
-| `Path Operations`  | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                   | —                           |
-| `Path Alignment`   | align and distribute components                            | missing    | —                                   | —                           |
-| `Path Arrangement` | bring forward / send back                                  | missing    | —                                   | —                           |
-| `Operation`        | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                   | —                           |
-| `Weight`           | path thickness — see below; mode-dependent                 | missing    | —                                   | —                           |
-| gear               | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                   | —                           |
-| `Mode` (blend)     | **Pixel mode only**, layer blend list                      | missing    | —                                   | —                           |
-| `Opacity`          | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes            | `Figures/Shape.tsx:292`     |
-| `Anti-alias`       | **Pixel mode only**, applied automatically                 | missing    | —                                   | —                           |
+| Photoshop control  | Photoshop behaviour                                        | App status | App default                          | App site                   |
+| ------------------ | ---------------------------------------------------------- | ---------- | ------------------------------------ | -------------------------- |
+| `Mode`             | Shape / Path / Pixels, default Shape                       | partial    | `shape`                              | `Figures/Shape.tsx:137`    |
+| `Fill`             | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff`  | `StoreContext.tsx:325`     |
+| `Stroke`           | outline swatch, same four contents                         | partial    | store `color` = `#000000`            | `StoreContext.tsx:324`     |
+| `Stroke width`     | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5               | `Figures/Shape.tsx:161`    |
+| `Stroke type`      | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins            | `Figures/Shape.tsx:227`    |
+| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | Create <Figure> dialog, 100×100 seed | `CreateShapeDialog.tsx:80` |
+| `Path Operations`  | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                    | —                          |
+| `Path Alignment`   | align and distribute components                            | missing    | —                                    | —                          |
+| `Path Arrangement` | bring forward / send back                                  | missing    | —                                    | —                          |
+| `Operation`        | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                    | —                          |
+| `Weight`           | path thickness — see below; mode-dependent                 | missing    | —                                    | —                          |
+| gear               | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                    | —                          |
+| `Mode` (blend)     | **Pixel mode only**, layer blend list                      | missing    | —                                    | —                          |
+| `Opacity`          | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes             | `Figures/Shape.tsx:292`    |
+| `Anti-alias`       | **Pixel mode only**, applied automatically                 | missing    | —                                    | —                          |
 
 **The Fill and Stroke app sites moved file, and the values did not.** Both defaults are still
 `#ffffff` and `#000000`; what was wrong was the file. `src/tools/shape.ts:167-168` is
@@ -261,17 +261,26 @@ Note this does **not** undo the Arrowheads-section finding below: the gear lists
 Contextual Task Bar is where the Line tool's Start/End/Width/Length/Concavity values live, and both
 sentences are true at once.
 
-**The `Shape W&H` row's Photoshop column above is right, and its `detail` is now right too.** The
+**The `Shape W&H` row's Photoshop column above is right, and its `detail` is right too.** The
 `detail` field is Photoshop's behaviour (`types.ts:43-47`). It had drifted the other way — it was
 written as "The app does ask for them, but it asks with two sequential `window.prompt` calls",
 which is an `appNotes` sentence in a `detail` field, and it said so three lines after the same
 material already sat in the `rectangle` and `ellipse` `appNotes`. The `detail` describes Adobe's
-control and the click dialog; the app's version is now in the `appNotes` of every tool that renders
+control and the click dialog; the app's version is in the `appNotes` of every tool that renders
 the control — `shape`, `line`, `triangle` and `custom-shape` alongside the two that already had it.
-`src/components/Main/ShapeToolArea.tsx:180-186` is the whole of the app's version: a click is
-detected by `start.x === end.x && start.y === end.y`, and then two `window.prompt` calls run
-**sequentially**, Width first and Height second, and the shape is only committed if both parse to a
-number above zero. There is no Corner Radius field and no From Center anywhere in that path.
+`src/components/Main/ShapeToolArea.tsx:205-209` is where the app's version starts: a click is
+detected by `start.x === end.x && start.y === end.y`, and every figure except the Line sets a
+`pendingShape` and returns instead of committing, so **the click itself commits nothing**.
+`CreateShapeDialog` is a modal opened on that state and portalled to `document.body`
+(`ShapeToolArea.tsx:333-344`), offering Width, Height and From Center, plus a Corner Radius field
+on the rectangle only, seeded from that figure's live Radius slider
+(`CreateShapeDialog.tsx:186-214`) and handed to the commit as an argument rather than written back
+into the bar (`ShapeToolArea.tsx:230`). **OK is the only commit**: Cancel, the backdrop, the
+header × and Escape all route to the same `onClose` (`:220`, `:131`, `:141-146`, and
+`useDialogFocusContainment`'s `onEscape` at `:117`), and OK is `disabled` outright while a dimension
+is below 1 px or unparseable (`:95`, `:228`). The From Center checkbox is seeded from the Alt held
+at the press (`ShapeToolArea.tsx:126`, `:339`) and stays editable, and the press point is the
+shape's corner or, with the box checked, its centre (`:247-250`).
 
 Per-figure deltas:
 
@@ -433,10 +442,15 @@ default, broken out with Alt/Option-drag on the on-canvas control
 Tool, all four corners can be rounded at once, or a single corner can be rounded independently");
 the separate Rounded Rectangle tool was removed in 22.3
 (`helpx.adobe.com/photoshop/using/modify-shapes.html`); `[` and `]` nudge the radius by 1 px, or
-10 px with Shift (`jkost.com`); and a click without a drag opens the Create Rectangle dialog with
-Width, Height, corner radii and From Center. That last sentence is **Photoshop's** dialog and belongs
-to the Photoshop column above; the app has no counterpart to it beyond the two `window.prompt` calls
-in the shared-surface section.
+10 px with Shift (`jkost.com`); and a click without a drag opens the Create Rectangle dialog. Adobe
+documents that in one sentence and no more — "Click on the canvas to bring up the Create Rectangle
+dialog", where you manually set "the dimensions, corner radii of your rectangle, and choose to align
+from centre" (`helpx.adobe.com/photoshop/using/modify-shapes.html`) — so the rectangle's field list
+is the best-evidenced of the family and the only one Adobe spells out field by field. The app has
+a counterpart to it: `CreateShapeDialog` opens on the click with Width, Height, Corner Radius and
+From Center, which is all four of the fields Adobe names. What diverges is the entry point rather
+than the fields — `Shape W&H` is a control on Photoshop's bar and this app's bar has none — and the
+shared-surface section above has the click-detection code.
 
 **The `appNotes` used to contradict this entry's own `options` table, and the fix is a rewrite rather
 than a status change.** It ended "Everything else on the Rectangle bar, from the separate Fill and
@@ -447,7 +461,7 @@ in `drawShape` at `src/tools/shape.ts:196`. So what is missing is the **swatch f
 separately clickable swatches with their None / Solid / Gradient / Pattern menu — and the sentence now
 says that, and then lists what is absent outright (the path weight, the pixel-mode blend mode, the
 anti-alias control, the three path-operation rows, the gear) and what the app's version of the W/H
-prompt is. The **ellipse** carried the same contradiction in a different form — "Everything the bar
+control is. The **ellipse** carried the same contradiction in a different form — "Everything the bar
 offers beyond the tool mode, thickness, dash and opacity is missing" — and is fixed the same way.
 
 App verdict: **partial**, and the verdict is the entry's, not this section's. Drag geometry,
@@ -626,9 +640,15 @@ options." That is `Shape W&H` sixth from the left end, which is the position the
 gives it.
 
 **The app's click-with-no-drag path is named in this entry's `appNotes` because this is the figure
-where it costs the most.** Adobe's dialog offers Width, Height, Corner Radius, Equilateral and From
-Center; the app's two `window.prompt` calls offer the first two only, and the Radius this tool has
-is the one the renderer ignores.
+where it costs the most.** Adobe documents five fields for this figure's click dialog — Width,
+Height, Corner Radius, Equilateral and From Center
+(`.../using/tool-techniques/triangle-tool.html`) — and the app's Create Triangle dialog has three
+of them, so **two are gaps**. Equilateral is absent outright, which is the same gap the Shift row
+above reaches from the other direction. Corner Radius is withheld rather than absent, and the reason
+is the renderer rather than the dialog: `drawShape` reads `cornerRadius` in its rectangle branch
+only (`src/tools/shape.ts:240`), so a triangle field would take a value and round nothing — and the
+Radius this tool has is the one the renderer ignores, so this figure's corners cannot be rounded
+here either way.
 
 ---
 
@@ -676,6 +696,20 @@ it stays here in Unverified.
 Pre-Star-tool builds carried the side count, the indent percentage and the smooth-radius value in
 the Properties panel (`jkost.com`, 2021); those are now the Star tool's fields. The app has no
 representation of any of it.
+
+**The polygon's click dialog is the one field list Adobe published and then stopped publishing, and
+the app's is the intersection rather than a subset of a current page.** Adobe's current documentation
+of a click dialog is a single sentence for the rectangle (`.../using/modify-shapes.html`), with the
+Triangle adding Corner Radius, Equilateral and From Center
+(`.../using/tool-techniques/triangle-tool.html`); a January 2021 archive of `drawing-shapes.html` is
+the only place the polygon's own list survives, naming Symmetric, Number of Sides, Corner Radius,
+Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page
+carries none of them. So the app's Create Polygon dialog — Width, Height, From Center — cannot be
+checked against a live Adobe list, and none of the five archived fields is missing from the app
+merely because the dialog omits it: `drawShape` hardcodes five sides at `src/tools/shape.ts:210` and
+reads no star or indent argument at all, so every one of them would be inert if a field offered it.
+They are gaps, and they are gaps in the renderer first — the dialog is the second place they would
+have to be closed, and it is not where they can be.
 
 Modifiers: Shift constrains proportions, off by default; Alt/Option draws from the centre, though a
 polygon is already centred in its drag box; Control/Cmd while dragging rotates it; Spacebar
@@ -742,17 +776,17 @@ sentence.** This entry had inherited the shared `sharedFigureOptions` consts, wh
 **bar's** statuses and the shape bar's `appRef`s — for a tool that never renders that bar. Six of the
 nine rows below were `partial` and three were `missing`; the correct reading is:
 
-| Row               | Was     | Now       | Why                                                                                                                |
-| ----------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------ |
-| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                                    |
-| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                         |
-| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                                       |
-| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                                 |
-| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the two `window.prompt` calls the other five figures get never run here |
-| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                              |
-| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                             |
-| `Stroke type`     | partial | `missing` | same                                                                                                               |
-| `Opacity`         | partial | `missing` | same                                                                                                               |
+| Row               | Was     | Now       | Why                                                                                                               |
+| ----------------- | ------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                                   |
+| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                        |
+| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                                      |
+| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                                |
+| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the Create <Figure> dialog the other five figures get never opens here |
+| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                             |
+| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                            |
+| `Stroke type`     | partial | `missing` | same                                                                                                              |
+| `Opacity`         | partial | `missing` | same                                                                                                              |
 
 The `inert` / `missing` split is the whole point of the two statuses, and it is the same split the Pen
 family already makes. `inert` is "declared **or displayed**, and nothing is wired behind it", whose
@@ -794,8 +828,8 @@ the canvas area is `DummyToolArea`, a `display: none` div
 (`src/components/Main/DummyToolArea.tsx:15`). That is why every `appRef` in the nine rows above points
 at the chip list and none at `Figures/Shape.tsx` or `src/tools/shape.ts`, and it is also why the three
 `modifiers` rows — Shift, Alt and Space — are bound to nothing: there is no drag for them to modify.
-The same absence is why the `Shape W&H` chip is `inert` rather than `partial`: the app's two
-`window.prompt` calls live in `ShapeToolArea`, which this tool never mounts, so a click with no drag
+The same absence is why the `Shape W&H` chip is `inert` rather than `partial`: the app's
+Create <Figure> dialog lives in `ShapeToolArea`, which this tool never mounts, so a click with no drag
 does nothing rather than asking for a size.
 
 **Path Operations, corrected.** The real set is New Shape Layer (or Create New Shape Layer),

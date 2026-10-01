@@ -88,10 +88,11 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
   const isColumn = toolName === 'single-column-marquee';
   const dragRef = useRef<MarqueeDrag | null>(null);
   const claimedPointerIdRef = useRef<number | null>(null);
-  const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid } = usePointerPosition({
-    ref: containerRef,
-    imageSize: totalSize,
-  });
+  const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid, releasePointer } =
+    usePointerPosition({
+      ref: containerRef,
+      imageSize: totalSize,
+    });
   const containScale = useContainScale(containerRef, totalSize);
 
   /**
@@ -356,6 +357,11 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     if (!drag || drag.pointerId !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
 
     takeDrag();
+    // Both, and in this order. `releasePointer` clears the hook's captured pointer, which
+    // `handlePointerUp` cannot reach once `takeDrag` has emptied the ref -- the up handler
+    // returns before `isPointerUpValid`, so a leave-then-release left the capture held and
+    // every later press was refused by `isPointerDownValid`'s first-pointer-wins check.
+    releasePointer();
     releaseDocumentClaim();
     // The store still shows the un-moved selection, so the repaint below is the
     // snap-back an abandoned drag gets.

@@ -103,6 +103,15 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
       return true;
     }),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
+    /**
+     * Mirrors the real hook's `releasePointer` (`usePointerPosition.ts:210`): clears the
+     * tracked pointer without a release event. Without it in the mock the captured pointer
+     * survived every abort, which is the wedge the real hook grew this to close — so the
+     * mock would have hidden the very defect the abort route exists to prevent.
+     */
+    releasePointer: vi.fn(() => {
+      pointerState.activePointer = null;
+    }),
     isMouseDown: { current: false },
   }),
 }));
@@ -852,6 +861,19 @@ describe('SingleRowColumnMarqueeToolArea', () => {
 
       expect(selectionEdits()).toEqual([]);
       expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+
+      // The hook's captured pointer goes with the gesture. While it is held the browser
+      // delivers `pointerup` to the capture target even when the pointer was released
+      // elsewhere — and `handlePointerUp` returns before `isPointerUpValid` once the drag
+      // ref is empty — so without `releasePointer` the ref survived and every later press
+      // was refused by `isPointerDownValid`'s first-pointer-wins check. The observable half
+      // is a second press on the SAME mounted element committing a band.
+      expect(pointerState.activePointer).toBe(null);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, ...canvas(5, 90) });
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 2, ...canvas(5, 90) });
+
+      expect(selectionEdits()).toHaveLength(1);
     });
 
     it('cancels the draft on a pointer cancel, which surfaces no release either', () => {
