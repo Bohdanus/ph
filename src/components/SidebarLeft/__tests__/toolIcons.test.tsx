@@ -42,6 +42,7 @@ const toolIconNames = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
   'crop',
   'draw',
   'shape',

@@ -1234,9 +1234,9 @@ The Dodge tool comes from the darkroom: a printer holds light back under a finge
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:125`
-- `src/tools/dodgeBurn.ts:177`
-- `src/tools/dodgeBurn.ts:90`
+- `src/tools/dodgeBurn.ts:124`
+- `src/tools/dodgeBurn.ts:176`
+- `src/tools/dodgeBurn.ts:89`
 - `src/tools/settings.ts:247`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
@@ -1292,9 +1292,9 @@ The Burn tool is the Dodge tool measured from the other end: instead of holding 
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:394`
-- `src/tools/dodgeBurn.ts:125`
-- `src/tools/dodgeBurn.ts:177`
+- `src/tools/dodgeBurn.ts:354`
+- `src/tools/dodgeBurn.ts:124`
+- `src/tools/dodgeBurn.ts:176`
 - `src/tools/settings.ts:255`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
@@ -1315,6 +1315,67 @@ Sources:
 - <https://flylib.com/books/en/2.816.1.11/1/>
 - <https://www.lenscraft.co.uk/photo-editing-tutorials/tutorial-mastering-the-photoshop-dodge-and-burn-tool/>
 - <https://www.dummies.com/article/technology/software/adobe-products/photoshop/using-the-dodge-and-burn-tools-in-photoshop-elements-9-205974/>
+
+---
+
+### Sponge Tool
+
+`sponge`
+
+Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.
+
+The Sponge tool subtly changes the colour saturation of an area. Saturate intensifies the colour's saturation and Desaturate dilutes it, and the tool reaches no further than that: it is the one brush in the toning flyout that acts on chroma rather than on tone, which is what separates it from the Dodge and the Burn beside it, and neither a Range nor an Exposure appears on its bar because neither means anything to a chroma operation. Flow is the bar's only intensity control, and where the Dodge and the Burn have neither Opacity nor Flow the Sponge has Flow and no Opacity, so the bare digit keys step Flow rather than Opacity. Dragging compounds: the effect builds up pass by pass and keeps building for as long as the button is held, which is why retouching with it is done at a low Flow with repeated passes. Adobe documents one more thing about it that belongs here rather than in the option table, because it is a rule rather than a control: when an image is in Grayscale mode the tool increases or decreases contrast by moving grey levels away from or toward the middle grey. Vibrance, the checkbox that sits beside Flow, is what keeps the Saturate direction from pushing an already-bright colour off the end of its range; it arrived with the CS4 rework of all three toning tools, which is the same release that gave the Dodge and the Burn Protect Tones.
+
+**Options bar**
+
+| Control               | Photoshop                                                                                                                                                                                                                                                                                                                                      | In this app                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Brush Preset Picker   | The tip the sponge is painted with, carrying its Size and Hardness. A large soft tip at a low Flow is how a whole area is evened out; a small hard one is how one stubborn patch is treated.                                                                                                                                                   | `partial` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:172` |
+| Mode                  | Saturate or Desaturate, and nothing else: Adobe names exactly the two, as 'Saturate: Intensifies the color's saturation' and 'Desaturate: Dilutes the color's saturation'. Which one is the default is not something Adobe states anywhere, so the app's own seeded value is recorded as a choice rather than as an Adobe fact.                | `present` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:133` |
+| Flow                  | The rate at which the saturation changes, as a percentage, 1-100%, and the bar's only intensity control. Adobe describes it only as setting 'the rate of saturation change' and states neither a default nor a range; the 1% floor and the 50% seed are the CS2 Bible's and a third-party walkthrough's, not Adobe's.                          | `present` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:146` |
+| Vibrance              | Adobe's only documented description of it is 'Select the Vibrance option to minimize clipping for fully saturated or desaturated colors', so it is a gamut guard rather than a second intensity control: with it on the stroke cannot push a channel off the end of its range. Whether Adobe ships it checked is not stated on any page found. | `present` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:163` |
+| Airbrush              | Off by default. With it on, the saturation keeps building wherever the brush rests without needing a new stroke. It is listed in community descriptions of the bar rather than in Adobe own enumeration of it.                                                                                                                                 | `missing`                                                        |
+| Use Pressure for Size | A pressure-tablet toggle that sizes the tip by how hard the stylus is pressed. No tool in this app reads tablet pressure, so the control would have nothing behind it.                                                                                                                                                                         | `missing`                                                        |
+
+**Shortcuts**
+
+- `O` — Selects the Dodge tool. Adobe lists the Dodge, the Burn and the Sponge as three rows with the same letter rather than one row, which puts the Dodge first; the Sponge is reached by cycling.
+- `Shift+O` — Cycles from the Dodge tool to the Burn tool and on to the Sponge, which share the O shortcut.
+- `Shift+Alt+D` — Sets the tool to Desaturate while the Sponge is active. Photoshop prints it Shift+Option+D on macOS.
+- `Shift+Alt+S` — Sets the tool to Saturate while the Sponge is active - and is Shadows on the Dodge and the Burn, on the same page of the same Adobe table, so the two tools share one key and Photoshop resolves it by which tool is selected. Photoshop prints it Shift+Option+S on macOS.
+- `[` — Decreases the brush tip size by one pixel, and repeats as a scrub while the key is held.
+- `]` — Increases the brush tip size by one pixel, and repeats as a scrub while the key is held.
+
+**In this app:** `partial` — This is filed partial on two independent grounds, and both are stated here rather than left for the next reader to infer. The first is the one the Dodge, the Burn and the Smudge already carry: there is no build-up. Photoshop's Sponge compounds for as long as the button is held and every tutorial retouches it at a low Flow with repeated passes, while this app commits once per stroke, on release, at the Flow value in full. That is what keeps the commit a pure function of its args, which is in turn what lets the registry's raster replay reproduce it exactly, and the cost is the tool's defining interaction - the same cost `docs/TOOLS-TOO-HARD.md` records for the other two toning tools. Flow therefore means 'the whole effect of one pass' here rather than Photoshop's 'the strength of one dab', and the two are only the same number at Flow 100. The second is the Vibrance checkbox: it is a control welded to one of its two states. It caps the chroma scale at the pixel's own gamut boundary, which is the strictest reading of Adobe's 'minimize clipping', and that cap can only ever bind in the Saturate direction - Desaturate moves every channel toward the pixel's own luma, so its result is the convex combination of two in-range values and provably cannot leave the range, which makes the checkbox do nothing in that mode. Airbrush and Use Pressure for Size are missing for the reasons given in the option table: the first is the build-up above and the second is a tablet this app does not read. Protect Texture and Tolerance are deliberately absent from this record's option table rather than filed as missing: no source puts Protect Texture on the Sponge's own bar (it is a Brush-panel checkbox) and none puts Tolerance on it at all - it belongs to the Magic Wand and the Color Replacement. Adobe's bare digit keys step Flow on this tool, because the Sponge has a Flow and no Opacity, and the app's Opacity table has no Sponge entry, so 0 and 1 do nothing here; that is recorded rather than listed, since the shortcut table describes Photoshop. Adobe's Grayscale-mode rule is also not implemented, and the reason is structural rather than an oversight: the rule pivots grey levels about mid-grey in a document MODE this app does not have, and on an RGB pixel with no chroma the chroma scale is already an exact no-op, so adding the pivot would make the tool behave the way Photoshop behaves in a mode that cannot be reached. Two seeded values are choices Adobe declines to document rather than divergences from it, and both are recorded in full at `SPONGE_MODE_DEFAULT` and `SPONGE_FLOW_DEFAULT`: no Adobe page states which Mode the bar opens on, and no Adobe page states a Flow default. The Mode seeds at Desaturate because it is the non-destructive direction - a saturated stroke that clips a channel cannot be painted back - and Flow at the midpoint of the range every other percentage control in this app uses. The pixel arithmetic is a chroma scale about a Rec.709 luma of the ENCODED sRGB the editor stores, in the same space and for the same stated reason as the Dodge and the Burn, rather than in a colour space Adobe names and this repo does not have; Adobe publishes no per-pixel specification for this tool, and the one community implementation that states its rule says the same thing. One deliberate departure from `computeLuma`: the pivot reads the stored channels and does not fold alpha in the way the shared helper does, because folding alpha composites a partly transparent pixel toward white and would drag its hue with it - the opposite of what a chroma tool should do to a cut-out edge. A fully transparent pixel is left alone outright. The stroke coverage field is the shared one, extracted out of `dodgeBurn.ts` into `src/util/stroke-coverage.ts` rather than written a second time, and dabs are unioned rather than summed so a replay cannot compound.
+
+Implementation:
+
+- `src/tools/sponge.ts:392`
+- `src/tools/sponge.ts:207`
+- `src/tools/sponge.ts:177`
+- `src/tools/sponge.ts:60`
+- `src/tools/sponge.ts:279`
+- `src/tools/settings.ts:269`
+- `src/components/ToolbarsRight/Sponge/Sponge.tsx:134`
+- `src/components/Main/SpongeToolArea.tsx:52`
+- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/components/Common/AppKeyboardShortcuts.tsx:592`
+- `src/components/Common/AppKeyboardShortcuts.tsx:602`
+- `toolbar-mapping.ts:100`
+- `src/tools/toolProcessors.ts:268`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html>
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html>
+- <https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html>
+- <http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf>
+- <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=646>
+- <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217>
+- <https://flylib.com/books/en/2.816.1.14/1/>
+- <https://www.glensmith.co.uk/photoshop/sponge-tool>
+- <https://www.adobe.com/products/photoshop/blend-colors.html>
 
 ---
 

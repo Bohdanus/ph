@@ -104,6 +104,7 @@ vi.mock('../toolIcons.tsx', () => {
       smudge: Icon,
       dodge: Icon,
       burn: Icon,
+      sponge: Icon,
       crop: Icon,
       draw: Icon,
       shape: Icon,

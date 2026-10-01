@@ -68,7 +68,10 @@ What makes it unresolvable from the documents alone:
 
 - The **34 is arithmetic, not an observation.** `HANDOFF.md` §74 states the shape as
   "41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete", and
-  `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available. So 34 is forced by
+  `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available.
+  **That 41 is §74's own historical figure, not today's count** — the registry carries 42 now,
+  since the Sponge was added to it. The quotation is left as §74 states it rather than
+  silently re-derived, because §74 is a record of an exercise and not a live total. So 34 is forced by
   the **70-tool target**, not counted off a roster. A combined list of 35 means either the
   target is 71 or one entry does not belong.
 - Three combined-list entries are **documented as unsettled**, so any of them could be the
@@ -125,20 +128,41 @@ lines of geometry reusing the rectangular-selection path.
 
 ## Retouch
 
-| Adobe tool             | Group                                                          | Shortcut                                                                                                                                | Headline options                                                                                                | Source                                                                                                                                                                                                                                                                                                                                        |
-| ---------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Spot Healing Brush** | Retouch — healing flyout, first entry                          | `J`, printed on Adobe's own page                                                                                                        | Size, Hardness, Spacing, Pressure; Content-Aware variants                                                       | Adobe: _"Select the Spot Healing Brush (J)"_, and the Options bar named as _"Size, Hardness, and Spacing"_                                                                                                                                                                                                                                    |
-| **Healing Brush**      | Retouch — healing flyout, second entry                         | `J`, printed on Adobe's own page                                                                                                        | Mode (Normal, Replace, Multiply, Screen, Darken), Source, Aligned, Sample, Diffusion                            | Adobe's Healing Brush page lists _"Mode, Source, Aligned, Sample, and Diffusion"_                                                                                                                                                                                                                                                             |
-| **Patch**              | Retouch — healing flyout, third entry                          | `J`, printed on Adobe's own page                                                                                                        | Patch option Normal, then Source or Destination                                                                 | Adobe's Patch page lists _"Normal"_ and _"Source or Destination"_                                                                                                                                                                                                                                                                             |
-| **Remove**             | Retouch                                                        | not researched                                                                                                                          | not researched                                                                                                  | `HANDOFF.md` §74: Adobe-documented, _"In the Tools panel, select Remove tool"_, and absent from the overview tables because it has its own page. Options bar not researched.                                                                                                                                                                  |
-| **Red Eye**            | Retouch — healing flyout                                       | the healing family letter — **not researched against a shortcut page**                                                                  | pupil size and darkness                                                                                         | Adobe has a page titled _"Remove red eye in flash photos"_, whose summary names pupil size and darkness. Options are one search excerpt deep, not an audited bar.                                                                                                                                                                             |
-| **Background Eraser**  | Retouch — **Eraser group**, beside the Eraser and Magic Eraser | `E`, shared with the Eraser family — **third-party**                                                                                    | not researched                                                                                                  | Adobe's page _"Change pixels to transparent with the Background Eraser tool"_ exists; its option list was not read.                                                                                                                                                                                                                           |
-| **Sponge**             | Focus — **toning flyout with Dodge and Burn**                  | `O`, cycled — the cycle is confirmed in this app's own `docs/TOOLS.md`, which documents the Sponge as the third member of the `O` cycle | Mode Saturate/Desaturate and Flow; **no Range and no Exposure**, which is what separates it from Dodge and Burn | `docs/TOOLS.md` (Sponge section) and `src/tools/descriptions/focus.notes.md`, which cite the CS2 Bible for the _"modifies two things: color saturation and color luminosity"_ distinction. Adobe's own page was not opened.                                                                                                                   |
-| **Adjustment Brush**   | Painting — **Brush flyout sibling**, not a retouch tool        | none of its own                                                                                                                         | not researched                                                                                                  | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, _"Select Adjustment Brush Tool from the toolbar"_, and _"a large feature involving an adjustment layer plus a painted mask"_. `HANDOFF.md` §74 is explicit that membership and size are different decisions. Options bar not researched. |
+| Adobe tool             | Group                                                          | Shortcut                                                               | Headline options                                                                     | Source                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Spot Healing Brush** | Retouch — healing flyout, first entry                          | `J`, printed on Adobe's own page                                       | Size, Hardness, Spacing, Pressure; Content-Aware variants                            | Adobe: _"Select the Spot Healing Brush (J)"_, and the Options bar named as _"Size, Hardness, and Spacing"_                                                                                                                                                                                                                                    |
+| **Healing Brush**      | Retouch — healing flyout, second entry                         | `J`, printed on Adobe's own page                                       | Mode (Normal, Replace, Multiply, Screen, Darken), Source, Aligned, Sample, Diffusion | Adobe's Healing Brush page lists _"Mode, Source, Aligned, Sample, and Diffusion"_                                                                                                                                                                                                                                                             |
+| **Patch**              | Retouch — healing flyout, third entry                          | `J`, printed on Adobe's own page                                       | Patch option Normal, then Source or Destination                                      | Adobe's Patch page lists _"Normal"_ and _"Source or Destination"_                                                                                                                                                                                                                                                                             |
+| **Remove**             | Retouch                                                        | not researched                                                         | not researched                                                                       | `HANDOFF.md` §74: Adobe-documented, _"In the Tools panel, select Remove tool"_, and absent from the overview tables because it has its own page. Options bar not researched.                                                                                                                                                                  |
+| **Red Eye**            | Retouch — healing flyout                                       | the healing family letter — **not researched against a shortcut page** | pupil size and darkness                                                              | Adobe has a page titled _"Remove red eye in flash photos"_, whose summary names pupil size and darkness. Options are one search excerpt deep, not an audited bar.                                                                                                                                                                             |
+| **Background Eraser**  | Retouch — **Eraser group**, beside the Eraser and Magic Eraser | `E`, shared with the Eraser family — **third-party**                   | not researched                                                                       | Adobe's page _"Change pixels to transparent with the Background Eraser tool"_ exists; its option list was not read.                                                                                                                                                                                                                           |
+| **Adjustment Brush**   | Painting — **Brush flyout sibling**, not a retouch tool        | none of its own                                                        | not researched                                                                       | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, _"Select Adjustment Brush Tool from the toolbar"_, and _"a large feature involving an adjustment layer plus a painted mask"_. `HANDOFF.md` §74 is explicit that membership and size are different decisions. Options bar not researched. |
+
+**The Sponge was on this table and is not any more, which is recorded here rather than left as a
+quiet deletion.** It was the third member of this table's `O` toning flyout row, and the app now
+ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
+its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
+sources behind it. Deleting the row keeps this file's contract — every row here is absent from
+`src/contexts/tool-types.ts` — and it is the reason this file's tables now show 29 of the 30 absent
+tools this file attributes to `TOOLS-TOO-HARD.md`: 35 rows across the six Adobe groups, less the six
+that group names at the top as coming from `HANDOFF.md` §74 instead. **Two claims the deleted row carried were themselves
+wrong**, and they are the reason this note exists rather than a bare `git log` entry:
+
+- It cited "`docs/TOOLS.md` (Sponge section)" as evidence for the `O` cycle. **There was no Sponge
+  section in `docs/TOOLS.md`**, and there could not have been: that file is generated from the
+  family modules under `src/tools/descriptions/`, and a tool the registry has no entry for cannot be
+  given a description in that system at all — the key's absence is a TypeScript error at the merge
+  in `src/tools/descriptions/index.ts`, not a gap in a rendered page. The row was citing a document
+  that the tooling makes impossible for an unimplemented tool to appear in.
+- It read "the cycle is confirmed in this app's own `docs/TOOLS.md`". The cycle is now confirmed
+  against **Adobe's own pages** instead, which is where it belonged: Adobe lists the Dodge, the Burn
+  and the Sponge as three rows carrying the same `O`, with `Shift+O` cycling the group.
 
 **Healing and Patch are one flyout, not three tools in a row.** All three share `J`, and
 `HANDOFF.md` §74 lists the Healing Brush, Red Eye and Sponge among the cheapest real
-additions because they are geometry and pixel loops rather than new subsystems.
+additions because they are geometry and pixel loops rather than new subsystems. **The Sponge was the
+one of those three that has actually been built**; the Healing Brush and Red Eye are still absent,
+and both are larger than the Sponge was.
 
 ## Painting
 
@@ -265,7 +289,7 @@ established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not op
 **This repository**
 
 - `.kilo/plans/ps-research/00-tool-inventory.md` — the registered-tool audit. **Its line 15
-  reads "all 29 in `availableTools`" and that is stale: the registry now carries 41**
+  reads "all 29 in `availableTools`" and that is stale: the registry now carries 42**
   (`src/contexts/tool-types.ts`, counted at the `ToolArgsByName` block). Its **Note A**
   (`color` has no determinate Photoshop identity) and **Note B** (`levels` is actually
   Brightness/Contrast) describe tools this app _has_, so they do not bear on this roster, and
@@ -284,8 +308,10 @@ established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not op
 - `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits" — the 30-entry roster this file
   takes over, and the dependencies the absent tools follow from.
 - `docs/TOOLS.md` and `src/tools/descriptions/*.notes.md` — per-tool option censuses and the
-  shortcut citations for the families that overlap this roster (Star, Sponge, Path Selection,
-  Direct Selection, Color Sampler).
+  shortcut citations for the families that overlap this roster (Star, Path Selection,
+  Direct Selection, Color Sampler). **`docs/TOOLS.md` only carries a tool that is implemented**,
+  so its Sponge section appeared with the tool rather than before it; see the note in §Retouch for
+  what the deleted row got wrong by citing it as though it already existed.
 - `docs/TOOLS-RESEARCH-BRIEF.md` — the protocol this repository runs research under, including
   the rule that an unsourceable claim goes in an Unverified list rather than into the data.
 - `toolbar-mapping.ts:109-116` — the shape flyout's six entries, and the missing seventh.

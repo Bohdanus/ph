@@ -21,6 +21,7 @@ import { SharpenToolArea } from './SharpenToolArea.tsx';
 import { SmudgeToolArea } from './SmudgeToolArea.tsx';
 import { DodgeToolArea } from './DodgeToolArea.tsx';
 import { BurnToolArea } from './BurnToolArea.tsx';
+import { SpongeToolArea } from './SpongeToolArea.tsx';
 import { GradientToolArea } from './GradientToolArea.tsx';
 import { FillToolArea } from './FillToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
@@ -127,6 +128,8 @@ const Main = () => {
     interactionMode = 'dodge';
   } else if (toolName === 'burn') {
     interactionMode = 'burn';
+  } else if (toolName === 'sponge') {
+    interactionMode = 'sponge';
   } else if (toolName === 'clone-stamp') {
     interactionMode = 'clone-stamp';
   } else if (toolName === 'sharpen') {
@@ -236,6 +239,7 @@ const Main = () => {
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
       | typeof BurnToolArea
+      | typeof SpongeToolArea
       | typeof CloneStampToolArea
       | typeof SharpenToolArea
       | typeof GradientToolArea
@@ -262,6 +266,7 @@ const Main = () => {
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
       else if (interactionMode === 'burn') EventHandler = BurnToolArea;
+      else if (interactionMode === 'sponge') EventHandler = SpongeToolArea;
       else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;

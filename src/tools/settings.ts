@@ -30,6 +30,7 @@ import type { SharpenToolArgs } from './sharpen.ts';
 import { PAINT_SMOOTHING_DEFAULT } from './brush.ts';
 import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
 import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
+import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
 import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
@@ -268,6 +269,20 @@ export const defaultSettings = {
     points: [],
     toolName: 'burn',
   } satisfies DodgeBurnToolArgs,
+  // Flow seeds at the midpoint and Vibrance at ON. Both are choices Adobe declines to
+  // document — its Mode and Flow pages are imperative throughout — so the reasoning and the
+  // search that failed to corroborate them live at `SPONGE_MODE_DEFAULT` in
+  // `src/tools/sponge.ts`, and the gap is recorded in `HANDOFF.md` rather than in
+  // `docs/OVERRIDES.md`, which no agent may write.
+  sponge: {
+    mode: SPONGE_MODE_DEFAULT,
+    flow: SPONGE_FLOW_DEFAULT,
+    vibrance: true,
+    size: 40,
+    hardness: 100,
+    points: [],
+    toolName: 'sponge',
+  } satisfies SpongeToolArgs,
   'clone-stamp': {
     size: 40,
     hardness: 100,
@@ -346,6 +361,7 @@ export type SavedSettings =
   // `saveLastSettings` on every persist.
   | SmudgeToolSettings
   | DodgeBurnToolSettings
+  | SpongeToolSettings
   | CloneStampToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

@@ -29,6 +29,7 @@ import { selection } from '../selection.ts';
 import { shape } from '../shape.ts';
 import { sharpen } from '../sharpen.ts';
 import { smudge } from '../smudge.ts';
+import { sponge } from '../sponge.ts';
 import { text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -200,6 +201,7 @@ describe('toolProcessors registry', () => {
         'pencil',
         'sharpen',
         'smudge',
+        'sponge',
       ].sort()
     );
   });
@@ -252,6 +254,7 @@ describe('toolProcessors registry', () => {
         'pencil',
         'sharpen',
         'smudge',
+        'sponge',
       ].sort()
     );
     for (const toolName of rasterCommitted) {
@@ -336,6 +339,7 @@ describe('toolProcessors registry', () => {
       smudge: 'raster',
       dodge: 'raster',
       burn: 'raster',
+      sponge: 'raster',
       'clone-stamp': 'raster',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
@@ -514,6 +518,7 @@ const realBarNames = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
   'color-replacement',
 ] as const satisfies readonly ToolName[];
 
@@ -688,6 +693,7 @@ const directProcessorSources: readonly [ToolName, unknown][] = [
   ['smudge', smudge],
   ['dodge', dodge],
   ['burn', burn],
+  ['sponge', sponge],
   ['clone-stamp', cloneStamp],
   ['rectangle', shape],
   ['ellipse', shape],
@@ -887,6 +893,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['smudge', 'canvas', 40, 24],
     ['dodge', 'canvas', 40, 24],
     ['burn', 'canvas', 40, 24],
+    ['sponge', 'canvas', 40, 24],
     ['clone-stamp', 'canvas', 40, 24],
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
@@ -1107,6 +1114,7 @@ describe('toolsMap exhaustiveness', () => {
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
+    ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],

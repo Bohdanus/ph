@@ -141,10 +141,11 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'smudge' ||
     toolName === 'dodge' ||
     toolName === 'burn' ||
+    toolName === 'sponge' ||
     toolName === 'clone-stamp' ||
     toolName === 'eraser'
   ) {
-    // These five are brushes, so `points` is the stroke that was just committed and not
+    // These six are brushes, so `points` is the stroke that was just committed and not
     // a setting: reseeding it would hand the next drag the previous one. Emptied the
     // way `draw` (:27) and `feather-magnetic-lasso` (:44) empty theirs. Note that
     // `clone-stamp.source` survives — a source point is a setting, and losing it is the

@@ -3987,3 +3987,115 @@ working tree to have anything to assert.
 
 **Files.** `scripts/__tests__/worktree-inventory.test.mjs:307`, `:329-357`, `:2300-2336`,
 `scripts/lib/worktree-inventory/classify.mjs:105`, `:159`
+
+## 145. The Dodge's and the Burn's tonal-range shortcuts are described as working, and are bound to nothing
+
+**Problem.** `src/tools/descriptions/focus.ts` carries six `shortcuts` rows that state, as fact, what
+`Shift+Alt+S`, `Shift+Alt+M` and `Shift+Alt+H` do to the Dodge and to the Burn — "Sets the stroke to
+the Shadows range while the Dodge tool is active" (`:275`, `:379` and its two siblings at `:280`,
+`:284`, `:384`, `:388`). **No keyboard handler anywhere in the app binds them.** The only two
+`alt: true` registrations in `src/components/Common/AppKeyboardShortcuts.tsx` are the Sponge's own
+mode keys, at `:596` and `:606`. The Range select is the only thing that writes
+`DodgeBurnToolArgs.range`, and it writes it from the user's click
+(`src/components/ToolbarsRight/Tonal/Tonal.tsx:107`).
+
+**Why it is a defect and not a gap.** A missing capability is filed `missing` per control. These rows
+are in the `shortcuts` array, which has **no status field at all** — a row there reads as a statement
+about what the app does, so a reader of the tooltip, of the generated `docs/TOOLS.md`, and of this
+file's own `implementationRefs` is told six keys work. The Dodge and the Burn are both filed
+`partial`, and their `appNotes` names the missing `Protect Tones` and `Airbrush` controls without
+once mentioning that three of their documented keys are inert.
+
+**How it became visible.** Building the Sponge forced the question. Adobe gives the Sponge
+`Shift+Alt+D` and `Shift+Alt+S` and gives the Dodge and the Burn `Shift+Alt+S/M/H` **on the same page
+of the same table** — Julieanne Kost's Adobe-blog post states both sets, and the Adobe-branded CS2
+sheet carries all five rows
+(<http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf>). Photoshop resolves the
+`Shift+Alt+S` collision by which tool is active, and the Sponge now does too
+(`enabled: toolName === 'sponge'`). That asymmetry is correct and is the whole point of the gate, but
+it leaves the pair's three keys as the only rows in the family describing something that does not
+happen.
+
+**Fix.** Bind all three for both tools in `selectTonalTool`'s neighbourhood, each gated on the active
+tool being `dodge` or `burn`, using `patchToolArgs(tool, { range })` — the same `alt`/`shift`
+registration shape the Sponge's two mode keys use. The three values already exist as
+`DODGE_BURN_RANGES`, so this is three registrations and a small table, with no new args field. Until
+then, either delete the six rows or add a `status` field to `ToolShortcut`
+(`src/tools/descriptions/types.ts:58-63`) so a documented key can be recorded as unbound; the second
+is the durable fix, because the field is the reason this could not be caught mechanically.
+
+**Files.** `src/tools/descriptions/focus.ts:275`, `:280`, `:284`, `:379`, `:384`, `:388`;
+`src/components/Common/AppKeyboardShortcuts.tsx:596`, `:606`;
+`src/components/ToolbarsRight/Tonal/Tonal.tsx:107`;
+`src/tools/descriptions/types.ts:58`
+
+## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
+
+**Problem.** The Sponge shipped with `mode: 'desaturate'` and `vibrance: true`
+(`src/tools/settings.ts:269`). **Neither is an Adobe default, because Adobe documents neither.** A
+dedicated search of Adobe's desktop Sponge page, its tool-techniques page, the CS4 manual and the
+CS2 Bible found no statement of which `Mode` the bar opens on and no statement of whether `Vibrance`
+ships checked. The app's two seeds rest on arguments, recorded at `SPONGE_MODE_DEFAULT`
+(`src/tools/sponge.ts:60`) and in the tool's `appNotes`:
+
+- `Desaturate` was chosen because it is the non-destructive direction, since a saturated stroke that
+  clips a channel cannot be painted back. **One non-Adobe source asserts it** and no second was found.
+- `Vibrance` **on** was chosen because Adobe documents the control as the thing that prevents
+  clipping. Against that: Adobe's sentence is an _action_ ("Select the Vibrance option to minimize
+  clipping"), which reads as an instruction to enable it and so points at **unchecked**, and one
+  2026 tutorial is consistent with unchecked.
+
+**Why it is filed rather than settled.** `docs/OVERRIDES.md` may not be edited by an agent, and there
+is nothing to override here in any case: **the source is silent, not contradicted**, so neither seed
+is a deviation from Adobe. That leaves an unverifiable default in shipped code, which is exactly the
+kind of thing a reviewer cannot check and an operator can settle in about ten seconds against a live
+Photoshop. If `Vibrance` is really unchecked, the tool's Saturate direction clips channel values that
+`Vibrance` was on precisely to protect; if `Mode` really opens on Saturate, a first stroke out of the
+box can clip.
+
+**Fix.** Confirm both against a live Photoshop and change `src/tools/settings.ts:269` if either is
+inverted. Nothing else needs to move — both are single values, both are already isolated as named
+constants, and both are already the subject of pinned unit tests. If the defaults cannot be
+confirmed, the alternative is to stop asserting either: render the `Mode` select unseeded and refuse
+the commit until the user chooses, which is worse and is not recommended.
+
+**Files.** `src/tools/settings.ts:269`; `src/tools/sponge.ts:60`, `:87`;
+`src/tools/descriptions/focus.ts` §sponge `appNotes`;
+`src/tools/descriptions/focus.notes.md` §Sponge Tool and items 15-16
+
+## 147. The app has no document colour modes, so every Photoshop rule scoped to one is unimplementable
+
+**Problem.** Adobe scopes behaviour to `Image > Mode` in several places, and this app has no such
+surface — a `grep -rni grayscale src` finds only `colors.ts`'s `grayscale` **filter amount**
+(`src/tools/colors.ts:5`, applied as a canvas `ctx.filter` at `:15`), the `color` tool's own
+`Grayscale` slider (`src/components/ToolbarsRight/Colors/Color.tsx:130`), a PSD-import warning
+(`src/contexts/psd-utils.ts:80`, "Grayscale PSD converted to RGB") and the Sponge's own prose.
+
+The Sponge is the case that surfaced it. Adobe: "When an image is in Grayscale mode, the tool
+increases or decreases contrast by moving gray levels away from or toward the middle gray"
+(<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and Photoshop
+Elements splits the direction — "In grayscale, Saturate increases contrast … In grayscale,
+Desaturate decreases contrast" (<https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html>).
+That rule is **deliberately not implemented** (`SPONGE_MIDDLE_GREY`, `src/tools/sponge.ts:110`), and
+the reasoning is sound: the rule is scoped to a document MODE, and on an RGB pixel with no chroma the
+chroma scale is already an exact no-op, so adding the pivot would make the tool behave the way
+Photoshop behaves in a mode this app cannot reach.
+
+**Why it is filed anyway.** The same trap is waiting for any future mode-scoped rule, and there is
+more than one: `Image > Mode` also governs what the Channels panel lists, what a Lab-document's
+`Image > Adjustments` behaves like, and how Photoshop's own Histogram reads a merged channel. An
+agent that finds one of those will read the Sponge's `appNotes` and conclude "no mode, so skip it",
+which is right here and would be wrong elsewhere — a greyscale document imported from a PSD is
+**already converted to RGB on import** (`psd-utils.ts:80`), so the pixels a mode-scoped rule would
+read as grey exist in the app today, as RGB pixels, and the mode-scoped rule would then be the
+Photoshop-correct answer for them. That inversion is the trap.
+
+**Fix.** Decide whether the app has document modes at all. If it does not, say so once in
+`docs/FEATURES.md` against the capability and treat mode-scoped Photoshop behaviour as unimplementable
+rather than absent — and change the Sponge's `appNotes` to say which way that reasoning runs, since it
+currently reads as "no mode, so nothing to do" when the imported-greyscale case is the opposite. If it
+should, `Image > Mode` is a document-level property with a PSD round trip attached, and the Sponge's
+grayscale branch is a small consumer of it rather than the reason to build it.
+
+**Files.** `src/tools/sponge.ts:110`; `src/tools/colors.ts:5`, `:15`;
+`src/components/ToolbarsRight/Colors/Color.tsx:130`; `src/contexts/psd-utils.ts:80`
