@@ -206,7 +206,7 @@ aspect-ratio lock a separate feature from the marquee's Shift.
 
 **The `M` group has two members, not four.** `marqueeGroup` in
 `src/components/Common/AppKeyboardShortcuts.tsx:26` is `['rectangular-selection',
-'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:138`-`:139` lists
+'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:150`-`:139` lists
 under the marquee tile. Adobe documents four marquee tools — Rectangular, Elliptical, Single Row
 and Single Column — so two of Photoshop's four are real tools the app simply does not have, and
 an earlier version of the data file described the `M` cycle as running through
@@ -384,7 +384,7 @@ field, so a feather can be typed before the next trace. Nothing in the app binds
 **Modifier gap.** None of this tool's Photoshop modifiers is implemented, and neither is the
 `Space`-to-Hand mid-trace binding. The freehand lasso is drawn by `PolygonClickToolArea` — the
 same component as the polygonal lasso, reached through the shared `interactionMode === 'lasso'`
-branch at `src/components/Main/Main.tsx:85`/`:210` — and that file reads no modifier key at all.
+branch at `src/components/Main/Main.tsx:87`/`:210` — and that file reads no modifier key at all.
 The `modifiers[]` rows are kept because the file describes Photoshop; the absence is stated in
 `appNotes` rather than by deleting the rows.
 
@@ -602,7 +602,7 @@ the exact definition of a defect a documentation pass should not call `present`.
 
 `7f3b0d19` made the latent branch reachable, and this record was not updated. `contiguous` is now
 a declared field of `MagicWandToolArgs` carrying Adobe's own sentence as its doc comment
-(`src/tools/magicWand.ts:7`-`:12`), seeded `true` in `settings.ts:127` so that no default click
+(`src/tools/magicWand.ts:7`-`:12`), seeded `true` in `settings.ts:137` so that no default click
 changes what is selected, and rendered as a checkbox wired to `patchToolArgs`
 (`MagicWand.tsx:76`-`:79`), sitting where Adobe puts it — straight after `Tolerance`. The commit
 notes the placement decision, and the status is `present`: the control is rendered, it is wired,
@@ -704,7 +704,7 @@ unchanged and the bare-letter rows are the ones that were wrong.
 `W` is correct for the Quick Selection — Adobe's own how-to page opens with "Select the Quick
 Selection tool (W)" — and it is the same key as the Magic Wand because the two share one Tools-panel
 flyout; Adobe's wand page likewise opens "Select the Magic Wand
-tool (W)". The app binds `W` to the Magic Wand tile (`toolbar-mapping.ts:52`) and gives the Quick
+tool (W)". The app binds `W` to the Magic Wand tile (`toolbar-mapping.ts:59`) and gives the Quick
 Selection tile no badge of its own (`:53`), which puts the badge on the flyout's primary rather
 than on the second item. That is a presentation difference, not a wrong key.
 

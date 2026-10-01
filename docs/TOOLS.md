@@ -48,12 +48,12 @@ The Rectangular Marquee tool makes the simplest selection in Photoshop: drag cor
 - `M` — Selects the Rectangular Marquee. All four marquee tools share M, so pressing it again re-selects this one rather than cycling; Shift+M is the cycling key.
 - `Shift+M` — Switches between the marquee tools, which Adobe lists as "Switch between marquee tools".
 
-**In this app:** `partial` — The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:400`-`:403`), and `adjustFreshPoint` (`:314`-`:329`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:502`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:156`-`:158`). The `M` key and Shift+M reach this tool and cycle the two marquees, and the app carries no single-row or single-column marquee, so the group behind that key holds the two tools the app actually ships and not the four Adobe documents. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.
+**In this app:** `partial` — The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:400`-`:403`), and `adjustFreshPoint` (`:314`-`:329`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:502`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:156`-`:158`). The `M` key and Shift+M reach this tool and cycle all four marquees Adobe documents, which this app now ships; the two 1-pixel members sit behind that same key, in the same flyout this tool leads. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.
 
 Implementation:
 
 - `src/tools/rectangularSelection.ts:4`
-- `src/tools/settings.ts:130`
+- `src/tools/settings.ts:132`
 - `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:33`
 - `src/components/Main/RectangularSelectionToolArea.tsx:74`
 - `src/hooks/useRect.ts:400`
@@ -109,7 +109,7 @@ Implementation:
 
 - `src/tools/ellipticalSelection.ts:155`
 - `src/tools/ellipticalSelection.ts:51`
-- `src/tools/settings.ts:220`
+- `src/tools/settings.ts:229`
 - `src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:98`
 - `src/components/Main/EllipticalSelectionToolArea.tsx:176`
 - `src/components/Main/EllipticalSelectionToolArea.tsx:247`
@@ -125,6 +125,100 @@ Sources:
 - <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html>
 - <https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html>
 - <https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/>
+
+---
+
+### Single Row Marquee Tool
+
+`single-row-marquee`
+
+Click or drag to select one document row, one pixel tall and as wide as the image.
+
+The Single Row Marquee tool makes the narrowest selection Photoshop offers: one row of pixels, one pixel tall, spanning the entire width of the image. It is a one-click tool — "click near the area you want to select, and then drag the marquee to the exact location" — so the gesture is a placement rather than a shape, and the drag exists only to position the row that was clicked. Its counterpart is the Single Column Marquee tool, which is the same gesture on the other axis. Together they are how you isolate a scanline for a colour lookup, or seed an adjustment to one row.
+
+**Options bar**
+
+| Control                                       | Photoshop                                                                                                                                                                                                                                                                                                                                  | In this app |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
+| New / Add To / Subtract From / Intersect With | Four buttons that set how the next click combines with the selection already on the canvas: replace it, union with it, subtract it, or keep only the overlap. Adobe states the step without scoping it to a tool, so these tools carry the four modes, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four. | `missing`   |
+| Feather                                       | Softens the border over a radius in pixels, default 0. Adobe applies the step to the marquee tools generally, but a control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectRow takes neither a feather nor an antiAlias parameter where selectRectangle takes both.                 | `missing`   |
+| Select and Mask                               | Opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush, a plain Brush, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors.                                                                                                                                        | `missing`   |
+
+**Modifiers**
+
+- **Shift** — Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.
+- **Alt** — Sets the click to Subtract From Selection, for the same reason Shift is Add.
+- **Shift+Alt** — Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row, so on a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable.
+
+**Shortcuts**
+
+- `M` — Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.
+- `Shift+M` — Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.
+
+**In this app:** `implemented` — The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` because they are absent for every selection tool in the application, not because they were skipped here, and adding them to the two newest tools and not to the other five would be a worse inconsistency than the one that exists. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.
+
+Implementation:
+
+- `src/tools/singleRowColumnMarquee.ts:81`
+- `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126`
+- `src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38`
+- `src/tools/toolProcessors.ts:248`
+- `toolbar-mapping.ts:48`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html>
+- <https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html>
+- <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html>
+- <https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html>
+- <https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/selection/>
+
+---
+
+### Single Column Marquee Tool
+
+`single-column-marquee`
+
+Click or drag to select one document column, one pixel wide and as tall as the image.
+
+The Single Column Marquee tool is the Single Row Marquee tool on the other axis: one column of pixels, one pixel wide, spanning the entire height of the image, placed by a click and positioned by an optional drag. It exists for the same reasons its counterpart does — isolating a scanline in the other direction, or seeding an adjustment to one column — and it shares its options bar, because Adobe gives the two tools the same controls.
+
+**Options bar**
+
+| Control                                       | Photoshop                                                                                                                                                                                                                                                          | In this app |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
+| New / Add To / Subtract From / Intersect With | Four buttons that set how the next click combines with the selection already on the canvas. Adobe states the step without scoping it to a tool, and Shift, Alt/Option and Shift+Alt/Option held during the click set the same four.                                | `missing`   |
+| Feather                                       | Softens the border over a radius in pixels, default 0. A control that cannot soften a 1-pixel band has no effect, and the scripting API is the sharper evidence: selectColumn takes neither a feather nor an antiAlias parameter where selectRectangle takes both. | `missing`   |
+| Select and Mask                               | Opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush, a plain Brush, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors.                                                                | `missing`   |
+
+**Modifiers**
+
+- **Shift** — Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.
+- **Alt** — Sets the click to Subtract From Selection, for the same reason Shift is Add.
+- **Shift+Alt** — Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row.
+
+**Shortcuts**
+
+- `M` — Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.
+- `Shift+M` — Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.
+
+**In this app:** `implemented` — The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` because they are absent for every selection tool in the application rather than skipped here. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.
+
+Implementation:
+
+- `src/tools/singleRowColumnMarquee.ts:94`
+- `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126`
+- `src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38`
+- `src/tools/toolProcessors.ts:255`
+- `toolbar-mapping.ts:49`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html>
+- <https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html>
+- <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/adjust-a-selection-manually.html>
+- <https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html>
+- <https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/selection/>
 
 ---
 
@@ -165,9 +259,9 @@ The Lasso tool draws a selection border by following the pointer with no correct
 Implementation:
 
 - `src/tools/polygonSelection.ts:3`
-- `src/tools/settings.ts:104`
+- `src/tools/settings.ts:106`
 - `src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:50`
-- `toolbar-mapping.ts:45`
+- `toolbar-mapping.ts:52`
 
 Sources:
 
@@ -221,10 +315,10 @@ The Polygonal Lasso tool draws a selection border out of straight segments, whic
 Implementation:
 
 - `src/tools/polygonSelection.ts:3`
-- `src/tools/settings.ts:96`
+- `src/tools/settings.ts:98`
 - `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:16`
 - `src/components/Main/PolygonClickToolArea.tsx:922`
-- `toolbar-mapping.ts:46`
+- `toolbar-mapping.ts:53`
 
 Sources:
 
@@ -287,14 +381,14 @@ Implementation:
 
 - `src/tools/featherMagneticLasso.ts:4`
 - `src/tools/featherMagneticLasso.ts:43`
-- `src/tools/settings.ts:112`
+- `src/tools/settings.ts:114`
 - `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:272`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:391`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:476`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:458`
 - `src/util/selection.ts:834`
 - `src/util/selection.ts:837`
-- `toolbar-mapping.ts:47`
+- `toolbar-mapping.ts:54`
 
 Sources:
 
@@ -345,16 +439,16 @@ The Magic Wand tool selects by color and tone rather than by shape: one click ta
 - `W` — Selects the Magic Wand. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key.
 - `Shift+W` — Switches between the Magic Wand and the Quick Selection tools.
 
-**In this app:** `partial` — The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. Tolerance is a different control from Photoshop’s on two axes at once: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. `Contiguous` is `present` as of this pass and was `missing` in the previous version of this record, which said the behaviour was "permanently on and cannot be reached". That was true when written and is not now: `contiguous` is a declared field of `MagicWandToolArgs` (`src/tools/magicWand.ts:12`), seeded `true` in `settings.ts:127`, rendered as a checkbox wired to `patchToolArgs` (`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77`), and `createMagicWandSelectionFromCanvas` branches on it — so unticking it now takes the non-contiguous path, which is the selection that makes the wand useful on a repeated sky or a duplicated product shot. The commit that made it reachable notes it was left seeded `true` so no default click changes what is selected, which is also Photoshop’s default per the third-party and Elements authority quoted in the row. Sample All Layers is still absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.
+**In this app:** `partial` — The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. Tolerance is a different control from Photoshop’s on two axes at once: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. `Contiguous` is `present` as of this pass and was `missing` in the previous version of this record, which said the behaviour was "permanently on and cannot be reached". That was true when written and is not now: `contiguous` is a declared field of `MagicWandToolArgs` (`src/tools/magicWand.ts:12`), seeded `true` in `settings.ts:137`, rendered as a checkbox wired to `patchToolArgs` (`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77`), and `createMagicWandSelectionFromCanvas` branches on it — so unticking it now takes the non-contiguous path, which is the selection that makes the wand useful on a repeated sky or a duplicated product shot. The commit that made it reachable notes it was left seeded `true` so no default click changes what is selected, which is also Photoshop’s default per the third-party and Elements authority quoted in the row. Sample All Layers is still absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.
 
 Implementation:
 
 - `src/tools/magicWand.ts:3`
-- `src/tools/settings.ts:124`
+- `src/tools/settings.ts:126`
 - `src/components/ToolbarsRight/MagicWand/MagicWand.tsx:63`
 - `src/components/Main/MagicWandToolArea.tsx:58`
 - `src/util/magicWand.ts:31`
-- `toolbar-mapping.ts:52`
+- `toolbar-mapping.ts:59`
 
 Sources:
 
@@ -411,11 +505,11 @@ Implementation:
 - `src/tools/quickSelection.ts:8`
 - `src/tools/quickSelection.ts:144`
 - `src/tools/quickSelection.ts:79`
-- `src/tools/settings.ts:227`
+- `src/tools/settings.ts:236`
 - `src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111`
 - `src/components/Main/QuickSelectionToolArea.tsx:125`
 - `src/components/Main/QuickSelectionToolArea.tsx:216`
-- `toolbar-mapping.ts:53`
+- `toolbar-mapping.ts:60`
 
 Sources:
 
@@ -488,14 +582,14 @@ The Brush is Photoshop’s general painting tool. Click and drag to lay down a s
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:256`
+- `src/tools/toolProcessors.ts:276`
 - `src/tools/brush.ts:70`
 - `src/components/ToolbarsRight/Paint/Paint.tsx:43`
 - `src/components/Main/DrawToolArea.tsx:143`
 - `src/tools/brush.ts:109`
 - `src/contexts/layer-utils.ts:230`
-- `src/tools/settings.ts:131`
-- `src/components/Common/AppKeyboardShortcuts.tsx:517`
+- `src/tools/settings.ts:140`
+- `src/components/Common/AppKeyboardShortcuts.tsx:538`
 
 Sources:
 
@@ -562,11 +656,11 @@ The Pencil is a Brush whose tip is always hard-edged, so its strokes never blend
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:264`
+- `src/tools/toolProcessors.ts:297`
 - `src/components/ToolbarsRight/Paint/Paint.tsx:43`
 - `src/components/Main/DrawToolArea.tsx:143`
-- `src/tools/settings.ts:148`
-- `src/components/Common/AppKeyboardShortcuts.tsx:517`
+- `src/tools/settings.ts:157`
+- `src/components/Common/AppKeyboardShortcuts.tsx:538`
 
 Sources:
 
@@ -618,14 +712,14 @@ The Color Replacement Tool substitutes one color for another in a stroke, keepin
 
 Implementation:
 
-- `src/tools/toolsMap.ts:117`
+- `src/tools/toolsMap.ts:138`
 - `src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:71`
 - `src/components/Main/ColorReplacementToolArea.tsx:141`
 - `src/tools/colorReplacement.ts:182`
 - `src/tools/colorReplacement.ts:313`
-- `src/tools/toolProcessors.ts:277`
-- `src/tools/settings.ts:165`
-- `src/components/Common/AppKeyboardShortcuts.tsx:347`
+- `src/tools/toolProcessors.ts:310`
+- `src/tools/settings.ts:174`
+- `src/components/Common/AppKeyboardShortcuts.tsx:368`
 
 Sources:
 
@@ -688,14 +782,14 @@ The Eraser removes pixels under a dragged tip, writing transparency on a layer a
 
 Implementation:
 
-- `src/tools/toolsMap.ts:122`
+- `src/tools/toolsMap.ts:143`
 - `src/tools/eraser.ts:26`
 - `src/tools/eraser.ts:85`
 - `src/tools/eraser.ts:215`
 - `src/components/Main/EraserToolArea.tsx:211`
 - `src/components/ToolbarsRight/Eraser/Eraser.tsx:38`
-- `src/tools/settings.ts:183`
-- `src/components/Common/AppKeyboardShortcuts.tsx:462`
+- `src/tools/settings.ts:192`
+- `src/components/Common/AppKeyboardShortcuts.tsx:483`
 
 Sources:
 
@@ -734,16 +828,16 @@ The Magic Eraser is the Paint Bucket run in reverse: one click erases every pixe
 
 - `Shift+E` — Cycles the slot shared with the Eraser and the Background Eraser. Adobe’s own help page prints the bare letter E beside the tool, but the tool does not have E to itself — the Eraser does.
 
-**In this app:** `partial` — A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the app does not bind `Shift+E`: the eraser family shares one plain `E` registration with no Shift twin (`AppKeyboardShortcuts.tsx:462`), so the tool is selected only by cycling with Shift+B from the eraser slot rather than the cycle Photoshop uses. Its bar is the shared fill bar, built by `createFillToolbar` and rendered at `MagicEraser.tsx:24`.
+**In this app:** `partial` — A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the app does not bind `Shift+E`: the eraser family shares one plain `E` registration with no Shift twin (`AppKeyboardShortcuts.tsx:483`), so the tool is selected only by cycling with Shift+B from the eraser slot rather than the cycle Photoshop uses. Its bar is the shared fill bar, built by `createFillToolbar` and rendered at `MagicEraser.tsx:24`.
 
 Implementation:
 
-- `src/tools/toolsMap.ts:123`
+- `src/tools/toolsMap.ts:144`
 - `src/tools/fill.ts:163`
 - `src/util/floodFill.ts:76`
 - `src/components/Main/FillToolArea.tsx:91`
 - `src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:24`
-- `src/tools/settings.ts:197`
+- `src/tools/settings.ts:206`
 
 Sources:
 
@@ -787,14 +881,14 @@ The Paint Bucket fills the whole connected region of similar color around the cl
 
 Implementation:
 
-- `src/tools/toolsMap.ts:124`
+- `src/tools/toolsMap.ts:145`
 - `src/tools/fill.ts:129`
 - `src/tools/fill.ts:151`
 - `src/components/Main/FillToolArea.tsx:154`
 - `src/components/Main/FillToolArea.tsx:160`
 - `src/components/ToolbarsRight/MagicEraser/PaintBucket.tsx:35`
-- `src/tools/settings.ts:206`
-- `src/components/Common/AppKeyboardShortcuts.tsx:314`
+- `src/tools/settings.ts:215`
+- `src/components/Common/AppKeyboardShortcuts.tsx:335`
 
 Sources:
 
@@ -853,7 +947,7 @@ The Clone Stamp copies pixels from one part of an image and paints them into ano
 
 Implementation:
 
-- `src/tools/toolsMap.ts:96`
+- `src/tools/toolsMap.ts:111`
 - `src/components/Main/CloneStampToolArea.tsx:343`
 - `src/components/Main/CloneStampToolArea.tsx:352`
 - `src/components/Main/CloneStampToolArea.tsx:210`
@@ -862,8 +956,8 @@ Implementation:
 - `src/contexts/useLayer.ts:334`
 - `src/contexts/useLayer.ts:589`
 - `src/components/ToolbarsRight/CloneStamp/CloneStamp.tsx:71`
-- `src/tools/settings.ts:263`
-- `src/components/Common/AppKeyboardShortcuts.tsx:362`
+- `src/tools/settings.ts:286`
+- `src/components/Common/AppKeyboardShortcuts.tsx:383`
 
 Sources:
 
@@ -915,12 +1009,12 @@ The Blur tool reduces local contrast and smooths detail in the areas you paint i
 Implementation:
 
 - `src/tools/blur.ts:11`
-- `src/tools/settings.ts:52`
+- `src/tools/settings.ts:54`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:101`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:121`
-- `src/components/Main/Main.tsx:236`
+- `src/components/Main/Main.tsx:250`
 - `src/components/Main/SharpenToolArea.tsx:33`
-- `src/tools/toolProcessors.ts:119`
+- `src/tools/toolProcessors.ts:120`
 
 Sources:
 
@@ -965,11 +1059,11 @@ Implementation:
 
 - `src/tools/sharpen.ts:243`
 - `src/tools/sharpen.ts:90`
-- `src/tools/settings.ts:245`
+- `src/tools/settings.ts:254`
 - `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:125`
 - `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:143`
 - `src/components/Main/SharpenToolArea.tsx:46`
-- `src/tools/toolProcessors.ts:226`
+- `src/tools/toolProcessors.ts:246`
 
 Sources:
 
@@ -1020,13 +1114,13 @@ Implementation:
 
 - `src/tools/smudge.ts:149`
 - `src/tools/smudge.ts:123`
-- `src/tools/settings.ts:246`
+- `src/tools/settings.ts:255`
 - `src/components/ToolbarsRight/Smudge/Smudge.tsx:138`
 - `src/components/ToolbarsRight/Smudge/Smudge.tsx:153`
 - `src/components/Main/SmudgeToolArea.tsx:62`
-- `src/components/Common/AppKeyboardShortcuts.tsx:49`
-- `src/components/Common/AppKeyboardShortcuts.tsx:518`
-- `src/tools/toolProcessors.ts:232`
+- `src/components/Common/AppKeyboardShortcuts.tsx:69`
+- `src/components/Common/AppKeyboardShortcuts.tsx:539`
+- `src/tools/toolProcessors.ts:252`
 
 Sources:
 
@@ -1084,10 +1178,10 @@ Implementation:
 - `src/components/ToolbarsRight/Gradient/Gradient.tsx:129`
 - `src/components/ToolbarsRight/Gradient/Gradient.tsx:146`
 - `src/tools/gradient.ts:132`
-- `src/tools/settings.ts:234`
+- `src/tools/settings.ts:243`
 - `src/components/Main/GradientToolArea.tsx:40`
 - `src/components/Main/GradientToolArea.tsx:95`
-- `src/tools/toolProcessors.ts:220`
+- `src/tools/toolProcessors.ts:221`
 
 Sources:
 
@@ -1140,17 +1234,17 @@ The Dodge tool comes from the darkroom: a printer holds light back under a finge
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:125`
-- `src/tools/dodgeBurn.ts:177`
-- `src/tools/dodgeBurn.ts:90`
-- `src/tools/settings.ts:247`
+- `src/tools/dodgeBurn.ts:119`
+- `src/tools/dodgeBurn.ts:171`
+- `src/tools/dodgeBurn.ts:84`
+- `src/tools/settings.ts:256`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:156`
 - `src/components/Main/DodgeToolArea.tsx:50`
-- `src/components/Common/AppKeyboardShortcuts.tsx:437`
-- `toolbar-mapping.ts:87`
-- `src/tools/toolProcessors.ts:238`
+- `src/components/Common/AppKeyboardShortcuts.tsx:458`
+- `toolbar-mapping.ts:94`
+- `src/tools/toolProcessors.ts:258`
 
 Sources:
 
@@ -1198,16 +1292,16 @@ The Burn tool is the Dodge tool measured from the other end: instead of holding 
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:394`
-- `src/tools/dodgeBurn.ts:125`
-- `src/tools/dodgeBurn.ts:177`
-- `src/tools/settings.ts:255`
+- `src/tools/dodgeBurn.ts:310`
+- `src/tools/dodgeBurn.ts:119`
+- `src/tools/dodgeBurn.ts:171`
+- `src/tools/settings.ts:264`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
 - `src/components/Main/BurnToolArea.tsx:56`
-- `src/components/Common/AppKeyboardShortcuts.tsx:437`
-- `toolbar-mapping.ts:88`
-- `src/tools/toolProcessors.ts:244`
+- `src/components/Common/AppKeyboardShortcuts.tsx:458`
+- `toolbar-mapping.ts:95`
+- `src/tools/toolProcessors.ts:264`
 
 Sources:
 
@@ -1221,6 +1315,67 @@ Sources:
 - <https://flylib.com/books/en/2.816.1.11/1/>
 - <https://www.lenscraft.co.uk/photo-editing-tutorials/tutorial-mastering-the-photoshop-dodge-and-burn-tool/>
 - <https://www.dummies.com/article/technology/software/adobe-products/photoshop/using-the-dodge-and-burn-tools-in-photoshop-elements-9-205974/>
+
+---
+
+### Sponge Tool
+
+`sponge`
+
+Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.
+
+The Sponge tool subtly changes the colour saturation of an area. Saturate intensifies the colour's saturation and Desaturate dilutes it, and the tool reaches no further than that: it is the one brush in the toning flyout that acts on chroma rather than on tone, which is what separates it from the Dodge and the Burn beside it, and neither a Range nor an Exposure appears on its bar because neither means anything to a chroma operation. Flow is the bar's only intensity control, and where the Dodge and the Burn have neither Opacity nor Flow the Sponge has Flow and no Opacity, so the bare digit keys step Flow rather than Opacity. Dragging compounds: the effect builds up pass by pass and keeps building for as long as the button is held, which is why retouching with it is done at a low Flow with repeated passes. Adobe documents one more thing about it that belongs here rather than in the option table, because it is a rule rather than a control: when an image is in Grayscale mode the tool increases or decreases contrast by moving grey levels away from or toward the middle grey. Vibrance, the checkbox that sits beside Flow, is what keeps the Saturate direction from pushing an already-bright colour off the end of its range; it arrived with the CS4 rework of all three toning tools, which is the same release that gave the Dodge and the Burn Protect Tones.
+
+**Options bar**
+
+| Control               | Photoshop                                                                                                                                                                                                                                                                                                                                      | In this app                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Brush Preset Picker   | The tip the sponge is painted with, carrying its Size and Hardness. A large soft tip at a low Flow is how a whole area is evened out; a small hard one is how one stubborn patch is treated.                                                                                                                                                   | `partial` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:172` |
+| Mode                  | Saturate or Desaturate, and nothing else: Adobe names exactly the two, as 'Saturate: Intensifies the color's saturation' and 'Desaturate: Dilutes the color's saturation'. Which one is the default is not something Adobe states anywhere, so the app's own seeded value is recorded as a choice rather than as an Adobe fact.                | `present` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:133` |
+| Flow                  | The rate at which the saturation changes, as a percentage, 1-100%, and the bar's only intensity control. Adobe describes it only as setting 'the rate of saturation change' and states neither a default nor a range; the 1% floor and the 50% seed are the CS2 Bible's and a third-party walkthrough's, not Adobe's.                          | `present` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:146` |
+| Vibrance              | Adobe's only documented description of it is 'Select the Vibrance option to minimize clipping for fully saturated or desaturated colors', so it is a gamut guard rather than a second intensity control: with it on the stroke cannot push a channel off the end of its range. Whether Adobe ships it checked is not stated on any page found. | `present` — `src/components/ToolbarsRight/Sponge/Sponge.tsx:163` |
+| Airbrush              | Off by default. With it on, the saturation keeps building wherever the brush rests without needing a new stroke. It is listed in community descriptions of the bar rather than in Adobe own enumeration of it.                                                                                                                                 | `missing`                                                        |
+| Use Pressure for Size | A pressure-tablet toggle that sizes the tip by how hard the stylus is pressed. No tool in this app reads tablet pressure, so the control would have nothing behind it.                                                                                                                                                                         | `missing`                                                        |
+
+**Shortcuts**
+
+- `O` — Selects the Dodge tool. Adobe lists the Dodge, the Burn and the Sponge as three rows with the same letter rather than one row, which puts the Dodge first; the Sponge is reached by cycling.
+- `Shift+O` — Cycles from the Dodge tool to the Burn tool and on to the Sponge, which share the O shortcut.
+- `Shift+Alt+D` — Sets the tool to Desaturate while the Sponge is active. Photoshop prints it Shift+Option+D on macOS.
+- `Shift+Alt+S` — Sets the tool to Saturate while the Sponge is active - and is Shadows on the Dodge and the Burn, on the same page of the same Adobe table, so the two tools share one key and Photoshop resolves it by which tool is selected. Photoshop prints it Shift+Option+S on macOS.
+- `[` — Decreases the brush tip size by one pixel, and repeats as a scrub while the key is held.
+- `]` — Increases the brush tip size by one pixel, and repeats as a scrub while the key is held.
+
+**In this app:** `partial` — This is filed partial on two independent grounds, and both are stated here rather than left for the next reader to infer. The first is the one the Dodge, the Burn and the Smudge already carry: there is no build-up. Photoshop's Sponge compounds for as long as the button is held and every tutorial retouches it at a low Flow with repeated passes, while this app commits once per stroke, on release, at the Flow value in full. That is what keeps the commit a pure function of its args, which is in turn what lets the registry's raster replay reproduce it exactly, and the cost is the tool's defining interaction - the same cost `docs/TOOLS-TOO-HARD.md` records for the other two toning tools. Flow therefore means 'the whole effect of one pass' here rather than Photoshop's 'the strength of one dab', and the two are only the same number at Flow 100. The second is the Vibrance checkbox: it is a control welded to one of its two states. It caps the chroma scale at the pixel's own gamut boundary, which is the strictest reading of Adobe's 'minimize clipping', and that cap can only ever bind in the Saturate direction - Desaturate moves every channel toward the pixel's own luma, so its result is the convex combination of two in-range values and provably cannot leave the range, which makes the checkbox do nothing in that mode. Airbrush and Use Pressure for Size are missing for the reasons given in the option table: the first is the build-up above and the second is a tablet this app does not read. Protect Texture and Tolerance are deliberately absent from this record's option table rather than filed as missing: no source puts Protect Texture on the Sponge's own bar (it is a Brush-panel checkbox) and none puts Tolerance on it at all - it belongs to the Magic Wand and the Color Replacement. Adobe's bare digit keys step Flow on this tool, because the Sponge has a Flow and no Opacity, and the app's Opacity table has no Sponge entry, so 0 and 1 do nothing here; that is recorded rather than listed, since the shortcut table describes Photoshop. Adobe's Grayscale-mode rule is also not implemented, and the reason is structural rather than an oversight: the rule pivots grey levels about mid-grey in a document MODE this app does not have, and on an RGB pixel with no chroma the chroma scale is already an exact no-op, so adding the pivot would make the tool behave the way Photoshop behaves in a mode that cannot be reached. Two seeded values are choices Adobe declines to document rather than divergences from it, and both are recorded in full at `SPONGE_MODE_DEFAULT` and `SPONGE_FLOW_DEFAULT`: no Adobe page states which Mode the bar opens on, and no Adobe page states a Flow default. The Mode seeds at Desaturate because it is the non-destructive direction - a saturated stroke that clips a channel cannot be painted back - and Flow at the midpoint of the range every other percentage control in this app uses. The pixel arithmetic is a chroma scale about a Rec.709 luma of the ENCODED sRGB the editor stores, in the same space and for the same stated reason as the Dodge and the Burn, rather than in a colour space Adobe names and this repo does not have; Adobe publishes no per-pixel specification for this tool, and the one community implementation that states its rule says the same thing. One deliberate departure from `computeLuma`: the pivot reads the stored channels and does not fold alpha in the way the shared helper does, because folding alpha composites a partly transparent pixel toward white and would drag its hue with it - the opposite of what a chroma tool should do to a cut-out edge. A fully transparent pixel is left alone outright. The stroke coverage field is the shared one, extracted out of `dodgeBurn.ts` into `src/util/stroke-coverage.ts` rather than written a second time, and dabs are unioned rather than summed so a replay cannot compound.
+
+Implementation:
+
+- `src/tools/sponge.ts:392`
+- `src/tools/sponge.ts:207`
+- `src/tools/sponge.ts:177`
+- `src/tools/sponge.ts:60`
+- `src/tools/sponge.ts:279`
+- `src/tools/settings.ts:292`
+- `src/components/ToolbarsRight/Sponge/Sponge.tsx:134`
+- `src/components/Main/SpongeToolArea.tsx:52`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
+- `src/components/Common/AppKeyboardShortcuts.tsx:592`
+- `src/components/Common/AppKeyboardShortcuts.tsx:602`
+- `toolbar-mapping.ts:100`
+- `src/tools/toolProcessors.ts:301`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/sponge-tool.html>
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/dodge-or-burn-image-areas.html>
+- <https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html>
+- <http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf>
+- <https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=646>
+- <https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=217>
+- <https://flylib.com/books/en/2.816.1.14/1/>
+- <https://www.glensmith.co.uk/photoshop/sponge-tool>
+- <https://www.adobe.com/products/photoshop/blend-colors.html>
 
 ---
 
@@ -1271,11 +1426,11 @@ The Rectangle tool draws a four-sided figure from two drag corners, and Shift ho
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:326`
+- `src/tools/toolProcessors.ts:359`
 - `src/tools/shape.ts:225`
 - `src/tools/shape.ts:240`
 - `src/components/ToolbarsRight/Figures/Shape.tsx:182`
-- `src/tools/settings.ts:278`
+- `src/tools/settings.ts:301`
 
 Sources:
 
@@ -1330,11 +1485,11 @@ The Ellipse tool inscribes an ellipse in the drag box; Shift holds it a circle, 
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:327`
+- `src/tools/toolProcessors.ts:360`
 - `src/tools/shape.ts:249`
 - `src/tools/shape.ts:93`
 - `src/components/ToolbarsRight/Figures/Shape.tsx:14`
-- `src/tools/settings.ts:285`
+- `src/tools/settings.ts:308`
 
 Sources:
 
@@ -1391,11 +1546,11 @@ The Line tool drags a single straight segment between two points, and Shift snap
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:330`
+- `src/tools/toolProcessors.ts:363`
 - `src/tools/shape.ts:200`
 - `src/tools/shape.ts:101`
 - `src/components/ToolbarsRight/Figures/Shape.tsx:197`
-- `src/tools/settings.ts:306`
+- `src/tools/settings.ts:329`
 
 Sources:
 
@@ -1451,11 +1606,11 @@ The Triangle tool, added in Photoshop 2021 (v22), draws a three-sided figure who
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:328`
+- `src/tools/toolProcessors.ts:361`
 - `src/tools/shape.ts:205`
 - `src/tools/shape.ts:210`
 - `src/tools/shape.ts:103`
-- `src/tools/settings.ts:292`
+- `src/tools/settings.ts:315`
 
 Sources:
 
@@ -1513,11 +1668,11 @@ The Polygon tool is drag-defined, not a click-to-place-vertices tool: Adobe says
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:329`
+- `src/tools/toolProcessors.ts:362`
 - `src/tools/shape.ts:205`
 - `src/tools/shape.ts:210`
 - `src/components/ToolbarsRight/Figures/Shape.tsx:182`
-- `src/tools/settings.ts:299`
+- `src/tools/settings.ts:322`
 
 Sources:
 
@@ -1574,11 +1729,11 @@ The Custom Shape tool draws any of the vector presets in Photoshop’s shape lib
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:331`
+- `src/tools/toolProcessors.ts:364`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:159`
-- `src/components/Main/Main.tsx:82`
-- `src/tools/settings.ts:313`
+- `src/tools/toolsMap.ts:180`
+- `src/components/Main/Main.tsx:84`
+- `src/tools/settings.ts:336`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37`
 
 Sources:
@@ -1635,15 +1790,15 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 - `Shift+U` — Cycles to the next tool in the shapes tool group, through the four the app’s cycle holds: rectangle, ellipse, line and Custom Shape. The Triangle and the Polygon are in the rail’s flyout but not in the cycle, and an unlisted figure does not skip ahead — Shift+U from either of them restarts at the rectangle instead of advancing.
 
-**In this app:** `partial` — The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:103-108`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, so Photoshop’s Create <Shape> dialog has no counterpart here and a dismissed prompt, or a value of zero or less, commits nothing at all.
+**In this app:** `partial` — The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:114-121`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, so Photoshop’s Create <Shape> dialog has no counterpart here and a dismissed prompt, or a value of zero or less, commits nothing at all.
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:159`
+- `src/tools/toolProcessors.ts:160`
 - `src/tools/shape.ts:194`
 - `src/tools/shape.ts:93`
 - `src/components/ToolbarsRight/Figures/Shape.tsx:21`
-- `src/tools/toolsMap.ts:63`
+- `src/tools/toolsMap.ts:65`
 
 Sources:
 
@@ -1706,18 +1861,18 @@ The Pen tool builds a path of straight and curved segments by clicking to place 
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:300`
+- `src/tools/toolProcessors.ts:333`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:128`
+- `src/tools/toolsMap.ts:149`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:272`
-- `src/contexts/tool-types.ts:58`
-- `src/util/settings.ts:101`
-- `src/components/Main/Main.tsx:236`
-- `src/components/Common/AppKeyboardShortcuts.tsx:492`
+- `src/tools/settings.ts:295`
+- `src/contexts/tool-types.ts:68`
+- `src/util/settings.ts:111`
+- `src/components/Main/Main.tsx:250`
+- `src/components/Common/AppKeyboardShortcuts.tsx:513`
 - `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:45`
-- `src/tools/__tests__/tool-processors.test.ts:336`
+- `src/tools/__tests__/tool-processors.test.ts:344`
 
 Sources:
 
@@ -1764,17 +1919,17 @@ The Freeform Pen takes a single drag and turns it into a path, so it is the tool
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:302`
+- `src/tools/toolProcessors.ts:335`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:132`
+- `src/tools/toolsMap.ts:153`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24`
-- `src/tools/settings.ts:273`
-- `src/contexts/tool-types.ts:59`
-- `src/util/settings.ts:102`
-- `src/components/Main/Main.tsx:236`
-- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:171`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/tools/settings.ts:296`
+- `src/contexts/tool-types.ts:69`
+- `src/util/settings.ts:112`
+- `src/components/Main/Main.tsx:250`
+- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
 Sources:
 
@@ -1824,17 +1979,17 @@ The Curvature Pen is Illustrator’s Curvature tool ported into Photoshop, and i
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:307`
+- `src/tools/toolProcessors.ts:340`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:137`
+- `src/tools/toolsMap.ts:158`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:25`
-- `src/tools/settings.ts:274`
-- `src/contexts/tool-types.ts:60`
-- `src/util/settings.ts:103`
-- `src/components/Main/Main.tsx:236`
-- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:171`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/tools/settings.ts:297`
+- `src/contexts/tool-types.ts:70`
+- `src/util/settings.ts:113`
+- `src/components/Main/Main.tsx:250`
+- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
 Sources:
 
@@ -1863,16 +2018,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:312`
+- `src/tools/toolProcessors.ts:345`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:142`
+- `src/tools/toolsMap.ts:163`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:275`
-- `src/contexts/tool-types.ts:61`
-- `src/util/settings.ts:104`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:77`
+- `src/tools/settings.ts:298`
+- `src/contexts/tool-types.ts:71`
+- `src/util/settings.ts:114`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:83`
 
 Sources:
 
@@ -1895,16 +2050,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:317`
+- `src/tools/toolProcessors.ts:350`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:147`
+- `src/tools/toolsMap.ts:168`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:276`
-- `src/contexts/tool-types.ts:62`
-- `src/util/settings.ts:105`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:78`
+- `src/tools/settings.ts:299`
+- `src/contexts/tool-types.ts:72`
+- `src/util/settings.ts:115`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:84`
 
 Sources:
 
@@ -1931,16 +2086,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:322`
+- `src/tools/toolProcessors.ts:355`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:152`
+- `src/tools/toolsMap.ts:173`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:277`
-- `src/contexts/tool-types.ts:63`
-- `src/util/settings.ts:106`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:79`
+- `src/tools/settings.ts:300`
+- `src/contexts/tool-types.ts:73`
+- `src/util/settings.ts:116`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:85`
 - `src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242`
 - `src/contexts/history-adapter.ts:550`
 
@@ -2009,7 +2164,7 @@ A crop sets a new boundary for the document. Selecting the Crop tool shows a cro
 Implementation:
 
 - `src/tools/crop.ts:26`
-- `src/tools/toolProcessors.ts:146`
+- `src/tools/toolProcessors.ts:147`
 - `src/components/ToolbarsRight/Crop/Crop.tsx:61`
 - `src/components/Main/CropToolArea.tsx:40`
 - `src/components/Main/CropToolArea.tsx:61`
@@ -2020,8 +2175,8 @@ Implementation:
 - `src/util/rect.ts:36`
 - `src/contexts/useLayer.ts:644`
 - `src/util/settings.ts:39`
-- `src/tools/settings.ts:67`
-- `toolbar-mapping.ts:59`
+- `src/tools/settings.ts:69`
+- `toolbar-mapping.ts:66`
 
 Sources:
 
@@ -2082,7 +2237,7 @@ Implementation:
 
 - `src/tools/text.ts:28`
 - `src/tools/text.ts:72`
-- `src/tools/toolProcessors.ts:160`
+- `src/tools/toolProcessors.ts:161`
 - `src/components/ToolbarsRight/Text/Text.tsx:95`
 - `src/components/Main/TextToolArea.tsx:24`
 - `src/contexts/useLayer.ts:369`
@@ -2091,8 +2246,8 @@ Implementation:
 - `src/contexts/materialization.ts:171`
 - `src/util/rect.ts:116`
 - `src/util/settings.ts:31`
-- `src/tools/settings.ts:82`
-- `toolbar-mapping.ts:101`
+- `src/tools/settings.ts:84`
+- `toolbar-mapping.ts:113`
 
 Sources:
 
@@ -2167,11 +2322,11 @@ Implementation:
 - `src/components/Main/MoveToolArea.tsx:199`
 - `src/contexts/useLayer.ts:334`
 - `src/tools/reposition.ts:12`
-- `src/tools/toolProcessors.ts:114`
+- `src/tools/toolProcessors.ts:115`
 - `src/components/ToolbarsRight/Move/Reposition.tsx:13`
-- `src/components/Common/AppKeyboardShortcuts.tsx:306`
-- `src/components/SidebarLeft/SidebarLeft.tsx:621`
-- `src/components/SidebarLeft/SidebarLeft.tsx:951`
+- `src/components/Common/AppKeyboardShortcuts.tsx:327`
+- `src/components/SidebarLeft/SidebarLeft.tsx:644`
+- `src/components/SidebarLeft/SidebarLeft.tsx:974`
 - `toolbar-mapping.ts:39`
 
 Sources:
@@ -2247,10 +2402,10 @@ Implementation:
 - `src/contexts/affine-transform.ts:216`
 - `src/tools/transform.ts:119`
 - `src/tools/transform.ts:153`
-- `src/tools/toolProcessors.ts:141`
+- `src/tools/toolProcessors.ts:142`
 - `src/contexts/useLayer.ts:552`
 - `src/contexts/useLayer.ts:348`
-- `toolbar-mapping.ts:174`
+- `toolbar-mapping.ts:189`
 
 Sources:
 
@@ -2312,15 +2467,15 @@ Implementation:
 - `src/components/ToolbarsRight/Levels/Levels.tsx:86`
 - `src/tools/levels.ts:12`
 - `src/tools/functions.ts:66`
-- `src/tools/settings.ts:54`
-- `src/tools/toolProcessors.ts:132`
+- `src/tools/settings.ts:56`
+- `src/tools/toolProcessors.ts:133`
 - `src/contexts/useLayer.ts:571`
 - `src/contexts/useLayer.ts:348`
 - `src/contexts/history-replay.ts:172`
 - `src/contexts/layer-renderer.ts:18`
 - `src/contexts/materialization.ts:84`
 - `src/test/setup.ts:320`
-- `toolbar-mapping.ts:174`
+- `toolbar-mapping.ts:189`
 
 Sources:
 
@@ -2369,15 +2524,15 @@ Implementation:
 - `src/components/ToolbarsRight/Colors/Color.tsx:110`
 - `src/tools/colors.ts:12`
 - `src/tools/functions.ts:60`
-- `src/tools/settings.ts:53`
-- `src/tools/toolProcessors.ts:126`
+- `src/tools/settings.ts:55`
+- `src/tools/toolProcessors.ts:127`
 - `src/contexts/useLayer.ts:571`
 - `src/contexts/useLayer.ts:348`
 - `src/contexts/history-replay.ts:172`
 - `src/contexts/layer-renderer.ts:16`
 - `src/contexts/materialization.ts:78`
 - `src/test/setup.ts:320`
-- `toolbar-mapping.ts:174`
+- `toolbar-mapping.ts:189`
 
 Sources:
 
@@ -2411,7 +2566,7 @@ The Eyedropper reads pixels and hands the result to the color controls, so a col
 | Control     | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                           | In this app                                                             |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Sample Size | Sets the sampling footprint, and Adobe enumerates the whole menu: Point Sample "Reads the exact value of the clicked pixel", and 3 by 3 / 5 by 5 / 11 by 11 / 31 by 31 / 51 by 51 / 101 by 101 Average "Reads the average color value within the selected pixel area". There are no Median entries in it. Adobe lists the menu without saying which entry ships selected, and states no default for it; the app seeds Point Sample. | `present` — `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22` |
-| Sample      | Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox. The app renders no control for it at all, and its `sampleAllLayers` field persists in settings and is refused loudly on click.                                                 | `inert` — `src/tools/settings.ts:217`                                   |
+| Sample      | Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox. The app renders no control for it at all, and its `sampleAllLayers` field persists in settings and is refused loudly on click.                                                 | `inert` — `src/tools/settings.ts:226`                                   |
 
 **Modifiers**
 
@@ -2422,7 +2577,7 @@ The Eyedropper reads pixels and hands the result to the color controls, so a col
 - `I` — Selects the Eyedropper, or temporarily switches to it while held.
 - `Shift+I` — Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count.
 
-**In this app:** `partial` — The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:217`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:309` and `:455`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:451` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all (`HANDOFF.md` §51 (`HANDOFF.md:1080`)).
+**In this app:** `partial` — The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:226`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:330` and `:476`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:472` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all (`HANDOFF.md` §51 (`HANDOFF.md:1080`)).
 
 Implementation:
 
@@ -2432,9 +2587,9 @@ Implementation:
 - `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22`
 - `src/tools/eyedropper.ts:7`
 - `src/tools/eyedropper.ts:34`
-- `src/tools/toolProcessors.ts:81`
-- `src/tools/toolsMap.ts:127`
-- `toolbar-mapping.ts:57`
+- `src/tools/toolProcessors.ts:82`
+- `src/tools/toolsMap.ts:148`
+- `toolbar-mapping.ts:64`
 
 Sources:
 
@@ -2494,9 +2649,9 @@ Implementation:
 - `src/components/Main/DrawToolArea.tsx:143`
 - `src/util/draw.ts:85`
 - `src/tools/draw.ts:6`
-- `src/tools/toolProcessors.ts:152`
-- `src/tools/settings.ts:37`
-- `toolbar-mapping.ts:90`
+- `src/tools/toolProcessors.ts:153`
+- `src/tools/settings.ts:39`
+- `toolbar-mapping.ts:102`
 
 Sources:
 

@@ -16,7 +16,16 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  */
 
 const DESKTOP = { width: 1280, height: 800 };
-/** A 1366×768 laptop window, and the same width at 125% scaling on a Full HD panel. */
+/**
+ * A short desktop window: 600px, which is not a device size and does not need to be one.
+ *
+ * It is the height the rail's reachability has to be proven at because it is where the
+ * three-dots tile stops being the exception. At 1280 wide the budget is the whole tools slot —
+ * 528px at an 800px window, which keeps nine of the fifteen tool tiles, and 328px here, which
+ * keeps five — so by 600 the tile holds the other TEN groups, the Type group among them.
+ * The rail and the tile are both on screen at 800 too; at 600 the tile is where most of the
+ * rail went, and that is the state the tests below are about.
+ */
 const SHORT_DESKTOP = { width: 1280, height: 600 };
 const TABLET = { width: 900, height: 700 };
 const WIDE_DESKTOP = { width: 1600, height: 900 };
@@ -33,9 +42,14 @@ const leftRail = (page: Page) => page.getByTestId('left-sidebar');
  * Select a tool through the header's Tools menu.
  *
  * `clickToolButton` looks for a sidebar tile, and a tile exists only for a group's PRIMARY
- * tool and only while the group is not collapsed: the Type group is one of the ones a 600px
- * window folds into the three-dots tile. The header menu lists every tool, and the header is
- * visible at every width this spec uses.
+ * tool and only while the group is not collapsed. The Type group is the fourteenth of the
+ * rail's fifteen, so it is one of the ten the fit folds into the three-dots tile at 600px. The
+ * header menu lists every tool, and the header is visible at every width this spec uses.
+ *
+ * It is NOT a route to `color`, `levels` or `transform`: they are `Image ▸ Adjustments` and
+ * `Edit ▸ Free Transform` commands, they are in `MENUS_EXCLUDE` because a command is not a tool,
+ * and no rail group or Tools-menu row exists for any of them. `e2e/levels.spec.ts` and
+ * `e2e/adjustments.spec.ts` select them through their own three-click menu sequence.
  *
  * Addressed by the menu's OWN test id, taking the tool's name — which is what it was not.
  * It used to be addressed by accessible name, and the menu and the rail are two different
@@ -99,9 +113,12 @@ test.describe('Left tool rail reachability', () => {
   // The rail does NOT simply overflow when its tools are taller than the window: the fit
   // collapses the rows that do not fit into the three-dots tile, so it stays within its row at
   // every height a person can reach, and the heights at which even that is impossible are
-  // DISCOVERED by a ladder in `e2e/no-document-overflow.spec.ts` rather than named here — a
-  // number for them moves every time the rail's chrome changes height. The content heights and
-  // the font metrics they depend on are recorded once in that file's header.
+  // DISCOVERED by a descend-and-bisect search in `e2e/no-document-overflow.spec.ts` rather than
+  // named here — a number for them moves every time the rail's chrome changes height, or every
+  // time the fit's budget does, which is what happened when the budget stopped reserving a
+  // fifth of the slot. There are two of those bands, not one: the height at which the fit gives
+  // up on every tool row, and the lower one at which the slot itself has to scroll. The content
+  // heights and the font metrics they depend on are recorded once in that file's header.
   //
   // `overflow-y-auto` is what bounds the grid row: a `1fr` track is `minmax(auto, 1fr)`,
   // and a scroll container's automatic minimum size is already zero, so the rail no longer
@@ -137,11 +154,12 @@ test.describe('Left tool rail reachability', () => {
    * through the three-dots tile.
    *
    * THE CONTRACT SINCE THE TILES COLLAPSE. `getByTestId('tool-button-text')` is not a
-   * contract any more: at 600px the Type group is one of the groups the fit folds into the
-   * three-dots tile, and the version of this test that waited for that tile spent 60 seconds
-   * waiting for a button that was never coming. What the layout guarantees instead is a
-   * PARTITION — every group is either a visible tile or offered by the three-dots flyout,
-   * never both and never neither — so that is what is asserted, in both directions.
+   * contract any more: at 600px the rail keeps five of its fifteen tool tiles and the Type
+   * group — the fourteenth — is one of the ten the fit folds into the three-dots tile, and
+   * the version of this test that waited for that tile spent 60 seconds waiting for a button
+   * that was never coming. What the layout guarantees instead is a PARTITION — every group is
+   * either a visible tile or offered by the three-dots flyout, never both and never neither —
+   * so that is what is asserted, in both directions.
    *
    * The groups are walked out of `toolbarMap` by a real import rather than a copied list, and
    * copied is the failure mode: a stale list makes this assert less than it appears to, with
@@ -157,7 +175,10 @@ test.describe('Left tool rail reachability', () => {
 
     // Every tile the rail kept has to be inside the window, and that is the guarantee the fit
     // exists to make. It is the assertion the old text-tile box check was really about, moved
-    // onto the tiles that exist at this height instead of onto one that no longer does.
+    // onto the tiles that exist at this height instead of onto one that no longer does. There
+    // are five of them here — the first five groups, through the Eyedropper — and the count is
+    // not asserted: a budget or tile change moves it, and a loop over whatever the rail kept is
+    // the claim that survives that.
     const tileBoxes = await page
       .locator('[data-testid="left-toolbar-tools"] [data-toolbar-tile]')
       .evaluateAll((tiles) =>
@@ -172,8 +193,9 @@ test.describe('Left tool rail reachability', () => {
       expect(box.bottom, `${box.name} must not sit below the window`).toBeLessThanOrEqual(SHORT_DESKTOP.height);
     }
 
+    // And the tile is not decoration at this height: ten of the fifteen groups are in it.
     const overflowTile = page.getByTestId('tool-overflow-tile');
-    await expect(overflowTile, 'a 600px window must fold something into the three-dots tile').toBeVisible();
+    await expect(overflowTile, 'a 600px window must fold ten of fifteen groups into the three-dots tile').toBeVisible();
     await overflowTile.click({ button: 'right' });
 
     const menu = page.getByTestId('tool-flyout-overflow');
@@ -208,16 +230,26 @@ test.describe('Left tool rail reachability', () => {
       }
     }
 
-    // And the folded tools are not merely listed: the top of the menu is on screen, and
-    // picking from it works. That is the whole of what the old tile-based test proved about
-    // the bottom of the rail, carried onto the element that is at the bottom of the rail now.
+    // And the folded tools are not merely listed: the top of the menu is on screen, the far end
+    // of the list is reachable inside the menu, and picking from it works. That is the whole of
+    // what the old tile-based test proved about the bottom of the rail, carried onto the element
+    // that is at the bottom of the rail now.
     //
-    // Only the FIRST item, and that is a known limit rather than a convenience. The overflow
-    // menu is as tall as its contents — 34 items is 1374px against a 600px window — and
-    // `AnchoredOverlay` clamps the overlay's POSITION, never its height, so everything past
-    // the fold is off-screen with no scrollbar to reach it. The three-dots tile makes a whole
-    // rail's worth of tools reachable in principle and, at a short window, not in practice.
-    // That is a defect in the app, not in this assertion, and it is not fixable from a spec.
+    // **THE MENU IS A SCROLL CONTAINER, NOT A CLIPPED ONE**, and that is the claim the rest of
+    // this block earns. At 600px the ten folded groups are 29 items at a 24.5px pitch — the row
+    // height `SidebarLeft.tsx:828` documents for every flyout — so the overlay opens at y=8, clamps
+    // itself to `max-height: 584px` and scrolls its own overflow, and the last item ends at
+    // y≈721, well off a 600px window, and is reached by scrolling the menu rather than
+    // being lost. It used to be described here as 34 items standing 1374px tall with nothing to
+    // scroll, which was stale twice over: the ten folded groups are 29 tools (a four-tile rail
+    // would have made it 30, so 34 was never either), and the height belonged to an overlay that
+    // was never clamped. That description named the far end of the list a defect in the app, and
+    // on the measured behaviour it is not one — which is why it is worth pinning, not repeating.
+    //
+    // The PICK below is still made from the first item, deliberately. It is the item this test
+    // has already proven to be on screen, and "a pick from the menu works" is the claim; the far
+    // end's reachability is the containment check's, and is asserted as a measurement rather
+    // than by clicking down there.
     const firstItem = menu.locator('[data-testid^="tool-flyout-item-"]').first();
     const firstBox = await firstItem.boundingBox();
     expect(firstBox, 'the first three-dots item must have a box').not.toBeNull();
@@ -225,6 +257,57 @@ test.describe('Left tool rail reachability', () => {
     expect(firstBox!.y + firstBox!.height, 'the first three-dots item must fit in the window').toBeLessThanOrEqual(
       SHORT_DESKTOP.height
     );
+
+    // The same shape as the slot's containment check in `e2e/no-document-overflow.spec.ts`, and
+    // for the same reason: `scrollIntoViewIfNeeded` would be the STIMULUS and not the evidence,
+    // so the scroll is driven and the scroll position read back, and the item's rect is compared
+    // against the menu's CLIENT box — the client box so the comparison survives a runner that
+    // draws classic scrollbars, which is the runner that file exists for.
+    const lastItemGeometry = () =>
+      menu.evaluate((el) => {
+        const items = [...el.querySelectorAll<HTMLElement>('[data-testid^="tool-flyout-item-"]')];
+        const item = items[items.length - 1];
+        if (!item) return null;
+        const box = el.getBoundingClientRect();
+        const itemBox = item.getBoundingClientRect();
+        return {
+          scrollTop: el.scrollTop,
+          clientTop: box.top + el.clientTop,
+          clientBottom: box.top + el.clientTop + el.clientHeight,
+          itemTop: itemBox.top,
+          itemBottom: itemBox.bottom,
+        };
+      });
+
+    // Non-vacuity for the containment check: the last item has to hang below the menu's own
+    // scrollport before anything scrolls, or the check below is true on the way in and proves
+    // nothing about the menu being able to reach it.
+    const unscrolled = await lastItemGeometry();
+    expect(unscrolled, 'the three-dots menu must have a last item to be measured at all').not.toBeNull();
+    expect(
+      unscrolled!.itemBottom,
+      'the last three-dots item must hang below the menu before anything scrolls, or the containment check below is true on the way in'
+    ).toBeGreaterThan(unscrolled!.clientBottom);
+
+    await menu.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+    const scrolled = await lastItemGeometry();
+    expect(
+      scrolled!.scrollTop,
+      'and the MENU must be what moved it, or the item only came into view because the call put it there'
+    ).toBeGreaterThan(unscrolled!.scrollTop);
+    expect(
+      scrolled!.itemTop,
+      'the last of the folded tools must land inside the menu own vertical scrollport, not merely on screen somewhere'
+    ).toBeGreaterThanOrEqual(scrolled!.clientTop);
+    expect(
+      scrolled!.itemBottom,
+      'and inside it at the bottom, or the menu is clipping the far end of its own list'
+    ).toBeLessThanOrEqual(scrolled!.clientBottom);
+    expect(
+      scrolled!.clientTop,
+      'and the menu must still be on screen at its far end, or scrolling it reached the item by leaving the window'
+    ).toBeGreaterThanOrEqual(0);
+
     await firstItem.click();
     await expect(page.getByTestId('tool-flyout-overflow'), 'a pick closes the menu').toHaveCount(0);
   });
@@ -295,9 +378,10 @@ test.describe('Tool option popovers are not clipped', () => {
   // as an 8px strip: the text tool's font family was unselectable and no test noticed.
   //
   // The Type tool is selected from the header menu rather than from a tile, because at these
-  // heights the Type group is one of the ones the fit folds into the three-dots tile — and
-  // because what is under test here is the OPTION ROW's overflow, not the rail. A popover
-  // that cannot be opened is not a popover that is not clipped.
+  // heights the Type group — the fourteenth of fifteen — is one of the groups the fit folds into
+  // the three-dots tile: an 800px window keeps nine tiles, a 400px window keeps one, and neither
+  // reaches the fifteenth. And because what is under test here is the OPTION ROW's overflow, not
+  // the rail. A popover that cannot be opened is not a popover that is not clipped.
   test('the text tool font list opens fully and every font is clickable', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);

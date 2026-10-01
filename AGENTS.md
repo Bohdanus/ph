@@ -12,14 +12,12 @@ ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE
 
 1. A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION
 2. A GPT SESSION MAY LAUNCH GPT SUBAGENTS
-3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is correct provider for GPT models, "kilo", is CORRECT provider for SpaceBunny.
+3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is CORRECT provider for GPT models, "kilo", is CORRECT provider for SpaceBunny.
 4. `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless. The `kilo` provider also lists it as plain `Space Bunny Alpha`; the dated spelling is the one that resolves on this gateway.
 5. Cost doubles past 200k of context FOR GPT Luna, and doubles above 270k of context for GPT Terra and Sol. Space Bunny does not have such restriction. IMPORTANT THAT GPT MODELS stay below threshold!
 6. `agent_manager`: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
-7. **THE GATEWAY PRICES IN THE NAME, AND A CATALOG ENTRY IS NOT A FREE ENTRY.** `(free)` is free; a bare name may be paid. `'NVIDIA: Nemotron 3 Super'` + `'kilo'` is in the catalog and it demanded credits from a free session; `'NVIDIA: Nemotron 3 Super (free)'` + `'kilo'`, same session 15 seconds later, ran 1,485,176 input tokens. The resolved id carries the same marker as `:free`.
-8. **NEVER ROUTE A GPT THROUGH `'kilo'`.** `'OpenAI: GPT-6 Sol (new)'` + `'kilo'` is a valid pair and it failed on `Add credits to continue, or switch to a free model`. Cost follows the model, never the provider.
-9. **A NAME THE PROVIDER DOES NOT CARRY CAN STILL SUCCEED, ON A MODEL NOBODY NAMED.** `'Space Bunny Alpha'` + `'kilo'` is not in the catalog, and it completed 90 of 90 on `stealth/space-bunny-alpha` — the model behind the `(new)` name. So VERIFY THE RESOLVED ID IN `session.model`; the launch, and the provider, prove nothing. The queries, and the six ways to get them wrong, are in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md#which-provider-did-a-subagent-run-on).
-10. **OMITTING `model` AND `provider` INHERITS THIS TURN'S MODEL, which is free only if this turn is.** The provider is not inherited with it: the same SpaceBunny model came back through `openrouter` for 106 children, which is `subagent_model` in `~/.config/kilo/kilo.jsonc` doing its job.
+7. THE GATEWAY PRICES IN THE NAME, AND A CATALOG ENTRY IS NOT A FREE ENTRY. `(free)` is free; a bare name may be paid.
+8. **NEVER OMIT `model` AND `provider`!**
 
 ```ts
 task({
@@ -31,18 +29,16 @@ task({
 });
 ```
 
-- Omitting those three fields inherits the current turn's model.
 - `agent_manager` (visible sessions, git worktrees) is a different tool: only when the user wants visible sessions or worktrees. `task` for everything else — it creates no sessions.
-- Audit before spawning a fleet, not after: `sqlite3 ~/.local/share/kilo/kilo.db "SELECT id, model, parent_id, title FROM session WHERE json_extract(data,'\$.model') …"`. On 2026-09-28 a free orchestrator (`ses_f1b1bccb…`) sent two subagents with a bare model name, the resolver fell through to the Kilo Gateway onto `~openai/gpt-luna-latest`, and both died in under a second on `APIError: Add credits to continue, or switch to a free model` at zero tokens — rule 1 breached by an agent that was itself free.
 
 ### Rules of delegation
 
 - **NEVER MORE THAN 15 SUBAGENTS RUNNING AT ONCE, IN ANY COMBINATION** — `task` subagents plus Agent Manager sessions plus background processes you have running. Fan-out is good; a fan-out that saturates the host is not, and 16 is past that point on this machine. Queue the remainder and launch as results land, or split the concern further. The cap is on **simultaneously running**, not on total: a hundred subagents in waves of fifteen is fine.
-- **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** If this chat is in `main`, every subagent you launch writes into `main` — 1398 of them did in seven days, and no permission can stop it. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work. `docs/ORCHESTRATION.md`.
+- **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** NEVER WORK on `main` worktree, unless allowed by operator. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work.
 - **NEVER TWO SUBAGENTS ON THE SAME FILE.** Split by concern, not by convenience.
 - **Self-contained briefs.** A subagent has a fresh context: give it the goal, your constraints, whether it may edit code, and exactly what its final message must contain. "Return file:line for every match" beats "investigate the caching layer".
 - **Ask for evidence.** A claim without `file:line` or command output is not verified. Have subagents report candidate results _and_ how they got them, then check the load-bearing ones yourself.
-- **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.** Its bash layer denies every invocation, so an explore agent asked to run `npm run test`, `npx playwright test --list` or `git log` reports a permission error instead of a result. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
+- **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.**. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
 
@@ -61,11 +57,11 @@ The e2e suite is headless by default and must stay that way.
 | `PLAYWRIGHT_ALLOW_HEADED=1`     | the human's opt-in, not yours                              |
 | `test.use({ headless: false })` | a live window                                              |
 
-`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. If something only reproduces visually, that is the operator's call; ask them to run `npm run test:e2e:headed` themselves.
+`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set.
 
 ### Looking at a live page is allowed, and does not need a window
 
-A visible browser is not how you look at this app. `npm run probe:console` loads a page
+ALWAYS use headless browser. `npm run probe:console` loads a page
 headlessly and reports every console error, page error and failed request, deduplicated with
 counts — which is how the nine invalid props on a `<div>` in `useRect` were found, on a suite
 of 339 tests that could not see them. `--url`, `--viewport`, `--dsf` and `--allow` are its only
@@ -96,7 +92,7 @@ npm run probe:console   # playwright, HEADLESS - one page load, reports console 
 
 One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
 
-- **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
+- **`node_modules` is missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **A run starts its own dev server, on a port of its own.** `scripts/e2e-run.mjs` picks a free port, so `test:e2e` never tests a checkout it did not start. Never set `PLAYWRIGHT_REUSE_EXISTING_SERVER`: `playwright.config.ts` hard-codes `reuseExistingServer: false` and the runner refuses that variable on TRUTHINESS, so even `=false` exits with an error. A bare `npx playwright test` skips the port picker and collides with whatever holds :5173 — use `npm run test:e2e`, or pass `PLAYWRIGHT_PORT=<free>`.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
 

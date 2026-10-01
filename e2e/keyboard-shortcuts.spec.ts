@@ -138,24 +138,35 @@ test.describe('Keyboard shortcuts', () => {
      * for every member of the group.
      *
      * The tile is RESOLVED rather than addressed, which is the whole difference between this
-     * test and the version from before the rail learned to fold itself away. Three of these
-     * four tools are rows of the three-dots tile's flyout at the suite's viewport and have
-     * no tile of their own to address. Resolution keeps the question identical at every
-     * window because the app answers it identically at every window: the three-dots tile
-     * computes `aria-pressed` with the same `group.some(...)`, over the collapsed set. The
-     * addressed version did not fail HERE — `getByTestId` reports zero elements rather than
-     * failing — so the absence surfaced one line later as "element(s) not found" against a
-     * test id that was correct and simply not rendered.
+     * test and the version from before the rail learned to fold itself away. TWO of these four
+     * tools are rows of the three-dots tile's flyout at the suite's viewport and have no tile
+     * of their own to address: Text and Clone Stamp, the fourteenth and eighth of the fifteen
+     * groups in `toolbar-mapping.ts`. The other two are among the seven rows the rail keeps at
+     * 1280x720 — Move is the first group and Crop the sixth — so they are addressed directly
+     * whatever the window. Crop used to be folded at this viewport; the rail now fills its
+     * whole slot with whole rows (`TOOLBAR_HEIGHT_BUDGET = 1`, `toolbar-overflow.ts:52`) and
+     * keeps seven of the fifteen groups here, which is why the count moved from three to two.
+     * Resolution keeps the question identical at every window because the app answers it
+     * identically at every window: the three-dots tile paints its lit state from the same
+     * `group.some(...)` predicate over the collapsed set, which is the channel
+     * `expectToolSelected` reads for a tool with no tile of its own. (It deliberately renders
+     * NO `aria-pressed` — `SidebarLeft.tsx:658`, which is why that helper reads the class and
+     * not the attribute; the sentence here used to say the attribute, and named a mechanism
+     * the tile does not have.) The addressed version did not fail HERE —
+     * `getByTestId` reports zero elements rather than failing — so the absence surfaced one
+     * line later as "element(s) not found" against a test id that was correct and simply not
+     * rendered.
      *
      * WHICH IS NOT ENOUGH ON ITS OWN, and the `bar` column is why. The three-dots tile
      * answers "is SOME tool of the collapsed set selected", so at a window where the rail
      * has folded anything it is lit for a large fraction of the tool list — and measured at
      * 1280x720 it is ALREADY lit on load, because the app starts on a tool that has been
-     * folded away. Asserting only the resolved tile would have made `C`, `T` and `S` pass
+     * folded away. Asserting only the resolved tile would have made `T` and `S` pass
      * with the shortcut deleted, which is why the tile alone is not what is asserted here.
      * `bar` is a control of that tool's own options bar, and the bar is the one thing in the
      * document that is driven by `toolName` itself: each row's control is absent before the
-     * keystroke and present after, so the row says WHICH tool is up. The tile assertion is
+     * keystroke and present after, so the row says WHICH tool is up — which for `T` and `S` is
+     * the entire question, since neither has a tile that can answer it. The tile assertion is
      * kept anyway, because it pins the reachability contract this branch is about — a tool
      * the rail could not show is still represented, and the tile standing for it lights.
      */

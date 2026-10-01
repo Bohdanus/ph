@@ -25,13 +25,47 @@ import type { FigureType } from '../../tools/shape.ts';
  * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
  * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
  *
- * **`color`, `levels` and `transform` are deliberately absent, and that is the invariant,
- * not an omission.** They are `Image ▸ Adjustments` and `Edit ▸ Free Transform` COMMANDS, so
- * Photoshop's Tools panel has no such entries and neither does this list — the same rule
- * the rail is held to, in the inverse direction. They are in `ADJUSTMENTS_ITEMS` and in
- * the `Edit` menu below instead, and `toolbar-mapping.ts`'s `extraTools` names them as the
- * registered tool ids with no rail entry.
+ * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly six
+ * tools, for two separate reasons.**
+ *
+ * Add Anchor Point, Delete Anchor Point and Convert Point are absent because they are absent
+ * from Photoshop's own Tools panel too — they modify a path rather than paint, and Photoshop
+ * reaches them from the Pen's context menu and the path-modification commands, not from the
+ * Tools panel or the Tools menu. `color`, `levels` and `transform` are absent for the other
+ * reason: they are `Image ▸ Adjustments` and `Edit ▸ Free Transform` COMMANDS, which are the
+ * same defect one level up from a missing tool — a command is not a tool, and a Tools-panel
+ * entry for one is a falsehood in the list whose own header calls a missing tool "a visible
+ * inconsistency the user has to notice and work around." They are in `ADJUSTMENTS_ITEMS` and
+ * in the `Edit` menu below instead, and `toolbar-mapping.ts`'s `extraTools` names them as the
+ * registered tool ids with no rail entry. All six are in `availableTools` because they are
+ * selectable tools; none of them is a Tools-menu item.
+ *
+ * Every OTHER `availableTools` name must produce a row. That was not true until the test
+ * below was derived from the registry: the assertion was a hand-written list of 24 names that
+ * never mentioned the Dodge, the Burn, the Smudge, the Sharpen or the Magic Eraser, so the
+ * Sponge shipped with no Tools-menu entry and the test stayed green.
  */
+/**
+ * The registered tools this menu deliberately does not list, and the ONLY ids allowed to be
+ * missing from it — every other `availableTools` name must produce a row, which is what
+ * `DesktopHeader.test.tsx` enforces by walking the registry.
+ *
+ * Two groups, two mechanisms, and they are not interchangeable. The three pen point-tools
+ * modify a path, which Photoshop reaches from the Pen's context menu rather than from a
+ * Tools panel. The three adjustment commands are not tools at all: they left the rail in the
+ * same change that added `MENUS_EXCLUDE`, and they are hosted by `Image ▸ Adjustments` and
+ * `Edit ▸ Free Transform`. See the note on `TOOL_MENU_ITEMS` above, which is the authority for
+ * both.
+ */
+export const MENUS_EXCLUDE: readonly ToolName[] = [
+  'add-anchor-point',
+  'delete-anchor-point',
+  'convert-point',
+  'color',
+  'levels',
+  'transform',
+];
+
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
   { toolName: 'blur', label: 'Blur' },
@@ -46,6 +80,8 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'quick-selection', label: 'Quick Selection Tool' },
   { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
   { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
+  { toolName: 'single-row-marquee', label: 'Single Row Marquee Tool' },
+  { toolName: 'single-column-marquee', label: 'Single Column Marquee Tool' },
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
@@ -54,9 +90,11 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'sharpen', label: 'Sharpen Tool' },
   { toolName: 'smudge', label: 'Smudge Tool' },
   { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
+  { toolName: 'magic-eraser', label: 'Magic Eraser Tool' },
   { toolName: 'gradient', label: 'Gradient Tool' },
   { toolName: 'dodge', label: 'Dodge Tool' },
   { toolName: 'burn', label: 'Burn Tool' },
+  { toolName: 'sponge', label: 'Sponge Tool' },
   { toolName: 'eyedropper', label: 'Eyedropper Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
@@ -478,7 +516,7 @@ const DesktopHeader = () => {
               Only `Free Transform` ships. The rest of Adobe's submenu — `Scale`, `Rotate`,
               `Skew`, `Distort`, `Perspective`, `Warp`, `Rotate 180°`, `Rotate 90° Clockwise`,
               `Rotate 90° Counter Clockwise`, `Flip Horizontal`, `Flip Vertical` — needs each
-              item to preset that tool's args AND repaint, and `HANDOFF.md` §144 records why
+              item to preset that tool's args AND repaint, and `HANDOFF.md` §150 records why
               that is not a one-liner. Nine items that all select the same tool and repaint
               nothing is the falsehood this host exists to prevent. */}
           {openMenu === 'edit' && (

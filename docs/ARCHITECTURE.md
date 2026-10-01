@@ -94,7 +94,7 @@ Traced through Smudge, a `usePaintStroke` consumer:
    `PROMOTE_LAYER_PRESENTATIONS` (`:1113-1140`).
 
 The args object is `ToolArgs`, a `toolName`-discriminated union
-(`src/contexts/tool-types.ts:28-85`). **This is why commits are pure functions of
+(`src/contexts/tool-types.ts:30-95`). **This is why commits are pure functions of
 their args**: the durable replay has nothing else to replay from.
 
 **Not every tool takes this path.** The Eraser — the example its own JSDoc cites —
@@ -228,19 +228,20 @@ Two registries with different key sets, which is easy to misread as one:
   processor and adds an `icon` and a `toolboxComponent`. This is the whole-tool
   map, including `eyedropper`, which has _only_ icon and component (`:125-127`),
   and the six pen-family `placeholderTool` entries (`:128-153`).
-- **`src/tools/toolProcessors.ts`** — 40 entries, `PixelToolName =
-Exclude<ToolName, 'eyedropper'>`. Each is curried: `(params) => (args) =>
+- **`src/tools/toolProcessors.ts`** — 40 entries, `PixelToolName` derived by
+  `Exclude` from `PIXEL_FREE_TOOLS` (`:88`, `:91`), which is how a tool that needs
+  no raster stays out of this registry. Each entry is curried: `(params) => (args) =>
 pixels`, where `params` carries the layer's raster and size and `args` the stroke
   (`:58-68`). `commit` is one of eight kinds (`:48-56`) and `replay` is a typed
   descriptor naming a durable operation.
 
 `toolbar-mapping.ts` (repository root) maps toolbar tiles to tools. Each **nested
 array is one flyout tile** (`:33`), and the first item in a group is that tile's
-default (`SidebarLeft.tsx:588`, `toolbar-mapping.ts:69-70`); the two-column rail
+default (`SidebarLeft.tsx:611`, `toolbar-mapping.ts:69-70`); the two-column rail
 is derived from that order (`:35`). Selecting a tile that carries a `figure`
 patches the shape tool's args before switching
-(`src/components/SidebarLeft/SidebarLeft.tsx:580-583`). The flyout opens on a
-250 ms sustained press (`SidebarLeft.tsx:101`) and not on hover, deliberately
+(`src/components/SidebarLeft/SidebarLeft.tsx:603-606`). The flyout opens on a
+250 ms sustained press (`SidebarLeft.tsx:124`) and not on hover, deliberately
 (`:587-595`).
 
 ## Options bars
@@ -253,9 +254,9 @@ live args from `useCurrentTool()` (`src/contexts/useCurrentTool.tsx:11-16`), whi
 is why it re-renders at slider rate without touching the store.
 
 Settings persist through `saveLastSettings` (`src/contexts/useCurrentTool.tsx:62`)
-into a **module-level singleton** (`src/tools/settings.ts:343`), seeded from
+into a **module-level singleton** (`src/tools/settings.ts:367`), seeded from
 `defaultSettings` (`:51-314`), with per-tool geometry stripped and an
-`exhaustiveness` trap at the end (`src/util/settings.ts:152-153`).
+`exhaustiveness` trap at the end (`src/util/settings.ts:163-164`).
 
 **Two comments in the tree contradict that and are wrong**:
 `ToolbarsRight/Sharpen/Sharpen.tsx:112` and `ToolbarsRight/Smudge/Smudge.tsx:114`
@@ -330,6 +331,6 @@ between them is `documentPointsToLayerLocal`.
 
 This is the codebase's most reliable defect class, and also the one with the
 largest false-positive rate: `HANDOFF.md` §132 investigated exactly this and
-concluded the three conversions in the shape path were already correct, pinned by
-a test. Read the conversion at both call sites before assuming the other one is
-wrong.
+concluded the three conversions in the shape path were already correct. It
+derives the arithmetic; it is not pinned by a test. Read the conversion at both
+call sites before assuming the other one is wrong.

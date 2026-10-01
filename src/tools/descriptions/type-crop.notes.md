@@ -120,7 +120,7 @@ The type tool has a flyout: the four tools Photoshop 2024–2026 ships are Horiz
 Vertical Type, Horizontal Type Mask and Vertical Type Mask, with the mask variants creating
 a selection outline in the shape of the type instead of a type layer. `T` selects the tool
 and `Shift+T` cycles the group. **The app has one entry for that four-tool group**
-(`toolbar-mapping.ts:101`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
+(`toolbar-mapping.ts:113`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
 the record now says so in its `appNotes`, because an entry that names Adobe's exact string
 for one of four tools otherwise reads as a complete stand-in. Vertical Type sets type
 top-to-bottom, and the two mask variants are not a variant of the entry the app has at all —
@@ -272,12 +272,12 @@ comment), so nothing but re-derivation catches it.
 the way a bound check cannot see: each landed on the _previous_ entry's closing line.**
 `settings.ts:62` was `resizeX: 100,` inside the TRANSFORM block, and the crop seed is `:67`;
 `settings.ts:77` was `color: '#000000',` inside the SHAPE block, and the text seed is `:82`;
-`toolProcessors.ts:145` was the `},` that closes the transform processor, and the crop entry
-begins at `:146`; `toolProcessors.ts:159` was the `shape` processor, and the text entry
+`toolProcessors.ts:146` was the `},` that closes the transform processor, and the crop entry
+begins at `:146`; `toolProcessors.ts:160` was the `shape` processor, and the text entry
 begins at `:160`. Every other entry was opened and confirmed to be what its record claims —
 `crop.ts:26` the crop creator, `rect.ts:36` `trimRect`, `useRect.ts:223` the 0.7 fill,
-`layer-renderer.ts:32` the six-name `vectorToolNames` set, `toolbar-mapping.ts:59` the
-single crop entry, `toolbar-mapping.ts:101` the single type entry.
+`layer-renderer.ts:32` the six-name `vectorToolNames` set, `toolbar-mapping.ts:66` the
+single crop entry, `toolbar-mapping.ts:113` the single type entry.
 
 **The numbers in the two paragraphs above are themselves history: they describe the pass
 before this one, and the lines have moved again.** Every `path:NNN` in both files was
@@ -292,9 +292,9 @@ census tables above and in `type-crop.ts`. Where they moved, and by how much:
 | `useLayer.ts:349`                                  | `useLayer.ts:369`                          | the `toolName === 'text'` branch                 |
 | `CropToolArea.tsx:21`                              | `CropToolArea.tsx:61`                      | the `useRect` call, after the key listener       |
 
-The crop `implementationRefs` are all correct as they stand (`toolProcessors.ts:146`,
+The crop `implementationRefs` are all correct as they stand (`toolProcessors.ts:147`,
 `CropToolArea.tsx:40,61`, `useRect.ts:156,223,342,454`, `rect.ts:36`, `useLayer.ts:644`,
-`settings.ts:39,67`, `toolbar-mapping.ts:59`, `crop.ts:26`), and so are the text ones except
+`settings.ts:39,67`, `toolbar-mapping.ts:66`, `crop.ts:26`), and so are the text ones except
 `Text.tsx:95`, which is `applyText` and is the right function for the commit row.
 
 Why each verdict:
@@ -326,7 +326,7 @@ Why each verdict:
   background bindings (there is no `alt` registration anywhere in
   `AppKeyboardShortcuts.tsx` — `useKeyboardEvents.tsx:76` is only the matcher), per-character
   scoping, and Photoshop's default of seeding the type colour from the foreground swatch,
-  where the app's seed is a fixed `color: '#000000'` (`src/tools/settings.ts:87`).
+  where the app's seed is a fixed `color: '#000000'` (`src/tools/settings.ts:89`).
 - **Font Style — `missing`,** corrected on this pass. See the census note above: there is no
   style combo box in `ToolbarsRight/Text/`, so `partial` with an `appRef` was a citation
   pointing at the B toggle rather than at the control the row names.
@@ -382,7 +382,7 @@ re-derived in this worktree:
    no retained text object anywhere in the module.
 2. `src/tools/text.ts:72-81` — the `text` creator allocates an `OffscreenCanvas`, calls
    `renderText` onto it and returns `[canvas]`. A creator tool's return value is a raster.
-3. `src/tools/toolProcessors.ts:160-166` — the `text` processor is `commit: 'source'`,
+3. `src/tools/toolProcessors.ts:161-167` — the `text` processor is `commit: 'source'`,
    `creator: true`, so the layer source is that raster.
 4. `src/contexts/layer-renderer.ts:32` — `vectorToolNames` is a `Set` of **six** tool names:
    `shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`. `text` is not in it, so
@@ -434,8 +434,8 @@ Photoshop rows the previous pass carried were all unbound, and two of them contr
 sentence already in the same file:
 
 - `Shift+T` "cycle the type tools in the flyout group" — the type tile is a **single entry**
-  (`toolbar-mapping.ts:101`), and the `t` registration passes no `shift`
-  (`AppKeyboardShortcuts.tsx:384-389`), so `Shift+T` simply re-selects the same tool. The
+  (`toolbar-mapping.ts:113`), and the `t` registration passes no `shift`
+  (`AppKeyboardShortcuts.tsx:405-410`), so `Shift+T` simply re-selects the same tool. The
   file says so in its own comment at `:451-452`: "there is nothing to cycle, so a
   `shift: true` twin would select the same tool twice". The data file now carries that as a
   `shortcuts` row rather than only as an omission.
@@ -784,7 +784,7 @@ behaviour, not the control.
 
 **No `inert` control here either, also checked rather than assumed.** `CropToolArgs` has
 three keys — `rect`, `preRatioRect`, `aspectRatio` — plus the seed in
-`src/tools/settings.ts:67`. All three are read and written: `preRatioRect` by
+`src/tools/settings.ts:69`. All three are read and written: `preRatioRect` by
 `Crop.tsx:40,48` and cleared on both write paths, `aspectRatio` by `CropToolArea.tsx:21`
 and passed into `useRect`, `rect` by every writer. The `preRatioRect` field is a
 regression-repair field, not a user-facing control, so it has no Photoshop counterpart to be
@@ -815,7 +815,7 @@ see the discarded area again, and undo is not a control on the bar.
 
 **A crop is a document-frame history entry, and the raster trim the tool declares is
 unreachable.** The crop processor is registered as `commit: 'document-operation'`
-(`src/tools/toolProcessors.ts:146-151`), and every layer path refuses that commit kind:
+(`src/tools/toolProcessors.ts:147-152`), and every layer path refuses that commit kind:
 
 | Refusal                               | What it refuses                                           |
 | ------------------------------------- | --------------------------------------------------------- |
@@ -870,7 +870,7 @@ claim in `type-crop.ts`, and neither is a live crop defect.
   and there is no Alt from-center drag anywhere — which is why the `Alt` and `Alt+Shift` rows
   of that array are aspirational and are described as Photoshop's rather than the app's.
 - **The crop owns no keyboard shortcut of its own, and one line of it is not a table
-  registration.** `C` comes from the shared table (`AppKeyboardShortcuts.tsx:362-367`), and
+  registration.** `C` comes from the shared table (`AppKeyboardShortcuts.tsx:383-388`), and
   `Enter`/`Esc` come from the raw `window` listener described in the next section rather than
   from `useKeyDownShortcut`. Everything else Photoshop binds for the crop is absent, and two of
   them are actively harmful to repeat. Detail in the next section.
@@ -893,10 +893,10 @@ were unbound, which is the table's absence being read as the app's.
 
 | Photoshop key        | What the app actually does                                                                                                                                                                                                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:59`), and the `c` registration passes no `shift` (`AppKeyboardShortcuts.tsx:362-367`), so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all.                             |
+| `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:66`), and the `c` registration passes no `shift` (`AppKeyboardShortcuts.tsx:383-388`), so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all.                             |
 | `Enter` / `Return`   | **Works, outside the table.** `CropToolArea.tsx:53` commits the pending rect and clears `rect`/`preRatioRect`; `PolygonClickToolArea.tsx:931` and `FeatherMagneticLassoToolArea.tsx:552` own the table registrations, for the lasso tools.                                                                         |
 | `Esc`                | **Works, outside the table.** `CropToolArea.tsx:54` drops the draft rect and restores the previous framing. `Escape` is also registered in the two lasso areas and in the font popup (`FontSelect.tsx:54`), and handled raw by the transform box (`Transform.tsx:37`), the two dialogs and the layer-rename field. |
-| `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:436-441` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn']` (the fallback at `:185`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.                                                    |
+| `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:457-462` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn']` (the fallback at `:206`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.                                                    |
 | `Shift+O`            | Same handler with `shift: true` (`:443-449`), so it also leaves the crop — it toggles between Dodge and Burn.                                                                                                                                                                                                      |
 | `X`                  | Unbound. There is no `x` registration anywhere in `src/`; `matchesShortcut` is case-insensitive (`useKeyboardEvents.tsx:29`), so this is not a capitalisation miss.                                                                                                                                                |
 | `Backspace`/`Delete` | Bound only in the two lasso tool areas (`PolygonClickToolArea.tsx:945,953`, `FeatherMagneticLassoToolArea.tsx:566,574`), and only to remove the last draft anchor.                                                                                                                                                 |

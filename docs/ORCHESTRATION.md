@@ -114,7 +114,7 @@ Three things stay allowed, each deliberately:
   a CLEAN tree prints nothing, exits 0, and creates **no entry at all**, so the
   `pop` that follows takes `stash@{0}`, which is whoever pushed last. Use a
   worktree or a branch; if work must be set aside, `HUSKY=0 git commit` on a
-  throwaway branch holds nothing but your own files. HANDOFF §69.
+  throwaway branch holds nothing but your own files.
 - **Stage only your own paths, everywhere.** The main worktree is not stable
   while you work — other sessions commit into it concurrently. Re-read `git
 status` and `git diff` before staging.
@@ -198,7 +198,7 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   fails. It is a **virtual** path: it never exists on disk, so an agent editing `e2e/*.spec.ts`
   holds those files separately and does not collide with it.
   - **The holder is a RUN, not a branch.** Board identity is the branch and the conflict test is
-    `lock.agent_id !== who` (`db.mjs:1130`), so a branch never conflicts with itself: with branch
+    `lock.agent_id !== who` (`db.mjs:1163` in `holdFiles`, `db.mjs:1554` in `lockFile`), so a branch never conflicts with itself: with branch
     identity, two runs in one worktree both "acquire" and the second one's `unlock` releases the
     row the first still believes it holds. Every board call therefore passes
     `--agent e2e-run/<branch>/<pid>`, and `swarm status` shows that while a suite runs — the

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import DesktopHeader from '../DesktopHeader.tsx';
+import DesktopHeader, { MENUS_EXCLUDE } from '../DesktopHeader.tsx';
+import { availableTools } from '../../../../toolbar-mapping.ts';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 import type { TextToolArgs } from '../../../tools/text.ts';
@@ -147,39 +148,31 @@ describe('DesktopHeader', () => {
 
     openMenu('Tools');
 
-    expect(screen.getByTestId('tools-menu-blur-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-crop-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-shape-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-text-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-polygonal-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-freehand-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-feather-magnetic-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-magic-wand-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-rectangular-selection-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-reposition-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-brush-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-pencil-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-color-replacement-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-freeform-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-curvature-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-rectangle-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-ellipse-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-triangle-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-polygon-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-line-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-custom-shape-button')).toBeInTheDocument();
+    // Derived from the registry rather than written out by hand. This was a literal list of
+    // 24 names that never included the Dodge, the Burn, the Smudge, the Sharpen or the eraser
+    // family, so it could not have caught a tool missing from `TOOL_MENU_ITEMS` — which is
+    // exactly how the Sponge shipped without a menu entry. Every `availableTools` name now has
+    // to produce a row, so the next omission fails here instead of in the app.
+    const missing = availableTools
+      .filter((tool) => !MENUS_EXCLUDE.includes(tool))
+      .filter((tool) => screen.queryByTestId(`tools-menu-${tool}-button`) === null);
+    expect(missing, `tools absent from the Tools menu: ${missing.join(', ')}`).toEqual([]);
   });
 
   /**
+   * The registry-derived test above proves every non-excluded tool HAS a row. It cannot see
+   * the other half: a tool that is absent for no stated reason is skipped by `MENUS_EXCLUDE`
+   * just as silently as one that is absent on purpose. This is the half that names them.
+   *
    * The Tools menu lists TOOLS. `color`, `levels` and `transform` are `Image ▸ Adjustments`
-   * and `Edit ▸ Transform` commands, so a Tools-menu entry for any of them would be the
+   * and `Edit ▸ Free Transform` commands, so a Tools-menu entry for any of them would be the
    * same falsehood the rail carried — in the other direction, and in the surface whose own
    * header comment calls a missing tool "a visible inconsistency". `toolbar-mapping.ts`'s
-   * `extraTools` names them; this is the pin that keeps the two in step.
+   * `extraTools` names them as the ids with no rail entry; `MENUS_EXCLUDE` names them as the
+   * ids with no menu row. This is the pin that keeps the two in step, and it is the only
+   * thing standing between "excluded on purpose" and "excluded by accident".
    */
-  it('keeps the three non-tool commands out of the Tools menu', () => {
+  it('keeps the three non-tool commands out of the Tools menu, and says why', () => {
     render(<DesktopHeader />);
 
     openMenu('Tools');
@@ -187,6 +180,26 @@ describe('DesktopHeader', () => {
     expect(screen.queryByTestId('tools-menu-color-button')).toBeNull();
     expect(screen.queryByTestId('tools-menu-levels-button')).toBeNull();
     expect(screen.queryByTestId('tools-menu-transform-button')).toBeNull();
+    expect(MENUS_EXCLUDE).toEqual(expect.arrayContaining(['color', 'levels', 'transform']));
+  });
+
+  /**
+   * `MENUS_EXCLUDE` is the ONLY sanctioned way for a registered tool to have no Tools-menu
+   * row, so it is the list that decides which omissions are deliberate. Left open, it grows
+   * without anyone reading it and the registry-derived test above keeps passing — which is
+   * precisely the failure mode it was written to end. Pinned at six, for the six stated
+   * reasons in `DesktopHeader.tsx`: three pen point-tools that modify a path, and three
+   * adjustment commands that are not tools at all.
+   */
+  it('holds MENUS_EXCLUDE to exactly the six tools with a stated reason', () => {
+    expect([...MENUS_EXCLUDE].sort()).toEqual([
+      'add-anchor-point',
+      'color',
+      'convert-point',
+      'delete-anchor-point',
+      'levels',
+      'transform',
+    ]);
   });
 
   it('toggles the file menu open and closed', () => {

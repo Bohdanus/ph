@@ -73,15 +73,22 @@ const POLL_BUDGET_AFTER_DUE_MS = 1500;
  *
  * This list used to be typed in — `['brush', 'shape', 'pen', 'freehand-lasso', 'color']` — and
  * that is a list of TOOLS, not of tiles, so it went stale the moment the rail learned to
- * collapse. At the suite's 1280x720 the rail shows five tiles and a three-dots tile, and every
- * tool in that list except `freehand-lasso` has been REMOVED from it: `openToolFlyout` then took
- * its collapse branch, opened the three-dots flyout instead of the requested tile's, and the
- * test passed while exercising the wrong menu. Reading the tiles back is the fix: the subject is
- * "every flyout tile on the rail", and the DOM is the only thing that knows which tiles there
- * are at this viewport.
+ * collapse. At the suite's 1280x720 the rail shows seven of its fifteen groups plus a three-dots
+ * tile, and the Clone Stamp, the Blur group, Gradient, Dodge, Draw, Pen, Type and Shape are
+ * all inside that tile: `openToolFlyout` for any of them takes its collapse branch, opens the
+ * three-dots flyout instead of the requested tile's, and the test passes while exercising the
+ * wrong menu. Reading the tiles back is the fix: the subject is "every flyout tile on the rail",
+ * and the DOM is the only thing that knows which tiles there are at this viewport.
+ *
+ * The COUNT is the second reason, and it is the one a list of tiles would not have caught either.
+ * The rail showed five tiles at 1280x720 and shows seven, because the fit budgets the whole slot
+ * now instead of four fifths of it. So the visible count is a step function of the window height
+ * with nothing in this file's control, and a number written down beside it would be correct only
+ * until the next fit change — which is exactly how the five-tile premise below went stale in the
+ * first place.
  *
  * `aria-haspopup="menu"` is the app's own statement that a tile HAS a flyout
- * (`SidebarLeft.tsx:447`), so it is the filter rather than a name list — a tile with no group
+ * (`SidebarLeft.tsx:645`), so it is the filter rather than a name list — a tile with no group
  * behind it carries no such attribute and is not a subject here.
  */
 const flyoutTiles = async (page: Page): Promise<string[]> =>
@@ -92,9 +99,9 @@ const flyoutTiles = async (page: Page): Promise<string[]> =>
 /**
  * The name of the flyout a tile opens, derived from that tile's own label.
  *
- * The app names a group menu `${primaryTool.label} tools` (`SidebarLeft.tsx:548`), and the tile
- * carries that same label as its `aria-label` (`:448`), so the two are one string apart. The
- * three-dots tile is the exception the app itself spells out (`:544`): it is not a tool, so its
+ * The app names a group menu `${primaryTool.label} tools` (`SidebarLeft.tsx:803`), and the tile
+ * carries that same label as its `aria-label` (`:645`), so the two are one string apart. The
+ * three-dots tile is the exception the app itself spells out (`:800`): it is not a tool, so its
  * menu is the literal `More tools` and no label can derive it. That is why this reads the tile's
  * label rather than carrying a table of menu names — a table is another list to go stale, and
  * this one cannot disagree with the app without the test failing.
@@ -109,7 +116,7 @@ const flyoutMenuName = async (page: Page, tileTestId: string): Promise<string> =
 /**
  * One real tool tile to press, as the tool name `openToolFlyout` addresses it by.
  *
- * `tool-button-<name>` is the app's own minting rule (`SidebarLeft.tsx:524`), so the name is
+ * `tool-button-<name>` is the app's own minting rule (`SidebarLeft.tsx:773`), so the name is
  * the test id with that prefix removed — read back rather than listed, for the same reason the
  * tile list is: any tool this file names may be collapsed out of the rail at this viewport, and
  * a collapsed tool sends `openToolFlyout` down the three-dots branch and tests a different menu
@@ -346,9 +353,9 @@ test.describe('SidebarLeft - long-press flyout is not a timing race', () => {
     //
     // The tile list is read from the DOM, so this covers whatever flyout tiles the rail
     // actually has at this viewport, the three-dots tile included. It used to be a typed list
-    // of five tool names, of which four had been collapsed out of the rail: each of those took
-    // the three-dots branch and reopened the SAME menu, so the test exercised one tile five
-    // times and reported it as five.
+    // of five tool names, of which four were folded out of the rail at the time — three still are,
+    // now that the fit takes the whole slot. Each of those took the three-dots branch and
+    // reopened the SAME menu, so the test exercised one tile five times and reported it as five.
     const tiles = await flyoutTiles(page);
     expect(tiles.length, 'the rail must have flyout tiles for this to test anything').toBeGreaterThan(0);
 

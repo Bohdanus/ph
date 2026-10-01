@@ -140,8 +140,8 @@ Adobe's, not the third-party figure it was previously filed as
 milliseconds"). **The number still is not in the data file**, and that is a separate decision from
 whether it is sourced: the `V` row describes the gesture, and a preference's delay is not part of
 what the key does. In this app the `shortcut` field on a toolbar entry is **display-only and
-binds nothing**: its only two consumers in all of `src/` are `SidebarLeft.tsx:621`, which passes
-it to `ToolTooltip`, and `SidebarLeft.tsx:951`, which renders it as a `<kbd>` badge. (Both numbers
+binds nothing**: its only two consumers in all of `src/` are `SidebarLeft.tsx:644`, which passes
+it to `ToolTooltip`, and `SidebarLeft.tsx:974`, which renders it as a `<kbd>` badge. (Both numbers
 were wrong in the previous version of this file — `:258` is a comment inside the `railLayout`
 block and `:431` is the start of `closeFlyout`; a `grep -rn "\.shortcut\b"` over `src`, `e2e` and
 `toolbar-mapping.ts` confirms those two are the whole set.) The app does
@@ -161,7 +161,7 @@ several that could drift.
 
 **Never true, and this is the correction that matters: the `OffscreenCanvas` processors are not on
 the editing, preview or commit path for `levels` or `color`.** Both are registered
-`commit: 'layer-operation'` (`src/tools/toolProcessors.ts:126` and `:132`), and
+`commit: 'layer-operation'` (`src/tools/toolProcessors.ts:127` and `:133`), and
 `src/contexts/useLayer.ts:568-577` handles that kind by appending an operation to the layer's
 `operations` array, nulling `tmpCanvas` and **returning** — the append itself is at `:571` — while
 the `processor.imageProcessor(...)` call is at `:603`, past that return, and nothing in the editing
@@ -208,7 +208,7 @@ So **0 is the neutral**, emitting exactly `brightness(100%) contrast(100%)`, and
 **minimum** of −100 that emits `brightness(0%)`. `src/tools/__tests__/functions.test.ts:31-36`
 pins both literals by name ("emits the neutral as brightness(100%) contrast(100%)", "reaches black:
 -100 brightness emits brightness(0%)"). `defaultSettings.levels` is `{ brightness: 0, contrast: 0 }`
-(`src/tools/settings.ts:54`), so the panel at rest applies nothing.
+(`src/tools/settings.ts:56`), so the panel at rest applies nothing.
 
 The test harness defect the corpus also flagged **is** fixed. `src/test/setup.ts:317-320` replaces
 the old swallowing setter with a real data property, with the reason in the comment — a getter
@@ -281,7 +281,7 @@ and diverges. The table below is corrected to match.
 
 No row is `inert`. `inert` is for state declared in `src/tools/settings.ts` and rendered by no
 component, and all four of these tools' declared state is read by a component that renders it —
-`settings.ts:53` (color), `:54` (levels), `:55-66` (transform) and `:95` (reposition) each back a
+`settings.ts:53` (color), `:54` (levels), `:55-66` (transform) and `:105` (reposition) each back a
 control that exists. The interesting result is the other direction: `levels` and `color` have
 **zero** `present` rows, which is the honest reading — the app's Levels panel shares no control
 with Photoshop's Levels, and its Colors panel shares none with Black and White.
@@ -461,7 +461,7 @@ committed history entry — `MoveToolArea.tsx:150` calls `updateLayerByTool` onc
 `:132` that an earlier version of this file cited is `tempUpdateLayer`, the transient preview, and
 the two are not the same call), and `src/tools/reposition.ts:12` returns `[bitmap, move]` without
 rasterizing, so a move is a position patch and nothing is resampled.
-`src/tools/toolProcessors.ts:114` declares `commit: 'geometry'`,
+`src/tools/toolProcessors.ts:115` declares `commit: 'geometry'`,
 which is the right kind for a tool whose output is a rectangle. What holds it back from
 `implemented` is the one overlay the app does draw: it renders a resize rect where Photoshop renders
 a transform box, which is a control that contradicts Photoshop rather than one that is merely
@@ -609,12 +609,12 @@ modifier table:
 | `Enter`        | commit                                              |
 
 The app binds none of the three. `t` alone selects the Text tool
-(`src/components/Common/AppKeyboardShortcuts.tsx:384-389`; the `:277-282` an earlier version cited is
+(`src/components/Common/AppKeyboardShortcuts.tsx:405-410`; the `:298-303` an earlier version cited is
 inside the `Cmd+C` copy handler) and there is no `Cmd+T` registration
 anywhere; the tool has no accelerator at all, and no rail entry to declare one on —
-`extraTools` (`toolbar-mapping.ts:174`) is where `color`, `levels` and `transform` are recorded as
+`extraTools` (`toolbar-mapping.ts:189`) is where `color`, `levels` and `transform` are recorded as
 carrying no Tools-rail entry, and `Edit ▸ Free Transform` in the header is what reaches the id
-instead (`toolbar-mapping.ts:163-164`).
+instead (`toolbar-mapping.ts:176-178`).
 
 **`Enter` is now Adobe's, and it was third-party before this pass.** Adobe's Free Transform page
 does not print it, but the Feb 23 2026 reference-point page does, in the imperative: "Press **Enter
@@ -643,9 +643,9 @@ That is the discard route, and it is the exact counterpart of the commit route �
 `commitDirtyTool` (`src/contexts/useLayer.ts:348`) is what bakes the preview into a layer plus one
 history entry, and its callers are the Apply button (`Transform.tsx:303`), `goToTool`
 (`src/hooks/useApp.ts:167-169`, which is the tool-switch path every toolbar click and letter
-shortcut runs through) and the export handlers (`src/components/DesktopHeader/DesktopHeader.tsx:249`,
+shortcut runs through) and the export handlers (`src/components/DesktopHeader/DesktopHeader.tsx:287`,
 `src/components/Mobile/MobileHeader.tsx:70`, `src/components/Mobile/MobileMenuDrawer.tsx:71`).
-(`DesktopHeader.tsx:243`, which an earlier version cited, is inside the export menu's own JSX; the
+(`DesktopHeader.tsx:281`, which an earlier version cited, is inside the export menu's own JSX; the
 call is at `:249`.) Enter and the click-outside-the-box route are both absent, and so is Adobe's
 in-transform `Edit > Undo`.
 
@@ -707,7 +707,7 @@ panel and Photoshop's share no rows in it.
 
 **And the mapping, which this file previously had inverted.** 0 on the Brightness slider is the
 **neutral** — the re-anchoring makes it emit exactly `brightness(100%) contrast(100%)`, so the panel
-at its defaults (`src/tools/settings.ts:54`) applies nothing at all. It is the **minimum**, −100,
+at its defaults (`src/tools/settings.ts:56`) applies nothing at all. It is the **minimum**, −100,
 that emits `brightness(0%)` and multiplies the layer to black. The earlier sentence here said "at
 zero it makes the image darker without clipping anything"; that is false, and the table in
 `src/tools/functions.ts:22-30` and the two named literals in
@@ -759,9 +759,9 @@ work with grayscale images**". Both rows were already right; they are now right 
 | `Cmd+L` | apply Levels; `Cmd+Option+L` re-applies with the last settings used; `Cmd+Shift+L` is Auto Tone |
 
 The app binds no shortcut for `levels`. The id has no Tools-rail entry to badge one on —
-`extraTools` (`toolbar-mapping.ts:174`) is where `color`, `levels` and `transform` are recorded as
+`extraTools` (`toolbar-mapping.ts:189`) is where `color`, `levels` and `transform` are recorded as
 carrying none — and `Image ▸ Adjustments` in the header is what reaches it
-(`toolbar-mapping.ts:163-164`).
+(`toolbar-mapping.ts:176-178`).
 
 **The `Cmd+Shift+L` claim in that row was wrong and is corrected above.** Adobe's shipped sheets do
 not put Levels on `Shift+Cmd`; see `## Unverified` #15. This is the one place in this family where
@@ -820,9 +820,9 @@ help text says "choose **Black & White** from the list". The phrase without the 
 English, not a product name, and `types.ts` requires the name verbatim, so `photoshopName`, the
 `summary` and `purpose` now use the ampersand. **`Colors` was this app's own tile label and was not
 an Adobe name at all** — and the label went out with the entry. The flyout that carried `color`,
-`levels` and `transform` is gone from `toolbarMap`; `extraTools` (`toolbar-mapping.ts:174`) is
+`levels` and `transform` is gone from `toolbarMap`; `extraTools` (`toolbar-mapping.ts:189`) is
 where the three ids are recorded as carrying no Tools-rail entry, and `color` is reached now from
-`Image ▸ Adjustments ▸ Photo Filter` (`toolbar-mapping.ts:163-164`). Nothing in `src/` spells it
+`Image ▸ Adjustments ▸ Photo Filter` (`toolbar-mapping.ts:176-178`). Nothing in `src/` spells it
 "Colors" any more, so `appNotes` records the rail absence and the Photo Filter host rather than the
 old name.
 
@@ -889,7 +889,7 @@ uniform tone color laid over a conversion whose mix you still control, whereas S
 filter stage applied to the whole image, so the two compose into a look neither produces alone.
 Saturation belongs to no part of Black and White at all — it is a Hue/Saturation control, and its
 presence is a leftover from the identity question D1 settled. All three start at 0
-(`src/tools/settings.ts:53`), which is a true no-op: the neutral emits
+(`src/tools/settings.ts:55`), which is a true no-op: the neutral emits
 `grayscale(0%) sepia(0%) saturate(100%)` and that literal is pinned by test.
 
 Black & White binds no modifier, and **it does have a keyboard shortcut** —

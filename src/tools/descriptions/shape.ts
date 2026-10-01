@@ -273,14 +273,14 @@ export const shapeDescriptions: Record<
     shortcuts: shapeToolShortcuts,
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:159',
+      'src/tools/toolProcessors.ts:160',
       'src/tools/shape.ts:194',
       'src/tools/shape.ts:93',
       'src/components/ToolbarsRight/Figures/Shape.tsx:21',
-      'src/tools/toolsMap.ts:63',
+      'src/tools/toolsMap.ts:65',
     ],
     appNotes:
-      'The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:103-108`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, so Photoshop’s Create <Shape> dialog has no counterpart here and a dismissed prompt, or a value of zero or less, commits nothing at all.',
+      'The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:114-121`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, so Photoshop’s Create <Shape> dialog has no counterpart here and a dismissed prompt, or a value of zero or less, commits nothing at all.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
       'https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207',
@@ -306,11 +306,11 @@ export const shapeDescriptions: Record<
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:326',
+      'src/tools/toolProcessors.ts:359',
       'src/tools/shape.ts:225',
       'src/tools/shape.ts:240',
       'src/components/ToolbarsRight/Figures/Shape.tsx:182',
-      'src/tools/settings.ts:278',
+      'src/tools/settings.ts:301',
     ],
     appNotes:
       'The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry, and only the rectangle gets a radius — the app gates the whole control on this figure. Fill and Stroke are on the bar, then, and `partial` in the table above is the honest reading of them: what the app renders is a single wired `Filled` checkbox over its one shared colour, and it is the separate swatches with their None / Solid / Gradient / Pattern menu that are missing, not the controls. The mode group, the stroke width, the stroke type, the opacity and the W/H prompt each diverge from Photoshop’s control in the same way, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, so the Create Rectangle dialog’s corner-radius field and its From Center field have no counterpart here.',
@@ -334,11 +334,11 @@ export const shapeDescriptions: Record<
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:327',
+      'src/tools/toolProcessors.ts:360',
       'src/tools/shape.ts:249',
       'src/tools/shape.ts:93',
       'src/components/ToolbarsRight/Figures/Shape.tsx:14',
-      'src/tools/settings.ts:285',
+      'src/tools/settings.ts:308',
     ],
     appNotes:
       'The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. The bar itself is the shared one — the Ellipse gets no control of its own, so the options bar names it and shows the same controls every figure gets: the tool-mode select, the thickness slider, the Filled checkbox, the dashed toggle with its dash and gap sliders, the opacity slider and the live preview. That is the same set the rectangle has minus the radius, so the same reading applies to each: fill and stroke are on the bar as a wired Filled checkbox over one shared colour rather than as Photoshop’s two swatches, the mode group, the stroke type, the opacity and the W/H prompt each diverge from Photoshop’s control, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A click with no drag asks for width and then height through two `window.prompt` calls, not a Create Ellipse dialog, and takes no From Center.',
@@ -377,11 +377,11 @@ export const shapeDescriptions: Record<
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:330',
+      'src/tools/toolProcessors.ts:363',
       'src/tools/shape.ts:200',
       'src/tools/shape.ts:101',
       'src/components/ToolbarsRight/Figures/Shape.tsx:197',
-      'src/tools/settings.ts:306',
+      'src/tools/settings.ts:329',
     ],
     appNotes:
       'The drag is the tool, and the drag is right: `normalizeShapeGeometry` routes the line figure to `snapLineGeometry`, which quantizes the drag angle to `LINE_ANGLE_STEP` — `Math.PI / 4` — so a Shift-drag snaps to a multiple of 45 degrees exactly as Adobe specifies, and unlike every other figure the line is not squared by Shift. The two things that are missing are the arrowheads and the shape of the bar. Arrowheads are absent outright — `drawShape` strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow, and that is what keeps the verdict at `partial` rather than `implemented`: the tool that draws arrows does not draw them. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path, through the Stroke Options panel rather than a bar-level select. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, and a line has no Width and Height on Photoshop’s side either, so the app is the only place a line here can be given a length before the drag.',
@@ -413,11 +413,11 @@ export const shapeDescriptions: Record<
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:328',
+      'src/tools/toolProcessors.ts:361',
       'src/tools/shape.ts:205',
       'src/tools/shape.ts:210',
       'src/tools/shape.ts:103',
-      'src/tools/settings.ts:292',
+      'src/tools/settings.ts:315',
     ],
     appNotes:
       'The geometry is wrong in the specific way the premise correction warns about. The app inscribes a regular three-sided polygon in the drag box, so a wide drag yields a squat isosceles-looking triangle only by accident, and Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w. Because the figure is built by the shared triangle/polygon branch, its Radius field is both absent from the bar and unimplemented in the renderer, so its corners can never be rounded. The Shift behaviour is version-dependent in wording only: the equilateral constraint has been the tool’s Shift since 2021 (v22), and later versions add the persistent Equilateral checkbox to the gear menu. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, so of the five things Adobe’s click dialog offers — Width, Height, Corner Radius, Equilateral and From Center — only the first two can be typed here, and Corner Radius cannot be typed at all.',
@@ -460,11 +460,11 @@ export const shapeDescriptions: Record<
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:329',
+      'src/tools/toolProcessors.ts:362',
       'src/tools/shape.ts:205',
       'src/tools/shape.ts:210',
       'src/components/ToolbarsRight/Figures/Shape.tsx:182',
-      'src/tools/settings.ts:299',
+      'src/tools/settings.ts:322',
     ],
     appNotes:
       "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Everything after that is missing. The side count is a hardcoded two-branch ternary — const sides = figure === 'triangle' ? 3 : 5, a literal at `src/tools/shape.ts:210` — so there is no Sides field and no way to draw a hexagon; and the app has no Star tool of its own to draw one, so a star Ratio has nothing here to compare against. That same hardcoding is why the `[` and `]` rows Photoshop gives this tool are gone from the table above: they change a side count that does not exist at runtime, and the app's bracket keys reach only the eight tools that carry a tip Size, so there is nothing for them to act on here. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing.",
@@ -543,11 +543,11 @@ export const shapeDescriptions: Record<
     shortcuts: [shapeGroupShortcut],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:331',
+      'src/tools/toolProcessors.ts:364',
       'src/tools/toolProcessors.ts:110',
-      'src/tools/toolsMap.ts:159',
-      'src/components/Main/Main.tsx:82',
-      'src/tools/settings.ts:313',
+      'src/tools/toolsMap.ts:180',
+      'src/components/Main/Main.tsx:84',
+      'src/tools/settings.ts:336',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37',
     ],
     appNotes:
