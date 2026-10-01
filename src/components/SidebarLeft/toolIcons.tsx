@@ -33,6 +33,7 @@ import { SharpenIcon } from './icons/SharpenIcon';
 import { SingleColumnMarqueeIcon } from './icons/SingleColumnMarqueeIcon';
 import { SingleRowMarqueeIcon } from './icons/SingleRowMarqueeIcon';
 import { SmudgeIcon } from './icons/SmudgeIcon';
+import { SpongeIcon } from './icons/SpongeIcon';
 import { TextIcon } from './icons/TextIcon';
 import { TransformIcon } from './icons/TransformIcon';
 
@@ -66,6 +67,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   smudge: SmudgeIcon,
   dodge: DodgeIcon,
   burn: BurnIcon,
+  sponge: SpongeIcon,
   brush: BrushToolIcon,
   pencil: BrushToolIcon,
   'color-replacement': ColorReplacementIcon,

@@ -63,7 +63,11 @@ export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangul
  * `createCommittedRectangleSelection` returns `null` for it, which silently does nothing.
  */
 function clampPixelIndex(value: number, extent: number): number {
-  if (!Number.isFinite(value)) return 0;
+  // Only `NaN` short-circuits. The infinities deliberately fall THROUGH to the clamp below, so
+  // `-Infinity` selects the first row and `+Infinity` the last — the nearest row to a press that
+  // overshot the document, which is what every other out-of-range value here already gets.
+  // Returning 0 for all three would make `+Infinity` select the row furthest from the pointer.
+  if (Number.isNaN(value)) return 0;
 
   return Math.min(Math.max(Math.floor(value), 0), Math.max(0, extent - 1));
 }

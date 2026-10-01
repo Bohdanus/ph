@@ -58,7 +58,8 @@ const SingleRowColumnMarquee: React.FC<{}> = () => {
   return (
     <div className="flex flex-row items-center gap-6 h-full">
       <div className="text-[10px] text-gray-700 dark:text-gray-300">
-        Click or drag to select one {noun}, then copy the selected bitmap line.
+        Click to select one {noun}, drag to aim it, or click the {noun} you already made to move it. Then copy the
+        selected bitmap line.
       </div>
       <div className="flex gap-2">
         <button className={PRIMARY_BUTTON} disabled={!hasRect} onClick={handleCopy}>

@@ -211,7 +211,7 @@ Actions, Measurement Log — dockable, with panel groups.
 (`src/contexts/PanelLayout.tsx:89`). They dock, drag-reorder, resize, collapse to
 icons and roll up (`src/contexts/PanelLayout.tsx:330-344`,
 `src/components/SidebarRight/PanelGroup.tsx`), and Window has Reset Workspace
-(`src/components/DesktopHeader/DesktopHeader.tsx:394`).
+(`src/components/DesktopHeader/DesktopHeader.tsx:403`).
 
 **Status:** `partial`
 
@@ -255,7 +255,7 @@ screen-mode switching.
 **This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
 scaleY)` with centring offsets (`src/hooks/usePointerPosition.ts:135`,
 `src/util/contain-fit.ts:33-51`). The
-zoom transform is commented out (`src/components/Main/Main.tsx:248`) and so is
+zoom transform is commented out (`src/components/Main/Main.tsx:270`) and so is
 the store's zoom state (`src/contexts/StoreContext.tsx:142-143`, `:1171-1174`).
 There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-118`).
 

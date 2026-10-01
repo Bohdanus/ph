@@ -120,6 +120,11 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Darkens the tonal range you choose as you paint, the way letting more light onto a print deepens its shadows.',
     implementation: 'partial',
   },
+  sponge: {
+    summary:
+      'Raises or lowers the colour saturation under the brush, so a flat area gains colour or a loud one loses it, and the lightness underneath is untouched.',
+    implementation: 'partial',
+  },
   gradient: {
     summary:
       'Fills a selection or layer with a gradient you define by dragging: the click sets the first colour stop, the release the second.',

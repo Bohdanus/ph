@@ -20,6 +20,7 @@ export type ToolIconName =
   | 'smudge'
   | 'dodge'
   | 'burn'
+  | 'sponge'
   | 'crop'
   | 'draw'
   | 'shape'

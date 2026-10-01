@@ -80,7 +80,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:41',
     ],
     appNotes:
-      'The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:400`-`:403`), and `adjustFreshPoint` (`:314`-`:329`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:502`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:156`-`:158`). The `M` key and Shift+M reach this tool, and Shift+M cycles the four marquees the app ships, which are the four Adobe documents; whether the Shift+M cycle Adobe documents cycle covers is still unresolved and recorded in selection.notes.md. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.',
+      'The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:400`-`:403`), and `adjustFreshPoint` (`:314`-`:329`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:502`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:156`-`:158`). The `M` key and Shift+M reach this tool and cycle all four marquees Adobe documents, which this app now ships; the two 1-pixel members sit behind that same key, in the same flyout this tool leads. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/rectangular-marquee-tool.html',
@@ -233,9 +233,9 @@ export const selectionDescriptions: Record<
     ],
     implementation: 'implemented',
     implementationRefs: [
-      'src/tools/singleRowColumnMarquee.ts:77',
-      'src/components/Main/SingleRowColumnMarqueeToolArea.tsx:199',
-      'src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:33',
+      'src/tools/singleRowColumnMarquee.ts:81',
+      'src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126',
+      'src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38',
       'src/tools/toolProcessors.ts:228',
       'toolbar-mapping.ts:48',
     ],
@@ -305,9 +305,9 @@ export const selectionDescriptions: Record<
     ],
     implementation: 'implemented',
     implementationRefs: [
-      'src/tools/singleRowColumnMarquee.ts:90',
-      'src/components/Main/SingleRowColumnMarqueeToolArea.tsx:199',
-      'src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:33',
+      'src/tools/singleRowColumnMarquee.ts:94',
+      'src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126',
+      'src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38',
       'src/tools/toolProcessors.ts:235',
       'toolbar-mapping.ts:49',
     ],

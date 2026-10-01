@@ -22,6 +22,7 @@ import type { GradientToolArgs } from '../tools/gradient.ts';
 import type { SharpenToolArgs } from '../tools/sharpen.ts';
 import type { SmudgeToolArgs } from '../tools/smudge.ts';
 import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
+import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { CloneStampToolArgs } from '../tools/cloneStamp.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
@@ -50,6 +51,12 @@ export type ToolArgsByName = {
   smudge: SmudgeToolArgs;
   dodge: DodgeBurnToolArgs;
   burn: DodgeBurnToolArgs;
+  /**
+   * The third member of the `O` toning flyout, and the only one of the three that is a
+   * chroma operation: it has a `mode` and a `flow` where the Dodge and the Burn have a
+   * `range` and an `exposure`, so it cannot share `DodgeBurnToolArgs` and does not.
+   */
+  sponge: SpongeToolArgs;
   'clone-stamp': CloneStampToolArgs;
   brush: PaintToolArgs;
   pencil: PaintToolArgs;

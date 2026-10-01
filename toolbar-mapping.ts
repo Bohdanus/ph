@@ -100,6 +100,11 @@ export const toolbarMap = [
     [
       { label: 'Dodge Tool', name: 'dodge', shortcut: 'O' },
       { label: 'Burn Tool', name: 'burn' },
+      // The third member of the same flyout, and in the order Adobe's own shortcut
+      // references give it: Dodge, Burn, Sponge, each `O`, cycled with `Shift+O`. The
+      // `shortcut` is left off the other two entries for the same reason it is left off
+      // `burn` — only the tile's first entry carries the letter.
+      { label: 'Sponge Tool', name: 'sponge' },
     ],
     [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
   ],
@@ -168,6 +173,7 @@ export const availableTools: readonly ToolName[] = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
 ];
 
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

@@ -1,59 +1,59 @@
+import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
-import type { RefObject } from 'react';
 import { SingleRowColumnMarqueeToolArea } from '../SingleRowColumnMarqueeToolArea.tsx';
 import {
+  MARQUEE_THICKNESS_PX,
   SINGLE_COLUMN_MARQUEE_SOURCE_TOOL,
   SINGLE_ROW_MARQUEE_SOURCE_TOOL,
-  isSingleRowOrColumnMarqueeRect,
 } from '../../../tools/singleRowColumnMarquee.ts';
+import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
-import { isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
-import { makeMockCtx } from '../../../__tests__/canvas-mock.ts';
-import type { Selection, SelectionSourceTool, Size } from '../../../contexts/general-types.ts';
+import type { Point, Selection, Size } from '../../../contexts/general-types.ts';
+import type { SingleRowOrColumnMarqueeToolName } from '../../../tools/singleRowColumnMarquee.ts';
+
+/** The two names the geometry module declares, spelled out so a case can index them. */
+const BOTH_TOOL_NAMES: SingleRowOrColumnMarqueeToolName[] = ['single-row-marquee', 'single-column-marquee'];
 
 const dispatchMock = vi.hoisted(() => vi.fn());
-const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false }, activePointer: null as number | null }));
-
+const pointerState = vi.hoisted(() => ({ activePointer: null as number | null }));
 const storeState = vi.hoisted(
   (): {
-    toolName: string;
+    toolName: SingleRowOrColumnMarqueeToolName;
+    totalSize: Size;
     selections: Selection[];
     activeSelectionId: string | null;
-    totalSize: { width: number; height: number };
     documentFrame: { x: number; y: number; width: number; height: number } | null;
   } => ({
-    toolName: 'single-row-marquee',
+    toolName: 'single-row-marquee' as SingleRowOrColumnMarqueeToolName,
+    totalSize: { width: 200, height: 120 },
     selections: [],
     activeSelectionId: null,
-    totalSize: { width: 200, height: 120 },
-    // Null, so the component derives the frame from `totalSize` and canvas coordinates and
-    // document coordinates are the same numbers here. A shifted frame is the one thing that
-    // would make a committed position ambiguous between the two spaces — which is why this
-    // default is the reason the `documentFrame` cases below have to set it deliberately:
-    // leaving it null here is what let a double conversion through 13 cases unnoticed.
     documentFrame: null,
   })
 );
 
 /**
- * `useSelectionHistory` is NOT mocked, and that is the point: the commit these cases pin is
- * the real one, so "this gesture wrote nothing" is observed as the absence of a
+ * `useSelectionHistory` is NOT mocked, and that is the point: the commit this file pins is the
+ * real one, so a gesture that should write nothing is observed as the absence of a
  * `COMMIT_DOCUMENT_EDIT` rather than as the absence of a mock call. The store mock therefore
- * carries every field the single-writer hook destructures, not only the ones the tool area
- * reads — `history` / `historyIndex` are the legacy append point it plans against, and
- * omitting them would make every commit read as a corrupt timeline and take the writer's
- * failure path.
+ * carries every field the single-writer hook destructures — `history` / `historyIndex` /
+ * `branchRevision` are what it plans the append against, and omitting them makes every commit
+ * read as a corrupt timeline and take the `catch` fallback instead.
+ *
+ * The values are GETTERS because the hook closes over them per render: a plain property copied
+ * once at mock time would freeze the state the moment `useStore()` was first called, and a test
+ * that reassigns `storeState.selections` afterwards would drive a component still holding the
+ * array it mounted with.
  */
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       containerRef: { current: document.createElement('div') },
-      get totalSize() {
-        return storeState.totalSize;
-      },
       get toolName() {
         return storeState.toolName;
+      },
+      get totalSize() {
+        return storeState.totalSize;
       },
       get selections() {
         return storeState.selections;
@@ -64,8 +64,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       get documentFrame() {
         return storeState.documentFrame;
       },
-      history: [],
-      historyIndex: -1,
+      selectionCleared: 0,
+      history: [] as unknown[],
+      historyIndex: 0,
       branchRevision: 0,
     },
     dispatchMock,
@@ -73,57 +74,82 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 }));
 
 /**
- * Both source-tool constants are `'rectangular-selection'` — truthfully, since a 1-pixel band
- * IS a rectangle, and pinned as such in `src/tools/__tests__/singleRowColumnMarquee.test.ts`.
- * That makes a draft payload compared against either of them pass whichever ARM dispatched it,
- * so this mock hands the two DISTINGUISHABLE values and the cases can see which one ran. Only
- * the constants are replaced; the geometry functions are the originals, so the bands these
- * cases commit are the real ones.
- */
-vi.mock('../../../tools/singleRowColumnMarquee.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../tools/singleRowColumnMarquee.ts')>()),
-  SINGLE_ROW_MARQUEE_SOURCE_TOOL: 'rectangular-selection' as SelectionSourceTool,
-  SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: '__column-source-tool__' as SelectionSourceTool,
-}));
-
-/**
- * A faithful stand-in for the real `usePointerPosition` capture contract, with ONE documented
- * omission: it does not refuse a non-primary button. The real hook does, so a right-click is
- * gated twice in production — once by the hook and once by the component's own first line.
- * Leaving the button check out of the mock is what makes the component's own gate the one the
- * non-primary case actually pins, instead of a case that passes whichever of the two survives.
+ * A faithful stand-in for the real `usePointerPosition` capture contract: the first `pointerDown`
+ * claims the pointer, and only that pointer's move/up are valid.
  *
- * The pointer id is honoured exactly as the real hook honours it, because this surface carries
- * the id on its own drag record and refuses a move or a release whose id is not the one the
- * press took.
+ * The pointer ID is load-bearing here, because this surface carries the id on its own drag record
+ * and refuses a move or a release whose id is not the one the press took. A double that let every
+ * event through would let a second pointer steer a drag it did not start, and every case below
+ * would still pass.
+ *
+ * `getLocalCoords` is the identity on `clientX`/`clientY`, i.e. an UNZOOMED, UNPANNED container at
+ * the canvas origin — so a canvas coordinate and a client coordinate are the same number here, and
+ * every offset in the assertions below is the document frame's, which is the only offset the
+ * component adds itself.
  */
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
     isPointerDownValid: vi.fn((event: PointerEvent) => {
+      if (event.button !== 0) return false;
       if (pointerState.activePointer !== null) return false;
       pointerState.activePointer = event.pointerId;
-      pointerState.isMouseDown.current = true;
       return true;
     }),
-    isPointerMoveValid: vi.fn(() => pointerState.activePointer !== null && pointerState.isMouseDown.current),
+    isPointerMoveValid: vi.fn(() => pointerState.activePointer !== null),
     isPointerUpValid: vi.fn((event: PointerEvent) => {
+      if (event.button !== 0) return false;
       if (pointerState.activePointer !== event.pointerId) return false;
       pointerState.activePointer = null;
-      pointerState.isMouseDown.current = false;
       return true;
     }),
     getLocalCoords: (event: PointerEvent) => ({ x: event.clientX, y: event.clientY }),
-    // Mirrors the real hook's `releasePointer` (`usePointerPosition.ts:203`): clears the
-    // tracked pointer without a release event. Without this the mock leaves the capture
-    // set forever, which is exactly the wedge the real hook grew this to close, so the
-    // mock would have hidden the very defect the abort route exists to prevent.
+    /**
+     * Mirrors the real hook's `releasePointer` (`usePointerPosition.ts:210`): clears the
+     * tracked pointer without a release event. Without it in the mock the captured pointer
+     * survived every abort, which is the wedge the real hook grew this to close — so the
+     * mock would have hidden the very defect the abort route exists to prevent.
+     */
     releasePointer: vi.fn(() => {
       pointerState.activePointer = null;
-      pointerState.isMouseDown.current = false;
     }),
-    isMouseDown: pointerState.isMouseDown,
+    isMouseDown: { current: false },
   }),
 }));
+
+/**
+ * The tool overlay is one 2D context for the whole session, and this area repaints it on mount,
+ * on every move and on every release. A context short of these calls would make the repaint a
+ * `TypeError`, which is a failure that says nothing about the behaviour under test.
+ */
+function createOverlayContext() {
+  return {
+    canvas: { width: 400, height: 300 },
+    clearRect: vi.fn(),
+    beginPath: vi.fn(),
+    closePath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    arc: vi.fn(),
+    fill: vi.fn(),
+    stroke: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    setLineDash: vi.fn(),
+    strokeStyle: '',
+    fillStyle: '',
+    lineWidth: 1,
+    globalAlpha: 1,
+  } as unknown as CanvasRenderingContext2D;
+}
+
+/**
+ * The frame offset used by every case that has one.
+ *
+ * Non-zero on purpose: a zero-origin frame makes document and canvas coordinates identical, so a
+ * conversion that dropped the offset — or, worse, applied it twice — would satisfy every assertion
+ * written against a frame at (0, 0).
+ */
+const OFFSET_FRAME = { x: 30, y: 40, width: 200, height: 120 };
 
 type SelectionEdit = {
   type: string;
@@ -133,601 +159,1103 @@ type SelectionEdit = {
   };
 };
 
-function dispatchedActions(): SelectionEdit[] {
-  return (dispatchMock.mock.calls as unknown[][]).map(([action]) => action as SelectionEdit);
-}
-
 function selectionEdits(): SelectionEdit[] {
-  return dispatchedActions().filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
+  return (dispatchMock.mock.calls as unknown[][])
+    .map(([action]) => action as SelectionEdit)
+    .filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
 }
 
 function singleSelectionEdit(): SelectionEdit {
   const edits = selectionEdits();
   expect(edits).toHaveLength(1);
-
   return edits[0];
 }
 
-function draftDispatches(): string[] {
-  return (dispatchMock.mock.calls as unknown[][])
-    .map(([action]) => action as { type: string; payload?: { sourceTool?: string } })
-    .filter((action) => action.type === 'START_SELECTION_DRAFT')
-    .map((action) => action.payload?.sourceTool as string);
+function dispatchedTypes(): string[] {
+  return (dispatchMock.mock.calls as unknown[][]).map(([action]) => (action as { type: string }).type);
 }
 
 /**
- * A cropped document: the frame origin is off the canvas origin, which is the ONLY state in
- * which canvas and document coordinates differ, and therefore the only state in which a commit
- * that forgets to convert — or converts twice — is visible at all.
+ * The selection a commit left ACTIVE.
  *
- * `totalSize` is the DOCUMENT's extent, not the canvas's: `StoreContext.tsx:357` derives it from
- * the frame on every commit, so a 700x550 document with a frame at (100, 50) occupies canvas
- * (100,50)-(800,600) and document (0,0)-(700,550). Every expectation below is computed in
- * DOCUMENT space and a press is given in CANVAS space, and the difference between the two is
- * exactly the frame origin.
+ * Not `selections[0]`: a create APPENDS, and the band it replaced is kept in the array with
+ * `isActive: false`, so the first element of a replacing commit is the OLD selection. Reading
+ * index 0 is how a "the press replaced it" case reports the selection it meant to have replaced.
  */
-const SHIFTED_FRAME = { x: 100, y: 50, width: 700, height: 550 };
-const SHIFTED_DOCUMENT: Size = { width: 700, height: 550 };
+function committedSelection(edit: SelectionEdit): Selection {
+  const { selections, activeSelectionId } = edit.payload.updates;
+  const active = selections.find((selection) => selection.id === activeSelectionId);
 
-function useShiftedDocument(): void {
-  storeState.documentFrame = { ...SHIFTED_FRAME };
-  storeState.totalSize = { ...SHIFTED_DOCUMENT };
+  expect(active, `no active selection in a commit of ${selections.map((s) => s.id).join(', ')}`).toBeDefined();
+
+  return active as Selection;
 }
 
-/** A committed 1-pixel row band, as the tool itself would have produced it. */
-const rowBand = (overrides: Partial<Selection> = {}): Selection => ({
-  id: 'band-1',
-  isActive: true,
-  geometry: 'rectangle',
-  sourceTool: SINGLE_ROW_MARQUEE_SOURCE_TOOL,
-  lifecycle: 'committed',
-  pos: { x: 0, y: 40, width: 200, height: 1 },
-  points: [
+/**
+ * The four corners of a full-width band, RELATIVE to its own origin.
+ *
+ * `getSelectionAbsolutePoints` offsets them by `pos`, so a selection's `points` are its local
+ * corners and not its absolute ones — writing absolute coordinates in both would double the
+ * offset, and this case is what says which of the two a commit stores.
+ */
+function bandPoints(): Point[] {
+  return [
     { x: 0, y: 0 },
     { x: 200, y: 0 },
-    { x: 200, y: 1 },
-    { x: 0, y: 1 },
-  ],
-  ...overrides,
-});
+    { x: 200, y: MARQUEE_THICKNESS_PX },
+    { x: 0, y: MARQUEE_THICKNESS_PX },
+  ];
+}
 
-const renderArea = (toolName?: string, overlayCtxRef?: RefObject<CanvasRenderingContext2D | null>) => {
-  if (toolName) storeState.toolName = toolName;
+/** The same band as a committed store selection, for the move arm's fixture. */
+function bandSelection(row: number, id = 'selection-1'): Selection {
+  return {
+    id,
+    isActive: true,
+    geometry: 'rectangle',
+    sourceTool: 'rectangular-selection',
+    lifecycle: 'committed',
+    pos: { x: 0, y: row, width: 200, height: MARQUEE_THICKNESS_PX },
+    points: bandPoints(),
+  };
+}
+
+/** The band a COLUMN press makes, as a committed store selection. */
+function columnBandSelection(column: number, id = 'selection-1'): Selection {
+  return {
+    id,
+    isActive: true,
+    geometry: 'rectangle',
+    sourceTool: 'rectangular-selection',
+    lifecycle: 'committed',
+    pos: { x: column, y: 0, width: MARQUEE_THICKNESS_PX, height: 120 },
+    points: [
+      { x: 0, y: 0 },
+      { x: MARQUEE_THICKNESS_PX, y: 0 },
+      { x: MARQUEE_THICKNESS_PX, y: 120 },
+      { x: 0, y: 120 },
+    ],
+  };
+}
+
+/** A point in CANVAS space, so a case reads as the pixel the user pressed. */
+function canvas(x: number, y: number): { clientX: number; clientY: number } {
+  return { clientX: x, clientY: y };
+}
+
+function renderArea(ctx = createOverlayContext()): HTMLDivElement {
   const { container } = render(
-    <SingleRowColumnMarqueeToolArea className="test-marquee-area" overlayCtxRef={overlayCtxRef} />
+    <SingleRowColumnMarqueeToolArea className="test-single-row-column-area" overlayCtxRef={{ current: ctx }} />
   );
 
   return container.firstElementChild as HTMLDivElement;
-};
+}
+
+/** press → (optional move) → release, the whole gesture, on one pointer id. */
+function gesture(toolArea: HTMLDivElement, points: Array<{ clientX: number; clientY: number }>, pointerId = 1): void {
+  const [down, ...rest] = points;
+
+  fireEvent.pointerDown(toolArea, { button: 0, pointerId, ...down });
+  rest.forEach((point) => fireEvent.pointerMove(toolArea, { button: 0, pointerId, ...point }));
+  fireEvent.pointerUp(toolArea, { button: 0, pointerId, ...points[points.length - 1] });
+}
 
 describe('SingleRowColumnMarqueeToolArea', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
-    pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
     storeState.toolName = 'single-row-marquee';
+    storeState.totalSize = { width: 200, height: 120 };
     storeState.selections = [];
     storeState.activeSelectionId = null;
-    storeState.totalSize = { width: 200, height: 120 };
     storeState.documentFrame = null;
-    // The document-gesture slot is module-level, so a claim leaked by one case would refuse
-    // every later press in this file and read as a dozen unrelated failures.
+    // The claim is module-level, so a leaked one refuses every later claim in this file and
+    // reads as a dozen unrelated failures.
     resetDocumentGestures();
   });
 
-  it('commits exactly one selection from a click, at the row under the press', () => {
-    const toolArea = renderArea();
+  describe('a press and release on the canvas', () => {
+    it('commits one document-pixel band spanning the full document width, on the pressed row', () => {
+      const toolArea = renderArea();
 
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+      // No frame here so the row rule is read on its own; the frame offset is the tripwire at the
+      // end of this describe.
+      gesture(toolArea, [canvas(5, 20)]);
 
-    const edit = singleSelectionEdit();
-    const [selection] = edit.payload.updates.selections;
+      const selection = committedSelection(singleSelectionEdit());
+      expect(selection.pos).toEqual({ x: 0, y: 20, width: 200, height: MARQUEE_THICKNESS_PX });
+      expect(selection.geometry).toBe('rectangle');
+      expect(selection.lifecycle).toBe('committed');
+      expect(selection.isActive).toBe(true);
+      expect(selection.sourceTool).toBe('rectangular-selection');
+      expect(selection.points).toEqual(bandPoints());
+    });
 
-    expect(selection.pos).toEqual({ x: 0, y: 60, width: 200, height: 1 });
-    expect(selection.geometry).toBe('rectangle');
-    expect(selection.sourceTool).toBe(SINGLE_ROW_MARQUEE_SOURCE_TOOL);
-    expect(edit.payload.updates.activeSelectionId).toBe(selection.id);
-    expect(edit.payload.historyItem.actionName).toBe(SELECTION_ACTION);
-    // `isActive` and `lifecycle` are deliberately NOT asserted here: `createCommittedRectangleSelection`
-    // sets both AND `committedSelectionUpdate` re-forces both on a create, so no single mutation can
-    // falsify an assertion on them in this file. The writer's own suite
-    // (`src/contexts/__tests__/useSelectionHistory.test.ts`) is where that contract is pinned.
-    // One create and one draft: the whole click is two dispatches and no more.
-    expect(draftDispatches()).toEqual([SINGLE_ROW_MARQUEE_SOURCE_TOOL]);
-    expect(dispatchMock).toHaveBeenCalledTimes(2);
+    it('is exactly one document pixel tall, whatever row it lands on', () => {
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(5, 60)]);
+
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos.height).toBe(MARQUEE_THICKNESS_PX);
+      expect(selection.pos.height).toBe(1);
+      // The far edge is exclusive, so the band covers row 60 and not row 61 — which is the same
+      // half-open interval the hit test reads.
+      expect(selection.pos.y + selection.pos.height).toBe(61);
+    });
+
+    it('spans the full document WIDTH, not the width of the press', () => {
+      const toolArea = renderArea();
+
+      // Pressed 3px from the left edge; the band still reaches the far edge.
+      gesture(toolArea, [canvas(3, 40)]);
+
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos.width).toBe(storeState.totalSize.width);
+      expect(selection.pos.x).toBe(0);
+    });
+
+    it('opens the selection draft once on the press, and never per pointer move', () => {
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(5, 20), canvas(60, 30), canvas(120, 45)]);
+
+      // Adobe: "click near the area you want to select, and then drag the marquee to the exact
+      // location" — one selection is being aimed, so the draft opens once, on the press.
+      expect(dispatchedTypes()).toEqual(['START_SELECTION_DRAFT', 'COMMIT_DOCUMENT_EDIT']);
+      expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: SINGLE_ROW_MARQUEE_SOURCE_TOOL },
+      });
+    });
+
+    it("commits on RELEASE from the pointer's position there, which is what the drag is for", () => {
+      const toolArea = renderArea();
+
+      // Pressed row 20, dragged down to row 50. Adobe's own wording for the gesture is "drag the
+      // marquee to the exact location", so the release row is the one that commits — NOT the
+      // press row.
+      gesture(toolArea, [canvas(5, 20), canvas(5, 50)]);
+
+      const selection = committedSelection(singleSelectionEdit());
+      expect(selection.pos).toEqual({ x: 0, y: 50, width: 200, height: MARQUEE_THICKNESS_PX });
+    });
+
+    it('anchors to the row the pointer is INSIDE, flooring a fractional press', () => {
+      const toolArea = renderArea();
+
+      // 12.9 is inside row 12. `Math.round` would answer 13 and every half-pixel press would
+      // select the row below the one the user actually clicked.
+      gesture(toolArea, [canvas(5, 12.9)]);
+
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos.y).toBe(12);
+      expect(selection.pos.height).toBe(1);
+    });
+
+    it('clamps a press below the document to the last row rather than committing nothing', () => {
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(5, 400)]);
+
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos.y).toBe(119);
+      expect(selection.pos.height).toBe(1);
+    });
+
+    it('clamps a press above the document to the first row', () => {
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(5, -30)]);
+
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos).toEqual({ x: 0, y: 0, width: 200, height: 1 });
+    });
+
+    it('appends and activates the band, and retires the previous one', () => {
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(5, 20)]);
+
+      const edit = singleSelectionEdit();
+      expect(edit.payload.updates.selections).toHaveLength(1);
+      expect(edit.payload.updates.activeSelectionId).toBe(edit.payload.updates.selections[0].id);
+      expect(edit.payload.historyItem.actionName).toBe(SELECTION_ACTION);
+    });
+
+    /**
+     * A committed selection's `pos` is its DOCUMENT-space origin: `RectangularSelectionToolArea`
+     * adds the frame to a CANVAS rect for exactly that reason, and `drawSelectionOutline` maps the
+     * stored points back to canvas with `documentToCanvasPoint` before painting them. Here the
+     * press is canvas (0, 0), so document (30, 40), so document row 40 — and 40 is the row the
+     * band must carry.
+     *
+     * This case was a `it.fails` tripwire: the commit added the frame a second time on top of a
+     * rect that `rectForAxis` had already built in document space, so on a cropped document the
+     * band committed — and therefore drew — a whole frame origin below the row that was pressed.
+     * Invisible on an uncropped document, where the frame is (0, 0) and the two forms agree.
+     */
+    it('commits the band at the pressed row on a cropped document, not one frame origin lower', () => {
+      storeState.documentFrame = OFFSET_FRAME;
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(0, 0)]);
+
+      const selection = committedSelection(singleSelectionEdit());
+      // `x: 0`, not the frame's 30: a row band starts at the DOCUMENT's left edge, and a stored
+      // `pos` is document space, so the band is `{0, 40}` there and canvas `(-30, 0)` once
+      // `drawSelectionOutline` maps it back — which is the canvas the press happened on.
+      expect(selection.pos).toEqual({ x: 0, y: 40, width: 200, height: 1 });
+    });
   });
 
-  it('dispatches nothing per pointer move, so a completed gesture writes one edit', () => {
-    const toolArea = renderArea();
+  describe('the single column marquee', () => {
+    beforeEach(() => {
+      storeState.toolName = 'single-column-marquee';
+    });
 
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 20 });
+    it('commits a one-pixel band spanning the full document HEIGHT, on the pressed column', () => {
+      const toolArea = renderArea();
 
-    for (let y = 25; y <= 90; y += 5) {
-      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: y });
-    }
+      // The mirror of the row case: the press's X picks the column and the span is the height.
+      gesture(toolArea, [canvas(70, 5)]);
 
-    // The draft the press opened, and nothing else: every move in between was overlay, and a
-    // commit per move would put fourteen undo steps on one drag and dirty the document
-    // fourteen times.
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
-    expect(draftDispatches()).toEqual([SINGLE_ROW_MARQUEE_SOURCE_TOOL]);
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos).toEqual({ x: 70, y: 0, width: MARQUEE_THICKNESS_PX, height: 120 });
+      expect(selection.pos.width).toBe(1);
+    });
 
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 90 });
+    it('opens the draft with the COLUMN source tool, not the row one', () => {
+      const toolArea = renderArea();
 
-    expect(selectionEdits()).toHaveLength(1);
-    expect(dispatchMock).toHaveBeenCalledTimes(2);
+      gesture(toolArea, [canvas(70, 5)]);
+
+      expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: SINGLE_COLUMN_MARQUEE_SOURCE_TOOL },
+      });
+    });
+
+    it('reads X, not Y: dragging down does not move the band it is aiming', () => {
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(70, 5), canvas(70, 100)]);
+
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos.x).toBe(70);
+      expect(selection.pos.height).toBe(120);
+    });
+
+    it('clamps a press right of the document to the last column', () => {
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(999, 5)]);
+
+      const [selection] = singleSelectionEdit().payload.updates.selections;
+      expect(selection.pos.x).toBe(199);
+      expect(selection.pos.width).toBe(1);
+    });
+
+    it('commits at the release position, transposed exactly as the row does', () => {
+      const toolArea = renderArea();
+
+      // Pressed at column 5 and released at column 95: the released column is what commits, which
+      // is Adobe's "drag the marquee to the exact location" and the transpose of the row case
+      // above. No frame here so the axis rule is read on its own — the frame offset is the
+      // separate case two below.
+      gesture(toolArea, [canvas(5, 5), canvas(95, 5)]);
+
+      const selection = committedSelection(singleSelectionEdit());
+      expect(selection.pos).toEqual({ x: 95, y: 0, width: 1, height: 120 });
+    });
+
+    /**
+     * `Selection.pos` is the DOCUMENT-space origin of a selection, and that is what every other
+     * writer in this app commits: `RectangularSelectionToolArea.tsx:105`-`:112` takes a CANVAS
+     * rect from `useRect` and adds the frame, because canvas + frame is document — and its own
+     * test pins that identity (`{x: 20, y: 10} -> {x: 50, y: 50}` with the frame at (30, 40)).
+     *
+     * This tool does not have a canvas rect to convert. `rectForAxis` builds its rect from a
+     * DOCUMENT-space axis value (`canvasToDocumentPoint` already added the frame), so the rect is
+     * ALREADY in document space and the commit must add nothing to it. It was a `it.fails`
+     * tripwire because it did: on any cropped document the band committed, and therefore drew,
+     * one whole frame origin from where the user pressed. Here the press is canvas x=95, which is
+     * document column 125, and 125 is the document-space `pos.x` the band must carry.
+     */
+    it('commits the released column at its document position, not one frame origin further', () => {
+      storeState.documentFrame = OFFSET_FRAME;
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(5, 5), canvas(95, 5)]);
+
+      const selection = committedSelection(singleSelectionEdit());
+      // `y: 0`, not the frame's 40: a column band starts at the DOCUMENT's top edge, for the same
+      // reason the row band starts at its left one.
+      expect(selection.pos).toEqual({ x: 125, y: 0, width: 1, height: 120 });
+    });
   });
 
-  it('commits the release position, not the press position, for a drag', () => {
+  describe('a press inside the active band', () => {
+    it('MOVES the band rather than replacing it, on a drag', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 60), canvas(100, 80)]);
+
+      // No draft: the press is not opening a new selection, it is grabbing the existing one.
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      const edit = singleSelectionEdit();
+      // Still exactly one selection, still carrying its OWN id — a create would have appended a
+      // second, and the count is what tells the two apart.
+      expect(edit.payload.updates.selections).toHaveLength(1);
+      expect(edit.payload.updates.selections[0].id).toBe('selection-1');
+      expect(edit.payload.updates.activeSelectionId).toBe('selection-1');
+      expect(edit.payload.updates.selections[0].pos).toEqual({ x: 0, y: 80, width: 200, height: 1 });
+      // The move builders stamp every call, so `movedAtVersion` is the visible evidence that the
+      // production builder ran rather than that the test wrote the geometry.
+      expect(edit.payload.updates.selections[0].metadata?.movedAtVersion).toBe(1);
+    });
+
+    it('moves only on the document delta, never on the frame offset', () => {
+      storeState.documentFrame = OFFSET_FRAME;
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Pressed and released at the same canvas y, so the delta is zero in canvas space and in
+      // document space alike — and the band must not jump by the frame's 40px.
+      gesture(toolArea, [canvas(100, 20), canvas(100, 20)]);
+
+      // The gate is GEOMETRY, not "the drag happened", so a zero delta writes nothing at all.
+      expect(selectionEdits()).toEqual([]);
+    });
+
+    it('moves the band down by exactly the pointer delta', () => {
+      storeState.documentFrame = OFFSET_FRAME;
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Canvas y 20 → 50 is document y 60 → 90, a delta of +30 rows.
+      gesture(toolArea, [canvas(100, 20), canvas(100, 50)]);
+
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.pos).toEqual({ x: 0, y: 90, width: 200, height: 1 });
+    });
+
+    it('commits nothing when the drag ends where it started', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 60), canvas(100, 60)]);
+
+      // `hasSameSelectionGeometry` is the gate, and `metadata.movedAtVersion` is why a deep
+      // comparison could never be: every builder call bumps it, so a drag that moved nothing is
+      // different AND geometrically identical at the same time. `COMMIT_DOCUMENT_EDIT` always
+      // flags unsaved changes, so committing here would mark the document dirty for nothing.
+      expect(selectionEdits()).toEqual([]);
+    });
+
+    /**
+     * The single-frame move cases cannot see this, and the reason is arithmetic rather than a
+     * missing branch: with one `pointerMove` the last delta IS the whole delta, so
+     * `moveSelectionByDelta(baseline, delta)` and `moveSelectionByDelta(preview, delta)` agree.
+     * Every move case above issues exactly one move, so the suite was blind to the difference by
+     * construction. This is the same defect `EllipticalSelectionToolArea.test.tsx:318` pins as a
+     * tripwire for that tool, and this tool had no such case at all.
+     */
+    it('accumulates a multi-frame move instead of committing the last frame alone', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // OUT to +30 rows, then a further +30: two frames of +30 must land on the band at the
+      // SECOND frame's row (90), not the first's (which the last-frame-only form gives).
+      gesture(toolArea, [canvas(100, 60), canvas(100, 90), canvas(100, 120)]);
+
+      // Row 120 is one past the last row of this 120-tall document, so the clamp lands it on 119.
+      // That is the clamp doing its job, and the value that distinguishes the two forms is 119
+      // rather than 90: a last-frame-only delta would have committed row 90.
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.pos).toEqual({ x: 0, y: 119, width: 200, height: 1 });
+    });
+
+    it('commits nothing for a move drag that went out and came back to the press point', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 60), canvas(100, 90), canvas(100, 60)]);
+
+      // The net displacement is zero, so the preview ends on the baseline's own geometry and the
+      // `hasSameSelectionGeometry` gate suppresses the commit — the same contract the one-frame
+      // case above pins, for the gesture's two-frame shape.
+      expect(selectionEdits()).toEqual([]);
+    });
+
+    it('keeps the band one pixel tall and full width when dragged along its own X', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // A horizontal drag of a ROW band must change nothing about it: the band is placed by its Y,
+      // and letting X into the commit would leave `y1: 0` with a width of one, which
+      // `isSingleRowOrColumnMarqueeRect` rejects — so the band could never be grabbed again.
+      gesture(toolArea, [canvas(100, 60), canvas(160, 60)]);
+
+      expect(selectionEdits()).toEqual([]);
+    });
+
+    it('never commits a band off the top of the document, however far it is dragged', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 60), canvas(100, -900)]);
+
+      // `rectForAxis` clamps, so the band lands on the first row rather than at y = -840.
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.pos).toEqual({ x: 0, y: 0, width: 200, height: 1 });
+    });
+
+    it('lands a moved band on an integral row even from a fractional pointer', () => {
+      storeState.documentFrame = OFFSET_FRAME;
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Any real pointer at a non-integer contain scale arrives between pixels. A band whose
+      // `pos.y` is 80.4 covers half of row 80 and half of row 81, so it is neither row.
+      gesture(toolArea, [canvas(100, 20), canvas(100, 40.4)]);
+
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.pos).toEqual({ x: 0, y: 80, width: 200, height: 1 });
+    });
+
+    it('treats a press one row ABOVE the band as a fresh draw, because the hit area is one pixel', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Row 61 is outside the band, and a band is exactly one row tall, so there is no
+      // tolerance: outside is the ONLY way to draw a new one. `isPointInPolygon` is a ray cast
+      // over `[60, 61)`, so 61 is already out — the band does not reach its own far edge.
+      gesture(toolArea, [canvas(100, 61)]);
+
+      expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: SINGLE_ROW_MARQUEE_SOURCE_TOOL },
+      });
+      const edit = singleSelectionEdit();
+      // A create APPENDS: the band it replaced stays in the array, deactivated, and the new one
+      // is the active id. Two selections is what distinguishes this from a move.
+      expect(edit.payload.updates.selections).toHaveLength(2);
+      expect(committedSelection(edit).id).not.toBe('selection-1');
+      expect(committedSelection(edit).pos.y).toBe(61);
+      expect(edit.payload.updates.selections[0].isActive).toBe(false);
+    });
+
+    it('treats a press one row BELOW the band as a fresh draw too', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 59)]);
+
+      expect(dispatchedTypes()).toEqual(['START_SELECTION_DRAFT', 'COMMIT_DOCUMENT_EDIT']);
+      expect(committedSelection(singleSelectionEdit()).pos.y).toBe(59);
+    });
+
+    it("treats a press exactly ON the band's first row as inside, edge included", () => {
+      // The near edge is part of the hit area, so the band is grabbable across `[y1, y2)`: its
+      // own first row is inside it. The half-open convention is what makes the row ABOVE it
+      // outside, and pinning both together is what stops a future edit from quietly making the
+      // band grabbable on both sides and leaving no way to draw a band next to it.
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(100, 60) });
+
+      expect(dispatchedTypes()).toEqual([]);
+    });
+
+    it('treats a press halfway down the single row as inside', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(100, 60.5) });
+
+      expect(dispatchedTypes()).toEqual([]);
+    });
+
+    it("treats a press horizontally outside the band's row as a fresh draw", () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // The band spans the whole width, so there is no "outside" horizontally — which is the
+      // property that makes one pixel of row the whole hit target.
+      gesture(toolArea, [canvas(0, 60), canvas(199, 60), canvas(100, 75)]);
+
+      // Pressed inside the row, so the drag MOVED it rather than drawing on top of it.
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      expect(singleSelectionEdit().payload.updates.selections[0].pos.y).toBe(75);
+    });
+
+    it('does NOT grab a rectangle the Rectangular Marquee drew, however small the press', () => {
+      // The distinction that makes the move arm safe: moving a selection the user made with a
+      // different tool would relocate a rectangle, and no drag of this tool's own preview would
+      // ever replace it.
+      storeState.selections = [
+        {
+          ...bandSelection(40),
+          pos: { x: 10, y: 40, width: 30, height: 20 },
+          points: [
+            { x: 0, y: 0 },
+            { x: 30, y: 0 },
+            { x: 30, y: 20 },
+            { x: 0, y: 20 },
+          ],
+        },
+      ];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Pressed dead centre of that rectangle.
+      gesture(toolArea, [canvas(25, 50)]);
+
+      expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: SINGLE_ROW_MARQUEE_SOURCE_TOOL },
+      });
+      const edit = singleSelectionEdit();
+      expect(committedSelection(edit).id).not.toBe('selection-1');
+      // The band that replaced it commits on the PRESS row, which is inside the old rectangle —
+      // a 200-wide, 1-tall band, not the 30x20 the other tool drew.
+      expect(committedSelection(edit).pos).toEqual({ x: 0, y: 50, width: 200, height: 1 });
+    });
+
+    it('does NOT grab a full-document rectangle that is not one pixel thin', () => {
+      // The second shape an ordinary marquee can have: every dimension of the document. Both
+      // clauses of `isSingleRowOrColumnMarqueeRect` require a thickness of exactly one, so
+      // Select-All-shaped selection is still a draw, not a grab.
+      storeState.selections = [
+        {
+          ...bandSelection(0),
+          pos: { x: 0, y: 0, width: 200, height: 120 },
+          points: [
+            { x: 0, y: 0 },
+            { x: 200, y: 0 },
+            { x: 200, y: 120 },
+            { x: 0, y: 120 },
+          ],
+        },
+      ];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 60)]);
+
+      expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: SINGLE_ROW_MARQUEE_SOURCE_TOOL },
+      });
+      expect(singleSelectionEdit().payload.updates.selections).toHaveLength(2);
+    });
+
+    it('moves a COLUMN band on its X, not on its Y', () => {
+      storeState.toolName = 'single-column-marquee';
+      storeState.selections = [columnBandSelection(70)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Pressed on column 70 and dragged to column 90, without touching Y at all.
+      gesture(toolArea, [canvas(70, 60), canvas(90, 60)]);
+
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.pos).toEqual({ x: 90, y: 0, width: 1, height: 120 });
+    });
+
+    it('grabs a ROW band on its own row while the COLUMN tool is active, because the hit test is orientation-agnostic', () => {
+      // `isSingleRowOrColumnMarqueeRect` names BOTH orientations and the tool area applies it
+      // whichever tool is mounted, so the move arm is not restricted to the band its own tool
+      // made. The spec these two tools implement says "a press INSIDE the existing band MOVES the
+      // selection" without qualifying the orientation, so this is the current contract rather
+      // than a defect — but it is a contract, and a press on row 60 with the column tool moves the
+      // row band vertically rather than drawing a column over it.
+      storeState.toolName = 'single-column-marquee';
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Pressed ON row 60 — inside the band's half-open `[60, 61)` — and dragged down 30 rows.
+      gesture(toolArea, [canvas(100, 60), canvas(100, 90)]);
+
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.id).toBe('selection-1');
+      expect(moved.pos).toEqual({ x: 0, y: 90, width: 200, height: 1 });
+    });
+
+    it('draws a fresh band with the COLUMN tool from a row the row band does not cover', () => {
+      // The other half of the same rule, and the reason the case above is not a trap: one row off
+      // the band there is no hit at all, so the column tool still draws where the user asked.
+      storeState.toolName = 'single-column-marquee';
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 61)]);
+
+      expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: SINGLE_COLUMN_MARQUEE_SOURCE_TOOL },
+      });
+      const selection = committedSelection(singleSelectionEdit());
+      expect(selection.id).not.toBe('selection-1');
+      expect(selection.pos).toEqual({ x: 100, y: 0, width: 1, height: 120 });
+    });
+
+    it('grabs a COLUMN band on its own column while the ROW tool is active', () => {
+      // The transpose of the case two above, and it shows the cross-tool move is a plain 2D
+      // translation: the row tool's press lands inside the column band's one-pixel width, and the
+      // drag then moves that band sideways even though the row tool has no X axis at all.
+      storeState.selections = [columnBandSelection(70)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(70.5, 60), canvas(95.5, 60)]);
+
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      const [moved] = singleSelectionEdit().payload.updates.selections;
+      expect(moved.id).toBe('selection-1');
+      expect(moved.pos).toEqual({ x: 95, y: 0, width: 1, height: 120 });
+    });
+
+    it('replaces rather than moves when there is no active selection to grab', () => {
+      // `getActiveSelection` falls back to the first `isActive` selection, so the fixture does not
+      // have to set `activeSelectionId` for the move arm to engage — and this pins that fallback
+      // from the other side: a store whose id points at nothing still finds the flagged band.
+      storeState.selections = [bandSelection(60, 'selection-1')];
+      storeState.activeSelectionId = null;
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(100, 60), canvas(100, 61)]);
+
+      expect(dispatchedTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      expect(singleSelectionEdit().payload.updates.selections[0].id).toBe('selection-1');
+    });
+  });
+
+  describe('abort routes', () => {
+    it('cancels the draft and commits nothing when the pointer leaves mid-draw', () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 60) });
+      fireEvent.pointerLeave(toolArea, { button: 0, pointerId: 1, ...canvas(5, 60) });
+
+      expect(selectionEdits()).toEqual([]);
+      expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+
+      // The hook's captured pointer goes with the gesture. While it is held the browser
+      // delivers `pointerup` to the capture target even when the pointer was released
+      // elsewhere — and `handlePointerUp` returns before `isPointerUpValid` once the drag
+      // ref is empty — so without `releasePointer` the ref survived and every later press
+      // was refused by `isPointerDownValid`'s first-pointer-wins check. The observable half
+      // is a second press on the SAME mounted element committing a band.
+      expect(pointerState.activePointer).toBe(null);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, ...canvas(5, 90) });
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 2, ...canvas(5, 90) });
+
+      expect(selectionEdits()).toHaveLength(1);
+    });
+
+    it('cancels the draft on a pointer cancel, which surfaces no release either', () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
+
+      expect(selectionEdits()).toEqual([]);
+      expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    });
+
+    it('snaps an abandoned MOVE back without writing anything', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(100, 60) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(100, 90) });
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 1, ...canvas(100, 90) });
+
+      // The store still shows the un-moved band, so the repaint is the snap-back. No draft was
+      // opened by this press, so none is cancelled — the cancel dispatch is the create arm's.
+      expect(dispatchedTypes()).toEqual([]);
+    });
+
+    it('commits nothing on the release of a press it refused', () => {
+      const toolArea = renderArea();
+
+      // A right-button press is refused by `isPointerDownValid`, so no gesture ever opened and
+      // the release that follows it has nothing to commit.
+      fireEvent.pointerDown(toolArea, { button: 2, pointerId: 1, ...canvas(5, 20) });
+      fireEvent.pointerUp(toolArea, { button: 2, pointerId: 1, ...canvas(5, 20) });
+
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing for a release from a pointer that never pressed', () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 9, ...canvas(5, 20) });
+
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing for a move from a pointer that never pressed', () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 9, ...canvas(5, 20) });
+
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it("ignores a second pointer's release while the first drag is still open", () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 2, ...canvas(5, 90) });
+
+      // The drag carries the pointer id it was taken with, so a release from anywhere else is
+      // dropped before `takeDrag()` — the pending commit stays pending.
+      expect(dispatchMock).toHaveBeenCalledTimes(1);
+      expect(dispatchedTypes()).toEqual(['START_SELECTION_DRAFT']);
+    });
+
+    it('commits nothing on a degenerate document, and cancels the draft instead', () => {
+      // A zero-width document yields a zero-area rect from the geometry, and
+      // `createCommittedRectangleSelection` returns null for it. The draft the press opened is
+      // then closed rather than left half-built in the store.
+      storeState.totalSize = { width: 0, height: 120 };
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(0, 20)]);
+
+      expect(selectionEdits()).toEqual([]);
+      expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    });
+
+    it('drops a running gesture on unmount, so it can never commit after the tool changed', () => {
+      const ctx = createOverlayContext();
+      const { container, unmount } = render(
+        <SingleRowColumnMarqueeToolArea className="test-single-row-column-area" overlayCtxRef={{ current: ctx }} />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 60) });
+
+      unmount();
+
+      // The overlay is cleared on the way out too, so a band aimed at the old tool does not stay
+      // painted over the next tool's canvas.
+      expect(selectionEdits()).toEqual([]);
+      expect(ctx.clearRect).toHaveBeenCalled();
+    });
+  });
+
+  describe('the document gesture gate', () => {
+    it('claims the document on the press that opens a draft, and releases it on the release', () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, ...canvas(5, 20) });
+
+      // Held for the whole gesture, which is the window a document-mutating shortcut must not
+      // reach — the commit lands on release, so a shortcut in between would truncate the very
+      // timeline the pending commit appends to.
+      expect(isDocumentGestureOpen()).toBe(true);
+      expect(readDocumentGesture()).toEqual({ kind: 'single-row-marquee', pointerId: 4 });
+
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, ...canvas(5, 20) });
+      });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims under the COLUMN kind while the column tool is active', () => {
+      storeState.toolName = 'single-column-marquee';
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 5, ...canvas(5, 20) });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'single-column-marquee', pointerId: 5 });
+    });
+
+    it('claims the document for a press that moves an existing band too', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 6, ...canvas(100, 60) });
+
+      // The move arm commits a document edit too, so the claim is not a property of the create arm.
+      expect(readDocumentGesture()).toEqual({ kind: 'single-row-marquee', pointerId: 6 });
+    });
+
+    it('releases the claim on the path that commits nothing', () => {
+      storeState.totalSize = { width: 0, height: 120 };
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, ...canvas(0, 20) });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, pointerId: 7, ...canvas(0, 20) });
+      });
+
+      // The release is the FIRST statement of the handler, ahead of the commit, so this path gives
+      // the claim back too.
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim on pointer leave and on pointer cancel', () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 8, ...canvas(5, 20) });
+      fireEvent.pointerLeave(toolArea, { button: 0, pointerId: 8, ...canvas(5, 20) });
+      expect(isDocumentGestureOpen()).toBe(false);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 9, ...canvas(5, 20) });
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 9, ...canvas(5, 20) });
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {
+      const { container, unmount } = render(
+        <SingleRowColumnMarqueeToolArea
+          className="test-single-row-column-area"
+          overlayCtxRef={{ current: createOverlayContext() }}
+        />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 10, ...canvas(5, 20) });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      unmount();
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims nothing for a press the pointer pipeline refuses', () => {
+      const toolArea = renderArea();
+
+      // A non-primary button starts no band, so there is no gesture for the keyboard to wait on —
+      // and a claim taken here would refuse every shortcut until some unrelated drag released it.
+      fireEvent.pointerDown(toolArea, { button: 2, pointerId: 11, ...canvas(5, 20) });
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims nothing for a second pointer while one is already down', () => {
+      const toolArea = renderArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 12, ...canvas(5, 20) });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // `usePointerPosition.isPointerDownValid` refuses a second pointer, and the claim follows
+      // that rule: the document still belongs to the first press, not to this one.
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 13, ...canvas(80, 80) });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'single-row-marquee', pointerId: 12 });
+    });
+
+    it('gives the claim to a second tool once the first one has released it', () => {
+      const toolArea = renderArea();
+
+      // The control for the two cases above: the same surface claims again immediately after a
+      // release, so the refusals read as refusals and not as a permanently dead slot.
+      gesture(toolArea, [canvas(5, 20)], 14);
+      expect(isDocumentGestureOpen()).toBe(false);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 15, ...canvas(5, 40) });
+      expect(readDocumentGesture()).toEqual({ kind: 'single-row-marquee', pointerId: 15 });
+    });
+  });
+
+  describe('the live-aim preview', () => {
+    it('strokes the band being aimed as a dashed closed path, with no anchor dots', () => {
+      const ctx = createOverlayContext();
+      const toolArea = renderArea(ctx);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
+
+      // The band for row 40 is (0,40) to (200,41), and the preview is its four corners as a
+      // closed path. Deliberately not `drawSelectionOutline`: that draws a white dot on every
+      // vertex, and the corners of a 1-pixel band are not draggable in Photoshop — the band is
+      // placed by the press, not by dragging its handles.
+      expect(ctx.moveTo).toHaveBeenCalledWith(0, 40);
+      expect(ctx.lineTo).toHaveBeenCalledWith(200, 40);
+      expect(ctx.lineTo).toHaveBeenCalledWith(200, 41);
+      expect(ctx.lineTo).toHaveBeenCalledWith(0, 41);
+      expect(ctx.closePath).toHaveBeenCalled();
+      expect(ctx.setLineDash).toHaveBeenCalledWith([6, 4]);
+      expect(ctx.stroke).toHaveBeenCalled();
+    });
+
+    it('re-aims the preview on every move, so the band follows the pointer during the drag', () => {
+      const ctx = createOverlayContext();
+      const toolArea = renderArea(ctx);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 70) });
+
+      // Two previews, each a full repaint of the one shared overlay context.
+      expect(ctx.clearRect).toHaveBeenCalledTimes(3); // mount + one per move
+      expect(ctx.moveTo).toHaveBeenCalledWith(0, 70);
+    });
+
+    it('previews a COLUMN band as the transposed rectangle', () => {
+      storeState.toolName = 'single-column-marquee';
+      const ctx = createOverlayContext();
+      const toolArea = renderArea(ctx);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(70, 5) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(90, 5) });
+
+      expect(ctx.moveTo).toHaveBeenCalledWith(90, 0);
+      expect(ctx.lineTo).toHaveBeenCalledWith(91, 0);
+      expect(ctx.lineTo).toHaveBeenCalledWith(91, 120);
+      expect(ctx.lineTo).toHaveBeenCalledWith(90, 120);
+    });
+
+    /**
+     * The overlay is painted in CANVAS coordinates: `drawSelectionOutline` maps each stored point
+     * through `documentToCanvasPoint` before it draws, and `useRect` is handed `initialRect` as
+     * `pos - frame` (`RectangularSelectionToolArea.test.tsx:196` pins that subtraction). The live
+     * preview is the transient twin of that outline, so it converts the same way; it was a
+     * `it.fails` tripwire because it handed `rectCorners(rectForAxis(axis))` — a DOCUMENT-space
+     * rect — straight to the painter, so on a cropped document the band being aimed at was drawn a
+     * whole frame origin away from the pointer aiming it.
+     *
+     * The press below is canvas (5, 40) with the frame at (30, 40), i.e. document row 80, and
+     * document row 80 sits at canvas y=40. That is where the preview belongs and where the
+     * committed band's outline lands too, since both convert once and only once.
+     */
+    it('paints the live preview where the pointer is, on a cropped document', () => {
+      storeState.documentFrame = OFFSET_FRAME;
+      const ctx = createOverlayContext();
+      const toolArea = renderArea(ctx);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
+
+      expect(ctx.moveTo).toHaveBeenCalledWith(-30, 40);
+      expect(ctx.lineTo).toHaveBeenCalledWith(170, 40);
+      expect(ctx.lineTo).toHaveBeenCalledWith(170, 41);
+      expect(ctx.lineTo).toHaveBeenCalledWith(-30, 41);
+    });
+
+    it('clears the overlay on release, so the preview does not outlive the gesture', () => {
+      const ctx = createOverlayContext();
+      const toolArea = renderArea(ctx);
+
+      gesture(toolArea, [canvas(5, 20), canvas(5, 40)]);
+
+      // Mount, one move, and the release's repaint. The release repaints from the store, which
+      // does not have the committed band yet in this mocked store, so the overlay ends empty —
+      // which is the correct thing for a context the store has not caught up with.
+      expect(ctx.clearRect).toHaveBeenCalledTimes(3);
+    });
+
+    it('paints the moved band during a move drag, in place of the stored one', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const ctx = createOverlayContext();
+      const toolArea = renderArea(ctx);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(100, 60) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(100, 90) });
+
+      // The move arm overrides the selection in the repaint rather than drawing a preview path,
+      // so the band's own outline is drawn at the dragged position — the same painter the
+      // committed selection uses, which is why there is no second dash pattern to look for.
+      expect(ctx.moveTo).toHaveBeenCalledWith(0, 90);
+      expect(ctx.lineTo).toHaveBeenCalledWith(200, 90);
+      expect(ctx.lineTo).toHaveBeenCalledWith(200, 91);
+      expect(ctx.lineTo).toHaveBeenCalledWith(0, 91);
+    });
+  });
+
+  describe('the shared tool-name surface', () => {
+    it('answers to exactly the two names its geometry module declares', () => {
+      // The store mock answers with `storeState.toolName`, so a name the module does not declare
+      // could not be set here at all; this case pins the pair the component reads.
+      expect(BOTH_TOOL_NAMES).toEqual(['single-row-marquee', 'single-column-marquee']);
+    });
+
+    it('treats any other tool name as the ROW tool, because the column is the only exception', () => {
+      // `isColumn` is one `===`, so the row is the default arm and every other name behaves like
+      // a row rather than mounting a dead surface. The cast is what a caller passing a third name
+      // would have to write, and it is why the narrowing is pinned.
+      storeState.toolName = 'rectangular-selection' as SingleRowOrColumnMarqueeToolName;
+      const toolArea = renderArea();
+
+      gesture(toolArea, [canvas(5, 20)]);
+
+      expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: SINGLE_ROW_MARQUEE_SOURCE_TOOL },
+      });
+      expect(singleSelectionEdit().payload.updates.selections[0].pos).toEqual({
+        x: 0,
+        y: 20,
+        width: 200,
+        height: 1,
+      });
+    });
+  });
+});
+
+/**
+ * The exactness of the committed geometry, read back through the store's own readers rather than
+ * through the component's builders. `Point` is imported for that reason and nothing else: a band
+ * described by its absolute corners is the one shape a reader can check by eye.
+ */
+describe('committed band geometry, read through the store readers', () => {
+  beforeEach(() => {
+    dispatchMock.mockClear();
+    pointerState.activePointer = null;
+    storeState.toolName = 'single-row-marquee';
+    storeState.totalSize = { width: 200, height: 120 };
+    storeState.selections = [];
+    storeState.activeSelectionId = null;
+    storeState.documentFrame = null;
+    resetDocumentGestures();
+  });
+
+  it('has absolute corners on the two rows the band covers, and on no others', () => {
     const toolArea = renderArea();
 
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 20 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 70 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 70 });
+    gesture(toolArea, [canvas(5, 30)]);
 
-    // Row 70, which is the pointer on release. A commit built from the press would land on
-    // row 20 — the row the user dragged AWAY from.
     const [selection] = singleSelectionEdit().payload.updates.selections;
-    expect(selection.pos).toEqual({ x: 0, y: 70, width: 200, height: 1 });
-  });
-
-  it('commits the press position for a press that never moved', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 20 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 20 });
-
-    // The control for the case above: with no move at all the press position is the whole
-    // gesture, so the pair says "release wins, press when there is no other release" rather
-    // than "the release is ignored".
-    const [selection] = singleSelectionEdit().payload.updates.selections;
-    expect(selection.pos).toEqual({ x: 0, y: 20, width: 200, height: 1 });
-  });
-
-  it('reads X and ignores Y under the column tool', () => {
-    const toolArea = renderArea('single-column-marquee');
-
-    // A drag that moves 70px down and not at all sideways.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 40, clientY: 20 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 40, clientY: 90 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 40, clientY: 90 });
-
-    // Column 40, whole document tall, one pixel wide. Had the tool read Y it would have
-    // committed row 90, and had it read X while the row tool also read X the two bars would
-    // be the same tool.
-    const [first] = singleSelectionEdit().payload.updates.selections;
-    expect(first.pos).toEqual({ x: 40, y: 0, width: 1, height: 120 });
-
-    // The other half: a drag that DOES move sideways moves the column. Without it the
-    // assertion above would be satisfied by a tool that never commits a second column.
-    dispatchMock.mockClear();
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 70, clientY: 10 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 70, clientY: 10 });
-
-    const [second] = singleSelectionEdit().payload.updates.selections;
-    expect(second.pos).toEqual({ x: 70, y: 0, width: 1, height: 120 });
-  });
-
-  it('moves the committed band for a press inside it, instead of creating a second selection', () => {
-    storeState.selections = [rowBand()];
-    storeState.activeSelectionId = 'band-1';
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60.5 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60.5 });
-
-    const edit = singleSelectionEdit();
-
-    // Still one selection, still carrying the id the band already had — a create would have
-    // appended a second one, and the count is what tells the two commits apart.
-    expect(edit.payload.updates.selections).toHaveLength(1);
-    expect(edit.payload.updates.selections[0].id).toBe('band-1');
-    expect(edit.payload.updates.selections[0].pos).toEqual({ x: 0, y: 60, width: 200, height: 1 });
-    expect(edit.payload.updates.activeSelectionId).toBe('band-1');
-    // The move arm returns before the draft, so a drag of a committed band opens no second
-    // draft over the selection it is about to replace.
-    expect(draftDispatches()).toEqual([]);
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
-  });
-
-  /**
-   * The hit test is the one place in the file where two coordinate spaces meet, and
-   * `getSelectionAbsolutePoints` is DOCUMENT space (`selection.ts:127` — its callers convert
-   * it TO canvas, at `selection.ts:176`, `:237` and `useSelectionAnts.ts:82`). With the frame
-   * shifted, converting the press to canvas here instead compares canvas against document:
-   * the press misses the band it is on and hits one frame below it, so the move gesture
-   * becomes unreachable on any cropped document while a phantom hit appears 50 rows down.
-   */
-  it('moves the committed band for a press inside it on a document whose frame origin is non-zero', () => {
-    useShiftedDocument();
-    expect(storeState.documentFrame).toEqual(SHIFTED_FRAME);
-
-    // A band already committed on the shifted document: document row 350, whole 700 width.
-    const band: Selection = {
-      ...rowBand(),
-      pos: { x: 0, y: 350, width: 700, height: 1 },
-      points: [
-        { x: 0, y: 0 },
-        { x: 700, y: 0 },
-        { x: 700, y: 1 },
-        { x: 0, y: 1 },
-      ],
-    };
-    storeState.selections = [band];
-    storeState.activeSelectionId = 'band-1';
-
-    const toolArea = renderArea();
-
-    // Canvas y=300 is document y=350, which is INSIDE the band (document 350..351). A press
-    // at canvas y=300 that is treated as a miss creates a second selection instead.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 300 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 340 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 340 });
-
-    const edit = singleSelectionEdit();
-
-    // Canvas y=340 -> document y=390 -> row 390. One selection, same id: a create would have
-    // appended a second one at row 50 (canvas 340 misread as document 340 clamped, or the
-    // frame applied twice), which is what the miss path produces.
-    expect(edit.payload.updates.selections).toHaveLength(1);
-    expect(edit.payload.updates.selections[0].id).toBe('band-1');
-    expect(edit.payload.updates.selections[0].pos).toEqual({ x: 0, y: 390, width: 700, height: 1 });
-    expect(draftDispatches()).toEqual([]);
-  });
-
-  it('creates a new selection for a press that misses the committed band', () => {
-    storeState.selections = [rowBand()];
-    storeState.activeSelectionId = 'band-1';
-    const toolArea = renderArea();
-
-    // Row 20, six rows clear of the committed band: the only way to draw a new one, because
-    // a press on the band is a move.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 20 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 20 });
-
-    const edit = singleSelectionEdit();
-
-    // The control for the move case: two selections now, the band deactivated and the new
-    // row appended and active.
-    expect(edit.payload.updates.selections).toHaveLength(2);
-    expect(edit.payload.updates.selections[0].isActive).toBe(false);
-    expect(edit.payload.updates.selections[1].pos).toEqual({ x: 0, y: 20, width: 200, height: 1 });
-    expect(edit.payload.updates.activeSelectionId).toBe(edit.payload.updates.selections[1].id);
-    expect(draftDispatches()).toEqual([SINGLE_ROW_MARQUEE_SOURCE_TOOL]);
-  });
-
-  it('commits nothing for a move that leaves the band where it was', () => {
-    storeState.selections = [rowBand()];
-    storeState.activeSelectionId = 'band-1';
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-    // A pointer that reports a move without changing position: the ordinary case of a device
-    // rounding a drag onto the same pixel, and the only way this gesture ends on a zero delta.
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-
-    // Nothing. The move builder bumps `metadata.movedAtVersion` on every call, so the
-    // selection the drag built is never deep-equal to the one it came from — and a commit
-    // for it would add an undo step and mark the document dirty for a drag that moved
-    // nothing. The guard is on geometry for exactly that reason.
-    expect(selectionEdits()).toEqual([]);
-    expect(draftDispatches()).toEqual([]);
-  });
-
-  it('cancels the draft and commits nothing when the pointer leaves mid-create-gesture', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
-    fireEvent.pointerLeave(toolArea, { pointerId: 1, clientX: 100, clientY: 60 });
-
-    // The hook's captured pointer goes with the gesture. While it is held, `pointerup` is
-    // delivered to the capture target even when the pointer was released elsewhere — and
-    // `handlePointerUp` returns before `isPointerUpValid` once the drag ref is empty — so
-    // without this the ref survived and every later press was refused by
-    // `isPointerDownValid`'s first-pointer-wins check: the tool stopped responding until
-    // it was unmounted. Asserted by pressing again on the SAME element afterwards and
-    // getting a real gesture rather than a refused one.
-    expect(pointerState.activePointer).toBe(null);
-    expect(pointerState.isMouseDown.current).toBe(false);
-
-    expect(selectionEdits()).toEqual([]);
-    expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
-    // The claim goes with the gesture, or every document-mutating shortcut stays dead for
-    // the rest of the session.
-    expect(isDocumentGestureOpen()).toBe(false);
-
-    // The drag really was dropped rather than merely un-drafted: a release that arrives
-    // after the leave has no gesture left to commit.
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
-    expect(selectionEdits()).toEqual([]);
-
-    // And the tool is still usable. This is the observable half of the capture: a second
-    // press on the SAME mounted element reaches the create arm instead of being refused by
-    // `isPointerDownValid`, which is what a surviving `activePointerId` produces.
-    dispatchMock.mockClear();
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 100, clientY: 90 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 2, clientX: 100, clientY: 90 });
-
-    expect(selectionEdits().map((edit) => edit.payload.updates.selections[0]?.pos)).toEqual([
-      { x: 0, y: 90, width: 200, height: 1 },
-    ]);
-  });
-
-  it('ignores a non-primary button', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 2, pointerId: 1, clientX: 100, clientY: 60 });
-    fireEvent.pointerUp(toolArea, { button: 2, pointerId: 1, clientX: 100, clientY: 60 });
-
-    // Not a single dispatch: a right-click starts no draft, claims no document, and
-    // commits no band.
-    expect(dispatchMock).not.toHaveBeenCalled();
-    expect(isDocumentGestureOpen()).toBe(false);
-  });
-
-  it('claims the document for the press and gives the claim back when the band commits', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 60 });
-
-    // Held for the whole gesture, which is the window a document-mutating shortcut must not
-    // reach: the commit lands on release, and a shortcut in between would mutate the
-    // document the pending commit then truncates.
-    expect(isDocumentGestureOpen()).toBe(true);
-
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 60 });
-
-    expect(isDocumentGestureOpen()).toBe(false);
-    expect(singleSelectionEdit().payload.historyItem.actionName).toBe(SELECTION_ACTION);
-  });
-
-  it('starts a draft naming the column source tool under the column tool', () => {
-    const toolArea = renderArea('single-column-marquee');
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 40, clientY: 60 });
-
-    // The two constants carry distinct values under the mock above, so this can tell the
-    // column arm from the row arm; against the real module both are `'rectangular-selection'`
-    // and either arm would satisfy the assertion.
-    expect(SINGLE_COLUMN_MARQUEE_SOURCE_TOOL).not.toBe(SINGLE_ROW_MARQUEE_SOURCE_TOOL);
-    expect(draftDispatches()).toEqual([SINGLE_COLUMN_MARQUEE_SOURCE_TOOL]);
-  });
-
-  it('starts a draft naming the row source tool under the row tool', () => {
-    const toolArea = renderArea('single-row-marquee');
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
-
-    expect(draftDispatches()).toEqual([SINGLE_ROW_MARQUEE_SOURCE_TOOL]);
-  });
-
-  it('lands a row band under the press when the document frame origin is non-zero', () => {
-    useShiftedDocument();
-
-    // The fixture IS the claim, so it is asserted rather than assumed: a frame that had quietly
-    // reverted to null would leave every expectation below passing while the tool committed
-    // canvas coordinates — which is precisely how 13 cases came to miss the double conversion.
-    expect(storeState.documentFrame).toEqual(SHIFTED_FRAME);
-    expect(storeState.totalSize).toEqual(SHIFTED_DOCUMENT);
-
-    const toolArea = renderArea();
-
-    // Inside the frame. Canvas y=300 -> document y = 300 + frame.y 50 = 350 -> row 350, and the
-    // band is the whole 700-wide document from document y=350 to 351. Converting a second time
-    // would land it on document y=400, one whole frame below the press.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 300 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 300 });
-
-    expect(singleSelectionEdit().payload.updates.selections[0].pos).toEqual({ x: 0, y: 350, width: 700, height: 1 });
-
-    // Near the far edge. Canvas y=545 -> document y = 545 + 50 = 595, which is 45 rows past the
-    // 550-row document, so `clampPixelIndex` (`src/tools/singleRowColumnMarquee.ts`:66) pins it
-    // to 550 - 1 = 549: the last row of the DOCUMENT. The clamp is against the document extent
-    // and not against the canvas, which is what distinguishes it from the press above.
-    dispatchMock.mockClear();
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 545 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 545 });
-
-    expect(singleSelectionEdit().payload.updates.selections[0].pos).toEqual({ x: 0, y: 549, width: 700, height: 1 });
-
-    // The other end of the same clamp. Canvas y=-60 is above the frame's top edge by 60 rows, so
-    // document y = -60 + 50 = -10, and a press off the top of the document is row 0 rather than
-    // no selection at all.
-    dispatchMock.mockClear();
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: -60 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: -60 });
-
-    expect(singleSelectionEdit().payload.updates.selections[0].pos).toEqual({ x: 0, y: 0, width: 700, height: 1 });
-  });
-
-  it('lands a column band under the press when the document frame origin is non-zero', () => {
-    useShiftedDocument();
-
-    expect(storeState.documentFrame).toEqual(SHIFTED_FRAME);
-
-    const toolArea = renderArea('single-column-marquee');
-
-    // Inside the frame. Canvas x=250 -> document x = 250 + frame.x 100 = 350 -> column 350, the
-    // whole 550-tall document. A second conversion would put it at document x=450.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 300 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 300 });
-
-    expect(singleSelectionEdit().payload.updates.selections[0].pos).toEqual({ x: 350, y: 0, width: 1, height: 550 });
-
-    // Near the far edge. Canvas x=690 -> document x = 690 + 100 = 790, which is 90 columns past
-    // the 700-column document, so the clamp pins it to 700 - 1 = 699.
-    dispatchMock.mockClear();
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 690, clientY: 300 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 690, clientY: 300 });
-
-    expect(singleSelectionEdit().payload.updates.selections[0].pos).toEqual({ x: 699, y: 0, width: 1, height: 550 });
-
-    // The other end. Canvas x=-150 -> document x = -150 + 100 = -50 -> column 0.
-    dispatchMock.mockClear();
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: -150, clientY: 300 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: -150, clientY: 300 });
-
-    expect(singleSelectionEdit().payload.updates.selections[0].pos).toEqual({ x: 0, y: 0, width: 1, height: 550 });
-  });
-
-  it('paints the drag preview in canvas space, so a shifted frame does not displace the outline', () => {
-    useShiftedDocument();
-
-    const ctx = makeMockCtx();
-    const toolArea = renderArea(undefined, { current: ctx });
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 50 });
-    // Canvas y=50 -> document y = 50 + 50 = 100 -> the row band at document y=100..101, spanning
-    // document x=0..700. Painting it back into canvas space subtracts the frame origin ONCE:
-    // x from 0-100 = -100 to 700-100 = 600, y from 100-50 = 50 to 51.
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 50 });
-
-    // The actual coordinates handed to the context — the numbers the press was given in, so the
-    // preview sits exactly under the pointer. Stroking the document-space rect instead would
-    // draw this band at (0..700, 100..101), a whole frame below and to the right of the press.
-    expect(ctx.moveTo).toHaveBeenCalledExactlyOnceWith(-100, 50);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(1, 600, 50);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(2, 600, 51);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(3, -100, 51);
-    expect(ctx.closePath).toHaveBeenCalledOnce();
-    expect(ctx.stroke).toHaveBeenCalledOnce();
-
-    // The half that pins the frame's contribution on its own: canvas y=0 -> document y=50 -> the
-    // row band at document y=50, painted at canvas y=0..1. So the preview TRACKS the pointer, and
-    // the conversion is not a constant offset that happened to agree on one row.
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 250, clientY: 0 });
-
-    // `lineTo` is called three times per preview, so the second move's corners are calls 4 to 6.
-    expect(ctx.moveTo).toHaveBeenNthCalledWith(2, -100, 0);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(4, 600, 0);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(5, 600, 1);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(6, -100, 1);
-    expect(ctx.stroke).toHaveBeenCalledTimes(2);
-  });
-
-  it('commits the sum of a multi-frame drag of a band, not its last frame alone', () => {
-    storeState.selections = [rowBand()];
-    storeState.activeSelectionId = 'band-1';
-    const toolArea = renderArea();
-
-    // The press is inside the committed band at document y=40..41, so the move arm takes it and
-    // every delta is measured from the press axis 40.5 for the whole gesture.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-    // Frame 1 out to row 70. Frame 2 out to row 90. The release is at row 110, which the pointer
-    // reaches between the last move and the release.
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 70.5 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 90.5 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 110.5 });
-
-    // Row 110: the release measured from the PRESS — 110.5 - 40.5 is 70 rows, and 40 + 70 is 110
-    // — and rebuilt as a band. Re-basing each frame on the frame before it instead commits the
-    // LAST displacement alone (110 - 90 = 20 rows), which lands the band on row 60.
-    const [selection] = singleSelectionEdit().payload.updates.selections;
-    expect(selection.id).toBe('band-1');
-    expect(selection.pos).toEqual({ x: 0, y: 110, width: 200, height: 1 });
-  });
-
-  it('commits nothing for a move of a band that went out and came back to the press point', () => {
-    storeState.selections = [rowBand()];
-    storeState.activeSelectionId = 'band-1';
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-    // OUT to row 70 (+30) and BACK to the press axis (-30). Measured from the press the two net
-    // zero, so the band ends exactly where it started; a drag that re-bases on the previous frame
-    // commits the way back out instead, which is a band the user never drew.
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 70.5 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-
-    // Not one dispatch: the geometry gate is against the baseline, so a gesture that returns to
-    // its own press is not a commit, an undo step, or a modified-file marker.
-    expect(dispatchMock).not.toHaveBeenCalled();
-
-    // The control that makes the empty assertion above about the out-and-back and nothing else:
-    // an ordinary single-frame drag on the same mount, with the same pointer and the same store,
-    // still enters the move arm and still commits — so the gesture above did not pass because
-    // the arm never ran.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 40.5 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 90.5 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 90.5 });
-
-    const [moved] = singleSelectionEdit().payload.updates.selections;
-    expect(moved.pos).toEqual({ x: 0, y: 90, width: 200, height: 1 });
-  });
-
-  it('keeps a full-width row a band after a sideways drag, so it can still be moved', () => {
-    storeState.selections = [rowBand()];
-    storeState.activeSelectionId = 'band-1';
-    const toolArea = renderArea();
-
-    // A diagonal drag: 200 columns right and 60 rows down from the press on the band at row 40,
-    // the last row of the 120-row document reached from row 40 without leaving it. Translating the
-    // band by that displacement would leave pos.x = 200, and a full-width band that does not
-    // start at document x=0 is not a band at all — every later press on it would create a second
-    // selection instead of moving it.
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 150, clientY: 40.5 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 350, clientY: 100.5 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 350, clientY: 100.5 });
-
-    const [moved] = singleSelectionEdit().payload.updates.selections;
-
-    // Rebuilt from the pointer's axis: row 100, still the whole 200-wide document from x=0.
-    expect(moved.pos).toEqual({ x: 0, y: 100, width: 200, height: 1 });
-    expect(isSingleRowOrColumnMarqueeRect({ x1: 0, y1: 100, x2: 200, y2: 101 }, storeState.totalSize)).toBe(true);
-
-    // The property that matters is the NEXT gesture, not the rect, so the selection this drag
-    // committed is mounted back as the store's own state — which is what it becomes.
-    storeState.selections = [moved];
-    storeState.activeSelectionId = moved.id;
-    dispatchMock.mockClear();
-    const secondArea = renderArea();
-
-    // A press inside the moved band at row 100 is a MOVE: no draft, and one edit carrying the
-    // same id rather than a second selection.
-    fireEvent.pointerDown(secondArea, { button: 0, pointerId: 1, clientX: 100, clientY: 100.5 });
-    fireEvent.pointerMove(secondArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60.5 });
-    fireEvent.pointerUp(secondArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60.5 });
-
-    const edit = singleSelectionEdit();
-    expect(edit.payload.updates.selections).toHaveLength(1);
-    expect(edit.payload.updates.selections[0].id).toBe('band-1');
-    expect(edit.payload.updates.selections[0].pos).toEqual({ x: 0, y: 60, width: 200, height: 1 });
-  });
-
-  it('cancels the draft and commits nothing on a document with no rows or no columns to select', () => {
-    // A zero-height document. The frame stays null so it is DERIVED from `totalSize`, which is
-    // the production shape of the state rather than a fixture shortcut.
-    storeState.totalSize = { width: 200, height: 0 };
-
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 0 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 0 });
-
-    // `singleRowMarqueeRect(0, {width:200, height:0})` is a NON-empty rect — (0,0) to (200,1) —
-    // and it is `trimRect` that collapses it: the bottom edge clamps to a document height of 0, so
-    // the band comes out 200x0 and `createCommittedRectangleSelection` returns null. There is
-    // nothing to commit, and the draft the press opened is closed rather than left half-built.
-    expect(selectionEdits()).toEqual([]);
-    expect(dispatchMock).toHaveBeenCalledTimes(2);
-    expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
-
-    // The transpose, which is a different collapse: a zero-WIDTH document under the column tool
-    // produces the band (0,0)-(1,120), and `trimRect` zeroes its WIDTH instead.
-    storeState.totalSize = { width: 0, height: 120 };
-    dispatchMock.mockClear();
-    const columnArea = renderArea('single-column-marquee');
-
-    fireEvent.pointerDown(columnArea, { button: 0, pointerId: 1, clientX: 0, clientY: 60 });
-    fireEvent.pointerUp(columnArea, { button: 0, pointerId: 1, clientX: 0, clientY: 60 });
-
-    expect(selectionEdits()).toEqual([]);
-    expect(dispatchMock).toHaveBeenCalledTimes(2);
-    expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    const corners: Point[] = selection.points.map((point) => ({
+      x: point.x + selection.pos.x,
+      y: point.y + selection.pos.y,
+    }));
+    const rows = corners.map((point) => point.y);
+
+    expect([...new Set(rows)].sort()).toEqual([30, 31]);
+    expect([...new Set(corners.map((point) => point.x))].sort()).toEqual([0, 200]);
   });
 });
