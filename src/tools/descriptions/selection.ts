@@ -70,19 +70,22 @@ export const selectionDescriptions: Record<
     implementation: 'partial',
     implementationRefs: [
       'src/tools/rectangularSelection.ts:4',
-      'src/tools/settings.ts:129',
-      'src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:32',
-      'src/hooks/useRect.ts:97',
+      'src/tools/settings.ts:130',
+      'src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:33',
+      'src/components/Main/RectangularSelectionToolArea.tsx:74',
+      'src/hooks/useRect.ts:400',
+      'src/hooks/useRect.ts:314',
       'toolbar-mapping.ts:41',
     ],
     appNotes:
-      'The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. The Shift square constraint is not read during the drag: useRect reads Shift, Ctrl and Cmd in exactly one place — `src/hooks/useRect.ts:97` — and that is when a handle of an already-committed rectangle is being resized, where it locks the aspect ratio to the current one rather than constraining to 1:1. The `M` key and Shift+M reach this tool and cycle the two marquees, and the app carries no single-row or single-column marquee, so the group behind that key holds the two tools the app actually ships and not the four Adobe documents. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.',
+      'The tool draws, commits and copies a rectangle, and its options bar renders only a static sentence plus Copy, Paste and Clear. It declares no settings of its own at all, so all five Photoshop controls in the table above are absent rather than inert. All three modifiers above ARE implemented, and were before this pass — an earlier version of this record said they were not, which was wrong: it read `useRect` as consulting Shift only inside `getEdgeAtPoint`, which is the HANDLE RESIZE path. The fresh-drag path is separate and opt-in. `RectangularSelectionToolArea.tsx:74`-`:75` passes `constrainToSquare: true` and `fromCentre: true`, `sampleFreshDragModifiers` reads `event.shiftKey` and `event.altKey` per pointer event into a ref (`src/hooks/useRect.ts:400`-`:403`), and `adjustFreshPoint` (`:314`-`:329`) applies them, taking the square on the radius per axis BEFORE mirroring the drag so that Shift+Alt is a square centred on the press point. Sampling per event rather than at press time means Shift pressed halfway through a drag takes hold immediately, and the release governs the committed rect (`:502`). A handle RESIZE is deliberately untouched: the modifier that locks a resize is still the aspect ratio `getEdgeAtPoint` captures (`:156`-`:158`). The `M` key and Shift+M reach this tool and cycle the two marquees, and the app carries no single-row or single-column marquee, so the group behind that key holds the two tools the app actually ships and not the four Adobe documents. Nothing here can feather an existing selection, inverse it, or grow it: there is no Select-menu surface anywhere in the application.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/rectangular-marquee-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/',
     ],
@@ -117,14 +120,14 @@ export const selectionDescriptions: Record<
         detail:
           'Normal, Fixed Ratio or Fixed Size. Normal takes its proportions from the drag; Fixed Ratio locks the drag to a height-to-width ratio; Fixed Size ignores the drag entirely and takes its height and width from two pixel fields, so a single click is a complete gesture.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:96',
+        appRef: 'src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:98',
       },
       {
         control: 'Width and Height',
         detail:
           'The two fields behind Fixed Ratio and Fixed Size. Fixed Ratio is a pair of decimal fields, so a box twice as wide as it is high is entered as 2 and 1; Fixed Size takes whole pixels. Both accept document units such as inches or centimetres alongside pixels.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:130',
+        appRef: 'src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:116',
       },
       {
         control: 'Select and Mask',
@@ -153,19 +156,21 @@ export const selectionDescriptions: Record<
     implementationRefs: [
       'src/tools/ellipticalSelection.ts:155',
       'src/tools/ellipticalSelection.ts:51',
-      'src/tools/settings.ts:213',
-      'src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:94',
-      'src/components/Main/EllipticalSelectionToolArea.tsx:172',
+      'src/tools/settings.ts:220',
+      'src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:98',
+      'src/components/Main/EllipticalSelectionToolArea.tsx:176',
+      'src/components/Main/EllipticalSelectionToolArea.tsx:247',
       'toolbar-mapping.ts:42',
     ],
     appNotes:
-      'The tool is the most complete of the selection family and the only one whose options bar has any Photoshop control on it, and every geometry behaviour Photoshop defines for it is implemented: Shift is read as constrainToCircle, Alt as fromCentre, and fixed-size ignores the drag and takes the press point only as the centre, so a click is a complete gesture. What it renders that Photoshop’s does not is the shape of the fields. Fixed Ratio is a single Ratio field rather than Photoshop’s pair of decimal Width and Height fields — but the ratio itself is the one Adobe states, because Photoshop’s worked example enters 2 for the width and 1 for the height, which is a width-to-height ratio and exactly what the app computes (`src/tools/ellipticalSelection.ts:121`-`:131`, and the bar’s hint reads `Drag at N:1` at `src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:88`). What that costs is expressiveness, not fidelity: the app’s floor is 0.05, where a pair of decimal fields can go as low as the keyboard allows, and its ceiling is 20. Fixed Size renders plain pixel number inputs, so the document-unit entry Photoshop accepts cannot be typed. The committed polygon is a sagitta-bounded inscribed ring rather than a true ellipse, because the data model holds a point path and cannot hold a curve; the bound is the app’s own choice rather than one Photoshop shares. The ellipse commits under a borrowed source-tool identifier because the selection union in the app’s own types has no elliptical member, which is why the committed ellipse carries no draggable anchor handles. What the app computes is what Photoshop computes, in every case: the two field shapes are recorded as `partial` on the controls themselves rather than here, and the one place the committed document differs from Photoshop’s is the inscribed polygon, whose chord error is bounded to a quarter of a pixel and derived from the radius — several times smaller than the anti-aliased edge this tool does not draw at all, since `Anti-alias` is `missing` above. On that reading the tool is scored `implemented` rather than `partial`; the argument, and the case against it, are in `selection.notes.md`.',
+      'The tool is the most complete of the selection family and the only one whose options bar has any Photoshop control on it, and every geometry behaviour Photoshop defines for it is implemented: Shift is read as constrainToCircle, Alt as fromCentre, and fixed-size ignores the drag and takes the press point only as the centre, so a click is a complete gesture. What it renders that Photoshop’s does not is the shape of the fields. Fixed Ratio is a single Ratio field rather than Photoshop’s pair of decimal Width and Height fields — but the ratio itself is the one Adobe states, because Photoshop’s worked example enters 2 for the width and 1 for the height, which is a width-to-height ratio and exactly what the app computes (`src/tools/ellipticalSelection.ts:121`-`:131`, and the bar’s hint reads `Drag at N:1` at `src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:90`). What that costs is expressiveness, not fidelity: the app’s floor is 0.05, where a pair of decimal fields can go as low as the keyboard allows, and its ceiling is 20. Fixed Size renders plain pixel number inputs, so the document-unit entry Photoshop accepts cannot be typed. The committed polygon is a sagitta-bounded inscribed ring rather than a true ellipse, because the data model holds a point path and cannot hold a curve; the bound is the app’s own choice rather than one Photoshop shares. The ellipse commits under a borrowed source-tool identifier because the selection union in the app’s own types has no elliptical member, which is why the committed ellipse carries no draggable anchor handles. What the app computes is what Photoshop computes, in every case: the two field shapes are recorded as `partial` on the controls themselves rather than here, and the one place the committed document differs from Photoshop’s is the inscribed polygon, whose chord error is bounded to a quarter of a pixel and derived from the radius — several times smaller than the anti-aliased edge this tool does not draw at all, since `Anti-alias` is `missing` above. On that reading the tool is scored `implemented` rather than `partial`; the argument, and the case against it, are in `selection.notes.md`.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/elliptical-marquee-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/',
     ],
@@ -233,17 +238,18 @@ export const selectionDescriptions: Record<
     implementationRefs: [
       'src/tools/polygonSelection.ts:3',
       'src/tools/settings.ts:104',
-      'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:46',
+      'src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:50',
       'toolbar-mapping.ts:45',
     ],
     appNotes:
-      'The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Clear beside a single toggle. That toggle is the app’s own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The app therefore has no Photoshop control on this bar at all, and no combination modes. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool’s bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool’s own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:918`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop’s mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace.',
+      'The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Clear beside a single toggle. That toggle is the app’s own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The app therefore has no Photoshop control on this bar at all, and no combination modes. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool’s bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool’s own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop’s mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/lasso-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/web/edit-images/make-selections/create-selections-with-lasso-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://www.adobe.com/products/photoshop/lasso-tool.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html',
@@ -308,16 +314,17 @@ export const selectionDescriptions: Record<
       'src/tools/polygonSelection.ts:3',
       'src/tools/settings.ts:96',
       'src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:16',
-      'src/components/Main/PolygonClickToolArea.tsx:915',
+      'src/components/Main/PolygonClickToolArea.tsx:922',
       'toolbar-mapping.ts:46',
     ],
     appNotes:
-      'The click-to-add-anchor gesture, the double-click close, the right-click close, the Enter close, the Delete anchor removal and the Escape abort are all implemented, which makes this the most faithful of the seven. Its options bar, however, is the thinnest component in the family: forty lines rendering one app-invented Outline/Fill toggle and a hint sentence, and — unlike the freehand and magnetic lasso bars beside it — no Copy, Paste or Clear buttons. It shares LassoToolArgs with the freehand lasso, so none of the four Photoshop controls in the table above has a field to live in. None of the modifiers above is read either. The component that draws this tool (`src/components/Main/PolygonClickToolArea.tsx`, which serves the freehand lasso too) consults no modifier key at all, so every one of those rows — the three combination modes — describes Photoshop and is not implemented here. The 45° Shift constraint, the Alt-drag freehand segment and the Alt-double-click straight close are not implemented here either, which is why none of the three is listed above. Of the shortcuts above, `Enter` and `Delete` are bound on this tool’s own gesture (`src/components/Main/PolygonClickToolArea.tsx:926` and `:948`); `Enter` is the key the app registers for the close that the table above calls Return, while the row’s second half, focus moving to a Feather field when no border is open, is not bound, because this bar has no Feather field to focus. Feathering is where the app is narrowest: no selection tool’s bar carries a Feather field except the magnetic lasso’s, re-making a selection with this tool applies no feather of any kind, and with no `Select > Modify > Feather` and no Refine Edge a committed border can never be softened after the fact. The magnetic lasso is the family’s only feathered path, and even there the value is written into the selection’s metadata at commit and read back when the selection is copied (`src/util/selection.ts:788`), so it softens the copied mask and not the selection the ants are drawn from.',
+      'The click-to-add-anchor gesture, the double-click close, the right-click close, the Enter close, the Delete anchor removal and the Escape abort are all implemented, which makes this the most faithful of the seven. Its options bar, however, is the thinnest component in the family: forty lines rendering one app-invented Outline/Fill toggle and a hint sentence, and — unlike the freehand and magnetic lasso bars beside it — no Copy, Paste or Clear buttons. It shares LassoToolArgs with the freehand lasso, so none of the four Photoshop controls in the table above has a field to live in. None of the modifiers above is read either. The component that draws this tool (`src/components/Main/PolygonClickToolArea.tsx`, which serves the freehand lasso too) consults no modifier key at all, so every one of those rows — the three combination modes — describes Photoshop and is not implemented here. The 45° Shift constraint, the Alt-drag freehand segment and the Alt-double-click straight close are not implemented here either, which is why none of the three is listed above. Of the shortcuts above, `Enter` and `Delete` are bound on this tool’s own gesture (`src/components/Main/PolygonClickToolArea.tsx:931` and `:953`); `Enter` is the key the app registers for the close that the table above calls Return, while the row’s second half, focus moving to a Feather field when no border is open, is not bound, because this bar has no Feather field to focus. Feathering is where the app is narrowest: no selection tool’s bar carries a Feather field except the magnetic lasso’s, re-making a selection with this tool applies no feather of any kind, and with no `Select > Modify > Feather` and no Refine Edge a committed border can never be softened after the fact. The magnetic lasso is the family’s only feathered path, and even there the value is written into the selection’s metadata at commit and read back when the selection is copied (`src/util/selection.ts:837`), so it softens the copied mask and not the selection the ants are drawn from.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/polygonal-lasso-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://www.photoshopessentials.com/basics/selections/polygonal-lasso-tool',
       'https://helpx.adobe.com/photoshop/web/edit-images/make-selections/create-selections-with-lasso-tool.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
@@ -342,34 +349,34 @@ export const selectionDescriptions: Record<
         control: 'Feather',
         detail: 'Softens the border over a radius in pixels, default 0, and must be set before the selection is made.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:252',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:272',
       },
       {
         control: 'Anti-alias',
         detail: 'On by default. Smooths the traced edge with intermediate coverage values where it is copied out.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:331',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:351',
       },
       {
         control: 'Width',
         detail:
           'The detection width in pixels, entered as a value rather than chosen from a list. The tool detects edges only within that distance of the pointer, and Caps Lock swaps the pointer for a circle of exactly that size. The left and right bracket keys change it by one pixel while the tool is tracing.',
-        status: 'present',
-        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:265',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:285',
       },
       {
         control: 'Contrast',
         detail:
           'The lasso’s sensitivity to edges, entered as a percentage from 1% to 100%. A higher value detects only edges that contrast sharply with their surroundings; a lower value detects lower-contrast edges. The comma and period keys change it while the tool is tracing.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:278',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:298',
       },
       {
         control: 'Frequency',
         detail:
-          'The rate at which the lasso sets fastening points, from 0 to 100. Adobe states it as "A higher value anchors the selection border in place more quickly"; that a higher value also lays fastening points down more densely is the third-party reading this description’s inversion finding rests on, not Adobe’s wording.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:291',
+          'The rate at which the lasso sets fastening points, from 0 to 100. Adobe states it as "A higher value anchors the selection border in place more quickly"; that a higher value also lays fastening points down more densely is the third-party reading this description’s inversion finding rested on, not Adobe’s wording.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:311',
       },
       {
         control: 'Stylus Pressure',
@@ -429,23 +436,25 @@ export const selectionDescriptions: Record<
     implementation: 'partial',
     implementationRefs: [
       'src/tools/featherMagneticLasso.ts:4',
+      'src/tools/featherMagneticLasso.ts:43',
       'src/tools/settings.ts:112',
-      'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:223',
-      'src/components/Main/FeatherMagneticLassoToolArea.tsx:183',
-      'src/components/Main/FeatherMagneticLassoToolArea.tsx:467',
-      'src/components/Main/FeatherMagneticLassoToolArea.tsx:387',
-      'src/util/selection.ts:728',
-      'src/util/selection.ts:729',
+      'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:272',
+      'src/components/Main/FeatherMagneticLassoToolArea.tsx:391',
+      'src/components/Main/FeatherMagneticLassoToolArea.tsx:476',
+      'src/components/Main/FeatherMagneticLassoToolArea.tsx:458',
+      'src/util/selection.ts:834',
+      'src/util/selection.ts:837',
       'toolbar-mapping.ts:47',
     ],
     appNotes:
-      'The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Four things diverge. Frequency is inverted — the app stores it as a maximum path length in pixels and its own help text says lower values add more anchors, where Photoshop’s 0–100 rate is documented as "A higher value anchors the selection border in place more quickly" and, on the third-party reading that a higher value also lays fastening points down more densely, means the opposite thing to the app. Contrast allows 0% where Photoshop’s documented range starts at 1%. And Feather and Anti-alias are not properties of the selection at all: `args.featherRadius` and `args.antiAlias` are written into the selection’s metadata at commit (`src/components/Main/FeatherMagneticLassoToolArea.tsx:385`-`:387`) and read back in exactly one place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas` (`src/util/selection.ts:729`-`:730`), so both reach only the COPIED alpha mask — un-ticking Anti-alias softens the copy and changes nothing else on the canvas, and the Feather radius is likewise never a feather of the selection the ants are drawn from. Adobe caps its own options-bar box at 0 to 100 pixels, which is the same ceiling the app uses, so the cap is not a divergence; what is missing behind both controls is `Select > Modify > Feather`, which the app has no route to. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. Alt is the one modifier this tool actually reads, and only as `magneticEnabled: !event.altKey` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:449`), so the freehand-segment row above is real and the Alt-double-click straight close, the Add/Subtract/Intersect rows and the Shift key are not read anywhere. Of the shortcuts above, the bracket and comma/period keys, `Caps Lock` and the feather-focus half of `Return` are not bound in the app — the global table in `src/components/Common/AppKeyboardShortcuts.tsx` holds the complete set, and none of them is in it — while `Enter` and `Delete` are bound on this tool’s own gesture (`src/components/Main/FeatherMagneticLassoToolArea.tsx:542` and `:564`). The app’s toolbar badge for this tool reads Shift+L, which is the app’s own binding for one item in a flyout — in Photoshop all three lasso tools share L and are cycled with Shift+L, so the badge and the Photoshop shortcut happen to read the same without being the same binding.',
+      'The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Three things diverge, and one load-bearing finding of the previous version of this record no longer holds. (1) Frequency was inverted and is no longer. That record said the app stored it as a maximum path length in pixels, so that lower values added more anchors — the exact opposite of Photoshop. The finding was correctly sourced and has been fixed: it is Adobe’s own 0–100 range with a plain-number readout (`MAGNETIC_LASSO_FREQUENCY_MIN`/`_MAX`, `src/tools/featherMagneticLasso.ts:20`-`:21`), and `magneticLassoAnchorSpan` (`:43`-`:54`) is the single place the direction is decided, mapping Frequency 0 to the longest 120px anchor span and Frequency 100 to the shortest 8px one, so a higher value anchors sooner. The gate is `pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:476`), and the row is `present` because range, direction and the bar’s own readout now agree with Adobe. (2) Contrast allows 0% where Photoshop’s documented range starts at 1%. (3) Feather and Anti-alias are not properties of the selection at all: `args.featherRadius` and `args.antiAlias` are written into the selection’s metadata at commit (`src/components/Main/FeatherMagneticLassoToolArea.tsx:394`-`:396`) and read back in exactly one place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas` (`src/util/selection.ts:836`-`:837`), so both reach only the COPIED alpha mask — un-ticking Anti-alias softens the copy and changes nothing else on the canvas, and the Feather radius is likewise never a feather of the selection the ants are drawn from. Adobe caps its own options-bar box at 0 to 100 pixels, which is the same ceiling the app uses, so that cap was never a divergence; what is missing behind both controls is `Select > Modify > Feather`, which the app has no route to. Width is `partial` for a narrower reason than the others: the app renders a 1–64px slider (`FeatherMagneticLasso.tsx:288`-`:289`) and Adobe states the field only as “a pixel value” with no maximum, so the ceiling is the app’s own. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. Alt is the one modifier this tool actually reads, and only as `magneticEnabled: !event.altKey` (`src/components/Main/FeatherMagneticLassoToolArea.tsx:458`), so the freehand-segment row above is real while the Alt-double-click straight close, the Shift/Alt/Shift+Alt combination modes and the Caps Lock, bracket, comma and period keys are all absent.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/magnetic-lasso-tool.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://www.adobe.com/products/photoshop/feather-edges.html',
       'https://www.photoshopessentials.com/basics/selections/magnetic-lasso-tool',
       'https://www.lifewire.com/magnetic-lasso-tool-in-adobe-photoshop-4077747',
@@ -479,24 +488,31 @@ export const selectionDescriptions: Record<
         detail:
           'The range of selected color values, from 0 (narrow, exact match only) to 255 (broad). Adobe states the range and no default; the 32 default is a third-party claim, and one of the pages carrying it is Adobe’s Photoshop Elements documentation, which is a different product. A low value selects colors very similar to the pixel you click; a higher value selects a broader range either side of it.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:54',
+        appRef: 'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:63',
       },
       {
         control: 'Anti-alias',
         detail:
-          'On by default, per the third-party and Elements pages that state it — Adobe’s current page describes the effect without naming a default. Smooths the stair-stepped edge a pixel-accurate selection leaves behind.',
+          'On by default, per the third-party and Elements pages that state it — Adobe’s current page describes the effect without naming a default. Smooths the stair-stepped edge a pixel-accurate selection leaves behind, and Adobe’s own current page on softening selection edges names this tool among those that can be anti-aliased.',
         status: 'missing',
       },
       {
         control: 'Contiguous',
         detail:
           'On by default, on the same third-party and Elements authority rather than an Adobe desktop sentence. When selected, only adjacent areas of similar color are taken; when deselected, every pixel using the same colors is selected throughout the entire image.',
-        status: 'missing',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77',
       },
       {
         control: 'Sample All Layers',
         detail:
           'Reported off by default, which is a CS5-era third-party claim and not an Adobe sentence. When selected, colors are sampled from all the visible layers; when deselected, only the active layer is sampled.',
+        status: 'missing',
+      },
+      {
+        control: 'Feather',
+        detail:
+          'Pixel radius, default 0, set before the click — but this row is version-dependent and the record says so rather than picking a side. Adobe’s current desktop page on softening selection edges (updated 2026-02-23) lists the tools that can be feathered and the wand is **not** among them, and an Adobe mobile page names Anti-alias, Contiguous and Tolerance for this tool with no Feather, while a third-party tutorial of the Photoshop CS era labels the control "Feather (Lasso Tool Only)". Against that, Adobe’s own **mobile** page for this tool (updated 2025-07-02) says to "access the more menu and adjust the **Feather** slider to define the feathering width as needed", and the UXP `Selection` reference has a `feather` argument defaulting to 0 on the selection-creating calls. The desktop bar as documented in 2025–2026 carries no Feather; whether it did in an earlier release is what the record cannot settle, and the unverified entry in the family notes names the page that came closest.',
         status: 'missing',
       },
       {
@@ -532,13 +548,13 @@ export const selectionDescriptions: Record<
     implementationRefs: [
       'src/tools/magicWand.ts:3',
       'src/tools/settings.ts:124',
-      'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:52',
-      'src/components/Main/MagicWandToolArea.tsx:55',
+      'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:63',
+      'src/components/Main/MagicWandToolArea.tsx:58',
       'src/util/magicWand.ts:31',
       'toolbar-mapping.ts:52',
     ],
     appNotes:
-      'The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. And only Tolerance corresponds to a Photoshop control, and it is a different control: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. Contiguous is not merely absent from the bar: the selection util carries the flag and takes the contiguous branch unless it is explicitly false, and the tool area never passes it, so the behaviour is permanently on and cannot be reached. Sample All Layers is absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.',
+      'The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. Tolerance is a different control from Photoshop’s on two axes at once: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. `Contiguous` is `present` as of this pass and was `missing` in the previous version of this record, which said the behaviour was "permanently on and cannot be reached". That was true when written and is not now: `contiguous` is a declared field of `MagicWandToolArgs` (`src/tools/magicWand.ts:12`), seeded `true` in `settings.ts:127`, rendered as a checkbox wired to `patchToolArgs` (`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77`), and `createMagicWandSelectionFromCanvas` branches on it — so unticking it now takes the non-contiguous path, which is the selection that makes the wand useful on a repeated sky or a duplicated product shot. The commit that made it reachable notes it was left seeded `true` so no default click changes what is selected, which is also Photoshop’s default per the third-party and Elements authority quoted in the row. Sample All Layers is still absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/select-areas-by-color-with-the-magic-wand-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/magic-wand-tool.html',
@@ -548,6 +564,7 @@ export const selectionDescriptions: Record<
       'https://www.photoshopessentials.com/basics/selections/magic-wand-tool',
       'https://www.adobe.com/products/photoshop/refine-edge.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://helpx.adobe.com/photoshop/using/high-dynamic-range-images.html',
       'https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html',
       'https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html',
@@ -578,7 +595,7 @@ export const selectionDescriptions: Record<
         detail:
           'The brush diameter, taken from the brush preset picker that also carries Hardness, Spacing, Angle and Roundness. The brush is the whole mechanism: the region grows outward from under the cursor and stops where the image edge is, so the brush diameter sets how much of the image the tool is allowed to reason about, and a smaller brush gives a more accurate result — which is why it is the control a user reaches for at a soft edge. Photoshop exposes size and hardness directly in the options bar and lets the left and right bracket keys resize the cursor while the tool is active.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:114',
+        appRef: 'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111',
       },
       {
         control: 'Select and Mask',
@@ -615,13 +632,14 @@ export const selectionDescriptions: Record<
       'src/tools/quickSelection.ts:8',
       'src/tools/quickSelection.ts:144',
       'src/tools/quickSelection.ts:79',
-      'src/tools/settings.ts:220',
-      'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:102',
-      'src/components/Main/QuickSelectionToolArea.tsx:123',
+      'src/tools/settings.ts:227',
+      'src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111',
+      'src/components/Main/QuickSelectionToolArea.tsx:125',
+      'src/components/Main/QuickSelectionToolArea.tsx:216',
       'toolbar-mapping.ts:53',
     ],
     appNotes:
-      "The stroke, the re-seeding along the path and the marching-ants preview are all implemented, and the arc-length re-seeding is a better answer than one seed per pointer event. Neither modifier above is read: the component that draws this tool (`src/components/Main/QuickSelectionToolArea.tsx`) grows the region from the pointer position, the brush size and the mode and consults no modifier key, so neither Alt-subtracts nor the Control+Option-drag brush-size gesture exists here. That last one is worth reading as a defect the bar advertises: its own hint text promises the user \"Shift and Alt drag on the canvas\" (`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:99`), and neither half of that sentence is honoured, so the bar makes a promise on screen that the gesture does not keep. The `[` and `]` rows are Photoshop's Photoshop-wide brush keys and are not bound either — the global table in `src/components/Common/AppKeyboardShortcuts.tsx` is the app's complete set and holds no bracket, so the brush size can only be changed from the bar's own slider. The region grow underneath, though, is not an edge detector: each seed hands the seed pixel to the same flood fill the Magic Wand uses, with Contiguous forced on, so a stroke selects a color range around every dab rather than following the image edge the way Photoshop's does. That is why the bar carries a Tolerance slider at all — Photoshop's Quick Selection has no such control, and the two are the same mechanism under different names. The mode dropdown offers only Add and Subtract, so there is no way to start a fresh selection and no Intersect, and Sample All Layers, Select and Mask, Auto-Enhance and the tool-preset picker are all absent — Sample All Layers because the stroke reads the merged composite canvas, and the rest because there is no implementation. The committed selection also has no route into Quick Mask mode, which is how Photoshop converts a selection into an editable mask: paint the tool's result, and there is no route from a selection to a layer mask at all, the only mask the app can produce being the bitmap its Copy button renders. The region is committed as a single traced contour, so a grown region with an enclosed hole is refused rather than committed, and the committed selection carries no brush hardness, spacing, angle or roundness and no live size and opacity keys. On the keyboard, the app badges the Magic Wand with W — the same key Photoshop binds, on the same flyout, because the two tools share it — and the Quick Selection tile carries no badge of its own.",
+      "The stroke, the re-seeding along the path and the marching-ants preview are all implemented, and the arc-length re-seeding is a better answer than one seed per pointer event. Neither modifier above is read: the component that draws this tool (`src/components/Main/QuickSelectionToolArea.tsx`) grows the region from the pointer position, the brush size and the mode and consults no modifier key, so neither Alt-subtracts nor the Control+Option-drag brush-size gesture exists here. **The on-screen promise this record used to report as the sharpest defect in the family is gone.** The bar's hint text used to read \"Shift and Alt drag on the canvas\" while the tool area consulted neither key; it now says only what the gesture does (`Drag over an object to grow the selection along the stroke.`, `QuickSelection.tsx:105`), with a comment above it naming Photoshop's Alt-drag tip resize and Shift-drag circular constraint as deliberately unimplemented (`QuickSelection.tsx:99`-`:101`). The promise was removed rather than implemented, and the hint is no longer a false claim. The `[` and `]` rows are Photoshop's Photoshop-wide brush keys and are not bound — the global table in `src/components/Common/AppKeyboardShortcuts.tsx` is the app's complete set and holds no bracket, so the brush size can only be changed from the bar's own slider, which runs 1 to 500px (`QUICK_SELECTION_SIZE_MIN`/`_MAX`, `src/tools/quickSelection.ts:53`-`:54`). The region grow underneath, though, is not an edge detector: each seed hands the seed pixel to the same flood fill the Magic Wand uses, with Contiguous forced on, so a stroke selects a color range around every dab rather than following the image edge the way Photoshop's does. That is why the bar carries a Tolerance slider at all — Photoshop's Quick Selection has no such control, and the two are the same mechanism under different names. The Mode dropdown offers only Add and Subtract (`QUICK_SELECTION_MODES`, `src/tools/quickSelection.ts:45`-`:48`), so there is no way to start a fresh selection and no Intersect, and Sample All Layers, Select and Mask, Auto-Enhance and the tool-preset picker are all absent — Sample All Layers because the stroke reads the merged composite canvas, and the rest because there is no implementation. The committed selection commits under a borrowed `sourceTool: 'magic-wand'` identifier (`QUICK_SELECTION_SOURCE_TOOL`, `src/tools/quickSelection.ts:43`) because the app's own `SelectionSourceTool` union has no `quick-selection` member, which is why the committed region carries no draggable anchors. The region is committed as a single traced contour, so a grown region with an enclosed hole is refused rather than committed, and the committed selection carries no brush hardness, spacing, angle or roundness and no live size and opacity keys. On the keyboard, the app badges the Magic Wand with W — the same key Photoshop binds, on the same flyout, because the two tools share it — and the Quick Selection tile carries no badge of its own.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/quick-selection-tool.html',
@@ -632,6 +650,7 @@ export const selectionDescriptions: Record<
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/make-precise-selections-in-select-mask.html',
       'https://helpx.adobe.com/photoshop/using/create-temporary-quick-mask.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html',
       'https://helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html',
       'https://www.photoshopessentials.com/basics/selections/quick-selection-tool',
       'https://cod.pressbooks.pub/photoshopmastery1250/chapter/selections',
