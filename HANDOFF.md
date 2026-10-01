@@ -4631,3 +4631,69 @@ parses `curated.mjs` and would catch a stale key.
 **Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
 `docs/README.md` ("Not maintained here"), `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
 `docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`
+
+    docs(handoff): the AVIF timeout is a symlink artefact, and main's entry is correct
+
+    Two audits disagreed about e2e/OPEN_PROBLEMS.md:704. The second measured the AVIF
+    pair failing on a detached worktree of committed main and concluded the entry was
+    falsified. The measurement was made through a symlinked node_modules, so Vite
+    refused to serve the @jsquash avif_enc.wasm - the run's own [WebServer] log says so
+    in one line - and the encoder never finished. With a real npm ci in the worktree the
+    same specs pass on the same commit.
+
+    Acting on the wrong conclusion would have replaced a correct entry with a wrong
+    one, so the finding is recorded as a non-finding.
+
+diff --git a/HANDOFF.md b/HANDOFF.md
+index 772cc328..d599aa82 100644
+--- a/HANDOFF.md
+++ b/HANDOFF.md
+@@ -4471,3 +4471,47 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
+form of the same trap: they not only work, they work on the wrong files.
+
+**Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
+
+## 140. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
+
+**Problem.** Two audits of this sweep disagreed about the same thing, and the second one was wrong.
+Main's `e2e/OPEN_PROBLEMS.md:704` records the AVIF download timeout and states that **both specs pass
+on `main`**, calling load "an explanation rather than a measurement". One audit measured the AVIF pair
+failing on a detached worktree of committed `main` and concluded that entry was falsified. That
+conclusion is wrong, and acting on it would replace a correct entry with a wrong one.
+
+**What actually happened.** The "measurement on main" was made in a worktree whose `node_modules`
+was a symlink to the root checkout. Vite does not walk up — it serves only what `server.fs.allow`
+permits — so the run's own log says:
+
+```
+[WebServer] The request id "/Users/bkalynovskyi/ph/node_modules/@jsquash/avif/codec/enc/avif_enc.wasm"
+            is outside of Vite serving allow list.
+```
+
+The wasm never loads, the encoder never finishes, and no download event fires. That is §135's
+symlinked-`node_modules` trap arriving through the _verification recipe_ rather than through the
+product, so the general fix is §135's and is not restated here. With the symlink removed and a real
+`npm ci` in the worktree, the same two specs on the same `main` commit:
+
+```
+✓ raster-formats.spec.ts:8 › exports to AVIF (.avif) with pixel verification (1.1s)
+✓ visual-regression.spec.ts:58 › exports to AVIF (.avif) matches visual baseline (1.2s)
+13 passed (16.7s)
+```
+
+**Reproduce the trap rather than the defect.**
+
+```bash
+git worktree add --detach /tmp/avif-check main
+rm -rf /tmp/avif-check/node_modules          # or simply do NOT symlink it
+(cd /tmp/avif-check && npm ci)                # and rm BEFORE npm ci, or npm ci deletes the root's
+(cd /tmp/avif-check && npm run test:e2e -- e2e/export/raster-formats.spec.ts)
+```
+
+**Fix / convention.** A measurement taken through a symlinked `node_modules` is not a measurement of
+`main`. When an audit reports that a documented flake reproduces on `main`, the first thing to check is
+whether the reproduction was itself broken — and the run's own `[WebServer]` log usually says so in one
+line. **The entry at `:704` stands.** Do not edit it, and do not add a second AVIF entry.
+
+**Files.** `e2e/OPEN_PROBLEMS.md:704`, `e2e/export/helpers.ts:408`,
+`node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
