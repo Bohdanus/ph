@@ -89,7 +89,7 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   release <id>           give it back, locks released with it
   hold <path...>         claim a file           --issue --lease --force
   unlock <path...>       release a file         --force
-  check <path...>        who holds these files  (exit 1 if any is held)
+  check <path...>        who holds it, and who has it open  (exit 1 if held)
   comment <id> <text>    say something on an issue
   note <text>            say something to the swarm
                           quote the text, or end it with --: a bare -- inside an
@@ -122,6 +122,11 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
                           \`claim ph-1 --note fixed the thing\` records the whole sentence
   --agent <id>           act as somebody else (default: the current git branch)
   --dir <path>           use another board database (default: $(git rev-parse --git-common-dir)/agent-board)
+
+  --files on \`new\` RESERVES the paths; on \`list\` it FINDS the open issues that
+  name them. A reservation is a lease and can be refused; a reference is not one,
+  which is why an imported issue can put fifty files on the board without
+  blocking anybody. \`check\` exits 1 on a reservation and never on a reference.
 
 exit codes: 0 ok · 1 usage or error · 2 not found · 3 claimed or not claimable · 4 file held by another agent
             5 the agent that resolved an issue cannot be the one that closes it`;
@@ -927,6 +932,35 @@ export async function run(
         }
         const report = paths.map((path) => board.checkPath(path));
         const busy = report.filter((entry) => !entry.free);
+        /**
+         * Every string main already printed is kept, and the open issues are
+         * APPENDED to it rather than replacing the line.
+         *
+         * `free` and `0` are read as one fact, and they are not: "free" means no
+         * live LOCK, not nobody's business. An issue filed with `--files`, or
+         * imported from a handoff document, names a file without holding it, and
+         * the operator's whole complaint was three agents in one file that every
+         * one of them had been told was free. So the suffix rides along on both
+         * halves — beside `held by` and beside `free:` — rather than on one.
+         *
+         * The EXIT CODE is untouched: still 1 for a live lock, never for a
+         * reference. The board's own imported issues name scores of files across
+         * nearly every directory, so a gate that failed on any of them would fail
+         * on nearly every path in the repository and the only rational response
+         * would be `--force`. Deliberately no counts: they were 54 and about a
+         * hundred when this was written, the board moves, and a stale figure here
+         * is the kind of plausible-looking number nobody re-checks.
+         */
+        // No `entry.issues &&`: db.mjs states that every return carries the key,
+        // precisely so a consumer never has to guard for it. The guard that was
+        // here contradicted that contract and, being a dead branch, taught the
+        // opposite of what the contract says.
+        const issues = (entry) =>
+          entry.issues.length
+            ? ` · ${entry.issues.length} open: ${entry.issues
+                .map((issue) => `${issue.id}${issue.claimed_by ? ` (claimed by ${issue.claimed_by})` : ''}`)
+                .join(', ')}`
+            : '';
         emit(
           { report },
           busy.length
@@ -936,13 +970,13 @@ export async function run(
                     ? 'nothing to check'
                     : entry.outside
                       ? `${entry.path} is not inside this repository`
-                      : `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}`
+                      : `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}${issues(entry)}`
                 )
                 .join('\n')
             : // The NORMALISED paths, not the ones typed: the free line quoted a
               // /tmp/… spelling while the JSON beside it carried /private/tmp/…,
               // and the two answers disagreed about the same file.
-              `free: ${report.map((entry) => entry.path).join(', ')}`
+              `free: ${report.map((entry) => `${entry.path}${issues(entry)}`).join(', ')}`
         );
         return busy.length === 0 ? 0 : 1;
       }
@@ -1310,6 +1344,7 @@ export async function run(
             events: board.events({ since: 0, limit: Number.MAX_SAFE_INTEGER }),
             claims: board.db.prepare('SELECT * FROM claims').all(),
             locks: board.db.prepare('SELECT * FROM file_locks').all(),
+            issueFiles: board.db.prepare('SELECT * FROM issue_files').all(),
             agents: board.agents(),
           },
           // Without the flag this used to print a single newline. The help says
