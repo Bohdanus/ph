@@ -1,11 +1,16 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DesktopHeader from '../DesktopHeader.tsx';
+import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 
 const storeState = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
   currentArgs: { current: { toolName: 'draw' } as ToolArgs },
+  // A REF, like `currentArgs`, because `UnsavedChangesProvider` reads
+  // `previewLayers.current` for an in-flight tool transaction. Without it the provider
+  // throws `Cannot convert undefined or null to object` on `Object.keys`.
+  previewLayers: { current: {} as Record<string, unknown> },
   fileName: 'test.png',
   hasUnsavedChanges: false,
   totalSize: { width: 800, height: 600 },
@@ -62,6 +67,17 @@ vi.mock('../../../contexts/RightPanelVisibility.tsx', () => ({
 
 const toggleButton = () => screen.queryByTestId('right-panel-toggle');
 
+// The real provider, not a mock: `useUnsavedChanges` throws outside it, and the guard it
+// owns is the one under test elsewhere in this suite. Nothing here reaches File > New or
+// File > Open, so the dialog it can render never appears.
+function renderHeader() {
+  return render(
+    <UnsavedChangesProvider>
+      <DesktopHeader />
+    </UnsavedChangesProvider>
+  );
+}
+
 describe('DesktopHeader tablet layers-panel toggle', () => {
   beforeEach(() => {
     Object.assign(panel, { isCollapsible: false, isOpen: true });
@@ -69,14 +85,14 @@ describe('DesktopHeader tablet layers-panel toggle', () => {
   });
 
   it('renders no toggle on desktop, so desktop gains no control and no layout shift', () => {
-    render(<DesktopHeader />);
+    renderHeader();
 
     expect(toggleButton()).toBeNull();
   });
 
   it('offers a collapsed-state toggle in the tablet band', () => {
     Object.assign(panel, { isCollapsible: true, isOpen: false });
-    render(<DesktopHeader />);
+    renderHeader();
 
     const button = toggleButton();
     expect(button).not.toBeNull();
@@ -89,7 +105,7 @@ describe('DesktopHeader tablet layers-panel toggle', () => {
 
   it('reports the open state and names the action it will take', () => {
     Object.assign(panel, { isCollapsible: true, isOpen: true });
-    render(<DesktopHeader />);
+    renderHeader();
 
     const button = toggleButton()!;
     expect(button).toHaveAttribute('aria-expanded', 'true');
@@ -98,7 +114,7 @@ describe('DesktopHeader tablet layers-panel toggle', () => {
 
   it('drives the shared toggle rather than owning its own panel state', () => {
     Object.assign(panel, { isCollapsible: true, isOpen: false });
-    render(<DesktopHeader />);
+    renderHeader();
 
     act(() => {
       fireEvent.click(toggleButton()!);
@@ -109,7 +125,7 @@ describe('DesktopHeader tablet layers-panel toggle', () => {
 
   it('is reachable by keyboard, since the panel cannot be taken away by click alone', () => {
     Object.assign(panel, { isCollapsible: true, isOpen: false });
-    render(<DesktopHeader />);
+    renderHeader();
 
     const button = toggleButton() as HTMLButtonElement;
     expect(button.tagName).toBe('BUTTON');

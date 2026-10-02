@@ -184,6 +184,33 @@ describe('useLayers createBlankLayer', () => {
     expect(store.previewLayers.current).toEqual({});
     expect(store.hasUnsavedChanges).toBe(true);
     expect(store.history).toHaveLength(1);
+    expect(store.history[0]).not.toHaveProperty('documentSource');
+    expect(store.durableDocument?.baseline.layers).toEqual([]);
+    expect(store.durableDocument?.cursor).toBe(0);
+  });
+
+  it('opens a single image from its source-only history and replays one bedrock layer', async () => {
+    const bitmap = { width: 24, height: 12, close: vi.fn() } as unknown as ImageBitmap;
+    const { result } = setup({ layers: { stale: makeLayer('stale', 0) }, activeLayerId: 'stale' });
+    const previousDocumentId = result.current.store.documentId;
+
+    await act(async () => {
+      await result.current.layers.createLayerFromBitmap(
+        { bitmap, name: 'Opened.png', isBedrock: true, size: { width: 24, height: 12 } },
+        true
+      );
+    });
+
+    const store = result.current.store;
+    const layer = store.layers[store.activeLayerId!]!;
+    expect(store.documentId).not.toBe(previousDocumentId);
+    expect(store.history[0]).not.toHaveProperty('documentSource');
+    expect(store.durableDocument?.baseline.layers).toEqual([]);
+    expect(store.durableDocument?.cursor).toBe(0);
+    expect(store.durableDocument?.history[0]?.operation).toMatchObject({
+      kind: 'create-layer',
+      layer: { id: layer.id, isBedrock: true },
+    });
   });
 
   it('does not paint a fully transparent blank layer', async () => {
@@ -230,7 +257,7 @@ describe('useLayers createBlankLayer', () => {
 });
 
 describe('useLayers createLayerFromTool geometry', () => {
-  it('shifts an explicit canvas position into document space and clears the tool overlay', () => {
+  it('keeps an explicit document position and clears the tool overlay', () => {
     const raster = new OffscreenCanvas(20, 10);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
     const { result } = setup({
@@ -261,13 +288,13 @@ describe('useLayers createLayerFromTool geometry', () => {
 
     const newLayer = created as Layer | null;
     expect(newLayer).not.toBeNull();
-    expect(newLayer!.pos).toEqual({ x: 35, y: 46, width: 20, height: 10 });
+    expect(newLayer!.pos).toEqual({ x: 5, y: 6, width: 20, height: 10 });
     expect(newLayer!.tmpCanvas).toBe(raster);
     const store = result.current.store;
     expect(store.layers[newLayer!.id]).toBeDefined();
     expect(store.activeLayerId).toBe(newLayer!.id);
     expect(store.history[0]).toMatchObject({ actionName: NEW_LAYER_ACTION, layerId: newLayer!.id });
-    expect(processor).toHaveBeenCalledWith({ size: { x: 35, y: 46, width: 20, height: 10 } });
+    expect(processor).toHaveBeenCalledWith({ size: { x: 5, y: 6, width: 20, height: 10 } });
     processor.mockRestore();
   });
 
@@ -300,13 +327,9 @@ describe('useLayers createLayerFromTool geometry', () => {
     processor.mockRestore();
   });
 
-  it.fails('normalises an inverted rect instead of creating a layer with a negative extent', () => {
-    // PROD DEFECT, not fixed: `src/contexts/useLayer.ts:274` feeds `args.rect`
-    // straight into `sortedRectToPos` without the `sortRect` normalisation its
-    // sibling `applyDocumentCrop` applies at `src/contexts/useLayer.ts:608`.
-    // An inverted rect therefore yields a layer whose width and height are
-    // negative, which `createLayerSource` accepts (it only rejects exactly zero,
-    // `src/contexts/layer-utils.ts:150`).
+  it('normalises an inverted rect instead of creating a layer with a negative extent', () => {
+    // The producer sorts the tool rect before deriving the document position and
+    // the layer-local replay rect (`useLayer.ts:349-360`).
     const raster = new OffscreenCanvas(30, 40);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
     const { result } = setup({ documentFrame: { x: 0, y: 0, width: 200, height: 100 } });

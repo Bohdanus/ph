@@ -11,7 +11,7 @@ absent from the rail.
 There is no per-tool home for these tools inside the app's own description system. The eight
 family modules under `src/tools/descriptions/` merge into a `Record<ToolName,
 ToolDescription>` at `src/tools/descriptions/index.ts:37`, where `ToolName = keyof
-ToolArgsByName` (`src/contexts/tool-types.ts:81`). A tool the registry has no entry for cannot
+ToolArgsByName` (`src/contexts/tool-types.ts:91`). A tool the registry has no entry for cannot
 be given a description in that system at all: adding the key is a TypeScript error at the
 merge, not a tooltip that renders `undefined`. `docs/TOOLS.md` is generated from those
 modules, so it cannot carry them either. This file is the substitute, and it is prose, so it
@@ -52,7 +52,7 @@ which carried **30** absent tools in six Adobe groups and no longer names them.
 `HANDOFF.md` §74 records the same exercise as **"36 present, 34 to add, 5 to
 delete"** out of a 41-`ToolName` → 70 target, and names absent tools the first list omits.
 **Six of them, not five:** Selection Brush, Adjustment Brush, Remove, Content-Aware Tracing,
-Artboard — and **Content-Aware Move** (`HANDOFF.md:1807`).
+Artboard — and **Content-Aware Move** (`HANDOFF.md:1325`).
 
 **30 + 6 = 36 against a stated 34** — the combined list is two over, not one.
 **This file does not resolve it.** An operator should, and this is deliberately left visible
@@ -115,7 +115,7 @@ someone who trusts the source material.
 
 **Star is the notable one**, because it is a missing _entry_ rather than a missing tool. The
 shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts:109-116`) — six of Adobe's seven — and Star is the one it lacks. The
+(`toolbar-mapping.ts:114-121`) — six of Adobe's seven — and Star is the one it lacks. The
 same custom-shape work is filed as too hard in [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md), so a
 hardcoded star is exactly what this repository's policy refuses.
 
@@ -190,9 +190,9 @@ name and expensive to build.
 | **Vertical Type Mask**   | Type — the type **mask** flyout            | the type letter, cycled                                | as above                                                                      | Same third-party PDF. Options not researched against Adobe.                                                                                                                                                                                                           |
 
 **All three are candidates for a different reason than the others.** This app's `text` tool is
-raster-at-birth: it is registered `commit: 'source'`, so a text layer is pixels from the
-moment it is created, and Photoshop type layers are live editable objects
-(`.kilo/plans/ps-research/00-tool-inventory.md` §Structural notes). Adding the three missing
+raster-at-birth: it is registered `commit: 'source'` (`src/tools/toolProcessors.ts:160-166`), so a
+text layer is pixels from the moment it is created, and Photoshop type layers are live editable
+objects (`.kilo/plans/ps-research/00-tool-inventory.md` §Structural notes). Adding the three missing
 type tools without fixing that adds three ways to create pixels that Photoshop would have
 kept editable.
 
@@ -220,7 +220,7 @@ individual tool pages. That boundary is preserved here row by row.
 
 **Zoom deserves one note of accuracy, because it is the entry most likely to be
 mis-catalogued.** The app has a zoom **interaction mode** on the canvas and **no Zoom tool**:
-the registry at `src/contexts/tool-types.ts:28-78` has no entry for it and the rail has none
+the registry at `src/contexts/tool-types.ts:30-88` has no entry for it and the rail has none
 either. A zoom mode is not a tool.
 
 ## Path
@@ -316,7 +316,7 @@ established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not op
   what the deleted row got wrong by citing it as though it already existed.
 - `docs/TOOLS-RESEARCH-BRIEF.md` — the protocol this repository runs research under, including
   the rule that an unsourceable claim goes in an Unverified list rather than into the data.
-- `toolbar-mapping.ts:109-116` — the shape flyout's six entries, and the missing seventh.
+- `toolbar-mapping.ts:114-121` — the shape flyout's six entries, and the missing seventh.
 - `docs/LAYERS-PANEL.md` — the app side of the Artboard gap.
 
 ## Unverified
@@ -346,11 +346,13 @@ this file; the "not researched" cells in the tables above are the same fact at r
   the Elliptical Marquee and `Style`, `Fixed Ratio` and `Fixed Size` to the Rectangular and
   Elliptical Marquees **by name**
   (`helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`), so neither 1-pixel tool has
-  any of them. What is left on their bars is the four selection modes, `Feather` and
-  `Select and Mask`; the scripting API is the sharper evidence on the first two, since
-  `selectRow`/`selectColumn` take neither a `feather` nor an `antiAlias` parameter where
-  `selectRectangle` takes both. Their cycling key is still unverified — see the `M` group
-  section of `src/tools/descriptions/selection.notes.md`.
+  any of them. What is left on **Adobe's** bar for each is the four selection modes, `Feather`
+  and `Select and Mask` — and **this app renders none of those three either**, which is why they
+  are `missing` in `docs/TOOLS.md` rather than absent from this file: the tools exist, so their
+  gaps belong to the description system, not here. The scripting API is the sharper evidence on
+  the first two, since `selectRow`/`selectColumn` take neither a `feather` nor an `antiAlias`
+  parameter where `selectRectangle` takes both. Their cycling key is still unverified — see the
+  `M` group section of `src/tools/descriptions/selection.notes.md`.
 
 **Third-party only — membership may be confirmed, the shortcut is not**
 

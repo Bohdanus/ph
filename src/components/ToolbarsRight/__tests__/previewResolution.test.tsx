@@ -45,6 +45,19 @@ vi.mock('../../../tools/draw.ts', () => ({
 }));
 
 vi.mock('../../../tools/shape.ts', () => ({
+  // The Sides constants and the normalizer are named by the Shape bar at module
+  // scope, so a mock that omits them fails the whole file at import rather than one
+  // assertion: the named import resolves to undefined and the JSX below never renders.
+  //
+  // The keys have to exist; the LOGIC must not. A previous version of this mock
+  // re-implemented the normalizer's bounds, which is a third copy of the same three
+  // constants in the repo — and replacing the body with `() => 999` left all 13 tests
+  // passing, because nothing in this file types into the field. A copy that is dead
+  // today and divergent tomorrow is worse than no copy, so these are inert.
+  DEFAULT_POLYGON_SIDES: 5,
+  MIN_POLYGON_SIDES: 3,
+  MAX_POLYGON_SIDES: 100,
+  polygonSides: () => 5,
   shape:
     ({ size }: { size: { width: number; height: number } }) =>
     (args: any) => {

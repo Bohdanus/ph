@@ -6,6 +6,20 @@ export function charLength(str: string): number {
   return [...segmenter.segment(str)].length;
 }
 
+/**
+ * The string split into its grapheme clusters, in order.
+ *
+ * `charLength`, `deleteCharAt` and `deleteLastChar` all index by cluster, so a caller that wants
+ * to iterate a string the same way those three measure it needs the clusters themselves rather
+ * than `[...str]`, which splits by code unit and separates a surrogate pair or a combining mark
+ * from its base. The Type tool's manual tracking fallback draws one cluster at a time
+ * (`src/tools/text.ts`), so a composed `é` or an emoji ZWJ sequence advances as one glyph there
+ * and would advance as two here.
+ */
+export function graphemes(str: string): string[] {
+  return [...segmenter.segment(str)].map((s) => s.segment);
+}
+
 export function deleteLastChar(str: string): [string, number] {
   let lastIndex = 0;
   for (const s of segmenter.segment(str)) {

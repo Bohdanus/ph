@@ -11,6 +11,7 @@ import { createAffineLayerOperation, createLayerOperation, reorderLayers } from 
 import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
+import type { ActionType } from '../util/constants.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
@@ -28,12 +29,33 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 
+/**
+ * A history entry this replay refused to apply.
+ *
+ * The refusal itself is the correct behaviour — a malformed entry is skipped
+ * rather than allowed to corrupt the replayed state — but a skip is a silent
+ * loss of a user edit unless something reports it, and HANDOFF.md §98 makes the
+ * console the app's only error channel. Collected rather than logged at the
+ * throw site because `replayHistory` runs on every undo, redo and history-panel
+ * click, and these catches sit inside the per-item loop: logging per item turns
+ * one refused entry into one line per navigation, repeated forever. The caller
+ * reports the whole set once per replay.
+ */
+export type ReplayDiagnostic = Readonly<{
+  historyId?: string;
+  actionName?: ActionType;
+  code: 'canvas-filter-unsupported' | 'invalid-affine-transform';
+  error: unknown;
+}>;
+
 export type HistoryReplayResult = {
   layers: LayersRecord;
   totalSize: Size;
   documentFrame: DocumentFrame;
   selections: Selection[];
   activeSelectionId: string | null;
+  /** Refused entries, in timeline order. Empty on a clean replay. */
+  diagnostics: ReplayDiagnostic[];
 };
 
 export type HistoryReplayDependencies = {
@@ -69,6 +91,7 @@ export function replayHistory(
   const selectionBaseline = deriveSelectionBaseline(history);
   let selections: Selection[] = selectionBaseline.selections.map((selection) => ({ ...selection }));
   let activeSelectionId: string | null = selectionBaseline.activeSelectionId;
+  const diagnostics: ReplayDiagnostic[] = [];
 
   for (let index = 0; index <= targetIndex; index += 1) {
     const item = history[index];
@@ -177,7 +200,17 @@ export function replayHistory(
       if (processor.requiresCanvasFilter) {
         try {
           requireCanvasFilter(toolArgs.toolName);
-        } catch {
+        } catch (error) {
+          // The commit gate at `useLayer.ts:356` refuses the same tool and logs it
+          // there, before any `TOOL_ACTION` exists, so this catch is a backstop for
+          // a timeline that arrived some other way. It records rather than logs,
+          // because replay repeats: see `ReplayDiagnostic`.
+          diagnostics.push({
+            historyId: item.id,
+            actionName,
+            code: 'canvas-filter-unsupported',
+            error,
+          });
           continue;
         }
       }
@@ -211,9 +244,21 @@ export function replayHistory(
             operations: [...layer.operations, createAffineLayerOperation(transform, item.id)],
           },
         };
-      } catch {
+      } catch (error) {
         // Invalid historical transforms are ignored rather than producing a
-        // corrupt replay state.
+        // corrupt replay state. Reachable, and unlike the two catches above this
+        // one loses a real edit: `getTransformFromHistoryArgs` validates the affine
+        // against `layer.pos` AS IT IS NOW, while it was validated at commit time
+        // against the pos the layer had then (`normalizeCommittedToolArgs` at
+        // `useLayer.ts:74-79` writes the retained transform into the committed
+        // args), so a transform valid when committed can fail a bounds check here
+        // after the layer moved. Recorded, not logged — see `ReplayDiagnostic`.
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-affine-transform',
+          error,
+        });
       }
       continue;
     }
@@ -234,5 +279,6 @@ export function replayHistory(
     documentFrame,
     selections,
     activeSelectionId: activeSelection ? activeSelectionId : null,
+    diagnostics,
   };
 }

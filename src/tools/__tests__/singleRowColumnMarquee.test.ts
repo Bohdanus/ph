@@ -3,6 +3,7 @@ import {
   MARQUEE_THICKNESS_PX,
   SINGLE_COLUMN_MARQUEE_SOURCE_TOOL,
   SINGLE_ROW_MARQUEE_SOURCE_TOOL,
+  bandOrientation,
   isSingleRowOrColumnMarqueeRect,
   singleColumnMarqueeRect,
   singleRowMarqueeRect,
@@ -366,5 +367,98 @@ describe('tool args and source tools', () => {
     // (a tessellated ellipse has no draggable handles) that does not apply to a band.
     expect(SINGLE_ROW_MARQUEE_SOURCE_TOOL).toBe('rectangular-selection');
     expect(SINGLE_COLUMN_MARQUEE_SOURCE_TOOL).toBe('rectangular-selection');
+  });
+});
+
+/**
+ * `bandOrientation` is tested HERE, importing it directly, rather than only through the tool
+ * area — which is how the rule went untested at the point it was wrong. `movedBand` asks it
+ * "which way round" and `isSingleRowOrColumnMarqueeRect` asks it "is this a band at all", and
+ * those two only agree because they are the same function; a test that reaches it through
+ * neither cannot tell a rule change from a plumbing change.
+ */
+describe('bandOrientation', () => {
+  const WIDE: Size = { width: 200, height: 120 };
+
+  it('reads a full-width one-pixel-tall band as a row, and a full-height one as a column', () => {
+    expect(bandOrientation(singleRowMarqueeRect(60, WIDE), WIDE)).toBe('row');
+    expect(bandOrientation(singleColumnMarqueeRect(90, WIDE), WIDE)).toBe('column');
+  });
+
+  it('separates a 1x1 band by SPAN, not by thickness, on both degenerate documents', () => {
+    // The two cases that only a span rule can tell apart, and they disagree about the SAME
+    // 1x1 rect. On a document one pixel tall the rect is that document's full height, so it is
+    // a column; on a document one pixel wide it is that document's full width but only one of
+    // its 120 rows, so it is a row. A thickness rule reads the first correctly and the second
+    // as a column, which transposes the band mid-drag.
+    const SQUARE_BAND: RectXYSorted = { x1: 40, y1: 0, x2: 41, y2: 1 };
+
+    expect(bandOrientation(SQUARE_BAND, { width: 200, height: 1 })).toBe('column');
+    expect(bandOrientation({ x1: 0, y1: 60, x2: 1, y2: 61 }, { width: 1, height: 120 })).toBe('row');
+  });
+
+  it('is not ordered: the two clauses cannot both match, so swapping them is unobservable', () => {
+    // The doc comment claims the clause order is arbitrary, and this is what makes the claim
+    // checkable rather than asserted. Both clauses hold only when the rect is one pixel on both
+    // axes AND the document is at most one pixel on both — where the two readings produce the
+    // identical rect, so the answer cannot surface. Enumerated here rather than reasoned about,
+    // because the earlier version of that comment asserted the order mattered and a swap of the
+    // two clauses passed every test in the repository.
+    const ONE: Size = { width: 1, height: 1 };
+    const rect: RectXYSorted = { x1: 0, y1: 0, x2: 1, y2: 1 };
+
+    const columnClause = rect.x2 - rect.x1 === 1 && rect.y2 - rect.y1 >= ONE.height && rect.y1 === 0;
+    const rowClause = rect.y2 - rect.y1 === 1 && rect.x2 - rect.x1 >= ONE.width && rect.x1 === 0;
+
+    expect(columnClause && rowClause).toBe(true);
+    // Both readings name the same one pixel, so the function cannot prefer one on any document
+    // where a 1x1 rect is a real band rather than `null`.
+    expect(singleColumnMarqueeRect(0, ONE)).toEqual(singleRowMarqueeRect(0, ONE));
+  });
+
+  it('returns null for a 1x1 rect on a document with both dimensions above one pixel', () => {
+    // The case the whole rule exists to route: not a band, so `isPressOnActiveBand` refuses the
+    // press and it is a fresh draw. This is why a degenerate band cannot reach the move arm.
+    expect(bandOrientation({ x1: 40, y1: 30, x2: 41, y2: 31 }, WIDE)).toBeNull();
+    expect(isSingleRowOrColumnMarqueeRect({ x1: 40, y1: 30, x2: 41, y2: 31 }, WIDE)).toBe(false);
+  });
+
+  it('requires the band to be anchored at the origin, so a translated one is not a band', () => {
+    // A band the user has somehow displaced off the origin fails the anchoring clause, which is
+    // what stops a selection that overhangs the document from being grabbed and moved forever.
+    const row = singleRowMarqueeRect(60, WIDE);
+    const shifted: RectXYSorted = { ...row, x1: row.x1 + 3, x2: row.x2 + 3 };
+
+    expect(bandOrientation(row, WIDE)).toBe('row');
+    expect(bandOrientation(shifted, WIDE)).toBeNull();
+    expect(bandOrientation({ ...singleColumnMarqueeRect(90, WIDE), y1: 2, y2: 122 }, WIDE)).toBeNull();
+  });
+
+  it('agrees with isSingleRowOrColumnMarqueeRect on every shape it is asked about', () => {
+    // The two are one function, so the invariant is that the boolean face is exactly "not
+    // null" — asserted over a grid rather than on two hand-picked shapes, because that is the
+    // form a divergence would take.
+    const sizes: Size[] = [
+      { width: 200, height: 120 },
+      { width: 1, height: 120 },
+      { width: 200, height: 1 },
+      { width: 1, height: 1 },
+    ];
+    let checked = 0;
+
+    sizes.forEach((size) => {
+      [0, 1, 30, size.width - 1, size.height - 1].forEach((index) => {
+        [
+          singleRowMarqueeRect(index, size),
+          singleColumnMarqueeRect(index, size),
+          { x1: 0, y1: 0, x2: 2, y2: 2 },
+        ].forEach((rect) => {
+          checked++;
+          expect(isSingleRowOrColumnMarqueeRect(rect, size)).toBe(bandOrientation(rect, size) !== null);
+        });
+      });
+    });
+
+    expect(checked).toBeGreaterThan(40);
   });
 });

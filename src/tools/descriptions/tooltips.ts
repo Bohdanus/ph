@@ -56,8 +56,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     implementation: 'partial',
   },
   'quick-selection': {
-    summary:
-      'Brush over an object and the selection grows along the image edges you cross; brush again to add, Alt-drag to subtract.',
+    summary: 'Brush over an object and the selection grows along the image edges you cross; brush again to add.',
     implementation: 'partial',
   },
   brush: {
@@ -190,7 +189,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   text: {
     summary:
-      'Creates live, resolution-independent type as a heading, a wrapped paragraph, or type flowing along a path.',
+      'Sets a typed string into the document as a raster text layer, with font, size, leading, tracking and caps controls.',
     implementation: 'partial',
   },
   crop: {

@@ -28,7 +28,7 @@ export function saveLastSettings(args: ToolArgs) {
   if (toolName === 'draw') {
     lastSavedSettings.draw = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'text') {
-    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect'));
+    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect', 'kind'));
   } else if (toolName === 'shape') {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
@@ -142,19 +142,21 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'dodge' ||
     toolName === 'burn' ||
     toolName === 'sponge' ||
-    toolName === 'clone-stamp' ||
-    toolName === 'eraser'
+    toolName === 'clone-stamp'
   ) {
-    // These six are brushes, so `points` is the stroke that was just committed and not
+    // These five are brushes, so `points` is the stroke that was just committed and not
     // a setting: reseeding it would hand the next drag the previous one. Emptied the
-    // way `draw` (:27) and `feather-magnetic-lasso` (:44) empty theirs. Note that
+    // way `draw` and `feather-magnetic-lasso` empty theirs. Note that
     // `clone-stamp.source` survives — a source point is a setting, and losing it is the
     // difference between "stamp where you last cloned" and "stamp nothing".
     //
-    // The eraser is here rather than in the arm above for exactly that reason: it erases
-    // along a stroke, so its `points` is the stroke too, and `EraserToolArgs.points` is
-    // required rather than optional. Persisting the last erased stroke would reappear in
-    // the options bar on the next tool switch.
+    // The eraser is NOT in this group, and must not be added to it. It erases along a
+    // stroke too, so the same reasoning applies to it — but it also has settings of its
+    // own (Mode, Size, Opacity, the foreground), which is why it has its own typed arm
+    // earlier in this chain that already empties `points`. It used to be listed here as
+    // well, which made this arm unreachable for it and left a comment justifying a
+    // placement that had been dead for as long as the typed arm existed: an `else if`
+    // chain takes its first match, so the later duplicate could never run.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else {
     // Every `ToolName` is persisted above by design. Without this trap a tool added to

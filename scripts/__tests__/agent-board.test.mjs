@@ -15,7 +15,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -25,6 +25,7 @@ import {
   BoardError,
   DEFAULT_LEASE_MS,
   IDLE_LIVE_MS,
+  MAX_MESSAGE_CHARS,
   isImportedOrigin,
   parseDuration,
 } from '../lib/agent-board/db.mjs';
@@ -150,7 +151,9 @@ describe('schema', () => {
   it('creates itself on first open and is idempotent', () => {
     const board = boardFor('a');
     const version = board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-    expect(Number(version.value)).toBe(2);
+    // 3, not 2: v3 is `issue_files`, the table that makes a file an open issue
+    // names something other than free.
+    expect(Number(version.value)).toBe(3);
     board.close();
     board.open();
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issues').get().n).toBe(0);
@@ -213,8 +216,26 @@ describe('issues', () => {
     });
     expect(board.locksHeldBy('a')).toHaveLength(0);
     const events = board.events({ issue: id });
-    expect(events.map((event) => event.kind)).toEqual(['issue.create', 'lock.hold']);
+    // `file.reference`, not `lock.hold`. The old expectation was `lock.hold`
+    // with `"held":false` in the payload: an event whose KIND said a hold
+    // happened while its data said one had not, emitted once per imported item.
+    // Fifty-four of those on a board where nothing is held is a log that has to
+    // be read against its own kind names.
+    expect(events.map((event) => event.kind)).toEqual(['issue.create', 'file.reference']);
     expect(events[1].data).toContain('"held":false');
+    // And the association is queryable, which is the part that was missing.
+    expect(board.issuesForPath('src/util/history-adapter.ts').map((issue) => issue.id)).toEqual([id]);
+  });
+
+  it('indexes the files an issue names whether or not it reserves them', () => {
+    const board = boardFor('a');
+    const reserved = board.createIssue({ title: 'with a lock', files: ['src/held.ts'] });
+    const referenced = board.createIssue({ title: 'without a lock', files: ['src/named.ts'], holdFiles: false });
+    const rows = board.db.prepare('SELECT issue_id, path FROM issue_files ORDER BY path').all();
+    expect(rows).toEqual([
+      { issue_id: reserved.id, path: 'src/held.ts' },
+      { issue_id: referenced.id, path: 'src/named.ts' },
+    ]);
   });
 
   it('filings an issue about a held file reports the holder instead of taking it', () => {
@@ -226,6 +247,98 @@ describe('issues', () => {
     expect(result.conflicts.map((conflict) => conflict.holder.agent_id)).toEqual(['a']);
     expect(other.locksHeldBy('b')).toHaveLength(0);
     other.close();
+  });
+});
+
+/**
+ * The index that makes "free" mean something.
+ *
+ * Every test here fails on the previous schema, and together they are the reason
+ * the previous one existed: a board where `check` says `free` for every file
+ * nobody has locked, including files that three agents are editing right now.
+ */
+describe('a file an open issue names is not a free file', () => {
+  it('finds an issue that reserves nothing, which is what an import produces', () => {
+    const a = boardFor('a');
+    a.createIssue({
+      title: 'the rail clips the flyout',
+      files: ['src/components/SidebarLeft/SidebarLeft.tsx'],
+      holdFiles: false,
+    });
+    a.close();
+
+    // A second agent, asking the question the flag reads as: what is this file?
+    const b = boardFor('b');
+    expect(b.listIssues({ files: ['src/components/SidebarLeft/SidebarLeft.tsx'] })).toHaveLength(1);
+    // It holds no lock, so `check` still says free — and now also says who.
+    const report = b.checkPath('src/components/SidebarLeft/SidebarLeft.tsx');
+    expect(report.free).toBe(true);
+    expect(report.issues.map((issue) => issue.title)).toEqual(['the rail clips the flyout']);
+  });
+
+  it('answers the file question for somebody else, which the old query could not', () => {
+    /**
+     * `list --files` joined `file_locks` and required `f.agent_id = ?` — the
+     * caller's own id. So it could only ever report the reader's own locks, and
+     * a file that three other agents were working in came back empty, which is
+     * indistinguishable from a file nobody cares about. The answer has to be
+     * about the path, not about the reader.
+     */
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'a is in the adapter', files: ['src/adapter.ts'] });
+    a.close();
+
+    const b = boardFor('b');
+    expect(b.listIssues({ files: ['src/adapter.ts'] }).map((issue) => issue.id)).toEqual([id]);
+    expect(b.listIssues({ files: ['src/nothing.ts'] })).toHaveLength(0);
+  });
+
+  it('normalises the path, because an absolute one is what a shell pastes', () => {
+    const a = boardFor('a');
+    a.createIssue({ title: 'named', files: ['src/x.ts'], holdFiles: false });
+    a.close();
+    const b = boardFor('b');
+    expect(b.issuesForPath(join(b.identity.worktree, 'src/x.ts')).map((issue) => issue.title)).toEqual(['named']);
+  });
+
+  it('forgets a resolved issue, so check does not cry wolf on a fixed file', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'fixed', files: ['src/fixed.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.resolveIssue(id);
+    a.close();
+    const b = boardFor('b');
+    expect(b.issuesForPath('src/fixed.ts')).toHaveLength(0);
+  });
+
+  it('names the claimant, so an unclaimed reference is distinguishable from a busy one', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'being worked', files: ['src/busy.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+    const b = boardFor('b');
+    expect(b.issuesForPath('src/busy.ts').map((issue) => issue.claimed_by)).toEqual(['a']);
+  });
+
+  it('rebuilds the index from the event log, so an existing board gains it on open', () => {
+    /**
+     * A board already on disk holds its file references in the `data` of its
+     * `issue.create` events and nowhere else. The import cannot be re-run to
+     * fix that — it is idempotent by `origin` and would file nothing — so the
+     * migration has to read them back.
+     */
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'imported', files: ['src/legacy.ts'], holdFiles: false });
+    a.db.exec('DROP TABLE issue_files');
+    a.db.prepare('UPDATE meta SET value = ? WHERE key = ?').run('1', 'schema_version');
+    a.close();
+
+    const b = new Board({ dir, identity: identityFor('b'), now: () => clock }).open();
+    // A v1 board now walks BOTH steps, so it lands on 3 rather than 2: step 1
+    // moves the lock attribution and step 2 indexes the event log.
+    expect(Number(b.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value)).toBe(3);
+    expect(b.issuesForPath('src/legacy.ts').map((issue) => issue.id)).toEqual([id]);
+    b.close();
   });
 });
 
@@ -436,6 +549,45 @@ describe('file locks make one-file-one-agent real', () => {
     b.close();
   });
 
+  it('reports your own lease as heldByYou, so your lock is not indistinguishable from a free file', () => {
+    // Removing `heldByYou` from the return left this suite green. It has no
+    // in-repo consumer yet, which is exactly why nothing noticed — and it is the
+    // half of the answer that separates "the board has never heard of this file"
+    // from "this file is yours, on a lease", on the command AGENTS.md makes every
+    // agent run before every edit.
+    const a = boardFor('a');
+    a.holdFiles(['src/mine.ts']);
+    const mine = a.checkPath('src/mine.ts', { agent: 'a' });
+    expect(mine.free).toBe(true);
+    expect(mine.holders).toEqual([]);
+    expect(mine.heldByYou.map((lock) => lock.agent_id)).toEqual(['a']);
+    // And the peer's view of the same file is a holder, with no `heldByYou` of its own.
+    const theirs = boardFor('b').checkPath('src/mine.ts', { agent: 'b' });
+    expect(theirs.free).toBe(false);
+    expect(theirs.holders.map((holder) => holder.agent_id)).toEqual(['a']);
+    expect(theirs.heldByYou).toEqual([]);
+  });
+
+  it("carries issues on every one of checkPath's returns, including the ones that answer without a query", () => {
+    // db.mjs states this as a contract — a consumer reading `.issues` must never
+    // have to guard for the key being absent — and dropping `issues: []` from two
+    // of the three early returns left the suite green. The CLI's own guard
+    // (`entry.issues && entry.issues.length`) is what has been hiding it: the
+    // contract is about consumers that are NOT the CLI.
+    const board = boardFor('a');
+    board.createIssue({ title: 'named', files: ['src/named.ts'], holdFiles: false });
+
+    // The three early returns, in the shapes db.mjs gives them.
+    expect(board.checkPath('')).toMatchObject({ issues: [], nothing: true });
+    expect(board.checkPath('/elsewhere/outside.ts')).toMatchObject({ issues: [], outside: true });
+    expect(board.checkPath('../../escape.ts')).toMatchObject({ issues: [], outside: true });
+    // A path that normalises to nothing queryable is the fourth return.
+    expect(board.checkPath('src/named.ts').issues.map((issue) => issue.id).length).toBe(1);
+    // And a genuinely free file, with no issue naming it, reports the key as empty
+    // rather than absent — a `[]`, so `.length` is safe on every branch.
+    expect(board.checkPath('src/free.ts')).toMatchObject({ free: true, issues: [] });
+  });
+
   it('hides an expired lock from everything that renders it, not just from a conflict check', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'lock outlives its lease' });
@@ -452,7 +604,14 @@ describe('file locks make one-file-one-agent real', () => {
     // same breath, called the file free.
     expect(a.liveClaimOrNull(id)).not.toBeNull();
     expect(a.locksFor(id)).toHaveLength(0);
-    expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'a' })).toHaveLength(0);
+    expect(a.status().locks).toHaveLength(0);
+    expect(a.checkPath('src/ghost.ts', { agent: 'b' }).free).toBe(true);
+    // The REFERENCE survives the lease, and that is the whole point of keeping
+    // the two apart: this issue is still about `src/ghost.ts` and the board still
+    // has to be able to say so. A query that went away with the lease was
+    // answering "who is in this file right now" through a flag that reads as
+    // "what is this file".
+    expect(a.listIssues({ files: ['src/ghost.ts'] }).map((issue) => issue.id)).toEqual([id]);
     a.close();
   });
 
@@ -1035,6 +1194,75 @@ describe('the event log is the swarm talking', () => {
     expect(event.issue_id).toBeNull();
     expect(event.message).toBe('I am touching StoreContext for the next hour');
   });
+
+  /**
+   * A note is a POINTER, and a pointer has to fit.
+   *
+   * Nothing capped a message at any layer, so a 5000-character note was stored
+   * whole and `watch` printed it as ONE 5100-character line — the log becomes a
+   * wall that every later reader scrolls past. The obvious repair is to truncate,
+   * and that is exactly what this repository has already written down as a defect
+   * in `truncate()`: `slice(0, 70)` with no ellipsis produced a title that read as
+   * a finished sentence, and an agent working from half a message cannot tell
+   * that is what it has. So the cap REJECTS, names the limit, and says where the
+   * finding belongs.
+   */
+  it('refuses an over-long message instead of truncating it', () => {
+    const board = boardFor('a');
+    expect(MAX_MESSAGE_CHARS).toBe(4096);
+    // Exactly at the limit is allowed: a cap that rejects the boundary value
+    // would be off by one against every author who counted.
+    const atLimit = board.note('x'.repeat(MAX_MESSAGE_CHARS));
+    expect(board.events({ since: 0, kind: 'note' }).map((event) => event.message)).toEqual([
+      'x'.repeat(MAX_MESSAGE_CHARS),
+    ]);
+    expect(atLimit.seq).toBeGreaterThan(0);
+    // One character over is refused, and NOTHING is written.
+    expect(() => board.note('x'.repeat(MAX_MESSAGE_CHARS + 1))).toThrow(BoardError);
+    expect(() => board.note('x'.repeat(MAX_MESSAGE_CHARS + 1))).toThrow(/4096-character board limit/);
+    expect(board.events({ since: 0, kind: 'note' })).toHaveLength(1);
+    // The error must not read as a truncated message would: it says nothing was
+    // written, and where the finding goes instead.
+    try {
+      board.note('x'.repeat(MAX_MESSAGE_CHARS + 1));
+      expect.unreachable('the over-long note should have been refused');
+    } catch (error) {
+      expect(error.message).toMatch(/nothing was written/);
+      expect(error.message).toMatch(/handoff document/);
+      expect(error.message).toMatch(/Nothing is truncated/);
+    }
+  });
+
+  it('caps every text-carrying EVENT, because they all pass through one place', () => {
+    const board = boardFor('a');
+    const { id } = board.createIssue({ title: 'capped' });
+    const over = 'x'.repeat(MAX_MESSAGE_CHARS + 1);
+    // claim, comment, defer, reopen, resolve and close all carry prose, and all of
+    // them reach addEvent. The test names them so a future command cannot quietly
+    // add a path around the one guard.
+    expect(() => board.claimIssue(id, { note: over })).toThrow(/board limit/);
+    expect(() => board.comment(id, over)).toThrow(/board limit/);
+    expect(() => board.deferIssue(id, { reason: over })).toThrow(/board limit/);
+    // resolve and close need the live claim first, which the refused claim above
+    // did not take — so take it with a short note.
+    board.claimIssue(id, { note: 'taking it' });
+    expect(() => board.resolveIssue(id, { note: over })).toThrow(/board limit/);
+    // `close` refuses an unresolved issue before it reaches the guard, and refuses
+    // the resolver as verifier, so resolve for real and let ANOTHER agent try to
+    // close it — which is the only way `closeIssue` is reachable at all.
+    board.resolveIssue(id, { note: 'resolved for real' });
+    expect(() => board.closeIssue(id, { agent: 'b', note: over })).toThrow(/board limit/);
+    // Nothing was written by any of them: the issue is still open-and-resolved
+    // rather than closed, and the only note on the board is the short one.
+    expect(board.getIssue(id).status).toBe('resolved');
+    // The refused `claim --note` left no claim.acquire behind, and the short note
+    // that was allowed is the only prose on the board.
+    expect(board.events({ kind: 'claim.acquire' }).map((event) => event.message)).toEqual(['claimed: taking it']);
+    expect(board.events({ kind: 'note' })).toHaveLength(0);
+    // An issue BODY is not an event, and is not capped: a body is a document an
+    // issue points at, not a log line, so it has no reader to protect.
+    expect(() => board.createIssue({ title: 'with a long body', body: over })).not.toThrow();
+  });
 });
 
 describe('the schema this script writes', () => {
@@ -1099,20 +1327,78 @@ describe('the schema this script writes', () => {
   it('migrates a v1 board once, advances the version, and survives a dangling id', () => {
     buildV1Board(dir);
     const first = boardFor('a');
-    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    // Two steps, so the whole chain runs and the board lands on 3.
+    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
     // The attribution v1 DID know about is carried forward, and the dangling one
     // is named in the log rather than silently dropped or fatally re-attempted.
     expect(first.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
     const migration = first.events({ kind: 'board.migrate' });
-    expect(migration).toHaveLength(1);
+    expect(migration).toHaveLength(2);
     expect(JSON.parse(migration[0].data)).toMatchObject({ moved: 1, dropped_dangling_issue: 1 });
     first.close();
 
     // A second open must not re-migrate, or every command anyone ever runs
     // repeats the work.
     const second = boardFor('a');
-    expect(second.events({ kind: 'board.migrate' })).toHaveLength(1);
+    expect(second.events({ kind: 'board.migrate' })).toHaveLength(2);
     expect(second.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
+    second.close();
+  });
+
+  /**
+   * The v2 → v3 index reads the EVENT LOG, and the event log outlives the issues
+   * table: closing an issue appends `issue.close` rather than deleting the row,
+   * and an imported board names issues it never created. So a dangling `issue_id`
+   * is the ordinary case, not corruption.
+   *
+   * It is also the case that made this migration unusable. `issue_files.issue_id`
+   * is a real foreign key and SQLite does not apply `ON CONFLICT` to one, so the
+   * natural `INSERT OR IGNORE` raised `FOREIGN KEY constraint failed` partway
+   * through and left the board at v2 — measured on the operator's own board: 143
+   * references indexed, then the raise. A migration that half-runs and refuses is
+   * better than silent corruption, but the board still cannot be opened, which is
+   * the outcome this step exists to remove.
+   */
+  const buildV2BoardWithADanglingEvent = (target) => {
+    const seeded = boardFor('a');
+    const live = seeded.createIssue({ title: 'live', files: ['src/live.ts'], holdFiles: false });
+    // An event naming an issue that does not exist, which is what a closed or
+    // imported issue leaves behind.
+    seeded.db
+      .prepare(
+        `INSERT INTO events (ts, agent_id, kind, issue_id, data)
+         VALUES (?, 'a', 'file.reference', 'ph-404', ?)`
+      )
+      .run(new Date().toISOString(), JSON.stringify({ files: ['src/orphan.ts'], held: false }));
+    seeded.db.exec('DELETE FROM issue_files');
+    seeded.db.prepare("UPDATE meta SET value = '2' WHERE key = 'schema_version'").run();
+    seeded.close();
+    return live.id;
+  };
+
+  it('indexes the v2 event log and survives a dangling issue reference', () => {
+    const liveId = buildV2BoardWithADanglingEvent(dir);
+    // The whole point: opening must not raise.
+    const board = boardFor('a');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    // The issue that exists is indexed, and the one that does not is named in the
+    // log rather than silently dropped or fatally re-attempted — the same
+    // treatment `migrateFileLockAttribution` gives its own dangling ids.
+    const rows = board.db.prepare('SELECT path FROM issue_files ORDER BY path').all();
+    expect(rows.map((row) => row.path)).toEqual(['src/live.ts']);
+    expect(board.issuesForPath('src/live.ts').map((issue) => issue.id)).toEqual([liveId]);
+    const migration = board.events({ kind: 'board.migrate' });
+    expect(JSON.parse(migration.at(-1).data)).toMatchObject({ from: 2, to: 3, dropped_dangling_issue: 1 });
+    board.close();
+
+    // And a second open neither re-migrates nor re-raises.
+    const second = boardFor('a');
+    // A literal, not `migration.length`: an expectation derived from the run under
+    // test cannot fail when that run double-emits, which is the failure this is here
+    // to catch. One v2 board runs step 2 alone, so exactly one migrate event.
+    expect(migration).toHaveLength(1);
+    expect(second.events({ kind: 'board.migrate' })).toHaveLength(1);
+    expect(second.db.prepare('SELECT COUNT(*) AS n FROM issue_files').get().n).toBe(1);
     second.close();
   });
 
@@ -1149,6 +1435,147 @@ describe('the schema this script writes', () => {
     expect(String(version)).not.toBe('2');
     // And nothing was silently moved on its way past.
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issue_locks').get().n).toBe(0);
+  });
+
+  /**
+   * The schema COLLISION, and it is the reason the number alone is not a guard.
+   *
+   * Two branches each raised `SCHEMA_VERSION` to 3 and each called their own
+   * first step "v2" — the same version main had already spent on something
+   * else. A board stamped 2 by main therefore meant two different schemas, and
+   * nothing in the format could tell them apart.
+   *
+   * What turned that into silent data loss is the SECOND half, and it is the
+   * half a version guard does not cover: `runMigrations` answered `false` for a
+   * version it had no step for. `false` is the caller's signal for "a migration
+   * ran and had nothing to do", and it is the value that withholds the version
+   * stamp — so the board sat at 2 with the new table created empty by
+   * `exec(SCHEMA)` and no error anywhere. `integration/merge-sweep` shipped
+   * exactly this and is still unmerged.
+   *
+   * Raised on this script's OWN `migrationSteps` rather than by building a
+   * branch's schema, because that is the shape that has to be caught: a script
+   * that adds a table, bumps the number, and forgets the step. Going through
+   * `open()` rather than calling `runMigrations` directly is the point — the
+   * defect only ever reached a caller that OPENED a board, and the first
+   * version of this case called the method instead, so it exercised the guard
+   * without exercising anything that could produce it.
+   */
+  it('refuses to open a version it claims to migrate but has no step for', () => {
+    // A real v1 board, so `existing` is inside (0, SCHEMA_VERSION) and the
+    // migration path is reached. This script writes v2 and its steps hold only
+    // `1`; emptying them is precisely the state a v3 branch ships when it forgot
+    // to add `steps[2]`. Before the guard, this opened successfully and reported
+    // nothing.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    // And the version was NOT stamped, which is what `false` used to cause.
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    after.close();
+  });
+
+  it('refuses a gap in the middle of the chain, which the pre-flight cannot see', () => {
+    /**
+     * The three refusal tests around this one all stub `migrationSteps` to `{}`,
+     * which means `requireMigrationStep(1)` throws FIRST and the loop body never
+     * executes. Deleting the entire `if (!step) throw` block from `runMigrations`
+     * left this suite green — the loop's own refusal had no test that could reach
+     * it, and it is the only thing standing between a v1 board and a stamp
+     * written over a missing step.
+     *
+     * So the stub here keeps step 1 and drops step 2: the pre-flight is satisfied,
+     * and only the loop can catch this.
+     */
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({ 1: () => true });
+    expect(() => board.open()).toThrow(/no step for v2/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    // The version row is the thing at stake, and it must not have moved even
+    // though step 1 ran and reported success.
+    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    after.close();
+  });
+
+  it('withholds the version stamp when ANY step in the chain declines', () => {
+    /**
+     * `runMigrations` used to return one step's value, so `false` from that step
+     * withheld the stamp. The loop made it an ANY with `||`, which inverted the
+     * guarantee the method's own comment states: step 1 declining and step 2
+     * succeeding stamped the board over step 1's unmigrated data. Reproduced
+     * before the fix — a v1 board stamped v3 with an empty `issue_files`.
+     */
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    // Step 1 declines, step 2 succeeds: the shape an OR gets wrong and an AND
+    // does not. Nothing is thrown, so the refusal has to be the silent one.
+    board.migrationSteps = () => ({ 1: () => false, 2: () => true });
+    expect(() => board.open()).not.toThrow();
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    after.close();
+  });
+
+  it('still migrates the version it does have a step for', () => {
+    // The guard must not become a blanket refusal: v1 is a version this script
+    // genuinely knows how to move, and refusing it would strand every v1 board.
+    buildV1Board(dir);
+    const board = boardFor('a');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    board.close();
+  });
+
+  it('leaves no half-open board when a migration refuses', () => {
+    // `open()` assigns `this.db` before `migrate()` runs, and its first line is
+    // `if (this.db) return this`. So a refusal that left the handle in place
+    // meant the natural recovery — catch, fix, retry — got a board back on the
+    // second call with `migrate()` never re-run and NO error, which is the
+    // unmigrated board the guard exists to prevent.
+    // A v1 board, so `existing` is inside (0, SCHEMA_VERSION) and the guard is
+    // reached at all — a fresh board is 0 and is stamped without migrating.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    // Stand in for a script whose steps do not cover v1.
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    expect(board.db).toBeNull();
+    // And the retry actually retries, rather than short-circuiting.
+    delete board.migrationSteps;
+    const reopened = board.open();
+    expect(reopened.db).not.toBeNull();
+    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    reopened.close();
+  });
+
+  it('leaves no half-open board when the statements BEFORE migrate() fail', () => {
+    // The gap a `try` that wrapped only `migrate()` left open. `new
+    // DatabaseSync` SUCCEEDS on a corrupt file — the handle is allocated and
+    // only fails when a statement runs — so the first `PRAGMA` throws and
+    // `migrate()` is never reached. Verified against the previous commit and
+    // against main: same half-open board, same silent second `open()`.
+    writeFileSync(join(dir, 'board.db'), 'this is not a sqlite database');
+    const board = new Board({ dir, identity: identityFor('a') });
+    expect(() => board.open()).toThrow();
+    expect(board.db, 'a failed open left a live handle, so a retry short-circuits').toBeNull();
+  });
+
+  it('refuses before it creates anything, not after', () => {
+    // The two refusals in `migrate()` have to agree: a newer board is refused
+    // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a
+    // missing migration step must not re-create that hazard one line later.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    const tables = after.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    // Only the v1 board's own tables: nothing from this script's SCHEMA.
+    expect(tables.map((row) => row.name)).not.toContain('issue_locks');
+    expect(tables.map((row) => row.name)).not.toContain('claims');
+    after.close();
   });
 });
 
@@ -1913,6 +2340,108 @@ describe('the command line', () => {
   });
 
   /**
+   * Every word typed must be a word stored, or the board is not telling the
+   * truth about what anybody said.
+   *
+   * `note before --flag after` stored `before`, discarded `--flag after`, and
+   * answered `noted — event #12` — exit 0, a sequence number, and a `watch` line
+   * carrying a finished-looking sentence that was not the sentence typed. The
+   * words were dropped in `parseArgs`, before any board call, so no check on the
+   * stored message could ever have caught it.
+   *
+   * Prose contains `--`, so the repair is a REFUSAL rather than a guess: quote
+   * the message, or end the command with a bare `--`. Both of those are pinned
+   * here, and the shape is pinned for a GLOBAL flag too — an earlier draft
+   * exempted `--json` and `--agent`, which reads right and is wrong: nothing
+   * follows a trailing global flag, so the exemption guarded nothing, while
+   * `note my finding --json trailing words` drops `trailing words` exactly as
+   * silently as any other flag does. An exemption that guards nothing and hides
+   * a loss is worse than no exemption.
+   */
+  it('refuses a note whose words a -- swallowed, instead of storing the half it kept', async () => {
+    // The quoted form, and the bare `--` form, both store the WHOLE sentence.
+    const quoted = await cli(['note', 'before --flag after', '--json']);
+    expect(quoted.code, quoted.err).toBe(0);
+    expect(JSON.parse(quoted.out).message).toBe('before --flag after');
+    // The helper appends `--dir`/`--agent` LAST, so a bare `--` inside the
+    // arguments would swallow them and leave the board with no home. This one puts
+    // the flags FIRST, the way the CLI has to be typed for a `--` to be usable.
+    const terminated = await (async () => {
+      const out = [];
+      const err = [];
+      const code = await run(['note', '--json', '--dir', dir, '--agent', 'a', '--', 'before --flag after'], {
+        cwd: dir,
+        out: { write: (chunk) => out.push(chunk) },
+        err: { write: (chunk) => err.push(chunk) },
+      });
+      return { code, out: out.join(''), err: err.join('') };
+    })();
+    expect(terminated.code, terminated.err).toBe(0);
+    expect(JSON.parse(terminated.out).message).toBe('before --flag after');
+    // And the unquoted form is refused rather than shortened.
+    const split = await cli(['note', 'before', '--flag', 'after', '--json']);
+    expect(split.code).toBe(1);
+    expect(split.err).toMatch(/dropped, not written/);
+    // The refusal must not have written the half it could read.
+    expect(JSON.parse((await cli(['watch', '--since', '0', '--json'])).out).events.map((e) => e.message)).toEqual([
+      'before --flag after',
+      'before --flag after',
+    ]);
+    // A trailing global flag configures the run and must NOT trip the refusal:
+    // nothing follows it, so no word is lost. `note x --json` is legitimate.
+    const global = await cli(['note', 'a plain finding here', '--json']);
+    expect(global.code, global.err).toBe(0);
+    expect(JSON.parse(global.out).message).toBe('a plain finding here');
+    // But words AFTER a global flag are the same loss as any other, and an
+    // exemption here would have hidden it — this is the case the exemption missed.
+    const afterGlobal = await cli(['note', 'a finding', '--json', 'trailing', 'words']);
+    expect(afterGlobal.code).toBe(1);
+    expect(afterGlobal.err).toMatch(/dropped, not written/);
+    // `comment` takes the same prose and gets the same protection.
+    const { id } = JSON.parse((await cli(['new', 'split text', '--json'])).out);
+    expect((await cli(['comment', id, 'tail', '--flag', 'head'])).code).toBe(1);
+    expect((await cli(['comment', id, 'tail --flag head', '--json'])).code).toBe(0);
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).events.map((e) => e.message)).toContain(
+      'tail --flag head'
+    );
+  });
+
+  /**
+   * Prose in a FLAG takes more than one word, or the flag documents a sentence it
+   * cannot hold.
+   *
+   * `--note`, `--reason` and `--body` were single-token value flags, so
+   * `claim ph-1 --note fixed the thing` recorded `fixed` and threw away the rest,
+   * with exit 0. The board then held a claim note that read as a complete
+   * sentence — `fixed` — and no way for the next agent to know an author had
+   * written four words. `--files a.ts b.ts` had exactly this shape once already and
+   * was fixed by making the parser learn the documented form, so the documented
+   * form here is the same one.
+   */
+  it('keeps an unquoted --note whole, rather than the first word of it', async () => {
+    const { id } = JSON.parse((await cli(['new', 'prose in a flag', '--json'])).out);
+    const claimed = await cli(['claim', id, '--note', 'fixed', 'the', 'thing', 'entirely', '--json']);
+    expect(claimed.code, claimed.err).toBe(0);
+    expect(
+      JSON.parse((await cli(['watch', '--since', '0', '--json'])).out).events.find(
+        (event) => event.kind === 'claim.acquire'
+      ).message
+    ).toContain('fixed the thing entirely');
+    // Quoting still works, and a later flag still ends the prose.
+    expect((await cli(['claim', id, '--note', 'quoted note', '--lease', '30m'])).code).toBe(0);
+    // `--reason` and `--body` carry prose through the same path.
+    const deferred = await cli(['defer', id, '--reason', 'waiting', 'on', 'ph-9', '--json']);
+    expect(deferred.code, deferred.err).toBe(0);
+    expect(JSON.parse(deferred.out).status).toBe('deferred');
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.defer_reason).toBe('waiting on ph-9');
+    const filed = await cli(['new', 'a body in words', '--body', 'several', 'words', 'of', 'body', '--json']);
+    expect(filed.code, filed.err).toBe(0);
+    expect(JSON.parse((await cli(['show', JSON.parse(filed.out).id, '--json'])).out).issue.body).toBe(
+      'several words of body'
+    );
+  });
+
+  /**
    * The log is longer than one page, and a bare `watch` used to show the wrong
    * end of it.
    *
@@ -2148,5 +2677,41 @@ describe('doctor with two holders of one path', () => {
     expect(a.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ? ORDER BY issue_id').all(path)).toEqual([
       { issue_id: 'ph-2' },
     ]);
+  });
+});
+
+/**
+ * The file this suite imports must be a TEXT file.
+ *
+ * Two raw NUL bytes were committed inside template literals in `db.mjs`, where
+ * backticks had been replaced by \x00. Nothing caught it: the result is valid
+ * JavaScript, every test in this file passed, `tsc` passed, and `build` passed.
+ * The cost was that every TEXT tool — `file`, the read tool, `grep`, diff — reads
+ * the board's central file as binary, which is how it went unnoticed until an
+ * agent could not read the file it needed to change.
+ *
+ * Nothing can assert this behaviourally, because `\0` and a raw NUL are the same
+ * string: restoring both raw bytes leaves all 127 tests green. That was measured
+ * before this case existed. So it is asserted at the byte level, which is the
+ * only level at which the difference is visible.
+ *
+ * `.gitattributes` sets `text=auto`, whose binary sniffing keys on exactly this
+ * byte — so a NUL arriving through any normal git path is what let one in.
+ */
+describe('the board module is a text file', () => {
+  const DB_MODULE = resolve(process.cwd(), 'scripts/lib/agent-board/db.mjs');
+
+  it('contains no NUL byte', () => {
+    const bytes = readFileSync(DB_MODULE);
+    const at = bytes.indexOf(0);
+    expect(at, `a NUL byte at offset ${at} makes every text tool read this file as binary`).toBe(-1);
+  });
+
+  it('uses the escape, not the raw byte, where a NUL is meant', () => {
+    // Pins the intent rather than the absence alone: the composite lock key
+    // joins path and agent_id with a NUL, which is the one byte a POSIX path
+    // cannot contain, so a path can never be made to impersonate another pair.
+    const source = readFileSync(DB_MODULE, 'utf8');
+    expect(source).toContain('${lock.path}\\0${lock.agent_id}');
   });
 });

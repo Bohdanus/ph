@@ -103,7 +103,7 @@ export const SPONGE_FLOW_DEFAULT = 50;
 /**
  * NOT READ BY ANY PRODUCT CODE, and that is deliberate. It is the Adobe sentence's own number,
  * published as a constant so the unimplemented rule has one named anchor instead of a number
- * repeated in prose, and `HANDOFF.md` §147 cites it as the record of the branch that is absent.
+ * repeated in prose, and `HANDOFF.md` §146 cites it as the record of the branch that is absent.
  * Deleting it loses that anchor; wiring it up would be implementing a mode this app does not
  * have, which is the thing the comment above refuses.
  */
@@ -345,7 +345,7 @@ const scalePaintedChroma = (
  * The one implementation the exported processor reaches.
  *
  * `points` are in the same space as `size` and the buffer: the registry hands a raster tool
- * the layer's own bitmap and extent (`src/contexts/useLayer.ts:544`), so a point is
+ * the layer's own bitmap and extent (`src/contexts/useLayer.ts:730-734`), so a point is
  * addressed against this buffer and not against the document.
  *
  * **There is no build-up.** Photoshop's Sponge compounds for as long as the button is held

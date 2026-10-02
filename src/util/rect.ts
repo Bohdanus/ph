@@ -1,8 +1,8 @@
 import type { RefObject } from 'react';
-import { getTextWidth, type TextToolArgs } from '../tools/text.ts';
+import { getTextLineCount, getTextWidth, resolveTextKind, textWrapWidth, type TextToolArgs } from '../tools/text.ts';
 import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
-import type { Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
+import type { Ctx2D, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
   if (!canvasRef.current) return { width: 0, height: 0 };
@@ -33,6 +33,19 @@ function clampEdge(value: number, imageLength: number): number {
   return Math.min(Math.max(0, value), imageLength);
 }
 
+// Round each edge once and derive the extent from the rounded edges, so
+// x + width === Math.round(x2) holds by construction for every consumer.
+// `trimRect` feeds it clamped edges, `sortRoundRect` feeds it unclamped ones:
+// the rounding is the same, the clamp is the caller's decision.
+function roundedPos(left: number, top: number, right: number, bottom: number): Pos {
+  const x = Math.round(left);
+  const y = Math.round(top);
+  const width = Math.round(right) - x;
+  const height = Math.round(bottom) - y;
+
+  return { x, y, width, height };
+}
+
 export function trimRect(rectSorted: RectXY, imageSize: Size): TrimmedRect {
   const { x1: rawX1, y1: rawY1, x2: rawX2, y2: rawY2 } = rectSorted;
   // Normalise before clamping, never after: `src/tools/crop.ts:17` is the one
@@ -49,14 +62,7 @@ export function trimRect(rectSorted: RectXY, imageSize: Size): TrimmedRect {
   const right = clampEdge(x2, imageWidth);
   const bottom = clampEdge(y2, imageHeight);
 
-  // Round each edge once and derive the extent from the rounded edges, so
-  // x + width === Math.round(x2) holds by construction for every consumer.
-  const x = Math.round(left);
-  const y = Math.round(top);
-  const width = Math.round(right) - x;
-  const height = Math.round(bottom) - y;
-
-  return { x, y, width, height, isTrimmed };
+  return { ...roundedPos(left, top, right, bottom), isTrimmed };
 }
 
 export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
@@ -70,6 +76,15 @@ export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
     x2: clampEdge(x2, imageWidth),
     y2: clampEdge(y2, imageHeight),
   };
+}
+
+// `trimRect` without the clamp: crop extends the canvas past the image edge, so the
+// rect this normalises is expected to leave it. That is why there is no `imageSize`
+// argument and no `isTrimmed` — a caller that needs the intersection clamps separately.
+export function sortRoundRect(rect: RectXY): Pos {
+  const { x1, y1, x2, y2 } = sortRect(rect);
+
+  return roundedPos(x1, y1, x2, y2);
 }
 
 export function sortedRectToPos(rectSorted: RectXYSorted): Pos {
@@ -136,36 +151,56 @@ export const calculateNewRect = (
       y2: rect.y1 + fontSize * lineHeight + 2 * TEXT_PADDING,
     };
 
-  let newRect = rect;
+  const isParagraph = resolveTextKind(newArgs) === 'paragraph';
+
+  // A paragraph box's width is the width the user dragged, so it is clamped BEFORE anything is
+  // measured rather than after. `useRect.drawMask` paints `trimRect(...)` while handing
+  // `onRepaint` the unclamped rect, so without this the preview wraps at the dragged width while
+  // the committed box is the clamped one and the two wrap differently — a divergence that moves
+  // ink today and changes where the lines break under wrapping.
+  const placed = isParagraph ? (trimRect2(rect, imageSize) ?? rect) : rect;
+
+  let newRect = placed;
 
   const ctx2d = canvasRef.current?.getContext('2d');
   if (ctx2d) {
-    const currentWidth = rect.x2 - rect.x1;
-    const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-    if (requiredWidth > currentWidth) {
-      switch (align) {
-        case 'left':
-          newRect = { ...rect, x2: rect.x1 + requiredWidth };
-          break;
-        case 'center':
-          newRect = {
-            ...rect,
-            x1: rect.x1 + (currentWidth - requiredWidth) / 2,
-            x2: rect.x1 + (currentWidth + requiredWidth) / 2,
-          };
-          break;
-        case 'right':
-          newRect = { ...rect, x1: rect.x2 - requiredWidth };
+    if (isParagraph) {
+      // Only the height is content-derived for a paragraph box. The width is not grown and not
+      // re-placed: "the lines of type wrap to fit the dimensions of the bounding box"
+      // (https://helpx.adobe.com/photoshop/using/creating-type.html), so the box's dimensions are
+      // what the text takes, not the other way round.
+      const lineCount = getTextLineCount(ctx2d as Ctx2D, { ...newArgs, rect: placed }, textWrapWidth(placed));
+      const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
+      if (requiredHeight > placed.y2 - placed.y1) {
+        newRect = { ...placed, y2: placed.y1 + requiredHeight };
+      }
+    } else {
+      const currentWidth = placed.x2 - placed.x1;
+      const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
+      if (requiredWidth > currentWidth) {
+        switch (align) {
+          case 'left':
+            newRect = { ...placed, x2: placed.x1 + requiredWidth };
+            break;
+          case 'center':
+            newRect = {
+              ...placed,
+              x1: placed.x1 + (currentWidth - requiredWidth) / 2,
+              x2: placed.x1 + (currentWidth + requiredWidth) / 2,
+            };
+            break;
+          case 'right':
+            newRect = { ...placed, x1: placed.x2 - requiredWidth };
+        }
       }
     }
   }
 
-  const lines = text.split('\n');
-  const lineCount = lines.length;
+  const lineCount = text.split('\n').length;
   const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
 
   const currentHeight = newRect.y2 - newRect.y1;
-  if (requiredHeight > currentHeight) {
+  if (!isParagraph && requiredHeight > currentHeight) {
     newRect = { ...newRect, y2: newRect.y1 + requiredHeight };
   }
 

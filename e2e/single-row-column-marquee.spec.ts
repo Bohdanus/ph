@@ -446,7 +446,7 @@ test.describe('Single row and single column marquee', () => {
   //    NOT `clickToolButton`, and the reason is a layout fact rather than a preference. That
   //    helper resolves a tool through a tile of its OWN name and, failing that, through the
   //    three-dots overflow (`toolbar-helpers.ts:189-217`). Neither route reaches a member of a
-  //    group that still has a tile: the marquee group is the second of sixteen
+  //    group that still has a tile: the marquee group is the second of fifteen
   //    (`toolbar-mapping.ts:41`), the collapse is a SUFFIX, and at the suite's 1280x720 window
   //    the rail keeps the marquee tile as `tool-button-rectangular-selection` — so the two
   //    1-pixel tools have no tile of their own AND are not among the collapsed tools. The
@@ -620,6 +620,109 @@ test.describe('Single row and single column marquee', () => {
       .toBeGreaterThan(releaseError + 20);
   });
 
+  // The same drag under the ROW tool, where it changes only X. The band is the pointer's
+  // ABSOLUTE document row rather than a function of the gesture:
+  // `SingleRowColumnMarqueeToolArea.tsx:305` re-derives `drag.axis` from `documentPoint.y` on
+  // every move frame, so a gesture that never crosses a row boundary leaves it where it was
+  // pressed. The column tool's identical gesture is the test above, and between the two the
+  // pair pins the axis to the TOOL rather than to the direction the pointer travelled.
+  //
+  // Broken by: the create arm accumulating a delta instead of reading the pointer's axis, which
+  // would carry the band down with the drag; or the row tool reading X, which would commit a
+  // COLUMN band at the release column — read through this window that is a band about 600
+  // document px thick, so the thickness assertion below is what catches the transposition.
+  test('a row drag that changes only X leaves the band on its press row', async ({ page }) => {
+    await selectMarquee(page, ROW, 'Single Row Marquee Tool');
+    await expect(rowBar(page)).toBeVisible();
+    const { fit } = await measure(page);
+    // Both points are built on row 200, so the release cannot be on another row by accident of
+    // the arithmetic; only X differs, and by 640 document pixels.
+    const press = pointOn(fit, 'row', 200, 0.1);
+    const release = pointOn(fit, 'row', 200, 0.9);
+    expect.soft(documentAxisOf(fit, press.y, 'row'), 'the press is built to land on its row').toBe(200);
+    expect.soft(documentAxisOf(fit, release.y, 'row'), 'the release is on the SAME row, by construction').toBe(200);
+    expect
+      .soft(Math.abs(release.x - press.x) / fit.scale, 'the gesture must be a real drag, not a click')
+      .toBeGreaterThan(100);
+
+    await page.mouse.move(press.x, press.y);
+    await page.mouse.down();
+    await page.mouse.move(release.x, release.y, { steps: 12 });
+    await page.mouse.up();
+
+    // PORTED FROM MAIN. This test arrived written against the `tool-overlay-canvas` reader, and
+    // this branch deleted that reader: the band is stroked on `selection-ants-canvas` now, so the
+    // old `readBand`/`committedBand`/`anyOverlayPaint` and the `OUTLINE_LINE_WIDTH` half-stroke
+    // arithmetic behind them have no definition here. It is not weakened in the port. Main
+    // asserted `thicknessOf(band) <= STROKE_TOLERANCE_PX` and `|band.start - (200 - halfStroke)|
+    // <= STROKE_TOLERANCE_PX`; `expectAntsBand` asserts the band's thin axis EQUALS the extremes a
+    // centred ant stroke at row 200 reaches, which is a tighter claim than a 1.5px tolerance
+    // around a rounded half-stroke. Main's `spanStart <= window.x + 3` / `spanEnd >=
+    // window.x + window.width - 4` become exact `crossFirst === 0` / `crossLast === 799`, again
+    // tighter, plus the span-coverage floor the old reader never had.
+    const band = await committedAntsBand(page, fit, 'row');
+    expectAntsBand(band, fit, 'row', 200);
+  });
+
+  // A press INSIDE a committed 1-pixel band is a MOVE (`isPressOnActiveBand`,
+  // `SingleRowColumnMarqueeToolArea.tsx:279`-`:287`), and it writes exactly ONE history state.
+  // `SingleRowColumnMarqueeToolArea.test.tsx:527` covers this against a MOCKED store and counts
+  // dispatches, which is a different question: a double commit — the move arm appending on
+  // pointerup while the create arm appended on pointerdown — dispatches once per arm but
+  // replays into two states, and only the real undo cursor can see that.
+  test('a press inside a committed band moves it and appends one history state', async ({ page }) => {
+    await selectMarquee(page, ROW, 'Single Row Marquee Tool');
+    await expect(rowBar(page)).toBeVisible();
+    const undo = page.getByTestId('undo-button');
+    const { fit } = await measure(page);
+
+    const press = pointOn(fit, 'row', 200, 0.5);
+    await page.mouse.click(press.x, press.y);
+    const first = await committedAntsBand(page, fit, 'row');
+    // PORTED FROM MAIN — see the note on the row-drag test above. `committedBand` -> 
+    // `committedAntsBand`, and the exact-extent assertion replaces main's
+    // `|start - (200 - halfStroke)| <= STROKE_TOLERANCE_PX`.
+    expectAntsBand(first, fit, 'row', 200);
+    await expect(undo, 'the first band is one history state').toBeEnabled();
+
+    // The same press point, so it lands inside the band just committed — the CENTRE of row 200 is
+    // the only row of hits unambiguously inside a band one document pixel tall. The drag ends 100
+    // rows lower, which is where the move must put it.
+    const release = pointOn(fit, 'row', 300, 0.5);
+    expect.soft(documentAxisOf(fit, release.y, 'row'), 'the release is built to land on its row').toBe(300);
+    await page.mouse.move(press.x, press.y);
+    await page.mouse.down();
+    await page.mouse.move(release.x, release.y, { steps: 12 });
+    await page.mouse.up();
+
+    const moved = await committedAntsBand(page, fit, 'row');
+    // PORTED FROM MAIN. `expectAntsBand(..., 300)` is exact where main asserted
+    // `|moved.start - (300 - halfStroke)| <= STROKE_TOLERANCE_PX`.
+    expectAntsBand(moved, fit, 'row', 300);
+
+    // The count is the point, and it is read off the cursor rather than off a dispatch list: one
+    // undo must return the band to row 200 — a create-on-press would have appended a second band
+    // there instead — and the second must clear the canvas entirely, which a second state from
+    // the move gesture would survive.
+    await undo.click();
+    await expect
+      .poll(
+        async () => {
+          const band = await scanAntsOnce(page, fit, 'row');
+
+          return band ? band.first : Number.NaN;
+        },
+        { message: 'one undo to bring the band back to the row it was committed on' }
+      )
+      .toBe(first.first);
+    await undo.click();
+    await expect.poll(async () => anyAntsPaint(page), { message: 'the second undo to clear the ants canvas' }).toBe(0);
+    await expect(
+      undo,
+      'the create and the move wrote two history states between them, so the move wrote one'
+    ).toBeDisabled();
+  });
+
   // A history state, unlike the eyedropper — `e2e/erase-fill-eyedropper.spec.ts:674` pins the
   // inverse. The seeded document has exactly one entry at cursor 0, so undo is disabled until
   // something commits, and the baseline is asserted BEFORE the gesture so a failure after it
@@ -648,6 +751,46 @@ test.describe('Single row and single column marquee', () => {
     // the cursor, and a commit per pointer move would have left several. This is what makes
     // "one history state" mean one rather than at least one.
     await expect(undo, 'the band wrote exactly one history state').toBeDisabled();
+  });
+
+  // REDO, which the one-state test above stops short of. Undo proves the band was REACHED from a
+  // known geometry; it says nothing about the geometry coming BACK, and a replay that restored a
+  // band somewhere else — off by the frame origin, or on the wrong row — would pass every undo
+  // assertion in this file.
+  test('redo brings back the band undo took away, on the row it was committed', async ({ page }) => {
+    await selectMarquee(page, ROW, 'Single Row Marquee Tool');
+    await expect(rowBar(page)).toBeVisible();
+    const { fit } = await measure(page);
+    const press = pointOn(fit, 'row', 300, 0.5);
+    await page.mouse.click(press.x, press.y);
+    // PORTED FROM MAIN — see the row-drag test's note. `BandRead{start,end,spanStart,spanEnd}` maps
+    // onto `AntsScan{first,last,crossFirst,crossLast}`, and `anyOverlayPaint` onto `anyAntsPaint`.
+    // The poll is two-step on purpose: `scanAntsOnce` is a SINGLE-frame read while
+    // `committedAntsBand` is phase-complete (it unions a whole dash cycle, which is the only way to
+    // read a dashed line's ENDS), so gating on a single frame and then comparing a single frame
+    // against the phase-complete `committed` would be comparing two different instruments. Gate on
+    // "ants are painted again", then read with the same instrument the commit was read with.
+    const committed = await committedAntsBand(page, fit, 'row');
+    const geometry = (band: AntsScan) => ({
+      first: band.first,
+      last: band.last,
+      crossFirst: band.crossFirst,
+      crossLast: band.crossLast,
+    });
+
+    await page.getByTestId('undo-button').click();
+    await expect.poll(async () => anyAntsPaint(page), { message: 'undo to take the band off the ants canvas' }).toBe(0);
+
+    await page.getByTestId('redo-button').click();
+    await expect
+      .poll(async () => (await scanAntsOnce(page, fit, 'row')) !== null, {
+        message: 'redo to repaint the band',
+      })
+      .toBe(true);
+    expect(
+      geometry(await committedAntsBand(page, fit, 'row')),
+      'redo must repaint the band exactly where it was committed'
+    ).toEqual(geometry(committed));
   });
 });
 

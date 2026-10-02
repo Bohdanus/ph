@@ -34,7 +34,24 @@ import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const SCHEMA_VERSION = 2;
+/**
+ * v3, and the number is the union of two meanings that were numbered apart:
+ * v2 is main's `file_locks.issue_id` -> `issue_locks` attribution migration,
+ * and v3 is `issue_files`, the durable index of which files an issue is ABOUT.
+ *
+ * They collided when this landed: both branches called their first step "v2"
+ * for a different migration, and a board stamped 2 by either script would be
+ * indistinguishable from a board stamped 2 by the other. v2 therefore means
+ * `migrateFileLockAttribution` and only that, which is why `issue_files` is v3.
+ */
+const SCHEMA_VERSION = 3;
+
+/**
+ * Issue statuses whose issues still describe work somebody may pick up. A
+ * closed issue's file references are history, and `swarm check` must not report
+ * a resolved defect as a reason to stay out of a file.
+ */
+const LIVE_STATUSES = ['open', 'claimed', 'deferred'];
 
 /**
  * Default lease. Long enough that an agent mid-refactor does not lose its
@@ -54,6 +71,46 @@ export const IDLE_LIVE_MS = 6 * 60 * 60 * 1000;
 
 /** "No cap" for an internal aggregation, as opposed to a displayed page. */
 export const NO_LIMIT = Number.MAX_SAFE_INTEGER;
+
+/**
+ * The longest a single board MESSAGE may be, in characters.
+ *
+ * The board is a log, not a document. A note is a pointer — "ph-12 fixed, files
+ * A and B" — and the finding it points at belongs in a handoff document, where
+ * it can be linked, reviewed and kept. `watch` prints one line per event, so an
+ * unbounded message is one unbounded line: a 5000-character note turns the log
+ * into a wall, and every reader after it has to scroll past.
+ *
+ * It REJECTS rather than truncates, which is the whole point. This repository has
+ * already paid for the alternative: `truncate()` exists because a title clipped
+ * with `slice(0, 70)` and no ellipsis read as a finished sentence, and an agent
+ * working from half a message cannot tell that is what it has. A note that was
+ * silently clipped at 4096 characters is the same defect wearing a larger number,
+ * and it is worse here because the author would never see it happen.
+ *
+ * 4096 is chosen to match Kilo's own `board_post` limit, so a finding that
+ * survives one channel survives the other, and an agent that learned the number
+ * in one place is right in the other.
+ */
+export const MAX_MESSAGE_CHARS = 4096;
+
+/**
+ * One guard for every text-carrying event, at the single point they all pass
+ * through.
+ *
+ * `note`, `comment`, `claim --note`, `resolve --note`, `close`, `defer` and
+ * `reopen` all reach `addEvent`, so a cap anywhere else could be bypassed by
+ * adding a command. The error names the limit, the field and the way out.
+ */
+function assertMessageLength(kind, message) {
+  if (message.length <= MAX_MESSAGE_CHARS) return;
+  throw new BoardError(
+    `${kind}: ${message.length} characters is over the ${MAX_MESSAGE_CHARS}-character board limit, ` +
+      `so nothing was written. The finding belongs in a handoff document — put its path in a note of ` +
+      `at most ${MAX_MESSAGE_CHARS} characters and the next agent can follow it. Nothing is truncated.`,
+    { code: 1 }
+  );
+}
 
 const PRIORITY_ORDER = { critical: 0, high: 1, normal: 2, low: 3 };
 export const PRIORITIES = Object.keys(PRIORITY_ORDER);
@@ -165,6 +222,32 @@ CREATE TABLE IF NOT EXISTS issues (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS issues_origin_uq ON issues(origin) WHERE origin IS NOT NULL;
+
+/**
+ * Which files an issue is ABOUT, as a durable index rather than an event's
+ * data JSON.
+ *
+ * It exists because the association used to be recorded in exactly one place
+ * nobody could query: the issue.create and lock.hold events. "board list
+ * --files <path>" had no other source, so it fell back to file_locks and asked
+ * "which of MY locks is on this path" - a question about the caller, not about
+ * the file. Every file nobody had locked came back empty, which is why
+ * "board check src/components/SidebarLeft/SidebarLeft.tsx" said "free" while
+ * three agents were editing it: an imported issue names that file, takes no
+ * lock, and was therefore invisible to the only query that could have said so.
+ *
+ * A row here is a REFERENCE, not a hold. Holding is file_locks, leased and
+ * exclusive; this is the cheap, unleased, closed-over view of the same fact, and
+ * the two must never be confused: 54 imported issues referencing 100 files would
+ * be 54 agents' worth of leases if the import took them.
+ */
+CREATE TABLE IF NOT EXISTS issue_files (
+  issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  path     TEXT NOT NULL,
+  PRIMARY KEY (issue_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS issue_files_path_idx ON issue_files(path);
 
 CREATE TABLE IF NOT EXISTS deps (
   issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
@@ -339,30 +422,57 @@ export class Board {
       throw new BoardError(`no board at ${this.path}`, { code: 2 });
     }
     this.db = new DatabaseSync(this.path);
-    // ORDER MATTERS, and setting the timeout first is NECESSARY BUT NOT
-    // SUFFICIENT.
+    // A THROW ANYWHERE IN HERE MUST NOT LEAVE A HALF-OPEN BOARD. `this.db` is
+    // assigned on the line above, and the first line of this method is
+    // `if (this.db) return this`, so a caller that catches the failure and
+    // retries — the natural reaction to an error message that says exactly what
+    // to fix — got a board back on the second call with the rest of `open()`
+    // never run and no error, because the short-circuit returned the object that
+    // was already holding a live handle. Measured before this: open threw, a
+    // second `open()` returned NORMALLY, and the caller held a usable unmigrated
+    // board.
     //
-    // The timeout first: without it, a second process opening a board gets
-    // SQLITE_BUSY immediately instead of waiting.
-    //
-    // The retry: SQLite does not run the busy handler for the exclusive lock a
-    // journal-mode conversion needs, so on a board that does not exist yet — the
-    // moment the whole swarm opens it at once — one process in three hundred
-    // still lost that lock and died with "database is locked". Reordering alone
-    // turned a 12% failure rate into a 0.2% one, which is worse than a fix
-    // because it looks like a fix.
-    //
-    // Giving up is survivable: WAL is what lets a reader run while a writer
-    // holds the write lock, and without it SQLite falls back to the rollback
-    // journal, where the same BEGIN IMMEDIATE transactions and the same
-    // busy_timeout still make every claim exclusive. Correctness comes from the
-    // transactions, not from this line; this line buys concurrency, and a board
-    // that stays on the rollback journal is slower, not wrong.
-    this.db.exec('PRAGMA busy_timeout = 5000');
-    this.enableWriteAheadLog();
-    this.db.exec('PRAGMA foreign_keys = ON');
-    this.migrate();
-    return this;
+    // THE `try` STARTS IMMEDIATELY AFTER THE ASSIGNMENT, and that placement is
+    // the whole fix. Wrapping only `migrate()` left the same leak reachable by
+    // every statement between here and there: on a corrupt `board.db`,
+    // `new DatabaseSync` succeeds and the first `PRAGMA` throws, so `migrate()`
+    // is never reached and the try/catch never runs. Verified against both the
+    // previous commit and main — same half-open board, same silent second open.
+    try {
+      // ORDER MATTERS, and setting the timeout first is NECESSARY BUT NOT
+      // SUFFICIENT.
+      //
+      // The timeout first: without it, a second process opening a board gets
+      // SQLITE_BUSY immediately instead of waiting.
+      //
+      // The retry: SQLite does not run the busy handler for the exclusive lock a
+      // journal-mode conversion needs, so on a board that does not exist yet —
+      // the moment the whole swarm opens it at once — one process in three
+      // hundred still lost that lock and died with "database is locked".
+      // Reordering alone turned a 12% failure rate into a 0.2% one, which is
+      // worse than a fix because it looks like a fix.
+      //
+      // Giving up is survivable: WAL is what lets a reader run while a writer
+      // holds the write lock, and without it SQLite falls back to the rollback
+      // journal, where the same BEGIN IMMEDIATE transactions and the same
+      // busy_timeout still make every claim exclusive. Correctness comes from
+      // the transactions, not from this line; this line buys concurrency, and a
+      // board that stays on the rollback journal is slower, not wrong.
+      this.db.exec('PRAGMA busy_timeout = 5000');
+      this.enableWriteAheadLog();
+      this.db.exec('PRAGMA foreign_keys = ON');
+      this.migrate();
+      return this;
+    } catch (err) {
+      try {
+        this.db.close();
+      } catch {
+        /* the handle is being discarded either way; a close that fails must not
+           replace the error the caller needs to see */
+      }
+      this.db = null;
+      throw err;
+    }
   }
 
   /**
@@ -432,6 +542,15 @@ export class Board {
         { code: 1 }
       );
     }
+    // BEFORE `exec(SCHEMA)`, like the version guard above, and for the same
+    // reason. `CREATE TABLE IF NOT EXISTS` would otherwise leave the board
+    // holding eight tables it was about to declare it could not understand —
+    // measured: a v2 board refused by a v3 script gained every table in SCHEMA
+    // and kept its v2 stamp. Additive and idempotent, so not corruption, but it
+    // is the half-adoption this method exists to avoid, and the two refusals in
+    // one method ought to have the same contract.
+    if (existing > 0 && existing < SCHEMA_VERSION) this.requireMigrationStep(existing);
+
     this.db.exec(SCHEMA);
     const migrated = existing > 0 && existing < SCHEMA_VERSION ? this.runMigrations(existing) : false;
     if (existing === 0) {
@@ -447,6 +566,12 @@ export class Board {
        * reason, the migration is then skipped, and the stamp lands anyway — so
        * the board announces v2 with every lock's attribution still sitting in a
        * column nothing reads, and there is no error to send anyone back.
+       *
+       * The step this branch brought did exactly that: it replaced the guarded
+       * `UPDATE` with an unconditional `INSERT … ON CONFLICT DO UPDATE`, which
+       * stamps the version even when `runMigrations` found no step to run. So
+       * main's guarded form is the one kept here, and `indexIssueFiles` is a
+       * step rather than a side effect.
        */
       this.db
         .prepare('UPDATE meta SET value = ? WHERE key = ? AND CAST(value AS INTEGER) < ?')
@@ -455,19 +580,113 @@ export class Board {
   }
 
   /**
-   * Migrations in order, each from the version it actually follows.
+   * Migrations in order, each from the version it actually follows, and EVERY
+   * step between the board's version and this script's.
    *
    * Returns whether a migration actually ran, and that return value is load
    * bearing: it is the ONLY thing that permits the version row to advance. A
    * version that advances without a migration is a board that claims to be
    * current while its data is not, and there is no error to send anyone back.
+   *
+   * It used to run exactly ONE step, keyed on the version it found. That was
+   * correct while there was one step and is a silent data loss the moment there
+   * are two: a board still on v1 opened `steps[1]`, was then stamped with
+   * SCHEMA_VERSION, and never ran `indexIssueFiles` — so it claimed to be
+   * current while every `issue_files` row it needed was missing, and nothing
+   * reported it. Hence the loop, and hence the throw below.
    */
   runMigrations(fromVersion) {
-    const steps = { 1: () => this.migrateFileLockAttribution() };
-    const step = steps[fromVersion];
-    // RETURNED, not just called: `if (step) step();` discarded it, the version
-    // row never advanced, and every open re-ran the migration.
-    return step ? step() : false;
+    // BOTH halves, and neither is redundant. The pre-flight is the guard: it
+    // refuses before `migrate()` has run `exec(SCHEMA)` and half-adopted a board
+    // it cannot migrate. The loop is what makes that guard sufficient — it runs
+    // EVERY step between the board's version and this script's, not only the one
+    // the board happens to be sitting on.
+    this.requireMigrationStep(fromVersion);
+    // AND across the chain, not OR. `false` from ANY step must withhold the
+    // version stamp, because a stamp written over a step that declined is
+    // exactly the board this method exists to prevent: it announces the current
+    // version while the data that version describes was never migrated, and
+    // there is no error to send anyone back. An OR would let step 1 decline and
+    // step 2 succeed, and the stamp would land over step 1's unmigrated data.
+    let complete = true;
+    for (let version = fromVersion; version < SCHEMA_VERSION; version += 1) {
+      const step = this.migrationSteps()[version];
+      /**
+       * A missing step is a defect in THIS script, not a condition of the board,
+       * and it must not be skipped.
+       *
+       * It THROWS rather than breaking out, and that is not the same as refusing:
+       * `requireMigrationStep` has already passed, because it only inspects the
+       * ONE version it was handed, so this is the only thing standing between a
+       * board and a stamp written over a gap. Note what has already happened when
+       * it fires — `migrate()` ran `exec(SCHEMA)`, so the new tables exist and
+       * the version row is still old. That half-adoption is deliberate and
+       * recoverable: every statement here is idempotent, so the next open after
+       * the script is fixed completes the migration. The alternative, breaking
+       * out, would stamp the version and so would strand it permanently.
+       */
+      if (!step) {
+        throw new BoardError(
+          `board is v${fromVersion} and this script writes v${SCHEMA_VERSION}, but there is no step for v${version}: the version would advance over data it never migrated`,
+          { code: 1 }
+        );
+      }
+      // The step's return value is READ, not just called: `if (step) step();`
+      // discarded it, the version row never advanced, and every open re-ran the
+      // migration.
+      if (!step()) complete = false;
+    }
+    return complete;
+  }
+
+  /**
+   * The migrations this script knows, each keyed by the version it follows.
+   *
+   * A METHOD rather than a literal inside `runMigrations`, because `migrate()`
+   * has to ask the same question BEFORE it runs `exec(SCHEMA)` and a literal
+   * scoped to the other method cannot answer it. Two tables would be two
+   * answers.
+   */
+  migrationSteps() {
+    return { 1: () => this.migrateFileLockAttribution(), 2: () => this.indexIssueFiles() };
+  }
+
+  /**
+   * A MISSING STEP IS A BUG IN THIS SCRIPT, and it used to pass for a
+   * successful open.
+   *
+   * `SCHEMA_VERSION` was raised to 3 by two branches that both called their
+   * first step "v2", while main's `steps` still started at 1 — so a board
+   * stamped 2 found no `steps[2]`, got `false`, and the caller read that as
+   * "no migration ran", which is precisely the value that WITHHOLDS the version
+   * stamp. The board stayed at 2 with the new table created empty by
+   * `exec(SCHEMA)` and nothing anywhere reporting an error.
+   *
+   * `integration/merge-sweep` shipped exactly that: v3, an `issue_files` table,
+   * and no `steps[2]`. It reproduces on demand — open a main-written v2 board
+   * with it and you get version 2, an empty `issue_files`, and exit 0.
+   *
+   * So a version this script claims to migrate, with no step to migrate it, now
+   * REFUSES. The failure a caller can act on beats the one it cannot: "fix the
+   * board script" is answerable, "your index is empty and nothing said so" is
+   * not.
+   *
+   * It does NOT, by itself, close the neighbouring hole, and the reason is
+   * that this method only asks about the ONE version it is handed. A v3 script
+   * whose `steps` are `{1, 2}` opening a **v1** board passes here — `steps[1]`
+   * exists — and a single-step `runMigrations` would then stamp it v3 having run
+   * only `migrateFileLockAttribution`. So the loop in `runMigrations` is not
+   * redundant with this guard and must not be collapsed into it: this one refuses
+   * before `exec(SCHEMA)` half-adopts the board, and that one walks every version
+   * in between. Both, or the hole is open again.
+   */
+  requireMigrationStep(fromVersion) {
+    if (!this.migrationSteps()[fromVersion]) {
+      throw new BoardError(
+        `board schema is v${fromVersion} and this script writes v${SCHEMA_VERSION}, but it has no v${fromVersion} migration step; add the step to migrationSteps() in db.mjs`,
+        { code: 1 }
+      );
+    }
   }
 
   currentSchemaVersion() {
@@ -535,6 +754,70 @@ export class Board {
   }
 
   /**
+   * v2 → v3: rebuild `issue_files` from the event log.
+   *
+   * The data is already there — `issue.create` and `lock.hold` both carry a
+   * `files` array in `data` — and any board imported from a handoff document
+   * holds fifty-odd issues whose file references live in that JSON and nowhere
+   * else. Reading them back out is what makes those issues answerable to
+   * `swarm list --files` and `swarm check` at all: the import is idempotent by
+   * `origin`, so re-running it to rebuild the index would file nothing.
+   *
+   * Paths go through `canonicalPaths` on the way in, because that is how they
+   * were stored by `holdFiles` and how `checkPath` compares them; a row spelled
+   * differently is a row nothing ever matches.
+   */
+  indexIssueFiles() {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO issue_files (issue_id, path) VALUES (?, ?)');
+    // JOIN, because `issue_files.issue_id` is a real foreign key and SQLite does
+    // NOT apply `ON CONFLICT` to one: `INSERT OR IGNORE` against an issue that no
+    // longer exists raises `FOREIGN KEY constraint failed` rather than skipping.
+    // The event log outlives the issues table — closing an issue appends an event
+    // rather than deleting the row, and an imported board names issues it never
+    // created — so dangling references are the ordinary case here, not corruption.
+    // Measured on the operator's own board: 143 references indexed, then the raise.
+    const rows = this.db
+      .prepare(
+        `SELECT e.issue_id AS issue_id, e.data AS data
+         FROM events e JOIN issues i ON i.id = e.issue_id
+         WHERE e.data IS NOT NULL AND e.issue_id IS NOT NULL`
+      )
+      .all();
+    const dangling = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM events e
+         WHERE e.issue_id IS NOT NULL AND e.data IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.id = e.issue_id)`
+      )
+      .get();
+    let inserted = 0;
+    for (const row of rows) {
+      let files = null;
+      try {
+        files = JSON.parse(row.data)?.files;
+      } catch {
+        continue;
+      }
+      for (const path of this.canonicalPaths(Array.isArray(files) ? files : [])) {
+        inserted += Number(insert.run(row.issue_id, path).changes);
+      }
+    }
+    this.addEvent('board.migrate', {
+      message: `v2 → v3: ${inserted} issue-file reference(s) indexed from the event log`,
+      data: {
+        from: 2,
+        to: 3,
+        indexed: inserted,
+        // Named rather than dropped silently, for the same reason
+        // `migrateFileLockAttribution` names its own: only the operator can say
+        // whether the event or the issue was the mistake.
+        dropped_dangling_issue: Number(dangling?.n ?? 0),
+      },
+    });
+    return true;
+  }
+
+  /**
    * Every mutation runs inside BEGIN IMMEDIATE. The lock is taken at the start
    * of the transaction rather than on first write, which is what makes
    * read-then-write sequences — "is this claim still live? then take it" —
@@ -560,6 +843,9 @@ export class Board {
   // --- events -------------------------------------------------------------
 
   addEvent(kind, fields = {}) {
+    if (typeof fields.message === 'string') {
+      assertMessageLength(kind, fields.message);
+    }
     const result = this.db
       .prepare(
         `INSERT INTO events (ts, agent_id, kind, issue_id, path, message, data)
@@ -761,9 +1047,15 @@ export class Board {
       // and recorded, so the filer finds out here rather than in a merge.
       // `holdFiles: false` is the import path: sixty issues imported at once
       // must not leave the importing agent holding sixty files' leases.
+      //
+      // The REFERENCE is written either way, which is the point: an issue that
+      // takes no lock is still an issue about that file, and before `issue_files`
+      // the only way to know that was to read its event payload by hand.
       const conflicts = [];
+      const referenced = this.canonicalPaths(files);
+      this.recordIssueFiles(id, referenced);
       if (holdFiles) {
-        for (const path of this.canonicalPaths(files)) {
+        for (const path of referenced) {
           const holder = this.liveLocks().find((lock) => lock.path === path && lock.agent_id !== createdBy);
           if (holder) {
             conflicts.push({ path, holder });
@@ -787,17 +1079,55 @@ export class Board {
         data: { scope, priority, origin, files, deps, ...(data ? { source: data } : {}) },
       });
       if (files.length > 0) {
-        this.addEvent('lock.hold', {
+        /**
+         * `lock.hold` is reserved for a hold that happened. The import used to
+         * emit one with `held: false` and a message that said so, which put a
+         * lie in the log under the lie's own name: an agent reading
+         * `board watch` saw forty-six "hold" events on a board where nothing was
+         * held, and the only honest way to read the log was to trust the message
+         * over the kind. Naming the reference for what it is costs nothing and
+         * makes the log readable.
+         */
+        this.addEvent(holdFiles ? 'lock.hold' : 'file.reference', {
           issue: id,
           agent: createdBy,
           message: holdFiles
             ? `filed with ${files.length} file lock(s)`
             : `filed about ${files.length} file(s), no locks taken`,
-          data: { files, held: holdFiles, conflicts: conflicts.map((c) => c.path) },
+          data: holdFiles ? { files, held: true, conflicts: conflicts.map((c) => c.path) } : { files, held: false },
         });
       }
       return { id, created: true, conflicts };
     });
+  }
+
+  recordIssueFiles(issueId, paths) {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO issue_files (issue_id, path) VALUES (?, ?)');
+    for (const path of paths) insert.run(issueId, path);
+  }
+
+  /**
+   * The live issues that name a path: the answer to "is anybody already in this
+   * file" for every issue that did not take a lock on it.
+   *
+   * Resolved and closed issues drop out. A fixed defect is a reason to read the
+   * entry, not a reason to stay out of the file, and leaving them in would make
+   * `check` cry wolf on every path the handoff documents have ever mentioned.
+   */
+  issuesForPath(path, { at = this.now() } = {}) {
+    const normalized = this.toRepoPath(path);
+    if (normalized === undefined) return [];
+    return this.db
+      .prepare(
+        `SELECT i.id, i.title, i.status, i.priority, i.origin, i.created_by AS agent_id,
+                (SELECT c.agent_id FROM claims c
+                  WHERE c.issue_id = i.id AND c.released_at IS NULL AND c.lease_until > ?) AS claimed_by
+           FROM issue_files f
+           JOIN issues i ON i.id = f.issue_id
+          WHERE f.path = ? AND i.status IN (${LIVE_STATUSES.map(() => '?').join(',')})
+          ORDER BY i.created_at ASC`
+      )
+      .all(this.iso(at), normalized, ...LIVE_STATUSES);
   }
 
   getIssue(id) {
@@ -897,19 +1227,29 @@ export class Board {
       params.push(claimedBy, this.iso());
     }
     if (files && files.length > 0) {
-      // Normalised, because `holdFiles` normalises: an absolute path here would
-      // never match the relative form it stored. And lease-filtered, because
-      // this query feeds a human a list of what is being worked on, which a
-      // lock whose lease ran out is not.
+      /**
+       * `issue_files`, not `file_locks`, and no `agent_id` filter.
+       *
+       * The old query joined `file_locks` and required the row to belong to the
+       * CALLER, so `board list --files src/x.ts` could only ever answer "which
+       * of my own locks is on this path" — a question about the reader, asked
+       * through a flag that reads as a question about the file. A file nobody
+       * held produced an empty list, which is indistinguishable from a file
+       * nobody cares about, so the one command an agent runs before editing had
+       * no way to say that three open issues name the file they are about to
+       * open.
+       *
+       * Paths are canonicalised for the same reason `holdFiles` canonicalises:
+       * an absolute path would never match the relative form that is stored.
+       */
       const wanted = this.canonicalPaths(files);
       if (wanted.length > 0) {
         where.push(
-          `EXISTS (SELECT 1 FROM issue_locks l WHERE l.issue_id = issues.id AND l.agent_id = ? AND l.path IN (${wanted
+          `EXISTS (SELECT 1 FROM issue_files f WHERE f.issue_id = issues.id AND f.path IN (${wanted
             .map(() => '?')
-            .join(',')})
-            AND EXISTS (SELECT 1 FROM file_locks f WHERE f.path = l.path AND f.agent_id = l.agent_id AND f.released_at IS NULL AND f.expires_at > ?))`
+            .join(',')}))`
         );
-        params.push(claimedBy ?? this.identity?.agentId ?? 'unknown', ...wanted, this.iso());
+        params.push(...wanted);
       }
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -1114,9 +1454,9 @@ export class Board {
    * `liveLocks`, and never through this.
    */
   locksFor(issueId, at = this.now()) {
-    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path} ${lock.agent_id}`, lock]));
+    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path}\0${lock.agent_id}`, lock]));
     return this.issueLocks(issueId, at)
-      .map((pairing) => live.get(`${pairing.path} ${pairing.agent_id}`))
+      .map((pairing) => live.get(`${pairing.path}\0${pairing.agent_id}`))
       .filter(Boolean);
   }
 
@@ -1252,6 +1592,22 @@ export class Board {
            ON CONFLICT(issue_id, path) DO NOTHING`
         )
         .run(issueId, path, who, this.iso());
+      /**
+       * A lock is also a fact about what the issue is ABOUT, so it is indexed as
+       * one. `swarm hold <path> --issue <id>` therefore makes the issue findable
+       * through `list --files` and `check` for as long as the issue is open,
+       * which is after the lease has run out — the LEASE says who is working in
+       * the file right now, and this says what the issue is about. Conflating the
+       * two is what made `list --files` unanswerable before: it asked the lease
+       * table a question about identity, and got an empty set for every
+       * unlocked file.
+       *
+       * Written after `issue_locks`, not before: `recordIssueFiles` has no
+       * foreign key of its own to trip, but a board that took the reference and
+       * then failed the pairing would leave an issue naming a file it never
+       * locked, which is exactly the false claim this index must not make.
+       */
+      this.recordIssueFiles(issueId, [path]);
     }
     return path;
   }
@@ -1304,20 +1660,56 @@ export class Board {
         agent: pairing.agent_id,
         path: pairing.path,
         message: 'released with the issue that held it',
+        // Named for the same reason `releaseFiles` names it: without a reason a
+        // close-driven release and a claim-driven release are the same row, and
+        // the log cannot answer who let go.
+        data: { reason: 'cascade' },
       });
     }
     return freed;
   }
 
-  releaseFiles(paths, { agent, force = false } = {}) {
+  /**
+   * `reason` exists because the log could not be read without it.
+   *
+   * Explicit `unlock` and the expiry sweep both ended up here, and both wrote
+   * `lock.release` with `data: { by, forced }`. That is *almost* a
+   * discriminator — the sweep happened to pass `force: true` and to pass the
+   * HOLDER as `by`, so a swept row read `{by: <the dead agent>, forced: true}`
+   * — but only inferentially: a third party running `unlock --force` produces
+   * the identical shape, and the on-the-issue-cascade path wrote no `data` at
+   * all. Asked "did this agent give the file up, or did the board take it?", the
+   * log could not answer, which is why 521 `lock.release` rows and 11 real
+   * `unlock` commands looked like the same event.
+   *
+   * A closed vocabulary, because the point is to be countable. `requested` is a
+   * human asking; `swept` is the board reclaiming a holding whose holder is
+   * gone; `cascade` is an issue closing or being released and taking its
+   * paired locks with it.
+   */
+  releaseFiles(paths, { agent, force = false, reason = 'requested' } = {}) {
     const who = agent ?? this.identity?.agentId;
     const list = this.canonicalPaths(paths);
     return this.transaction(() => {
       const released = [];
+      const blocked = [];
       for (const path of list) {
         const rows = this.db.prepare('SELECT * FROM file_locks WHERE path = ? AND released_at IS NULL').all(path);
         for (const row of rows) {
-          if (row.agent_id !== who && !force) continue;
+          if (row.agent_id !== who && !force) {
+            /**
+             * Report the holder instead of skipping in silence.
+             *
+             * Skipping produced `released: []`, which the CLI rendered as
+             * `nothing held by you there` and exit 0 — a success message for a
+             * release that did not happen. `scripts/e2e-run.mjs:404-407` records
+             * the damage in this repository's own words: a dead-holder reclaim
+             * "ran as us, matched no row, and reported success". The caller
+             * needs to know a file is still somebody else's, and which somebody.
+             */
+            blocked.push({ path, agent_id: row.agent_id });
+            continue;
+          }
           this.db
             .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ?')
             .run(this.iso(), path, row.agent_id);
@@ -1338,21 +1730,21 @@ export class Board {
               issue: pairing.issue_id,
               agent: row.agent_id,
               path,
-              message: 'released',
-              data: { by: who, forced: Boolean(force) },
+              message: reason === 'swept' ? 'released by the sweep' : 'released',
+              data: { by: who, forced: Boolean(force), reason },
             });
           }
           if (pairings.length === 0) {
             this.addEvent('lock.release', {
               agent: row.agent_id,
               path,
-              message: 'released',
-              data: { by: who, forced: Boolean(force) },
+              message: reason === 'swept' ? 'released by the sweep' : 'released',
+              data: { by: who, forced: Boolean(force), reason },
             });
           }
         }
       }
-      return { released: [...new Set(released)] };
+      return { released: [...new Set(released)], blocked };
     });
   }
 
@@ -1534,25 +1926,64 @@ export class Board {
    * compared against `/…/worktree/src/x.ts` and reported FREE — this command
    * exists to be the gate against two agents in one file, and it was inverted
    * for exactly the input a caller is most likely to paste in.
+   *
+   * `issues` is reported but NOT allowed to change the exit code. A reference is
+   * not a hold: 54 imported issues name about a hundred files, and a gate that
+   * failed on any of them would fail on nearly every file in the repository and
+   * train every agent to pass `--force`. The exit code answers "may I take this
+   * file" and nothing else; `issues` answers "who else is in it" for the agent
+   * that reads the output. Making the stricter reading available is a separate
+   * decision, and it is the operator's, not a side effect of a query.
    */
   checkPath(path, { agent, at = this.now() } = {}) {
     const who = agent ?? this.identity?.agentId;
     const typed = String(path ?? '').trim();
     // Nothing was asked about. "Free" is an answer about a FILE, and a command
     // that checked no file must not hand back the exit code that means it did.
-    if (typed === '') return { path, free: false, holders: [], outside: true, nothing: true };
+    if (typed === '') return { path, free: false, holders: [], issues: [], outside: true, nothing: true };
     const normalized = this.toRepoPath(path);
-    if (normalized === undefined) return { path, free: true, holders: [] };
+    if (normalized === undefined) return { path, free: true, holders: [], issues: [] };
     // An absolute path that survived the prefix strip is OUTSIDE every worktree
     // of this repository, so the board has no lock on it and cannot say it is
     // free — `hold` refuses such a path outright, and `check` answering "free"
     // where `hold` answers "no" is the disagreement that lets a shell gate on
     // the wrong one.
     if (normalized.startsWith('/') || normalized.startsWith('..')) {
-      return { path: normalized, free: false, holders: [], outside: true };
+      // `issues: []` on every early return, not just here: this object is what
+      // the CLI renders, and a consumer that reads `.issues` must never have to
+      // guard for the key being absent on one of three paths.
+      return { path: normalized, free: false, holders: [], issues: [], outside: true };
     }
-    const holders = this.liveLocks(at).filter((lock) => lock.path === normalized && lock.agent_id !== who);
-    return { path: normalized, free: holders.length === 0, holders };
+    const onPath = this.liveLocks(at).filter((lock) => lock.path === normalized);
+    const holders = onPath.filter((lock) => lock.agent_id !== who);
+    /**
+     * Your own lock is not contention — you are allowed to edit what you are in,
+     * and treating it as a conflict would make `check` unusable for the agent
+     * that most needs to ask. So `free` stays `true`.
+     *
+     * What was wrong is that the answer said nothing. `free` is also what a file
+     * NOBODY holds reports, and the board's own state — that there is a live
+     * lock here, held by the caller, with a lease on it — was discarded rather
+     * than reported. `check` is the command AGENTS.md mandates before every
+     * edit, so "the board has never heard of this file" and "this file is
+     * locked, by you" came back as the identical string and the identical exit
+     * 0. An agent debugging why a peer could not see its own lock had no way to
+     * find out, and the board's own knowledge of the file looked absent.
+     */
+    const heldByYou = onPath
+      .filter((lock) => lock.agent_id === who)
+      .map((lock) => ({ agent_id: lock.agent_id, expires_at: lock.expires_at, worktree: lock.worktree }));
+    // `issues` is the half this whole branch exists for, and the doc comment above
+    // already promised it: an issue that NAMES this file is not a free file, even
+    // with no lease on it. Reporting it is not the same as refusing it — the exit
+    // code still answers only "may I take this", per the comment.
+    return {
+      path: normalized,
+      free: holders.length === 0,
+      holders,
+      heldByYou,
+      issues: this.issuesForPath(normalized, { at }),
+    };
   }
 
   // --- lifecycle ----------------------------------------------------------
@@ -1733,11 +2164,26 @@ export class Board {
    */
   doctor({ at = this.now(), dryRun = false, record = true } = {}) {
     const findings = [];
+    /**
+     * The agents already reported as gone, so the same abandonment is not
+     * counted twice.
+     *
+     * A claim taken with `--issue` and its file lock are ONE event, and the
+     * release loop below proves it: `releaseClaim` cascades into
+     * `releaseIssueLocksInTransaction`, so a second finding would name a release
+     * that already happened, and the log would report two reclaimments for one
+     * abandoned agent. The `hold <path>` with no `--issue` form that the
+     * dead-worktree test below exists for writes NO claim at all, so its holder
+     * is not in this set and its lock is still reported — which is the whole
+     * point of adding the test rather than extending the claim's.
+     */
+    const goneAgents = new Set();
     const claims = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     for (const claim of claims) {
       const expired = Date.parse(claim.lease_until) <= at;
       const gone = claim.worktree ? !existsDir(claim.worktree) : false;
       if (!expired && !gone) continue;
+      if (gone) goneAgents.add(claim.agent_id);
       findings.push({
         kind: gone ? 'dead-worktree' : 'expired-lease',
         issue: claim.issue_id,
@@ -1749,8 +2195,40 @@ export class Board {
     }
     const at2 = this.now();
     for (const lock of this.db.prepare('SELECT * FROM file_locks WHERE released_at IS NULL').all()) {
-      if (Date.parse(lock.expires_at) > at2) continue;
-      findings.push({ kind: 'expired-lock', path: lock.path, agent: lock.agent_id, releaseable: true });
+      const expired = Date.parse(lock.expires_at) <= at2;
+      /**
+       * The dead-worktree test, for locks, which claims got and locks never did.
+       *
+       * `file_locks.worktree` has been written on every hold since the column
+       * existed and was read by NOTHING — not by `doctor`, not by `liveLocks`,
+       * not by any predicate in this file. So the one reclaimable-by-fact
+       * holding had no fact-based reclaim, and the only thing that could ever
+       * free it was a 45-minute timer. The case that hurt is the form
+       * `AGENTS.md:110` prescribes: `hold <path>` with no `--issue` writes no
+       * `issue_locks` row, so the claim cascade in the release loop below has
+       * nothing to find, and a dead session's lock refused `hold` (exit 4) and
+       * `check` (exit 1) for the rest of its window while naming a branch that
+       * no longer existed.
+       *
+       * Safe for the same reason it is safe for claims: the worktree is written
+       * from the holder's own identity, so it is the HOLDER's directory, and a
+       * directory that is gone is not coming back to renew anything.
+       *
+       * And skipped when the CLAIM loop already reported this agent as gone —
+       * see `goneAgents`. `expired-lock` is untouched by that: a lapsed lock is
+       * a lapsed lock whatever the claim is doing, and the release loop needs
+       * the row to release it.
+       */
+      const gone = lock.worktree ? !existsDir(lock.worktree) : false;
+      if (!expired && !gone) continue;
+      if (gone && goneAgents.has(lock.agent_id)) continue;
+      findings.push({
+        kind: gone ? 'dead-worktree-lock' : 'expired-lock',
+        path: lock.path,
+        agent: lock.agent_id,
+        worktree: lock.worktree,
+        releaseable: true,
+      });
     }
     // A sweep is a fact about the swarm and the log is the only place it can be
     // seen from another session. But it is recorded ONLY when it released
@@ -1791,8 +2269,15 @@ export class Board {
          *
          * A sweep agent may reclaim what has lapsed. It may NOT take a file away
          * from an agent that is still writing: only the operator stops a chat.
+         *
+         * `reason: 'swept'` is the ONLY thing this branch adds to the line, and
+         * it is a log discriminator, not a permission: it is what makes a swept
+         * `lock.release` distinguishable from an `unlock` a human asked for, in a
+         * column that has no `path` to tell them apart by. `force` is left off
+         * because adding it back would re-open the hole the paragraph above
+         * documents, in exchange for nothing this change needs.
          */
-        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent });
+        if (finding.path) this.releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' });
       }
     }
     return findings;
@@ -1851,20 +2336,128 @@ export class Board {
   }
 
   /**
+   * The same presence argument applied to the FILE LOCKS, which for years had
+   * none of it — and the asymmetry was the single worst defect this board had.
+   *
+   * Measured on the live board: 378 of 459 lock rows had `expires_at` exactly
+   * `acquired_at + 45m` and nothing else, which is the signature of a countdown
+   * that nothing ever pushes forward. Claim rows over the same period ranged
+   * from 0m to 94m+, because `renewOwnClaims` above keeps moving them. So a
+   * claim was extended by existing while the file lock protecting that claim's
+   * files died at a fixed 45 minutes, and `docs/ORCHESTRATION.md` told every
+   * agent the lease was renewed by presence.
+   *
+   * What that means in use: an agent locks six files, works for two hours, and
+   * runs no board command because everything is going fine. At minute 45 all six
+   * locks are gone, `check` reports every one of those files `free` to the next
+   * agent, and the guarantee "never two agents in one file" — the reason the tool
+   * exists — lapses silently. Nothing is logged, because nothing happened.
+   *
+   * So locks are renewed the same way claims are: the caller renews its own, and
+   * only its own, and only while its worktree is on disk. The gate is the same
+   * half-lease threshold, so this fires at most once per half-lease per command
+   * rather than on every command — the event flood that made `claim.renew` and
+   * the auto-sweeper contentious is the thing being avoided here, not repeated.
+   *
+   * `acquired_at` is deliberately NOT touched. It answers "how long has this
+   * agent been in this file", which is a different question from "how long is
+   * this lock good for", and a re-hold already resets both.
+   */
+  renewOwnLocks({ at = this.now(), leaseMs = DEFAULT_LEASE_MS } = {}) {
+    const agentId = this.identity?.agentId;
+    if (!agentId) return [];
+    // Same rule as claims: no worktree, no way to prove liveness, so the
+    // manual contract stands. That is the `main`-checkout and detached case.
+    const worktree = this.identity?.worktree;
+    if (!worktree || !existsDir(worktree)) return [];
+    const until = msFromNow(leaseMs, at);
+    const mine = this.db
+      .prepare('SELECT path, expires_at FROM file_locks WHERE released_at IS NULL AND agent_id = ?')
+      .all(agentId)
+      .filter((lock) => Date.parse(lock.expires_at) - at < leaseMs / 2);
+    if (mine.length === 0) return [];
+    for (const lock of mine) {
+      this.db
+        .prepare('UPDATE file_locks SET expires_at = ? WHERE path = ? AND agent_id = ?')
+        .run(until, lock.path, agentId);
+    }
+    /**
+     * ONE event for the whole batch, not one per file, and with no `path`.
+     *
+     * That is the same unit `lock.hold` uses (one event for a command that took
+     * any number of files), and it is load-bearing rather than tidy: `health`
+     * splits activity by reading `path IS NULL`, so a per-file renewal event
+     * would land in the per-file bucket and make a lease extension look like
+     * file contention — the exact misreading that already produced one wrong
+     * published number in this repository.
+     */
+    this.addEvent('lock.renew', {
+      message: `${mine.length} file(s)`,
+      data: { files: mine.map((lock) => lock.path) },
+    });
+    return mine.map((lock) => lock.path);
+  }
+
+  /**
+   * Is a locked path a FILE, or a name standing in for one?
+   *
+   * Some locks are mutexes, not files. `scripts/e2e-run.mjs` takes
+   * `e2e/.swarm-e2e-runner` to serialise Playwright suites across every
+   * worktree — a path that is deliberately never created, so that no agent can
+   * edit it and no commit can collide on it. It is a real coordination point
+   * and it works, but it is not a file and it is not contention on the
+   * repository.
+   *
+   * The measurement, on the live board: 536 of 575 `lock.deny` events — 93% of
+   * the single largest event class in an 1812-event log — were refusals on that
+   * one sentinel. So `lock.deny` read as enormous multi-agent file contention
+   * when real source-file refusals numbered 39. That is the third time an
+   * aggregate in this method has described the ENCODING rather than the swarm,
+   * after the per-command/per-file unit split and the `lockShare` sum. The
+   * difference here is that the two populations cannot even be ADDED: one is
+   * "a source file", the other is "a queue".
+   *
+   * Answered from the filesystem across every worktree the board knows, not
+   * from a list of known sentinels: a hand-maintained list is how the unit bug
+   * happened, and a second sentinel would be invisible to it. The verdict is
+   * also reported, never applied silently.
+   */
+  isRepoFile(path) {
+    if (!this._fileVerdict) this._fileVerdict = new Map();
+    if (this._fileVerdict.has(path)) return this._fileVerdict.get(path);
+    let isFile = false;
+    for (const root of this.pathRoots()) {
+      try {
+        if (statSync(join(root, path)).isFile()) {
+          isFile = true;
+          break;
+        }
+      } catch {
+        // Not under this root, or not a regular file. Try the next one.
+      }
+    }
+    this._fileVerdict.set(path, isFile);
+    return isFile;
+  }
+
+  /**
    * The maintenance a board should never need a human to run: keep my own
-   * claims alive because I exist, then release the ones whose holder does not.
+   * claims and file locks alive because I exist, then release the ones whose
+   * holder does not.
    *
    * Order matters and is the whole reason this is safe. Renewing first means a
    * working agent's lease is never the thing that gets swept, so the sweep can
-   * only ever reclaim a claim whose worktree is gone — which is precisely when
-   * reclaiming it is correct. Sweeping first, as a bare `doctor` on every open
-   * would, hands a 45-minute timer the power to strip a lock off an agent in
-   * the middle of an edit.
+   * only ever reclaim a holding whose worktree is gone — which is precisely
+   * when reclaiming it is correct. Sweeping first, as a bare `doctor` on every
+   * open would, hands a 45-minute timer the power to strip a lock off an agent
+   * in the middle of an edit.
    */
   autoSweep({ at = this.now(), dryRun = false } = {}) {
-    const renewed = dryRun ? [] : this.renewOwnClaims({ at });
-    const released = this.doctor({ at, dryRun, record: !dryRun });
-    return { renewed, released };
+    if (dryRun) return { renewed: [], renewedFiles: [], released: this.doctor({ at, dryRun, record: false }) };
+    const renewed = this.renewOwnClaims({ at });
+    const renewedFiles = this.renewOwnLocks({ at });
+    const released = this.doctor({ at, dryRun, record: true });
+    return { renewed, renewedFiles, released };
   }
 
   /**
@@ -1898,6 +2491,25 @@ export class Board {
      */
     const perFile = new Map();
     const perCommand = new Map();
+    /**
+     * The per-file bucket, split again by whether the path is a file at all.
+     *
+     * A lock on `e2e/.swarm-e2e-runner` is a queue, and counting it beside a
+     * lock on `src/util/draw.ts` says something true about neither. Kept as
+     * separate maps rather than subtracted, so the totals still add up to the
+     * numbers a reader already has — a correction, not a replacement.
+     */
+    const perFileReal = new Map();
+    const perFileVirtual = new Map();
+    /**
+     * TWO QUERIES, because the split needs a per-path row and the unit does not.
+     *
+     * The unit split is an aggregate — `GROUP BY kind, is_file` answers it in one
+     * pass, and it is the one that has to keep working: `perCommand` is where a
+     * `lock.hold` that took no file lands, and a rewrite that kept only the
+     * per-path rows emptied that bucket entirely. Splitting a query by the
+     * `WHERE` clause is not a refactor, it deletes a population.
+     */
     for (const row of this.db
       .prepare(
         `SELECT kind, CASE WHEN path IS NULL THEN 0 ELSE 1 END AS is_file, COUNT(*) n
@@ -1905,6 +2517,12 @@ export class Board {
       )
       .all()) {
       (row.is_file ? perFile : perCommand).set(row.kind, row.n);
+    }
+    for (const row of this.db
+      .prepare('SELECT kind, path, COUNT(*) n FROM events WHERE path IS NOT NULL GROUP BY kind, path')
+      .all()) {
+      const bucket = this.isRepoFile(row.path) ? perFileReal : perFileVirtual;
+      bucket.set(row.kind, (bucket.get(row.kind) ?? 0) + row.n);
     }
     const summed = (map) => [...map.values()].reduce((a, b) => a + b, 0);
 
@@ -1935,6 +2553,17 @@ export class Board {
         perFile: Object.fromEntries([...perFile].sort((a, b) => b[1] - a[1])),
         perCommandTotal: summed(perCommand),
         perFileTotal: summed(perFile),
+        /**
+         * `perFile` split by whether the path is a file. Read `perFileFiles` to
+         * answer "how much contention is there on the repository" and
+         * `perFileNonFiles` to answer "how much of the lock traffic is a queue
+         * or a name" — adding them back together is how the sentinel came to
+         * outnumber real contention fourteen to one.
+         */
+        perFileFiles: Object.fromEntries([...perFileReal].sort((a, b) => b[1] - a[1])),
+        perFileFilesTotal: summed(perFileReal),
+        perFileNonFiles: Object.fromEntries([...perFileVirtual].sort((a, b) => b[1] - a[1])),
+        perFileNonFilesTotal: summed(perFileVirtual),
       },
       locks: { taken, live: liveLocks, released: taken - liveLocks },
       claims: { total: unreleased.length, live: live.length, expired: unreleased.length - live.length },

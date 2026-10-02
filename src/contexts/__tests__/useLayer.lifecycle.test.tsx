@@ -714,19 +714,23 @@ describe('useLayers applyDocumentCrop', () => {
 
     expect(applied).toBe(true);
     const store = result.current.store;
-    // The rect is clamped to the document bounds before the frame is derived.
-    expect(store.documentFrame).toEqual({ x: 100, y: 50, width: 700, height: 550 });
-    expect(store.totalSize).toEqual({ width: 700, height: 550 });
+    // The rect is NOT clamped to the document bounds: 900x650 is what the gesture asked for,
+    // and the frame keeps all of it, so an 800x600 document is untouched in size and only
+    // re-anchored at 100,50.
+    expect(store.documentFrame).toEqual({ x: 100, y: 50, width: 800, height: 600 });
+    expect(store.totalSize).toEqual({ width: 800, height: 600 });
     expect(store.history.at(-1)).toMatchObject({
       actionName: SET_DOCUMENT_FRAME_ACTION,
       layerId: 'document',
       args: {
         previousFrame: frame,
-        nextFrame: { x: 100, y: 50, width: 700, height: 550 },
+        nextFrame: { x: 100, y: 50, width: 800, height: 600 },
       },
     });
-    // The store converts the appended timeline, so the legacy edit is published.
-    expect(store.durableStatus).toBe('current');
+    // This harness intentionally starts with no legacy timeline. The append is
+    // still published through the legacy authority, while the durable shadow
+    // reports the undefined cursor mapping instead of claiming parity.
+    expect(store.durableStatus).toBe('unavailable');
   });
 
   it('refuses a crop that trims to nothing and records no history', () => {
@@ -783,5 +787,198 @@ describe('useLayers applyDocumentCrop', () => {
     expect(result.current.store.history.filter((entry) => entry.actionName === SET_DOCUMENT_FRAME_ACTION)).toHaveLength(
       2
     );
+  });
+
+  it('grows the document past the right and bottom edge', () => {
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    let applied = false;
+    act(() => {
+      // 900x650 on an 800x600 document: 100px of new canvas on the right, 50px on the bottom.
+      applied = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: 900, y2: 650 });
+    });
+
+    expect(applied).toBe(true);
+    const store = result.current.store;
+    expect(store.documentFrame).toEqual({ x: 0, y: 0, width: 900, height: 650 });
+    expect(store.totalSize).toEqual({ width: 900, height: 650 });
+    // The commit carries the frame and nothing else, so the added band holds no pixels: OVR-1.
+    expect(store.history.at(-1)).toMatchObject({
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      args: { previousFrame: frame, nextFrame: { x: 0, y: 0, width: 900, height: 650 } },
+    });
+  });
+
+  it('anchors the frame negatively when the rect extends past the left and top edge', () => {
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    let applied = false;
+    act(() => {
+      // -100,-50 to 700,550: the extent is the document's own 800x600, only moved up and left.
+      applied = result.current.layers.applyDocumentCrop({ x1: -100, y1: -50, x2: 700, y2: 550 });
+    });
+
+    expect(applied).toBe(true);
+    const store = result.current.store;
+    expect(store.documentFrame).toEqual({ x: -100, y: -50, width: 800, height: 600 });
+    // The size is unchanged, which is what makes a negative origin legible: 800x600 of canvas,
+    // with the pixels now sitting 100px in from its left edge and 50px down from its top.
+    expect(store.totalSize).toEqual({ width: 800, height: 600 });
+  });
+
+  it('refuses a frame past the per-side ceiling, and records no history', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    // 32768x1 is 32768 pixels in area — a rounding error against the 16777216px area ceiling —
+    // and 32768 pixels on one side against the 4096px per-side ceiling, so only the side arm can
+    // refuse it. It is the rect the guard refused at its own 32767 ceiling and it is still
+    // refused: a lower ceiling must not turn a refused frame into an accepted one.
+    // 20000x20000 is over both ceilings now (20000 > 4096, and 400,000,000 > 16777216), so it no
+    // longer isolates the area arm and is kept for the outcome rather than for the arm.
+    let overSide = true;
+    let overBoth = true;
+    act(() => {
+      overSide = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: 32768, y2: 1 });
+    });
+    act(() => {
+      overBoth = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: 20000, y2: 20000 });
+    });
+
+    expect(overSide).toBe(false);
+    expect(overBoth).toBe(false);
+    expect(result.current.store.documentFrame).toEqual(frame);
+    expect(result.current.store.totalSize).toEqual(size);
+    expect(result.current.store.history).toEqual([]);
+    // A refusal the operator cannot see is indistinguishable from a crop that did nothing.
+    const refusals = warn.mock.calls.map((call) => String(call[0]));
+    expect(refusals.filter((message) => message.includes('32768x1'))).toHaveLength(1);
+    expect(refusals.filter((message) => message.includes('20000x20000'))).toHaveLength(1);
+
+    warn.mockRestore();
+  });
+
+  it('refuses a strip the area ceiling admits, so the side arm is the one that fires', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    // 16384x1 is 16384 pixels of area, a thousandth of the 16777216px area ceiling, so the area
+    // arm cannot be what refuses it — 16384 pixels on one side is what does, against 4096. This
+    // is the test that makes the two arms independent: the previous test passes just as well with
+    // a side ceiling of 32767, because at that ceiling every over-area frame is also over a side
+    // and the side arm is unreachable. The cost of the side arm is stated here: a 16384x1 frame is
+    // legal on every browser this app targets, and it is refused.
+    let applied = true;
+    act(() => {
+      applied = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: 16384, y2: 1 });
+    });
+
+    expect(applied).toBe(false);
+    expect(result.current.store.documentFrame).toEqual(frame);
+    expect(result.current.store.history).toEqual([]);
+    const refusals = warn.mock.calls.map((call) => String(call[0]));
+    expect(refusals.filter((message) => message.includes('16384x1'))).toHaveLength(1);
+    // The message names the ceilings it was measured against, not a single canvas that gave up.
+    expect(refusals[0]).toContain('4096px per-side');
+    expect(refusals[0]).toContain('16777216px area');
+
+    warn.mockRestore();
+  });
+
+  it('accepts the largest frame the ceilings allow', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    // 4096 * 4096 === 16777216, so this frame sits on BOTH ceilings exactly and is the largest
+    // legal one. The control for the three refusals above: a guard whose ceilings were set one
+    // notch too tight — a `>` where the intent was `>=`, or an area ceiling below sqrt(2^24) —
+    // refuses legal work and nothing else here would show it.
+    let applied = false;
+    act(() => {
+      applied = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: 4096, y2: 4096 });
+    });
+
+    expect(applied).toBe(true);
+    const store = result.current.store;
+    expect(store.documentFrame).toEqual({ x: 0, y: 0, width: 4096, height: 4096 });
+    expect(store.totalSize).toEqual({ width: 4096, height: 4096 });
+    expect(store.history.filter((entry) => entry.actionName === SET_DOCUMENT_FRAME_ACTION)).toHaveLength(1);
+    expect(warn.mock.calls.filter((call) => String(call[0]).includes('applyDocumentCrop refused'))).toEqual([]);
+
+    warn.mockRestore();
+  });
+
+  it('refuses one pixel over the area ceiling and names the attempted size', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    // 4097x4096 is 16781312 pixels: 4096 over the area ceiling, and one pixel over the side
+    // ceiling as well. Both arms are over, and that is the arithmetic of a 4096 side ceiling
+    // rather than a gap in the guard: no frame can be over the area while inside the sides,
+    // because 4096 * 4096 IS the area ceiling. The area arm is therefore subsumed, the side arm
+    // carries every refusal, and both are kept so the budget and the box it is spent in stay
+    // written down next to each other.
+    let applied = true;
+    act(() => {
+      applied = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: 4097, y2: 4096 });
+    });
+
+    expect(applied).toBe(false);
+    expect(result.current.store.documentFrame).toEqual(frame);
+    expect(result.current.store.totalSize).toEqual(size);
+    expect(result.current.store.history).toEqual([]);
+    const refusals = warn.mock.calls.map((call) => String(call[0]));
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain('4097x4096');
+    expect(refusals[0]).toContain('16781312px');
+    expect(refusals[0]).toContain('six canvas surfaces');
+
+    warn.mockRestore();
+  });
+
+  it('composes a growth and a shrink the way two shrinks compose', () => {
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    // Same composition the accumulating case above pins, with the first step going the other
+    // way: the rect is relative to the current frame, so 100,50 is 100,50 of a 900x650 canvas.
+    act(() => {
+      result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: 900, y2: 650 });
+    });
+    act(() => {
+      result.current.layers.applyDocumentCrop({ x1: 100, y1: 50, x2: 500, y2: 400 });
+    });
+
+    const store = result.current.store;
+    expect(store.documentFrame).toEqual({ x: 100, y: 50, width: 400, height: 350 });
+    expect(store.totalSize).toEqual({ width: 400, height: 350 });
+    expect(store.history.filter((entry) => entry.actionName === SET_DOCUMENT_FRAME_ACTION)).toHaveLength(2);
   });
 });

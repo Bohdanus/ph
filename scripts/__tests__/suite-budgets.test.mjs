@@ -84,6 +84,8 @@ const BUDGETED = [
   'e2e-run.test.mjs',
   'main-worktree-guard.test.mjs',
   'merge-release.test.mjs',
+  'merge-takeover-guard.test.mjs',
+  'merge-takeover-guard-install.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
 ];

@@ -2,7 +2,13 @@ import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } fro
 import type { Point, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
-import { getCanvasSize, posToSortedRect, sortRect, trimRect } from '../util/rect.ts';
+import {
+  getCanvasSize,
+  posToSortedRect,
+  sortRect,
+  sortRoundRect,
+  trimRect,
+} from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
@@ -11,8 +17,9 @@ import type { Layer } from '../contexts/layer-types.ts';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
+  /** The frame's size in CANVAS px, so the frame rect here is `[0, 0, imageSize]`. */
   imageSize: Size;
-  initialRect?: RectXYSorted | null; // can be set using props
+  initialRect?: RectXYSorted | null; // can be set using props, in canvas px like everything else
 
   hideBlend?: boolean;
   isMoveTool?: boolean;
@@ -50,6 +57,22 @@ export type UseRectProps = {
    */
   borderMode?: 'always' | 'while-dragging';
 
+  /**
+   * Paint the TRUE rect where the pointer left it, including the part that has left the canvas
+   * frame.
+   *
+   * Opt-in per consumer because this hook is shared: crop's box is a window onto a canvas that
+   * extends past the image, so a box dragged past the frame edge has to keep the overhang — the
+   * clamp below made it snap back to the edge while `onChange`/`onChangeEnd` still reported the
+   * unclamped rect, so the two disagreed on screen. Every other consumer wants the clamp and
+   * passes neither this nor the other two.
+   *
+   * PAINTING ONLY. The reported rect is `sortRect(rect)` with no clamp in any case, so
+   * `onRepaint`, `onChange` and `onChangeEnd` are untouched by this prop; the backing store clips
+   * whatever falls outside the frame, which is why the overhang is still legible rather than drawn.
+   */
+  allowOutsideCanvas?: boolean;
+
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 
@@ -66,6 +89,15 @@ type FreshDragModifiers = {
 
 const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre: false };
 
+/**
+ * CANVAS px throughout: every point, size and rect read or computed below — and every rect handed
+ * to `onRepaint`/`onChange`/`onChangeEnd` — is in the frame's own space, whose origin is the frame
+ * origin, so the frame rect is exactly `[0, 0, imageSize]`. Nothing in this file may add or
+ * subtract `documentFrame.x`/`.y`: those are DOCUMENT coordinates, they are the only thing negative
+ * about a grown frame, and folding them in here is an off-by-frame-origin bug that is invisible on
+ * a zero-origin document. Document space is one `canvasRectToDocumentFrame` call away
+ * (`src/contexts/document-frame.ts:48-55`), and making it is the consumer's job.
+ */
 export function useRect({
   aspectRatio = null,
   imageSize,
@@ -76,6 +108,7 @@ export function useRect({
   constrainToSquare = false,
   fromCentre = false,
   borderMode = 'always',
+  allowOutsideCanvas = false,
 
   containerRef,
   overlayRef,
@@ -298,7 +331,18 @@ export function useRect({
     const rect = rectUnsortedRef.current;
     if (!rect) return;
 
-    const { x, y, width, height } = trimRect(sortRect(rect), getCanvasSize(overlayRef));
+    // Sorted once and used twice: the paint below and the report at the bottom, which is the
+    // sorted rect UNCLAMPED in every case. Only the paint has a choice of geometry.
+    //
+    // `trimRect` clamps the painted rect to the frame — `[0, 0, overlay canvas size]`, in canvas
+    // px — so a box dragged past the frame edge snapped back to it while the reported rect kept
+    // the overhang. `sortRoundRect` is the same sort and the same one-round-per-edge rounding with
+    // the clamp dropped, so a rect that lies inside the frame paints identically on both paths and
+    // only the part that leaves it differs.
+    const sortedRect = sortRect(rect);
+    const { x, y, width, height } = allowOutsideCanvas
+      ? sortRoundRect(sortedRect)
+      : trimRect(sortedRect, getCanvasSize(overlayRef));
 
     if (!hideBlend) {
       // Draw semi-transparent overlay
@@ -306,7 +350,11 @@ export function useRect({
       ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
       ctx.fillRect(0, 0, imageSize.width, imageSize.height);
 
-      // Clear the selection area
+      // Clear the selection area. The DIM is the frame, not the selection — the `fillRect` above
+      // is `[0, 0, imageSize]`, the frame rect in canvas px — so the cut-out is against the frame
+      // rectangle in both modes, and this line is the only part of the blend the prop reaches: a
+      // negative CANVAS-origin `clearRect` is clipped by the backing store to exactly the part of
+      // the true rect that overlaps the frame, which is the cut-out wanted.
       ctx.clearRect(x, y, width, height);
     }
 
@@ -341,7 +389,6 @@ export function useRect({
     ctx.fillRect(x + width - h2, y + height - h2, h1, h1);
 
     // todo update status bar - add func on each update
-    const sortedRect = sortRect(rect);
     onRepaint?.(sortedRect);
 
     if (hasRectChanged) {

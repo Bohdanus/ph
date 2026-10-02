@@ -19,14 +19,19 @@ import {
  *
  * The left rail is one column by default and fits whole 44px rows into the WHOLE of the slot
  * it has left after its own chrome — a fifth of that slot used to be reserved as headroom, and
- * the fit no longer reserves anything. At an ordinary 1280x720 window it shows seven of the
- * sixteen groups: Move, Marquee, Lasso, Magic Wand, Eyedropper, Crop and Colour. The other nine
- * — the Brush group down to Shape — move into a three-dots tile, so the Brush, Pen, Type and
- * Shape tiles are not on the rail at all, and it takes a window of 1094 for the rail to show
- * all sixteen. That is the product contract and not a defect: a tool is always reachable from
- * exactly one of a tile of its own or the three-dots flyout (`e2e/toolbar-overflow.spec.ts` pins
- * that reachability, `e2e/toolbar-fit.spec.ts` the arithmetic behind how many rows fit). What
- * it means for THIS file is that two questions must not be confused:
+ * the fit no longer reserves anything. **It is now fifteen groups, not sixteen: the
+ * `[Colors, Levels, Transform]` group left `toolbarMap` in the same change that moved those
+ * three into `Image ▸ Adjustments` and `Edit ▸ Free Transform`, and one group is one row and
+ * one section separator, so the whole grid is 57px shorter than it was.** At an ordinary
+ * 1280x720 window it shows seven of the fifteen: Move, Marquee, Lasso, Magic Wand, Eyedropper,
+ * Crop and **Brush** — the seventh was the Colour group and is now the Brush, which is the same
+ * depth for a different reason and is why no test below may name the seventh row by position.
+ * The other eight — Clone Stamp down to Shape — move into a three-dots tile, so the Brush, Pen,
+ * Type and Shape tiles are not on the rail at all, and it takes a window of 1037 for the rail to
+ * show all fifteen. That is the product contract and not a defect: a tool is always reachable
+ * from exactly one of a tile of its own or the three-dots flyout (`e2e/toolbar-overflow.spec.ts`
+ * pins that reachability, `e2e/toolbar-fit.spec.ts` the arithmetic behind how many rows fit).
+ * What it means for THIS file is that two questions must not be confused:
  *
  *   - a question about a TILE ("does this tile's flyout paint", "does Escape give focus back
  *     to this tile") needs a tile that EXISTS, and at a short window it may not;
@@ -46,12 +51,25 @@ import {
  *       flyout at all, which is what leaves exactly ONE test below needing (b).
  *   (b) `selecting shape from flyout updates primary and patches figure`, and only that one,
  *       grows the window until the rail collapses nothing at all.
- *   (c) two tests — the pen group and the colors group — go the OTHER way and ask for the
- *       three-dots flyout on purpose, because their claim is that a collapsed group still
- *       lists every one of its tools. Their names say "present in flyout", not "on a tile".
- *       The Pen is the fourteenth row and needs a 1044px window for a tile, so an ordinary
- *       window folds it for free; the Colour group is the seventh and an ordinary window shows
- *       it, so its test SHORTENS the window to 600 to keep asking the same question.
+ *   (c) ONE test — the pen group — goes the OTHER way and asks for the three-dots flyout on
+ *       purpose, because its claim is that a collapsed group still lists every one of its
+ *       tools. Its name says "present in flyout", not "on a tile". The Pen is the thirteenth
+ *       row of fifteen and needs a window of 972 for a tile of its own, so an ordinary window
+ *       folds it for free and the test needs no resize.
+ *
+ * There used to be a SECOND (c) test, for the `[Colors, Levels, Transform]` group, and it
+ * needed a resize of its own for the opposite reason — that group was the seventh, an ordinary
+ * window showed its tile, and the test shortened the window to 600 to keep asking about the
+ * three-dots menu. That group is gone: those three are `Image ▸ Adjustments` and
+ * `Edit ▸ Free Transform` COMMANDS in Photoshop rather than Tools-panel entries, and they are
+ * hosted by `src/components/DesktopHeader/DesktopHeader.tsx` now.
+ *
+ * **So the claim is not lost, it is held once instead of twice** — and that is the reason for
+ * recording it rather than letting the test vanish silently. Its subject was "a collapsed
+ * group still lists every one of its tools", and `all pen tools present in flyout` asserts
+ * exactly that, against a group that is a collapsed row at an ordinary window and therefore
+ * needs no resize to be one. A second instance differed only in which group it named, so
+ * deleting it removes a duplicate rather than coverage.
  *
  * The fourth thing worth stating once, because several tests below are only meaningful with
  * it: `toBeVisible()` does not test CLIPPING. The rail is `overflow-y-auto`, which makes CSS
@@ -114,7 +132,7 @@ const flyoutItem = (page: Page, toolName: string, label: string) =>
  * of that slot, floored to a whole pixel — it used to be 80% of it, which is what moved every
  * number in the next sentence.
  *
- * Sixteen rows of a 44px tile with fifteen 6px gaps and four 7px section separators is 822px,
+ * Fifteen rows of a 44px tile with fourteen 6px gaps and three 7px section separators is 765px,
  * so the fit collapses nothing at a slot of 822 and nothing above that: a viewport HEIGHT of
  * 1094. The old 80% budget needed a slot of 1027.5 for the same 822, which is the 1300 this
  * constant used to be derived from. `e2e/toolbar-fit.spec.ts` sweeps that boundary from both
@@ -127,7 +145,7 @@ const flyoutItem = (page: Page, toolName: string, label: string) =>
  * six of them. The tablet band is MORE generous rather than less — its header row renders empty,
  * which takes its chrome to 109 — so the same 720px window shows EIGHT tool tiles there, and a
  * 900px window is in that band rather than in the desktop one. What no width does is change the
- * rule: all sixteen groups are on the rail from 1094 tall, and a window under 680 shows fewer
+ * rule: all fifteen groups are on the rail from 1037 tall, and a window under 680 shows fewer
  * than seven. At 720 the three-dots tile therefore lists the BRUSH group down where the 80% budget
  * listed the Colors/Levels group down — one row deeper, so the first group to fold is no longer
  * reachable by accident of how deep it sits in the map.
@@ -548,49 +566,6 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await expect(flyout).toContainText('Convert Point Tool');
   });
 
-  test('all colors tools present in flyout', async ({ page }) => {
-    // As the pen test above, and for the same reason — its claim is that the group's three
-    // entries stay together in ONE menu rather than being split across a tile and a flyout.
-    // The Pen is the fourteenth row and needs a 1044px window for a tile of its own, so an
-    // ordinary window folds it and the test gets the three-dots menu for free. The Colour
-    // group is the SEVENTH, and the whole-slot fit puts a tile there at 720: seven tool tiles
-    // stand where the 80% budget left six, and the Colour group is one of them. Left at the
-    // default window this would stop being a test of the three-dots menu and become a second
-    // tile's own flyout — still passing, for a reason it no longer claims.
-    //
-    // So the window is shortened to 600, where the rail has room for five tool rows and the
-    // three-dots tile, and the premise is ASSERTED rather than assumed, which is `expectTileOnRail`
-    // inverted and the reason this cannot drift silently: a rail that grew room for a Colour tile
-    // would leave the poll below true forever and fail here instead of quietly changing what the
-    // test is about. 600 rather than something just under the 680 the Colour row needs, so that
-    // no rounding change in the rail's own chrome can move the boundary past it.
-    //
-    // The premise of the resize itself is asserted first, for the same reason: nothing else in
-    // this file says WHICH group the seventh row is. `e2e/toolbar-fit.spec.ts` pins the count at
-    // 720 (seven of sixteen), this pins that the seventh is the Colour — and if the fit ever
-    // folds it again, the test below still works and this line is what says the resize is no
-    // longer needed.
-    await expect(
-      getToolButton(page, 'color'),
-      'at 1280x720 the seventh visible row is the Colour group, which is why this test has to shorten the window'
-    ).toBeVisible();
-    await page.setViewportSize({ width: 1280, height: 600 });
-    await expect
-      .poll(async () => await hasOwnToolTile(page, 'color'), {
-        message:
-          'the rail has room for a "color" tile at 600px tall, so this test is about that TILE\'s flyout ' +
-          `rather than the three-dots one. Shorten the window, or accept that the colour group's three ` +
-          `entries are now reachable from a tile and rewrite the test around that.`,
-      })
-      .toBe(false);
-    await openToolFlyout(page, 'color');
-
-    const flyout = page.getByRole('menu');
-    await expect(flyout).toContainText('Colors');
-    await expect(flyout).toContainText('Levels');
-    await expect(flyout).toContainText('Transform');
-  });
-
   test('pending long-press cancels on pointer leave', async ({ page }) => {
     // The tile's `onPointerLeave`, so it needs a tile the rail still shows.
     await expectTileOnRail(page, WAND);
@@ -659,7 +634,7 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     // Leaving the section separators out of that can only help the menu: a boundary costs 7 more,
     // which pushes a tile DOWN but is charged to the fit as well, so it cannot change the sign.
     // The one window tighter than the 67 is the one where nothing collapses, because there the
-    // reserved row is not reserved: the full sixteen-row grid is 822 and needs a 1094px window,
+    // reserved row is not reserved: the full fifteen-row grid is 765 and needs a 1037px window,
     // and at 1094 the Shape tile is the deepest row of the whole map at y=916, its six-item menu
     // ends at 1069, and the padded window ends at 1086. Measured on the real map, and 17px is the
     // closest this rail has come to clamping one of its own menus — which is why the fit should

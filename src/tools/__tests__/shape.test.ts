@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_POLYGON_SIDES,
   drawShape,
   isFigureType,
+  MAX_POLYGON_SIDES,
+  MIN_POLYGON_SIDES,
+  polygonSides,
   normalizeFigure,
   normalizeShapeGeometry,
   setShapeCtx,
@@ -596,6 +600,73 @@ describe('drawShape', () => {
     expect(ctx.closePath).toHaveBeenCalled();
   });
 
+  /*
+   * The side count is the one shape argument the renderer used to hardcode, so
+   * these two describes are the whole reason the field can be trusted: the
+   * normalizer bounds what reaches the loop, and the loop's vertex count is what
+   * proves the argument arrived.
+   */
+
+  describe("the Polygon's Sides", () => {
+    it('draws as many vertices as the field asks for', () => {
+      // 8 sides means 7 lineTo calls plus the moveTo, because the loop starts at
+      // -PI/2 and the closing vertex is the one already on the path.
+      for (const sides of [3, 5, 6, 8, 12]) {
+        const ctx = createCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'polygon',
+          sides,
+          start: { x: 0, y: 0 },
+          end: { x: 20, y: 20 },
+        });
+        expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+        expect(ctx.lineTo).toHaveBeenCalledTimes(sides - 1);
+      }
+    });
+
+    it('leaves the triangle at three whatever the field says', () => {
+      // The field is offered on the polygon figure only, but the value is
+      // persisted per figure in one shared table, so a sides that survives a
+      // figure switch must not be able to bend the triangle.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'triangle',
+        sides: 9,
+        start: { x: 0, y: 0 },
+        end: { x: 20, y: 20 },
+      });
+      expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to the seeded count when the field is absent or unusable', () => {
+      // Absent is the pre-field document and a store written before Sides existed.
+      expect(polygonSides(undefined)).toBe(DEFAULT_POLYGON_SIDES);
+      // Unusable is every way a persisted or hand-edited value can be nonsense,
+      // and the loop divides by this result, so each would be a wrong polygon or
+      // a NaN path rather than a default.
+      expect(polygonSides(Number.NaN)).toBe(DEFAULT_POLYGON_SIDES);
+      expect(polygonSides(Number.POSITIVE_INFINITY)).toBe(DEFAULT_POLYGON_SIDES);
+      expect(polygonSides(0)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(-4)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(2)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(10_000)).toBe(MAX_POLYGON_SIDES);
+      // And a fractional count rounds, because the loop indexes an angle with it.
+      expect(polygonSides(5.4)).toBe(5);
+      expect(polygonSides(5.6)).toBe(6);
+    });
+
+    it('draws the fallback rather than throwing when the field is absent', () => {
+      // The normalizer is not the only thing standing between a bad value and the
+      // loop: a field the renderer ignored entirely would satisfy the normalizer's
+      // tests and still draw a pentagon for every input.
+      const ctx = createCtx();
+      drawShape(ctx, { ...baseArgs, figure: 'polygon', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
+      expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
+    });
+  });
+
   it('fills only when hasFill is set and toolMode is not path', () => {
     const filled = createCtx();
     drawShape(filled, {
@@ -623,6 +694,118 @@ describe('drawShape', () => {
     const unfilled = createCtx();
     drawShape(unfilled, { ...baseArgs, figure: 'rectangle', start: { x: 0, y: 0 }, end: { x: 10, y: 10 } });
     expect(unfilled.fillRect).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `setShapeCtx` writes `fillStyle` only when `backgroundColor` is set, so it is a second half of
+   * the fill condition rather than a detail of it. Without that half a `hasFill` figure with no
+   * background colour reaches `ctx.fill()` with whatever `fillStyle` the context already carried:
+   * the canvas default on a fresh surface, and the previous tool's colour on the shared tool
+   * overlay, which `drawShape` paints many times per one `setShapeCtx` (see the bracket note on
+   * `shape`). The fill has to be suppressed, not merely left unset.
+   */
+  describe('the background colour is half of the fill condition', () => {
+    const firableFigures = ['rectangle', 'oval', 'triangle', 'polygon'] as const;
+
+    it.each(firableFigures)('does not fill a %s marked filled that has no background colour', (figure) => {
+      // `backgroundColor` is typed `string | null`, so `null` is the colourless state the type
+      // admits; an absent property is the same falsy branch, which is why the guard coerces.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure,
+        hasFill: true,
+        backgroundColor: null,
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 10 },
+      });
+
+      expect(ctx.fill, figure).not.toHaveBeenCalled();
+      expect(ctx.fillRect, figure).not.toHaveBeenCalled();
+    });
+
+    it('does not fill a corner-rounded rectangle marked filled that has no background colour', () => {
+      // The `it.each` above reaches the rectangle only through the axis-aligned fast path, where
+      // `cornerRadius` is absent and `radius` is 0, so it never enters the rounded branch. That
+      // branch gates its fill separately (`shape.ts`: `if (hasFill) ctx.fill();` after
+      // `roundedRectPath`), so the `hasFill` guard there is a second, independently removable line
+      // that nothing else in this file exercises: every other cornerRadius case draws an unfilled
+      // rectangle, and an unfilled one cannot tell a suppressed fill from a fill it never wanted.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'rectangle',
+        cornerRadius: 8,
+        hasFill: true,
+        backgroundColor: null,
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 10 },
+      });
+
+      expect(ctx.fill).not.toHaveBeenCalled();
+      expect(ctx.fillRect).not.toHaveBeenCalled();
+      // The outline is still drawn, and only through the path primitive: `strokeRect` here would be
+      // the fast path, which a positive radius must never take.
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+      expect(ctx.strokeRect).not.toHaveBeenCalled();
+    });
+
+    it.each(firableFigures)('still fills a %s marked filled that has a background colour', (figure) => {
+      // A radius-0 rectangle fills through `fillRect` and the rest through `fill`, so the method
+      // is named per figure rather than asserted as a set -- a rectangle passing on `fill` alone
+      // would mean the assertion was vacuous for it.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure,
+        hasFill: true,
+        backgroundColor: '#ff0000',
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 10 },
+      });
+
+      const fillMethod = figure === 'rectangle' ? 'fillRect' : 'fill';
+      expect(ctx[fillMethod], figure).toHaveBeenCalled();
+    });
+
+    it('suppresses only the fill, leaving the outline drawn', () => {
+      // Each figure strokes through a different call, and a radius-0 rectangle is not one of them:
+      // it takes the axis-aligned fast path at `shape.ts` and strokes with `strokeRect`, so an
+      // assertion on `ctx.stroke` here would pass for the wrong reason on three figures and fail
+      // on the fourth. A guard that removed the whole figure would be caught by this, not by the
+      // two above. Asserting the named primitive alone is one-sided, though: a mutation that made
+      // a figure outline BOTH primitives, or stroke twice, would still pass, so each case pins the
+      // count on its own primitive and the absence of the other.
+      const cases = [
+        { figure: 'rectangle', cornerRadius: 0, strokeMethod: 'strokeRect' },
+        { figure: 'rectangle', cornerRadius: 4, strokeMethod: 'stroke' },
+        { figure: 'oval', cornerRadius: 0, strokeMethod: 'stroke' },
+        { figure: 'triangle', cornerRadius: 0, strokeMethod: 'stroke' },
+        { figure: 'polygon', cornerRadius: 0, strokeMethod: 'stroke' },
+      ] as const;
+
+      for (const { figure, cornerRadius, strokeMethod } of cases) {
+        const ctx = createCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure,
+          cornerRadius,
+          hasFill: true,
+          backgroundColor: null,
+          start: { x: 0, y: 0 },
+          end: { x: 10, y: 10 },
+        });
+
+        // The one primitive this case does not outline. Naming the unused half of the pair rather
+        // than leaving it to the reader is what makes the absence an assertion instead of an
+        // inference from which method happened to be listed.
+        const otherStrokeMethod = strokeMethod === 'strokeRect' ? 'stroke' : 'strokeRect';
+        const label = `${figure} r=${cornerRadius}`;
+
+        expect(ctx[strokeMethod], label).toHaveBeenCalledTimes(1);
+        expect(ctx[otherStrokeMethod], label).not.toHaveBeenCalled();
+      }
+    });
   });
 });
 
@@ -653,6 +836,18 @@ describe('setShapeCtx', () => {
     setShapeCtx(ctx, { ...baseArgs, lineDash: null });
     expect(ctx.setLineDash).toHaveBeenCalledWith([]);
     expect(ctx.lineCap).toBe('butt');
+  });
+
+  it('does not write fillStyle for a filled figure that has no background colour', () => {
+    // The writer side of the same invariant `drawShape` reads: without a colour there is no fill
+    // colour to write, so the context keeps whatever it carried. Pinned here because the symptom
+    // of breaking it is invisible from `drawShape` -- a fix that made `setShapeCtx` always assign
+    // would turn the stale-fill into a wrong-fill and leave every fill assertion here green.
+    const ctx = createCtx();
+    ctx.fillStyle = '#00ff00';
+    setShapeCtx(ctx, { ...baseArgs, hasFill: true, backgroundColor: null });
+
+    expect(ctx.fillStyle).toBe('#00ff00');
   });
 });
 

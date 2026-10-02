@@ -46,8 +46,37 @@ misread:
 
 ## Entries
 
-_None. The operator has not written one yet._
+### OVR-1 — Photoshop fills the area an extended crop adds with the
 
-An empty register is not a gap to be filled by the next agent to notice something
-awkward. It is a statement that this app follows Adobe, and that changing that is
-the operator's decision to make deliberately.
+Background layer's colour when the bottom layer is a locked Background
+
+**This app:** An extended crop always leaves the added band transparent,
+whatever the bottom layer is.
+
+**Operator decided:** 2026-10-02
+
+**Why:** This is the Background-layer case of Photoshop's Fill dropdown,
+and it is the only cheap one. The other two values — Content-Aware and
+Generative Expand — are a patch-based synthesis model and a cloud
+generative feature, and are recorded in TOOLS-TOO-HARD.md instead.
+
+### OVR-2 — Photoshop's Tools panel has no Draw tool
+
+**This app:** A `draw` tile stays in the rail, labelled "Draw Tool",
+with a Pen Type dropdown — Pen, Dashed Pen, Spray. A stroke is
+committed as a new layer, not composited into the current one.
+
+**Operator decided:** 2026-10-02
+
+**Why:** A stroke that is its own layer is a separately undone and
+separately deleted object. Photoshop's Brush and Pencil both paint
+into the layer you were already on, so neither can do this.
+
+Dashed Pen and Spray stand in for a dash control and an airbrush
+control the paint bar does not have yet. That hold is temporary, and
+this entry is where it is revisited when they land.
+
+Suspends [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) on `draw`: "No
+invented tools" at `:33`, and "`draw` is a live tile, and it is the
+last deletion" at `:131`. No keyboard letter — Adobe's single cycling
+`B` already serves four tools.

@@ -1,5 +1,29 @@
 Photoshop clone production-grade photo editor
 
+## Worktree FIRST — no tracked edit happens outside one
+
+**100% of work that changes a tracked file happens in its own worktree, on its own
+branch. `main` is for reading and merging.** The exceptions are enumerated, none of
+them a judgement call, in
+[`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
+
+```bash
+git rev-parse --show-toplevel                        # FIRST. Every time. Non-negotiable.
+# `git worktree list` puts the MAIN checkout first, and $MAIN is absolute: the new
+# worktree lands under the main checkout and never nests inside the one you are in.
+MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
+git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
+```
+
+- **A commit from `main` is refused**, not warned about: `scripts/main-worktree-guard.mjs`
+  runs first in `.husky/pre-commit`, and the refusal names this recipe. It is the floor
+  under the rule rather than the rule: it runs after the edit, so a session that writes
+  into `main` and never commits is not stopped by it. What stops the write is the process
+  above.
+
+The three traps that follow from having a worktree are in **Worktrees and dev servers**
+below.
+
 ## Subagents INSTRUCTION
 
 LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.
@@ -41,6 +65,7 @@ task({
 - **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.**. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
+- **A post that will not fit is a path, not a shorter post.** `board_post` rejects a body over 4096 characters and the rejection ABORTS THE TURN — a finished review, its mutations and all its evidence, gone, ending on a tool error. Write the finding to a handoff document and post the path. `docs/ORCHESTRATION.md` has the cap and the rest of the swarm text rules.
 
 ## NEVER OPEN A BROWSER WINDOW
 
@@ -57,14 +82,14 @@ The e2e suite is headless by default and must stay that way.
 | `PLAYWRIGHT_ALLOW_HEADED=1`     | the human's opt-in, not yours                              |
 | `test.use({ headless: false })` | a live window                                              |
 
-`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. 
+`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set.
 
 ### Looking at a live page is allowed, and does not need a window
 
 ALWAYS use headless browser. `npm run probe:console` loads a page
 headlessly and reports every console error, page error and failed request, deduplicated with
 counts — which is how the nine invalid props on a `<div>` in `useRect` were found, on a suite
-of 339 tests that could not see them. `--url`, `--viewport`, `--dsf` and `--allow` are its only
+that could not see them. `--url`, `--viewport`, `--dsf` and `--allow` are its only
 options; `headless` is hardcoded in the script and is not read from the environment.
 
 Do not add a browser MCP server to get this. `permission.bash` globs match shell commands and
@@ -84,17 +109,28 @@ npm run probe:console   # playwright, HEADLESS - one page load, reports console 
 ```
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
-- **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` resolves the app tsconfig alone, which excludes tests: it exits 0 while the tests do not compile.
+- **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `tsconfig.json` at the root is a solution stub — `"files": []` plus references — so `--noEmit` resolves ZERO input files and exits 0 whatever is broken. It does not fall back to the app tsconfig, and that tsconfig includes `src/**/__tests__` anyway.
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive test that only fails in a full run is usually the pool, not the code.
 - `npm run test:e2e` starts Vite itself, on a port it picks. Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local `retries: 0`.
 
 ## Worktrees and dev servers
 
-One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
+**A merge may not silently delete the other side's work.** `scripts/merge-takeover-guard.mjs`
+runs from `pre-commit` (a conflicted merge being committed) and `pre-merge-commit` (a clean
+merge that commits itself), and **refuses** the merge. It catches the shape `tsc` and `build`
+cannot: a path the merge resolved by copying one whole side's content, which is a perfectly
+good file and compiles. One merge here shipped 17 such reverts and 1,835 lines, none of them
+a conflict. `docs/ORCHESTRATION.md` is the one home. Two limits: a **fast-forward fires no
+hook at all** (safe by construction — the branch tip contains main as an ancestor), and
+`--no-verify` bypasses it, as it bypasses every gate here.
+
+The three traps that follow from having one, each a consequence of a second checkout of
+the same repository:
 
 - **`node_modules` is missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **A run starts its own dev server, on a port of its own.** `scripts/e2e-run.mjs` picks a free port, so `test:e2e` never tests a checkout it did not start. Never set `PLAYWRIGHT_REUSE_EXISTING_SERVER`: `playwright.config.ts` hard-codes `reuseExistingServer: false` and the runner refuses that variable on TRUTHINESS, so even `=false` exits with an error. A bare `npx playwright test` skips the port picker and collides with whatever holds :5173 — use `npm run test:e2e`, or pass `PLAYWRIGHT_PORT=<free>`.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
+- **Never remove a worktree by hand.** `npm run dispose -- <name>` is the only path: it checks the inventory's `action`, the board's claims and locks, and the session database, then anchors the branch before it deletes. `git worktree remove --force` and `git branch -D` are denied or gated in `kilo.jsonc`, and there is no reason to defeat them. A refusal names the signal that produced it — an in-flight task is `in-use`, and only the operator may stop a writing chat.
 
 ## Test traps
 
@@ -102,33 +138,30 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
-- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds one `auto` fixture, `ConsolePolice`, which fails a test on any unaccepted console error or page error. It is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds two `auto` fixtures: `consolePolice`, which fails a test on any unaccepted console error or page error, and `pinnedTheme`, which seeds `localStorage.theme` so the suite's pixel oracles keep the light backdrop they are calibrated for under the app's dark default. `auto` is the load-bearing part — it is opt-out, not opt-in. `consolePolice` is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
 - Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates
 
 ### Local
 
-Two husky hooks, both delegating to a script in `package.json`, so the gated sequence is a command anyone can run by hand:
+Four husky hooks, and only two of them wrap a `package.json` script. The other two — `pre-merge-commit` and `post-merge` — run `scripts/*.mjs` directly and are covered in **Worktrees and dev servers** above. The gated sequence is a command anyone can run by hand:
 
 | Command               | Runs from           | Contents                                                       |
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
-| `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
+| `npm run test:staged` | **NOWHERE**         | `vitest related` over the staged paths — a command, not a gate |
 | `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
 
-The commit hook is two gates because they answer different questions. `gate:verify` asks "does the tree still build and typecheck". `test:staged` asks "did this commit break a test covering the files in it" — and only that. Both `tsc` and `build` PASS a flipped numeric threshold, a renamed branch or a dropped case, so without the second gate such a change commits cleanly and dies in CI: the same class of fix that has repeatedly needed its own worktree ("Fix 12 failing useHistory tests", "Fix 3 failing replay-coordinator tests", "Fix failing useApp.psd tests", "Fix failing useRect tests").
+**ONE gate runs on commit, and it runs no app test.** `gate:verify` asks "does the tree still build and typecheck" — and it PASSES a flipped numeric threshold, a renamed branch or a dropped case, the same class of change that has repeatedly needed its own worktree ("Fix 12 failing useHistory tests", "Fix 3 failing replay-coordinator tests", "Fix failing useApp.psd tests", "Fix failing useRect tests"). `test:staged` would ask the second question — "did this commit break a test covering the files in it", and only that — but **no hook invokes it**: `.husky/pre-commit` ends at `npm run gate:commit`, and the full suite is the push gate. Run it by hand when you want the scoped answer. [`docs/TESTING.md`](docs/TESTING.md#teststaged-is-a-command-not-a-gate) is the one home for why it was taken out and what it costs.
 
-- `test:staged` is a 2.8s scoped run where the full suite is 7-14s, and it is unconditionally safe in Vitest 5: no matching staged path reports `No test files found` and exits 0, and a staged path outside `src/` (`.md`, an `e2e/**` helper, a binary asset) also exits 0 without running the whole suite. It therefore needs no `--passWithNoTests` and no guard. What it does **not** give you is completeness: a file with no test importing it passes, which is why the full suite still runs at push.
-- A **merge commit** is index-vs-`HEAD`, so `git diff --cached` reports every file the merge brings in rather than what was staged: 120 merged `src` paths measure 9.8s and 81 test files, making the hook ~19s instead of ~12s. Slower, never a false pass. The selection derives from Vite's module graph, so it is not stable across environments (a staged `package.json` selects all 180 test files in a warm checkout, none in a fresh install). Do not rely on a staged non-`src` file dragging in its dependents.
-- The staged list is read with `-z` and passed through `xargs -0` **ON PURPOSE**. An unquoted `$(git diff --cached --name-only)` word-splits and glob-expands, and the failure is SILENT: a path expanding to nothing makes vitest report `No test files found` and exit 0, so the gate appears to pass while testing nothing. The shell form works today only by accident of the current tree (no tracked name contains a space or glob metacharacter); `src/components/[id]/`-style paths are the plausible next break. Empty input is a true no-op — BSD `xargs` does not invoke the command at all — so a docs-only commit costs 0.04s.
 - `lint-staged` formats two groups. `*.{ts,tsx}` gets `eslint --fix` and `prettier --write`; `*.{js,scss,jsonc,yml,yaml,md,json}` gets `prettier --write` only, because no ESLint config covers those. The second group deliberately includes `.js`, `.scss` and `.jsonc`: `prettier --check .` matches all of them, and anything it matches but lint-staged does not is formatted by nobody at commit time and fails in CI instead.
 - `--fail-on-changes` is why the hook is trustworthy: by default lint-staged re-adds whatever `--fix`/`--write` changed, so the commit ends up containing code that was never staged and never read. With the flag the fix stays in the working tree, the index is untouched, and the commit is blocked. `--no-stash` makes that clean — without it a blocked commit leaves a `WIP on <branch>` stash behind. Together: no index rewrite, no residue. Cost is one extra round trip per commit that touched an unformatted file; `npm run format` removes it. One residue does survive: `.git/lint-staged_unstaged.patch` after any blocked commit, and nothing removes it.
 - `build` is in the commit hook because it is not redundant with `tsc`: `vite build` runs Babel and esbuild, which strip types without checking them, so it catches Sass, wasm resolution, PostCSS and import resolution that `tsc` cannot, while `tsc` catches types the bundle never sees. `gate:verify`'s name predates its contents — it runs no lint and no app test, which is why it is a distinct row.
 - **NOTHING LOCAL RUNS `lint:check` ANY MORE** (`gate:push` used to). Whole-repo `eslint . --cache` and `prettier --check .` are CI-only, so an already-committed unformatted file, a branch switch that changes lint rules, and a bad rebase are all caught by the `ci` job rather than locally. lint-staged covers the staged files, which is what the `.scss` gap needed.
 - `gate:push` does **not** repeat `gate:commit`. It used to, reasoning that a push can follow `--no-verify`, a rebase or a cherry-pick — sound for `tsc`, but it re-ran 9s of deterministic checks to protect 7s of suite time and ran `test:e2e:unit` twice per push. A rebase that broke the build is caught by `ci` in about a minute.
-- Measured, for judging a future change to this table: `build` 1.7s, `test:e2e:unit` 1.1s, `test:staged` 2.8s, `tsc -b` 5s, `gate:commit` end to end ~9s, `test:staged` adding ~3s, `test` 7-14s.
+- Measured, for judging a future change to this table: `build` 1.7s, `test:e2e:unit` 1.1s, `tsc -b` 5s, `gate:commit` end to end ~9s, `test:staged` 2.8s by hand, `test` 7-14s.
 
 ### CI (Node 24 from `.nvmrc`, which is also what `engines` requires)
 
@@ -144,12 +177,12 @@ The commit hook is two gates because they answer different questions. `gate:veri
 
 ## Known failures and how to read one
 
-On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by declaration (`e2e/sidebar-flyout.spec.ts` right-click on single-tool groups, `e2e/viewport-drawing.spec.ts` line-under-cursor after resize, `e2e/export/photopea.spec.ts` the Photopea round trip). Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
+On the default headless run **no e2e test fails**. The only skips are 3 declarations (`e2e/sidebar-flyout.spec.ts` right-click on single-tool groups, `e2e/viewport-drawing.spec.ts` line-under-cursor after resize, `e2e/export/photopea.spec.ts` the Photopea round trip). **Do not store the pass count here:** specs generate tests inside `for` loops, so the suite's size is known only by running it, and a stored number is wrong the day a test lands. `docs/TESTING.md` says so, and it is the home for that rule. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
 
 - The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
 - A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `expected-fail` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.
 - **DO NOT widen a threshold, add a skip, or re-record a visual baseline to make a test green.**
-- Baselines are now genuinely compared: `visual-regression.spec.ts` re-records only under an explicit `--update-snapshots`, so a green run means the pixels matched.
+- Baselines are now genuinely compared: `visual-regression.spec.ts` re-records only under an explicit `--update-snapshots=all` — a bare `--update-snapshots` resolves to `changed` and does NOT re-record — so a green run means the pixels matched.
 - Read a failure from disk, never from a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record (in CI it also writes `test-results/results.json`). A `trace.zip` needs the trace viewer, which is a window — ask the operator.
 
 ## Documentation
@@ -174,4 +207,4 @@ On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by de
 
 The legacy `HistoryItem[]` path is the **PRODUCTION REPLAY AUTHORITY**: it writes history, replays through `history-replay.ts`, renders runtime `Layer` objects and exports from the runtime canvas and layers. The durable document is still a shadow projection, NOT the authority for rendering. Treat that as the state to read, not a fact to assume — the history work is in flight. Re-read the code and the plans before designing across the legacy/durable boundary.
 
-The single-writer cutover's old blocker is GONE, not merely moved: it was gated on a canvas-promotion helper that no longer exists (`HANDOFF.md` §127 records the deletion), and the hazard it named is closed — presentation caches are published through the reducer by a typed action, so a cache cannot be promoted outside reducer publication. Do not re-derive that gate from this sentence's predecessor; check the current reducer.
+The single-writer cutover's old blocker is GONE, not merely moved. It was gated on a canvas-promotion helper that no longer exists — there is no `HANDOFF.md` entry for that gate, live or retired, so this sentence carries no citation and invents none. What the reducer does establish, and all it establishes: TWO arms write the presentation cache. `PROMOTE_LAYER_PRESENTATIONS` re-checks `isSamePresentationCanvas` per record and rewrites only the affected records; `PUBLISH_RUNTIME_PRESENTATION` replaces `layers` wholesale. The guard that proves a publication moves no durable layer state is `layersDifferOnlyByPresentation`, and it is applied on the `PUBLISH_RUNTIME_PRESENTATION` path, NOT on the promotion path — so "a cache cannot be promoted outside reducer publication" was stronger than the code. Check the current reducer rather than re-deriving this from its predecessor.

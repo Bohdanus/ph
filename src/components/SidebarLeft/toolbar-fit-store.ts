@@ -41,14 +41,14 @@ export type ToolbarFitStore = {
    * This is the throttle. A `ResizeObserver` reports every frame of a window drag, and the
    * rail's tile count is a step function of the height — so on a 900-to-1400px drag the
    * height changes about five hundred times and the count changes FOUR. Comparing raw
-   * measurements published all five hundred, each one re-rendering up to sixteen tiles, their
+   * measurements published all five hundred, each one re-rendering up to fifteen tiles, their
    * flyout state, their tooltips and their refs, to arrive at the same plan every time.
    * Comparing plans publishes four. Nothing is skipped and nothing is stale: the measurement
    * still runs on every observation, and the plan that comes out of it is still compared
    * against the one on screen.
    *
-   * Four, not five, because fifteen tiles is unreachable: fifteen rows plus the three-dots row
-   * IS the full sixteen-row grid, so the step off "everything" lands on fourteen.
+   * Four, not five, because fourteen tiles is unreachable: fourteen rows plus the three-dots row
+   * IS the full fifteen-row grid, so the step off "everything" lands on thirteen.
    *
    * Set from an effect rather than during render, because the store publishes synchronously
    * and a publish during render is a render-phase update.
@@ -103,7 +103,7 @@ const length = (value: string): number => {
  * `rememberedSectionBreakHeight` is what it falls back on, and why it needs a fallback is
  * the whole of the defect `HANDOFF.md` recorded as §97. The separator is only visible in the DOM while
  * some section after the first still has a tile in it, so a layout that has collapsed
- * sections 1 through 4 cannot measure it — and a fit that then plans with `0` where the CSS
+ * sections 1 through 3 cannot measure it — and a fit that then plans with `0` where the CSS
  * charges `7` accepts a row the grid cannot render, which is the overflow that defect measured. The
  * fallback is not a fudge: the separator is a property of the class string, not of the
  * layout, so the last real reading of it stays true across every collapse the rail can make.

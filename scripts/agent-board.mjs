@@ -41,6 +41,8 @@ import {
   BoardError,
   DEFAULT_LEASE_MS,
   NO_LIMIT,
+  SCOPES,
+  STATUSES,
   isImportedOrigin,
   parseDuration,
   priorityFromTitle,
@@ -48,6 +50,19 @@ import {
   resolveBoardDir,
 } from './lib/agent-board/db.mjs';
 import { resolveIdentity } from './lib/agent-board/identity.mjs';
+
+/**
+ * How a reader has to spell a command, in ONE place.
+ *
+ * There is no `swarm` binary: `package.json` has no `bin` entry, so `swarm
+ * doctor` — printed by the two commands an agent runs when its leases have gone
+ * stale, which are exactly the two where the printed instruction is the whole
+ * recovery — exits `command not found`. `npm run swarm --` is the only spelling
+ * that runs, and it was hand-typed at six sites that nothing kept in step. A
+ * printed command has to be PASTEABLE; an unpasteable one is worse than none,
+ * because it looks like help.
+ */
+const RUN = 'npm run swarm --';
 
 const USAGE = `swarm — live coordination for a swarm of agents on one repository
 
@@ -60,8 +75,8 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   agents were doing, was told the board was empty, and was holding 196 events.
   It is now \`npm run swarm\`, and there is no 'board' script left to confuse.
 
-  live state: swarm status      what is ready: swarm ready
-  the log:    swarm watch --follow
+  live state: ${RUN} status      what is ready: ${RUN} ready
+  the log:    ${RUN} watch --follow
 
   new <title>            file an issue          --body --scope --priority --files --dep --origin
                            (the title is everything BEFORE the first flag)
@@ -74,9 +89,13 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   release <id>           give it back, locks released with it
   hold <path...>         claim a file           --issue --lease --force
   unlock <path...>       release a file         --force
-  check <path...>        who holds these files  (exit 1 if any is held)
+  check <path...>        who holds it, and who has it open  (exit 1 if held)
   comment <id> <text>    say something on an issue
   note <text>            say something to the swarm
+                          quote the text, or end it with --: a bare -- inside an
+                          UNQUOTED note is refused rather than cut (nothing is dropped
+                          silently), and a message over 4096 characters is refused —
+                          put the finding in a handoff document and note the path
   resolve <id>           the work is done       --note
   close <id>             verified by YOU, done
   defer <id>             park it                --reason --until
@@ -98,8 +117,16 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   --json                 machine-readable output on every command except help and --version,
                          and \`watch --follow\`, which is an unbounded stream: it prints one
                          line per event instead, and says so above
+  --note --reason --body  PROSE, and prose is more than one word: every bare token
+                          after one of these belongs to it, so an unquoted
+                          \`claim ph-1 --note fixed the thing\` records the whole sentence
   --agent <id>           act as somebody else (default: the current git branch)
   --dir <path>           use another board database (default: $(git rev-parse --git-common-dir)/agent-board)
+
+  --files on \`new\` RESERVES the paths; on \`list\` it FINDS the open issues that
+  name them. A reservation is a lease and can be refused; a reference is not one,
+  which is why an imported issue can put fifty files on the board without
+  blocking anybody. \`check\` exits 1 on a reservation and never on a reference.
 
 exit codes: 0 ok · 1 usage or error · 2 not found · 3 claimed or not claimable · 4 file held by another agent
             5 the agent that resolved an issue cannot be the one that closes it`;
@@ -144,6 +171,24 @@ const VALUE_FLAGS = new Set([
 const LIST_FLAGS = new Set(['files', 'dep', 'file']);
 
 /**
+ * Flags whose value is PROSE, and which therefore swallow every following token
+ * that is not itself a flag, joining them back with spaces.
+ *
+ * `--note fixed the thing` recorded `fixed` and dropped the rest of the sentence
+ * on the floor, with exit 0 and no warning: `claim`, `resolve` and `close` took a
+ * single-token value, so every note an agent typed without quotes arrived
+ * truncated at its first space, and the board read back a finished-looking
+ * sentence that was not what was written. `defer --reason waiting on ph-9` lost
+ * everything after `waiting`.
+ *
+ * These take prose, so they behave like `--files a.ts b.ts` rather than like a
+ * single token: greedily, then rejoined. The text a flag value is documented to
+ * hold has to survive being typed without quotes, or the documentation is a lie
+ * about the length of a sentence.
+ */
+const TEXT_FLAGS = new Set(['note', 'reason', 'body']);
+
+/**
  * A dependency-free argument parser, because an agent's first command in a
  * fresh context is often `--help` and a tool that cannot be run without a
  * working `node_modules` is a tool that will not be run. Unknown flags are kept
@@ -155,14 +200,37 @@ export function parseArgs(argv) {
   const positional = [];
   /** The positional arguments that appeared BETWEEN the command and the first flag after it. */
   const leading = [];
+  /**
+   * The tokens typed after a bare `--`, which are LITERAL: never a flag, never a
+   * value, never a title. They are kept apart from `leading` because a command
+   * that reads prose has to be able to tell "this text was quoted" from "this
+   * text was swallowed as a flag value", and only one of those is what the author
+   * meant.
+   */
+  const literal = [];
   let seenFlag = false;
   let seenCommand = false;
   let i = 0;
   while (i < argv.length) {
     const token = argv[i];
     if (token === '--') {
+      literal.push(...argv.slice(i + 1));
       positional.push(...argv.slice(i + 1));
       break;
+    }
+    if (token === '-h' || token === '-?') {
+      /**
+       * `-h`, not `--h`.
+       *
+       * The parser only recognised `--`, so a single-dash `-h` fell through to
+       * `positional` and BECAME THE COMMAND: `swarm -h` hit the unknown-command
+       * branch and answered the request for help with `unknown command: -h` and
+       * a usage dump, which is the opposite of help. `flags.h` in the dispatch
+       * below reads the field this writes, so `--h` keeps working unchanged.
+       */
+      flags.help = true;
+      i += 1;
+      continue;
     }
     if (token.startsWith('--')) {
       // A GLOBAL flag before the command does not end the leading run: the help
@@ -177,14 +245,18 @@ export function parseArgs(argv) {
       if (value === undefined) {
         const next = argv[i + 1];
         if (VALUE_FLAGS.has(name) && next !== undefined && !next.startsWith('--')) {
-          if (LIST_FLAGS.has(name)) {
-            // A list flag is greedy: every following bare token belongs to it.
+          if (LIST_FLAGS.has(name) || TEXT_FLAGS.has(name)) {
+            // A list or prose flag is greedy: every following bare token belongs
+            // to it. A list keeps its tokens apart; prose rejoins them with
+            // spaces, because `--note fixed the thing` is one sentence and not
+            // three words.
             const values = [];
             while (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
               values.push(argv[i + 1]);
               i += 1;
             }
-            value = values.length > 0 ? values : true;
+            value =
+              values.length === 0 ? true : TEXT_FLAGS.has(name) ? values.join(' ') : values.length > 0 ? values : true;
           } else {
             value = next;
             i += 1;
@@ -207,7 +279,36 @@ export function parseArgs(argv) {
     }
     i += 1;
   }
-  return { flags, positional, leading };
+  return { flags, positional, leading, literal };
+}
+
+/**
+ * `note` and `comment` take PROSE, and prose contains `--`.
+ *
+ * `note before --flag after` stored `before` and reported `noted — event #12`:
+ * the tail became a flag, the message was cut at the first `--`, and nothing said
+ * so. The same sentence the author could see in their own shell arrived on the
+ * board shorter than it was written, and `swarm watch` printed the short version
+ * as though it were the whole.
+ *
+ * So a `--` inside a note's own text is a REFUSAL, not a silent split: the
+ * author quotes it, or ends the command with `--`. The cost is one error where
+ * there used to be a lie.
+ *
+ * `positional` is longer than `leading` exactly when a bare token arrived after a
+ * flag, which is the shape of the loss. No flag is exempt, because a global flag
+ * is not the exception it looks like: `note my finding --json` is fine — nothing
+ * follows the flag — while `note my finding --json trailing words` drops `trailing
+ * words` just as silently as a note flag would, and exempting `--json` would have
+ * exempted that too.
+ */
+function assertNoAbandonedText(command, abandoned) {
+  if (abandoned <= 0) return;
+  throw new BoardError(
+    `${command}: ${abandoned} word(s) after a -- flag were dropped, not written. ` +
+      `Quote the message ("${command} \\"…\\"") or put it after a bare -- so a -- inside the text is text.`,
+    { code: 1 }
+  );
 }
 
 /**
@@ -245,6 +346,57 @@ const list = (value) => {
     .flatMap((entry) => entry.split(','))
     .map((entry) => entry.trim())
     .filter(Boolean);
+};
+
+/**
+ * A filter value out of a closed set, or an error naming the set.
+ *
+ * The WRITE paths already do this: `new --priority urgent` and `--lease soon`
+ * are refused with the allowed values (`db.mjs`, `unknown priority` /
+ * `not a duration`). The READ paths did not, and that asymmetry is the defect:
+ * `list --status opne` built a status set containing no real status, matched no
+ * row, printed an empty table and exited 0 — textually identical to a board
+ * with nothing on it, which is the one answer a reader cannot act on. The sets
+ * are IMPORTED from the library rather than copied, so a set that changes there
+ * cannot go stale here.
+ *
+ * The valueless flag is refused too, and that is not a hypothetical:
+ * `--status` on its own used to be the empty set, which SQLite accepts as
+ * "matches nothing" (`status IN ()`), so it produced the same empty table and
+ * the same exit 0.
+ */
+const filterValues = (name, value, allowed) => {
+  if (value === true || (typeof value === 'string' && value.trim() === '')) {
+    throw new BoardError(`--${name} needs a value, one of: ${allowed.join(', ')}`, { code: 1 });
+  }
+  const values = list(value);
+  for (const entry of values) {
+    if (!allowed.includes(entry)) {
+      throw new BoardError(`--${name}: ${entry} is not one of: ${allowed.join(', ')}`, { code: 1 });
+    }
+  }
+  if (values.length === 0) {
+    throw new BoardError(`--${name} needs a value, one of: ${allowed.join(', ')}`, { code: 1 });
+  }
+  return values;
+};
+
+/**
+ * A `--kind` filter is checked for SHAPE, not against a vocabulary.
+ *
+ * The event kinds are `addEvent` call sites spread across `db.mjs` and
+ * `handoff-import.mjs` with no registry to import, and a list copied here goes
+ * stale the next time one is added. A stale list REFUSES a kind that exists,
+ * which is the worse of the two errors: the reader typed something real and was
+ * told it does not exist. What is refused is the two shapes that cannot be a
+ * kind at all — the valueless flag and an empty value.
+ */
+const eventKind = (value) => {
+  if (value === undefined || value === null || value === false) return null;
+  if (value === true || String(value).trim() === '') {
+    throw new BoardError('--kind needs a value, for example: --kind lock.hold', { code: 1 });
+  }
+  return String(value);
 };
 
 function columns(rows, headers) {
@@ -384,7 +536,7 @@ export async function run(
   argv,
   { cwd = process.cwd(), env = process.env, out = process.stdout, err = process.stderr } = {}
 ) {
-  const { flags, positional, leading } = parseArgs(argv);
+  const { flags, positional, leading, literal } = parseArgs(argv);
   // `leading` is every bare token before the first flag, which includes the
   // command name. The title of `new` is the rest of that run.
   const leadingArgs = leading.slice(1);
@@ -487,8 +639,8 @@ export async function run(
 
       case 'list': {
         const issues = board.listIssues({
-          status: flags.status ? list(flags.status) : null,
-          scope: flags.scope ? list(flags.scope) : null,
+          status: flags.status ? filterValues('status', flags.status, STATUSES) : null,
+          scope: flags.scope ? filterValues('scope', flags.scope, SCOPES) : null,
           files: flags.files ? list(flags.files) : null,
           claimedBy: typeof flags.claimed_by === 'string' ? flags.claimed_by : null,
           limit: limitFlag(flags.limit, NO_LIMIT),
@@ -733,8 +885,42 @@ export async function run(
       case 'unlock': {
         const paths = args.length > 0 ? args : list(flags.files);
         const result = board.releaseFiles(paths, { force: Boolean(flags.force) });
-        emit(result, result.released.length ? `released ${result.released.join(', ')}` : 'nothing held by you there');
-        return 0;
+        /**
+         * The paths the board REFUSED to touch because another live agent holds
+         * them. Read defensively (`?? []`) so this command keeps working against
+         * a board that does not report the field yet — and, more to the point,
+         * so the two meanings of "released nothing" stay distinguishable instead
+         * of collapsing into one success line: you never held these paths, or
+         * somebody else holds them and you are not going to get them.
+         */
+        const blocked = result.blocked ?? [];
+        emit(
+          { ...result, blocked },
+          [
+            result.released.length ? `released ${result.released.join(', ')}` : null,
+            blocked.length
+              ? `not released, held by another agent: ${blocked
+                  .map((entry) => `${entry.path} by ${entry.agent_id}`)
+                  .join(', ')}`
+              : null,
+            result.released.length === 0 && blocked.length === 0
+              ? 'nothing held by you there: you held none of these paths, and nobody else does either'
+              : null,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        );
+        /**
+         * 4, the table's "file held by another agent", whenever anything is
+         * still held by somebody else — including the partial case, where this
+         * agent got its own paths and did not get the other one, because a
+         * caller gating on the code must not read a half-done release as done.
+         *
+         * Exit 0 here is what `scripts/e2e-run.mjs:404-407` records as having
+         * made a dead-holder reclaim look like it worked: it ran, matched no row,
+         * and reported success.
+         */
+        return blocked.length > 0 ? 4 : 0;
       }
 
       case 'check': {
@@ -746,6 +932,35 @@ export async function run(
         }
         const report = paths.map((path) => board.checkPath(path));
         const busy = report.filter((entry) => !entry.free);
+        /**
+         * Every string main already printed is kept, and the open issues are
+         * APPENDED to it rather than replacing the line.
+         *
+         * `free` and `0` are read as one fact, and they are not: "free" means no
+         * live LOCK, not nobody's business. An issue filed with `--files`, or
+         * imported from a handoff document, names a file without holding it, and
+         * the operator's whole complaint was three agents in one file that every
+         * one of them had been told was free. So the suffix rides along on both
+         * halves — beside `held by` and beside `free:` — rather than on one.
+         *
+         * The EXIT CODE is untouched: still 1 for a live lock, never for a
+         * reference. The board's own imported issues name scores of files across
+         * nearly every directory, so a gate that failed on any of them would fail
+         * on nearly every path in the repository and the only rational response
+         * would be `--force`. Deliberately no counts: they were 54 and about a
+         * hundred when this was written, the board moves, and a stale figure here
+         * is the kind of plausible-looking number nobody re-checks.
+         */
+        // No `entry.issues &&`: db.mjs states that every return carries the key,
+        // precisely so a consumer never has to guard for it. The guard that was
+        // here contradicted that contract and, being a dead branch, taught the
+        // opposite of what the contract says.
+        const issues = (entry) =>
+          entry.issues.length
+            ? ` · ${entry.issues.length} open: ${entry.issues
+                .map((issue) => `${issue.id}${issue.claimed_by ? ` (claimed by ${issue.claimed_by})` : ''}`)
+                .join(', ')}`
+            : '';
         emit(
           { report },
           busy.length
@@ -755,29 +970,33 @@ export async function run(
                     ? 'nothing to check'
                     : entry.outside
                       ? `${entry.path} is not inside this repository`
-                      : `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}`
+                      : `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}${issues(entry)}`
                 )
                 .join('\n')
             : // The NORMALISED paths, not the ones typed: the free line quoted a
               // /tmp/… spelling while the JSON beside it carried /private/tmp/…,
               // and the two answers disagreed about the same file.
-              `free: ${report.map((entry) => entry.path).join(', ')}`
+              `free: ${report.map((entry) => `${entry.path}${issues(entry)}`).join(', ')}`
         );
         return busy.length === 0 ? 0 : 1;
       }
 
       case 'comment': {
         const id = leadingArgs[0];
-        const message = leadingArgs.slice(1).join(' ').trim();
+        const message = [...leadingArgs.slice(1), ...literal].join(' ').trim();
         if (!id || !message) throw new BoardError('comment needs an id and a message', { code: 1 });
+        assertNoAbandonedText(command, positional.length - leading.length - literal.length);
         board.comment(id, message);
         emit({ id, message }, `commented on ${id}`);
         return 0;
       }
 
       case 'note': {
-        const message = leadingArgs.join(' ').trim();
+        const message = [...leadingArgs, ...literal].join(' ').trim();
         if (!message) throw new BoardError('note needs a message', { code: 1 });
+        // Every word typed must be a word STORED. `note x --flag y` used to keep
+        // `x`, discard `--flag y`, and answer `noted — event #12`.
+        assertNoAbandonedText(command, positional.length - leading.length - literal.length);
         const result = board.note(message);
         // The seq comes back because a note you cannot FIND is a note you
         // cannot confirm. This board read its own log from the wrong end for
@@ -865,7 +1084,7 @@ export async function run(
               .join(' · ')}`,
             `${report.ready} ready · ${report.blocked} blocked · ${report.agents} agents seen`,
             report.expiredClaims > 0
-              ? `${report.expiredClaims} expired claim(s) still recorded — run: swarm doctor`
+              ? `${report.expiredClaims} expired claim(s) still recorded — run: ${RUN} doctor`
               : null,
             '',
             report.myClaims.length
@@ -884,7 +1103,7 @@ export async function run(
             '',
             ...report.locks.map((lock) => `  ${lock.path} — ${lock.agent_id} · ${remaining(lock.expires_at)}`),
             '',
-            `last event #${report.lastSeq} — swarm watch --since ${report.lastSeq}`,
+            `last event #${report.lastSeq} — ${RUN} watch --since ${report.lastSeq}`,
           ]
             .filter((line) => line !== null)
             .join('\n')
@@ -899,7 +1118,11 @@ export async function run(
         // with more than 200 events it would print the first 200 forever and
         // never show anything new — which is the opposite of tailing a log.
         const PAGE = 200;
-        const kind = flags.kind ? String(flags.kind) : null;
+        // Shape-checked, not vocabulary-checked, like every other read filter:
+        // the event kinds are `addEvent` call sites with no registry, so a
+        // `--kind` with no value is refused while a real kind is never refused
+        // for being new.
+        const kind = eventKind(flags.kind);
         // Reading the log from the beginning was ALSO wrong, and it is the half
         // that cost two agents a session. A bare `watch` took `--since 0`, read
         // one page, and stopped: on a log longer than a page it printed a FIXED
@@ -1048,7 +1271,7 @@ export async function run(
             // Each of these is a measurement, not a nag: the point of the
             // command is that a reader does not have to hand-write the SQL, and
             // a number that is merely printed is one nobody compares.
-            report.claims.expired > 0 ? `${report.claims.expired} claim(s) expired — run: swarm doctor` : null,
+            report.claims.expired > 0 ? `${report.claims.expired} claim(s) expired — run: ${RUN} doctor` : null,
             report.idleLive.length > 0
               ? `${report.idleLive.length} live finding(s) idle over 6h, needing a home in the handoff docs:`
               : null,
@@ -1099,7 +1322,7 @@ export async function run(
             `${result.created.length} filed`,
             result.skipped.length ? `${result.skipped.length} already on the board` : null,
             result.drifted.length
-              ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (swarm show <id>)`
+              ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (${RUN} show <id>)`
               : null,
             result.dead.length ? `${result.dead.length} skipped as already closed in their document` : null,
           ]
@@ -1121,6 +1344,7 @@ export async function run(
             events: board.events({ since: 0, limit: Number.MAX_SAFE_INTEGER }),
             claims: board.db.prepare('SELECT * FROM claims').all(),
             locks: board.db.prepare('SELECT * FROM file_locks').all(),
+            issueFiles: board.db.prepare('SELECT * FROM issue_files').all(),
             agents: board.agents(),
           },
           // Without the flag this used to print a single newline. The help says

@@ -52,7 +52,7 @@ platform limit.
 | Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only         |
 | History           | `have`      | Linear, unbounded, with a History panel                                        |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
-| Menu bar          | `divergent` | Four menus; the Edit menu is six tool switches                                 |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
 | View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
 | Keyboard          | `partial`   | 41 bindings against Photoshop's ~200                                           |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
@@ -68,16 +68,50 @@ New time, and many documents open at once in tabs.
 **This app:** the canvas is a `DocumentFrame` — a `Pos` —
 `src/contexts/document-frame.ts:3` — plus a `Size` from
 `src/contexts/general-types.ts:2`. New offers presets, a DPI field shown only for
-physical-unit presets (`src/components/NewImageDialog/NewImageDialog.tsx:126`),
+physical-unit presets (`src/components/NewImageDialog/NewImageDialog.tsx:128-133`),
 background colour and opacity, and pixel dimensions clamped to 1–10000
-(`:197-198`, `:216-217`). Opening a file replaces the whole document and mints a new
-`documentId` (`src/hooks/useApp.ts:116-144`).
+(`src/components/NewImageDialog/NewImageDialog.tsx:199-200`, `:218-219`). Opening a
+file replaces the whole document and mints a new `documentId`
+(`src/hooks/useApp.ts:116-144`).
 
 **Status:** `partial`
 
 **Gap:** One document at a time. No colour mode or bit depth. No Image Size or
 Canvas Size dialog. DPI is a one-shot conversion at New time and is never stored on
-the document (`NewImageDialog.tsx:12-20`).
+the document (`src/components/NewImageDialog/NewImageDialog.tsx:13-19`).
+
+### Unsaved changes
+
+**Photoshop:** replacing or unloading a modified document asks first, and the prompt
+offers to save before discarding.
+
+**This app:** one predicate, `hasDiscardableWork`
+(`src/util/document-dirty.ts`), and one owner of it,
+`UnsavedChangesProvider` (`src/contexts/UnsavedChangesContext.tsx`). The predicate is
+three terms, because the store's own `hasUnsavedChanges` sees only one of them: what is
+already on the timeline; a text box typed into but not yet placed, which lives in
+`currentArgs` until a tool commit moves it; and an in-flight tool transaction, which
+lives in `previewLayers` and dispatches nothing at all for the whole gesture. Every
+replacement surface — File > New, File > Open, the mobile drawer, and the window file
+drop, the only one a bare gesture reaches on a populated document — calls
+`confirmDiscard(reason)`, which resolves `true` without a widget when there is nothing
+to discard and otherwise renders `ConfirmDialog`
+(`src/components/ConfirmDialog/ConfirmDialog.tsx`), the app's first generic two-button
+modal. Tab close, reload and navigation are the same predicate against a `beforeunload`
+handler.
+
+**Status:** `partial`
+
+**Gap:** Two, and the first is a product decision rather than a defect.
+
+- The prompt offers **Discard** and **Cancel**. There is no **Save**, because the app's
+  only save is Save As to a new file — it proposes `"<name> (copy)"`
+  (`src/contexts/useFile.tsx:190`) — so a Save button would have to open a file picker
+  and then resume a New or Open. Which of the two is right is a product call; see
+  `HANDOFF.md`.
+- The unload prompt's wording is the browser's, not the app's. `beforeunload` can only
+  ask for a prompt, not supply one; Chrome, Safari and Firefox each supply their own
+  text, and none of it is translatable from here.
 
 ## Import
 
@@ -114,9 +148,10 @@ below that a browser handles perfectly well today.
 HDR, each with its own options.
 
 **This app:** `saveImageToDisk` (`src/contexts/image-load-save-utils.ts:138`)
-writes PNG, JPEG and WebP through `canvas.toBlob` (`:203-205`), and dispatches TIFF,
+writes PNG, JPEG and WebP through `canvas.toBlob`
+(`src/contexts/image-load-save-utils.ts:201-205`), and dispatches TIFF,
 BMP, GIF, AVIF, ICO and SVG to their encoders (`:147-178`). PSD is written
-separately (`src/contexts/psd-utils.ts:205`).
+separately (`src/contexts/psd-utils.ts:209`).
 
 **Status:** `partial`
 
@@ -135,7 +170,7 @@ refines, saves to and loads from a named channel, and is viewed in a Channels pa
 
 **This app:** a selection is **a polygon point list with a bounding box**, not a
 pixel channel — `src/contexts/general-types.ts:61-70`. Seven selection tools write
-it (`src/contexts/tool-types.ts:38-44`). Marching ants read the points
+it (`src/contexts/tool-types.ts:40-48`). Marching ants read the points
 (`src/hooks/useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`). An alpha
 mask does exist, but only as a derived copy for clipboard and copy-to-layer
 (`src/util/selection.ts:705`), reached from `copySelectionToCanvas` (`:822`) and
@@ -161,15 +196,17 @@ masks, clipping masks and Blend If.
 
 **This app:** `LayerSource` has three discriminants — `blank`, `image`, `tool`
 (`src/contexts/layer-types.ts:9-26`). Both Type and a shape commit as a source
-(`src/tools/toolProcessors.ts:159-160`, `commit: 'source'` on each), but only the six
-tools in `vectorToolNames` (`src/contexts/layer-renderer.ts:32`) are re-rendered from
+(`src/tools/toolProcessors.ts:170-177`, `commit: 'source'` on each), but only the six
+tools in `vectorToolNames` (`src/contexts/layer-renderer.ts:49`) are re-rendered from
 their args at draw time; Type is not among them, so `getLayerBitmap` falls through to
-the layer's own bitmap (`layer-renderer.ts:53`), which replay materialises
-(`src/contexts/history-replay.ts:216`). Sixteen Photoshop blend modes map to
-canvas composite operations (`src/contexts/psd-utils.ts:16-33`), and opacity and
-blend mode are applied at draw time (`src/contexts/layer-renderer.ts:100-101`).
-The layer record is flat (`layer-types.ts:71`) and the panel offers visibility,
-reorder, rename and delete (`src/components/SidebarRight/LayersTab.tsx:174-263`).
+the layer's own bitmap (`src/contexts/layer-renderer.ts:55-57`), which replay
+materialises (`src/contexts/history-replay.ts:227`). Sixteen Photoshop blend modes map
+to canvas composite operations (`src/contexts/psd-utils.ts:16-33`), and opacity and
+blend mode are applied at draw time
+(`src/contexts/layer-renderer.ts:114-115`). The layer record is flat, a
+`Record<LayerId, Layer>` with no `parentId` (`src/contexts/layer-types.ts:48-69`,
+`:71`), and the panel offers visibility, reorder, rename and delete
+(`src/components/SidebarRight/LayersTab.tsx:141-271`).
 
 **Status:** `partial`
 
@@ -198,7 +235,7 @@ per-step disabled toggle (`:88-98`), plus Undo/Redo in the header
 
 **Note, because it is the opposite of what the code looks like:** entries store
 _args_, never pixels, and undo re-runs the tool processors from index zero
-(`src/contexts/history-replay.ts:72`). See
+(`src/contexts/history-replay.ts:73`). See
 [`ARCHITECTURE.md`](ARCHITECTURE.md#two-history-systems).
 
 ## Panels
@@ -209,17 +246,17 @@ Actions, Measurement Log — dockable, with panel groups.
 
 **This app:** exactly two dockable panels, `PanelId = 'history' | 'layers'`
 (`src/contexts/PanelLayout.tsx:89`). They dock, drag-reorder, resize, collapse to
-icons and roll up (`src/contexts/PanelLayout.tsx:330-344`,
+icons and roll up (`src/contexts/PanelLayout.tsx:330-348`,
 `src/components/SidebarRight/PanelGroup.tsx`), and Window has Reset Workspace
-(`src/components/DesktopHeader/DesktopHeader.tsx:403`).
+(`src/components/DesktopHeader/DesktopHeader.tsx:621-630`).
 
 **Status:** `partial`
 
 **Gap:** No Properties, Adjustments, Channels, Paths, Character, Paragraph, Brush
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
-(`src/components/SidebarLeft/SidebarLeft.tsx:1227-1261`); the closest analogues to
-Color and Character are the Colors tool's three sliders and the Type options bar,
+(`src/components/SidebarLeft/SidebarLeft.tsx:1255`); the closest analogues to
+Color and Character are the Photo Filter command's three sliders and the Type options bar,
 which are options bars, not panels.
 
 ## Menu bar
@@ -227,23 +264,26 @@ which are options bars, not panels.
 **Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, 3D, View, Window,
 Help.
 
-**This app:** four menus — `file`, `tools`, `edit`, `window`
-(`src/components/DesktopHeader/DesktopHeader.tsx:140-151`). File has New, Open,
-Save. Tools lists every tool. Edit holds six entries — Colors, Blur, Levels,
-Transform, Draw, Text — which are tool switches, not Edit commands. Window has
-Reset Workspace.
+**This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
+(`src/components/DesktopHeader/DesktopHeader.tsx:368-634`). File has New, Open,
+Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
+twenty **disabled** (`DesktopHeader.tsx:207-230`); a disabled item records a capability
+the app does not have rather than faking it. Edit holds one item, `Free Transform`,
+which is where Adobe puts it (`DesktopHeader.tsx:585-594`). Window has Reset Workspace.
 
 **Status:** `divergent`
 
-**Gap:** The Image, Layer, Type, Select, Filter, 3D, View and Help menus do not
-exist. So Undo, Cut, Copy, Paste, Image Size, Canvas Size, Layer Mask, Clipping
-Mask, Group, Merge, Select All, Deselect, Modify, the Filter gallery, Zoom, Fit
-Screen, Rulers, Guides and Print are unreachable from the menu bar — several are
-unreachable entirely.
+**Gap:** The Layer, Type, Select, Filter, 3D, View and Help menus do not exist, and
+Image and Edit are each a stub — Image has no Mode, Image Size, Canvas Size, Crop,
+Trim or Canvas Rotation, and Edit has nothing but Free Transform. So Undo, Cut, Copy,
+Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask, Group, Merge, Select All,
+Deselect, Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
+unreachable from the menu bar — several are unreachable entirely.
 
 Undo and Redo exist as buttons (`src/components/HistoryControls/HistoryControls.tsx:43-62`)
 and are bound to `Ctrl+Z` / `Shift+Ctrl+Z`
-(`src/components/Common/AppKeyboardShortcuts.tsx:238`, `:250`); they are missing
+(`src/components/Common/AppKeyboardShortcuts.tsx:259`, `:271`); they are missing
 from the menu, not from the app.
 
 ## View and navigation
@@ -253,11 +293,11 @@ Hand-tool panning, rotate view, rulers, guides, snap, a grid overlay, and
 screen-mode switching.
 
 **This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
-scaleY)` with centring offsets (`src/hooks/usePointerPosition.ts:135`,
+scaleY)` with centring offsets (`src/hooks/usePointerPosition.ts:137`,
 `src/util/contain-fit.ts:33-51`). The
-zoom transform is commented out (`src/components/Main/Main.tsx:270`) and so is
-the store's zoom state (`src/contexts/StoreContext.tsx:142-143`, `:1171-1174`).
-There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-118`).
+zoom transform is commented out (`src/components/Main/Main.tsx:275`) and so is
+the store's zoom state (`src/contexts/StoreContext.tsx:165-166`, `:1395-1401`).
+There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-170`).
 
 **Status:** `absent`
 
@@ -298,7 +338,7 @@ selection model above rather than from the keyboard layer. `Tab`, `F`,
 UI-contrast helpers and nothing else. There is no ICC handling anywhere in `src/`.
 PSD import hard-rejects anything but 8-bit and RGB/greyscale
 (`src/contexts/psd-utils.ts:66-67`), and PSD export quantises opacity to one byte
-(`:253`).
+(`:256-257`).
 
 **Status:** `platform` for the colour-space and bit-depth half.
 
@@ -333,7 +373,7 @@ metadata option; no WebP, AVIF, GIF or TIFF encoder settings.
 **Photoshop:** a touch-optimised workspace with one-finger draw, two-finger pan and
 pinch-zoom.
 
-**This app:** a full mobile shell (`src/App.tsx:118`) — header with menu, undo,
+**This app:** a full mobile shell (`src/App.tsx:119`) — header with menu, undo,
 redo, layers drawer and Export (`src/components/Mobile/MobileHeader.tsx:92-167`),
 a tool sheet carrying the active tool's options
 (`src/components/Mobile/MobileToolSheet.tsx:66-97`), a bottom bar whose tiles come
@@ -341,7 +381,7 @@ from the same `toolbarMap` as desktop so they cannot drift
 (`src/components/Mobile/mobile-tools.ts:50-63`), and a layers drawer
 (`src/components/Mobile/MobileLayersDrawer.tsx:134-320`). Canvas input goes
 through Pointer Events with single-pointer capture, so drawing works on touch
-(`src/hooks/usePointerPosition.ts:155-176`).
+(`src/hooks/usePointerPosition.ts:193`).
 
 **Status:** `partial`
 
@@ -357,20 +397,22 @@ Content-Aware Fill, Neural Filters.
 explicit warning (`src/contexts/psd-utils.ts:109`), and there is no `LayerSource`
 arm for one. No adjustment layers. No generative, content-aware or neural code in
 `src/`. The Pen family and Custom Shape are unimplemented placeholders
-(`src/tools/toolProcessors.ts:300-335`), so there are no path layers either.
+(`src/tools/toolProcessors.ts:343-378`), so there are no path layers either.
 
 **What it does have** is a genuine, if narrow, non-destructive mechanism: a
 per-layer retained operation stack — `FilterLayerOperation | AffineLayerOperation`
 (`src/contexts/layer-types.ts:31-46`) — re-rendered as a CSS `ctx.filter` string on
-every draw (`src/contexts/layer-renderer.ts:22-30`, `:77`). A layer can be
-re-blurred, re-levelled or re-coloured without rasterising.
+every draw (`getPresentationFilter` at `src/contexts/presentation-evaluator.ts:103`,
+assigned to `ctx.filter` at `:166`). A layer can be re-blurred, re-levelled or
+re-coloured without rasterising.
 
 **Status:** `divergent`
 
 ### Platform limits on filters
 
 **Capability:** Blur, Colors and Levels — every adjustment this app mints by
-re-rendering a `CanvasRenderingContext2D.filter` string.
+re-rendering a `CanvasRenderingContext2D.filter` string. The first is a tool; the
+other two are `Image ▸ Adjustments` commands.
 
 `CanvasRenderingContext2D.filter` is **not Baseline**. caniuse records Safari
 `3.1 - 17.6: Not supported`, and MDN's own page states that the feature "is not
@@ -384,9 +426,9 @@ bitmap as if it were the edit, and no replay could reproduce those pixels.
 Photoshop applies a real kernel on every platform, so the divergence is visible,
 not silent.
 
-**Status:** `platform` for the Safari half. Everywhere else these three tools
-behave as Photoshop does, and the absence of a CPU-side implementation is not
-recorded here — that is a backlog item, not a limit.
+**Status:** `platform` for the Safari half. Everywhere else these three behave as
+Photoshop does, and the absence of a CPU-side implementation is not recorded here —
+that is a backlog item, not a limit.
 
 ## What is not a platform limit
 

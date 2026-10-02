@@ -1,10 +1,11 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Locator, type Page, test, type TestInfo } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
 /**
- * Automated accessibility auditing, via axe-core, over three regions of the app.
+ * Automated accessibility auditing, via axe-core, over four regions of the app.
  *
  * ## Why this file exists at all, when the suite already has ~172 role locators
  *
@@ -39,7 +40,7 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  * `src/components/NewImageDialog/NewImageDialog.tsx:63`). Two hand-written
  * implementations of one rule is precisely the shape that drifts.
  *
- * ## Why THREE scans and not one whole-page sweep
+ * ## Why FOUR scans and not one whole-page sweep
  *
  * A single `analyze()` over the whole document is the obvious version and it is
  * worthless here: every violation comes back with the same selector prefix, so a
@@ -50,8 +51,8 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  * `workspace-canvas` plus a stack of overlays, and a document-wide sweep attributes
  * whatever it finds there to the shell.
  *
- * The three regions are chosen to cover the three distinct kinds of widget, not the
- * three most-likely-to-fail spots:
+ * The four regions are chosen to cover the four distinct kinds of widget, not the
+ * four most-likely-to-fail spots:
  *
  * 1. **The shell** (`document`, unscoped) — DesktopHeader, the tools rail, the right
  *    dock, the footer. Structure, landmarks, headings, names.
@@ -59,15 +60,23 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *    app: a `<select>`, four range inputs, a labelled checkbox, a canvas preview.
  *    Every label there is a `<label htmlFor>`, which is exactly the association axe
  *    checks and a role locator cannot.
- * 3. **A modal dialog** — New Image. The one surface with a focus trap, an
+ * 3. **A modal dialog with a form** — New Image. A surface with a focus trap, an
  *    `aria-labelledby`, a form and its own contrast palette.
+ * 4. **A modal dialog with no form** — the unsaved-changes prompt
+ *    (`src/components/ConfirmDialog`). It is the FIRST modal a user meets, it stands
+ *    between the file commands and the document, and before the guard moved into the
+ *    app it was a native `confirm()` — which axe cannot audit at all, so nothing else
+ *    in this file could ever have covered it.
+ *
+ * The fourth was added after the guard changed; the first three are unchanged and
+ * none of them was relaxed to make room for it.
  *
  * ## What a GREEN run does NOT prove — read this before trusting one
  *
  * This is the part that decides whether the file is worth keeping, so it is stated at
  * length and in the negative.
  *
- * - **Green means axe found nothing in three regions of one viewport, in the light
+ * - **Green means axe found nothing in four regions of one viewport, in the light
  *   theme.** It does not mean the app is accessible. axe covers roughly 30-40% of WCAG
  *   as a matter of design; the rest — keyboard operability, focus order, focus
  *   visibility, a screen reader actually understanding a canvas editor, error recovery,
@@ -85,7 +94,7 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *   is a `<canvas>`; its pixels are the content, and there is no DOM to expose. axe
  *   scans the SHELL AROUND the canvas and says nothing about the canvas. A green run
  *   here is a statement about the furniture, not the picture.
- * - **The scans are per-state, not per-app.** Three snapshots. The flyout menu, the
+ * - **The scans are per-state, not per-app.** Four snapshots. The flyout menu, the
  *   mobile drawers, the Save dialog, the Export menu, the layers rename input, the
  *   History and Layers panels in their rolled-up and icon-only states, every other
  *   tool's options bar, and the dark theme are all UNSCANNED.
@@ -99,9 +108,17 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *   checks it could not decide — in the shell scan, `aria-allowed-role` on one node and
  *   `color-contrast` on two. Asserting it would fail on elements axe correctly admits
  *   it cannot judge, which is a false positive, not a defect. It is attached to the
- *   report in full, and its ids are logged on every run, so a reader can see it was
- *   there and was not counted. `violations` is the only bucket this file asserts on,
- *   and it is asserted EMPTY.
+ *   report in full, its ids are logged on every run, and the attachment records each
+ *   node's `targets`, so a reader can see it was there, was not counted, and can find
+ *   the element without re-running the scan. `violations` is the only bucket this file
+ *   asserts on, and it is asserted EMPTY.
+ *   **The `aria-allowed-role` x1 is the one to read by hand.** It goes incomplete when
+ *   an element's accessible role is ambiguous, which usually means the `role` and the
+ *   element disagree. The two `color-contrast` results land on the `SidebarRight`
+ *   `PanelGroup` header (`src/components/SidebarRight/PanelGroup.tsx:40-42`), whose
+ *   background is set by class rather than inline — text over a surface axe declines to
+ *   judge is usually a design decision, and belongs in `docs/OVERRIDES.md` rather than
+ *   in a test if it is deliberate.
  * - **No rule is disabled and no tag filter is applied.** The full default rule set
  *   runs, `best-practice` included. Two of the four failures below are
  *   `best-practice` rules rather than WCAG A/AA, and they are left in on purpose: a
@@ -120,8 +137,11 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *   `[axe] <label>: N violations, N incomplete, N passed rule(s) — audited N node(s)`.
  *   A scoped scan that stopped matching anything would also report zero violations,
  *   and `resolveScope` cannot catch that on its own; the audited-node count is what
- *   distinguishes a clean region from an empty audit. The measured counts are 59
- *   nodes for the dialog, 23 for the options bar and 395 for the shell.
+ *   distinguishes a clean region from an empty audit. The measured counts, from the run
+ *   that added the fourth scan, are 59 nodes for the New Image dialog, 25 for the
+ *   unsaved-changes prompt, 33 for the options bar and 465 for the shell — the options
+ *   bar and the shell have both moved as the app grew, which is the same drift this line
+ *   exists to make visible.
  *
  * ## THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE
  *
@@ -299,11 +319,17 @@ async function expectNoViolations(
           occurrences: violation.nodes.length,
           targets: violation.nodes.map((node) => node.target),
         })),
-        // Attached so a reader can see it was considered and not silently dropped.
+        // Attached so a reader can see it was considered and not silently dropped. `targets` is
+        // recorded for the same reason the violations bucket records it at `:300`: without the
+        // element selector a rule id and a count say that axe stopped, and not WHERE. An
+        // `aria-allowed-role` that cannot be located without re-running the scan is not a
+        // hand-off, it is a to-do nobody can start.
         incompleteNotAsserted: results.incomplete.map((item) => ({
           id: item.id,
           impact: item.impact,
+          help: item.help,
           occurrences: item.nodes.length,
+          targets: item.nodes.map((node) => node.target),
         })),
         inapplicable: results.inapplicable.length,
         passes: results.passes.length,
@@ -363,15 +389,19 @@ test('the New Image dialog has no axe violations', async ({ page }, testInfo) =>
   await expect(getWorkspaceCanvas(page)).toBeVisible();
 
   // The blank document the app creates on load (`App.tsx:28-41`, `BlankImageStarter`)
-  // may or may not count as unsaved, so the `confirm()` guard `DesktopHeader` puts on
-  // New (`DesktopHeader.tsx:188-189`) may or may not appear. Armed with `on` rather than
-  // `once` for exactly that reason: `once` would consume the NEXT dialog of any kind if
-  // the guard does not fire, and a bare Playwright dialog with no handler is DISMISSED,
-  // which silently cancels the New and leaves this test scanning nothing.
-  page.on('dialog', (dialog) => void dialog.accept());
-
+  // carries unsaved changes, so the guard `DesktopHeader` puts on New
+  // (`UnsavedChangesContext.tsx`) IS shown on this click, and it is now the app's own
+  // modal (`src/components/ConfirmDialog`) rather than a native `confirm()`. The old
+  // `page.on('dialog', …)` was armed with `on` rather than `once` for a reason that no
+  // longer applies: `once` would consume the NEXT dialog of any kind if the guard did not
+  // fire, and a bare Playwright dialog with no handler is DISMISSED, which silently
+  // cancelled the New and left this test scanning nothing. `acceptDiscardPrompt` answers
+  // the prompt this test caused and FAILS if it was never shown, which is the same
+  // protection stated as an assertion rather than as a listener that tolerated its
+  // absence — a clean document would now fail here instead of passing with an empty scan.
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-new-button').click();
+  await acceptDiscardPrompt(page);
 
   const dialog = await resolveScope(page, '[data-testid="new-image-dialog"]', 'the New Image dialog');
   await expect(dialog).toBeVisible();
@@ -379,6 +409,52 @@ test('the New Image dialog has no axe violations', async ({ page }, testInfo) =>
   await expectNoViolations(page, testInfo, 'new-image-dialog', (builder) =>
     builder.include('[data-testid="new-image-dialog"]')
   );
+});
+
+/**
+ * The unsaved-changes guard — the app's own modal, and a FOURTH region.
+ *
+ * It was a native `confirm()` until the guard moved into the app
+ * (`src/contexts/UnsavedChangesContext.tsx`), and a browser-native dialog is not in this
+ * document at all: axe cannot audit the chrome of an OS dialog, and `role="dialog"` on
+ * nothing is not a surface any of the existing scans reach. Now that it is DOM it is
+ * auditable, and it is the FIRST modal a user meets in this app — it stands between the
+ * file commands and the document — so a sweep of it is the cheapest real coverage
+ * available for a new modal and belongs beside the New Image sweep rather than after it.
+ *
+ * What it covers that the New Image sweep does not: `aria-modal="true"` and an
+ * `aria-describedby` pointing at the message paragraph (`ConfirmDialog.tsx:35,:37` → `:62`),
+ * which is wiring no role locator in the suite asks about — the whole reason
+ * `e2e/document-dialogs.spec.ts` and the unit tests can go green on a `toBeInTheDocument()`
+ * while `aria-describedby` names an id that does not exist. The message is body copy inside
+ * a titled dialog, so it is a `<p>` and not a heading: an `<h3>` there would break axe's
+ * `heading-order`, and the `<h2>` title is chosen for the same reason.
+ *
+ * Same scope discipline as the New Image scan, for the same reason: a `fixed inset-0`
+ * overlay that does not mark the page behind it `aria-hidden` or `inert` would drag the
+ * whole shell into this report, and the shell is judged by its own scan.
+ */
+test('the unsaved-changes prompt has no axe violations', async ({ page }, testInfo) => {
+  await page.setViewportSize(VIEWPORT);
+  await page.goto('/');
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+  // Shown by the boot document's unsaved changes, so the guard is reached on the first
+  // `File > New` with no work of this test's own required first.
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-new-button').click();
+
+  const prompt = await resolveScope(page, '[data-testid="confirm-dialog"]', 'the unsaved-changes prompt');
+  await expect(prompt).toBeVisible();
+
+  await expectNoViolations(page, testInfo, 'confirm-dialog', (builder) =>
+    builder.include('[data-testid="confirm-dialog"]')
+  );
+
+  // Answered only after the scan, so the prompt is on screen while axe reads it. Nothing
+  // below this line depends on the answer, and leaving a modal up at the end of a test is
+  // the sort of thing that makes the next one fail for the wrong reason.
+  await acceptDiscardPrompt(page);
 });
 
 /**

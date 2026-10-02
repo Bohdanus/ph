@@ -215,7 +215,9 @@ describe('TextToolArea', () => {
       // The type colour belongs to the tool and is edited on the options bar. The store's
       // foreground used to be written over it here, which is what made the swatch unwritable: a
       // drag republished the foreground, not the colour the user had chosen.
-      expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, color: '#0000ff', rect: newRect });
+      // A 40x20 press is a drag, so the committed record also says which of Adobe's two kinds of
+      // type layer the gesture placed.
+      expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, color: '#0000ff', rect: newRect, kind: 'paragraph' });
     });
 
     it('does not republish the args when only the store foreground changed', () => {
@@ -257,6 +259,91 @@ describe('TextToolArea', () => {
       expect(h.setToolArgs).not.toHaveBeenCalled();
       expect(focus).not.toHaveBeenCalled();
     });
+
+    it('commits a drag as a paragraph box, with the dragged rect handed over unchanged', () => {
+      const dragged = { x1: 10, y1: 20, x2: 90, y2: 60 };
+      toolArgs = makeTextArgs({ text: 'hi', rect: dragged });
+      vi.mocked(calculateNewRect).mockReturnValue(dragged);
+
+      renderArea();
+      act(() => h.useRectProps.current!.onChangeEnd(dragged));
+
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'paragraph', rect: dragged }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph', rect: dragged }));
+    });
+
+    it('commits a click as a point box, collapsing the rect onto the press origin', () => {
+      const clicked = { x1: 12, y1: 34, x2: 12, y2: 34 };
+      toolArgs = makeTextArgs({ text: 'hi', rect: clicked });
+      vi.mocked(calculateNewRect).mockReturnValue(clicked);
+
+      renderArea();
+      act(() => h.useRectProps.current!.onChangeEnd(clicked));
+
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'point', rect: { x1: 12, y1: 34, x2: 12, y2: 34 } }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point' }));
+    });
+
+    it('treats a 4px-wide, 1px-tall press as a drag: crossing the threshold on ONE axis is enough', () => {
+      const dragged = { x1: 5, y1: 5, x2: 9, y2: 6 };
+      toolArgs = makeTextArgs({ text: 'hi', rect: dragged });
+      vi.mocked(calculateNewRect).mockReturnValue(dragged);
+
+      renderArea();
+      act(() => h.useRectProps.current!.onChangeEnd(dragged));
+
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'paragraph', rect: dragged }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph' }));
+    });
+
+    it('treats a 200px-wide, 3px-tall press as a drag too: a height inside the threshold decides nothing alone', () => {
+      const dragged = { x1: 0, y1: 10, x2: 200, y2: 13 };
+      toolArgs = makeTextArgs({ text: 'hi', rect: dragged });
+      vi.mocked(calculateNewRect).mockReturnValue(dragged);
+
+      renderArea();
+      act(() => h.useRectProps.current!.onChangeEnd(dragged));
+
+      // The click test is the AND of two per-axis verdicts, so the negation is their OR: 3px of
+      // travel on y is not a click, and the 200px on x carries the drag on its own. The rect is
+      // handed over as dragged, which is what a collapsed point box would not be.
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'paragraph', rect: dragged }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph' }));
+    });
+
+    it('treats a press exactly at the threshold, 3px by 3px, as a click', () => {
+      const rect = { x1: 7, y1: 8, x2: 10, y2: 11 };
+      toolArgs = makeTextArgs({ text: 'hi', rect });
+      vi.mocked(calculateNewRect).mockReturnValue({ x1: 7, y1: 8, x2: 7, y2: 8 });
+
+      renderArea();
+      act(() => h.useRectProps.current!.onChangeEnd(rect));
+
+      // `<=` and not `<`: the threshold is the largest press still counted as a click on BOTH
+      // axes, so a 4px travel is the first that is not.
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'point', rect: { x1: 7, y1: 8, x2: 7, y2: 8 } }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point' }));
+    });
   });
 
   describe('text preview', () => {
@@ -288,9 +375,12 @@ describe('TextToolArea', () => {
 
       // The preview the user reads on the canvas is the colour the bar will commit, not the
       // foreground: the two used to disagree the moment the bar's own choice was made.
+      // The third argument is the overflow indicator, which is the one thing this overlay asks
+      // for that the committed layer's canvas must never have baked into it.
       expect(renderText).toHaveBeenCalledWith(
         ctx,
-        expect.objectContaining({ text: 'hello', color: '#0000ff', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } })
+        expect.objectContaining({ text: 'hello', color: '#0000ff', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } }),
+        { overflowIndicator: true }
       );
     });
 
