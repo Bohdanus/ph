@@ -1,5 +1,29 @@
 Photoshop clone production-grade photo editor
 
+## Worktree FIRST — no tracked edit happens outside one
+
+**100% of work that changes a tracked file happens in its own worktree, on its own
+branch. `main` is for reading and merging.** The exceptions are enumerated, none of
+them a judgement call, in
+[`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
+
+```bash
+git rev-parse --show-toplevel                        # FIRST. Every time. Non-negotiable.
+# `git worktree list` puts the MAIN checkout first, and $MAIN is absolute: the new
+# worktree lands under the main checkout and never nests inside the one you are in.
+MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
+git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
+```
+
+- **A commit from `main` is refused**, not warned about: `scripts/main-worktree-guard.mjs`
+  runs first in `.husky/pre-commit`, and the refusal names this recipe. It is the floor
+  under the rule rather than the rule: it runs after the edit, so a session that writes
+  into `main` and never commits is not stopped by it. What stops the write is the process
+  above.
+
+The three traps that follow from having a worktree are in **Worktrees and dev servers**
+below.
+
 ## Subagents INSTRUCTION
 
 LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.
@@ -91,7 +115,8 @@ npm run probe:console   # playwright, HEADLESS - one page load, reports console 
 
 ## Worktrees and dev servers
 
-One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
+The three traps that follow from having one, each a consequence of a second checkout of
+the same repository:
 
 - **`node_modules` is missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **A run starts its own dev server, on a port of its own.** `scripts/e2e-run.mjs` picks a free port, so `test:e2e` never tests a checkout it did not start. Never set `PLAYWRIGHT_REUSE_EXISTING_SERVER`: `playwright.config.ts` hard-codes `reuseExistingServer: false` and the runner refuses that variable on TRUTHINESS, so even `=false` exits with an error. A bare `npx playwright test` skips the port picker and collides with whatever holds :5173 — use `npm run test:e2e`, or pass `PLAYWRIGHT_PORT=<free>`.
@@ -104,7 +129,7 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
-- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds one `auto` fixture, `ConsolePolice`, which fails a test on any unaccepted console error or page error. It is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds two `auto` fixtures: `consolePolice`, which fails a test on any unaccepted console error or page error, and `pinnedTheme`, which seeds `localStorage.theme` so the suite's pixel oracles keep the light backdrop they are calibrated for under the app's dark default. `auto` is the load-bearing part — it is opt-out, not opt-in. `consolePolice` is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
 - Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates

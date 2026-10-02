@@ -12,7 +12,7 @@ import {
   measureInk,
   waitForCanvasRedraw,
 } from '../helpers/canvas-helpers';
-import { clickToolButton } from '../helpers/toolbar-helpers';
+import { clickToolButton, toggleToolbarLayout } from '../helpers/toolbar-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';
 
 export interface ExportFormat {
@@ -308,9 +308,25 @@ export async function assertExportGeometry(
   return { actual, baseline: expected };
 }
 
+/**
+ * How the left toolbar's layout is set before the line is drawn.
+ *
+ * The toggle is a desktop-only control: `SidebarLeft` renders it behind `!isTablet`, so it
+ * does not exist below the `lg` breakpoint (1024px) and `toggled` is only reachable above it.
+ * The layout-independence test relies on that — it applies `toggled` only at widths where the
+ * control is present, and asserts its absence below `lg` rather than silently skipping.
+ */
+export type ToolbarLayout = 'default' | 'toggled';
+
+export interface SetupExportTestOptions {
+  /** Which left-toolbar layout to draw in. Defaults to `default`. */
+  toolbarLayout?: ToolbarLayout;
+}
+
 export async function setupExportTest(
   page: Page,
-  testInfo: TestInfo
+  testInfo: TestInfo,
+  options: SetupExportTestOptions = {}
 ): Promise<{
   box: { x: number; y: number; width: number; height: number };
   documentSize: { width: number; height: number };
@@ -324,6 +340,15 @@ export async function setupExportTest(
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
+
+  // BEFORE the box is read. The toggle restyles the left rail, which resizes the grid area the
+  // canvas fills, so a box measured before it would map the document line into a canvas that no
+  // longer exists — and the mapping would be wrong by the rail's width rather than by a
+  // rounding, which is exactly the class of error this helper exists to remove.
+  if (options.toolbarLayout === 'toggled') {
+    await toggleToolbarLayout(page);
+  }
+
   const box = await canvas.boundingBox();
   if (!box) throw new Error('Canvas not found');
 
