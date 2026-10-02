@@ -54,14 +54,14 @@ type GradientEndpoints = { from: Point; to: Point };
  *
  * The args are documented as a document-space drag, and they are: `usePaintStroke` converts every
  * pointer sample through `canvasToDocumentPoint` before any callback sees it. They are then
- * rebased onto the active layer's own raster before they reach the processor, because
- * `tempUpdateLayer` hands the processor `size: layer.pos` and the layer's own bitmap with no
- * document origin. A layer at a non-zero document origin would otherwise have its gradient
- * shifted off the layer by that origin. Rebasing happens here rather than in the processor
- * because this is the only place that knows the layer's `pos`, and it is deterministic: the
- * rebased numbers are what the history entry retains, and replay feeds them back to this
- * processor with `size: layer.pos` as well (`src/contexts/useHistory.ts:98-108`), so a replay
- * reproduces the same fill. `src/util/layer-space.ts` states the two spaces; the stroke tools
+ * rebased onto the active layer's own raster before they reach the processor, because the
+ * processor is handed a buffer with no document origin in it. A layer at a non-zero document
+ * origin would otherwise have its gradient shifted off the layer by that origin. Rebasing happens
+ * here rather than in the processor because this is the only place that knows the layer's `pos`,
+ * and it is deterministic: the rebased numbers are what the history entry retains, and replay
+ * feeds them back to this processor over the same layer-local buffer
+ * (`src/contexts/useHistory.ts:169`), so a replay reproduces the same fill.
+ * `src/util/layer-space.ts` states the two spaces; the stroke tools
  * that were missing this rebase are `EraserToolArea`, `SmudgeToolArea`, `DodgeToolArea` and
  * `BurnToolArea`.
  *
