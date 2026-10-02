@@ -126,6 +126,41 @@ test.describe('document size across many tool commits', () => {
     console.log(`[PW-PROBE-SUMMARY] ${JSON.stringify({ baseline, rows: rows.length })}`);
   });
 
+  test('12 Draw commits never expand the workspace row', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await clickToolButton(page, 'draw');
+
+    const baseline = await backingStore(page);
+    const baselineBox = await canvasBox(page);
+    const baselinePageHeight = await page.evaluate(() => ({
+      clientHeight: document.documentElement.clientHeight,
+      scrollHeight: document.documentElement.scrollHeight,
+    }));
+    const baselineRows = await page.getByTestId('layer-row').count();
+
+    for (let i = 0; i < 12; i += 1) {
+      const from = { x: 80 + (i % 4) * 180, y: 80 + Math.floor(i / 4) * 120 };
+      const to = { x: from.x + 80, y: from.y + 12 };
+      await dragInDocument(page, from, to);
+      await expect(page.getByTestId('layer-row'), `Draw commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
+      await expect.poll(() => backingStore(page), `backing store after Draw commit ${i + 1}`).toEqual(baseline);
+      await expect.poll(() => canvasBox(page), `canvas box after Draw commit ${i + 1}`).toEqual(baselineBox);
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => ({
+              clientHeight: document.documentElement.clientHeight,
+              scrollHeight: document.documentElement.scrollHeight,
+            })),
+          `page geometry after Draw commit ${i + 1}`
+        )
+        .toEqual(baselinePageHeight);
+    }
+  });
+
   test('a crop, then more shape commits, then undo/redo', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 

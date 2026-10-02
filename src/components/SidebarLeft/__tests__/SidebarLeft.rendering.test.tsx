@@ -120,6 +120,14 @@ describe('SidebarLeft rendering', () => {
       (button) => button.dataset.testid?.replace('tool-button-', '')
     );
 
+    // A hard-coded pin on the tile order, NOT derived from `toolbarMap`: re-deriving it would
+    // make this test pass for any map at all, which is the one thing it exists to catch.
+    //
+    // `color`, `levels` and `transform` are absent because Photoshop's Tools panel has no such
+    // entries — they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands, and the
+    // command is not a tool. Which registered tools carry no tile at all is pinned in
+    // `toolbar-mapping.test.ts`; this list pins the tiles that do exist and the order they
+    // appear in.
     expect(buttonNames).toEqual([
       'reposition',
       'rectangular-selection',
@@ -127,7 +135,6 @@ describe('SidebarLeft rendering', () => {
       'magic-wand',
       'eyedropper',
       'crop',
-      'color',
       'brush',
       'clone-stamp',
       'blur',
@@ -165,7 +172,6 @@ describe('SidebarLeft rendering', () => {
     expect(toolbarButtonByName('magic-wand')).toHaveAccessibleName('Magic Wand Tool');
     expect(toolbarButtonByName('crop')).toHaveAccessibleName('Crop Tool');
     expect(toolbarButtonByName('eyedropper')).toHaveAccessibleName('Eyedropper Tool');
-    expect(toolbarButtonByName('color')).toHaveAccessibleName('Colors');
     expect(toolbarButtonByName('brush')).toHaveAccessibleName('Brush Tool');
     expect(toolbarButtonByName('clone-stamp')).toHaveAccessibleName('Clone Stamp Tool');
     expect(toolbarButtonByName('blur')).toHaveAccessibleName('Blur Tool');
@@ -184,7 +190,6 @@ describe('SidebarLeft rendering', () => {
       toolbarButtonByName(name).querySelector('span[aria-hidden="true"]') !== null;
 
     expect(hasFlyoutIndicator('freehand-lasso')).toBe(true);
-    expect(hasFlyoutIndicator('color')).toBe(true);
     expect(hasFlyoutIndicator('brush')).toBe(true);
     expect(hasFlyoutIndicator('pen')).toBe(true);
     expect(hasFlyoutIndicator('shape')).toBe(true);

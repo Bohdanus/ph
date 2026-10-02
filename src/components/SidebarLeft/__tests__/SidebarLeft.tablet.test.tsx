@@ -116,7 +116,7 @@ describe('SidebarLeft owns its scrolling', () => {
   afterEach(() => setViewportWidth(DESKTOP_WIDTH, 800));
 
   /**
-   * The rail holds 16 tool groups in 5 sections plus the colour swatches, inside the `1fr`
+   * The rail holds 15 tool groups in 4 sections plus the colour swatches, inside the `1fr`
    * row of a grid whose container is `height: 100%`. Its content heights are measured,
    * font-metric dependent, and deliberately restated nowhere else — see the header of
    * `e2e/no-document-overflow.spec.ts` for them and for what asserts what. The pair this

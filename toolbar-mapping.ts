@@ -65,13 +65,6 @@ export const toolbarMap = [
   ],
   [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
   [
-    [
-      { label: 'Colors', name: 'color' },
-      { label: 'Levels', name: 'levels' },
-      { label: 'Transform', name: 'transform' },
-    ],
-  ],
-  [
     // The Brush stays the tile's default tool, so the eraser-family tools are appended
     // rather than inserted: `renderToolGroup` derives the tile's default identity from the
     // first entry (`SidebarLeft.tsx:578`). Six entries is the same length as the Pen family
@@ -176,4 +169,23 @@ export const availableTools: readonly ToolName[] = [
   'sponge',
 ];
 
+/**
+ * Tool ids with no Tools-rail entry, because Photoshop's Tools panel has none.
+ *
+ * `color`, `levels` and `transform` are `Image ▸ Adjustments` and `Edit ▸ Free Transform`
+ * COMMANDS, and a command is not a tool. They were the sole members of a three-wide flyout
+ * here until they were extracted; what hosts them now is
+ * `src/components/DesktopHeader/DesktopHeader.tsx` — `Image ▸ Adjustments` carries the
+ * first two and `Edit ▸ Free Transform` the third.
+ *
+ * Before that extraction this export was a declaration with no consumer at all, and it still
+ * has none: `toolbar-mapping.test.ts` is its only importer. What that test pins is the
+ * two-way relation with `toolbarMap` — nothing in `extraTools` may be a tile, and a rail
+ * entry dropped without being recorded here fails it the other way.
+ *
+ * It is NOT the answer to "which registered tool is not a tile", because five more ids are
+ * not tiles: `rectangle`, `ellipse`, `triangle`, `polygon` and `line`, reachable only as
+ * values of the `shape` tile's `figure`. The test carves those five out by name, so adding
+ * a sixth alias means adding it to that exemption too.
+ */
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

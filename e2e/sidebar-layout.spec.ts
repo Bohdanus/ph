@@ -227,7 +227,7 @@ test.describe('SidebarLeft - Layout Toggle (fast)', () => {
     // this viewport rather than the order, and would start failing the day a row changed height.
     //
     // The counts move with the budget and are not pinned here — seven tool tiles in one column
-    // at 1280x720, and all sixteen in two columns, where the whole map fits above 666px and no
+    // at 1280x720, and all fifteen in two columns, where the whole map fits above 666px and no
     // three-dots tile is rendered at all. `e2e/toolbar-fit.spec.ts` owns the heights and prints
     // them on every run; they are font-metric dependent and a second copy is a second thing to
     // rot. What is true at every one of them, and what this asserts, is that each layout shows

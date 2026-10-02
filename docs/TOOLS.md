@@ -53,7 +53,7 @@ The Rectangular Marquee tool makes the simplest selection in Photoshop: drag cor
 Implementation:
 
 - `src/tools/rectangularSelection.ts:4`
-- `src/tools/settings.ts:130`
+- `src/tools/settings.ts:132`
 - `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:33`
 - `src/components/Main/RectangularSelectionToolArea.tsx:74`
 - `src/hooks/useRect.ts:400`
@@ -109,7 +109,7 @@ Implementation:
 
 - `src/tools/ellipticalSelection.ts:155`
 - `src/tools/ellipticalSelection.ts:51`
-- `src/tools/settings.ts:220`
+- `src/tools/settings.ts:229`
 - `src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:98`
 - `src/components/Main/EllipticalSelectionToolArea.tsx:176`
 - `src/components/Main/EllipticalSelectionToolArea.tsx:247`
@@ -162,7 +162,7 @@ Implementation:
 - `src/tools/singleRowColumnMarquee.ts:81`
 - `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126`
 - `src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38`
-- `src/tools/toolProcessors.ts:228`
+- `src/tools/toolProcessors.ts:248`
 - `toolbar-mapping.ts:48`
 
 Sources:
@@ -209,7 +209,7 @@ Implementation:
 - `src/tools/singleRowColumnMarquee.ts:94`
 - `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126`
 - `src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38`
-- `src/tools/toolProcessors.ts:235`
+- `src/tools/toolProcessors.ts:255`
 - `toolbar-mapping.ts:49`
 
 Sources:
@@ -258,9 +258,9 @@ The Lasso tool draws a selection border by following the pointer with no correct
 Implementation:
 
 - `src/tools/polygonSelection.ts:3`
-- `src/tools/settings.ts:104`
+- `src/tools/settings.ts:106`
 - `src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:50`
-- `toolbar-mapping.ts:45`
+- `toolbar-mapping.ts:52`
 
 Sources:
 
@@ -311,10 +311,10 @@ The Polygonal Lasso tool draws a selection border out of straight segments, whic
 Implementation:
 
 - `src/tools/polygonSelection.ts:3`
-- `src/tools/settings.ts:96`
+- `src/tools/settings.ts:98`
 - `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:16`
 - `src/components/Main/PolygonClickToolArea.tsx:922`
-- `toolbar-mapping.ts:46`
+- `toolbar-mapping.ts:53`
 
 Sources:
 
@@ -377,14 +377,14 @@ Implementation:
 
 - `src/tools/featherMagneticLasso.ts:4`
 - `src/tools/featherMagneticLasso.ts:43`
-- `src/tools/settings.ts:112`
+- `src/tools/settings.ts:114`
 - `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:272`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:391`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:476`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:458`
 - `src/util/selection.ts:834`
 - `src/util/selection.ts:837`
-- `toolbar-mapping.ts:47`
+- `toolbar-mapping.ts:54`
 
 Sources:
 
@@ -435,16 +435,16 @@ The Magic Wand tool selects by color and tone rather than by shape: one click ta
 - `W` — Selects the Magic Wand. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key.
 - `Shift+W` — Switches between the Magic Wand and the Quick Selection tools.
 
-**In this app:** `partial` — The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. Tolerance is a different control from Photoshop’s on two axes at once: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. `Contiguous` is `present` as of this pass and was `missing` in the previous version of this record, which said the behaviour was "permanently on and cannot be reached". That was true when written and is not now: `contiguous` is a declared field of `MagicWandToolArgs` (`src/tools/magicWand.ts:12`), seeded `true` in `settings.ts:127`, rendered as a checkbox wired to `patchToolArgs` (`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77`), and `createMagicWandSelectionFromCanvas` branches on it — so unticking it now takes the non-contiguous path, which is the selection that makes the wand useful on a repeated sky or a duplicated product shot. The commit that made it reachable notes it was left seeded `true` so no default click changes what is selected, which is also Photoshop’s default per the third-party and Elements authority quoted in the row. Sample All Layers is still absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.
+**In this app:** `partial` — The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. Tolerance is a different control from Photoshop’s on two axes at once: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. `Contiguous` is `present` as of this pass and was `missing` in the previous version of this record, which said the behaviour was "permanently on and cannot be reached". That was true when written and is not now: `contiguous` is a declared field of `MagicWandToolArgs` (`src/tools/magicWand.ts:12`), seeded `true` in `settings.ts:137`, rendered as a checkbox wired to `patchToolArgs` (`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77`), and `createMagicWandSelectionFromCanvas` branches on it — so unticking it now takes the non-contiguous path, which is the selection that makes the wand useful on a repeated sky or a duplicated product shot. The commit that made it reachable notes it was left seeded `true` so no default click changes what is selected, which is also Photoshop’s default per the third-party and Elements authority quoted in the row. Sample All Layers is still absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.
 
 Implementation:
 
 - `src/tools/magicWand.ts:3`
-- `src/tools/settings.ts:124`
+- `src/tools/settings.ts:126`
 - `src/components/ToolbarsRight/MagicWand/MagicWand.tsx:63`
 - `src/components/Main/MagicWandToolArea.tsx:58`
 - `src/util/magicWand.ts:31`
-- `toolbar-mapping.ts:52`
+- `toolbar-mapping.ts:59`
 
 Sources:
 
@@ -496,11 +496,11 @@ Implementation:
 - `src/tools/quickSelection.ts:8`
 - `src/tools/quickSelection.ts:144`
 - `src/tools/quickSelection.ts:79`
-- `src/tools/settings.ts:227`
+- `src/tools/settings.ts:236`
 - `src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111`
 - `src/components/Main/QuickSelectionToolArea.tsx:125`
 - `src/components/Main/QuickSelectionToolArea.tsx:216`
-- `toolbar-mapping.ts:53`
+- `toolbar-mapping.ts:60`
 
 Sources:
 
@@ -573,14 +573,14 @@ The Brush is Photoshop’s general painting tool. Click and drag to lay down a s
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:256`
+- `src/tools/toolProcessors.ts:276`
 - `src/tools/brush.ts:70`
 - `src/components/ToolbarsRight/Paint/Paint.tsx:43`
 - `src/components/Main/DrawToolArea.tsx:143`
 - `src/tools/brush.ts:109`
 - `src/contexts/layer-utils.ts:230`
-- `src/tools/settings.ts:131`
-- `src/components/Common/AppKeyboardShortcuts.tsx:517`
+- `src/tools/settings.ts:140`
+- `src/components/Common/AppKeyboardShortcuts.tsx:538`
 
 Sources:
 
@@ -647,11 +647,11 @@ The Pencil is a Brush whose tip is always hard-edged, so its strokes never blend
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:264`
+- `src/tools/toolProcessors.ts:297`
 - `src/components/ToolbarsRight/Paint/Paint.tsx:43`
 - `src/components/Main/DrawToolArea.tsx:143`
-- `src/tools/settings.ts:148`
-- `src/components/Common/AppKeyboardShortcuts.tsx:517`
+- `src/tools/settings.ts:157`
+- `src/components/Common/AppKeyboardShortcuts.tsx:538`
 
 Sources:
 
@@ -703,14 +703,14 @@ The Color Replacement Tool substitutes one color for another in a stroke, keepin
 
 Implementation:
 
-- `src/tools/toolsMap.ts:117`
+- `src/tools/toolsMap.ts:138`
 - `src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:71`
 - `src/components/Main/ColorReplacementToolArea.tsx:141`
 - `src/tools/colorReplacement.ts:182`
 - `src/tools/colorReplacement.ts:313`
-- `src/tools/toolProcessors.ts:277`
-- `src/tools/settings.ts:165`
-- `src/components/Common/AppKeyboardShortcuts.tsx:347`
+- `src/tools/toolProcessors.ts:310`
+- `src/tools/settings.ts:174`
+- `src/components/Common/AppKeyboardShortcuts.tsx:368`
 
 Sources:
 
@@ -773,14 +773,14 @@ The Eraser removes pixels under a dragged tip, writing transparency on a layer a
 
 Implementation:
 
-- `src/tools/toolsMap.ts:122`
+- `src/tools/toolsMap.ts:143`
 - `src/tools/eraser.ts:26`
 - `src/tools/eraser.ts:85`
 - `src/tools/eraser.ts:215`
 - `src/components/Main/EraserToolArea.tsx:211`
 - `src/components/ToolbarsRight/Eraser/Eraser.tsx:38`
-- `src/tools/settings.ts:183`
-- `src/components/Common/AppKeyboardShortcuts.tsx:462`
+- `src/tools/settings.ts:192`
+- `src/components/Common/AppKeyboardShortcuts.tsx:483`
 
 Sources:
 
@@ -819,16 +819,16 @@ The Magic Eraser is the Paint Bucket run in reverse: one click erases every pixe
 
 - `Shift+E` — Cycles the slot shared with the Eraser and the Background Eraser. Adobe’s own help page prints the bare letter E beside the tool, but the tool does not have E to itself — the Eraser does.
 
-**In this app:** `partial` — A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the app does not bind `Shift+E`: the eraser family shares one plain `E` registration with no Shift twin (`AppKeyboardShortcuts.tsx:462`), so the tool is selected only by cycling with Shift+B from the eraser slot rather than the cycle Photoshop uses. Its bar is the shared fill bar, built by `createFillToolbar` and rendered at `MagicEraser.tsx:24`.
+**In this app:** `partial` — A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the app does not bind `Shift+E`: the eraser family shares one plain `E` registration with no Shift twin (`AppKeyboardShortcuts.tsx:483`), so the tool is selected only by cycling with Shift+B from the eraser slot rather than the cycle Photoshop uses. Its bar is the shared fill bar, built by `createFillToolbar` and rendered at `MagicEraser.tsx:24`.
 
 Implementation:
 
-- `src/tools/toolsMap.ts:123`
+- `src/tools/toolsMap.ts:144`
 - `src/tools/fill.ts:163`
 - `src/util/floodFill.ts:76`
 - `src/components/Main/FillToolArea.tsx:91`
 - `src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:24`
-- `src/tools/settings.ts:197`
+- `src/tools/settings.ts:206`
 
 Sources:
 
@@ -872,14 +872,14 @@ The Paint Bucket fills the whole connected region of similar color around the cl
 
 Implementation:
 
-- `src/tools/toolsMap.ts:124`
+- `src/tools/toolsMap.ts:145`
 - `src/tools/fill.ts:129`
 - `src/tools/fill.ts:151`
 - `src/components/Main/FillToolArea.tsx:154`
 - `src/components/Main/FillToolArea.tsx:160`
 - `src/components/ToolbarsRight/MagicEraser/PaintBucket.tsx:35`
-- `src/tools/settings.ts:206`
-- `src/components/Common/AppKeyboardShortcuts.tsx:314`
+- `src/tools/settings.ts:215`
+- `src/components/Common/AppKeyboardShortcuts.tsx:335`
 
 Sources:
 
@@ -938,7 +938,7 @@ The Clone Stamp copies pixels from one part of an image and paints them into ano
 
 Implementation:
 
-- `src/tools/toolsMap.ts:96`
+- `src/tools/toolsMap.ts:111`
 - `src/components/Main/CloneStampToolArea.tsx:343`
 - `src/components/Main/CloneStampToolArea.tsx:352`
 - `src/components/Main/CloneStampToolArea.tsx:210`
@@ -947,8 +947,8 @@ Implementation:
 - `src/contexts/useLayer.ts:334`
 - `src/contexts/useLayer.ts:589`
 - `src/components/ToolbarsRight/CloneStamp/CloneStamp.tsx:71`
-- `src/tools/settings.ts:263`
-- `src/components/Common/AppKeyboardShortcuts.tsx:362`
+- `src/tools/settings.ts:286`
+- `src/components/Common/AppKeyboardShortcuts.tsx:383`
 
 Sources:
 
@@ -1000,12 +1000,12 @@ The Blur tool reduces local contrast and smooths detail in the areas you paint i
 Implementation:
 
 - `src/tools/blur.ts:11`
-- `src/tools/settings.ts:52`
+- `src/tools/settings.ts:54`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:101`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:121`
-- `src/components/Main/Main.tsx:236`
+- `src/components/Main/Main.tsx:250`
 - `src/components/Main/SharpenToolArea.tsx:33`
-- `src/tools/toolProcessors.ts:119`
+- `src/tools/toolProcessors.ts:120`
 
 Sources:
 
@@ -1050,11 +1050,11 @@ Implementation:
 
 - `src/tools/sharpen.ts:243`
 - `src/tools/sharpen.ts:90`
-- `src/tools/settings.ts:245`
+- `src/tools/settings.ts:254`
 - `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:125`
 - `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:143`
 - `src/components/Main/SharpenToolArea.tsx:46`
-- `src/tools/toolProcessors.ts:226`
+- `src/tools/toolProcessors.ts:246`
 
 Sources:
 
@@ -1105,13 +1105,13 @@ Implementation:
 
 - `src/tools/smudge.ts:149`
 - `src/tools/smudge.ts:123`
-- `src/tools/settings.ts:246`
+- `src/tools/settings.ts:255`
 - `src/components/ToolbarsRight/Smudge/Smudge.tsx:138`
 - `src/components/ToolbarsRight/Smudge/Smudge.tsx:153`
 - `src/components/Main/SmudgeToolArea.tsx:62`
-- `src/components/Common/AppKeyboardShortcuts.tsx:49`
-- `src/components/Common/AppKeyboardShortcuts.tsx:518`
-- `src/tools/toolProcessors.ts:232`
+- `src/components/Common/AppKeyboardShortcuts.tsx:69`
+- `src/components/Common/AppKeyboardShortcuts.tsx:539`
+- `src/tools/toolProcessors.ts:252`
 
 Sources:
 
@@ -1169,10 +1169,10 @@ Implementation:
 - `src/components/ToolbarsRight/Gradient/Gradient.tsx:129`
 - `src/components/ToolbarsRight/Gradient/Gradient.tsx:146`
 - `src/tools/gradient.ts:132`
-- `src/tools/settings.ts:234`
+- `src/tools/settings.ts:243`
 - `src/components/Main/GradientToolArea.tsx:40`
 - `src/components/Main/GradientToolArea.tsx:95`
-- `src/tools/toolProcessors.ts:220`
+- `src/tools/toolProcessors.ts:221`
 
 Sources:
 
@@ -1225,17 +1225,17 @@ The Dodge tool comes from the darkroom: a printer holds light back under a finge
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:124`
-- `src/tools/dodgeBurn.ts:176`
-- `src/tools/dodgeBurn.ts:89`
-- `src/tools/settings.ts:247`
+- `src/tools/dodgeBurn.ts:119`
+- `src/tools/dodgeBurn.ts:171`
+- `src/tools/dodgeBurn.ts:84`
+- `src/tools/settings.ts:256`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:156`
 - `src/components/Main/DodgeToolArea.tsx:50`
-- `src/components/Common/AppKeyboardShortcuts.tsx:437`
+- `src/components/Common/AppKeyboardShortcuts.tsx:458`
 - `toolbar-mapping.ts:94`
-- `src/tools/toolProcessors.ts:238`
+- `src/tools/toolProcessors.ts:258`
 
 Sources:
 
@@ -1283,16 +1283,16 @@ The Burn tool is the Dodge tool measured from the other end: instead of holding 
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:354`
-- `src/tools/dodgeBurn.ts:124`
-- `src/tools/dodgeBurn.ts:176`
-- `src/tools/settings.ts:255`
+- `src/tools/dodgeBurn.ts:310`
+- `src/tools/dodgeBurn.ts:119`
+- `src/tools/dodgeBurn.ts:171`
+- `src/tools/settings.ts:264`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
 - `src/components/Main/BurnToolArea.tsx:56`
-- `src/components/Common/AppKeyboardShortcuts.tsx:437`
-- `toolbar-mapping.ts:94`
-- `src/tools/toolProcessors.ts:244`
+- `src/components/Common/AppKeyboardShortcuts.tsx:458`
+- `toolbar-mapping.ts:95`
+- `src/tools/toolProcessors.ts:264`
 
 Sources:
 
@@ -1346,14 +1346,14 @@ Implementation:
 - `src/tools/sponge.ts:177`
 - `src/tools/sponge.ts:60`
 - `src/tools/sponge.ts:279`
-- `src/tools/settings.ts:269`
+- `src/tools/settings.ts:292`
 - `src/components/ToolbarsRight/Sponge/Sponge.tsx:134`
 - `src/components/Main/SpongeToolArea.tsx:52`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 - `src/components/Common/AppKeyboardShortcuts.tsx:592`
 - `src/components/Common/AppKeyboardShortcuts.tsx:602`
 - `toolbar-mapping.ts:100`
-- `src/tools/toolProcessors.ts:268`
+- `src/tools/toolProcessors.ts:301`
 
 Sources:
 
@@ -1781,7 +1781,7 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 - `Shift+U` — Cycles to the next tool in the shapes tool group, through the four the app’s cycle holds: rectangle, ellipse, line and Custom Shape. The Triangle and the Polygon are in the rail’s flyout but not in the cycle, and an unlisted figure does not skip ahead — Shift+U from either of them restarts at the rectangle instead of advancing.
 
-**In this app:** `partial` — The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:110-115`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.
+**In this app:** `partial` — The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:114-121`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.
 
 Implementation:
 
@@ -1852,18 +1852,18 @@ The Pen tool builds a path of straight and curved segments by clicking to place 
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:300`
+- `src/tools/toolProcessors.ts:333`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:128`
+- `src/tools/toolsMap.ts:149`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:272`
-- `src/contexts/tool-types.ts:58`
-- `src/util/settings.ts:101`
-- `src/components/Main/Main.tsx:236`
-- `src/components/Common/AppKeyboardShortcuts.tsx:492`
+- `src/tools/settings.ts:295`
+- `src/contexts/tool-types.ts:68`
+- `src/util/settings.ts:111`
+- `src/components/Main/Main.tsx:250`
+- `src/components/Common/AppKeyboardShortcuts.tsx:513`
 - `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:45`
-- `src/tools/__tests__/tool-processors.test.ts:336`
+- `src/tools/__tests__/tool-processors.test.ts:344`
 
 Sources:
 
@@ -1910,17 +1910,17 @@ The Freeform Pen takes a single drag and turns it into a path, so it is the tool
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:302`
+- `src/tools/toolProcessors.ts:335`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:132`
+- `src/tools/toolsMap.ts:153`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24`
-- `src/tools/settings.ts:273`
-- `src/contexts/tool-types.ts:59`
-- `src/util/settings.ts:102`
-- `src/components/Main/Main.tsx:236`
-- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:171`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/tools/settings.ts:296`
+- `src/contexts/tool-types.ts:69`
+- `src/util/settings.ts:112`
+- `src/components/Main/Main.tsx:250`
+- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
 Sources:
 
@@ -1970,17 +1970,17 @@ The Curvature Pen is Illustrator’s Curvature tool ported into Photoshop, and i
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:307`
+- `src/tools/toolProcessors.ts:340`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:137`
+- `src/tools/toolsMap.ts:158`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:25`
-- `src/tools/settings.ts:274`
-- `src/contexts/tool-types.ts:60`
-- `src/util/settings.ts:103`
-- `src/components/Main/Main.tsx:236`
-- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:171`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/tools/settings.ts:297`
+- `src/contexts/tool-types.ts:70`
+- `src/util/settings.ts:113`
+- `src/components/Main/Main.tsx:250`
+- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
 Sources:
 
@@ -2009,16 +2009,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:312`
+- `src/tools/toolProcessors.ts:345`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:142`
+- `src/tools/toolsMap.ts:163`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:275`
-- `src/contexts/tool-types.ts:61`
-- `src/util/settings.ts:104`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:77`
+- `src/tools/settings.ts:298`
+- `src/contexts/tool-types.ts:71`
+- `src/util/settings.ts:114`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:83`
 
 Sources:
 
@@ -2041,16 +2041,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:317`
+- `src/tools/toolProcessors.ts:350`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:147`
+- `src/tools/toolsMap.ts:168`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:276`
-- `src/contexts/tool-types.ts:62`
-- `src/util/settings.ts:105`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:78`
+- `src/tools/settings.ts:299`
+- `src/contexts/tool-types.ts:72`
+- `src/util/settings.ts:115`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:84`
 
 Sources:
 
@@ -2077,16 +2077,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:322`
+- `src/tools/toolProcessors.ts:355`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:152`
+- `src/tools/toolsMap.ts:173`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:277`
-- `src/contexts/tool-types.ts:63`
-- `src/util/settings.ts:106`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:79`
+- `src/tools/settings.ts:300`
+- `src/contexts/tool-types.ts:73`
+- `src/util/settings.ts:116`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:85`
 - `src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242`
 - `src/contexts/history-adapter.ts:550`
 
@@ -2155,7 +2155,7 @@ A crop sets a new boundary for the document. Selecting the Crop tool shows a cro
 Implementation:
 
 - `src/tools/crop.ts:26`
-- `src/tools/toolProcessors.ts:146`
+- `src/tools/toolProcessors.ts:147`
 - `src/components/ToolbarsRight/Crop/Crop.tsx:61`
 - `src/components/Main/CropToolArea.tsx:40`
 - `src/components/Main/CropToolArea.tsx:61`
@@ -2166,8 +2166,8 @@ Implementation:
 - `src/util/rect.ts:36`
 - `src/contexts/useLayer.ts:644`
 - `src/util/settings.ts:39`
-- `src/tools/settings.ts:67`
-- `toolbar-mapping.ts:59`
+- `src/tools/settings.ts:69`
+- `toolbar-mapping.ts:66`
 
 Sources:
 
@@ -2228,7 +2228,7 @@ Implementation:
 
 - `src/tools/text.ts:28`
 - `src/tools/text.ts:72`
-- `src/tools/toolProcessors.ts:160`
+- `src/tools/toolProcessors.ts:161`
 - `src/components/ToolbarsRight/Text/Text.tsx:95`
 - `src/components/Main/TextToolArea.tsx:24`
 - `src/contexts/useLayer.ts:369`
@@ -2237,8 +2237,8 @@ Implementation:
 - `src/contexts/materialization.ts:171`
 - `src/util/rect.ts:116`
 - `src/util/settings.ts:31`
-- `src/tools/settings.ts:82`
-- `toolbar-mapping.ts:108`
+- `src/tools/settings.ts:84`
+- `toolbar-mapping.ts:113`
 
 Sources:
 
@@ -2313,11 +2313,11 @@ Implementation:
 - `src/components/Main/MoveToolArea.tsx:199`
 - `src/contexts/useLayer.ts:334`
 - `src/tools/reposition.ts:12`
-- `src/tools/toolProcessors.ts:114`
+- `src/tools/toolProcessors.ts:115`
 - `src/components/ToolbarsRight/Move/Reposition.tsx:13`
-- `src/components/Common/AppKeyboardShortcuts.tsx:306`
-- `src/components/SidebarLeft/SidebarLeft.tsx:621`
-- `src/components/SidebarLeft/SidebarLeft.tsx:951`
+- `src/components/Common/AppKeyboardShortcuts.tsx:327`
+- `src/components/SidebarLeft/SidebarLeft.tsx:644`
+- `src/components/SidebarLeft/SidebarLeft.tsx:974`
 - `toolbar-mapping.ts:39`
 
 Sources:
@@ -2343,138 +2343,9 @@ Sources:
 
 ---
 
-### Colors
-
-`color`
-
-Photoshop's name for it is **Black & White — the Image > Adjustments command, not a Tools panel Tool**.
-
-Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.
-
-Black & White is not a desaturation — it is a weighted mix, and the six sliders are the weights. Each of the six sextants of the color wheel, Reds, Yellows, Greens, Cyans, Blues and Magentas, gets its own control over how bright that family of hues becomes in the result, so a landscape can have a dark sky and a bright sky in the same conversion, and skin can be lifted without touching the greens. Every slider starts at a value that reproduces a conventional conversion — Photoshop opens the adjustment having already applied "a default grayscale conversion to your image" — and dragging one away from that value is the whole technique. Ticking Tint lays a uniform tone color over the monochrome so it reads as toned rather than neutral, which is how a sepia or a split-tone is made from a color original without going back to it.
-
-**Options bar**
-
-| Control                  | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | In this app                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Preset                   | Menu of predefined grayscale mixes and of any mix the user has saved, with Save Black & White Preset alongside it.                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `missing`                                                       |
-| On-image adjustment icon | The Targeted Adjustment tool, sitting directly under the Preset option at the top of the panel. Adobe states the gesture as a drag of the icon itself: "Select and drag On-image adjustment icon onto the image to adjust tones." It moves the sextant slider for whichever family of hues dominates the pixels under the cursor, and that one slider moves every area containing those hues rather than a mark you place.                                                                                                                                                      | `missing`                                                       |
-| Auto                     | Sets a grayscale mix based on the values in the image itself — Adobe's own words are "Set a grayscale mix based on your image's color values" — so it reads the layer rather than asking you to weight six families by hand.                                                                                                                                                                                                                                                                                                                                                    | `missing`                                                       |
-| Tint                     | Checkbox that lays a uniform tone color over the monochrome result, which is what turns a neutral conversion into a toned or sepia one.                                                                                                                                                                                                                                                                                                                                                                                                                                         | `missing`                                                       |
-| Tint Color               | The color swatch beside the Tint checkbox. Choosing it opens the Color Picker, and the tone applied is called Tint Color.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `missing`                                                       |
-| Color sliders            | Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe's own page names the block and nothing inside it — "Color sliders: Drag sliders to adjust gray tones for specific colors" — so both the six family names and their order are third-party, as are their resting values: the default of 40, 60, 40, 60, 20 and 80 is documented, but the pages that print it print only the first three, "Reds set to 40%, Yellows set to 60%, and so on". | `missing`                                                       |
-| Reset                    | The reset icon that returns the sliders to their default values, and more generally the panel control that returns the adjustment to its original settings.                                                                                                                                                                                                                                                                                                                                                                                                                     | `partial` — `src/components/ToolbarsRight/Colors/Color.tsx:185` |
-
-**Shortcuts**
-
-- `Shift+Cmd+Opt+B` — Open the Black & White command. Printed by Adobe's shipped shortcut sheet as "Black & White... Opt+Shift+Cmd+B" on macOS, and Ctrl+Alt+Shift+B on Windows; the app binds no shortcut for it.
-
-**In this app:** `partial` — Black & White is an Image > Adjustments command, or an adjustment layer — not a toolbar tool, and "Colors" is this app's own tile label rather than an Adobe name — so the app's Colors entry occupies a slot Photoshop's toolbar does not have. No control of Photoshop's seven is reproduced, and the three sliders that are rendered are not Black & White controls: there is no sextant weighting anywhere in the app, so no per-hue decision can be made and the conversion is a flat luminance desaturation rather than a mix. The one control whose name the app shares is Reset, and it does not behave as Photoshop's does: it is disabled unless an uncommitted preview is live, and it restores that panel's own defaults rather than the sextant defaults, so a committed conversion can only be undone. The grayscale slider is the nearest thing to the whole panel and it is the one control that cannot stand in for it, because a hue-weighted mix and a luminance average differ the moment any of the six families is pushed. Sepia is not the Tint checkbox either: Tint lays a uniform tone color over a conversion whose mix you still control, and applying sepia is a second filter stage that tints the whole image rather than replacing its channel weights, so the two can be combined and the result is not the same look. Saturation belongs to no part of Black & White; it is a Hue/Saturation control, and the fact that this app has one is a leftover from the identity question this tool's shape was chosen to answer. Presets, Auto, Tint, Tint Color, the on-image adjustment icon and the six sliders are all absent. As with Levels, the engine is a CSS filter string, and the surface it is assigned to is the visible canvas: the renderer builds an ordinary HTMLCanvasElement, sets ctx.filter from the layer's operations array and draws the layer stack into it. The OffscreenCanvas processors in src/tools/colors.ts are not on the editing, preview or commit path — color is registered as commit: 'layer-operation', so those paths append the operation and return before a pixel is produced — and the committed conversion is retained on the same terms as Levels, with the layer's own bitmap untouched and undo replaying the operation rather than a raster. The string is built once, so the renderer and the durable materializer cannot drift, and the test harness exposes filter as a writable property, so the emitted string is assertable; the jsdom mock still cannot rasterize it, so no test here shows what the filter looks like.
-
-Implementation:
-
-- `src/components/ToolbarsRight/Colors/Color.tsx:134`
-- `src/components/ToolbarsRight/Colors/Color.tsx:110`
-- `src/tools/colors.ts:12`
-- `src/tools/functions.ts:60`
-- `src/tools/settings.ts:53`
-- `src/tools/toolProcessors.ts:126`
-- `src/contexts/useLayer.ts:571`
-- `src/contexts/useLayer.ts:348`
-- `src/contexts/history-replay.ts:172`
-- `src/contexts/layer-renderer.ts:16`
-- `src/contexts/materialization.ts:78`
-- `src/test/setup.ts:320`
-- `toolbar-mapping.ts:62`
-
-Sources:
-
-- <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/convert-a-color-image-to-black-and-white.html>
-- <https://helpx.adobe.com/photoshop/using/color-adjustments.html>
-- <https://helpx.adobe.com/photoshop/using/color-monochrome-adjustments-using-channels.html>
-- <https://www.photoshopessentials.com/photo-editing/black-and-white-cs3>
-- <https://www.photoshopessentials.com/photo-editing/converting-color-photos-to-black-and-white-in-photoshop>
-- <https://www.photoshopessentials.com/photo-effects/easy-selective-color-effect-with-photoshop>
-- <https://photoshoptrainingchannel.com/black-white-photos-photoshop/>
-- <https://glensmith.co.uk/photoshop/tools>
-- <https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview>
-- <https://training-nyc.com/legacy/photoshop_cs6_all_keyboard_shortcuts_sheet.pdf>
-
----
-
-### Levels
-
-`levels`
-
-Photoshop's name for it is **Levels — the Image > Adjustments command, not a Tools panel Tool**.
-
-Photoshop's Levels remaps an image's tonal range through a histogram, a gamma pivot and per-channel black, white and output points.
-
-Levels is the tonal correction tool: it stretches or compresses where the image's darkest and lightest pixels land, and bends the midtones independently of the ends, which is what separates it from a brightness or contrast slider. The histogram above the controls is the working surface — you read where the data actually sits, then move the three input sliders until the blacks reach the black point, the whites the white point, and the middle slider makes the gamma adjustment that sets overall midtone brightness without crushing either end. Every move can be scoped to one color channel, which is how a cast gets removed rather than merely desaturated. The two routes are not equivalent, and Adobe says so: choosing Image > Adjustments > Levels "makes direct adjustments to the image layer and discards image information", while an adjustment layer stays editable.
-
-**Options bar**
-
-| Control                     | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | In this app                                                      |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Preset                      | Menu of saved settings, with Save Preset alongside it. Adobe states the round trip in one sentence and counts nothing: "You can save Levels settings as a preset, then apply them to other images."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `missing`                                                        |
-| Channel                     | Menu choosing the channel the adjustment applies to — RGB and the individual Red, Green and Blue channels, plus the channel combinations selected in the Channels panel, whose names the menu abbreviates ("CM for cyan and magenta", as Adobe puts it). RGB is the resting choice, a default Adobe does not state. Choosing a combination is unavailable in a Levels adjustment layer, which Adobe notes alongside the menu.                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `missing`                                                        |
-| Histogram                   | The graph of how pixels are distributed across tonal levels, drawn over the three input sliders as their backing track. It is the guide, not a control: reading it is how you decide where the black and white points belong, and Adobe says so — "drag the black and white Input Levels sliders to the edge of the first group of pixels at either end of the histogram."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `missing`                                                        |
-| Input Levels: black point   | Leftmost input slider, on the 0 to 255 level domain Adobe states for the adjustment, with a text box beside it for entering the level directly. It sits at level 0, which Adobe does not state as a default. Adobe prints the worked case itself, and it is the clipping case: "if you move the black point slider to the right at level 5, Photoshop maps all the pixels at level 5 and lower to level 0."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
-| Input Levels: midtone gamma | Middle input slider, which "adjusts the gamma in the image" and "moves the midtone (level 128)" rather than either extreme. It sits at 1.00 by default, which Adobe does not state; moving it left makes the image lighter and right darker, and the pivot is the midpoint level between the output sliders, which is level 128 while they are at their defaults.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `missing`                                                        |
-| Input Levels: white point   | Rightmost input slider, with a text box beside it, sitting at level 255 by default, which Adobe does not state as a default. Adobe does print the worked case on this slider: "if you move the white point slider to the left at level 243, Photoshop maps all pixels at level 243 and higher to level 255."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
-| Output Levels: black        | Left output slider, the level the black point maps to, and its default is Adobe’s: "By default, the Output sliders are at level 0, where the pixels are black, and level 255, where the pixels are white." The output pair is what the two input points are defined against, so moving it changes where black lands without touching where it is read from.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
-| Output Levels: white        | Right output slider, default level 255, the level the white point maps to — the other half of Adobe’s stated Output-slider defaults.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `missing`                                                        |
-| Auto                        | Button that clips a small fraction of the shadows and highlights in every channel and maps the remaining extremes to pure black and pure white, as a starting point to refine by hand. Adobe states both halves of it: the domain is 0 to 255, and "By default, the Auto option and the Auto Tone command clip the white and black pixels by 0.1% — that is, it ignores the first 0.1% of either extreme."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `missing`                                                        |
-| Auto Options                | Entry in the Properties panel menu that opens the Auto Color Correction Options dialog, which chooses the algorithm Auto runs and sets the shadow and highlight clipping percentages; Alt-clicking (Windows) or Option-clicking (Mac OS) the Auto button opens the same dialog. Adobe states the route verbatim: "To experiment with other automatic adjustment options, choose Auto Options from the Properties panel menu, then change Algorithms in the Auto Color Corrections Options dialog box." Adobe's guidance for the Clip boxes is that a value between 0.0% and 1% is recommended. Three of the four algorithms are Adobe-named — Enhance Monochromatic Contrast, Enhance Per Channel Contrast and Find Dark & Light Colors — and the fourth, Enhance Brightness and Contrast, is third-party only; the dialog also has a Snap Neutral Midtones checkbox, which Adobe does name. | `missing`                                                        |
-| Eyedroppers                 | Three eyedroppers — Set Black Point, Set Gray Point and Set White Point — that set each point by clicking the image. Using them discards any Levels adjustment already made, so Adobe advises using them first. The gray point one is for removing a color cast and is unavailable on grayscale images.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `missing`                                                        |
-| Reset                       | Returns the adjustment to its original settings. Part of the adjustment panel rather than the tonal controls themselves, and listed here because it belongs to this adjustment.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `partial` — `src/components/ToolbarsRight/Levels/Levels.tsx:140` |
-
-**Modifiers**
-
-- **Alt** — Hold while dragging the black point or white point slider to see which areas are being clipped, instead of moving the slider. Adobe prints it as Alt on Windows and Option on macOS. Choosing Show Clipping For Black/White Points from the panel menu makes the same preview permanent.
-
-**Shortcuts**
-
-- `Cmd+L` — Apply the Levels command. Cmd+Option+L re-applies it with the last settings used. Cmd+Shift+L is not a second Levels binding — it is Auto Tone.
-
-**In this app:** `partial` — Levels is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so the app's Levels entry occupies a slot Photoshop's toolbar does not have. Inside that slot no control of Photoshop's Levels panel is reproduced, and the two sliders that are rendered are not Levels controls at all: Photoshop's Levels has no Brightness and no Contrast slider. The one control whose name the app does borrow is the Reset button, and it does not behave as Photoshop's does. What the app renders is CSS brightness() and contrast() over the encoded pixel values, both on an exponential curve re-anchored so the endpoints are exact, which means a flat linear multiply and a pivot at mid-gray in encoded space where Photoshop's curve is piecewise-linear through three control points with its middle slider moving the midtone at level 128. The Brightness slider is labelled and centred on a neutral of 0, and the re-anchoring makes that literal rather than approximate: 0 emits exactly brightness(100%), so the panel at its defaults applies nothing at all, and it is the slider's minimum of -100 that emits brightness(0%) and multiplies the whole layer to black — a range-wide multiply, where Photoshop's black point is a threshold that only remaps the pixels below it. There is no black point, no white point, no gamma midtone, no output pair, no histogram, no channel selector, no Auto, no Auto Options and no eyedroppers. Levels works on the document's encoded values rather than a linear-light space — Adobe draws exactly this contrast with Exposure, which does calculate in linear color space — and the app's filter is likewise in whatever space the canvas composite happens to be. A committed adjustment is retained rather than destroyed, and that is the half of the split the app gets right. A committed Levels adjustment is a layer operation, not a rewrite of pixels: the layer's own bitmap is never touched, the commit appends an operation to the layer's operations array and records one history entry, the renderer re-derives the filter from that array on every frame, and undo and redo replay the operation rather than a stored raster. What the app does not have is the other half of the split: the adjustment is not re-editable, so a committed one can only be taken back with undo, which is why the Reset button is gated on an uncommitted preview and restores the panel's own defaults rather than re-opening the adjustment. The engine for all of that is a CSS filter string assigned to ctx.filter on an ordinary HTMLCanvasElement 2D context — the canvas the user is actually looking at, which the renderer builds with document.createElement and draws the layer stack into. The OffscreenCanvas processors in src/tools/levels.ts are not on that path at all: levels and color are registered as commit: 'layer-operation', and the preview and commit paths append the operation and return before any pixel is produced, so those processors are never reached while editing, previewing or committing. The one surface that still applies the string to an OffscreenCanvas 2D context is the durable materializer, which prefers new OffscreenCanvas wherever one exists; no module outside src/contexts/**tests** imports it today, and the OffscreenCanvasRenderingContext2D.filter support Safari has never shipped is a property of that surface rather than of the canvas this tool edits on. The string is built in one place, so the renderer and that materializer cannot drift, and the test harness exposes filter as a real writable property, so the emitted string is assertable — though the jsdom mock still cannot rasterize it, so no assertion here proves what the filter looks like.
-
-Implementation:
-
-- `src/components/ToolbarsRight/Levels/Levels.tsx:110`
-- `src/components/ToolbarsRight/Levels/Levels.tsx:86`
-- `src/tools/levels.ts:12`
-- `src/tools/functions.ts:66`
-- `src/tools/settings.ts:54`
-- `src/tools/toolProcessors.ts:132`
-- `src/contexts/useLayer.ts:571`
-- `src/contexts/useLayer.ts:348`
-- `src/contexts/history-replay.ts:172`
-- `src/contexts/layer-renderer.ts:18`
-- `src/contexts/materialization.ts:84`
-- `src/test/setup.ts:320`
-- `toolbar-mapping.ts:63`
-
-Sources:
-
-- <https://helpx.adobe.com/photoshop/using/levels-adjustment.html>
-- <https://helpx.adobe.com/photoshop/using/adjust-color-tone-levels-curves.html>
-- <https://helpx.adobe.com/photoshop/using/making-quick-tonal-adjustments.html>
-- <https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html>
-- <https://helpx.adobe.com/photoshop/using/color-adjustments.html>
-- <https://helpx.adobe.com/ca/photoshop/web/edit-images/color--tone--and-lighting/modify-tones-with-levels-adjustment.html>
-- <https://www.adobe.com/learn/photoshop/web/photoshop-improve-tones-levels>
-- <https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf>
-- <https://glensmith.co.uk/photoshop/tools>
-- <https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview>
-
----
-
-### Transform
+### Free Transform — the Edit > Free Transform command, not a Tools panel Tool
 
 `transform`
-
-Photoshop's name for it is **Free Transform — the Edit > Free Transform command, not a Tools panel Tool**.
 
 Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, adds perspective or warps a layer in one continuous operation.
 
@@ -2512,7 +2383,7 @@ Free Transform puts a bounding box around the active layer and lets one continuo
 - `Cmd+Option+T` — Duplicate the layer or selection and enter Free Transform on the duplicate, leaving the original untouched.
 - `Enter` — Commit the transform. Selecting another tool or another layer commits it too.
 
-**In this app:** `partial` — Free Transform is a command, not a tool. The primary evidence is a negative one and it is a good one: a complete, version-stamped inventory of the Photoshop 2026 Tools panel lists every entry in the bar — Move, the marquees, the crop, the pen family, the type tools, the shape tools, Hand, Zoom — and has no Transform entry in it, while Photoshop reaches the operation through Edit > Free Transform or Cmd+T. Adobe's own routing agrees, sending a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool. Note the shape of the menu, because it is two items and not one: Edit > Free Transform is a top-level Edit item, and Edit > Transform is a separate submenu carrying the six single modes — Scale, Rotate, Skew, Distort, Perspective and Warp. One counter-sentence exists on Adobe's marketing copy — "Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)" — but the very next clause of the same page is "You can also go to Edit > Free Transform": the page names the menu route itself, and uses "tool" for the interactive state rather than for a Tools-panel entry. The app registers it as a toolbar entry next to Colors and Levels, and none of the three has a Photoshop toolbar slot. That is a defensible choice, but it makes the panel in the options bar a different thing from Free Transform's bar, and the two should not be described as the same control set. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop's nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and the geometry is only committed, as one history entry, when the dirty tool is committed — on Apply, on tool switch or on export. Escape is the opposite of a commit route: it and the Cancel button both call the same cancel handler, which deletes the pending preview, resets the panel to its defaults and dispatches nothing, so what remains is the last committed state. Of Free Transform's own bindings, only Escape is wired; Enter does not commit, and the step back Adobe documents for a live transform is absent: "To undo the last handle adjustment, choose Edit > Undo." Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.
+**In this app:** `partial` — Free Transform is a command, not a tool. The primary evidence is a negative one and it is a good one: a complete, version-stamped inventory of the Photoshop 2026 Tools panel lists every entry in the bar — Move, the marquees, the crop, the pen family, the type tools, the shape tools, Hand, Zoom — and has no Transform entry in it, while Photoshop reaches the operation through Edit > Free Transform or Cmd+T. Adobe's own routing agrees, sending a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool. Note the shape of the menu, because it is two items and not one: Edit > Free Transform is a top-level Edit item, and Edit > Transform is a separate submenu carrying the six single modes — Scale, Rotate, Skew, Distort, Perspective and Warp. One counter-sentence exists on Adobe's marketing copy — "Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)" — but the very next clause of the same page is "You can also go to Edit > Free Transform": the page names the menu route itself, and uses "tool" for the interactive state rather than for a Tools-panel entry. The app reaches the same command from Edit > Free Transform, which is the route Adobe documents, so the route matches and the panel does not: it makes the panel in the options bar a different thing from Free Transform's bar, and the two should not be described as the same control set. Colors and Levels went the other way, out of the toolbar and into Image > Adjustments, because they are commands too; `extraTools` in toolbar-mapping.ts is the list of registered tool ids that deliberately carry no rail entry. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop's nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and the geometry is only committed, as one history entry, when the dirty tool is committed — on Apply, on tool switch or on export. Escape is the opposite of a commit route: it and the Cancel button both call the same cancel handler, which deletes the pending preview, resets the panel to its defaults and dispatches nothing, so what remains is the last committed state. Of Free Transform's own bindings, only Escape is wired; Enter does not commit, and the step back Adobe documents for a live transform is absent: "To undo the last handle adjustment, choose Edit > Undo." Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.
 
 Implementation:
 
@@ -2522,10 +2393,10 @@ Implementation:
 - `src/contexts/affine-transform.ts:216`
 - `src/tools/transform.ts:119`
 - `src/tools/transform.ts:153`
-- `src/tools/toolProcessors.ts:141`
+- `src/tools/toolProcessors.ts:142`
 - `src/contexts/useLayer.ts:552`
 - `src/contexts/useLayer.ts:348`
-- `toolbar-mapping.ts:64`
+- `toolbar-mapping.ts:189`
 
 Sources:
 
@@ -2546,6 +2417,129 @@ Sources:
 
 ---
 
+### Levels — the Image > Adjustments command, not a Tools panel Tool
+
+`levels`
+
+Photoshop's Levels remaps an image's tonal range through a histogram, a gamma pivot and per-channel black, white and output points.
+
+Levels is the tonal correction tool: it stretches or compresses where the image's darkest and lightest pixels land, and bends the midtones independently of the ends, which is what separates it from a brightness or contrast slider. The histogram above the controls is the working surface — you read where the data actually sits, then move the three input sliders until the blacks reach the black point, the whites the white point, and the middle slider makes the gamma adjustment that sets overall midtone brightness without crushing either end. Every move can be scoped to one color channel, which is how a cast gets removed rather than merely desaturated. The two routes are not equivalent, and Adobe says so: choosing Image > Adjustments > Levels "makes direct adjustments to the image layer and discards image information", while an adjustment layer stays editable.
+
+**Options bar**
+
+| Control                     | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | In this app                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Preset                      | Menu of saved settings, with Save Preset alongside it. Adobe states the round trip in one sentence and counts nothing: "You can save Levels settings as a preset, then apply them to other images."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `missing`                                                        |
+| Channel                     | Menu choosing the channel the adjustment applies to — RGB and the individual Red, Green and Blue channels, plus the channel combinations selected in the Channels panel, whose names the menu abbreviates ("CM for cyan and magenta", as Adobe puts it). RGB is the resting choice, a default Adobe does not state. Choosing a combination is unavailable in a Levels adjustment layer, which Adobe notes alongside the menu.                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `missing`                                                        |
+| Histogram                   | The graph of how pixels are distributed across tonal levels, drawn over the three input sliders as their backing track. It is the guide, not a control: reading it is how you decide where the black and white points belong, and Adobe says so — "drag the black and white Input Levels sliders to the edge of the first group of pixels at either end of the histogram."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `missing`                                                        |
+| Input Levels: black point   | Leftmost input slider, on the 0 to 255 level domain Adobe states for the adjustment, with a text box beside it for entering the level directly. It sits at level 0, which Adobe does not state as a default. Adobe prints the worked case itself, and it is the clipping case: "if you move the black point slider to the right at level 5, Photoshop maps all the pixels at level 5 and lower to level 0."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
+| Input Levels: midtone gamma | Middle input slider, which "adjusts the gamma in the image" and "moves the midtone (level 128)" rather than either extreme. It sits at 1.00 by default, which Adobe does not state; moving it left makes the image lighter and right darker, and the pivot is the midpoint level between the output sliders, which is level 128 while they are at their defaults.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `missing`                                                        |
+| Input Levels: white point   | Rightmost input slider, with a text box beside it, sitting at level 255 by default, which Adobe does not state as a default. Adobe does print the worked case on this slider: "if you move the white point slider to the left at level 243, Photoshop maps all pixels at level 243 and higher to level 255."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
+| Output Levels: black        | Left output slider, the level the black point maps to, and its default is Adobe’s: "By default, the Output sliders are at level 0, where the pixels are black, and level 255, where the pixels are white." The output pair is what the two input points are defined against, so moving it changes where black lands without touching where it is read from.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
+| Output Levels: white        | Right output slider, default level 255, the level the white point maps to — the other half of Adobe’s stated Output-slider defaults.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `missing`                                                        |
+| Auto                        | Button that clips a small fraction of the shadows and highlights in every channel and maps the remaining extremes to pure black and pure white, as a starting point to refine by hand. Adobe states both halves of it: the domain is 0 to 255, and "By default, the Auto option and the Auto Tone command clip the white and black pixels by 0.1% — that is, it ignores the first 0.1% of either extreme."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `missing`                                                        |
+| Auto Options                | Entry in the Properties panel menu that opens the Auto Color Correction Options dialog, which chooses the algorithm Auto runs and sets the shadow and highlight clipping percentages; Alt-clicking (Windows) or Option-clicking (Mac OS) the Auto button opens the same dialog. Adobe states the route verbatim: "To experiment with other automatic adjustment options, choose Auto Options from the Properties panel menu, then change Algorithms in the Auto Color Corrections Options dialog box." Adobe's guidance for the Clip boxes is that a value between 0.0% and 1% is recommended. Three of the four algorithms are Adobe-named — Enhance Monochromatic Contrast, Enhance Per Channel Contrast and Find Dark & Light Colors — and the fourth, Enhance Brightness and Contrast, is third-party only; the dialog also has a Snap Neutral Midtones checkbox, which Adobe does name. | `missing`                                                        |
+| Eyedroppers                 | Three eyedroppers — Set Black Point, Set Gray Point and Set White Point — that set each point by clicking the image. Using them discards any Levels adjustment already made, so Adobe advises using them first. The gray point one is for removing a color cast and is unavailable on grayscale images.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `missing`                                                        |
+| Reset                       | Returns the adjustment to its original settings. Part of the adjustment panel rather than the tonal controls themselves, and listed here because it belongs to this adjustment.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `partial` — `src/components/ToolbarsRight/Levels/Levels.tsx:140` |
+
+**Modifiers**
+
+- **Alt** — Hold while dragging the black point or white point slider to see which areas are being clipped, instead of moving the slider. Adobe prints it as Alt on Windows and Option on macOS. Choosing Show Clipping For Black/White Points from the panel menu makes the same preview permanent.
+
+**Shortcuts**
+
+- `Cmd+L` — Apply the Levels command. Cmd+Option+L re-applies it with the last settings used. Cmd+Shift+L is not a second Levels binding — it is Auto Tone.
+
+**In this app:** `partial` — Levels is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so it has no rail entry at all: the app reaches it from Image > Adjustments > Brightness/Contrast, named for what it computes, and carries Photoshop's own Levels item in the same submenu as a disabled command this app cannot do. No control of Photoshop's Levels panel is reproduced, and the two sliders that are rendered are not Levels controls at all: Photoshop's Levels has no Brightness and no Contrast slider. The one control whose name the app does borrow is the Reset button, and it does not behave as Photoshop's does. What the app renders is CSS brightness() and contrast() over the encoded pixel values, both on an exponential curve re-anchored so the endpoints are exact, which means a flat linear multiply and a pivot at mid-gray in encoded space where Photoshop's curve is piecewise-linear through three control points with its middle slider moving the midtone at level 128. The Brightness slider is labelled and centred on a neutral of 0, and the re-anchoring makes that literal rather than approximate: 0 emits exactly brightness(100%), so the panel at its defaults applies nothing at all, and it is the slider's minimum of -100 that emits brightness(0%) and multiplies the whole layer to black — a range-wide multiply, where Photoshop's black point is a threshold that only remaps the pixels below it. There is no black point, no white point, no gamma midtone, no output pair, no histogram, no channel selector, no Auto, no Auto Options and no eyedroppers. Levels works on the document's encoded values rather than a linear-light space — Adobe draws exactly this contrast with Exposure, which does calculate in linear color space — and the app's filter is likewise in whatever space the canvas composite happens to be. A committed adjustment is retained rather than destroyed, and that is the half of the split the app gets right. A committed Levels adjustment is a layer operation, not a rewrite of pixels: the layer's own bitmap is never touched, the commit appends an operation to the layer's operations array and records one history entry, the renderer re-derives the filter from that array on every frame, and undo and redo replay the operation rather than a stored raster. What the app does not have is the other half of the split: the adjustment is not re-editable, so a committed one can only be taken back with undo, which is why the Reset button is gated on an uncommitted preview and restores the panel's own defaults rather than re-opening the adjustment. The engine for all of that is a CSS filter string assigned to ctx.filter on an ordinary HTMLCanvasElement 2D context — the canvas the user is actually looking at, which the renderer builds with document.createElement and draws the layer stack into. The OffscreenCanvas processors in src/tools/levels.ts are not on that path at all: levels and color are registered as commit: 'layer-operation', and the preview and commit paths append the operation and return before any pixel is produced, so those processors are never reached while editing, previewing or committing. The one surface that still applies the string to an OffscreenCanvas 2D context is the durable materializer, which prefers new OffscreenCanvas wherever one exists; no module outside src/contexts/**tests** imports it today, and the OffscreenCanvasRenderingContext2D.filter support Safari has never shipped is a property of that surface rather than of the canvas this tool edits on. The string is built in one place, so the renderer and that materializer cannot drift, and the test harness exposes filter as a real writable property, so the emitted string is assertable — though the jsdom mock still cannot rasterize it, so no assertion here proves what the filter looks like.
+
+Implementation:
+
+- `src/components/ToolbarsRight/Levels/Levels.tsx:110`
+- `src/components/ToolbarsRight/Levels/Levels.tsx:86`
+- `src/tools/levels.ts:12`
+- `src/tools/functions.ts:66`
+- `src/tools/settings.ts:56`
+- `src/tools/toolProcessors.ts:133`
+- `src/contexts/useLayer.ts:571`
+- `src/contexts/useLayer.ts:348`
+- `src/contexts/history-replay.ts:172`
+- `src/contexts/layer-renderer.ts:18`
+- `src/contexts/materialization.ts:84`
+- `src/test/setup.ts:320`
+- `toolbar-mapping.ts:189`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/levels-adjustment.html>
+- <https://helpx.adobe.com/photoshop/using/adjust-color-tone-levels-curves.html>
+- <https://helpx.adobe.com/photoshop/using/making-quick-tonal-adjustments.html>
+- <https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html>
+- <https://helpx.adobe.com/photoshop/using/color-adjustments.html>
+- <https://helpx.adobe.com/ca/photoshop/web/edit-images/color--tone--and-lighting/modify-tones-with-levels-adjustment.html>
+- <https://www.adobe.com/learn/photoshop/web/photoshop-improve-tones-levels>
+- <https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf>
+- <https://glensmith.co.uk/photoshop/tools>
+- <https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview>
+
+---
+
+### Black & White — the Image > Adjustments command, not a Tools panel Tool
+
+`color`
+
+Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.
+
+Black & White is not a desaturation — it is a weighted mix, and the six sliders are the weights. Each of the six sextants of the color wheel, Reds, Yellows, Greens, Cyans, Blues and Magentas, gets its own control over how bright that family of hues becomes in the result, so a landscape can have a dark sky and a bright sky in the same conversion, and skin can be lifted without touching the greens. Every slider starts at a value that reproduces a conventional conversion — Photoshop opens the adjustment having already applied "a default grayscale conversion to your image" — and dragging one away from that value is the whole technique. Ticking Tint lays a uniform tone color over the monochrome so it reads as toned rather than neutral, which is how a sepia or a split-tone is made from a color original without going back to it.
+
+**Options bar**
+
+| Control                  | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | In this app                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Preset                   | Menu of predefined grayscale mixes and of any mix the user has saved, with Save Black & White Preset alongside it.                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `missing`                                                       |
+| On-image adjustment icon | The Targeted Adjustment tool, sitting directly under the Preset option at the top of the panel. Adobe states the gesture as a drag of the icon itself: "Select and drag On-image adjustment icon onto the image to adjust tones." It moves the sextant slider for whichever family of hues dominates the pixels under the cursor, and that one slider moves every area containing those hues rather than a mark you place.                                                                                                                                                      | `missing`                                                       |
+| Auto                     | Sets a grayscale mix based on the values in the image itself — Adobe's own words are "Set a grayscale mix based on your image's color values" — so it reads the layer rather than asking you to weight six families by hand.                                                                                                                                                                                                                                                                                                                                                    | `missing`                                                       |
+| Tint                     | Checkbox that lays a uniform tone color over the monochrome result, which is what turns a neutral conversion into a toned or sepia one.                                                                                                                                                                                                                                                                                                                                                                                                                                         | `missing`                                                       |
+| Tint Color               | The color swatch beside the Tint checkbox. Choosing it opens the Color Picker, and the tone applied is called Tint Color.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `missing`                                                       |
+| Color sliders            | Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe's own page names the block and nothing inside it — "Color sliders: Drag sliders to adjust gray tones for specific colors" — so both the six family names and their order are third-party, as are their resting values: the default of 40, 60, 40, 60, 20 and 80 is documented, but the pages that print it print only the first three, "Reds set to 40%, Yellows set to 60%, and so on". | `missing`                                                       |
+| Reset                    | The reset icon that returns the sliders to their default values, and more generally the panel control that returns the adjustment to its original settings.                                                                                                                                                                                                                                                                                                                                                                                                                     | `partial` — `src/components/ToolbarsRight/Colors/Color.tsx:185` |
+
+**Shortcuts**
+
+- `Shift+Cmd+Opt+B` — Open the Black & White command. Printed by Adobe's shipped shortcut sheet as "Black & White... Opt+Shift+Cmd+B" on macOS, and Ctrl+Alt+Shift+B on Windows; the app binds no shortcut for it.
+
+**In this app:** `partial` — Black & White is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so it has no rail entry, and the app reaches the same three CSS filters from Image > Adjustments > Photo Filter. That name is a bounded divergence rather than a match: sepia IS the Warming preset Photo Filter ships and saturation is the nearest thing to its Density slider, but the grayscale slider is a control Photo Filter does not have, which is why the same submenu also carries Black and White itself as a disabled command. No control of Photoshop's seven is reproduced, and the three sliders that are rendered are not Black & White controls: there is no sextant weighting anywhere in the app, so no per-hue decision can be made and the conversion is a flat luminance desaturation rather than a mix. The one control whose name the app shares is Reset, and it does not behave as Photoshop's does: it is disabled unless an uncommitted preview is live, and it restores that panel's own defaults rather than the sextant defaults, so a committed conversion can only be undone. The grayscale slider is the nearest thing to the whole panel and it is the one control that cannot stand in for it, because a hue-weighted mix and a luminance average differ the moment any of the six families is pushed. Sepia is not the Tint checkbox either: Tint lays a uniform tone color over a conversion whose mix you still control, and applying sepia is a second filter stage that tints the whole image rather than replacing its channel weights, so the two can be combined and the result is not the same look. Saturation belongs to no part of Black & White; it is a Hue/Saturation control, and the fact that this app has one is a leftover from the identity question this tool's shape was chosen to answer. Presets, Auto, Tint, Tint Color, the on-image adjustment icon and the six sliders are all absent. As with Levels, the engine is a CSS filter string, and the surface it is assigned to is the visible canvas: the renderer builds an ordinary HTMLCanvasElement, sets ctx.filter from the layer's operations array and draws the layer stack into it. The OffscreenCanvas processors in src/tools/colors.ts are not on the editing, preview or commit path — color is registered as commit: 'layer-operation', so those paths append the operation and return before a pixel is produced — and the committed conversion is retained on the same terms as Levels, with the layer's own bitmap untouched and undo replaying the operation rather than a raster. The string is built once, so the renderer and the durable materializer cannot drift, and the test harness exposes filter as a writable property, so the emitted string is assertable; the jsdom mock still cannot rasterize it, so no test here shows what the filter looks like.
+
+Implementation:
+
+- `src/components/ToolbarsRight/Colors/Color.tsx:134`
+- `src/components/ToolbarsRight/Colors/Color.tsx:110`
+- `src/tools/colors.ts:12`
+- `src/tools/functions.ts:60`
+- `src/tools/settings.ts:55`
+- `src/tools/toolProcessors.ts:127`
+- `src/contexts/useLayer.ts:571`
+- `src/contexts/useLayer.ts:348`
+- `src/contexts/history-replay.ts:172`
+- `src/contexts/layer-renderer.ts:16`
+- `src/contexts/materialization.ts:78`
+- `src/test/setup.ts:320`
+- `toolbar-mapping.ts:189`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/convert-a-color-image-to-black-and-white.html>
+- <https://helpx.adobe.com/photoshop/using/color-adjustments.html>
+- <https://helpx.adobe.com/photoshop/using/color-monochrome-adjustments-using-channels.html>
+- <https://www.photoshopessentials.com/photo-editing/black-and-white-cs3>
+- <https://www.photoshopessentials.com/photo-editing/converting-color-photos-to-black-and-white-in-photoshop>
+- <https://www.photoshopessentials.com/photo-effects/easy-selective-color-effect-with-photoshop>
+- <https://photoshoptrainingchannel.com/black-white-photos-photoshop/>
+- <https://glensmith.co.uk/photoshop/tools>
+- <https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview>
+- <https://training-nyc.com/legacy/photoshop_cs6_all_keyboard_shortcuts_sheet.pdf>
+
+---
+
 ## Eyedropper and draw
 
 Long-form research, provenance and unverified claims: [`src/tools/descriptions/eyedropper-draw.notes.md`](../src/tools/descriptions/eyedropper-draw.notes.md).
@@ -2563,7 +2557,7 @@ The Eyedropper reads pixels and hands the result to the color controls, so a col
 | Control     | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                           | In this app                                                             |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Sample Size | Sets the sampling footprint, and Adobe enumerates the whole menu: Point Sample "Reads the exact value of the clicked pixel", and 3 by 3 / 5 by 5 / 11 by 11 / 31 by 31 / 51 by 51 / 101 by 101 Average "Reads the average color value within the selected pixel area". There are no Median entries in it. Adobe lists the menu without saying which entry ships selected, and states no default for it; the app seeds Point Sample. | `present` — `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22` |
-| Sample      | Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox. The app renders no control for it at all, and its `sampleAllLayers` field persists in settings and is refused loudly on click.                                                 | `inert` — `src/tools/settings.ts:217`                                   |
+| Sample      | Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox. The app renders no control for it at all, and its `sampleAllLayers` field persists in settings and is refused loudly on click.                                                 | `inert` — `src/tools/settings.ts:226`                                   |
 
 **Modifiers**
 
@@ -2574,7 +2568,7 @@ The Eyedropper reads pixels and hands the result to the color controls, so a col
 - `I` — Selects the Eyedropper, or temporarily switches to it while held.
 - `Shift+I` — Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count.
 
-**In this app:** `partial` — The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:217`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:309` and `:455`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:451` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all.
+**In this app:** `partial` — The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:226`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:334` and `:480`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:475` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all.
 
 Implementation:
 
@@ -2584,9 +2578,9 @@ Implementation:
 - `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22`
 - `src/tools/eyedropper.ts:7`
 - `src/tools/eyedropper.ts:34`
-- `src/tools/toolProcessors.ts:81`
-- `src/tools/toolsMap.ts:127`
-- `toolbar-mapping.ts:57`
+- `src/tools/toolProcessors.ts:82`
+- `src/tools/toolsMap.ts:148`
+- `toolbar-mapping.ts:64`
 
 Sources:
 
@@ -2646,9 +2640,9 @@ Implementation:
 - `src/components/Main/DrawToolArea.tsx:143`
 - `src/util/draw.ts:85`
 - `src/tools/draw.ts:6`
-- `src/tools/toolProcessors.ts:152`
-- `src/tools/settings.ts:37`
-- `toolbar-mapping.ts:97`
+- `src/tools/toolProcessors.ts:153`
+- `src/tools/settings.ts:39`
+- `toolbar-mapping.ts:102`
 
 Sources:
 

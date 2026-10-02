@@ -166,14 +166,14 @@ restricted. See `## Unverified` 13.
 (`src/tools/blur.ts:11`) — a true Gaussian, so the closest thing in this editor to
 `Filter > Blur > Gaussian Blur`, wearing the Blur tool's name. There is no gesture surface, and
 the surface it gets is **`DummyToolArea`**, not the Sharpen's: `Main`'s tool-area dispatch has no
-`blur` branch, so blur falls through to the default (`src/components/Main/Main.tsx:236`), which
+`blur` branch, so blur falls through to the default (`src/components/Main/Main.tsx:250`), which
 renders `display: none` (`src/components/Main/DummyToolArea.tsx:15`). The Sharpen is a different
 component that reaches the same rendering on purpose — it mounts its own `SharpenToolArea`
 (`src/components/Main/SharpenToolArea.tsx:46`), and that file's own JSDoc is what says blur "has no
 tool area at all and falls through to `DummyToolArea`" (`:33`). Identical rendering, two
 components; "the same surface the Sharpen uses" was wrong. It is registered as a `layer-operation`,
-not a `raster` (`src/tools/toolProcessors.ts:119`), and its single seeded arg is a radius
-(`src/tools/settings.ts:52`). All four recorded controls are `missing`, none `partial`: there is
+not a `raster` (`src/tools/toolProcessors.ts:120`), and its single seeded arg is a radius
+(`src/tools/settings.ts:54`). All four recorded controls are `missing`, none `partial`: there is
 nothing here for a partial rating to attach to. The recovered `Flow` control is missing too, and
 structurally so — the app has no per-dab/per-stroke opacity pair to express one with.
 
@@ -199,7 +199,7 @@ the list is restricted". See `## Unverified` 13.
 **The slider previews; it does not commit.** The bar routes through `tempUpdateLayer`
 (`src/components/ToolbarsRight/Blur/Blur.tsx:36`), the only writer of `previewLayersRef`, and the
 history entry is written later by `commitDirtyTool` (`src/contexts/useLayer.ts:365`) on tool switch
-(`src/hooks/useApp.ts:169`), on export (`src/components/DesktopHeader/DesktopHeader.tsx:249`) and
+(`src/hooks/useApp.ts:169`), on export (`src/components/DesktopHeader/DesktopHeader.tsx:287`) and
 in `mergeAllLayers` (`src/contexts/useLayer.ts:674`). "Blurred as soon as the slider moves"
 overstates it: the layer is blurred in a preview, and the undoable edit lands at the commit.
 
@@ -293,7 +293,7 @@ about a version range the desktop bar has long since settled. `## Unverified` 5 
 
 **App verdict: the Unsharp Mask filter under the tool's name.** The bar is `Amount`
 (`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:125`, 0–500%, seeded 50% at
-`src/tools/settings.ts:245`) and `Radius` (`:143`, 0–100 px, seeded 1) — the Unsharp Mask's own
+`src/tools/settings.ts:254`) and `Radius` (`:152`, 0–100 px, seeded 1) — the Unsharp Mask's own
 control names, not the tool's — and there is no brush and no gesture
 (`src/components/Main/SharpenToolArea.tsx:46`).
 
@@ -323,7 +323,7 @@ Sharpen from the Blur is exactly what the app does not reproduce, and the Blur/S
 here in radius and magnitude rather than in the shape of the kernel's response. The one thing it
 does better than the reference filter is real: the blur runs on premultiplied colour with alpha
 unsharp-masked on its own 0–255 scale, so a transparent hole cannot bleed a ring into the opaque
-side. Registered as `raster` (`src/tools/toolProcessors.ts:226`).
+side. Registered as `raster` (`src/tools/toolProcessors.ts:246`).
 
 **Why `partial` and not `placeholder`:** the processor returns a real convolved canvas and
 `commitDirtyTool` writes a history entry, so the tool reaches the document and is not a
@@ -406,11 +406,11 @@ processor reads every covered pixel from the untouched source raster at the texe
 along the drag (`src/tools/smudge.ts:149`, called from `smudgeDab` at `:123`) and never from the
 buffer it is writing, so colour travels exactly one segment per dab rather than compounding into a
 single streak; the falloff is the shared engine's `tipAlphaAt`, the same edge every other
-paint-family tool stamps. `Strength` is seeded at 50% (`src/tools/settings.ts:239`), which is
+paint-family tool stamps. `Strength` is seeded at 50% (`src/tools/settings.ts:248`), which is
 Photoshop's own default. The transport semantics are right,
 and the app matches Photoshop's layering rule without having been told to. The gesture is a real
 press/move/release on the active layer (`src/components/Main/SmudgeToolArea.tsx:62`), registered
-as `raster` (`src/tools/toolProcessors.ts:232`).
+as `raster` (`src/tools/toolProcessors.ts:252`).
 
 Three controls are `missing` for structural reasons the component itself states. **Mode** is missing
 because **no control anywhere in the app edits a layer's blend mode** — the earlier wording here
@@ -441,11 +441,11 @@ independent reproductions of Adobe's default-keyboard list all give `Decrease Br
 `Increase Brush Size` = `]`, one pixel per press and repeating
 (<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
 <https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>). The app binds exactly that, on the
-`repeat: true` registrations at `src/components/Common/AppKeyboardShortcuts.tsx:518` and `:526`, and
-the Smudge is in `tipSizeField` (`src/components/Common/AppKeyboardShortcuts.tsx:49`) so both keys
+`repeat: true` registrations at `src/components/Common/AppKeyboardShortcuts.tsx:539` and `:547`, and
+the Smudge is in `tipSizeField` (`src/components/Common/AppKeyboardShortcuts.tsx:69`) so both keys
 are live while it is selected. Rows for both are therefore in the data file — and the same two rows
 are now on the Dodge and the Burn, which are also `tipSizeField` members
-(`src/components/Common/AppKeyboardShortcuts.tsx:50-51`). The same list gives `{` and `}` to brush
+(`src/components/Common/AppKeyboardShortcuts.tsx:70-71`). The same list gives `{` and `}` to brush
 hardness, which the app does not bind; that is a capability gap, not a claim this file makes, and
 it is not given a row because there is no Photoshop `control` to hang it on.
 
@@ -509,7 +509,7 @@ but this ultimately results in some desaturation"
 Opacity or a Flow on the Dodge or Burn bar, and that is the point worth recording: the tonal tools
 build by dwelling, not by the per-dab/per-stroke opacity pair the paint tools use. The app matches
 this correctly by accident — `DodgeBurnToolArgs` has no opacity or spacing field and takes both from
-the shared engine's defaults. The type itself (`src/tools/dodgeBurn.ts:26-33`) has **no `mode`
+the shared engine's defaults. The type itself (`src/tools/dodgeBurn.ts:21-28`) has **no `mode`
 field at all**, and `Tonal.tsx` renders only Range, Exposure, Size and Hardness, so the app never
 had the control to remove.
 
@@ -528,7 +528,7 @@ attributed to Adobe's iPad documentation, which I could not open — see `## Unv
 
 `O` selects the Dodge tool and `Shift+O` cycles the flyout, which is confirmed twice independently.
 The app binds `O` the same way — the tile declares it (`toolbar-mapping.ts:94`) and the handler is
-`src/components/Common/AppKeyboardShortcuts.tsx:437`, whose cycle branch is `selectTonalTool` at
+`src/components/Common/AppKeyboardShortcuts.tsx:458`, whose cycle branch is `selectTonalTool` at
 `:177`.
 
 **Three more bindings Adobe has and the app does not: `Shift+Alt+S`, `Shift+Alt+M` and
@@ -569,7 +569,7 @@ and it is flagged as such here.
 **App verdict: Range and Exposure are real; the defining interaction is absent.** Range writes a
 field the processor reads, and Exposure drives a per-pixel amount rather than a display-only value,
 with the band's **power** driven by the exposure (`tonalWeight` at
-`src/tools/dodgeBurn.ts:125`, `tonalAmount` at `:177`) so a high value narrows the band instead of
+`src/tools/dodgeBurn.ts:120`, `tonalAmount` at `:172`) so a high value narrows the band instead of
 dragging a hard edge across the picture. The band is a quadratic falloff in Rec.709 luma of the
 **encoded** sRGB the editor stores, split at a flat luma 128. That is a defensible reading, since
 Photoshop also scales stored channel values towards 255, but it is one hard split against a real
@@ -585,7 +585,7 @@ The largest gap is not a control. **There is no build-up.** One stroke commits o
 full Exposure value in a single pass, because a one-shot commit has to be a pure function of its
 args — which is also what makes the registry's `requiresRaster` replay reproduce it exactly. The
 phrase matters in one respect: the per-pixel amount a commit emits is a **curve** of the Exposure
-value, not the value itself. `tonalAmount` (`src/tools/dodgeBurn.ts:177`) returns
+value, not the value itself. `tonalAmount` (`src/tools/dodgeBurn.ts:172`) returns
 `band ** (level * EXPOSURE_EXPONENT) * level * EXPOSURE_GAIN * paint` with the exponent at `:87` and
 the gain at `:73`, both 4 and 1, so at the default Exposure of 50 the peak of the chosen band shifts
 a pixel by 0.5 and a quarter of the way down the band by a far smaller amount; the "full Exposure
@@ -615,7 +615,7 @@ it off `placeholder`: a real raster and a real history entry come out of the oth
 The Burn tool is the same darkroom move from the other side: let more light onto the print and that
 part of the image deepens. It is the Dodge tool's control set under another name, which is why the
 app gives the two one shared `DodgeBurnToolArgs` and one shared options component — the module says
-so at `src/tools/dodgeBurn.ts:26-33`. The two processors are separate function references by design
+so at `src/tools/dodgeBurn.ts:21-28`. The two processors are separate function references by design
 (`dodge` at `:379`, `burn` at `:394`) because a test pins processor identity, and the module is
 explicit that **burn is not the inverse of dodge**: with `q` the amount, `burn(dodge(c)) =
 [c + (255 - c)q](1 - q)`, which equals `c` only at `q = 0` and `q = 1`. They are two ends of one
@@ -640,9 +640,9 @@ none of the four.
 is `applyDodgeBurn(..., false)` against the dodge's `true` (`src/tools/dodgeBurn.ts:394`), so the
 pixel rule is `c' = c - c * amount` where the dodge's is `c' = c + (255 - c) * amount`. Range and
 Exposure are genuinely wired to per-pixel work through the same band function. Registered as
-`raster` (`src/tools/toolProcessors.ts:244`); the gesture is
+`raster` (`src/tools/toolProcessors.ts:264`); the gesture is
 `src/components/Main/BurnToolArea.tsx:56`, a deliberate duplicate of the Dodge's own file. The
-seeded args are `src/tools/settings.ts:255`. The absent build-up is the same absence and gets the
+seeded args are `src/tools/settings.ts:264`. The absent build-up is the same absence and gets the
 same phrasing: one stroke, one commit, at the slider's full Exposure value in a single pass, with
 the emitted per-pixel amount a curve of that value rather than the value itself, and no dwell
 anywhere in the stroke hook to accumulate more.
@@ -917,7 +917,7 @@ painting a second gradient over it. Photoshop's live-preview gradient is not a r
 it is the difference between a fill and an editable object. `Shift` is not bound either — there is
 no `shiftKey` read anywhere in `GradientToolArea.tsx` or in `src/hooks/usePaintStroke.ts` — and
 neither `,` nor `.` is on any keyboard handler. `[` and `]` are registered, but as the shared
-tip-size nudge at `src/components/Common/AppKeyboardShortcuts.tsx:518` and `:526`, gated to
+tip-size nudge at `src/components/Common/AppKeyboardShortcuts.tsx:539` and `:547`, gated to
 `tipSizeField` (`:44-53`), and the Gradient is not a member, so both are dead while this tool is
 selected. The only `Delete` bindings belong to the two lasso tool areas
 (`src/components/Main/FeatherMagneticLassoToolArea.tsx:574` and
@@ -937,7 +937,7 @@ file is outside this family's two, so it is reported rather than fixed.
 
 **`G` does not reach the Gradient on a first press, which the data file used to claim.** A plain `G`
 runs `selectFillTool(false)`, which lands on `'paint-bucket'`
-(`src/components/Common/AppKeyboardShortcuts.tsx:166-175`, handler registered at `:421-426`); the
+(`src/components/Common/AppKeyboardShortcuts.tsx:187-196`, handler registered at `:442-447`); the
 Gradient is what the cycle reaches, via the `Shift+G` binding at `:428-434` into `selectFillTool`'s
 cycle branch. The tile declarations agree: the Paint Bucket
 declares `shortcut: 'G'` (`toolbar-mapping.ts:80`) and the Gradient tile declares none at all
@@ -1007,7 +1007,7 @@ a binding is **absent**, which is the stronger form of the same objection.
    established. **This is why the data file's dodge and burn `appNotes` say the app's band "is a
    single hard split against a real tonal scale, and the three Photoshop bands are not equal halves
    of the range", and do not quote 85/170 as Photoshop's values.** The app's own split is luma 128
-   (`TONAL_SPLIT` in `src/tools/dodgeBurn.ts:48`), which is a different proposition and is
+   (`TONAL_SPLIT` in `src/tools/dodgeBurn.ts:43`), which is a different proposition and is
    verifiable in the tree.
 4. **`Protect Texture` as the desktop control name.** The recovered research states the control is
    **Protect Texture**, and that Adobe's iPad documentation says so explicitly for the equivalent
@@ -1092,7 +1092,7 @@ a binding is **absent**, which is the stronger form of the same objection.
     names no letter, and the current Sharpen page could not be opened, so neither carries an `R`
     row — the same rule the other five controls in this file follow, where a claim goes in the data
     file only if a page puts it on that tool. The app binds none of the three
-    (`toolbar-mapping.ts:86-88`), so this is an accuracy question, not an app-fidelity one.
+    (`toolbar-mapping.ts:85-89`), so this is an accuracy question, not an app-fidelity one.
 12. **`Dither`'s and `Reverse`'s defaults, and the removal of `Reverse`'s.** The data file used to
     say "On by default" for `Dither` and "Off by default" for `Reverse`, and both were silence
     dressed as a fact. They are now both gone from the `detail` text and the rows say that no page
