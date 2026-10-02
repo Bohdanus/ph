@@ -40,8 +40,8 @@ type DodgeToolAreaProps = {
  *
  * The canvas-to-document conversion is `usePaintStroke`'s job
  * (`src/hooks/usePaintStroke.ts:25-31`), so `points` arrives in document space. The
- * layer-local conversion is this file's: `tempUpdateLayer` hands the processor the layer's
- * OWN raster with `size: layer.pos` (`src/contexts/useLayer.ts:544`), so the frame the
+ * layer-local conversion is this file's: the processor is handed a buffer in the layer's OWN
+ * space (`src/contexts/useLayer.ts:730-734`), so the frame the
  * processor addresses starts at `activeLayer.pos` and carries no document origin, and a
  * document point has to become `point - activeLayer.pos` before it is used as a pixel
  * address. `src/util/layer-space.ts` states the two spaces and why the conversion is made
