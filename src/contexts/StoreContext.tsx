@@ -507,7 +507,17 @@ function sourceBackedEntryContext(
   if (historyItem.actionName !== NEW_LAYER_ACTION && historyItem.actionName !== MERGE_ACTION) {
     return null;
   }
-  if (historyItem.layerSource?.kind === 'tool' && historyItem.layerSource.args.toolName === 'draw') {
+  const candidate = historyItem.layerSource ?? historyItem.args;
+  const candidateRecord = candidate as { kind?: unknown; args?: unknown } | undefined;
+  if (
+    candidateRecord &&
+    candidateRecord.kind === 'tool' &&
+    !['text', 'shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(
+      (candidateRecord.args as ToolArgs).toolName
+    )
+  ) {
+    // Raster creator tools have no durable source representation yet. They are
+    // intentionally conversion-only; do not enter the planner only to throw.
     return null;
   }
   return {

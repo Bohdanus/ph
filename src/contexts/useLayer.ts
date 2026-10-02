@@ -352,11 +352,14 @@ export const useLayers = () => {
 
       source = { kind: 'tool', ...sourceArgs, args: { ...args, rect: newRect }, pos: newPos };
     } else {
+      // Shape and draw callers derive `pos` from document-space points. The
+      // no-pos branch above is the only path that converts canvas geometry;
+      // subtracting the frame here would move a cropped layer twice.
       source = {
         kind: 'tool',
         ...sourceArgs,
         args: { ...args },
-        pos: canvasToDocumentPos(pos, documentFrame),
+        pos: { ...pos },
       } as ToolLayerSource; // clone args anyway
     }
 

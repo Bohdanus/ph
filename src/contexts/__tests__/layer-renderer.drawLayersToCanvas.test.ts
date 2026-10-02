@@ -380,7 +380,7 @@ describe('drawLayersToCanvas', () => {
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
     expect(target.context.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
-    expect(target.context.drawImage).not.toHaveBeenCalled();
+    expect(target.context.drawImage).toHaveBeenCalledTimes(1);
     expect(target.canvas.width).toBe(300);
     expect(target.canvas.height).toBe(150);
   });
@@ -392,8 +392,8 @@ describe('drawLayersToCanvas', () => {
 
     expect(drawLayersToCanvas(target.canvas, [], frame(0, 0, 640, 480))).toBe(false);
 
-    expect(consoleError).toHaveBeenCalledTimes(1);
-    expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
+    expect(consoleError).toHaveBeenNthCalledWith(1, 'Unable to restore runtime layer presentation', failure);
+    expect(consoleError).toHaveBeenNthCalledWith(2, 'Unable to publish runtime layer presentation', failure);
     expect(target.context.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
   });
 

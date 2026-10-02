@@ -257,7 +257,7 @@ describe('useLayers createBlankLayer', () => {
 });
 
 describe('useLayers createLayerFromTool geometry', () => {
-  it('shifts an explicit canvas position into document space and clears the tool overlay', () => {
+  it('keeps an explicit document position and clears the tool overlay', () => {
     const raster = new OffscreenCanvas(20, 10);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
     const { result } = setup({
@@ -288,13 +288,13 @@ describe('useLayers createLayerFromTool geometry', () => {
 
     const newLayer = created as Layer | null;
     expect(newLayer).not.toBeNull();
-    expect(newLayer!.pos).toEqual({ x: 35, y: 46, width: 20, height: 10 });
+    expect(newLayer!.pos).toEqual({ x: 5, y: 6, width: 20, height: 10 });
     expect(newLayer!.tmpCanvas).toBe(raster);
     const store = result.current.store;
     expect(store.layers[newLayer!.id]).toBeDefined();
     expect(store.activeLayerId).toBe(newLayer!.id);
     expect(store.history[0]).toMatchObject({ actionName: NEW_LAYER_ACTION, layerId: newLayer!.id });
-    expect(processor).toHaveBeenCalledWith({ size: { x: 35, y: 46, width: 20, height: 10 } });
+    expect(processor).toHaveBeenCalledWith({ size: { x: 5, y: 6, width: 20, height: 10 } });
     processor.mockRestore();
   });
 
