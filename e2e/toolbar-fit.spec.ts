@@ -349,23 +349,41 @@ test.describe('Toolbar fit', () => {
     expect(skips, `a 20px step dropped more than one tile — ${counts.join(',')}`).toEqual([]);
   });
 
-  test('both layouts collapse and stay reachable', async ({ page }) => {
-    // The two-column rail is the one the whole suite missed: `toolbarSlots` minted
-    // `two-column-N` keys there while the three-dots flyout asked about `section-group` keys,
-    // so a collapse matched nothing and the tile came out holding an empty group.
-    //
-    // The heights are the ones where each layout actually folds something, which changed when
-    // the budget stopped being 80%: a two-column grid is 394px of tiles and fits whole from a
-    // 700px window up, so 720 and 900 are a no-collapse control here and 600 and 500 are not.
-    for (const twoColumns of [false, true]) {
-      for (const height of [1400, 900, 720, 600, 500]) {
+  // ONE TEST PER (layout, height), where this was ONE test over all ten. The two-column rail is
+  // what this file is really a tripwire for: `toolbarSlots` minted `two-column-N` keys there while
+  // the three-dots flyout asked about `section-group` keys, so a collapse matched nothing and the
+  // tile came out holding an empty group.
+  //
+  // TEN combinations inside one test meant ten full app loads against ONE 30s budget, so the test
+  // could lose on Playwright's default while every assertion in it was far inside its own — which is
+  // what TEST-FLAKES.md §13 recorded, and only under CPU contention. Splitting is the structural
+  // answer and it is free: Playwright's budget is PER TEST, so ten tests give ten budgets, and the
+  // work is unchanged because each test still gets its own fresh page from `open()`. It is also the
+  // better report, because a red run now names the layout and the height instead of leaving the
+  // reader to infer both from one failure.
+  //
+  // WHAT WAS NOT DONE, and it is the obvious first idea: the ten loads are not shareable. The fit
+  // is re-planned asynchronously, and this test reads the rail ONCE — `hasOverflowTile` below is a
+  // single `count()` immediately after `open()` or after the layout toggle — so a measurement taken
+  // against the previous height's plan is a false reading rather than a slow one. `settled` above
+  // is the fix for that, and it is a poll on the property, not a delay; the resize sweep uses it
+  // because its subject IS the resize path. Navigating once and `setViewportSize`-ing through the
+  // other nine would replace ten trustworthy readings with one. So the multiplication can only be
+  // removed from the BUDGET, not from the work. No `test.setTimeout` was added anywhere.
+  //
+  // The heights are the ones where each layout actually folds something, which changed when
+  // the budget stopped being 80%: a two-column grid is 394px of tiles and fits whole from a
+  // 700px window up, so 720 and 900 are a no-collapse control here and 600 and 500 are not.
+  for (const twoColumns of [false, true]) {
+    for (const height of [1400, 900, 720, 600, 500]) {
+      const label = `${twoColumns ? 'two' : 'one'}-col H=${height}`;
+      test(`both layouts collapse and stay reachable — ${label}`, async ({ page }) => {
         await open(page, height);
         if (twoColumns) await prefersTwoColumns(page);
         else {
           const toggle = page.getByTestId('toolbar-layout-toggle');
           if ((await toggle.count()) && (await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
         }
-        const label = `${twoColumns ? 'two' : 'one'}-col H=${height}`;
 
         // A collapse has to have happened for the rest to mean anything, and one of the two
         // layouts at one height is the only place all sixteen groups fit.
@@ -431,9 +449,9 @@ test.describe('Toolbar fit', () => {
         page.on('pageerror', (error) => pageErrors.push(String(error)));
         if (hasOverflowTile) await page.getByTestId('tool-overflow-tile').click();
         expect(pageErrors, `${label}: clicking the three-dots tile must not throw`).toEqual([]);
-      }
+      });
     }
-  });
+  }
 });
 
 /** The app's slug rule, restated: a label becomes a run of non-alphanumerics as one dash. */
