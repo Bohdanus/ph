@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import SidebarLeft from '../SidebarLeft.tsx';
+import SidebarLeft, { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
 
 const goToTool = vi.fn();
 const patchToolArgsMock = vi.fn();
@@ -83,7 +83,7 @@ vi.mock('../toolIcons.tsx', () => {
   };
 });
 
-const LONG_PRESS_DELAY = 300;
+const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
 
 const longPress = (button: HTMLElement) => {
   fireEvent.pointerDown(button, { button: 0 });
@@ -177,7 +177,7 @@ describe('SidebarLeft flyout closing', () => {
     });
 
     act(() => {
-      vi.advanceTimersByTime(300);
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
     });
 
     expect(screen.queryByRole('menu')).toBeNull();

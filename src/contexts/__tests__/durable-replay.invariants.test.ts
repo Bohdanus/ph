@@ -669,8 +669,13 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
     expect(replay.activeLayerId).toBe(layerId);
   });
 
-  it('rasterize-layer on non-existent layer is a no-op', () => {
-    const { document } = legacyHistoryToDurable(
+  // This used to be titled `rasterize-layer on non-existent layer is a no-op`, and it
+  // was vacuous: the tool action named an absent layer, so the converter threw at
+  // `history-adapter.ts:787` and never produced an operation at all. The `rasterized`
+  // assertion named a layer id the fixture never contained, so it could not fail. The
+  // subject is the converter's refusal to invent a layer, which is what it does.
+  it('drops a tool action on an absent layer and keeps the baseline intact', () => {
+    const converted = legacyHistoryToDurable(
       [
         {
           id: 'baseline',
@@ -683,18 +688,29 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
           },
         },
         {
-          id: 'rasterize-missing',
+          id: 'tool-missing-layer',
           actionName: TOOL_ACTION,
           layerId: 'non-existent',
-          args: { toolName: 'rasterize' },
+          args: { toolName: 'blur', radius: 2 },
         },
       ],
       { documentId: 'edge-case-test' }
     );
 
-    const replay = replayDurableDocument(document);
-    expect(replay.layers[layerId]).toBeDefined();
-    expect(replay.layers['rasterized']).toBeUndefined();
+    expect(converted.diagnostics).toEqual([
+      {
+        historyId: 'tool-missing-layer',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'unsupported-history-feature',
+        message: 'Layer non-existent is unavailable',
+      },
+    ]);
+    // No operation was produced, so there is nothing for replay to apply.
+    expect(converted.document.history).toHaveLength(0);
+
+    const replay = replayDurableDocument(converted.document);
+    expect(Object.keys(replay.layers)).toEqual([layerId]);
   });
 
   it('set-document-frame updates frame without affecting layers', () => {

@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   type ClipOptions,
@@ -297,5 +297,147 @@ test.describe('Shape tools', () => {
       ovalCorner!.red,
       `an oval's corner is outside the curve, read ${JSON.stringify(ovalCorner)}`
     ).toBeGreaterThan(240);
+  });
+});
+
+/**
+ * Whether a region changed at all, as a byte-for-byte screenshot comparison against a
+ * baseline captured earlier.
+ *
+ * This replaced an absolute "is anything dark here" predicate, which cannot work in this app:
+ * the theme defaults to dark (`b6a15214`), so an empty workspace is already near-black, and a
+ * black stroke on a white document is not the only way to be dark. A difference needs no
+ * knowledge of the palette, the theme, the document's contents or the stroke padding
+ * `shapeGeometryBounds` adds — it only needs the two moments to differ or not.
+ *
+ * Both moments must be captured with the dialog CLOSED, because the open dialog paints a
+ * `bg-black bg-opacity-25` backdrop over the whole viewport and dims every pixel under it.
+ */
+const regionChanged = async (page: Page, clip: Required<ClipOptions>, baseline: Buffer): Promise<boolean> =>
+  !(await page.screenshot({ clip })).equals(baseline);
+
+/**
+ * A bare click on the canvas, which Adobe answers with the `Create <Figure>` dialog rather
+ * than a drag: "Click on the canvas to bring up the Create Rectangle dialog"
+ * (https://helpx.adobe.com/photoshop/using/modify-shapes.html).
+ *
+ * These live in their own `describe` with their own `beforeEach` because the bare click
+ * REPLACES the drag: the rect helpers above wait for painted pixels, and there are none until
+ * the dialog is answered.
+ */
+test.describe('Shape click dialog', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await selectShape(page, 'Rectangle Tool');
+    await setForegroundColor(page, STROKE_BLACK, true);
+    await thickness(page).fill('20');
+  });
+
+  /** A press and release at one point, which is what makes the gesture a click. */
+  async function clickDocument(page: Page, at: Point): Promise<void> {
+    const box = await canvasBox(page);
+    const offset = documentToCanvasOffset(box, at.x, at.y);
+    await page.mouse.move(box.x + offset.x, box.y + offset.y);
+    await page.mouse.down();
+    await page.mouse.up();
+  }
+
+  const dialog = (page: Page) => page.getByTestId('create-shape-dialog');
+
+  test('a click opens the Create Rectangle dialog and commits nothing until it is answered', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    // The region the dialog's default 100x100 will land in, off the click point.
+    const region = documentClip(box, { from: { x: 40, y: 40 }, to: { x: 140, y: 140 } }, 0);
+    const baseline = await page.screenshot({ clip: region });
+
+    await clickDocument(page, { x: 40, y: 40 });
+
+    await expect(dialog(page)).toBeVisible();
+    await expect(dialog(page).getByRole('heading', { name: 'Create Rectangle' })).toBeVisible();
+
+    // Closed again before the comparison, because the open dialog's backdrop dims the whole
+    // viewport and every pixel under it — the assertion would then be measuring the backdrop.
+    await dialog(page).getByTestId('create-shape-dialog-cancel-button').click();
+    await expect(dialog(page)).toHaveCount(0);
+
+    expect(await regionChanged(page, region, baseline)).toBe(false);
+  });
+
+  test('the dialog draws a shape of the size it is given, at the clicked point', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    const origin: Point = { x: 40, y: 40 };
+    const extent: Rect = { from: origin, to: { x: 240, y: 190 } };
+    const region = documentClip(box, extent, 20);
+    const baseline = await page.screenshot({ clip: region });
+
+    await clickDocument(page, origin);
+    await dialog(page).getByTestId('create-shape-width-input').fill('200');
+    await dialog(page).getByTestId('create-shape-height-input').fill('150');
+    await dialog(page).getByTestId('create-shape-dialog-submit-button').click();
+
+    await expect(dialog(page)).toHaveCount(0);
+    expect(
+      await regionChanged(page, region, baseline),
+      'the committed shape has to have painted into the clicked region'
+    ).toBe(true);
+  });
+
+  test('cancelling the dialog commits nothing at all', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    const region = documentClip(box, { from: { x: 40, y: 40 }, to: { x: 140, y: 140 } }, 0);
+    const baseline = await page.screenshot({ clip: region });
+
+    await clickDocument(page, { x: 40, y: 40 });
+    await dialog(page).getByTestId('create-shape-dialog-cancel-button').click();
+
+    await expect(dialog(page)).toHaveCount(0);
+    expect(await regionChanged(page, region, baseline)).toBe(false);
+  });
+
+  test('Escape closes the dialog and commits nothing', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    const region = documentClip(box, { from: { x: 40, y: 40 }, to: { x: 140, y: 140 } }, 0);
+    const baseline = await page.screenshot({ clip: region });
+
+    await clickDocument(page, { x: 40, y: 40 });
+    await dialog(page).getByTestId('create-shape-width-input').press('Escape');
+
+    await expect(dialog(page)).toHaveCount(0);
+    expect(await regionChanged(page, region, baseline)).toBe(false);
+  });
+
+  // The Line is the documented exception: Adobe names drag-and-release only, and never a
+  // Create Line dialog (https://helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html).
+  // The refusal reaches the console on purpose, which is what the ACCEPTED_CONSOLE_ERRORS
+  // entry for it exists to declare.
+  test('the Line tool opens no dialog on a click, because Adobe documents none', async ({ page }) => {
+    await selectShape(page, 'Line Tool');
+    await clickDocument(page, { x: 40, y: 40 });
+
+    await expect(dialog(page)).toHaveCount(0);
+  });
+
+  test('a native browser dialog never opens on the click route', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    // Registered with `once` and asserted as absent rather than auto-dismissed: a stray
+    // `prompt()` silently absorbed by Playwright is exactly the defect this pins, and this
+    // file's own comment on the export helpers records why `once` beats `on` here.
+    let nativeDialog = false;
+    page.once('dialog', async (d) => {
+      nativeDialog = true;
+      await d.dismiss().catch(() => undefined);
+    });
+
+    await clickDocument(page, { x: 40, y: 40 });
+    await expect(dialog(page)).toBeVisible();
+    await dialog(page).getByTestId('create-shape-dialog-submit-button').click();
+    await expect(dialog(page)).toHaveCount(0);
+
+    expect(nativeDialog, 'a window.prompt or window.alert fired on the click route').toBe(false);
   });
 });

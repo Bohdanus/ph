@@ -14,13 +14,22 @@ import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
 export const ANT_STROKE_COLOR = 'black';
 export const ANT_GAP_COLOR = 'white';
 
-const DASH_CYCLE = DASH_LENGTH + GAP_LENGTH;
-
 export type SelectionMarchingAntsProps = {
   overlayRef: RefObject<HTMLCanvasElement | null>;
   selections: Selection[];
   documentFrame: DocumentFrame;
   enabled?: boolean;
+  /**
+   * CSS px per document px, as a ref — the contain fit. See `useContainScale`.
+   *
+   * The constants imported above are CSS px, but this canvas is sized to the DOCUMENT and displayed
+   * with `object-contain`, so a context draws in document px and every one of them has to be divided
+   * by this to stay constant on screen. Omitting it leaves the divisor at 1, which is what this hook
+   * did before the divisor existed: correct at scale 1, sub-pixel below it, and proportionally heavy
+   * above it, with a crawl rate that varies with zoom. It is a REF rather than a number because this
+   * reads it inside a 60fps loop.
+   */
+  scaleRef?: RefObject<number>;
 };
 
 type AntsShape = { id: string; path: Path2D };
@@ -54,6 +63,7 @@ export function useSelectionMarchingAnts({
   selections,
   documentFrame,
   enabled = true,
+  scaleRef,
 }: SelectionMarchingAntsProps) {
   const animationIdRef = useRef<number | null>(null);
   const dashOffsetRef = useRef(0);
@@ -109,23 +119,37 @@ export function useSelectionMarchingAnts({
       // it. A stroke with no `globalAlpha` of its own renders at whatever the last painter left
       // behind, and the ants are two thin strokes — the first thing that would show it.
       resetOverlayAlpha(ctx);
-      ctx.lineWidth = LINE_WIDTH;
+      // The divide is per frame rather than once at mount, because the ref is read inside the loop
+      // and the fit changes when the window does. The cycle is recomputed rather than read from a
+      // module constant: the undivided cycle is the WRONG modulus here, because at a scale below 1
+      // the dashes are longer in document px than that, so offsetting by it would make the modulo a
+      // no-op and let the offset grow without bound.
+      const scale = scaleRef?.current ?? 1;
+      const lineWidth = LINE_WIDTH / scale;
+      const dashLength = DASH_LENGTH / scale;
+      const gapLength = GAP_LENGTH / scale;
+      const dashCycle = dashLength + gapLength;
+
+      ctx.lineWidth = lineWidth;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'butt';
-      ctx.setLineDash([DASH_LENGTH, GAP_LENGTH]);
+      ctx.setLineDash([dashLength, gapLength]);
 
       for (const shape of current) {
         ctx.strokeStyle = ANT_STROKE_COLOR;
         ctx.lineDashOffset = offset;
         ctx.stroke(shape.path);
         ctx.strokeStyle = ANT_GAP_COLOR;
-        ctx.lineDashOffset = offset + DASH_LENGTH;
+        ctx.lineDashOffset = offset + dashLength;
         ctx.stroke(shape.path);
       }
 
       ctx.restore();
 
-      dashOffsetRef.current = (offset - SPEED) % DASH_CYCLE;
+      // A per-frame distance, so it is divided by the same factor as the dash it walks along: at
+      // scale 1 this is the original `SPEED`, and below it the ants keep the same apparent pace
+      // instead of crawling in slow motion.
+      dashOffsetRef.current = (offset - SPEED / scale) % dashCycle;
       animationIdRef.current = requestAnimationFrame(frame);
     },
     [clearCanvas, overlayRef]

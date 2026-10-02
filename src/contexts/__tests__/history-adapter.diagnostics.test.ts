@@ -754,7 +754,7 @@ describe('durable entry id uniqueness', () => {
     // `after` carries no `previousFrame`, so its `previous` is the fold's frame.
     // Rolling the fold back would record `first` here instead, and the append
     // boundary compares this value against the legacy `previousFrame`
-    // (`history-append.ts:494`) — so a stale fold refuses the user's next crop.
+    // (`history-append.ts:744-747`) — so a stale fold refuses the user's next crop.
     const after = result.document.history[1]?.operation;
     expect(after?.kind).toBe('set-document-frame');
     expect(after?.kind === 'set-document-frame' && after.previous).toEqual(second);
@@ -870,46 +870,28 @@ describe('durable entry id uniqueness', () => {
     expect(filterToolNames(atTip.layers[layerId]?.operations ?? [])).toEqual(['blur', 'color']);
   });
 
-  it('KNOWN LIMIT: publishes a later entry that reuses the baseline open-document id with no diagnostic', () => {
-    // KNOWN LIMIT, pinned deliberately as the CURRENT behaviour. The baseline
-    // document-source branch `continue`s BEFORE the duplicate-id guard
-    // (`history-adapter.ts:571-576`), so the baseline entry's id never reaches
-    // `publishedEntryIds` and a later entry claiming that id is published as a
-    // first occurrence: the ids collide in a way the diagnostic does not report.
-    //
-    // That is a real limit rather than a cosmetic gap, because the two id-based
-    // resolvers disagree about what the id MEANS. `updateHistoryTimeline`
-    // (`history-timeline.ts:24`) resolves `toggle-disabled <id>` by first match
-    // over the LEGACY timeline and lands on the baseline entry, while
-    // `toggleDurableEntry` (`history-adapter.ts:850`) resolves the same key by
-    // first match over the DURABLE history and lands on the LATER entry — the
-    // baseline is not in the durable document at all, so "first match" means
-    // different entries on the two sides.
-    //
-    // No production route produces this: the open-document entry is minted by
-    // `createHistoryItem` with its default fresh `uuidv4()` per commit
-    // (`history-utils.ts:81`, called at `useApp.ts:120-125`), and every other
-    // writer mints one the same way, so no two committed entries can share an id.
-    //
-    // Whoever closes the limit MUST update this test. It is the tripwire saying
-    // "conversion is silent here"; it starts failing the moment the baseline id is
-    // recorded (or the baseline is published as an entry), and the honest
-    // expectation then becomes the repeat warning.
+  it('reports a later entry that reuses the baseline open-document id', () => {
+    // The baseline document-source id is meaningful to the legacy first-match
+    // resolver even though the source is not itself a durable history entry.
+    // Conversion seeds that id in the duplicate set, so a later edit cannot
+    // publish under the same key and make the two resolvers disagree silently.
     const registry = new AssetRegistry();
     const sharedId = 'baseline-id-collision';
     const history = [...baselineHistory(sharedId), blurItem(sharedId)];
 
     const result = legacyHistoryToDurable(history, { documentId, registry });
 
-    // CURRENT: published silently, with a cursor per legacy entry as usual.
-    expect(result.diagnostics).toEqual([]);
-    expect(result.document.history.map((entry) => entry.id)).toEqual([sharedId]);
-    expect(result.document.history[0]?.operation).toMatchObject({
-      kind: 'apply-filter',
-      layerId,
-      filter: { toolName: 'blur' },
-    });
-    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: sharedId,
+        actionName: TOOL_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: expect.stringContaining('baseline document-source entry'),
+      }),
+    ]);
+    expect(result.document.history).toEqual([]);
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, -1]);
 
     // The LEGACY resolver takes that id to the baseline open-document entry...
     const legacy = updateHistoryTimeline(
@@ -920,8 +902,9 @@ describe('durable entry id uniqueness', () => {
     expect(legacy.entries[0]?.disabled).toBe(true);
     expect(legacy.entries[1]?.disabled).toBeUndefined();
 
-    // ...while the DURABLE resolver takes the very same id to the later entry.
+    // The durable resolver has no entry under the colliding id, so the warning
+    // does not leave a second edit for the wrong first-match lookup to toggle.
     const durable = toggleDurableEntry(result.document, sharedId);
-    expect(durable.history.map((entry) => [entry.operation.kind, entry.enabled])).toEqual([['apply-filter', false]]);
+    expect(durable).toBe(result.document);
   });
 });

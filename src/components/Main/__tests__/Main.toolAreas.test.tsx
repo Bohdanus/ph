@@ -82,6 +82,7 @@ vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') })
 vi.mock('../SmudgeToolArea.tsx', () => ({ SmudgeToolArea: marker('smudge') }));
 vi.mock('../DodgeToolArea.tsx', () => ({ DodgeToolArea: marker('dodge') }));
 vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
+vi.mock('../SpongeToolArea.tsx', () => ({ SpongeToolArea: marker('sponge') }));
 vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
 vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
 
@@ -109,6 +110,7 @@ const TOOL_AREA_IDS = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
   'fill',
   'color-replacement',
   'gradient',
@@ -133,7 +135,6 @@ beforeEach(() => {
   setImageFromUpload.mockResolvedValue(undefined);
   setBlankImage.mockImplementation(() => {});
   vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
-  vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -176,6 +177,10 @@ describe('Main tool-area routing', () => {
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
+    // The Sponge gets its OWN area rather than `Tonal`'s pair, and this row pins that it
+    // still resolves: a tool the routing table forgot falls through to the hidden dummy,
+    // which renders no marker and would otherwise pass as a working area.
+    ['sponge', 'sponge'],
     ['magic-eraser', 'fill'],
     ['paint-bucket', 'fill'],
     ['gradient', 'gradient'],
@@ -219,6 +224,7 @@ describe('Main tool-area routing', () => {
       'smudge',
       'dodge',
       'burn',
+      'sponge',
       'paint-bucket',
       'gradient',
     ] as const;
@@ -499,12 +505,37 @@ describe('Main empty-document actions', () => {
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 
-  it('alerts when the file dialog rejects', async () => {
+  it('reports the failure through console.error when the file dialog rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openLoadImageDialog.mockRejectedValue(new Error('no access'));
     render(<Main />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
-    await vi.waitFor(() => expect(window.alert).toHaveBeenCalledWith('Failed to open file: no access'));
+    // The dialog threw before it could name a file, so the upload must not have been attempted:
+    // the console report and the untouched document are the whole of the failure now that the
+    // modal is gone, and the second half is what keeps a handler that still called
+    // `setImageFromUpload` on the error path from passing this.
+    // The Error is the SECOND argument, not an interpolation: passing it through is what leaves the
+    // stack in the console, and a single interpolated string would fail this on arity alone.
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to open file:', expect.any(Error)));
+    expect(setImageFromUpload).not.toHaveBeenCalled();
+  });
+
+  it('passes a non-Error rejection through to the console unchanged', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    openLoadImageDialog.mockRejectedValue({ code: 'EACCES' });
+    render(<Main />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
+
+    // This is the whole point of the two-argument form. Stringified, a rejection that is not an
+    // `Error` collapses to `[object Object]` and the reason is gone; passed through, the console
+    // prints the object. So the assertion names the exact raw value, and it cannot pass against the
+    // interpolated call it replaced.
+    await vi.waitFor(() =>
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file:', { code: 'EACCES' })
+    );
+    expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 
   it('creates a blank document from the new image dialog', async () => {
@@ -527,12 +558,32 @@ describe('Main empty-document actions', () => {
     expect(setBlankImage).not.toHaveBeenCalled();
   });
 
-  it('alerts when the new image dialog rejects', async () => {
+  it('reports the failure through console.error when the new image dialog rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openNewImageDialog.mockRejectedValue(new Error('canceled'));
     render(<Main />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
-    await vi.waitFor(() => expect(window.alert).toHaveBeenCalledWith('Failed to create document: canceled'));
+    // A rejected dialog yields no size, so no blank document may be created from it — the
+    // console report and an unchanged document are the whole of the failure.
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to create document:', expect.any(Error)));
+    expect(setBlankImage).not.toHaveBeenCalled();
+  });
+
+  it('passes a non-Error rejection from the new image dialog through unchanged', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    openNewImageDialog.mockRejectedValue('plain failure');
+    render(<Main />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
+
+    // Stringified, this would arrive as `Failed to create document: plain failure` — the reason
+    // survives by accident for a string, but only because `String(x)` on a string is `x`; an
+    // object reason does not get that. The raw value is the contract.
+    await vi.waitFor(() =>
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to create document:', 'plain failure')
+    );
+    expect(setBlankImage).not.toHaveBeenCalled();
   });
 });
 
@@ -632,13 +683,33 @@ describe('Main file drop', () => {
     await vi.waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
   });
 
-  it('alerts when a dropped file cannot be decoded', async () => {
+  it('reports the failure through console.error when a dropped file cannot be decoded', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     loadDocumentFile.mockRejectedValue(new Error('corrupt'));
     render(<Main />);
 
     dropOnMain(screen.getByRole('main'));
 
-    await vi.waitFor(() => expect(window.alert).toHaveBeenCalledWith('Failed to open file: corrupt'));
+    // The decode is the last thing the drop handler does before it publishes, so a rejection
+    // leaves the open document exactly as it was — the assertion that matters now that the
+    // modal dialog is gone. The Error is the second argument, so the stack survives into the log.
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to open file:', expect.any(Error)));
+    expect(setImageFromUpload).not.toHaveBeenCalled();
+  });
+
+  it('passes a non-Error decode rejection through to the console unchanged', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    loadDocumentFile.mockRejectedValue({ code: 'ENODATA' });
+    render(<Main />);
+
+    dropOnMain(screen.getByRole('main'));
+
+    // A decoder that rejects with a reason object is the realistic shape here, and under the
+    // interpolated log it read `Failed to open file: [object Object]`. The assertion names the
+    // exact object, so it fails against that and passes only against the two-argument call.
+    await vi.waitFor(() =>
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file:', { code: 'ENODATA' })
+    );
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 });

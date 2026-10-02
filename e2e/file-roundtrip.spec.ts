@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
@@ -214,9 +214,10 @@ async function requireDominantRed(capture: Buffer, label: string) {
  *   seeds a blank document on boot, so the prompt is shown on the very first click of
  *   a fresh page. Playwright auto-dismisses an unhandled dialog, which reads as
  *   "declined" and returns before the picker is ever opened. `once` scopes the
- *   handler to that one prompt: a global accept in a fixture would also swallow the
- *   `window.alert` that a failed `loadDocumentFile` raises, which is the only signal
- *   that the open failed.
+ *   handler to that one prompt: a global accept in a fixture would keep answering every
+ *   dialog raised after it, so an unexpected `confirm()` or `prompt()` from some other
+ *   path would be accepted instead of surfacing, and the run would continue past a guard
+ *   it never reached.
  *
  * The file then arrives through Playwright's `filechooser` event, which is what the
  * programmatic `.click()` on a `display:none` input raises. Verified on this host: the

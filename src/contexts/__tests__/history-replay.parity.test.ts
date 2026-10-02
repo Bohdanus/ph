@@ -1,0 +1,339 @@
+import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+
+import { replayDurableDocument } from '../durable-replay.ts';
+import { legacyHistoryToDurable } from '../history-adapter.ts';
+import type { DurableOperation } from '../history-model.ts';
+import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
+import type { HistoryItem } from '../history-types.ts';
+import type { Layer, LayerOperation, LayerSource, LayersRecord } from '../layer-types.ts';
+import type { DurableReplayResult } from '../durable-replay.ts';
+import type { Selection, Size } from '../general-types.ts';
+import type { DocumentFrame } from '../document-frame.ts';
+import type { TextToolArgs } from '../../tools/text.ts';
+import type { TransformToolArgs } from '../../tools/transform.ts';
+import {
+  HIDE_LAYER_ACTION,
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
+  REMOVE_ACTION,
+  RENAME_LAYER_ACTION,
+  REORDER_ACTION,
+  SELECTION_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SHOW_LAYER_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
+import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
+
+const size: Size = { width: 400, height: 300 };
+const frame: DocumentFrame = { x: 0, y: 0, width: 400, height: 300 };
+const layerA = 'layer-a';
+const layerB = 'layer-b';
+
+type BlankSource = Extract<LayerSource, { kind: 'blank' }>;
+
+function blankSource(pos: Layer['pos']): BlankSource {
+  return { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos };
+}
+
+function runtimeLayer(id: string, order: number, pos = { x: 20, y: 30, width: 120, height: 80 }): Layer {
+  const source = blankSource(pos);
+  return {
+    id,
+    name: id,
+    isBedrock: false,
+    tmpCanvas: null,
+    bitmap: null,
+    visible: true,
+    opacity: 1,
+    locked: false,
+    blendMode: 'source-over',
+    order,
+    pos,
+    source,
+    operations: [],
+  };
+}
+
+function baseline(layers: LayersRecord = { [layerA]: runtimeLayer(layerA, 0) }): HistoryItem {
+  return {
+    id: 'baseline',
+    actionName: OPEN_DOCUMENT_ACTION,
+    layerId: Object.keys(layers)[0] ?? layerA,
+    documentSource: { layers, size, frame },
+  };
+}
+
+function item(id: string, actionName: HistoryItem['actionName'], layerId: string, args?: object): HistoryItem {
+  return { id, actionName, layerId, ...(args ? { args } : {}) };
+}
+
+function selection(id: string, x: number, y: number, active = true): Selection {
+  return {
+    id,
+    points: [
+      { x, y },
+      { x: x + 20, y },
+      { x: x + 20, y: y + 20 },
+    ],
+    isActive: active,
+    pos: { x, y, width: 20, height: 20 },
+    lifecycle: 'committed',
+    geometry: 'polygon',
+    sourceTool: 'polygonal-lasso',
+    metadata: { movedAtVersion: x + y },
+  };
+}
+
+const textArgs: TextToolArgs = {
+  toolName: 'text',
+  align: 'left',
+  bold: false,
+  color: '#111111',
+  fontFamily: 'Arial',
+  fontSize: 18,
+  italic: false,
+  lineHeight: 1.2,
+  text: 'Parity',
+  rect: { x1: 10, y1: 15, x2: 140, y2: 55 },
+};
+
+const transformArgs: TransformToolArgs = {
+  toolName: 'transform',
+  rotate: 17,
+  mirrorH: false,
+  mirrorV: false,
+  skewX: 0,
+  skewY: 0,
+  trapezoid: 0,
+  resizeX: 125,
+  resizeY: 85,
+};
+
+const cases: ReadonlyArray<{ name: string; history: readonly HistoryItem[] }> = [
+  {
+    name: 'layer properties',
+    history: [
+      baseline(),
+      item('hide', HIDE_LAYER_ACTION, layerA),
+      item('show', SHOW_LAYER_ACTION, layerA),
+      item('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
+    ],
+  },
+  {
+    name: 'create and remove',
+    history: [
+      baseline(),
+      {
+        id: 'create',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'created',
+        layerSource: blankSource({ x: 40, y: 50, width: 80, height: 60 }),
+      },
+      item('remove', REMOVE_ACTION, 'created'),
+    ],
+  },
+  {
+    name: 'reposition and affine transform',
+    history: [
+      baseline(),
+      item('move', TOOL_ACTION, layerA, { toolName: 'reposition', move: { x: 45, y: 55 } }),
+      item('transform', TOOL_ACTION, layerA, transformArgs),
+    ],
+  },
+  {
+    name: 'reorder',
+    history: [
+      baseline({ [layerA]: runtimeLayer(layerA, 0), [layerB]: runtimeLayer(layerB, 1) }),
+      item('reorder', REORDER_ACTION, layerB, { layerToMoveId: layerB, afterWhichLayerId: null }),
+    ],
+  },
+  {
+    name: 'filter chain',
+    history: [
+      baseline(),
+      item('blur', TOOL_ACTION, layerA, { toolName: 'blur', radius: 4 }),
+      item('color', TOOL_ACTION, layerA, { toolName: 'color', grayscale: 0.5 }),
+      item('levels', TOOL_ACTION, layerA, { toolName: 'levels', inputBlack: 0, inputWhite: 255 }),
+    ],
+  },
+  {
+    name: 'document frame crop',
+    history: [
+      baseline(),
+      item('crop', SET_DOCUMENT_FRAME_ACTION, 'document', {
+        previousFrame: frame,
+        nextFrame: { x: 10, y: 20, width: 200, height: 150 },
+      }),
+    ],
+  },
+  {
+    name: 'merge',
+    history: [
+      baseline({ [layerA]: runtimeLayer(layerA, 0), [layerB]: runtimeLayer(layerB, 1) }),
+      {
+        id: 'merge',
+        actionName: MERGE_ACTION,
+        layerId: 'merged',
+        layerSource: blankSource({ x: 0, y: 0, width: 400, height: 300 }),
+      },
+    ],
+  },
+  {
+    name: 'text source',
+    history: [
+      baseline(),
+      {
+        id: 'text',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'text-layer',
+        layerSource: {
+          kind: 'tool',
+          args: textArgs,
+          isBedrock: false,
+          pos: { x: 10, y: 15, width: 130, height: 40 },
+        },
+      },
+    ],
+  },
+  {
+    name: 'selection',
+    history: [
+      baseline(),
+      item('selection-create', SELECTION_ACTION, 'selection', {
+        previousSelectionState: { selections: [], activeSelectionId: null },
+        nextSelectionState: { selections: [selection('selection-a', 15, 25)], activeSelectionId: 'selection-a' },
+      }),
+    ],
+  },
+];
+
+function replayDependencies(): HistoryReplayDependencies {
+  return {
+    createLayer: ({ layerId, layers, source }) => ({
+      id: layerId,
+      name:
+        source.kind === 'tool' ? source.args.toolName : source.kind === 'image' ? (source.name ?? layerId) : 'Blank',
+      isBedrock: Boolean(source.isBedrock),
+      tmpCanvas: null,
+      bitmap: source.kind === 'image' ? source.bitmap : null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: Object.values(layers).length,
+      pos: 'pos' in source ? { ...source.pos } : { x: 0, y: 0, width: source.size.width, height: source.size.height },
+      source,
+      operations: [],
+    }),
+    applyRasterTool: (layer) => layer,
+  };
+}
+
+function sourceKind(source: LayerSource | undefined): string {
+  if (!source) return 'materialized';
+  if (source.kind === 'image') return 'raster';
+  if (source.kind === 'tool') return source.args.toolName === 'text' ? 'text' : 'legacy-tool';
+  return source.kind;
+}
+
+function durableSourceKind(source: DurableReplayResult['layers'][string]['snapshot']['source']): string {
+  return source.kind;
+}
+
+type ComparableOperationKind = NonNullable<LayerOperation['kind']> | DurableOperation['kind'] | 'unknown';
+
+function operationKind(kind: LayerOperation['kind'], operation: LayerOperation): ComparableOperationKind {
+  if (kind === 'filter') return 'apply-filter';
+  if (kind === 'affine-transform') return 'apply-affine-transform';
+  if (kind === undefined && 'args' in operation && typeof operation.args.toolName === 'string') {
+    return 'apply-filter';
+  }
+  return 'unknown';
+}
+
+function normalizeLegacy(result: HistoryReplayResult) {
+  return {
+    frame: result.documentFrame,
+    totalSize: result.totalSize,
+    layers: Object.values(result.layers)
+      .sort((left, right) => left.order - right.order)
+      .map((layer, order) => ({
+        id: layer.id,
+        order,
+        name: layer.name,
+        visible: layer.visible ?? true,
+        locked: layer.locked,
+        opacity: layer.opacity,
+        blendMode: layer.blendMode,
+        pos: layer.pos,
+        sourceKind: sourceKind(layer.source),
+        operationKinds: layer.operations.map((operation) => operationKind(operation.kind, operation)),
+      })),
+    selections: result.selections,
+    activeSelectionId: result.activeSelectionId,
+  };
+}
+
+function normalizeDurable(result: DurableReplayResult) {
+  return {
+    frame: result.frame,
+    totalSize: result.totalSize,
+    layers: Object.values(result.layers)
+      .sort((left, right) => left.snapshot.order - right.snapshot.order)
+      .map(({ snapshot, operations }, order) => ({
+        id: snapshot.id,
+        order,
+        name: snapshot.name,
+        visible: snapshot.visible ?? true,
+        locked: snapshot.locked,
+        opacity: snapshot.opacity,
+        blendMode: snapshot.blendMode,
+        pos: snapshot.pos,
+        sourceKind: durableSourceKind(snapshot.source),
+        operationKinds: operations.map((operation) => operation.kind),
+      })),
+    selections: result.selections.selections,
+    activeSelectionId: result.selections.activeSelectionId,
+  };
+}
+
+function convert(history: readonly HistoryItem[], name: string) {
+  return legacyHistoryToDurable(history, { documentId: `parity-${name}` });
+}
+
+describe('legacy/durable logical replay parity', () => {
+  beforeAll(() => overrideCanvasFilterSupport(true));
+  afterAll(() => overrideCanvasFilterSupport(null));
+
+  it.each(cases)('matches at every reachable cursor: $name', ({ name, history }) => {
+    const converted = convert(history, name);
+    expect(converted.diagnostics).toEqual([]);
+
+    for (let cursor = 0; cursor < history.length; cursor += 1) {
+      const legacy = replayHistory(history, cursor, size, replayDependencies(), frame);
+      const durableCursor = converted.legacyCursorToDurableCursor[cursor];
+      expect(durableCursor, `${name} legacy cursor ${cursor} must map`).toEqual(expect.any(Number));
+      const durable = replayDurableDocument(converted.document, durableCursor);
+      expect(normalizeDurable(durable), `${name} at cursor ${cursor}`).toEqual(normalizeLegacy(legacy));
+    }
+  });
+
+  it('keeps invalid cursor behavior outside the parity oracle', () => {
+    const history = cases[0]!.history;
+    const converted = convert(history, 'invalid-cursor');
+    const legacy = replayHistory(history, -1, size, replayDependencies(), frame);
+    const durable = replayDurableDocument(converted.document, -1);
+
+    expect(Object.keys(legacy.layers)).toHaveLength(0);
+    expect(Object.keys(durable.layers)).toHaveLength(1);
+    expect(durable.cursor).toBe(-1);
+
+    const nanLegacy = replayHistory(history, Number.NaN, size, replayDependencies(), frame);
+    const nanDurable = replayDurableDocument(converted.document, Number.NaN);
+    expect(Object.keys(nanLegacy.layers)).toHaveLength(0);
+    expect(Object.keys(nanDurable.layers)).toHaveLength(1);
+    expect(nanDurable.cursor).toBe(-1);
+  });
+});

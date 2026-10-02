@@ -40,6 +40,13 @@ export const toolbarMap = [
     [
       { label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' },
       { label: 'Elliptical Marquee Tool', name: 'elliptical-selection' },
+      // The two 1-pixel marquees share this flyout and therefore carry no shortcut of
+      // their own: Adobe's published default table assigns `M` to the Rectangular and
+      // Elliptical Marquees only, and neither 1-pixel tool has a key. `Shift+M` still
+      // reaches them, because the cycle is over the whole group (see `marqueeGroup` in
+      // `AppKeyboardShortcuts.tsx`), which is a weaker and separately-labelled claim.
+      { label: 'Single Row Marquee Tool', name: 'single-row-marquee' },
+      { label: 'Single Column Marquee Tool', name: 'single-column-marquee' },
     ],
     [
       { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
@@ -65,9 +72,10 @@ export const toolbarMap = [
     ],
   ],
   [
-    // The Brush stays the tile's primary tool, so the eraser-family tools are appended
-    // rather than inserted: `SidebarLeft.tsx:144-152` makes the first entry the tile identity.
-    // Six entries is the same length as the Pen family flyout below, so this is not an outlier.
+    // The Brush stays the tile's default tool, so the eraser-family tools are appended
+    // rather than inserted: `renderToolGroup` derives the tile's default identity from the
+    // first entry (`SidebarLeft.tsx:578`). Six entries is the same length as the Pen family
+    // flyout below, so this is not an outlier.
     [
       { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
       { label: 'Pencil Tool', name: 'pencil' },
@@ -92,6 +100,11 @@ export const toolbarMap = [
     [
       { label: 'Dodge Tool', name: 'dodge', shortcut: 'O' },
       { label: 'Burn Tool', name: 'burn' },
+      // The third member of the same flyout, and in the order Adobe's own shortcut
+      // references give it: Dodge, Burn, Sponge, each `O`, cycled with `Shift+O`. The
+      // `shortcut` is left off the other two entries for the same reason it is left off
+      // `burn` — only the tile's first entry carries the letter.
+      { label: 'Sponge Tool', name: 'sponge' },
     ],
     [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
   ],
@@ -143,6 +156,8 @@ export const availableTools: readonly ToolName[] = [
   'transform',
   'rectangular-selection',
   'elliptical-selection',
+  'single-row-marquee',
+  'single-column-marquee',
   'freehand-lasso',
   'polygonal-lasso',
   'feather-magnetic-lasso',
@@ -158,6 +173,7 @@ export const availableTools: readonly ToolName[] = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
 ];
 
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

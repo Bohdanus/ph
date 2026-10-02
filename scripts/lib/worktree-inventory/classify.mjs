@@ -151,7 +151,10 @@ function mergeVerdict(wt) {
  * worktree nobody has written about is still inventoried, just with no
  * editorial summary.
  */
-export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardAgents = [] }) {
+export function classify(
+  wt,
+  { chatSummary, chatSessions, curated, nowMs, boardAgents = [], writeHistory = null, liveWritersSuppressed = null }
+) {
   const reasons = [];
   const uncommitted = isWorkingTreeHeld(wt);
   const unmerged = hasUnmergedCommits(wt);
@@ -160,7 +163,37 @@ export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardA
   // session that was opened in the main checkout and then driven into a task
   // worktree — its `directory` never changes — so the board's own agent record
   // is the only signal that covers that case.
-  const live = hasLiveSession(chatSummary, nowMs) || Boolean(liveAgent);
+  const chatLive = hasLiveSession(chatSummary, nowMs);
+  // A WRITE is a stronger claim on a worktree than a message. A chat that
+  // edited files here twenty minutes ago and has been quiet since still owns
+  // the directory; one that merely said something here does not. This is the
+  // signal the session-directory audit structurally cannot produce, because the
+  // chat that wrote may never have had this worktree as its `directory` at all.
+  //
+  // `derivedChatIds`, not `activeNow`: the latter is the signal AFTER a declared
+  // hard state has been applied to it, so reading it here would make the
+  // override erase its own evidence and `derivedLive` would quietly agree with
+  // `live` about a signal nobody ever checked.
+  const writeLive = Boolean(writeHistory?.derivedChatIds?.length);
+  const derivedLive = chatLive || writeLive || Boolean(liveAgent);
+
+  // A declared hard state outranks every heuristic above. Both of them are
+  // RECENCY inferences over rows that outlive the process that wrote them, so
+  // they keep answering "active" for half an hour after the editor that was
+  // running them is gone — which is exactly the moment a reader most needs the
+  // file to be true. The override is recorded rather than applied silently: the
+  // reasons say it happened, and the evidence it overrode is still on the record
+  // in `writeHistory.derivedChatIds`, so the file can be audited rather
+  // than believed.
+  const live = liveWritersSuppressed ? false : derivedLive;
+  if (liveWritersSuppressed) {
+    reasons.push(
+      `liveness overridden: ${liveWritersSuppressed}` +
+        (derivedLive
+          ? ` (${chatLive ? 'a session' : 'a board agent'} looked live at ${new Date(nowMs).toISOString()})`
+          : '')
+    );
+  }
 
   let status;
   if (wt.detached) {
@@ -212,9 +245,11 @@ export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardA
   } else if (live) {
     recommendation = RECOMMENDATION.IN_USE;
     reasons.push(
-      hasLiveSession(chatSummary, nowMs)
-        ? 'a session messaged inside the last 30 minutes'
-        : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
+      writeLive
+        ? 'a chat wrote a file in this worktree inside the last 30 minutes'
+        : chatLive
+          ? 'a session messaged inside the last 30 minutes'
+          : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
@@ -315,6 +350,11 @@ export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardA
     prunable,
     reasons,
     live,
+    // What the signals said before any declared hard state overrode them. Kept
+    // so an override is auditable: `live: false` beside `derivedLive: true` is
+    // a record that something was suppressed and what it suppressed.
+    derivedLive,
+    liveSuppressed: Boolean(liveWritersSuppressed),
     uncommitted,
     unmerged,
   };

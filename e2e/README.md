@@ -47,7 +47,7 @@ purpose:
 | The left rail and its flyouts | `sidebar-flyout`, `sidebar-keyboard`, `sidebar-layout`                                              |
 | Layers and the panel          | `layers`, `layers-panel`, `undo-redo`                                                               |
 | History and its panel         | `keyboard-shortcuts`, `history-panel`, `undo-redo`                                                  |
-| Dialogs and the document      | `document-dialogs`, `select-move` (crop), `file-roundtrip`                                          |
+| Dialogs and the document      | `document-dialogs`, `crop-history`, `file-roundtrip`                                              |
 | Adjustments and filters       | `adjustments`, `filter-tools`, `levels`                                                             |
 | Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
 | Selections                    | `selection-tools`, `select-move`                                                                    |

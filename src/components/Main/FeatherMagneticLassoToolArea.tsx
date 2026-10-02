@@ -5,6 +5,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
 import { magneticLassoAnchorSpan } from '../../tools/featherMagneticLasso.ts';
@@ -50,6 +51,7 @@ function drawFeatherMagneticOverlay({
   preview,
   args,
   documentFrame,
+  scale,
 }: {
   ctx: CanvasRenderingContext2D;
   selections: Selection[];
@@ -58,6 +60,7 @@ function drawFeatherMagneticOverlay({
   preview: MagneticSegmentResult | null;
   args: FeatherMagneticLassoToolArgs;
   documentFrame: DocumentFrame;
+  scale: number;
 }) {
   const drawPath = (path: Point[]) => {
     if (path.length < 2) return;
@@ -81,7 +84,7 @@ function drawFeatherMagneticOverlay({
   // function on the same shared context and writes `strokeStyle`/`lineWidth` with no alpha of its
   // own, so the reset has to happen before both rather than only inside the anchors.
   resetOverlayAlpha(ctx);
-  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame));
+  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, scale));
   if (draftPoints.length === 0) return;
 
   ctx.save();
@@ -176,6 +179,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     ref: containerRef,
     imageSize: totalSize,
   });
+  const containScale = useContainScale(containerRef, totalSize);
 
   function clampToImage(point: Point): Point {
     return {
@@ -211,8 +215,9 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
       preview: previewRef.current,
       selections,
       documentFrame,
+      scale: containScale.current,
     });
-  }, [args, documentFrame, overlayCtxRef, selections]);
+  }, [args, documentFrame, overlayCtxRef, selections, containScale]);
 
   function rebuildPointsFromSegments() {
     const anchors = anchorsRef.current;

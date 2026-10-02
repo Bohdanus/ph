@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import SidebarLeft from '../SidebarLeft.tsx';
+import SidebarLeft, { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
 
 const goToTool = vi.fn();
 const patchToolArgsMock = vi.fn();
@@ -83,7 +83,7 @@ vi.mock('../toolIcons.tsx', () => {
   };
 });
 
-const LONG_PRESS_DELAY = 300;
+const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
 
 const longPress = (button: HTMLElement) => {
   fireEvent.pointerDown(button, { button: 0 });
@@ -198,24 +198,42 @@ describe('SidebarLeft primary tool selection', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it.each(groupedToolCases)('does not resolve the long-press until 300ms elapses ($title)', ({ name }) => {
-    vi.useFakeTimers();
-    render(<SidebarLeft />);
+  it.each(groupedToolCases)(
+    'arms the long-press timer at 250ms, and opens the flyout on the tick that reaches it ($title)',
+    ({ name }) => {
+      vi.useFakeTimers();
+      render(<SidebarLeft />);
 
-    const rootButton = toolbarButtonByName(name);
-    act(() => {
-      fireEvent.pointerDown(rootButton, { button: 0 });
-    });
-    act(() => {
-      vi.advanceTimersByTime(299);
-    });
-    expect(screen.queryByRole('menu')).toBeNull();
+      // The NUMBER, pinned here rather than derived, and this is the whole reason the test has
+      // a literal in it. A bracket written as `LONG_PRESS_DELAY - 1` then `+1` looks like it
+      // guards the threshold and in fact does not: every term comes from the same export the
+      // app schedules with, so the bracket is [T−1, T] for whatever T is. Measured — set
+      // `FLYOUT_LONG_PRESS_MS` to 5000 and all of these cases stay green, so a five-second
+      // hold would have shipped behind a test named after the hold. One assertion on the
+      // value makes the bracket mean what its name says.
+      expect(
+        LONG_PRESS_DELAY,
+        'the app long-press threshold is 250ms; changing it is a decision, not a refactor, and this is the assertion that notices'
+      ).toBe(250);
 
-    act(() => {
-      vi.advanceTimersByTime(1);
-    });
-    expect(screen.getByRole('menu')).toBeInTheDocument();
-  });
+      const rootButton = toolbarButtonByName(name);
+      act(() => {
+        fireEvent.pointerDown(rootButton, { button: 0 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY - 1);
+      });
+      expect(screen.queryByRole('menu'), 'one millisecond short of the threshold, nothing may have opened').toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(
+        screen.getByRole('menu'),
+        'the very next tick is the threshold, and the flyout opens on it'
+      ).toBeInTheDocument();
+    }
+  );
 
   it('does not open the submenu on hover', () => {
     vi.useFakeTimers();

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures/extended-test';
 import { drawLine, getColorAtPoint, getWorkspaceCanvas, loadImageData } from './helpers/canvas-helpers';
 import { cssPointToImage } from './helpers/screenshot-scale';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';

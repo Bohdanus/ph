@@ -87,11 +87,19 @@ export default function LayersTab() {
     removeLayer(layerId);
   }
 
-  function handleNameChange(layerId: LayerId, newName: string) {
+  function handleNameChange(layerId: LayerId, newName: string, labelNode: HTMLElement) {
     const trimmed = newName.trim();
-    if (trimmed && trimmed !== layers[layerId]?.name) {
+    const committed = Boolean(trimmed && trimmed !== layers[layerId]?.name);
+    if (committed) {
       updateLayer(layerId, { name: trimmed }, RENAME_LAYER_ACTION);
+    } else {
+      // A refused rename leaves the stored name untouched, so React re-renders with the very
+      // same text child and writes nothing — the blank text node the browser left behind would
+      // survive and the row would show a nameless layer. Writing the stored name back, the way
+      // the Escape branch does, has to happen before edit mode ends.
+      labelNode.textContent = layers[layerId]?.name ?? '';
     }
+    // Ending edit mode re-renders with the same text child, so the write-back must land first.
     setEditingLayerId(null);
   }
 
@@ -213,7 +221,7 @@ export default function LayersTab() {
                         e.stopPropagation();
                       }}
                       onBlur={(e) => {
-                        handleNameChange(layer.id, e.currentTarget.textContent || '');
+                        handleNameChange(layer.id, e.currentTarget.textContent || '', e.currentTarget);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {

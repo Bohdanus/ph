@@ -30,7 +30,10 @@ replaces `TEST_COVERAGE_GAPS.md`, `TEST_REVIEW_FINDINGS.md`, `TEST_NEW_FINDINGS.
 | Files below 50% statements | 0                                                |
 | Files below 50% branches   | 0                                                |
 
-Thresholds in `vitest.config.ts:33` are 95 / 89 / 97 / 96. The suite passes under 16 different
+There are no coverage thresholds. Neither `vitest.config.ts` nor `vitest.e2e.config.ts` has a
+`thresholds` key, and `git log --all -S"thresholds"` returns no commit that ever added one, so the
+figure above was reported rather than enforced. CI uploads `coverage/` as an artifact and nothing
+reads it; a drop is invisible until someone looks. The suite passes under 16 different
 `--sequence.shuffle` seeds, so no test depends on execution order.
 
 ---

@@ -8,9 +8,16 @@
  * mocks below to apply. Vitest resolves mock paths relative to the file that calls
  * `vi.mock`; this file sits in the same directory as the suites, so the relative
  * specifiers match the ones the suites used before the extraction.
+ *
+ * The long-press threshold is read from the component rather than restated here, so this file
+ * now imports `../SidebarLeft.tsx` as well. That is not a cycle and it does not defeat the
+ * mocks: vitest hoists THIS file's `vi.mock` calls above its own imports, so the component is
+ * evaluated after the factories below are registered — the same ordering the suites depend on
+ * when they import this harness first.
  */
 import { act, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, vi, type Mock } from 'vitest';
+import { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
 
 type StoreStateFixture = {
   toolName: string;
@@ -24,9 +31,6 @@ type ToolArgsFixture = {
   toolName: string;
   figure: string | undefined;
 };
-
-/** Long-press threshold for opening a tool flyout, in `src/components/SidebarLeft/SidebarLeft.tsx`. */
-export const LONG_PRESS_DELAY_MS = 300;
 
 /**
  * `requestAnimationFrame` in jsdom is polyfilled by `src/test/setup.ts` as
@@ -84,6 +88,8 @@ vi.mock('../toolIcons.tsx', () => {
       reposition: Icon,
       'rectangular-selection': Icon,
       'elliptical-selection': Icon,
+      'single-row-marquee': Icon,
+      'single-column-marquee': Icon,
       'freehand-lasso': Icon,
       'polygonal-lasso': Icon,
       'feather-magnetic-lasso': Icon,
@@ -98,6 +104,7 @@ vi.mock('../toolIcons.tsx', () => {
       smudge: Icon,
       dodge: Icon,
       burn: Icon,
+      sponge: Icon,
       crop: Icon,
       draw: Icon,
       shape: Icon,
@@ -137,13 +144,17 @@ export const advanceOneFrame = (): void => {
 };
 
 /**
- * Advances past the long-press threshold and drains the animation frame the flyout
- * schedules, so "the flyout never opened" assertions are not decided by an arbitrary
- * settle window.
+ * Advances past the long-press threshold by one frame's worth, so "the flyout never opened"
+ * assertions are not decided by an arbitrary settle window.
+ *
+ * The extra frame is tolerance, not a requirement: nothing on the long-press path schedules
+ * one. A long press is a pointerdown, a timer and `openFlyout` — the only
+ * `requestAnimationFrame` in the rail belongs to the tile's own `onKeyDown` focus deferral
+ * (`SidebarLeft.tsx`), which is a keyboard path.
  */
 export const advanceThroughLongPress = (): void => {
   act(() => {
-    vi.advanceTimersByTime(LONG_PRESS_DELAY_MS + RAF_FRAME_MS);
+    vi.advanceTimersByTime(FLYOUT_LONG_PRESS_MS + RAF_FRAME_MS);
   });
 };
 
@@ -151,14 +162,17 @@ export const advanceThroughLongPress = (): void => {
  * Presses a tool tile long enough to open its flyout, then releases and clicks so the
  * trailing click is delivered too.
  *
- * The advance stops at exactly {@link LONG_PRESS_DELAY_MS} and deliberately does *not*
- * drain the animation frame: the "focus moves to the first flyout item on the next
- * frame" behaviour is asserted separately, and draining here would hide it.
+ * The advance stops at exactly {@link FLYOUT_LONG_PRESS_MS} — the instant the app's own
+ * timer fires — rather than past it, and no animation frame is drained, because the
+ * long-press path schedules none. The frame that IS load-bearing is the tile's keyboard
+ * focus deferral, and `SidebarLeft.keyboard.test.tsx` asserts it by capturing the
+ * callback: a key pressed AFTER this helper returns is what registers that frame, so
+ * nothing this helper does with the clock can hide it.
  */
 export const longPress = (button: HTMLElement): void => {
   fireEvent.pointerDown(button, { button: 0 });
   act(() => {
-    vi.advanceTimersByTime(LONG_PRESS_DELAY_MS);
+    vi.advanceTimersByTime(FLYOUT_LONG_PRESS_MS);
   });
   fireEvent.pointerUp(button, { button: 0 });
   fireEvent.click(button);

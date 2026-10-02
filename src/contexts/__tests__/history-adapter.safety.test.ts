@@ -741,3 +741,70 @@ describe('deriveSetSelectionEntry', () => {
     expect(derived?.enabled).toBe(false);
   });
 });
+
+describe('plainValue absence handling', () => {
+  it('an explicit undefined element in a tool-arg array does not void the document', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        {
+          id: 'undefined-element',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: { toolName: 'levels', stops: [0, undefined, 1] },
+        },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    expect(result.document?.history).not.toHaveLength(0);
+    registry.shutdown();
+  });
+
+  it('an explicitly undefined argument property survives conversion', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        {
+          id: 'undefined-property',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: { toolName: 'levels', optional: undefined },
+        },
+      ],
+      registry
+    );
+
+    const operation = result.document?.history[0]?.operation;
+    expect(result.status).toBe('current');
+    expect(operation?.kind).toBe('apply-filter');
+    if (operation?.kind === 'apply-filter') {
+      expect(Object.hasOwn(operation.filter.args, 'optional')).toBe(true);
+      expect(operation.filter.args.optional).toBeUndefined();
+    }
+    registry.shutdown();
+  });
+
+  it('a hole in a tool-arg array stays a hole', () => {
+    const registry = new AssetRegistry();
+    const stops = new Array<unknown>(3);
+    stops[0] = 0;
+    stops[2] = 1;
+    const result = convertSafely(
+      [{ id: 'hole', actionName: TOOL_ACTION, layerId, args: { toolName: 'levels', stops } }],
+      registry
+    );
+
+    const operation = result.document?.history[0]?.operation;
+    expect(result.status).toBe('current');
+    expect(operation?.kind).toBe('apply-filter');
+    if (operation?.kind === 'apply-filter') {
+      const durableStops = operation.filter.args.stops as readonly unknown[];
+      expect(durableStops).toHaveLength(3);
+      expect(1 in durableStops).toBe(false);
+    }
+    registry.shutdown();
+  });
+});

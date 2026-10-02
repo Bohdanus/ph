@@ -37,18 +37,18 @@ repository does not use — [Phase 0](#phase-0--decide-the-tool)), or the ordina
 
 ## The shape of the task
 
-| Phase                                                         | What it decides                        | Gate before moving on                                                                      |
-| ------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [0](#phase-0--decide-the-tool)                                | merge, rebase, or a third design       | `range-diff` output pasted, and the tool choice written with its evidence                  |
-| [1](#phase-1--recover-the-requirements-from-the-chat-history) | what each branch was actually _for_    | every requirement traced to a quoted human turn, an Adobe citation, or an `AGENTS.md` rule |
-| [2](#phase-2--fill-the-ledger-from-the-source-of-truth)       | the disputed requirements, arbitrated  | every open question is classified: answered, defaulted, or filed                           |
-| [3](#phase-3--map-the-overlap-surface)                        | the real conflict set                  | candidates separated from conflicts, by the merge commit itself                            |
-| [4](#phase-4--classify-every-conflict)                        | what kind of clash each one is         | every conflicted hunk carries a class from the taxonomy                                    |
-| [5](#phase-5--ask-the-human-in-a-file)                        | the questions only a person can answer | no blocking question is left in chat                                                       |
-| [6](#phase-6--resolve-in-the-order-that-loses-nothing)        | the merged tree                        | no whole file taken with `--ours` or `--theirs`                                            |
-| [7](#phase-7--prove-the-merge-lost-nothing)                   | the silent-merge invariants            | all five sweeps pass: marker, count, duplicate-key, citation, re-anchor                    |
-| [8](#phase-8--the-gates)                                      | that the tree is correct               | `tsc`, `build`, `lint:check`, `test`, `test:e2e:unit`, `test:e2e`                          |
-| [9](#phase-9--the-resolution-record)                          | the durable record of the merge        | the merge body names every judgement call, using this repository's own vocabulary          |
+| Phase                                                         | What it decides                                               | Gate before moving on                                                                         |
+| ------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [0](#phase-0--decide-the-tool)                                | merge, rebase, a third design, or a declared reimplementation | `range-diff` output pasted, and the tool choice written with its evidence                     |
+| [1](#phase-1--recover-the-requirements-from-the-chat-history) | what each branch was actually _for_                           | every requirement traced to a quoted human turn, an Adobe citation, or an `AGENTS.md` rule    |
+| [2](#phase-2--fill-the-ledger-from-the-source-of-truth)       | the disputed requirements, arbitrated                         | every open question is classified: answered, defaulted, or filed                              |
+| [3](#phase-3--map-the-overlap-surface)                        | the real conflict set                                         | candidates separated from conflicts, by the merge commit itself                               |
+| [4](#phase-4--classify-every-conflict)                        | what kind of clash each one is                                | every conflicted hunk carries a class from the taxonomy                                       |
+| [5](#phase-5--ask-the-human-in-a-file)                        | the questions only a person can answer                        | no blocking question is left in chat, and every one carries the searches that came back empty |
+| [6](#phase-6--resolve-in-the-order-that-loses-nothing)        | the merged tree                                               | no whole file taken with `--ours` or `--theirs`                                               |
+| [7](#phase-7--prove-the-merge-lost-nothing)                   | the silent-merge invariants                                   | all five sweeps pass: marker, count, duplicate-key, citation, re-anchor                       |
+| [8](#phase-8--the-gates)                                      | that the tree is correct                                      | `tsc`, `build`, `lint:check`, `test`, `test:e2e:unit`, `test:e2e`                             |
+| [9](#phase-9--the-resolution-record)                          | the durable record of the merge                               | the merge body names every judgement call, using this repository's own vocabulary             |
 
 Then: [the conflict taxonomy](#appendix-a--the-conflict-taxonomy) ·
 [the decision vocabulary](#appendix-b--the-decision-vocabulary) ·
@@ -83,7 +83,18 @@ These are the ones that change outcomes. Each is expanded where it is used.
    React-family merge conflicts, accepting both sides scored **48/86**; the best frontier model
    scored **36/86**. Textual concatenation of the two branches beat every model at preserving both
    branches' behaviour. → [Phase 7](#74-the-citation-sweep)
-8. **A blocking question is a file, not a chat message.** → [Phase 5](#phase-5--ask-the-human-in-a-file)
+8. **A blocking question is a file, not a chat message.**
+   → [Phase 5](#phase-5--ask-the-human-in-a-file)
+9. **Escalating is the last resort, and it is never the first move.** Time and compute are almost
+   unlimited here; the two things that are not are autonomy and correctness, so a question routed to
+   the operator is a question the research had not finished. Re-read the transcripts, search chats
+   past the ids you were handed, go to Adobe and to industry practice, and only then file the
+   question — with the searches that came back empty written into it.
+   → [Phase 5](#phase-5--ask-the-human-in-a-file)
+10. **Reimplementing is a first-class answer, not a failure.** Two implementations of one
+    requirement that have drifted apart are sometimes cheaper to replace than to arbitrate, and a
+    clean merge of two half-understood implementations is a seam with a green `tsc` on it.
+    → [Phase 6](#5-a-third-design-when-neither-side-is-right)
 
 ## How to read this document
 
@@ -92,6 +103,52 @@ Read the phase you are in. Each phase opens by naming the source of truth it def
 
 The phases are ordered by **destroyability**, not by chronology. Phase 1 and Phase 2 change nothing
 and are the two that prevent every expensive mistake; Phase 6 is the only one that writes.
+
+---
+
+## Before any phase — where this merge runs
+
+`docs/ORCHESTRATION.md` is the authority for everything in this section, and this skill restates
+only what a merge makes sharper. The rest of this document claims `AGENTS.md` carries the
+worktree rule and the gates; it does carry them, but a merge is the case where carrying them in
+your head is not enough, because a merge has a landing and a fan-out and neither is visible from
+inside a diff.
+
+**Check where you are before anything else: `git rev-parse --show-toplevel`.** A merge resolved in
+the main worktree puts an unreviewed resolution into a checkout three other sessions are committing
+into, so the merge runs in the branch's own worktree, `main` is merged **into the branch** first,
+and the commit that lands on `main` is a fast-forward or a mechanical two-parent commit with nothing
+left to decide. `scripts/main-worktree-guard.mjs` refuses a commit made from the main worktree —
+it runs first in `.husky/pre-commit`, ahead of `gate:commit`, and a landing never reaches it
+because `git merge` runs `pre-merge-commit` and a fast-forward runs no hook at all. It does not
+stop the write, only the commit.
+
+**Every subagent this skill sends out inherits your working directory.** The worktree exists before
+the fan-out and its **absolute path is in the brief** — a subagent's cwd only affects relative
+`bash`, so the brief is the thing that moves the work. Pass `model` **and** `provider` together, per
+`AGENTS.md`'s model policy; a fan-out launched with a bare model name resolves onto whatever the
+launching turn is using, and on a free orchestrator that has killed subagents at zero tokens. **This
+skill's delegation splits by file, never by hunk**, and never puts two writers on one file — and the
+board cannot see that collision at all, because its identity is the git branch and `holdFiles`
+refuses only a _foreign_ lock, so it surfaces as a clobbered index rather than a refusal. **Claim
+the merge, not just the files:** a branch about to land carries a hazard to every path in it, and no
+file claim expresses that.
+
+**Two traps that belong to the landing rather than to the resolution.** Never `git add -A` in a
+worktree whose root checkout is dirty: the root is a different checkout of a different `HEAD`, so
+`-A` commits a deliberate reverting of whatever `main` has since done to those files, with **no
+conflict marker** — this repository shipped 17 such reverts and not one of them was a conflict. Run
+the `comm -13` set difference in `docs/ORCHESTRATION.md` **before** the review, because a reviewer
+only catches the files its brief happened to mention. And a red `tsc` in the main worktree may be
+another session's half-written change rather than a broken `main`; check the _committed_ state in a
+throwaway worktree before you touch a path you have not touched.
+
+**The gates and the board.** `npm run test:e2e` starts its own server on a port it picks, and
+`npm run test:e2e:raw` from a worktree attaches to whatever holds `:5173`. The cross-session channel
+is `npm run swarm`, **not** Kilo's `board_read`/`board_post`: `board_read` reports `messages: []`
+outside a fan-out on purpose, `board_post` about a worktree usually returns `total: 0, active: 0`
+because it only reaches the sessions a fan-out spawned, and **a `board_read` that returns nothing
+is not evidence that nobody is working.**
 
 ---
 
@@ -164,6 +221,17 @@ choice is written down with the evidence that forced it. Everything downstream a
 not a question about code. It is a question about a requirement that was never written down, and
 the only place that requirement exists is the operator's own words in a chat transcript.
 
+**A hard merge is where effort is nearly free and the requirement is not.** Phases 1 and 2 change
+no file and gate every expensive mistake after them, so a requirement you failed to recover is the
+one input nothing downstream can buy back: six gates over a tree built on a guessed requirement
+prove nothing about the product. **When the requirement is hard to recover, spend more effort
+recovering it — the effort is not the cost, the wrong merge is.** Re-read the transcript, widen
+the search past the ids you were handed, and put the ledger's own question back to the tree; each
+of those is cheap next to a resolution that answers a requirement neither branch was ever asked.
+**"I could not find it" is a finding to report, never a reason to stop looking** — and the negative
+result, together with the searches that produced it, belongs in the ledger whether or not it
+settles the row.
+
 The requirements for this repository are in four places, in this order of authority:
 
 | Rank | Source                                                        | Why it ranks there                                                                                               |
@@ -222,6 +290,30 @@ In the incident this returned two roots, both in `/Users/bkalynovskyi/ph`, both 
 one had landed, one had not. Nine and six subagent children respectively, all finished. A search by
 title alone is not enough — **title matches are routing, not evidence**, and the second branch's
 title frequently does not contain the word the first branch's does.
+
+### Search beyond the ids you were handed
+
+The two root sessions are the **floor, not the ceiling**. A branch's requirement is frequently
+stated in a chat that never touched the branch: a session that asked for the feature and stopped, a
+subagent that researched it, a session whose title shares no word with the branch. So search the
+**whole project's** session history, not the ids an inventory, a worktree name or a commit subject
+hands you:
+
+- **`kilo_local_recall` with `mode: "search"`**, on feature nouns, commit subjects, file paths and
+  the operator's own phrasing. It ranks user-authored and whole-phrase matches highest, and it
+  reaches archived and child sessions that the `session` query above does not name. `mode: "read"`
+  with a returned id is the follow-up, not the search — reading two transcripts is not a search.
+- **The `lower(title) LIKE` query above** as the second pass, because a title search misses a
+  session that did the work under another name.
+- **A family walk** when the ids you found look thin: `WHERE directory = '<abs worktree path>'`.
+  `session.directory` is where a chat _opened_, so a main-checkout chat that drove into a worktree
+  is booked against main for its whole life; that is a reason to walk the family, not a reason to
+  conclude nobody was there.
+
+A session that is not "about this merge" can still be the only statement of the requirement this
+merge is arbitrating — and a requirement recovered from the wrong chat is a requirement whose
+citation nobody can check, which is the failure mode every other rank rule in the table above
+exists to prevent.
 
 ### Extract, do not summarise
 
@@ -345,6 +437,17 @@ third-party description) / `UNSOURCED`. Never drop the third to tidy an argument
 you cannot source becomes a question; a requirement you cannot source _and_ cannot ask becomes a
 named handoff item, in writing, with the search you ran.
 
+**A stalled arbitration is a research deficit, and every move that breaks one is read-only.** When
+the sources above came back empty, do more searching — do not conclude faster, and do not reach for
+a question, because a question is the one move that ends the search. `websearch` the feature's
+**industry best practice** (what Krita, Affinity, GIMP and the platform HIG do — one openable
+document per row, never a bare count) and re-read **Adobe's own page for the feature** rather than
+a general page that mentions it in passing. Then re-read the ledger's own question: a requirement
+stated once and never re-read reads as a settled one, and a settled row is what a merge inherits
+silently. Rank a search-index excerpt as `OBSERVATION` and say which one you have, exactly as
+above — a clean negative from a complete enumeration is the strongest evidence this phase produces,
+and a re-search that finds nothing new is still worth the ledger line that says you looked twice.
+
 ### The web-platform axis
 
 Some Photoshop behaviour is not reachable in a browser at all, and knowing which is what stops an
@@ -375,12 +478,21 @@ not a backlog item, and it is deleted when the capability lands.
 
 ### The token axis
 
-**The hard requirement is that a paid model's budget is not infinite.** Everything else is a
-judgement call, and the repo already encodes the judgement: research fan-out is free and is the
-_preferred_ shape, because a subagent runs in a fresh context and a long main turn is what costs.
-`AGENTS.md` states the substitution in call counts rather than tokens, deliberately — "40 sequential
-tool calls in one context = 8 parallel subagents + a 6-call synthesis. Sequential calls are the
-defect, not the token count."
+**Time and compute are almost unlimited here; the two things that are not are autonomy and
+correctness.** `AGENTS.md` states it as "COMPUTE COSTS ZERO; QUALITY IS THE POINT", and a hard
+merge is where that is most load-bearing: the task spends a whole context on research to get one
+resolution right, and a cheap wrong merge costs a day of arbitration to unpick. So the axis below
+**ranks what to run first — it is not a licence to stop.** Everything else is a judgement call, and
+the repo already encodes the judgement: research fan-out is free and is the _preferred_ shape,
+because a subagent runs in a fresh context and a long main turn is what costs. `AGENTS.md` states
+the substitution in call counts rather than tokens, deliberately — "40 sequential tool calls in one
+context = 8 parallel subagents + a 6-call synthesis. Sequential calls are the defect, not the token
+count."
+
+A previous form of this paragraph made a paid model's budget the hard requirement. **That is not
+this repository's rule**, and an agent reading it as one rations the transcripts — the single most
+expensive corner in the document to cut, because a requirement recovered cheaply is a requirement
+recovered wrongly.
 
 Rank the work by **what the cost is a function of**, never by a figure, because `AGENTS.md` forbids
 unsourced numbers in this repository's gates and docs and this document does not get an exemption:
@@ -430,7 +542,7 @@ git -c merge.conflictStyle=zdiff3 merge-tree --write-tree <main> <branch>
 
 This runs the real three-way merge in a scratch object store. It touches **no working tree, no
 index and no ref** — the property that matters, and the one this repository's own inventory script
-depends on (`scripts/lib/worktree-inventory/git.mjs:183-224`). It is not object-store-neutral: the
+depends on (`scripts/lib/worktree-inventory/git.mjs:198`). It is not object-store-neutral: the
 tree it prints is written to the object store as unreachable loose objects. That is the same
 trade the repo already made, and the claim it makes is the one that counts.
 
@@ -440,7 +552,7 @@ Two things to know about the output:
   also means an unresolvable ref. "No conflicts" is a licence to land, so a wrong licence is how a
   branch breaks `main`; a failed run must degrade to **unknown**, never to clean. This is the
   repo's own rule, and it is stated twice — the JSDoc at
-  `scripts/lib/worktree-inventory/git.mjs:193-196` ("`null` is NOT `false`: an unknown answer must
+  `scripts/lib/worktree-inventory/git.mjs:194-197` ("`null` is NOT `false`: an unknown answer must
   not be reported as a clean merge, because 'no conflicts' is a licence to land and a wrong licence
   is how a branch breaks main") and the `return { conflict: null, … }` at `:226-231`. The `^CONFLICT`
   match itself is at `:214`.
@@ -572,6 +684,17 @@ instance has a ledger row. Any conflicted hunk you cannot classify is escalated 
 **A hard question is a document, not a chat message.** Chat is for the _pointer_: the final message
 may name the one question that gates the next step, and it must not contain the question.
 
+**Escalation is the last resort, and only once Phases 1 and 2 have genuinely been exhausted.** By
+the time you are here you have read the transcripts, searched the whole project's session history
+rather than the ids you were handed, arbitrated against Adobe and the industry, and re-read the
+ledger's own question — and you still cannot answer it. **Write that exhaustion down**, in the
+question's own context block, as the searches you ran and what each one did **not** find. A
+question with no search log behind it is a judgement call wearing a question's clothes, and the
+operator cannot tell the two apart, which makes the judgement call the more expensive of the two.
+
+What survives that is a **policy or an authorisation** — not a defect, not a number, and not
+anything the tree can answer, because if the tree could answer it, this is not Phase 5.
+
 The reason is not politeness. A question dropped into a live chat is a random interrupt: it arrives
 with no context, the reader must reconstruct the decision from a transcript, and it is lost when
 the session ends. A question file inverts that — the context arrives _with_ the question, at the
@@ -614,8 +737,12 @@ through three sessions becomes a decision nobody made:
 behaviours and the distinction is the protocol. A blocking question _with_ a default becomes a
 time-boxed question: at the deadline the agent takes the default and files the assumption. A
 blocking question _without_ a default stops that unit of work and commits nothing — and **stopping
-is the correct outcome, not a failure.** The precedent in this repository says so in as many words:
-"The fix agent declined to guess and committed nothing. That is the correct outcome, not a failure."
+is the correct outcome, not a failure.** It is the correct outcome for **that unit of work**, and
+only after every other unit is exhausted: a merge that halts with forty conflicts unresolved because
+one row is open has confused _blocked_ with _finished_, which is a different failure from the one
+this rule exists to prevent — and the one it makes invisible. The precedent in this repository says
+so in as many words: "The fix agent declined to guess and committed nothing. That is the correct
+outcome, not a failure."
 
 ### The format
 
@@ -771,6 +898,23 @@ phrases from the corpus:
 A merge body that reads as a synthesis when it was a coin flip is the thing this whole phase exists
 to prevent.
 
+**And one option sits above all of these, and it is a design decision rather than a resolution:
+reimplement.** Two agents implemented one requirement at the same time and collided, and sometimes
+the cheapest correct answer is to keep **neither** and write the feature once — from the
+requirement you recovered in [Phase 1](#phase-1--recover-the-requirements-from-the-chat-history)
+rather than from either diff. **It is a first-class option, not a last resort, and it is decided in
+[Phase 0](#phase-0--decide-the-tool) beside the tool**, because choosing it changes the tool: you
+are no longer merging two branches, you are replacing one, and `range-diff` is what tells you which
+commits of the loser are `=` with `main` and can be dropped outright instead of resolved. Name it
+in the merge body as **"reimplemented from the recovered requirement rather than resolved"**, say
+which side's behaviour it reproduces and which it deliberately does not, and run **every** Phase 7
+sweep over the result — a rewrite loses exactly what a merge loses, silently, and it loses more of
+it, because nothing in it is a conflict.
+
+This is not a re-derivation. A re-derivation recomputes a claim inside a file that survives; a
+reimplementation replaces the file. **A clean merge of two half-understood implementations is not a
+merge** — it is a seam with a green `tsc` on it.
+
 ### 6. Corrected rather than deleted
 
 The rule for tests, stated once and completely:
@@ -808,8 +952,8 @@ These produce a green tree and a wrong product, which is worse than a red one:
 | Deleting an assertion to make a conflict go away    | Union, graft, or correct. There is no fourth option                                                                                            |
 
 **Gate.** No whole file was taken with `--ours` or `--theirs`. Every resolution is a union, a
-graft, a re-derivation, a regeneration, or a named third design, and every rejection names its
-mechanism.
+graft, a re-derivation, a regeneration, a named third design, or a **declared reimplementation**,
+and every rejection names its mechanism.
 
 ---
 
@@ -827,7 +971,7 @@ committed file still carried live markers.** It carried **six** of them: an unin
 `<<<<<<< HEAD` at :57, `=======` at :759 and :1001, **an indented `<<<<<<<` at :848**, and two
 space-separated `> > > > > > > main` label lines at :818 and :1003. They passed through three
 further commits — one of them a merge — before `ef85d3ab` ("docs(agents): repair a committed
-conflict in AGENTS.md") removed them.
+conflict in AGENTS.md, and shorten it") removed them.
 
 ```bash
 # search the MERGED TREE, not the working tree — a merge is judged on what it
@@ -848,7 +992,7 @@ gate run _during_ the merge the two agree; for the audit you run afterwards, onl
 anchored, no whitespace, `>` uncounted — finds only **3 of the 6** markers in that commit, because
 `:848` is indented and `:818`/`:1003` are the space-separated `diff3` label form
 `> > > > > > > main`, not `>>>>>>> main`. The same uncounted `>` also matches **every markdown
-blockquote**: it fires 78 times in `.skills/photoshop-tool-creation.md` and 5 times in
+blockquote**: it fires 79 times in `.skills/photoshop-tool-creation.md` and 7 times in
 `HANDOFF.md` on ordinary `>` quote lines. A sweep like that reports a clean merge as broken, and an
 agent who sees it fire on `AGENTS.md` learns to ignore it — strictly worse than not sweeping.
 
@@ -867,7 +1011,8 @@ printf '%s\n' '> a blockquote' '|---|---|' '======' | grep -cE "$PAT"           
 
 On this repository's own documents — `HANDOFF.md`, `AGENTS.md`, `docs/ORCHESTRATION.md`,
 `docs/TESTING.md`, `docs/PHOTOSHOP-UX.md`, `e2e/OPEN_PROBLEMS.md` and both existing `.skills/`
-documents — the corrected pattern matches **0**; the uncorrected one matches 83. A sweep whose
+documents — the corrected pattern matches **0**; the uncorrected one matches 92 (79 in
+`.skills/photoshop-tool-creation.md`, 7 in `HANDOFF.md`, the rest in this file). A sweep whose
 failure mode is "always fires" looks identical to a working one on the failure case alone.
 
 Gate over the merge's changed files. **A merge with live markers in it is not a resolution.** If
@@ -1047,9 +1192,13 @@ npm run test:e2e       # the locked wrapper. NEVER `npm run test:e2e:raw` from a
 ```
 
 **`npm run test:e2e` is a queue, not a gate.** It takes a swarm lock, allocates a free port per run
-and writes to its own output directory. It exits **4** if the wait runs out, and `swarm check`
-exits **1** for a busy path — different questions, so do not read one as the other. A bare
-`npx playwright test` from a worktree is the shape that reported seven product mutations green
+and writes to its own output directory. **Nothing about the lock can fail a run**: queue full,
+board unreachable, malformed lease, wait expired — each logs and the suite proceeds, because a lost
+queue costs a concurrent run rather than correctness and both runs have their own ports. An earlier
+version exited 4 when it could not have the lock, which turned an unenforceable mechanism into a
+hard block on a merge gate; do not reintroduce one. `swarm check` exits **1** for a busy path, and
+that is a different question from the one the queue answers, so do not read one as the other. A
+bare `npx playwright test` from a worktree is the shape that reported seven product mutations green
 against another checkout's code; it is `npm run test:e2e:raw` and it belongs to CI, where one job
 owns one checkout.
 
@@ -1064,7 +1213,7 @@ quoted on `main` to prove it.
 
 **The merge commit body is the durable artifact.** Nothing else in this repository records why a
 resolution was what it was, and the corpus is unusually good: of the last 200 merge commits on
-`main`, **50 carry a body that is not just git's `Conflicts:` trailer** (the measurement, which you
+`main`, **63 carry a body that is not just git's `Conflicts:` trailer** (the measurement, which you
 should re-derive rather than trust):
 
 ```bash
@@ -1126,7 +1275,7 @@ incident that produced this document; the rest from the wider merge corpus.
 | 2   | **Opposing product decisions on one literal**                      | `useState(false)` vs `useState(true)`. Resolved against the operator's spoken instruction to the branch that had it.                                                                                                              |
 | 3   | **Both sides rewrote the same explanatory comment**                | The `h-full` / `min-h-full` block in `SidebarLeft.tsx`; also `responsive-shell.spec.ts`, `text-tool.spec.ts`, `document-dialogs.spec.ts` — prose collisions above unchanged code.                                                 |
 | 4   | **A duplicated numbered section**                                  | Two `## 79.` in `HANDOFF.md`, independently authored, both real. Main keeps 79; the branch renumbers to 83.                                                                                                                       |
-| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` at `:859` and on the branch at a different line. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.              |
+| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` at `curated.mjs:947` and on the branch at a different line. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.   |
 | 6   | **A helper whose signature diverged**                              | `leftOf(): number` vs `boxOf(): {left, top}`, and the call sites diverged with it.                                                                                                                                                |
 | 7   | **The same import, added twice**                                   | `SidebarLeft.tsx` and `SidebarLeft.flyout-hardening.test.tsx`. The trivial union — **and the most common shape, so do not let its triviality set your expectation for the rest.**                                                 |
 | 8   | **A document was split on `main`**                                 | `main` split `AGENTS.md` into a thin root plus `docs/ORCHESTRATION.md`, `docs/TESTING.md` and `docs/PHOTOSHOP-UX.md`; the branch edited the long form. Ported the edit to its new home.                                           |
@@ -1417,13 +1566,13 @@ where the check was not actually run** — the same honesty convention the tool-
    as "conflicts" when the real answer is "could not be determined", and a branch reported as
    clean because the ref did not resolve. Defence: match `^CONFLICT` on stdout (the test is at
    `scripts/lib/worktree-inventory/git.mjs:214`), and degrade a failed run to **unknown**, never to
-   clean — the rule the file's own JSDoc states at `git.mjs:193-196` and implements at `:226-231`.
+   clean — the rule the file's own JSDoc states at `git.mjs:194-197` and implements at `:231` and `:233`.
 
 6. **An expired lease makes a file look free while the agent working in it is not.** Symptom: a
    `swarm check` returns `free` for a path another agent is actively rewriting, because its
    45-minute lease lapsed and was swept. Defence: an unclaimed path looks free — claim or hold it
    before editing, and treat "free" as "not currently locked", never as "nobody is here". See
-   `docs/ORCHESTRATION.md:290-294`.
+   `docs/ORCHESTRATION.md:596-606`.
 
 7. **The board cannot see two writers in one worktree, and cannot see two agents on one _feature_
    in two worktrees.** Symptom: two agents pick overlapping work and neither sees the other.
@@ -1467,8 +1616,10 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` after any interrupted or aban
 
 14. **`.kilo/` is gitignored, so a worktree has no plan documents and no skills.** Symptom: the
     research corpus, this document, and every plan directory appear not to exist. Defence: read
-    the corpus from the **main** checkout, not from the worktree. Verified: `.gitignore:34` matches
-    `.kilo` and `git ls-files .kilo` returns nothing.
+    the corpus from the **main** checkout, not from the worktree. Verified: `git check-ignore -v
+.kilo` names `.gitignore` and `git ls-files .kilo` returns nothing. Re-run the `check-ignore`
+    form rather than copying the line number out of this sentence: `.gitignore` is one of the files
+    in that worktree's stale-`HEAD` diff, and its line numbers move every time a rule is added.
 
 15. **`helpx.adobe.com` returns HTTP 403 to a direct fetch.** Symptom: an arbitration step that
     concludes "Adobe does not document this" because the page could not be loaded. Defence: read
@@ -1487,11 +1638,14 @@ insertion above it; a line number does not.** A re-verification pass is required
 to a cited document, not only to the code it points into.
 
 **A count is the same defect wearing a different hat.** If a count is load-bearing, derive it in
-the same sentence that uses it. Two files in this repository state a line count for
-`.skills/photoshop-tool-creation.md` and **both are wrong** — its own gitignored loader says 4,819,
-`docs/TOOLS-RESEARCH-BRIEF.md:103` says 4,371, and the file is 4,395. That is not a slip in a
-citation; it is a stale number that reads plausibly, which is the exact failure mode this appendix
-is about. Verify any count you copy from here, including this one.
+the same sentence that uses it. Three files in this repository state a line count for
+`.skills/photoshop-tool-creation.md` and **all three are wrong** — its own gitignored loader says
+4,819, `docs/TOOLS-RESEARCH-BRIEF.md:103` says 4,371, and an earlier form of this paragraph said
+4,395; `wc -l .skills/photoshop-tool-creation.md` is the only one of the four that can be right.
+That is not a slip in a citation; it is a stale number that reads plausibly, which is the exact
+failure mode this appendix is about. **Verify any count you copy from here, including this one** —
+and note that the paragraph making that demand was itself carrying a wrong count, which is the
+strongest possible argument for deriving rather than copying.
 
 **Tooling behaviour is the least stable thing here.** A flag that exists in git 2.50.1 may not
 exist in the next one, and a script's behaviour can change without a commit. Mark such a claim

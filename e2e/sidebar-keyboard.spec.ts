@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import {
   getToolButton,
@@ -19,14 +19,21 @@ import {
  * The grouped tile every flyout test here drives, and why this one.
  *
  * The rail folds a SUFFIX of its rows into the three-dots tile, so the groups high on it
- * are the last to go: the Lasso is the third row of the first section and still has a tile
- * of its own, while the Brush and the Colors tile this file used to drive do not. The
- * Lasso is preferred to growing the viewport, because every test below is about a GROUPED
- * TILE's flyout rather than about the Lasso or the Brush specifically — and a window tall
- * enough to bring `brush` and `color` back would pin a viewport number to mean "everything
- * fits", which is the assumption this branch stopped making. Measured at the suite's
- * 1280x720: the rail shows Move, Rectangular Marquee, Lasso, Magic Wand, Eyedropper and
- * the three-dots tile.
+ * are the last to go: the Lasso is the third row of the first section — group 3 of the 16
+ * in `toolbar-mapping.ts` — and still has a tile of its own, while the Brush, group 8 and
+ * the first one the fit drops at this viewport, does not. The Lasso is preferred to growing
+ * the viewport, because every test below is about a GROUPED TILE's flyout rather than about
+ * the Lasso or the Brush specifically — and a window tall enough to bring `brush` back would
+ * pin a viewport number to mean "everything fits", which is the assumption this branch
+ * stopped making.
+ *
+ * Measured at the suite's 1280x720: the rail shows Move, Rectangular Marquee, Lasso, Magic
+ * Wand, Eyedropper, Crop, Colors and the three-dots tile — SEVEN tool tiles of sixteen
+ * groups, so the fold begins at the Brush. Seven is a count of this fit, not a constant of
+ * the viewport: the fit spends the WHOLE slot on whole rows where it used to hold a fifth
+ * back as headroom, which is what brought Colors (group 7) onto the rail and moved the
+ * first folded group from Crop to the Brush. The Lasso's own tile survives either way, so
+ * the seven is what keeps the sentence above checkable instead of a remembered measurement.
  *
  * Three items in the group rather than two, which is why not the Rectangular Marquee:
  * `ArrowUp wraps to last item` reads a two-item menu's "last" as indistinguishable from

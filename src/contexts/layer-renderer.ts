@@ -1,32 +1,49 @@
 import type { Pos } from './general-types.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
-import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
-import { getLayerAffineTransform, isIdentityAffineTransform } from './affine-transform.ts';
+import { CanvasFilterUnsupportedError, requireCanvasFilter } from '../util/canvas-filter.ts';
 import { resizeCanvas } from '../util/canvas.ts';
+import {
+  drawEvaluatedPresentation,
+  evaluatePresentation,
+  getPresentationFilter,
+  scaleVectorArgs,
+  type PresentationOperation,
+} from './presentation-evaluator.ts';
 
-function filterForOperation(operation: Extract<LayerOperation, { args: unknown }>): string {
-  const { args } = operation;
-  switch (args.toolName) {
-    case 'blur':
-      return `blur(${args.radius}px)`;
-    case 'color':
-      return buildColorsFilter(args);
-    case 'levels':
-      return buildLevelsFilter(args);
-  }
+function enabledFilterOperations(
+  operations: readonly LayerOperation[]
+): Array<Extract<LayerOperation, { args: unknown }>> {
+  return operations.filter(
+    (operation): operation is Extract<LayerOperation, { args: unknown }> =>
+      operation.enabled && operation.kind !== 'affine-transform' && 'args' in operation
+  );
 }
 
 export function getLayerFilter(operations: readonly LayerOperation[]): string {
-  const filters = operations
-    .filter(
-      (operation): operation is Extract<LayerOperation, { args: unknown }> =>
-        operation.enabled && operation.kind !== 'affine-transform' && 'args' in operation
-    )
-    .map(filterForOperation);
-  return filters.length ? filters.join(' ') : 'none';
+  return getPresentationFilter(
+    enabledFilterOperations(operations).map((operation) => ({
+      kind: 'filter',
+      toolName: operation.args.toolName,
+      args: operation.args as unknown as Readonly<Record<string, unknown>>,
+    }))
+  );
+}
+
+/**
+ * Assigning `ctx.filter` on an engine that ignores the write leaves the layer drawn unfiltered,
+ * so the refusal happens before the assignment rather than after it. The label names the tool,
+ * not the composed CSS string, because the string is what the user cannot act on.
+ */
+function requireLayerFilterSupport(operations: readonly LayerOperation[]): void {
+  for (const operation of enabledFilterOperations(operations)) {
+    const toolName = operation.args.toolName;
+    if (findToolProcessor(toolName)?.requiresCanvasFilter) {
+      requireCanvasFilter(`Layer filter tool "${toolName}"`);
+    }
+  }
 }
 
 const vectorToolNames = new Set<ToolName>(['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']);
@@ -35,24 +52,13 @@ function isVectorSource(source: Layer['source']): source is ToolLayerSource {
   return !!source && source.kind === 'tool' && vectorToolNames.has(source.args.toolName);
 }
 
-function scaleVectorArgs(args: ToolArgs, source: ToolLayerSource, position: Pos): ToolArgs {
-  if (!('pos' in source) || !('start' in args) || !args.start || !args.end) return args;
-  const scaleX = position.width / source.pos.width;
-  const scaleY = position.height / source.pos.height;
-  const lineWidth = 'lineWidth' in args ? args.lineWidth * Math.sqrt(Math.abs(scaleX * scaleY)) : undefined;
-  return {
-    ...args,
-    start: { x: args.start.x * scaleX, y: args.start.y * scaleY },
-    end: { x: args.end.x * scaleX, y: args.end.y * scaleY },
-    ...(lineWidth === undefined ? {} : { lineWidth }),
-  } as ToolArgs;
-}
-
 function getLayerBitmap(layer: Layer, position: Pos) {
   if (layer.tmpCanvas) return layer.tmpCanvas;
   if (!isVectorSource(layer.source)) return layer.bitmap;
 
-  const args = scaleVectorArgs(layer.source.args, layer.source, position);
+  const args = ('pos' in layer.source
+    ? scaleVectorArgs(layer.source.args as unknown as Record<string, unknown>, layer.source.pos, position)
+    : layer.source.args) as unknown as ToolArgs;
   const processor = findToolProcessor(args.toolName);
   // A vector source is only ever created by a creator tool, and a tool with no processor
   // (`PIXEL_FREE_TOOLS`) is never one, so this is unreachable — and falls back to the layer's own
@@ -69,25 +75,33 @@ export function drawLayerSource(
   documentFrame?: DocumentFrame
 ): boolean {
   const bitmap = getLayerBitmap(layer, position);
-  if (!bitmap || bitmap.width === 0 || bitmap.height === 0) return false;
+  if (!bitmap || bitmap.width === 0 || bitmap.height === 0 || position.width === 0 || position.height === 0)
+    return false;
+
+  const operations: PresentationOperation[] = [];
+  for (const operation of layer.operations) {
+    if (!operation.enabled) continue;
+    if (operation.kind === 'affine-transform') {
+      operations.push({ kind: 'affine-transform', transform: operation.transform });
+    } else {
+      operations.push({
+        kind: 'filter',
+        toolName: operation.args.toolName,
+        args: operation.args as unknown as Readonly<Record<string, unknown>>,
+      });
+    }
+  }
+  const evaluation = evaluatePresentation({
+    position,
+    sourceSize: { width: position.width, height: position.height },
+    operations,
+    mode: 'layer-bounds',
+  });
+  if (evaluation.filter !== 'none') requireLayerFilterSupport(layer.operations);
 
   ctx.save();
   try {
-    const affine = getLayerAffineTransform(layer);
-    ctx.filter = getLayerFilter(layer.operations);
-    const x = position.x - (documentFrame?.x ?? 0);
-    const y = position.y - (documentFrame?.y ?? 0);
-    if (isIdentityAffineTransform(affine)) {
-      ctx.drawImage(bitmap, x, y, position.width, position.height);
-    } else {
-      // Product ordering is deliberate: retained affine operations compose in
-      // source order, then the filter stack is applied to that transformed
-      // presentation. Arbitrary affine/filter interleaving is not represented
-      // by the current canvas filter API.
-      ctx.translate(x, y);
-      ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
-      ctx.drawImage(bitmap, 0, 0, position.width, position.height);
-    }
+    drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'document', frame: documentFrame });
   } finally {
     ctx.restore();
   }
@@ -125,21 +139,37 @@ export function drawLayersToCanvas(
   try {
     for (const layer of layers) {
       if (!layer.visible) continue;
-      if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
+      // Per layer, not per composition: one layer carrying a filter this browser refuses must not
+      // cost the document the other layers. The staging canvas is discarded by the return below,
+      // so the visible canvas keeps the presentation it already had.
+      try {
+        if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
+      } catch (error) {
+        if (!(error instanceof CanvasFilterUnsupportedError)) throw error;
+        console.error('skipped layer whose filter this browser cannot apply', layer.id, error);
+      }
     }
   } catch (error) {
     console.error('Unable to compose runtime layer presentation', error);
     return false;
   }
 
+  const previousSize = { width: canvas.width, height: canvas.height };
   try {
-    resizeCanvas(canvas, size.width, size.height);
     const context = canvas.getContext('2d');
     if (!context) return false;
+    resizeCanvas(canvas, size.width, size.height);
     context.clearRect(0, 0, size.width, size.height);
     context.drawImage(stagingCanvas, 0, 0);
     return true;
   } catch (error) {
+    if (canvas.width !== previousSize.width || canvas.height !== previousSize.height) {
+      try {
+        resizeCanvas(canvas, previousSize.width, previousSize.height);
+      } catch (restoreError) {
+        console.error('Unable to restore runtime layer presentation dimensions', restoreError);
+      }
+    }
     console.error('Unable to publish runtime layer presentation', error);
     return false;
   }

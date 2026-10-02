@@ -36,10 +36,11 @@ const MagicWand: React.FC<{}> = () => {
 
     try {
       setIsCopying(true);
-      copyActiveSelection(activeSelection);
+      if (!copyActiveSelection(activeSelection)) {
+        console.error('Failed to copy magic wand selection');
+      }
     } catch (error) {
       console.error('Error copying magic wand selection:', error);
-      alert('Failed to copy magic wand selection');
     } finally {
       setIsCopying(false);
     }

@@ -15,7 +15,7 @@ import type { ToolName } from '../../contexts/tool-types.ts';
  * This file covers the remaining `setImageFromUpload` document branches: an
  * already immutable raster, a non-image layer source, active-layer selection by
  * order, an empty layer record, partially attached canvases, and the
- * `ADOPT_LAYER_BITMAPS` registration that follows the replacement.
+ * adoption registration that follows the replacement.
  */
 
 const harness = vi.hoisted(() => ({
@@ -31,6 +31,7 @@ const harness = vi.hoisted(() => ({
     clearPreviewLayers: vi.fn(),
   },
   dispatch: vi.fn(),
+  adoptLayerBitmaps: vi.fn(),
   layerMocks: {
     createBlankLayer: vi.fn(),
     createLayerFromBitmap: vi.fn(),
@@ -39,7 +40,7 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [harness.state, harness.dispatch],
+  useStore: () => [{ ...harness.state, adoptLayerBitmaps: harness.adoptLayerBitmaps }, harness.dispatch],
 }));
 
 vi.mock('../../contexts/useLayer.ts', () => ({ useLayers: () => harness.layerMocks }));
@@ -163,7 +164,7 @@ describe('useApp document import', () => {
     await useApp().setImageFromUpload({ fileName: 'clean.psd', document: documentOf({}) });
 
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(harness.dispatch).toHaveBeenCalledTimes(2);
+    expect(harness.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('resizes only the canvases that are attached', async () => {
@@ -209,14 +210,16 @@ describe('useApp document import', () => {
     // document id and closed by that document's release.
     const types = dispatchedTypes();
     const replace = types.indexOf('REPLACE_DOCUMENT');
-    const adopt = types.indexOf('ADOPT_LAYER_BITMAPS');
+    expect(types).toEqual(['REPLACE_DOCUMENT']);
     expect(replace).toBeGreaterThanOrEqual(0);
-    expect(adopt).toBe(replace + 1);
+    expect(harness.adoptLayerBitmaps).toHaveBeenCalledExactlyOnceWith([backgroundBitmap, topBitmap]);
+    expect(harness.dispatch.mock.invocationCallOrder[replace]).toBeLessThan(
+      harness.adoptLayerBitmaps.mock.invocationCallOrder[0]
+    );
 
     // Exactly the image-shaped layers' rasters, and nothing else: the tool layer
     // has no raster to adopt, and a bitmap is adopted by identity, not by value.
-    const adoptAction = harness.dispatch.mock.calls[adopt][0] as DispatchedAction;
-    const { bitmaps } = adoptAction.payload as { bitmaps: ImageBitmap[] };
+    const [bitmaps] = harness.adoptLayerBitmaps.mock.calls[0] as [ImageBitmap[]];
     expect(bitmaps).toHaveLength(2);
     expect(bitmaps).toContain(backgroundBitmap);
     expect(bitmaps).toContain(topBitmap);
@@ -236,9 +239,10 @@ describe('useApp document import', () => {
     });
 
     const types = dispatchedTypes();
-    const adopt = types.indexOf('ADOPT_LAYER_BITMAPS');
-    expect(types.indexOf('REPLACE_DOCUMENT')).toBeLessThan(adopt);
-    const adoptAction = harness.dispatch.mock.calls[adopt][0] as DispatchedAction;
-    expect((adoptAction.payload as { bitmaps: ImageBitmap[] }).bitmaps).toEqual([]);
+    expect(types).toEqual(['REPLACE_DOCUMENT']);
+    expect(harness.adoptLayerBitmaps).toHaveBeenCalledExactlyOnceWith([]);
+    expect(harness.dispatch.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.adoptLayerBitmaps.mock.invocationCallOrder[0]
+    );
   });
 });
