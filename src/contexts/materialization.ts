@@ -1,18 +1,17 @@
 import type { BitmapSource, Pos, Size } from './general-types.ts';
-import {
-  getAffineBounds,
-  IDENTITY_AFFINE_TRANSFORM,
-  multiplyAffineTransforms,
-  type AffineTransform,
-} from './affine-transform.ts';
 import type { DocumentFrame } from './document-frame.ts';
-import type { DurableFilter, DurableLayerSource, DurableOperation } from './history-model.ts';
+import type { DurableOperation } from './history-model.ts';
 import { AssetRegistry, type MaterializationLease } from './asset-registry.ts';
 import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
-import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
+import {
+  drawEvaluatedPresentation,
+  evaluatePresentation,
+  scaleVectorArgs,
+  type PresentationOperation,
+} from './presentation-evaluator.ts';
 
 export type MaterializationRequest = Readonly<{
   documentId: string;
@@ -71,56 +70,6 @@ function context2d(
   return context as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 }
 
-function filterForOperation(filter: DurableFilter): string {
-  switch (filter.toolName) {
-    case 'blur':
-      return `blur(${Number(filter.args.radius ?? 0)}px)`;
-    case 'color':
-      return buildColorsFilter({
-        grayscale: Number(filter.args.grayscale ?? 0),
-        sepia: Number(filter.args.sepia ?? 0),
-        saturation: Number(filter.args.saturation ?? 0),
-      });
-    case 'levels':
-      return buildLevelsFilter({
-        brightness: Number(filter.args.brightness ?? 0),
-        contrast: Number(filter.args.contrast ?? 0),
-      });
-  }
-}
-
-function operationFilter(operations: readonly DurableOperation[]): string {
-  return (
-    operations
-      .filter(
-        (operation): operation is Extract<DurableOperation, { kind: 'apply-filter' }> =>
-          operation.kind === 'apply-filter'
-      )
-      .map((operation) => {
-        const processor = toolProcessors[operation.filter.toolName];
-        if (!processor || processor.replay.version !== operation.filter.version) {
-          throw new Error(`Unsupported filter ${operation.filter.toolName} v${operation.filter.version}`);
-        }
-        // The durable record already holds this operation, so materialization is the last place
-        // that can refuse it before a bitmap is published. Refusing rejects the lease rather than
-        // caching an unfiltered presentation: `operationFilter` has no way to express "skip this
-        // one", and emitting the layer unfiltered is exactly the silent no-op the error names.
-        if (processor.requiresCanvasFilter) requireCanvasFilter(operation.filter.toolName);
-        return filterForOperation(operation.filter);
-      })
-      .join(' ') || 'none'
-  );
-}
-
-function operationAffine(operations: readonly DurableOperation[]): AffineTransform {
-  let transform = IDENTITY_AFFINE_TRANSFORM;
-  for (const operation of operations) {
-    if (operation.kind !== 'apply-affine-transform') continue;
-    transform = multiplyAffineTransforms(operation.transform, transform);
-  }
-  return transform;
-}
-
 function layerSize(layer: DurableReplayLayer): Size {
   return {
     width: layer.snapshot.pos.width,
@@ -128,26 +77,29 @@ function layerSize(layer: DurableReplayLayer): Size {
   };
 }
 
-function vectorArgsForSize(source: Extract<DurableLayerSource, { kind: 'vector' }>, size: Size): ToolArgs {
-  const sourceWidth = source.sourcePos.width;
-  const sourceHeight = source.sourcePos.height;
-  if (!(sourceWidth > 0) || !(sourceHeight > 0)) return source.args as ToolArgs;
+function presentationOperations(operations: readonly DurableOperation[]): PresentationOperation[] {
+  const normalized: PresentationOperation[] = [];
+  for (const operation of operations) {
+    if (operation.kind === 'apply-affine-transform') {
+      normalized.push({ kind: 'affine-transform', transform: operation.transform });
+      continue;
+    }
+    if (operation.kind !== 'apply-filter') continue;
 
-  const scaleX = size.width / sourceWidth;
-  const scaleY = size.height / sourceHeight;
-  const args = source.args as ToolArgs & {
-    start?: { x: number; y: number };
-    end?: { x: number; y: number };
-    lineWidth?: number;
-  };
-  if (!args.start || !args.end) return args;
-
-  return {
-    ...args,
-    start: { x: args.start.x * scaleX, y: args.start.y * scaleY },
-    end: { x: args.end.x * scaleX, y: args.end.y * scaleY },
-    ...(typeof args.lineWidth === 'number' ? { lineWidth: args.lineWidth * Math.sqrt(Math.abs(scaleX * scaleY)) } : {}),
-  } as ToolArgs;
+    const processor = toolProcessors[operation.filter.toolName];
+    if (!processor || processor.replay.version !== operation.filter.version) {
+      throw new Error(`Unsupported filter ${operation.filter.toolName} v${operation.filter.version}`);
+    }
+    // Version gating remains durable-record-specific. The shared evaluator only
+    // receives the normalized, versionless filter needed to render it.
+    if (processor.requiresCanvasFilter) requireCanvasFilter(operation.filter.toolName);
+    normalized.push({
+      kind: 'filter',
+      toolName: operation.filter.toolName,
+      args: operation.filter.args,
+    });
+  }
+  return normalized;
 }
 
 async function sourceBitmap(
@@ -169,11 +121,18 @@ async function sourceBitmap(
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
     return { bitmap: canvas, release: () => undefined, size: renderSize };
   } else {
-    const toolName = 'toolName' in source ? source.toolName : 'text';
+    const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
     if (!processor?.creator) throw new Error(`Source tool ${toolName} is not a deterministic creator`);
     const sourceRenderSize = source.kind === 'vector' ? renderSize : source.size;
-    const args = source.kind === 'vector' ? vectorArgsForSize(source, renderSize) : (source.args as ToolArgs);
+    const args =
+      source.kind === 'vector' && source.sourcePos.width > 0 && source.sourcePos.height > 0
+        ? (scaleVectorArgs(source.args as unknown as Record<string, unknown>, source.sourcePos, {
+            x: 0,
+            y: 0,
+            ...renderSize,
+          }) as unknown as ToolArgs)
+        : (source.args as ToolArgs);
     const [created] = processor.imageProcessor({ size: sourceRenderSize })(args);
     if (!created) throw new Error(`Source tool ${toolName} produced no raster`);
     return { bitmap: created, release: () => undefined, size: { width: created.width, height: created.height } };
@@ -205,6 +164,9 @@ export function createMaterializationKey(layer: DurableReplayLayer, request: Mat
     operationSetRevision: request.operationSetRevision,
     operations,
     pos: layer.snapshot.pos,
+    opacity: layer.snapshot.opacity,
+    blendMode: layer.snapshot.blendMode,
+    visible: layer.snapshot.visible,
     affineRevision: operations.filter(
       (operation) => (operation as { kind?: string }).kind === 'apply-affine-transform'
     ),
@@ -242,24 +204,25 @@ export async function materializeLayer(
 
       const renderRetainedSegment = async (operations: readonly DurableOperation[], force = false) => {
         if (!force && operations.length === 0) return;
-        const affine = operationAffine(operations);
-        const bounds = getAffineBounds(affine, size);
-        const output = createCanvas(bounds.width, bounds.height);
+        const evaluation = evaluatePresentation({
+          position: { x: origin.x, y: origin.y, width: size.width, height: size.height },
+          sourceSize: size,
+          operations: presentationOperations(operations),
+          mode: 'layer-bounds',
+        });
+        const output = createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
         const ctx = context2d(output);
         ctx.save();
         try {
-          // Retained operations use the documented product rule: affine
-          // operations compose first, then filters apply to that presentation.
-          ctx.filter = operationFilter(operations);
-          ctx.translate(-bounds.x, -bounds.y);
-          ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
-          ctx.drawImage(bitmap, 0, 0, size.width, size.height);
+          // The evaluator composes affine operations first, then applies the
+          // joined filter string to that presentation.
+          drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'bounds' });
         } finally {
           ctx.restore();
         }
         replaceOwnedBitmap(await toOwnedBitmap(output));
-        origin = { x: origin.x + bounds.x, y: origin.y + bounds.y };
-        size = { width: bounds.width, height: bounds.height };
+        origin = { x: evaluation.bounds.x, y: evaluation.bounds.y };
+        size = { width: evaluation.bounds.width, height: evaluation.bounds.height };
       };
 
       try {
@@ -305,13 +268,17 @@ export async function materializeLayer(
 
         const frameSurface = createCanvas(request.frame.width, request.frame.height);
         const frameContext = context2d(frameSurface);
-        frameContext.drawImage(
-          presentation,
-          bounds.x - request.frame.x,
-          bounds.y - request.frame.y,
-          bounds.width,
-          bounds.height
-        );
+        const frameEvaluation = evaluatePresentation({
+          position: bounds,
+          sourceSize: { width: bounds.width, height: bounds.height },
+          operations: [],
+          frame: request.frame,
+          mode: 'frame-bounds',
+        });
+        drawEvaluatedPresentation(frameContext, presentation, frameEvaluation, {
+          kind: 'document',
+          frame: request.frame,
+        });
         if (presentationIsOwned) closeOwnedBitmap(presentation);
         return {
           bitmap: await toOwnedBitmap(frameSurface),
@@ -344,7 +311,16 @@ export async function materializeDocument(
   try {
     for (const layer of Object.values(replay.layers)) {
       if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
-      materialized[layer.snapshot.id] = await materializeLayer(layer, request);
+      try {
+        materialized[layer.snapshot.id] = await materializeLayer(layer, request);
+      } catch (error) {
+        // A refused layer must not be published unfiltered: doing so would make
+        // the visible document look successful while durable replay cannot
+        // reproduce its pixels. Keep the failure local, report it, and let the
+        // compositor continue with the layers that did materialize.
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        console.error(`Unable to materialize durable layer ${layer.snapshot.id}; skipping layer`, error);
+      }
       // Keep replay cooperative even when every operation is synchronous.
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 0);

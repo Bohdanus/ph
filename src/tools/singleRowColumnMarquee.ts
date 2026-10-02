@@ -39,6 +39,16 @@ export type SingleRowOrColumnMarqueeToolArgs = SingleRowMarqueeToolArgs | Single
  * `SelectionSourceTool` — is the real fix and it is a separate change, because every
  * `sourceTool` comparison in `selection.ts` and the anchors that key off it would have to
  * be re-read for the two new members.
+ *
+ * The visible cost of borrowing is that `drawSelectionOutline` draws its four white anchor
+ * dots for anything that is not `freehand-lasso` or `magic-wand` (`selection.ts:196`), so a
+ * band gains four handles the moment it commits, where the transient preview that became it
+ * has none (`SingleRowColumnMarqueeToolArea.tsx` `drawMarqueePreview`). The dots are not
+ * draggable here — a band is placed by its press — so they are decoration rather than a
+ * control, but they are decoration the user sees and Photoshop does not. Fixing it means
+ * either giving `SelectionSourceTool` its own members and teaching every `sourceTool`
+ * comparison about them, or teaching the outline painter which geometries have anchors,
+ * which is the same change wearing a different hat.
  */
 export const SINGLE_ROW_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangular-selection';
 export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangular-selection';
@@ -61,6 +71,17 @@ export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangul
  * document often enough that rejecting it would be a surprise rather than a fidelity win.
  * The alternative — an empty selection — is what a zero-area drag produces, and
  * `createCommittedRectangleSelection` returns `null` for it, which silently does nothing.
+ *
+ * **The clamp covers the PRESS, not the drag.** A drag that leaves the tool element is
+ * aborted by its `onPointerLeave` before any further axis value is read, so the last row it
+ * clamps to is the one under the pointer at the moment of leaving, and the gesture commits
+ * nothing. That is house convention rather than a choice of these two tools —
+ * `EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, and the Rectangular
+ * Marquee wires `pointercancel` alone — but it does mean the two marquee families disagree
+ * about what an out-of-document pointer does, and Photoshop keeps tracking instead of
+ * dropping. Recorded in `HANDOFF.md` rather than fixed here, because narrowing the abort to
+ * `pointercancel` would change a behaviour every selection tool shares, and that is a
+ * decision about the family rather than about a band.
  */
 function clampPixelIndex(value: number, extent: number): number {
   // Only `NaN` short-circuits. The infinities deliberately fall THROUGH to the clamp below, so
@@ -97,6 +118,45 @@ export function singleColumnMarqueeRect(x: number, imageSize: Size): RectXYSorte
   return { x1: column, y1: 0, x2: column + MARQUEE_THICKNESS_PX, y2: Math.max(0, imageSize.height) };
 }
 
+/** Which axis a committed 1-pixel band is thin on, or `null` if the rect is not a band. */
+export type BandOrientation = 'row' | 'column';
+
+/**
+ * What a band's rect IS, asked the same way every time.
+ *
+ * This is the single answer to "is this rect a band, and if so which way round", and
+ * `isSingleRowOrColumnMarqueeRect` below is this function's boolean face. It exists because the
+ * question was being asked twice, differently: the tool area's `movedBand` decided the
+ * orientation from the rect's THICKNESS alone while the hit test decided it from the rect's
+ * SPAN, and the two disagreed — on a document one pixel wide, where a row band is also one
+ * pixel wide, a thickness-only rule reads it as a column and transposes it mid-drag. Asking
+ * twice, differently, is the defect; this is the one place that answers.
+ *
+ * **The order of the two clauses is arbitrary, and swapping them changes nothing.** Both can
+ * only be true at once when the rect is one pixel on both axes AND the document is at most one
+ * pixel on both axes, and there the two readings produce the identical rect, so the answer
+ * cannot surface. Every reachable band satisfies exactly one clause. (An earlier version of
+ * this comment claimed COLUMN FIRST was what made the degenerate documents come out right; a
+ * swap of the two clauses passes every test in the repository, which is how that claim was
+ * caught. The SPAN conditions are what separate the degenerate cases, not the order.)
+ *
+ * What the span conditions do is separate the two documents where a 1x1 rect is a real band.
+ * On a document one pixel TALL, a 1x1 band reaches its full height and so is a column; on a
+ * document one pixel WIDE, the same rect reaches its full width but only one of its 120 rows,
+ * so it is a row. A rect that satisfies neither clause — a 1x1 band on a document with both
+ * dimensions above one pixel — is not a band at all and is `null`, which is why such a band
+ * can never be reached through a press.
+ */
+export function bandOrientation(rect: RectXYSorted, imageSize: Size): BandOrientation | null {
+  const width = rect.x2 - rect.x1;
+  const height = rect.y2 - rect.y1;
+
+  if (width === MARQUEE_THICKNESS_PX && height >= imageSize.height && rect.y1 === 0) return 'column';
+  if (height === MARQUEE_THICKNESS_PX && width >= imageSize.width && rect.x1 === 0) return 'row';
+
+  return null;
+}
+
 /**
  * Whether the rect is the band one of these two tools produces: one pixel on one axis and
  * the whole document on the other.
@@ -107,11 +167,5 @@ export function singleColumnMarqueeRect(x: number, imageSize: Size): RectXYSorte
  * pairs this with the whole-band span rather than a point test.
  */
 export function isSingleRowOrColumnMarqueeRect(rect: RectXYSorted, imageSize: Size): boolean {
-  const width = rect.x2 - rect.x1;
-  const height = rect.y2 - rect.y1;
-
-  return (
-    (width === MARQUEE_THICKNESS_PX && height >= imageSize.height && rect.y1 === 0) ||
-    (height === MARQUEE_THICKNESS_PX && width >= imageSize.width && rect.x1 === 0)
-  );
+  return bandOrientation(rect, imageSize) !== null;
 }

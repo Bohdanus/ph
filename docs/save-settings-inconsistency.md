@@ -29,7 +29,7 @@ Tool arguments are managed through several layers:
 
 1. **`defaultSettings`** (`src/tools/settings.ts`): Defines the initial/default args for every tool type. All 29 tools have entries here.
 
-2. **`lastSavedSettings`** (`src/tools/settings.ts:201`): A mutable object initialized from `cloneDeep(defaultSettings)`. This serves as the in-memory "last saved" state for each tool and is the source of truth when restoring tool args.
+2. **`lastSavedSettings`** (`src/tools/settings.ts:210`): A mutable object initialized from `cloneDeep(defaultSettings)`. This serves as the in-memory "last saved" state for each tool and is the source of truth when restoring tool args.
 
 3. **`saveLastSettings`** (`src/util/settings.ts:9`): Called whenever tool args change (via `_setToolArgs` → `saveLastSettings`). This function **serializes and persists** args to `lastSavedSettings`. It contains a long if/else chain that handles each tool type differently (some strip transient fields, some only store `{ toolName }`, some merge with existing).
 

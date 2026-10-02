@@ -1,5 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 
 /**
  * Below 768 CSS pixels the mobile chrome is shown and the desktop chrome is hidden —
@@ -10,11 +11,6 @@ import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
  * band by rounding.
  */
 test.use({ viewport: { width: 390, height: 844 } });
-
-/** The file menu's `confirm()` guard fires for any of these on a dirty document. */
-async function acceptConfirmations(page: Page): Promise<void> {
-  page.on('dialog', (dialog) => void dialog.accept());
-}
 
 const mobileHeader = (page: Page) => page.getByTestId('mobile-header');
 const bottomBar = (page: Page) => page.getByTestId('mobile-bottom-bar');
@@ -91,7 +87,6 @@ test.describe('Mobile shell', () => {
   });
 
   test('the navigation drawer carries the file commands the header no longer shows', async ({ page }) => {
-    await acceptConfirmations(page);
     await page.getByTestId('mobile-menu-button').click();
     const drawer = page.getByRole('dialog', { name: 'Mobile Navigation Menu' });
     await expect(drawer).toBeVisible();
@@ -107,12 +102,26 @@ test.describe('Mobile shell', () => {
       await expect(page.getByTestId(id)).toBeVisible();
     }
 
+    // The drawer's New is gated by the same unsaved-changes guard the header's is, and it
+    // is the app's own modal rather than a native `confirm()` now. Answering it is a click,
+    // which is what this test needed and could not have had before: Playwright
+    // auto-dismisses a native dialog nobody handles, so the `page.on('dialog', …)` that
+    // used to open this test swallowed the guard silently and made "the drawer's New
+    // reaches the same dialog" indistinguishable from "the guard declined". `acceptDiscardPrompt`
+    // waits for the prompt before answering it, so neither of those can pass as the other.
     await page.getByTestId('mobile-menu-new-button').click();
+    await acceptDiscardPrompt(page);
     await expect(page.getByTestId('new-image-dialog'), 'New reaches the same dialog it does on desktop').toBeVisible();
   });
 
   test('the theme toggle in the drawer moves the document, as it does from the header', async ({ page }) => {
     const root = page.locator('html');
+    // Starts LIGHT because the shared `test` pins `localStorage.theme` to `light` before
+    // the app's first statement — the `pinnedTheme` fixture in
+    // `e2e/fixtures/extended-test.ts`, and the reason every spec is. The app's own
+    // default with nothing stored is DARK, which is a separate test's claim
+    // (`e2e/document-dialogs.spec.ts`); asserting a light start here without that would
+    // pin the app's default rather than the suite's.
     await expect(root).toHaveClass(/\blight\b/);
     await page.getByTestId('mobile-menu-button').click();
     await page.getByTestId('mobile-menu-theme-button').click();

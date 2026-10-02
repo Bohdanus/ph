@@ -146,8 +146,19 @@ describe('useLayers removeLayer reports a failed plan', () => {
       result.current.layers.removeLayer(id);
     });
 
-    expect(errorSpy).toHaveBeenCalledExactlyOnceWith(thrown);
-    expect(errorSpy.mock.calls[0]![0]).toBe(thrown);
+    // Exactly one call, in main's two-argument shape: a message naming the
+    // failing path, then the error VALUE. The message is `main`'s — reported at
+    // `useLayer.ts:578` — not this branch's, so the assertion pins the shape the
+    // tree actually has rather than the one-argument `console.error(error)` the
+    // branch originally wrote against.
+    expect(errorSpy).toHaveBeenCalledExactlyOnceWith('Unable to plan durable history for a layer removal', thrown);
+    // Argument 1, because argument 0 is the message. The identity requirement
+    // moved with the signature; it did not weaken.
+    expect(errorSpy.mock.calls[0]![1]).toBe(thrown);
+    // What the identity buys, and why the index matters rather than being a
+    // convenience: the stack has to survive into the one channel the user can
+    // read.
+    expect((errorSpy.mock.calls[0]![1] as Error).stack).toBe(thrown.stack);
   });
 
   it('reports nothing on the removal path when the boundary does not throw', () => {

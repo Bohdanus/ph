@@ -99,7 +99,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     implementationRefs: [
       'src/tools/text.ts:28',
       'src/tools/text.ts:72',
-      'src/tools/toolProcessors.ts:160',
+      'src/tools/toolProcessors.ts:161',
       'src/components/ToolbarsRight/Text/Text.tsx:95',
       'src/components/Main/TextToolArea.tsx:24',
       'src/contexts/useLayer.ts:369',
@@ -108,8 +108,8 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/contexts/materialization.ts:171',
       'src/util/rect.ts:116',
       'src/util/settings.ts:31',
-      'src/tools/settings.ts:82',
-      'toolbar-mapping.ts:108',
+      'src/tools/settings.ts:84',
+      'toolbar-mapping.ts:127',
     ],
     appNotes:
       "The app's type layer is baked pixels, not live type. renderText paints the string into a 2D context with fillText, and the text creator hands back a single OffscreenCanvas, so what reaches the Layers panel is a bitmap. On the runtime path the layer renderer re-runs a tool's creator only for the six shape tools and text is not among them, so the visible canvas, undo replay and the PSD writer all draw `layer.bitmap` and enlarging a text layer rescales those pixels where a Photoshop type layer re-renders at the new size. The durable path is the exception and the runtime claim is not the whole truth: the durable materializer re-runs the text creator from the retained args, so the characters survive in one of the two engines and are re-derivable there. There is no text box either: the app grows the rect to the widest line instead of wrapping, so a long line runs to the canvas edge rather than reflowing, and every newline is a hard break. Text is typed into a textarea in the right-hand panel rather than onto the canvas, so there is no caret, no text selection and no per-character formatting; the draft is committed by Apply or implicitly by switching tools, and the commit creates a raster layer. The colour row is the one this file used to get backwards. There IS a colour control — a native colour input at Text.tsx:184 that writes through to the args and from there into renderText — and it is the tool's own setting: the bar no longer mirrors the global foreground swatch into the args on every render, which is what the earlier text claimed. What the app still lacks is Photoshop's Color Picker rather than the platform's, the Alt+Backspace and Ctrl+Backspace foreground/background bindings (there is no altKey registration anywhere in the keyboard table), per-character scoping, and Photoshop's default of seeding the type colour from the foreground swatch — the app's seed is a fixed black. Font size is a CSS pixel range of 8-500 rather than points, the font list is fourteen hard-coded families rather than the system enumeration, and leading is a unitless multiplier of the font size defaulting to 1.1 where Photoshop's Leading defaults to Auto, so every line the app draws is set to a fixed ratio rather than an automatic one. T is the only type key, and only while the textarea does not hold focus — the canvas tool area focuses it as soon as the tool is selected, and a shortcut that does not opt into inputs is refused while a field is focused, so a T pressed mid-edit types a letter rather than reselecting the tool. The type tile holds a single entry, so Shift+T re-selects the same tool instead of cycling a flyout — and that one entry stands in for a four-tool group.",
@@ -284,7 +284,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     implementation: 'partial',
     implementationRefs: [
       'src/tools/crop.ts:26',
-      'src/tools/toolProcessors.ts:146',
+      'src/tools/toolProcessors.ts:147',
       'src/components/ToolbarsRight/Crop/Crop.tsx:61',
       'src/components/Main/CropToolArea.tsx:40',
       'src/components/Main/CropToolArea.tsx:61',
@@ -295,8 +295,8 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/util/rect.ts:36',
       'src/contexts/useLayer.ts:644',
       'src/util/settings.ts:39',
-      'src/tools/settings.ts:67',
-      'toolbar-mapping.ts:59',
+      'src/tools/settings.ts:69',
+      'toolbar-mapping.ts:66',
     ],
     appNotes:
       "The app's crop edits the document frame rather than a tool layer, and it is not a raster commit at all. The crop's processor is declared with `commit: 'document-operation'`, and that commit kind is refused by every layer path — painting on it, replaying it into a layer and converting it to a durable layer all bail out — so the raster trim in src/tools/crop.ts is declared and unreachable: what actually commits is applyDocumentCrop, which trims the rect to the canvas, converts it into the next documentFrame and dispatches a COMMIT_DOCUMENT_EDIT carrying a SET_DOCUMENT_FRAME_ACTION history entry with the previous frame. The document shrinks at once and everything outside the new frame stops rendering, while layer positions and sources are untouched, so the discarded pixels are still held in the layer bitmaps and undo puts the frame back. That is Photoshop's Delete Cropped Pixels OFF case — the canvas shrinks, the pixels are kept — not the ON case, which permanently removes them. What the app genuinely lacks is the setting itself, which it can neither offer nor invert, and the Image > Reveal All menu item, which does not exist anywhere in the app. The rect may be dragged past the image edge, yet trimRect clamps it to the document, so extending a crop cannot add canvas the way Photoshop's Fill control does. Dragging inside the crop box translates the rect rather than picking up the layer under the pointer, because CropToolArea never passes one and so the branch that would move the image never runs; whether that is a divergence is not settled, because Adobe's current crop page says an inside drag moves the box. The pending rect is not written through to the persisted settings — the crop arm of the settings saver omits the rect and the pre-ratio rect before persisting — so the aspect ratio survives a tool switch and the draft does not, and switching away from the Crop tool and back discards the draft. That is closer to Photoshop's cancel-on-Escape than to its commit-on-switch. On modifiers, Shift does lock the current aspect ratio on a handle drag, but it is honoured for any modifier the browser reports rather than Shift alone, and useRect's fromCentre and constrainToSquare props are opt-in that CropToolArea never passes, so there is no Alt from-centre drag at all and the Alt, Alt+Shift, Ctrl, Shift-rotate and Ctrl-rotate rows of the table above are aspirational. Enter and Esc are the exception to that pattern: CropToolArea installs its own window keydown listener rather than a table entry, so Enter commits and Esc cancels for real, and neither is reachable from the shared keyboard table. X, O and Shift+O are unbound, and O and Shift+O are actively harmful to repeat because they select the Dodge and Burn tools. The crop tile holds a single entry, so Shift+C re-selects the Crop tool rather than cycling a flyout, and Perspective Crop, Slice and Slice Select are not in the tool registry at all.",

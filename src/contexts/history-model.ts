@@ -36,6 +36,12 @@ export type DurableLayerSource =
     }>
   | Readonly<{
       kind: 'text';
+      /**
+       * Always `'text'` for this variant. Declared rather than inferred: the adapter
+       * emitted it from the start, and `Object.freeze`'s inferred return type defeated
+       * excess-property checking, so a reader had to probe for it at runtime.
+       */
+      toolName: string;
       args: PlainObject;
       size: Size;
       sourcePos: Readonly<{ x: number; y: number; width: number; height: number }>;
@@ -104,7 +110,6 @@ export type DurableOperation =
       version: number;
       args: PlainObject;
     }>
-  | Readonly<{ kind: 'rasterize-layer'; layerId: LayerId; result: DurableLayerSnapshot }>
   | Readonly<{ kind: 'set-document-frame'; previous: DocumentFrame; next: DocumentFrame }>
   | Readonly<{ kind: 'merge-document'; result: DurableLayerSnapshot; removedLayerIds: readonly LayerId[] }>
   | Readonly<{ kind: 'set-selection'; before: SelectionSnapshot; after: SelectionSnapshot }>;
@@ -152,23 +157,47 @@ function collectLayerAsset(layer: DurableLayerSnapshot, assetIds: Set<AssetId>) 
 
 /**
  * Every asset referenced by a baseline or any replayable entry remains
- * reachable. Cursor position is intentionally ignored: undo must retain the
- * assets needed to redo without reconstructing a new baseline.
+ * reachable, so `reconcileDocumentAssets` never releases a live bitmap. Cursor
+ * position is intentionally ignored: undo must retain the assets needed to redo
+ * without reconstructing a new baseline.
+ *
+ * The `never` arm is load-bearing. Without it a kind added to `DurableOperation`
+ * compiles, and this switch — which is deliberately selective rather than
+ * exhaustive, because only two kinds carry a bitmap — falls off its end and skips
+ * the new kind. `reconcileDocumentAssets` then releases an asset the document
+ * still reaches, and the next `resolve` throws on a closed bitmap. Adding a kind
+ * without classifying it here is a typecheck error, which is the only moment the
+ * omission is cheap to fix.
  */
 export function collectDurableAssetIds(document: DurableDocument): ReadonlySet<AssetId> {
   const assetIds = new Set<AssetId>();
   for (const layer of document.baseline.layers) collectLayerAsset(layer, assetIds);
   for (const entry of document.history) {
-    switch (entry.operation.kind) {
+    const { kind } = entry.operation;
+    switch (kind) {
       case 'create-layer':
         collectLayerAsset(entry.operation.layer, assetIds);
-        break;
-      case 'rasterize-layer':
-        collectLayerAsset(entry.operation.result, assetIds);
         break;
       case 'merge-document':
         collectLayerAsset(entry.operation.result, assetIds);
         break;
+      // Every remaining kind holds no bitmap: each names layers by id, carries
+      // plain args, or writes the frame and the selection. They are named rather
+      // than lumped into the default so that the classification is a claim a
+      // reader can check, and so that adding a kind forces a decision here.
+      case 'remove-layer':
+      case 'set-layer-properties':
+      case 'reposition-layer':
+      case 'reorder-layers':
+      case 'apply-filter':
+      case 'apply-affine-transform':
+      case 'apply-raster-processor':
+      case 'set-document-frame':
+      case 'set-selection':
+        break;
+      default:
+        const _exhaustive: never = kind;
+        void _exhaustive;
     }
   }
   return assetIds;
@@ -182,7 +211,12 @@ function clonePlainValue(value: PlainValue | undefined): PlainValue | undefined 
   );
 }
 
-function cloneSelectionSnapshot(snapshot: SelectionSnapshot): SelectionSnapshot {
+/**
+ * The single copy of a selection snapshot for the durable path. `durable-replay.ts`
+ * imports this rather than reimplementing it, because its private predecessor
+ * omitted `metadata` unconditionally and a second copy is how that survived.
+ */
+export function cloneSelectionSnapshot(snapshot: SelectionSnapshot): SelectionSnapshot {
   return Object.freeze({
     selections: Object.freeze(
       snapshot.selections.map((selection) =>
@@ -247,13 +281,7 @@ export function cloneLayerSnapshot(layer: DurableLayerSnapshot): DurableLayerSna
 function cloneOperation(operation: DurableOperation): DurableOperation {
   switch (operation.kind) {
     case 'create-layer':
-    case 'rasterize-layer':
-      return Object.freeze({
-        ...operation,
-        ...(operation.kind === 'create-layer'
-          ? { layer: cloneLayerSnapshot(operation.layer) }
-          : { result: cloneLayerSnapshot(operation.result) }),
-      });
+      return Object.freeze({ ...operation, layer: cloneLayerSnapshot(operation.layer) });
     case 'apply-affine-transform':
       return Object.freeze({ ...operation, transform: Object.freeze({ ...operation.transform }) });
     case 'apply-filter':
@@ -323,7 +351,13 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
     ...document,
     baseline,
     history,
-    cursor: Math.max(-1, Math.min(document.cursor, history.length - 1)),
+    /**
+     * Total cursor clamp: a non-finite or non-integer index has no position in the
+     * timeline and refuses to `-1`; a finite integer is clamped into `[-1, tip]`.
+     * Kept byte-identical in `history-model.ts` and `durable-replay.ts`;
+     * `setDurableCursor` refuses with the same `Number.isInteger` predicate.
+     */
+    cursor: Number.isInteger(document.cursor) ? Math.max(-1, Math.min(document.cursor, history.length - 1)) : -1,
   });
 }
 

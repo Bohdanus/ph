@@ -1,17 +1,13 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { TransformToolArgs } from '../../../tools/transform.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import {
-  ICON_BUTTON,
-  SMALL_TOGGLE_BUTTON_ACTIVE,
-  SMALL_TOGGLE_BUTTON_INACTIVE,
-  TEXT_LINK_BUTTON,
-} from '../buttonStyles.ts';
+import { ICON_BUTTON, SMALL_TOGGLE_BUTTON_ACTIVE, SMALL_TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
 
 const Transform: React.FC<{}> = () => {
   const { tempUpdateLayer, cancelLayerPreview, commitDirtyTool } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
+  const barRef = useRef<HTMLDivElement>(null);
 
   const args = toolArgs as TransformToolArgs;
 
@@ -41,10 +37,46 @@ const Transform: React.FC<{}> = () => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   });
+
+  // A finished gesture is the commit gesture.
+  //
+  // React's `onChange` on a range input is bound to the native `input` event, which
+  // fires on every frame of a drag, so it cannot express "the user let go". The
+  // native `change` event is the one that fires exactly once, when the value is
+  // committed: on pointer release, and on a keyboard step. Binding it as a plain
+  // listener on the bar is what turns a drag into one history entry instead of a
+  // preview nobody commits.
+  //
+  // `commitDirtyTool` consumes the pending preview (`useLayer.ts:488`) and is a
+  // no-op when there is none, and `normalizeCommittedToolArgs` drops an identity
+  // transform before it reaches history (`useLayer.ts:484`) — so a release that
+  // moved nothing writes nothing, and a second release cannot double-write.
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const onValueCommitted = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.type === 'range') {
+        commitDirtyTool?.();
+      }
+    };
+    bar.addEventListener('change', onValueCommitted);
+    return () => bar.removeEventListener('change', onValueCommitted);
+  });
+
+  // The discrete controls commit in the same place a released slider does: the
+  // rotate buttons and the two mirror toggles are finished gestures too, and a
+  // panel where a slider lands in history but a mirror flip does not is a panel
+  // whose history nobody can reason about.
+  const commitPreview = () => {
+    commitDirtyTool?.();
+  };
+
   const throttledOnChange = (newArgs: TransformToolArgs) => {
     // This is a transient preview. History is created only when the dirty
     // layer is committed, so applying the latest value synchronously cannot
-    // create one history entry per slider frame.
+    // create one history entry per slider frame. The commit rides the `change`
+    // listener above, which is the end of the gesture.
     tempUpdateLayer({ toolArgs: newArgs });
     setToolArgs(newArgs);
   };
@@ -96,12 +128,14 @@ const Transform: React.FC<{}> = () => {
     let newRotate = rotate - 90;
     if (newRotate < 0) newRotate += 360;
     throttledOnChange({ ...args, rotate: newRotate, trapezoid: 0 });
+    commitPreview();
   };
 
   const handleRotateRight = () => {
     let newRotate = rotate + 90;
     if (newRotate >= 360) newRotate -= 360;
     throttledOnChange({ ...args, rotate: newRotate, trapezoid: 0 });
+    commitPreview();
   };
 
   const handleRotateSliderChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -111,10 +145,12 @@ const Transform: React.FC<{}> = () => {
 
   const toggleMirrorH = () => {
     throttledOnChange({ ...args, mirrorH: !mirrorH, trapezoid: 0 });
+    commitPreview();
   };
 
   const toggleMirrorV = () => {
     throttledOnChange({ ...args, mirrorV: !mirrorV, trapezoid: 0 });
+    commitPreview();
   };
 
   const handleSkewXChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -148,12 +184,8 @@ const Transform: React.FC<{}> = () => {
     throttledOnChange({ ...args, resizeY: Number(event.target.value), trapezoid: 0 });
   };
 
-  const resetAll = () => {
-    cancel();
-  };
-
   return (
-    <div className="flex flex-row items-center gap-4 h-full">
+    <div ref={barRef} className="flex w-full flex-row items-center gap-4 h-full">
       <div className="flex flex-col">
         <div className="flex gap-1">
           <button
@@ -165,7 +197,10 @@ const Transform: React.FC<{}> = () => {
           </button>
           <button
             className={`flex h-6 w-10 items-center justify-center rounded border transition-colors focus:outline-none ${ICON_BUTTON}`}
-            onClick={() => throttledOnChange({ ...args, rotate: (rotate + 180) % 360, trapezoid: 0 })}
+            onClick={() => {
+              throttledOnChange({ ...args, rotate: (rotate + 180) % 360, trapezoid: 0 });
+              commitPreview();
+            }}
             title="Rotate 180°"
           >
             180°
@@ -276,7 +311,7 @@ const Transform: React.FC<{}> = () => {
         />
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-1 items-center justify-center">
         <div className="flex gap-1">
           <button
             className={`flex h-6 w-8 items-center justify-center rounded border transition-colors focus:outline-none ${
@@ -297,15 +332,6 @@ const Transform: React.FC<{}> = () => {
             ↕
           </button>
         </div>
-        <button className={`text-[10px] ${TEXT_LINK_BUTTON} mt-1`} onClick={resetAll}>
-          Reset All
-        </button>
-        <button className={`text-[10px] ${TEXT_LINK_BUTTON}`} onClick={() => commitDirtyTool?.()}>
-          Apply
-        </button>
-        <button className={`text-[10px] ${TEXT_LINK_BUTTON}`} onClick={cancel}>
-          Cancel
-        </button>
       </div>
     </div>
   );

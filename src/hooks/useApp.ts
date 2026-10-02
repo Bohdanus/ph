@@ -1,7 +1,7 @@
 import type { BitmapSource, Size } from '../contexts/general-types.ts';
 import { useStore, type StoreMetadataUpdates } from '../contexts/StoreContext.tsx';
 import type { Layer, LayersRecord } from '../contexts/layer-types.ts';
-import type { BlankImageParams, ToolName } from '../contexts/tool-types.ts';
+import type { NewDocumentBlankParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
 import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
 import { v4 as uuidv4 } from 'uuid';
@@ -13,7 +13,7 @@ import { documentFrameFromSize } from '../contexts/document-frame.ts';
 import { appendSelectionClear } from '../contexts/useSelectionHistory.ts';
 
 export interface UseAppType {
-  setBlankImage: (data: BlankImageParams) => void;
+  setBlankImage: (data: NewDocumentBlankParams) => void;
   setImageFromUpload: (data: ImageUploadResponse) => Promise<void>;
 
   handleImageSave: (data: ImageSaveResponse) => void;
@@ -52,6 +52,7 @@ export const useApp = (): UseAppType => {
       historyIndex,
       branchRevision = 0,
       clearPreviewLayers,
+      adoptLayerBitmaps,
     },
     dispatch,
   ] = useStore();
@@ -74,7 +75,7 @@ export const useApp = (): UseAppType => {
     dispatch({ type: 'SET_FILE_NAME', payload: fileName });
   }
 
-  function setBlankImage(params: BlankImageParams) {
+  function setBlankImage(params: NewDocumentBlankParams) {
     handleImageCreate(params.size);
     createBlankLayer({ ...params }, true);
   }
@@ -144,17 +145,14 @@ export const useApp = (): UseAppType => {
       });
       // Every raster this import produced is adopted into the store's presentation
       // scope, exactly as `useLayers().createLayerFromBitmap` does for a single-image
-      // import. Dispatched AFTER `REPLACE_DOCUMENT`: the scope is keyed by the owning
+      // import. Called AFTER `REPLACE_DOCUMENT`: the scope is keyed by the owning
       // document, so a registration published before the replacement would be filed
       // under the outgoing document id and closed by its release.
-      dispatch({
-        type: 'ADOPT_LAYER_BITMAPS',
-        payload: {
-          bitmaps: Object.values(immutableLayers)
-            .map((layer) => (layer.source?.kind === 'image' ? layer.source.bitmap : null))
-            .filter((bitmap): bitmap is BitmapSource => bitmap !== null),
-        },
-      });
+      adoptLayerBitmaps(
+        Object.values(immutableLayers)
+          .map((layer) => (layer.source?.kind === 'image' ? layer.source.bitmap : null))
+          .filter((bitmap): bitmap is BitmapSource => bitmap !== null)
+      );
       return;
     }
     const { image } = data;

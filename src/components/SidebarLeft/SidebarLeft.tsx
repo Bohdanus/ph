@@ -1020,7 +1020,7 @@ const SidebarLeft = () => {
     // The LAST SECTION is the wrong fallback for the row that is not there. With nothing
     // fitted — the degenerate band, a window too short to hold a tool row and the three-dots
     // tile's row together — `toolbarSlots[-1]` is undefined, and the fallback put the lone tile
-    // in section 4, whose `<ul>` carries `mt-1.5 border-t pt-1.5`. That is 13px of separator
+    // in the last section, whose `<ul>` carries `mt-1.5 border-t pt-1.5`. That is 13px of separator
     // chrome for a separator with nothing above it, and the planner charges a lone tile
     // `tileHeight` and nothing more, so the model was 13px short of the screen in exactly the
     // state where the slot has no pixels to spare. Section 0 carries none of it.
@@ -1179,7 +1179,9 @@ const SidebarLeft = () => {
           // nothing while the element that can actually overflow paints a bar. The slot is
           // narrow — 56px — and the degenerate band is where it goes, so the window is small,
           // but "the last tile is unreachable" is not a trade worth a pixel-wide bar.
-          className="scrollbar-none flex min-h-0 w-full flex-1 justify-center overflow-y-auto"
+          // Keep one overflow tile reachable in a degenerate short desktop row without letting
+          // the full tool list become the grid's minimum height.
+          className="scrollbar-none flex min-h-0 min-h-11 w-full flex-1 justify-center overflow-y-auto"
           data-testid="left-toolbar-slot"
           ref={attachSlot}
         >

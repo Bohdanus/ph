@@ -131,14 +131,28 @@ describe('MobileToolSheet', () => {
   });
 
   it('marks only the active member of the group as pressed', () => {
-    setTool('levels');
+    // `eraser` is in the Brush group and is not that group's primary, which is the condition
+    // the old `levels`-in-the-Colors-tile case set up: pressed must be resolved per member of
+    // the group rather than by handing the whole tile to the one active tool.
+    //
+    // `color`/`levels`/`transform` carry no rail entry any more — they are `Image ▸
+    // Adjustments` and `Edit ▸ Transform` commands, so `mobileToolGroups` has no group for
+    // them and the sheet has no picker to mark. The Brush group is a live six-member group.
+    setTool('eraser');
     render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
 
-    const editGroup = mobileToolGroups.find((group) => group.matchingTools.includes('levels'))!;
-    expect(screen.getByRole('button', { name: 'Levels' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Colors' })).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByRole('button', { name: 'Transform' })).toHaveAttribute('aria-pressed', 'false');
-    expect(editGroup.matchingTools).toEqual(['color', 'levels', 'transform']);
+    const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eraser'))!;
+    expect(screen.getByRole('button', { name: 'Eraser Tool' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Brush Tool' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Pencil Tool' })).toHaveAttribute('aria-pressed', 'false');
+    expect(brushGroup.matchingTools).toEqual([
+      'brush',
+      'pencil',
+      'color-replacement',
+      'eraser',
+      'magic-eraser',
+      'paint-bucket',
+    ]);
   });
 
   it('keeps the full-width overlay out of hit testing, and the card inside it in', () => {

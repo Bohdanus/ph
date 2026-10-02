@@ -185,19 +185,26 @@ describe('useSelectionHistory durable-plan failure is reported', () => {
     // The failure was really provoked, rather than the assertion passing on a
     // plan that happened to succeed.
     expect(appendControl.calls).toHaveLength(1);
-    // Exactly one call, carrying the error and nothing else: a message prefix
-    // would be a second argument, and `console.error(\`...\`, error)` is a
-    // different report than this one.
-    expect(consoleError).toHaveBeenCalledExactlyOnceWith(failure);
+    // Exactly one call, in main's two-argument shape: a message naming the
+    // failing path, then the error VALUE. The message is `main`'s, not this
+    // branch's — `useSelectionHistory.ts:162` reports it — so the assertion pins
+    // the shape the tree actually has rather than the one the branch originally
+    // wrote against a one-argument `console.error(error)`.
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+      'Unable to plan durable history for a selection clear',
+      failure
+    );
     // The `toBe` states the requirement in its own terms instead of leaving it
     // to the matcher's treatment of `Error`: identity, asserted as identity.
     // Verified by mutation rather than assumed — rewrapping
     // (`new Error(String(error))`) is rejected by BOTH assertions under Vitest
     // 5, so the matcher is stricter here than the comment it replaced claimed,
-    // and this line is the belt to that braces.
-    expect(consoleError.mock.calls[0][0]).toBe(failure);
+    // and this line is the belt to that braces. Argument 1, because argument 0
+    // is the message: the identity requirement moved with the signature, it did
+    // not weaken.
+    expect(consoleError.mock.calls[0][1]).toBe(failure);
     // What the identity buys: the stack the user can report, not a message.
-    expect((consoleError.mock.calls[0][0] as Error).stack).toBe(failure.stack);
+    expect((consoleError.mock.calls[0][1] as Error).stack).toBe(failure.stack);
   });
 
   it('reports the thrown plan error object itself when a commit cannot be planned', () => {
@@ -209,12 +216,17 @@ describe('useSelectionHistory durable-plan failure is reported', () => {
     mountWriter().commitSelection(drawn, 'create');
 
     expect(appendControl.calls).toHaveLength(1);
-    expect(consoleError).toHaveBeenCalledExactlyOnceWith(failure);
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+      'Unable to plan durable history for a selection commit',
+      failure
+    );
     // Same identity requirement as the clear, on the OTHER writer. The two catch
     // blocks are copies of one another, and a copy is exactly the thing that
-    // drifts: the first test cannot fail if only this line is deleted.
-    expect(consoleError.mock.calls[0][0]).toBe(failure);
-    expect((consoleError.mock.calls[0][0] as Error).stack).toBe(failure.stack);
+    // drifts: the first test cannot fail if only this line is deleted. The
+    // message differs from the clear's, which is what proves the report names
+    // the writer that failed rather than a constant copied into both.
+    expect(consoleError.mock.calls[0][1]).toBe(failure);
+    expect((consoleError.mock.calls[0][1] as Error).stack).toBe(failure.stack);
   });
 
   it('reports a non-Error throw by value rather than reaching through it', () => {
@@ -228,8 +240,11 @@ describe('useSelectionHistory durable-plan failure is reported', () => {
 
     mountWriter().clearSelections();
 
-    expect(consoleError).toHaveBeenCalledExactlyOnceWith(failure);
-    expect(consoleError.mock.calls[0][0]).toBe(failure);
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+      'Unable to plan durable history for a selection clear',
+      failure
+    );
+    expect(consoleError.mock.calls[0][1]).toBe(failure);
   });
 
   it('reports nothing when the plan succeeds', () => {

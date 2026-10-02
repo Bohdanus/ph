@@ -193,7 +193,12 @@ const roundedRectPath = (ctx: Ctx2D, x: number, y: number, width: number, height
 
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { figure, start, end } = args;
-  const hasFill = args.toolMode !== 'path' && args.hasFill;
+  // `backgroundColor` is half the condition, not a detail: `setShapeCtx` only assigns `fillStyle`
+  // when it is set, so filling on `hasFill` alone would paint with whatever the context already
+  // carried — the canvas default on a fresh surface, and the previous tool's colour on the shared
+  // tool overlay, which paints many times per one `setShapeCtx`. Path mode suppresses the fill
+  // outright, as a path carries no rasterized fill.
+  const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor;
 
   if (!start || !end) return;
 

@@ -7,7 +7,7 @@ import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.
 import type { MaterializationRequest } from '../materialization.ts';
 import { materializeLayer, materializeDocument, createMaterializationKey } from '../materialization.ts';
 import type { AssetId } from '../history-model.ts';
-import type { DocumentFrame } from '../document-frame.ts';
+import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
 import type { DurableOperation, DurableLayerSnapshot, DurableLayerSource } from '../history-model.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 
@@ -99,6 +99,7 @@ function makeReplay(layers: Record<string, DurableReplayLayer>): DurableReplayRe
     durableRevision: Object.keys(layers).length,
     cursor: -1,
     frame: { ...defaultFrame },
+    totalSize: documentFrameSize(defaultFrame),
     layers: Object.freeze({ ...layers }),
     selections: Object.freeze({
       selections: Object.freeze([]),
@@ -393,7 +394,13 @@ describe('materializeLayer safety (P0.3)', () => {
 });
 
 describe('materializeDocument safety (P0.3)', () => {
-  it('releases already-materialized layer leases when a later layer fails', async () => {
+  // SD-8 replaced the whole-document rejection this test asserted. The discriminating
+  // concern it was built around survives intact and moves with the behaviour: a
+  // per-layer failure must release exactly the OTHER layers' leases, on `release()`,
+  // in document order — and nothing at all before that. `layer-other` exists so that
+  // "which key" is answerable at all, since `createMaterializationKey` encodes no
+  // layer id and two identically-shaped layers would share one key.
+  it('omits only the refused layer and releases just the surviving leases on release', async () => {
     const registry = new AssetRegistry();
     const { bitmap, close } = createOwnedBitmap(10, 10);
     // Registered under the request's OWN document id. Under a different id the two
@@ -401,6 +408,7 @@ describe('materializeDocument safety (P0.3)', () => {
     // cleanup: disposing `'document-a'` would leave this baseline untouched either way.
     const validAssetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
 
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const releaseSpy = vi.fn();
     const releasedKeys: string[] = [];
     const originalMaterialize = registry.materialize.bind(registry);
@@ -428,12 +436,32 @@ describe('materializeDocument safety (P0.3)', () => {
       'layer-other': layerOther,
     });
 
-    await expect(materializeDocument(replay, request)).rejects.toThrow(/Unknown or disposed asset/);
+    const result = await materializeDocument(replay, request);
 
-    // `layer-bad` never got a lease, so cleanup must release exactly one — and the one it
-    // releases is `layer-ok`'s, not `layer-other`'s or `layer-bad`'s.
-    expect(releaseSpy).toHaveBeenCalledTimes(1);
-    expect(releasedKeys).toEqual([createMaterializationKey(layerOk, request)]);
+    // `layer-bad` is omitted; both layers around it composited, so the failure did not
+    // truncate the document at the point it occurred.
+    expect(Object.keys(result.layers)).toEqual(['layer-ok', 'layer-other']);
+    expect(result.layers['layer-bad']).toBeUndefined();
+    expect(result.layers['layer-ok'].bitmap).toBeDefined();
+    expect(result.layers['layer-other'].bitmap).toBeDefined();
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [message, reported] = consoleError.mock.calls[0] as [string, Error];
+    expect(message).toBe('Unable to materialize durable layer layer-bad; skipping layer');
+    expect(reported.message).toMatch(/Unknown or disposed asset/);
+
+    // A refused layer no longer triggers the rollback, so nothing is released while
+    // `materializeDocument` is still working.
+    expect(releaseSpy).not.toHaveBeenCalled();
+
+    // On release: exactly the two surviving layers, in document order. `layer-bad`
+    // never took a lease, so its key cannot appear — and the two survivor keys are
+    // distinct, which is what makes this comparison able to fail.
+    const okKey = createMaterializationKey(layerOk, request);
+    const otherKey = createMaterializationKey(layerOther, request);
+    expect(okKey).not.toBe(otherKey);
+    result.release();
+    expect(releasedKeys).toEqual([okKey, otherKey]);
 
     // Cleanup releases leases, not this document's baseline assets.
     expect(registry.getRecord(validAssetId)).toBeDefined();
@@ -441,6 +469,49 @@ describe('materializeDocument safety (P0.3)', () => {
 
     registry.shutdown();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  // The rollback this suite used to pin through a per-layer failure is now only
+  // reachable through an abort, so the pin moves with it. Deleting the loop body in
+  // `materializeDocument`'s outer `catch` turns this red; the abort-before-any-layer
+  // case below cannot, because it rolls back an empty set.
+  it('releases already-materialized layer leases when the document is aborted mid-loop', async () => {
+    const registry = new AssetRegistry();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const releaseSpy = vi.fn();
+    const releasedKeys: string[] = [];
+    const controller = new AbortController();
+    const originalMaterialize = registry.materialize.bind(registry);
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const originalRelease = lease.release;
+      // Abort as soon as the first layer's lease exists, so the SECOND iteration is
+      // the one that trips the signal check at the top of the loop.
+      controller.abort();
+      return {
+        ...lease,
+        release: () => {
+          releaseSpy();
+          releasedKeys.push(input.key);
+          originalRelease();
+        },
+      };
+    });
+
+    const request = makeRequest(registry, controller.signal);
+    const layerOk = makeBlankLayer('layer-ok', 50, 50);
+    const layerOther = makeBlankLayer('layer-other', 50, 60);
+    const replay = makeReplay({ 'layer-ok': layerOk, 'layer-other': layerOther });
+
+    await expect(materializeDocument(replay, request)).rejects.toThrow(/aborted/);
+
+    // An abort is still a document-level failure: it rejects rather than omitting a
+    // layer, the one lease already handed out is released on the way out, and an abort
+    // never reaches the per-layer `console.error` path.
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(releasedKeys).toEqual([createMaterializationKey(layerOk, request)]);
+
+    registry.shutdown();
   });
 
   it('aborts early when the signal is aborted before processing layers', async () => {

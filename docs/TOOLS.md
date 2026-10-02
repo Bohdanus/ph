@@ -53,7 +53,7 @@ The Rectangular Marquee tool makes the simplest selection in Photoshop: drag cor
 Implementation:
 
 - `src/tools/rectangularSelection.ts:4`
-- `src/tools/settings.ts:130`
+- `src/tools/settings.ts:132`
 - `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:33`
 - `src/components/Main/RectangularSelectionToolArea.tsx:74`
 - `src/hooks/useRect.ts:400`
@@ -109,7 +109,7 @@ Implementation:
 
 - `src/tools/ellipticalSelection.ts:155`
 - `src/tools/ellipticalSelection.ts:51`
-- `src/tools/settings.ts:220`
+- `src/tools/settings.ts:229`
 - `src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx:98`
 - `src/components/Main/EllipticalSelectionToolArea.tsx:176`
 - `src/components/Main/EllipticalSelectionToolArea.tsx:247`
@@ -146,23 +146,23 @@ The Single Row Marquee tool makes the narrowest selection Photoshop offers: one 
 
 **Modifiers**
 
-- **Shift** — Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.
-- **Alt** — Sets the click to Subtract From Selection, for the same reason Shift is Add.
-- **Shift+Alt** — Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row, so on a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable.
+- **Shift** — In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here, and not a shortcut: this app has no selection modes for any selection tool, and the code reads no modifier at all.
+- **Alt** — In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here.
+- **Shift+Alt** — In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. On a 1-pixel row the selection meaning is the live one and the geometric one is inapplicable. NOT IMPLEMENTED here.
 
 **Shortcuts**
 
 - `M` — Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.
 - `Shift+M` — Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.
 
-**In this app:** `implemented` — The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` because they are absent for every selection tool in the application, not because they were skipped here, and adding them to the two newest tools and not to the other five would be a worse inconsistency than the one that exists. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.
+**In this app:** `implemented` — The gesture is implemented in full: a click commits the row under the press, a drag positions it, the row is exactly one document pixel tall and spans the full document width, and a press inside the committed row moves it — the press-inside-moves behaviour every other selection tool here has, narrowed to a 1-pixel hit target. The row is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document height and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing where a marquee flyout neighbour accepts the same press. No option above is rendered, and that is a statement about Photoshop rather than a shortcut: Adobe scopes Anti-alias to the Elliptical Marquee and Style, Fixed Ratio and Fixed Size to the Rectangular and Elliptical Marquees by name, so this bar has no control of its own to render. The four selection modes and Feather are `missing` because they are absent for every selection tool in the application, not because they were skipped here, and the three modifiers above are not implemented for the same reason: the tool reads no `shiftKey` or `altKey`, so holding one changes nothing rather than selecting Add, Subtract or Intersect, and adding them to the two newest tools and not to the other five would be a worse inconsistency than the one that exists. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle, and widening that union is a separate change with its own blast radius.
 
 Implementation:
 
 - `src/tools/singleRowColumnMarquee.ts:81`
 - `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126`
 - `src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38`
-- `src/tools/toolProcessors.ts:228`
+- `src/tools/toolProcessors.ts:248`
 - `toolbar-mapping.ts:48`
 
 Sources:
@@ -193,23 +193,23 @@ The Single Column Marquee tool is the Single Row Marquee tool on the other axis:
 
 **Modifiers**
 
-- **Shift** — Sets the click to Add to Selection. Adobe carves single row and single column out of the marquee geometry modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it is bound to for every other selection tool.
-- **Alt** — Sets the click to Subtract From Selection, for the same reason Shift is Add.
-- **Shift+Alt** — Sets the click to Intersect With Selection. Adobe lists Shift+Alt twice for marquee tools — once as a geometry constraint and once as Intersect — and only the Quick Selection tool is excluded from the Intersect row.
+- **Shift** — In Photoshop, sets the click to Add to Selection: Adobe carves single row and single column out of the marquee GEOMETRY modifiers by name — "Any marquee tool (except single column and single row)" — which leaves Shift to the selection mode it binds for every other selection tool. NOT IMPLEMENTED here, and not a shortcut: this app has no selection modes for any selection tool, and the code reads no modifier at all.
+- **Alt** — In Photoshop, sets the click to Subtract From Selection, for the same reason Shift is Add. NOT IMPLEMENTED here.
+- **Shift+Alt** — In Photoshop, sets the click to Intersect With Selection: Adobe lists Shift+Alt twice for marquee tools, once as a geometry constraint and once as Intersect, and only the Quick Selection tool is excluded from the Intersect row. NOT IMPLEMENTED here.
 
 **Shortcuts**
 
 - `M` — Does not reach this tool directly. Adobe’s default-shortcut table assigns M to the Rectangular and Elliptical Marquees only, and no published source gives either 1-pixel tool a key of its own.
 - `Shift+M` — Reaches this tool in this application, because the cycle is over the whole marquee group. Adobe publishes "Switch between marquee tools — SHIFT+M" without enumerating which tools the cycle covers, and third-party sources disagree on whether the 1-pixel pair is inside it. See selection.notes.md.
 
-**In this app:** `implemented` — The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` because they are absent for every selection tool in the application rather than skipped here. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.
+**In this app:** `implemented` — The gesture is implemented in full: a click commits the column under the press, a drag positions it, the column is exactly one document pixel wide and spans the full document height, and a press inside the committed column moves it. This tool and its counterpart share one processor, one tool area and one options bar, because their Photoshop option sets are identical to each other and differ from the other marquees only in controls neither of them has; the one visible difference is a word in the bar’s sentence. The column is chosen by flooring the pointer position and clamping it into the document, which is this application’s documented answer to a case Adobe leaves open: its scripting API requires the coordinate to be within the document width and publishes no GUI behaviour for a press outside the canvas, and rejecting the press would silently do nothing. No option above is rendered, and the four selection modes and Feather are `missing` because they are absent for every selection tool in the application rather than skipped here; the three modifiers above are not implemented either, and holding one changes nothing. The committed selection carries the borrowed source-tool identifier `rectangular-selection` because the app’s `SelectionSourceTool` union has no member for either 1-pixel tool; the geometry really is a rectangle.
 
 Implementation:
 
 - `src/tools/singleRowColumnMarquee.ts:94`
 - `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:126`
 - `src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx:38`
-- `src/tools/toolProcessors.ts:235`
+- `src/tools/toolProcessors.ts:255`
 - `toolbar-mapping.ts:49`
 
 Sources:
@@ -245,7 +245,6 @@ The Lasso tool draws a selection border by following the pointer with no correct
 - **Alt** — Sets the drag to Subtract From Selection.
 - **Alt** — Held after the drag has started, converts the trailing segment to a straight edge between the two points; releasing the mouse while it is held leaves the border open.
 - **Shift+Alt** — Sets the drag to Intersect With Selection.
-- **Space** — Temporarily switches to the Hand tool so the image can be panned mid-trace.
 
 **Shortcuts**
 
@@ -254,14 +253,14 @@ The Lasso tool draws a selection border by following the pointer with no correct
 - `Return` — Selects the tool and moves focus to the Feather field in the options bar, so a feather can be typed before the next trace.
 - `Delete` — Erases recently drawn straight segments during a trace.
 
-**In this app:** `partial` — The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Clear beside a single toggle. That toggle is the app’s own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The app therefore has no Photoshop control on this bar at all, and no combination modes. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool’s bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool’s own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`), so the focus-the-Feather-field binding and the mid-trace Space-to-Hand binding above are Photoshop bindings with no counterpart here, while the Delete row is bound to the same registration that pops the last point of the trace.
+**In this app:** `partial` — The tool traces a closed loop and commits it, and its bar renders Copy, Paste and Clear beside a single toggle. That toggle is the app’s own control and has no Photoshop counterpart: it is labelled Mode in the bar but switches between Outline and Fill, which changes how the committed border is painted rather than how a new gesture combines with the existing selection. The app therefore has no Photoshop control on this bar at all, and no combination modes. The LassoToolArgs type carries alpha, lineWidth, color and fill, none of which Photoshop puts on this tool’s bar. None of the modifiers above is read: the freehand lasso is drawn by the same PolygonClickToolArea as the polygonal one, and neither that component nor anything else on the lasso path consults a modifier key, so the Shift/Alt/Shift+Alt rows describe Photoshop only. The Return row is not bound either — the app registers Escape, Enter, Backspace and Delete on this tool’s own gesture and nothing else (`src/components/Main/PolygonClickToolArea.tsx:922`) — so the focus-the-Feather-field binding above is a Photoshop binding with no counterpart here, and neither is Photoshop’s mid-trace Space-to-Hand switch, which this app binds on the Shape tool alone and there to pan the shape being drawn (`src/components/Main/ShapeToolArea.tsx:52`) rather than to change tools. The Delete row is bound to the same registration that pops the last point of the trace.
 
 Implementation:
 
 - `src/tools/polygonSelection.ts:3`
-- `src/tools/settings.ts:104`
+- `src/tools/settings.ts:106`
 - `src/components/ToolbarsRight/Lasso/FreehandLasso.tsx:50`
-- `toolbar-mapping.ts:45`
+- `toolbar-mapping.ts:52`
 
 Sources:
 
@@ -296,9 +295,6 @@ The Polygonal Lasso tool draws a selection border out of straight segments, whic
 
 **Modifiers**
 
-- **Alt** — Held while dragging, draws a freehand segment between the last anchor and the next one; releasing Alt and the mouse button returns the tool to straight segments.
-- **Alt** — Double-clicking while Alt is held closes the border with a straight segment rather than a magnetic one.
-- **Shift** — Draws a straight line at a multiple of 45°, held as you move to select the next segment.
 - **Shift** — Sets the gesture to Add to Selection.
 - **Alt** — Set as the combination mode, sets the gesture to Subtract From Selection.
 - **Shift+Alt** — Sets the gesture to Intersect With Selection.
@@ -310,15 +306,15 @@ The Polygonal Lasso tool draws a selection border out of straight segments, whic
 - `Return` — Closes the border with a segment the tool finds, or moves focus to the Feather field when no border is open.
 - `Delete` — Erases the most recently drawn straight segments, one at a time.
 
-**In this app:** `partial` — The click-to-add-anchor gesture, the double-click close, the right-click close, the Enter close, the Delete anchor removal and the Escape abort are all implemented, which makes this the most faithful of the seven. Its options bar, however, is the thinnest component in the family: forty lines rendering one app-invented Outline/Fill toggle and a hint sentence, and — unlike the freehand and magnetic lasso bars beside it — no Copy, Paste or Clear buttons. It shares LassoToolArgs with the freehand lasso, so none of the four Photoshop controls in the table above has a field to live in. None of the modifiers above is read either. The component that draws this tool (`src/components/Main/PolygonClickToolArea.tsx`, which serves the freehand lasso too) consults no modifier key at all, so every one of those rows — the 45° constraint, the Alt-drag freehand segment, the Alt-double-click straight close, and the three combination modes — describes Photoshop and is not implemented here. Of the shortcuts above, `Enter` and `Delete` are bound on this tool’s own gesture (`src/components/Main/PolygonClickToolArea.tsx:931` and `:952`); `Enter` is the key the app registers for the close that the table above calls Return, while the row’s second half, focus moving to a Feather field when no border is open, is not bound, because this bar has no Feather field to focus. Feathering is where the app is narrowest: no selection tool’s bar carries a Feather field except the magnetic lasso’s, re-making a selection with this tool applies no feather of any kind, and with no `Select > Modify > Feather` and no Refine Edge a committed border can never be softened after the fact. The magnetic lasso is the family’s only feathered path, and even there the value is written into the selection’s metadata at commit and read back when the selection is copied (`src/util/selection.ts:836`-`:837`), so it softens the copied mask and not the selection the ants are drawn from.
+**In this app:** `partial` — The click-to-add-anchor gesture, the double-click close, the right-click close, the Enter close, the Delete anchor removal and the Escape abort are all implemented, which makes this the most faithful of the seven. Its options bar, however, is the thinnest component in the family: forty lines rendering one app-invented Outline/Fill toggle and a hint sentence, and — unlike the freehand and magnetic lasso bars beside it — no Copy, Paste or Clear buttons. It shares LassoToolArgs with the freehand lasso, so none of the four Photoshop controls in the table above has a field to live in. None of the modifiers above is read either. The component that draws this tool (`src/components/Main/PolygonClickToolArea.tsx`, which serves the freehand lasso too) consults no modifier key at all, so every one of those rows — the three combination modes — describes Photoshop and is not implemented here. The 45° Shift constraint, the Alt-drag freehand segment and the Alt-double-click straight close are not implemented here either, which is why none of the three is listed above. Of the shortcuts above, `Enter` and `Delete` are bound on this tool’s own gesture (`src/components/Main/PolygonClickToolArea.tsx:931` and `:953`); `Enter` is the key the app registers for the close that the table above calls Return, while the row’s second half, focus moving to a Feather field when no border is open, is not bound, because this bar has no Feather field to focus. Feathering is where the app is narrowest: no selection tool’s bar carries a Feather field except the magnetic lasso’s, re-making a selection with this tool applies no feather of any kind, and with no `Select > Modify > Feather` and no Refine Edge a committed border can never be softened after the fact. The magnetic lasso is the family’s only feathered path, and even there the value is written into the selection’s metadata at commit and read back when the selection is copied (`src/util/selection.ts:837`), so it softens the copied mask and not the selection the ants are drawn from.
 
 Implementation:
 
 - `src/tools/polygonSelection.ts:3`
-- `src/tools/settings.ts:96`
+- `src/tools/settings.ts:98`
 - `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx:16`
 - `src/components/Main/PolygonClickToolArea.tsx:922`
-- `toolbar-mapping.ts:46`
+- `toolbar-mapping.ts:53`
 
 Sources:
 
@@ -381,14 +377,14 @@ Implementation:
 
 - `src/tools/featherMagneticLasso.ts:4`
 - `src/tools/featherMagneticLasso.ts:43`
-- `src/tools/settings.ts:112`
+- `src/tools/settings.ts:114`
 - `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:272`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:391`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:476`
 - `src/components/Main/FeatherMagneticLassoToolArea.tsx:458`
 - `src/util/selection.ts:834`
 - `src/util/selection.ts:837`
-- `toolbar-mapping.ts:47`
+- `toolbar-mapping.ts:54`
 
 Sources:
 
@@ -439,16 +435,16 @@ The Magic Wand tool selects by color and tone rather than by shape: one click ta
 - `W` — Selects the Magic Wand. The wand and the Quick Selection share W, so pressing it again re-selects this one rather than cycling; Shift+W is the cycling key.
 - `Shift+W` — Switches between the Magic Wand and the Quick Selection tools.
 
-**In this app:** `partial` — The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. Tolerance is a different control from Photoshop’s on two axes at once: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. `Contiguous` is `present` as of this pass and was `missing` in the previous version of this record, which said the behaviour was "permanently on and cannot be reached". That was true when written and is not now: `contiguous` is a declared field of `MagicWandToolArgs` (`src/tools/magicWand.ts:12`), seeded `true` in `settings.ts:127`, rendered as a checkbox wired to `patchToolArgs` (`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77`), and `createMagicWandSelectionFromCanvas` branches on it — so unticking it now takes the non-contiguous path, which is the selection that makes the wand useful on a repeated sky or a duplicated product shot. The commit that made it reachable notes it was left seeded `true` so no default click changes what is selected, which is also Photoshop’s default per the third-party and Elements authority quoted in the row. Sample All Layers is still absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.
+**In this app:** `partial` — The click, the flood and the commit all work, and the options bar reports the live selected-pixel count, which Photoshop’s bar does not. None of the modifiers above is read: the component that draws this tool (`src/components/Main/MagicWandToolArea.tsx`) takes the click position, `tolerance` and `smoothing` and consults no modifier key, so the Shift-adds, Alt-subtracts and Shift+Alt-intersects rows describe Photoshop and have no implementation here. Tolerance is a different control from Photoshop’s on two axes at once: a 0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32, so the app cannot reach the top two thirds of Photoshop’s color range and its default is not Photoshop’s. The bar’s second slider, Smooth, has no Photoshop counterpart and is not anti-aliasing — it simplifies the traced boundary polygon, so raising it rounds off the staircase rather than blending it. `Contiguous` is `present` as of this pass and was `missing` in the previous version of this record, which said the behaviour was "permanently on and cannot be reached". That was true when written and is not now: `contiguous` is a declared field of `MagicWandToolArgs` (`src/tools/magicWand.ts:12`), seeded `true` in `settings.ts:137`, rendered as a checkbox wired to `patchToolArgs` (`src/components/ToolbarsRight/MagicWand/MagicWand.tsx:77`), and `createMagicWandSelectionFromCanvas` branches on it — so unticking it now takes the non-contiguous path, which is the selection that makes the wand useful on a repeated sky or a duplicated product shot. The commit that made it reachable notes it was left seeded `true` so no default click changes what is selected, which is also Photoshop’s default per the third-party and Elements authority quoted in the row. Sample All Layers is still absent and effectively always on, because the tool always samples the merged document canvas rather than the active layer. The two follow-ups that make the wand usable in a real workflow, Refine Edge and Select Similar, do not exist in the app at all.
 
 Implementation:
 
 - `src/tools/magicWand.ts:3`
-- `src/tools/settings.ts:124`
+- `src/tools/settings.ts:126`
 - `src/components/ToolbarsRight/MagicWand/MagicWand.tsx:63`
 - `src/components/Main/MagicWandToolArea.tsx:58`
 - `src/util/magicWand.ts:31`
-- `toolbar-mapping.ts:52`
+- `toolbar-mapping.ts:59`
 
 Sources:
 
@@ -471,7 +467,7 @@ Sources:
 
 `quick-selection`
 
-Brush over an object and the selection grows along the image edges you cross; brush again to add, Alt-drag to subtract.
+Brush over an object and the selection grows along the image edges you cross; brush again to add.
 
 The Quick Selection tool is a brush that paints a selection. You drag over the object and the region grows outward from under the cursor, comparing color, tone and texture, and stops where it finds a defined edge in the image. That is the whole difference from the Magic Wand, which also takes a contiguous region but does it with a single click and no edge following: the Wand selects by color similarity, the Quick Selection selects by following an edge with a brush. Because the brush is the mechanism, its diameter is the accuracy control — the smaller it is, the less the tool is allowed to reason about at once and the tighter the result, which is why a soft edge wants a small brush. Adobe describes it as selecting "based on similar tones and image edges", so it is edge following with a color prior rather than a pure boundary tracer. It carries only three selection modes rather than four — New, Add to and Subtract from, with no Intersect — and it switches itself to Add to Selection after the first stroke so that brushing is cumulative by default. This description is of Photoshop 2025 through 2026.
 
@@ -480,16 +476,11 @@ The Quick Selection tool is a brush that paints a selection. You drag over the o
 | Control                      | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | In this app                                                                      |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | Tool presets                 | The preset picker every Photoshop tool carries, for saving and recalling this tool's whole option-bar state. It is the leftmost item on the bar.                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `missing`                                                                        |
-| New / Add to / Subtract from | Three buttons, and three only. Every other selection tool carries four — New, Add to, Subtract from and Intersect with — but this one stops at Subtract from, so there is no way to intersect a quick selection with an existing one. The tool switches itself to Add to Selection after the first stroke, and holding Alt/Option while brushing temporarily selects Subtract from Selection.                                                                                                                                                                                                        | `partial` — `src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:148` |
+| New / Add to / Subtract from | Three buttons, and three only. Every other selection tool carries four — New, Add to, Subtract from and Intersect with — but this one stops at Subtract from, so there is no way to intersect a quick selection with an existing one. The tool switches itself to Add to Selection after the first stroke, and the mode has to be chosen in this bar; the app binds no Alt/Option modifier to the gesture, so there is no temporary Subtract from Selection while brushing.                                                                                                                          | `partial` — `src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:148` |
 | Size                         | The brush diameter, taken from the brush preset picker that also carries Hardness, Spacing, Angle and Roundness. The brush is the whole mechanism: the region grows outward from under the cursor and stops where the image edge is, so the brush diameter sets how much of the image the tool is allowed to reason about, and a smaller brush gives a more accurate result — which is why it is the control a user reaches for at a soft edge. Photoshop exposes size and hardness directly in the options bar and lets the left and right bracket keys resize the cursor while the tool is active. | `partial` — `src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111` |
 | Select and Mask              | Opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush for soft edges such as hair or fur, a plain Brush to add and remove by hand, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors in the Properties panel, then output as a selection, a layer mask, a new layer or a new document. This tool's own page ends by naming it: "Select Select and Mask to refine the selection further."                                                                                                                                  | `missing`                                                                        |
 | Sample All Layers            | When selected, the selection is made from all the visible layers instead of only the currently selected layer, so a subject on one layer can be selected against a background on another.                                                                                                                                                                                                                                                                                                                                                                                                            | `missing`                                                                        |
 | Auto-Enhance                 | Named Enhance Edge in the 2025 documentation and Auto-Enhance in Adobe's 2022 tutorial, which is where the older label appears. It reduces the roughness and blockiness the raw edge detection leaves, flows the selection further toward the image edges, and applies part of the edge refinement that Select and Mask does by hand — at the cost of the tool taking noticeably longer to run.                                                                                                                                                                                                      | `missing`                                                                        |
-
-**Modifiers**
-
-- **Alt** — Brushing with Alt held subtracts from the selection for the duration of the stroke; releasing it returns the tool to Add to Selection.
-- **Ctrl+Alt** — Dragging horizontally with it held changes the brush size, and dragging vertically the hardness. That is the macOS binding, and the Windows one is the same pair with the right mouse button; plain Alt-drag is not bound to brush size in Photoshop at all.
 
 **Shortcuts**
 
@@ -505,11 +496,11 @@ Implementation:
 - `src/tools/quickSelection.ts:8`
 - `src/tools/quickSelection.ts:144`
 - `src/tools/quickSelection.ts:79`
-- `src/tools/settings.ts:227`
+- `src/tools/settings.ts:236`
 - `src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:111`
 - `src/components/Main/QuickSelectionToolArea.tsx:125`
 - `src/components/Main/QuickSelectionToolArea.tsx:216`
-- `toolbar-mapping.ts:53`
+- `toolbar-mapping.ts:60`
 
 Sources:
 
@@ -582,14 +573,14 @@ The Brush is Photoshop’s general painting tool. Click and drag to lay down a s
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:256`
+- `src/tools/toolProcessors.ts:276`
 - `src/tools/brush.ts:70`
 - `src/components/ToolbarsRight/Paint/Paint.tsx:43`
 - `src/components/Main/DrawToolArea.tsx:143`
 - `src/tools/brush.ts:109`
 - `src/contexts/layer-utils.ts:230`
-- `src/tools/settings.ts:131`
-- `src/components/Common/AppKeyboardShortcuts.tsx:517`
+- `src/tools/settings.ts:140`
+- `src/components/Common/AppKeyboardShortcuts.tsx:538`
 
 Sources:
 
@@ -656,11 +647,11 @@ The Pencil is a Brush whose tip is always hard-edged, so its strokes never blend
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:264`
+- `src/tools/toolProcessors.ts:297`
 - `src/components/ToolbarsRight/Paint/Paint.tsx:43`
 - `src/components/Main/DrawToolArea.tsx:143`
-- `src/tools/settings.ts:148`
-- `src/components/Common/AppKeyboardShortcuts.tsx:517`
+- `src/tools/settings.ts:157`
+- `src/components/Common/AppKeyboardShortcuts.tsx:538`
 
 Sources:
 
@@ -712,14 +703,14 @@ The Color Replacement Tool substitutes one color for another in a stroke, keepin
 
 Implementation:
 
-- `src/tools/toolsMap.ts:117`
+- `src/tools/toolsMap.ts:138`
 - `src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:71`
 - `src/components/Main/ColorReplacementToolArea.tsx:141`
 - `src/tools/colorReplacement.ts:182`
 - `src/tools/colorReplacement.ts:313`
-- `src/tools/toolProcessors.ts:277`
-- `src/tools/settings.ts:165`
-- `src/components/Common/AppKeyboardShortcuts.tsx:347`
+- `src/tools/toolProcessors.ts:310`
+- `src/tools/settings.ts:174`
+- `src/components/Common/AppKeyboardShortcuts.tsx:368`
 
 Sources:
 
@@ -782,14 +773,14 @@ The Eraser removes pixels under a dragged tip, writing transparency on a layer a
 
 Implementation:
 
-- `src/tools/toolsMap.ts:122`
+- `src/tools/toolsMap.ts:143`
 - `src/tools/eraser.ts:26`
 - `src/tools/eraser.ts:85`
 - `src/tools/eraser.ts:215`
 - `src/components/Main/EraserToolArea.tsx:211`
 - `src/components/ToolbarsRight/Eraser/Eraser.tsx:38`
-- `src/tools/settings.ts:183`
-- `src/components/Common/AppKeyboardShortcuts.tsx:462`
+- `src/tools/settings.ts:192`
+- `src/components/Common/AppKeyboardShortcuts.tsx:483`
 
 Sources:
 
@@ -828,16 +819,16 @@ The Magic Eraser is the Paint Bucket run in reverse: one click erases every pixe
 
 - `Shift+E` — Cycles the slot shared with the Eraser and the Background Eraser. Adobe’s own help page prints the bare letter E beside the tool, but the tool does not have E to itself — the Eraser does.
 
-**In this app:** `partial` — A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the app does not bind `Shift+E`: the eraser family shares one plain `E` registration with no Shift twin (`AppKeyboardShortcuts.tsx:462`), so the tool is selected only by cycling with Shift+B from the eraser slot rather than the cycle Photoshop uses. Its bar is the shared fill bar, built by `createFillToolbar` and rendered at `MagicEraser.tsx:24`.
+**In this app:** `partial` — A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the app does not bind `Shift+E`: the eraser family shares one plain `E` registration with no Shift twin (`AppKeyboardShortcuts.tsx:483`), so the tool is selected only by cycling with Shift+B from the eraser slot rather than the cycle Photoshop uses. Its bar is the shared fill bar, built by `createFillToolbar` and rendered at `MagicEraser.tsx:24`.
 
 Implementation:
 
-- `src/tools/toolsMap.ts:123`
+- `src/tools/toolsMap.ts:144`
 - `src/tools/fill.ts:163`
 - `src/util/floodFill.ts:76`
 - `src/components/Main/FillToolArea.tsx:91`
 - `src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:24`
-- `src/tools/settings.ts:197`
+- `src/tools/settings.ts:206`
 
 Sources:
 
@@ -881,14 +872,14 @@ The Paint Bucket fills the whole connected region of similar color around the cl
 
 Implementation:
 
-- `src/tools/toolsMap.ts:124`
+- `src/tools/toolsMap.ts:145`
 - `src/tools/fill.ts:129`
 - `src/tools/fill.ts:151`
 - `src/components/Main/FillToolArea.tsx:154`
 - `src/components/Main/FillToolArea.tsx:160`
 - `src/components/ToolbarsRight/MagicEraser/PaintBucket.tsx:35`
-- `src/tools/settings.ts:206`
-- `src/components/Common/AppKeyboardShortcuts.tsx:314`
+- `src/tools/settings.ts:215`
+- `src/components/Common/AppKeyboardShortcuts.tsx:335`
 
 Sources:
 
@@ -947,7 +938,7 @@ The Clone Stamp copies pixels from one part of an image and paints them into ano
 
 Implementation:
 
-- `src/tools/toolsMap.ts:96`
+- `src/tools/toolsMap.ts:111`
 - `src/components/Main/CloneStampToolArea.tsx:343`
 - `src/components/Main/CloneStampToolArea.tsx:352`
 - `src/components/Main/CloneStampToolArea.tsx:210`
@@ -956,8 +947,8 @@ Implementation:
 - `src/contexts/useLayer.ts:334`
 - `src/contexts/useLayer.ts:589`
 - `src/components/ToolbarsRight/CloneStamp/CloneStamp.tsx:71`
-- `src/tools/settings.ts:263`
-- `src/components/Common/AppKeyboardShortcuts.tsx:362`
+- `src/tools/settings.ts:286`
+- `src/components/Common/AppKeyboardShortcuts.tsx:383`
 
 Sources:
 
@@ -1009,12 +1000,12 @@ The Blur tool reduces local contrast and smooths detail in the areas you paint i
 Implementation:
 
 - `src/tools/blur.ts:11`
-- `src/tools/settings.ts:52`
+- `src/tools/settings.ts:54`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:101`
 - `src/components/ToolbarsRight/Blur/Blur.tsx:121`
-- `src/components/Main/Main.tsx:236`
+- `src/components/Main/Main.tsx:250`
 - `src/components/Main/SharpenToolArea.tsx:33`
-- `src/tools/toolProcessors.ts:119`
+- `src/tools/toolProcessors.ts:120`
 
 Sources:
 
@@ -1059,11 +1050,11 @@ Implementation:
 
 - `src/tools/sharpen.ts:243`
 - `src/tools/sharpen.ts:90`
-- `src/tools/settings.ts:245`
+- `src/tools/settings.ts:254`
 - `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:125`
 - `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:143`
 - `src/components/Main/SharpenToolArea.tsx:46`
-- `src/tools/toolProcessors.ts:226`
+- `src/tools/toolProcessors.ts:246`
 
 Sources:
 
@@ -1114,13 +1105,13 @@ Implementation:
 
 - `src/tools/smudge.ts:149`
 - `src/tools/smudge.ts:123`
-- `src/tools/settings.ts:246`
+- `src/tools/settings.ts:255`
 - `src/components/ToolbarsRight/Smudge/Smudge.tsx:138`
 - `src/components/ToolbarsRight/Smudge/Smudge.tsx:153`
 - `src/components/Main/SmudgeToolArea.tsx:62`
-- `src/components/Common/AppKeyboardShortcuts.tsx:49`
-- `src/components/Common/AppKeyboardShortcuts.tsx:518`
-- `src/tools/toolProcessors.ts:232`
+- `src/components/Common/AppKeyboardShortcuts.tsx:69`
+- `src/components/Common/AppKeyboardShortcuts.tsx:539`
+- `src/tools/toolProcessors.ts:252`
 
 Sources:
 
@@ -1178,10 +1169,10 @@ Implementation:
 - `src/components/ToolbarsRight/Gradient/Gradient.tsx:129`
 - `src/components/ToolbarsRight/Gradient/Gradient.tsx:146`
 - `src/tools/gradient.ts:132`
-- `src/tools/settings.ts:234`
+- `src/tools/settings.ts:243`
 - `src/components/Main/GradientToolArea.tsx:40`
 - `src/components/Main/GradientToolArea.tsx:95`
-- `src/tools/toolProcessors.ts:220`
+- `src/tools/toolProcessors.ts:221`
 
 Sources:
 
@@ -1234,17 +1225,17 @@ The Dodge tool comes from the darkroom: a printer holds light back under a finge
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:124`
-- `src/tools/dodgeBurn.ts:176`
-- `src/tools/dodgeBurn.ts:89`
-- `src/tools/settings.ts:247`
+- `src/tools/dodgeBurn.ts:119`
+- `src/tools/dodgeBurn.ts:171`
+- `src/tools/dodgeBurn.ts:84`
+- `src/tools/settings.ts:256`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:156`
 - `src/components/Main/DodgeToolArea.tsx:50`
-- `src/components/Common/AppKeyboardShortcuts.tsx:437`
+- `src/components/Common/AppKeyboardShortcuts.tsx:458`
 - `toolbar-mapping.ts:94`
-- `src/tools/toolProcessors.ts:238`
+- `src/tools/toolProcessors.ts:258`
 
 Sources:
 
@@ -1292,16 +1283,16 @@ The Burn tool is the Dodge tool measured from the other end: instead of holding 
 
 Implementation:
 
-- `src/tools/dodgeBurn.ts:354`
-- `src/tools/dodgeBurn.ts:124`
-- `src/tools/dodgeBurn.ts:176`
-- `src/tools/settings.ts:255`
+- `src/tools/dodgeBurn.ts:310`
+- `src/tools/dodgeBurn.ts:119`
+- `src/tools/dodgeBurn.ts:171`
+- `src/tools/settings.ts:264`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`
 - `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`
 - `src/components/Main/BurnToolArea.tsx:56`
-- `src/components/Common/AppKeyboardShortcuts.tsx:437`
-- `toolbar-mapping.ts:94`
-- `src/tools/toolProcessors.ts:244`
+- `src/components/Common/AppKeyboardShortcuts.tsx:458`
+- `toolbar-mapping.ts:95`
+- `src/tools/toolProcessors.ts:264`
 
 Sources:
 
@@ -1355,14 +1346,14 @@ Implementation:
 - `src/tools/sponge.ts:177`
 - `src/tools/sponge.ts:60`
 - `src/tools/sponge.ts:279`
-- `src/tools/settings.ts:269`
+- `src/tools/settings.ts:292`
 - `src/components/ToolbarsRight/Sponge/Sponge.tsx:134`
 - `src/components/Main/SpongeToolArea.tsx:52`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 - `src/components/Common/AppKeyboardShortcuts.tsx:592`
 - `src/components/Common/AppKeyboardShortcuts.tsx:602`
 - `toolbar-mapping.ts:100`
-- `src/tools/toolProcessors.ts:268`
+- `src/tools/toolProcessors.ts:301`
 
 Sources:
 
@@ -1400,7 +1391,7 @@ The Rectangle tool draws a four-sided figure from two drag corners, and Shift ho
 | Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:212` |
 | Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:161` |
 | Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:227` |
-| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog offering Width, Height and From Center — plus a corner-radius field on the figures that have one — so exact geometry can be typed instead of dragged.                                                                                                                                                                                                                                                                                                                                                                                        | `partial` — `src/components/Main/ShapeToolArea.tsx:181`          |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `partial` — `src/components/Main/ShapeToolArea.tsx:205`          |
 | Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `missing`                                                        |
 | Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
 | Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
@@ -1422,7 +1413,7 @@ The Rectangle tool draws a four-sided figure from two drag corners, and Shift ho
 
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `partial` — The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry, and only the rectangle gets a radius — the app gates the whole control on this figure. Fill and Stroke are on the bar, then, and `partial` in the table above is the honest reading of them: what the app renders is a single wired `Filled` checkbox over its one shared colour, and it is the separate swatches with their None / Solid / Gradient / Pattern menu that are missing, not the controls. The mode group, the stroke width, the stroke type, the opacity and the W/H prompt each diverge from Photoshop’s control in the same way, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A click with no drag is refused and reported on the console rather than opening a dialog, so of the Create Rectangle dialog’s fields none has a counterpart here: Width, Height, corner-radius and From Center are all unreachable without a drag.
+**In this app:** `partial` — The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry on the bar, and only the rectangle gets a radius — the app gates the whole control on this figure. Fill and Stroke are on the bar, then, and `partial` in the table above is the honest reading of them: what the app renders is a single wired `Filled` checkbox over its one shared colour, and it is the separate swatches with their None / Solid / Gradient / Pattern menu that are missing, not the controls. The mode group, the stroke width, the stroke type and the opacity each diverge from Photoshop’s control in the same way, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A bare click is where this figure is at its closest: Adobe’s one documented sentence is this figure’s own, and all four of the fields it names — Width, Height, corner radii and align from centre — are in the app’s Create Rectangle dialog, so nothing is left over on this figure. The corner radius is seeded from the bar’s live slider and applied to the layer being created, so a radius typed in the dialog does not rewrite the slider behind the user’s back. What diverges is the entry point rather than the fields: `Shape W&H` is a control on Photoshop’s bar and this app’s bar has none, so here the exact geometry is reachable only by opening the dialog with a click.
 
 Implementation:
 
@@ -1460,7 +1451,7 @@ The Ellipse tool inscribes an ellipse in the drag box; Shift holds it a circle, 
 | Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:212` |
 | Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:161` |
 | Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:227` |
-| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog offering Width, Height and From Center — plus a corner-radius field on the figures that have one — so exact geometry can be typed instead of dragged.                                                                                                                                                                                                                                                                                                                                                                                        | `partial` — `src/components/Main/ShapeToolArea.tsx:181`          |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `partial` — `src/components/Main/ShapeToolArea.tsx:205`          |
 | Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `missing`                                                        |
 | Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
 | Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
@@ -1481,7 +1472,7 @@ The Ellipse tool inscribes an ellipse in the drag box; Shift holds it a circle, 
 
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `partial` — The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. The bar itself is the shared one — the Ellipse gets no control of its own, so the options bar names it and shows the same controls every figure gets: the tool-mode select, the thickness slider, the Filled checkbox, the dashed toggle with its dash and gap sliders, the opacity slider and the live preview. That is the same set the rectangle has minus the radius, so the same reading applies to each: fill and stroke are on the bar as a wired Filled checkbox over one shared colour rather than as Photoshop’s two swatches, the mode group, the stroke type, the opacity and the W/H prompt each diverge from Photoshop’s control, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A click with no drag is refused and reported on the console rather than opening a Create Ellipse dialog, and takes no From Center.
+**In this app:** `partial` — The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. The bar itself is the shared one — the Ellipse gets no control of its own, so the options bar names it and shows the same controls every figure gets: the tool-mode select, the thickness slider, the Filled checkbox, the dashed toggle with its dash and gap sliders, the opacity slider and the live preview. That is the same set the rectangle has minus the radius, so the same reading applies to each: fill and stroke are on the bar as a wired Filled checkbox over one shared colour rather than as Photoshop’s two swatches, the mode group, the stroke type and the opacity each diverge from Photoshop’s control, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A bare click opens the app’s Create Ellipse dialog, titled per figure, with Width, Height and From Center and no corner radius — the same gate as the bar’s, on a figure whose corners are not rounded anywhere on either side. Adobe’s own documentation of a click dialog is the rectangle’s, so this figure’s dialog is the app’s field set rather than a documented one.
 
 Implementation:
 
@@ -1519,7 +1510,7 @@ The Line tool drags a single straight segment between two points, and Shift snap
 | Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:212` |
 | Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:161` |
 | Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:227` |
-| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog offering Width, Height and From Center — plus a corner-radius field on the figures that have one — so exact geometry can be typed instead of dragged.                                                                                                                                                                                                                                                                                                                                                                                        | `partial` — `src/components/Main/ShapeToolArea.tsx:181`          |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `partial` — `src/components/Main/ShapeToolArea.tsx:205`          |
 | Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `missing`                                                        |
 | Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
 | Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
@@ -1542,7 +1533,7 @@ The Line tool drags a single straight segment between two points, and Shift snap
 
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `partial` — The drag is the tool, and the drag is right: `normalizeShapeGeometry` routes the line figure to `snapLineGeometry`, which quantizes the drag angle to `LINE_ANGLE_STEP` — `Math.PI / 4` — so a Shift-drag snaps to a multiple of 45 degrees exactly as Adobe specifies, and unlike every other figure the line is not squared by Shift. The two things that are missing are the arrowheads and the shape of the bar. Arrowheads are absent outright — `drawShape` strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow, and that is what keeps the verdict at `partial` rather than `implemented`: the tool that draws arrows does not draw them. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path, through the Stroke Options panel rather than a bar-level select. A click with no drag is refused and reported on the console rather than opening a dialog. A line has no Width and Height on Photoshop’s side either, so unlike the other figures there was never a click dialog to diverge from — but neither can a line be given a length before the drag, because the bare click commits nothing.
+**In this app:** `partial` — The drag is the tool, and the drag is right: `normalizeShapeGeometry` routes the line figure to `snapLineGeometry`, which quantizes the drag angle to `LINE_ANGLE_STEP` — `Math.PI / 4` — so a Shift-drag snaps to a multiple of 45 degrees exactly as Adobe specifies, and unlike every other figure the line is not squared by Shift. The two things that are missing are the arrowheads and the shape of the bar. Arrowheads are absent outright — `drawShape` strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow, and that is what keeps the verdict at `partial` rather than `implemented`: the tool that draws arrows does not draw them. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path, through the Stroke Options panel rather than a bar-level select. A bare click gets no dialog at all on this figure, and that is the contract rather than a gap: Adobe documents the Line tool as a drag and a release and never names a Create Line dialog, so the click refuses on the console instead of opening a dialog Adobe has not got. A line has no Width and Height on Adobe’s side either, so the drag is the only place either can give it a length.
 
 Implementation:
 
@@ -1580,7 +1571,7 @@ The Triangle tool, added in Photoshop 2021 (v22), draws a three-sided figure who
 | Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:212` |
 | Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:161` |
 | Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:227` |
-| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog offering Width, Height and From Center — plus a corner-radius field on the figures that have one — so exact geometry can be typed instead of dragged.                                                                                                                                                                                                                                                                                                                                                                                        | `partial` — `src/components/Main/ShapeToolArea.tsx:181`          |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `partial` — `src/components/Main/ShapeToolArea.tsx:205`          |
 | Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `missing`                                                        |
 | Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
 | Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
@@ -1602,7 +1593,7 @@ The Triangle tool, added in Photoshop 2021 (v22), draws a three-sided figure who
 
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `partial` — The geometry is wrong in the specific way the premise correction warns about. The app inscribes a regular three-sided polygon in the drag box, so a wide drag yields a squat isosceles-looking triangle only by accident, and Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w. Because the figure is built by the shared triangle/polygon branch, its Radius field is both absent from the bar and unimplemented in the renderer, so its corners can never be rounded. The Shift behaviour is version-dependent in wording only: the equilateral constraint has been the tool’s Shift since 2021 (v22), and later versions add the persistent Equilateral checkbox to the gear menu. A click with no drag is refused and reported on the console rather than opening a dialog, so none of the five things Adobe’s click dialog offers — Width, Height, Corner Radius, Equilateral and From Center — can be typed here at all; the click path exists only to draw.
+**In this app:** `partial` — The geometry is wrong in the specific way the premise correction warns about. The app inscribes a regular three-sided polygon in the drag box, so a wide drag yields a squat isosceles-looking triangle only by accident, and Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w. Because the figure is built by the shared triangle/polygon branch, its Radius field is both absent from the bar and unimplemented in the renderer, so its corners can never be rounded. The Shift behaviour is version-dependent in wording only: the equilateral constraint has been the tool’s Shift since 2021 (v22), and later versions add the persistent Equilateral checkbox to the gear menu. A bare click opens the app’s Create Triangle dialog with Width, Height and From Center, so of the five things Adobe documents for this figure’s click dialog — Width, Height, Corner Radius, Equilateral and From Center — three can be typed here and two are gaps. Equilateral is absent outright, and it is the same gap the Shift row above reaches from the other direction. Corner Radius is withheld rather than absent: `drawShape` reads `cornerRadius` in its rectangle branch only, so a triangle field would take a value and round nothing, and this figure’s corners cannot be rounded here either way.
 
 Implementation:
 
@@ -1641,7 +1632,7 @@ The Polygon tool is drag-defined, not a click-to-place-vertices tool: Adobe says
 | Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:212` |
 | Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:161` |
 | Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:227` |
-| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog offering Width, Height and From Center — plus a corner-radius field on the figures that have one — so exact geometry can be typed instead of dragged.                                                                                                                                                                                                                                                                                                                                                                                        | `partial` — `src/components/Main/ShapeToolArea.tsx:181`          |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `partial` — `src/components/Main/ShapeToolArea.tsx:205`          |
 | Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `missing`                                                        |
 | Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
 | Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
@@ -1664,7 +1655,7 @@ The Polygon tool is drag-defined, not a click-to-place-vertices tool: Adobe says
 
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `partial` — The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Everything after that is missing. The side count is a hardcoded two-branch ternary — const sides = figure === 'triangle' ? 3 : 5, a literal at `src/tools/shape.ts:210` — so there is no Sides field and no way to draw a hexagon; and the app has no Star tool of its own to draw one, so a star Ratio has nothing here to compare against. That same hardcoding is why the `[` and `]` rows Photoshop gives this tool are gone from the table above: they change a side count that does not exist at runtime, and the app's bracket keys reach only the eight tools that carry a tip Size, so there is nothing for them to act on here. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing.
+**In this app:** `partial` — The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Everything after that is missing. The side count is a hardcoded two-branch ternary — const sides = figure === 'triangle' ? 3 : 5, a literal at `src/tools/shape.ts:210` — so there is no Sides field and no way to draw a hexagon; and the app has no Star tool of its own to draw one, so a star Ratio has nothing here to compare against. That same hardcoding is why the `[` and `]` rows Photoshop gives this tool are gone from the table above: they change a side count that does not exist at runtime, and the app's bracket keys reach only the eight tools that carry a tip Size, so there is nothing for them to act on here. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and the renderer would ignore every one of them here regardless, because the side count is the hardcoded literal above and no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.
 
 Implementation:
 
@@ -1704,7 +1695,7 @@ The Custom Shape tool draws any of the vector presets in Photoshop’s shape lib
 | Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `inert` — `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37` |
 | Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `missing`                                                               |
 | Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `missing`                                                               |
-| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog offering Width, Height and From Center — plus a corner-radius field on the figures that have one — so exact geometry can be typed instead of dragged.                                                                                                                                                                                                                                                                                                                                                                                        | `inert` — `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37` |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `inert` — `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37` |
 | Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `inert` — `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37` |
 | Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                               |
 | Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                               |
@@ -1725,7 +1716,7 @@ The Custom Shape tool draws any of the vector presets in Photoshop’s shape lib
 
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `placeholder` — Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. That is why those six rows read `inert` and not `missing` — the names are on screen and nothing is wired behind any of them, which is the exact shape the `inert` status exists for. The three rows that were `partial` above are also `missing` rather than partial, but for the opposite reason: Stroke width, Stroke type and Opacity have no chip in this tool's list at all, and the real shape bar that carries them never renders here, because this tool is absent from the canvas dispatch that gives the other five figures their gesture surface. It is a `display: none` area, so the three modifiers named above — Shift, Alt and Space — are bound to nothing either, and the app’s Shift constraint, which squares the drag box for every figure except the line, has no drag to apply to. That is also the whole of the app side of the Shape W&H row: for the five figures that draw, a click with no drag is refused and reported on the console, and for this tool the whole area is `display: none`, so a click does nothing at all rather than opening a sized dialog. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.
+**In this app:** `placeholder` — Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. That is why those six rows read `inert` and not `missing` — the names are on screen and nothing is wired behind any of them, which is the exact shape the `inert` status exists for. The three rows that were `partial` above are also `missing` rather than partial, but for the opposite reason: Stroke width, Stroke type and Opacity have no chip in this tool's list at all, and the real shape bar that carries them never renders here, because this tool is absent from the canvas dispatch that gives the other five figures their gesture surface. It is a `display: none` area, so the three modifiers named above — Shift, Alt and Space — are bound to nothing either, and the app’s Shift constraint, which squares the drag box for every figure except the line, has no drag to apply to. That is also the whole of the app side of the Shape W&H row: a bare click opens a Create <Figure> dialog on the five figures that mount `ShapeToolArea`, and this tool mounts `DummyToolArea` instead, so none of that runs here and a click with no drag does nothing rather than opening a sized dialog. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.
 
 Implementation:
 
@@ -1768,7 +1759,7 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 | Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:212` |
 | Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:161` |
 | Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:227` |
-| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog offering Width, Height and From Center — plus a corner-radius field on the figures that have one — so exact geometry can be typed instead of dragged.                                                                                                                                                                                                                                                                                                                                                                                        | `partial` — `src/components/Main/ShapeToolArea.tsx:181`          |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `partial` — `src/components/Main/ShapeToolArea.tsx:205`          |
 | Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `missing`                                                        |
 | Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
 | Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
@@ -1790,7 +1781,7 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 - `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 - `Shift+U` — Cycles to the next tool in the shapes tool group, through the four the app’s cycle holds: rectangle, ellipse, line and Custom Shape. The Triangle and the Polygon are in the rail’s flyout but not in the cycle, and an unlisted figure does not skip ahead — Shift+U from either of them restarts at the rectangle instead of advancing.
 
-**In this app:** `partial` — The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:110-115`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag has no size to draw, so it is refused and reported on the console (`ShapeToolArea.tsx:184`) rather than opening a dialog, which means Photoshop’s Create <Shape> dialog has no counterpart here at all and a bare click commits nothing.
+**In this app:** `partial` — The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:128-135`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.
 
 Implementation:
 
@@ -1861,18 +1852,18 @@ The Pen tool builds a path of straight and curved segments by clicking to place 
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:300`
+- `src/tools/toolProcessors.ts:333`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:128`
+- `src/tools/toolsMap.ts:149`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:272`
-- `src/contexts/tool-types.ts:58`
-- `src/util/settings.ts:101`
-- `src/components/Main/Main.tsx:236`
-- `src/components/Common/AppKeyboardShortcuts.tsx:492`
+- `src/tools/settings.ts:295`
+- `src/contexts/tool-types.ts:68`
+- `src/util/settings.ts:111`
+- `src/components/Main/Main.tsx:250`
+- `src/components/Common/AppKeyboardShortcuts.tsx:513`
 - `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:45`
-- `src/tools/__tests__/tool-processors.test.ts:336`
+- `src/tools/__tests__/tool-processors.test.ts:344`
 
 Sources:
 
@@ -1919,17 +1910,17 @@ The Freeform Pen takes a single drag and turns it into a path, so it is the tool
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:302`
+- `src/tools/toolProcessors.ts:335`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:132`
+- `src/tools/toolsMap.ts:153`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24`
-- `src/tools/settings.ts:273`
-- `src/contexts/tool-types.ts:59`
-- `src/util/settings.ts:102`
-- `src/components/Main/Main.tsx:236`
-- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:171`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/tools/settings.ts:296`
+- `src/contexts/tool-types.ts:69`
+- `src/util/settings.ts:112`
+- `src/components/Main/Main.tsx:250`
+- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
 Sources:
 
@@ -1979,17 +1970,17 @@ The Curvature Pen is Illustrator’s Curvature tool ported into Photoshop, and i
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:307`
+- `src/tools/toolProcessors.ts:340`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:137`
+- `src/tools/toolsMap.ts:158`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:25`
-- `src/tools/settings.ts:274`
-- `src/contexts/tool-types.ts:60`
-- `src/util/settings.ts:103`
-- `src/components/Main/Main.tsx:236`
-- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:171`
-- `src/components/Common/AppKeyboardShortcuts.tsx:33`
+- `src/tools/settings.ts:297`
+- `src/contexts/tool-types.ts:70`
+- `src/util/settings.ts:113`
+- `src/components/Main/Main.tsx:250`
+- `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172`
+- `src/components/Common/AppKeyboardShortcuts.tsx:53`
 
 Sources:
 
@@ -2018,16 +2009,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:312`
+- `src/tools/toolProcessors.ts:345`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:142`
+- `src/tools/toolsMap.ts:163`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:275`
-- `src/contexts/tool-types.ts:61`
-- `src/util/settings.ts:104`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:77`
+- `src/tools/settings.ts:298`
+- `src/contexts/tool-types.ts:71`
+- `src/util/settings.ts:114`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:83`
 
 Sources:
 
@@ -2050,16 +2041,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:317`
+- `src/tools/toolProcessors.ts:350`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:147`
+- `src/tools/toolsMap.ts:168`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:276`
-- `src/contexts/tool-types.ts:62`
-- `src/util/settings.ts:105`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:78`
+- `src/tools/settings.ts:299`
+- `src/contexts/tool-types.ts:72`
+- `src/util/settings.ts:115`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:84`
 
 Sources:
 
@@ -2086,16 +2077,16 @@ _Photoshop gives this tool no options bar of its own._
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:322`
+- `src/tools/toolProcessors.ts:355`
 - `src/tools/toolProcessors.ts:110`
-- `src/tools/toolsMap.ts:152`
+- `src/tools/toolsMap.ts:173`
 - `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8`
 - `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23`
-- `src/tools/settings.ts:277`
-- `src/contexts/tool-types.ts:63`
-- `src/util/settings.ts:106`
-- `src/components/Main/Main.tsx:236`
-- `src/components/SidebarLeft/toolIcons.tsx:79`
+- `src/tools/settings.ts:300`
+- `src/contexts/tool-types.ts:73`
+- `src/util/settings.ts:116`
+- `src/components/Main/Main.tsx:250`
+- `src/components/SidebarLeft/toolIcons.tsx:85`
 - `src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242`
 - `src/contexts/history-adapter.ts:550`
 
@@ -2164,7 +2155,7 @@ A crop sets a new boundary for the document. Selecting the Crop tool shows a cro
 Implementation:
 
 - `src/tools/crop.ts:26`
-- `src/tools/toolProcessors.ts:146`
+- `src/tools/toolProcessors.ts:147`
 - `src/components/ToolbarsRight/Crop/Crop.tsx:61`
 - `src/components/Main/CropToolArea.tsx:40`
 - `src/components/Main/CropToolArea.tsx:61`
@@ -2175,8 +2166,8 @@ Implementation:
 - `src/util/rect.ts:36`
 - `src/contexts/useLayer.ts:644`
 - `src/util/settings.ts:39`
-- `src/tools/settings.ts:67`
-- `toolbar-mapping.ts:59`
+- `src/tools/settings.ts:69`
+- `toolbar-mapping.ts:66`
 
 Sources:
 
@@ -2237,7 +2228,7 @@ Implementation:
 
 - `src/tools/text.ts:28`
 - `src/tools/text.ts:72`
-- `src/tools/toolProcessors.ts:160`
+- `src/tools/toolProcessors.ts:161`
 - `src/components/ToolbarsRight/Text/Text.tsx:95`
 - `src/components/Main/TextToolArea.tsx:24`
 - `src/contexts/useLayer.ts:369`
@@ -2246,8 +2237,8 @@ Implementation:
 - `src/contexts/materialization.ts:171`
 - `src/util/rect.ts:116`
 - `src/util/settings.ts:31`
-- `src/tools/settings.ts:82`
-- `toolbar-mapping.ts:108`
+- `src/tools/settings.ts:84`
+- `toolbar-mapping.ts:127`
 
 Sources:
 
@@ -2322,11 +2313,11 @@ Implementation:
 - `src/components/Main/MoveToolArea.tsx:199`
 - `src/contexts/useLayer.ts:334`
 - `src/tools/reposition.ts:12`
-- `src/tools/toolProcessors.ts:114`
+- `src/tools/toolProcessors.ts:115`
 - `src/components/ToolbarsRight/Move/Reposition.tsx:13`
-- `src/components/Common/AppKeyboardShortcuts.tsx:306`
-- `src/components/SidebarLeft/SidebarLeft.tsx:621`
-- `src/components/SidebarLeft/SidebarLeft.tsx:951`
+- `src/components/Common/AppKeyboardShortcuts.tsx:327`
+- `src/components/SidebarLeft/SidebarLeft.tsx:644`
+- `src/components/SidebarLeft/SidebarLeft.tsx:974`
 - `toolbar-mapping.ts:39`
 
 Sources:
@@ -2352,70 +2343,83 @@ Sources:
 
 ---
 
-### Colors
+### Free Transform — the Edit > Free Transform command, not a Tools panel Tool
 
-`color`
+`transform`
 
-Photoshop's name for it is **Black & White — the Image > Adjustments command, not a Tools panel Tool**.
+Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, adds perspective or warps a layer in one continuous operation.
 
-Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.
-
-Black & White is not a desaturation — it is a weighted mix, and the six sliders are the weights. Each of the six sextants of the color wheel, Reds, Yellows, Greens, Cyans, Blues and Magentas, gets its own control over how bright that family of hues becomes in the result, so a landscape can have a dark sky and a bright sky in the same conversion, and skin can be lifted without touching the greens. Every slider starts at a value that reproduces a conventional conversion — Photoshop opens the adjustment having already applied "a default grayscale conversion to your image" — and dragging one away from that value is the whole technique. Ticking Tint lays a uniform tone color over the monochrome so it reads as toned rather than neutral, which is how a sepia or a split-tone is made from a color original without going back to it.
+Free Transform puts a bounding box around the active layer and lets one continuous operation change its size, angle and shape together, which is the point: rotating and rescaling an image in two steps resamples it twice. Every mode is a drag on that box, and the mode is chosen by right-click menu, by an options-bar button, or by holding a modifier so the box changes behavior mid-gesture. Nothing is written to the document until you commit, so a transform can be abandoned and undone as a unit.
 
 **Options bar**
 
-| Control                  | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | In this app                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Preset                   | Menu of predefined grayscale mixes and of any mix the user has saved, with Save Black & White Preset alongside it.                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `missing`                                                       |
-| On-image adjustment icon | The Targeted Adjustment tool, sitting directly under the Preset option at the top of the panel. Adobe states the gesture as a drag of the icon itself: "Select and drag On-image adjustment icon onto the image to adjust tones." It moves the sextant slider for whichever family of hues dominates the pixels under the cursor, and that one slider moves every area containing those hues rather than a mark you place.                                                                                                                                                      | `missing`                                                       |
-| Auto                     | Sets a grayscale mix based on the values in the image itself — Adobe's own words are "Set a grayscale mix based on your image's color values" — so it reads the layer rather than asking you to weight six families by hand.                                                                                                                                                                                                                                                                                                                                                    | `missing`                                                       |
-| Tint                     | Checkbox that lays a uniform tone color over the monochrome result, which is what turns a neutral conversion into a toned or sepia one.                                                                                                                                                                                                                                                                                                                                                                                                                                         | `missing`                                                       |
-| Tint Color               | The color swatch beside the Tint checkbox. Choosing it opens the Color Picker, and the tone applied is called Tint Color.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `missing`                                                       |
-| Color sliders            | Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe's own page names the block and nothing inside it — "Color sliders: Drag sliders to adjust gray tones for specific colors" — so both the six family names and their order are third-party, as are their resting values: the default of 40, 60, 40, 60, 20 and 80 is documented, but the pages that print it print only the first three, "Reds set to 40%, Yellows set to 60%, and so on". | `missing`                                                       |
-| Reset                    | The reset icon that returns the sliders to their default values, and more generally the panel control that returns the adjustment to its original settings.                                                                                                                                                                                                                                                                                                                                                                                                                     | `partial` — `src/components/ToolbarsRight/Colors/Color.tsx:185` |
+| Control                                      | Photoshop                                                                                                                                                                                                                                                                                                                                                        | In this app                                                            |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Width                                        | Numeric text box, in percent, for the layer width. The paired Link icon is on by default since Photoshop 21.0, so a corner handle scales proportionally.                                                                                                                                                                                                         | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:254` |
+| Height                                       | Numeric text box, in percent, for the layer height, linked to Width by the Link icon.                                                                                                                                                                                                                                                                            | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:269` |
+| Maintain Aspect Ratio (Link)                 | Toggle between proportional and non-proportional scaling, on by default since Photoshop 21.0. Shift is bound to the same state and inverts it while held.                                                                                                                                                                                                        | `missing`                                                              |
+| Reference point location                     | A 3-by-3 grid of squares choosing the pivot, draggable in the document to move the transform origin. The reference point is hidden by default and must be shown from this control; transforms start from the object center until it is moved.                                                                                                                    | `missing`                                                              |
+| Rotation                                     | Numeric text box, in degrees, for the rotation angle. The same angle is produced by dragging outside the bounding box, where Shift snaps to 15-degree increments.                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:183` |
+| H                                            | Numeric text box, in degrees, for horizontal skew. Adobe names the field H: "To skew numerically, enter degrees in the H (horizontal skew) and V (vertical skew) text boxes in the options bar." The pair is absent from the bar when a Smart Object is the thing being transformed.                                                                             | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:203` |
+| V                                            | Numeric text box, in degrees, for vertical skew — Adobe's V, the other half of the H/V pair above.                                                                                                                                                                                                                                                               | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:218` |
+| Switch Between Free Transform And Warp Modes | Button that swaps the box for a warp mesh, after which a Warp pop-up menu offers the predefined warp styles and a square handle adjusts the chosen one.                                                                                                                                                                                                          | `missing`                                                              |
+| X                                            | Numeric text box for the horizontal position of the transform reference point. It is the numeric form of dragging the item inside its own bounding box, and Adobe describes it as taking "values for the new location of the reference".                                                                                                                         | `missing`                                                              |
+| Y                                            | Numeric text box for the vertical position of that same reference point, paired with X; which of the two positionings they express is the Relative Positioning button's state.                                                                                                                                                                                   | `missing`                                                              |
+| Relative Positioning                         | Button that switches what the X and Y values mean: click it "to specify the new position in relation to the current position", so the pair becomes a measured displacement from where the item already is rather than a coordinate.                                                                                                                              | `missing`                                                              |
+| Commit                                       | The checkmark that applies the transform. Enter works too — Adobe prints it as "Press Enter (Windows) or Return (macOS) to apply the transformation." A third route, clicking away from the transform controls once the pointer is a black arrow again rather than a handle cursor, is documented outside Adobe. Selecting a new tool commits the transform too. | `missing`                                                              |
+| Cancel                                       | The cancel button that abandons the transform and restores the original shape and size. Esc does the same.                                                                                                                                                                                                                                                       | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:31`  |
+
+**Modifiers**
+
+- **Shift** — With a rotation drag outside the bounding box, constrain the angle to 15-degree increments. With a handle drag, toggle proportional scaling off and on, which is what Shift means since Photoshop 21.0.
+- **Alt** — Distort relative to the center point of the bounding box, so the opposite handle moves at the same time in the opposite direction. Printed by Adobe as Alt on Windows and Option on macOS.
+- **Cmd** — Distort freely by dragging a handle, in any direction, with no constraint. Printed by Adobe as Command on macOS and Control on Windows.
+- **Cmd+Shift** — Skew: drag a side handle to slant that side while the opposite side stays parallel.
+- **Cmd+Alt+Shift** — Perspective: drag a corner handle so the layer recedes toward one edge, the two sides no longer meeting at a right angle.
 
 **Shortcuts**
 
-- `Shift+Cmd+Opt+B` — Open the Black & White command. Printed by Adobe's shipped shortcut sheet as "Black & White... Opt+Shift+Cmd+B" on macOS, and Ctrl+Alt+Shift+B on Windows; the app binds no shortcut for it.
+- `Cmd+T` — Free Transform. Choosing the Move tool and checking Show Transform Controls enters the same state, which is how a pixel layer gets its box.
+- `Cmd+Option+T` — Duplicate the layer or selection and enter Free Transform on the duplicate, leaving the original untouched.
+- `Enter` — Commit the transform. Selecting another tool or another layer commits it too.
 
-**In this app:** `partial` — Black & White is an Image > Adjustments command, or an adjustment layer — not a toolbar tool, and "Colors" is this app's own tile label rather than an Adobe name — so the app's Colors entry occupies a slot Photoshop's toolbar does not have. No control of Photoshop's seven is reproduced, and the three sliders that are rendered are not Black & White controls: there is no sextant weighting anywhere in the app, so no per-hue decision can be made and the conversion is a flat luminance desaturation rather than a mix. The one control whose name the app shares is Reset, and it does not behave as Photoshop's does: it is disabled unless an uncommitted preview is live, and it restores that panel's own defaults rather than the sextant defaults, so a committed conversion can only be undone. The grayscale slider is the nearest thing to the whole panel and it is the one control that cannot stand in for it, because a hue-weighted mix and a luminance average differ the moment any of the six families is pushed. Sepia is not the Tint checkbox either: Tint lays a uniform tone color over a conversion whose mix you still control, and applying sepia is a second filter stage that tints the whole image rather than replacing its channel weights, so the two can be combined and the result is not the same look. Saturation belongs to no part of Black & White; it is a Hue/Saturation control, and the fact that this app has one is a leftover from the identity question this tool's shape was chosen to answer. Presets, Auto, Tint, Tint Color, the on-image adjustment icon and the six sliders are all absent. As with Levels, the engine is a CSS filter string, and the surface it is assigned to is the visible canvas: the renderer builds an ordinary HTMLCanvasElement, sets ctx.filter from the layer's operations array and draws the layer stack into it. The OffscreenCanvas processors in src/tools/colors.ts are not on the editing, preview or commit path — color is registered as commit: 'layer-operation', so those paths append the operation and return before a pixel is produced — and the committed conversion is retained on the same terms as Levels, with the layer's own bitmap untouched and undo replaying the operation rather than a raster. The string is built once, so the renderer and the durable materializer cannot drift, and the test harness exposes filter as a writable property, so the emitted string is assertable; the jsdom mock still cannot rasterize it, so no test here shows what the filter looks like.
+**In this app:** `partial` — Free Transform is a command, not a tool. The primary evidence is a negative one and it is a good one: a complete, version-stamped inventory of the Photoshop 2026 Tools panel lists every entry in the bar — Move, the marquees, the crop, the pen family, the type tools, the shape tools, Hand, Zoom — and has no Transform entry in it, while Photoshop reaches the operation through Edit > Free Transform or Cmd+T. Adobe's own routing agrees, sending a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool. Note the shape of the menu, because it is two items and not one: Edit > Free Transform is a top-level Edit item, and Edit > Transform is a separate submenu carrying the six single modes — Scale, Rotate, Skew, Distort, Perspective and Warp. One counter-sentence exists on Adobe's marketing copy — "Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)" — but the very next clause of the same page is "You can also go to Edit > Free Transform": the page names the menu route itself, and uses "tool" for the interactive state rather than for a Tools-panel entry. The app reaches the same command from Edit > Free Transform, which is the route Adobe documents, so the route matches and the panel does not: it makes the panel in the options bar a different thing from Free Transform's bar, and the two should not be described as the same control set. Colors and Levels went the other way, out of the toolbar and into Image > Adjustments, because they are commands too; `extraTools` in toolbar-mapping.ts is the list of registered tool ids that deliberately carry no rail entry. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop's nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and commit when the gesture ends. A drag PREVIEWS while the pointer is down and lands as exactly one history entry when the pointer is released, which is the browser's own native `change` event on a range input and not React's `onChange`, which is the `input` event and fires on every frame of the drag (`src/components/ToolbarsRight/Transform/Transform.tsx:54-69`). The five discrete controls commit in the same place, because a rotate button and a mirror toggle are finished gestures too. A release that moved nothing writes nothing, so a click that lands where it started costs no history entry. The commit is also still reachable by leaving the tool or exporting, and Escape is the only way back: it calls the cancel handler, which deletes the pending preview, resets the panel to its defaults and dispatches nothing, so what remains is the last committed state. The bar itself carries no commit control, no discard control and no Reset control — the whole right-hand column is the two mirror toggles, centered in the slack the three removed text links left behind. Those removals were a HEIGHT fix, not a width one, and the measurement is worth keeping because the reason reads backwards without it: the column is a `flex flex-col` under the mirror toggles, so those controls were stacked rather than laid out across. With all four children it measured 85px inside the strip's fixed `h-[50px]` (`src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:5`) and spilled 35px above and below it. The bar's own width did not change by a pixel across that work — 548px before and after — and a horizontal overflow was never the defect; if it ever becomes one the levers are `w-24`, `w-10` and `gap-4`. Of Free Transform's own bindings, only Escape is wired, and Enter does not commit because there is no commit key to bind; the step back Adobe documents for a live transform is absent: "To undo the last handle adjustment, choose Edit > Undo." Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.
 
 Implementation:
 
-- `src/components/ToolbarsRight/Colors/Color.tsx:134`
-- `src/components/ToolbarsRight/Colors/Color.tsx:110`
-- `src/tools/colors.ts:12`
-- `src/tools/functions.ts:60`
-- `src/tools/settings.ts:53`
-- `src/tools/toolProcessors.ts:126`
-- `src/contexts/useLayer.ts:571`
+- `src/components/ToolbarsRight/Transform/Transform.tsx:155`
+- `src/components/ToolbarsRight/Transform/Transform.tsx:35`
+- `src/contexts/affine-transform.ts:173`
+- `src/contexts/affine-transform.ts:216`
+- `src/tools/transform.ts:119`
+- `src/tools/transform.ts:153`
+- `src/tools/toolProcessors.ts:142`
+- `src/contexts/useLayer.ts:552`
 - `src/contexts/useLayer.ts:348`
-- `src/contexts/history-replay.ts:172`
-- `src/contexts/layer-renderer.ts:16`
-- `src/contexts/materialization.ts:78`
-- `src/test/setup.ts:320`
-- `toolbar-mapping.ts:62`
+- `toolbar-mapping.ts:189`
 
 Sources:
 
-- <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/convert-a-color-image-to-black-and-white.html>
-- <https://helpx.adobe.com/photoshop/using/color-adjustments.html>
-- <https://helpx.adobe.com/photoshop/using/color-monochrome-adjustments-using-channels.html>
-- <https://www.photoshopessentials.com/photo-editing/black-and-white-cs3>
-- <https://www.photoshopessentials.com/photo-editing/converting-color-photos-to-black-and-white-in-photoshop>
-- <https://www.photoshopessentials.com/photo-effects/easy-selective-color-effect-with-photoshop>
-- <https://photoshoptrainingchannel.com/black-white-photos-photoshop/>
+- <https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html>
+- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/adjust-scale-rotation-and-perspective.html>
+- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/apply-transformations.html>
+- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/duplicate-objects-as-you-transform.html>
+- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/move-reference-point-for-transformations.html>
+- <https://helpx.adobe.com/photoshop-elements/using/keys-transforming-selections.html>
+- <https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/manage-image-states.html>
+- <https://jkost.com/blog/2019/06/new-free-transform-preference-in-photoshop.html>
+- <https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf>
 - <https://glensmith.co.uk/photoshop/tools>
-- <https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview>
-- <https://training-nyc.com/legacy/photoshop_cs6_all_keyboard_shortcuts_sheet.pdf>
+- <https://www.adobe.com/products/photoshop/resize-image.html>
+- <https://www.photoshopessentials.com/basics/free-transform>
+- <https://www.peachpit.com/articles/article.aspx?p=3150375>
+- <https://community.adobe.com/questions-712/horizontal-h-and-vertical-v-skew-fields-are-missing-in-the-options-bar-on-photoshop-cc-2019-1078402>
 
 ---
 
-### Levels
+### Levels — the Image > Adjustments command, not a Tools panel Tool
 
 `levels`
-
-Photoshop's name for it is **Levels — the Image > Adjustments command, not a Tools panel Tool**.
 
 Photoshop's Levels remaps an image's tonal range through a histogram, a gamma pivot and per-channel black, white and output points.
 
@@ -2446,7 +2450,7 @@ Levels is the tonal correction tool: it stretches or compresses where the image'
 
 - `Cmd+L` — Apply the Levels command. Cmd+Option+L re-applies it with the last settings used. Cmd+Shift+L is not a second Levels binding — it is Auto Tone.
 
-**In this app:** `partial` — Levels is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so the app's Levels entry occupies a slot Photoshop's toolbar does not have. Inside that slot no control of Photoshop's Levels panel is reproduced, and the two sliders that are rendered are not Levels controls at all: Photoshop's Levels has no Brightness and no Contrast slider. The one control whose name the app does borrow is the Reset button, and it does not behave as Photoshop's does. What the app renders is CSS brightness() and contrast() over the encoded pixel values, both on an exponential curve re-anchored so the endpoints are exact, which means a flat linear multiply and a pivot at mid-gray in encoded space where Photoshop's curve is piecewise-linear through three control points with its middle slider moving the midtone at level 128. The Brightness slider is labelled and centred on a neutral of 0, and the re-anchoring makes that literal rather than approximate: 0 emits exactly brightness(100%), so the panel at its defaults applies nothing at all, and it is the slider's minimum of -100 that emits brightness(0%) and multiplies the whole layer to black — a range-wide multiply, where Photoshop's black point is a threshold that only remaps the pixels below it. There is no black point, no white point, no gamma midtone, no output pair, no histogram, no channel selector, no Auto, no Auto Options and no eyedroppers. Levels works on the document's encoded values rather than a linear-light space — Adobe draws exactly this contrast with Exposure, which does calculate in linear color space — and the app's filter is likewise in whatever space the canvas composite happens to be. A committed adjustment is retained rather than destroyed, and that is the half of the split the app gets right. A committed Levels adjustment is a layer operation, not a rewrite of pixels: the layer's own bitmap is never touched, the commit appends an operation to the layer's operations array and records one history entry, the renderer re-derives the filter from that array on every frame, and undo and redo replay the operation rather than a stored raster. What the app does not have is the other half of the split: the adjustment is not re-editable, so a committed one can only be taken back with undo, which is why the Reset button is gated on an uncommitted preview and restores the panel's own defaults rather than re-opening the adjustment. The engine for all of that is a CSS filter string assigned to ctx.filter on an ordinary HTMLCanvasElement 2D context — the canvas the user is actually looking at, which the renderer builds with document.createElement and draws the layer stack into. The OffscreenCanvas processors in src/tools/levels.ts are not on that path at all: levels and color are registered as commit: 'layer-operation', and the preview and commit paths append the operation and return before any pixel is produced, so those processors are never reached while editing, previewing or committing. The one surface that still applies the string to an OffscreenCanvas 2D context is the durable materializer, which prefers new OffscreenCanvas wherever one exists; no module outside src/contexts/**tests** imports it today, and the OffscreenCanvasRenderingContext2D.filter support Safari has never shipped is a property of that surface rather than of the canvas this tool edits on. The string is built in one place, so the renderer and that materializer cannot drift, and the test harness exposes filter as a real writable property, so the emitted string is assertable — though the jsdom mock still cannot rasterize it, so no assertion here proves what the filter looks like.
+**In this app:** `partial` — Levels is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so it has no rail entry at all: the app reaches it from Image > Adjustments > Brightness/Contrast, named for what it computes, and carries Photoshop's own Levels item in the same submenu as a disabled command this app cannot do. No control of Photoshop's Levels panel is reproduced, and the two sliders that are rendered are not Levels controls at all: Photoshop's Levels has no Brightness and no Contrast slider. The one control whose name the app does borrow is the Reset button, and it does not behave as Photoshop's does. What the app renders is CSS brightness() and contrast() over the encoded pixel values, both on an exponential curve re-anchored so the endpoints are exact, which means a flat linear multiply and a pivot at mid-gray in encoded space where Photoshop's curve is piecewise-linear through three control points with its middle slider moving the midtone at level 128. The Brightness slider is labelled and centred on a neutral of 0, and the re-anchoring makes that literal rather than approximate: 0 emits exactly brightness(100%), so the panel at its defaults applies nothing at all, and it is the slider's minimum of -100 that emits brightness(0%) and multiplies the whole layer to black — a range-wide multiply, where Photoshop's black point is a threshold that only remaps the pixels below it. There is no black point, no white point, no gamma midtone, no output pair, no histogram, no channel selector, no Auto, no Auto Options and no eyedroppers. Levels works on the document's encoded values rather than a linear-light space — Adobe draws exactly this contrast with Exposure, which does calculate in linear color space — and the app's filter is likewise in whatever space the canvas composite happens to be. A committed adjustment is retained rather than destroyed, and that is the half of the split the app gets right. A committed Levels adjustment is a layer operation, not a rewrite of pixels: the layer's own bitmap is never touched, the commit appends an operation to the layer's operations array and records one history entry, the renderer re-derives the filter from that array on every frame, and undo and redo replay the operation rather than a stored raster. What the app does not have is the other half of the split: the adjustment is not re-editable, so a committed one can only be taken back with undo, which is why the Reset button is gated on an uncommitted preview and restores the panel's own defaults rather than re-opening the adjustment. The engine for all of that is a CSS filter string assigned to ctx.filter on an ordinary HTMLCanvasElement 2D context — the canvas the user is actually looking at, which the renderer builds with document.createElement and draws the layer stack into. The OffscreenCanvas processors in src/tools/levels.ts are not on that path at all: levels and color are registered as commit: 'layer-operation', and the preview and commit paths append the operation and return before any pixel is produced, so those processors are never reached while editing, previewing or committing. The one surface that still applies the string to an OffscreenCanvas 2D context is the durable materializer, which prefers new OffscreenCanvas wherever one exists; no module outside src/contexts/**tests** imports it today, and the OffscreenCanvasRenderingContext2D.filter support Safari has never shipped is a property of that surface rather than of the canvas this tool edits on. The string is built in one place, so the renderer and that materializer cannot drift, and the test harness exposes filter as a real writable property, so the emitted string is assertable — though the jsdom mock still cannot rasterize it, so no assertion here proves what the filter looks like.
 
 Implementation:
 
@@ -2454,15 +2458,15 @@ Implementation:
 - `src/components/ToolbarsRight/Levels/Levels.tsx:86`
 - `src/tools/levels.ts:12`
 - `src/tools/functions.ts:66`
-- `src/tools/settings.ts:54`
-- `src/tools/toolProcessors.ts:132`
+- `src/tools/settings.ts:56`
+- `src/tools/toolProcessors.ts:133`
 - `src/contexts/useLayer.ts:571`
 - `src/contexts/useLayer.ts:348`
 - `src/contexts/history-replay.ts:172`
 - `src/contexts/layer-renderer.ts:18`
 - `src/contexts/materialization.ts:84`
 - `src/test/setup.ts:320`
-- `toolbar-mapping.ts:63`
+- `toolbar-mapping.ts:189`
 
 Sources:
 
@@ -2479,79 +2483,60 @@ Sources:
 
 ---
 
-### Transform
+### Black & White — the Image > Adjustments command, not a Tools panel Tool
 
-`transform`
+`color`
 
-Photoshop's name for it is **Free Transform — the Edit > Free Transform command, not a Tools panel Tool**.
+Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.
 
-Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, adds perspective or warps a layer in one continuous operation.
-
-Free Transform puts a bounding box around the active layer and lets one continuous operation change its size, angle and shape together, which is the point: rotating and rescaling an image in two steps resamples it twice. Every mode is a drag on that box, and the mode is chosen by right-click menu, by an options-bar button, or by holding a modifier so the box changes behavior mid-gesture. Nothing is written to the document until you commit, so a transform can be abandoned and undone as a unit.
+Black & White is not a desaturation — it is a weighted mix, and the six sliders are the weights. Each of the six sextants of the color wheel, Reds, Yellows, Greens, Cyans, Blues and Magentas, gets its own control over how bright that family of hues becomes in the result, so a landscape can have a dark sky and a bright sky in the same conversion, and skin can be lifted without touching the greens. Every slider starts at a value that reproduces a conventional conversion — Photoshop opens the adjustment having already applied "a default grayscale conversion to your image" — and dragging one away from that value is the whole technique. Ticking Tint lays a uniform tone color over the monochrome so it reads as toned rather than neutral, which is how a sepia or a split-tone is made from a color original without going back to it.
 
 **Options bar**
 
-| Control                                      | Photoshop                                                                                                                                                                                                                                                                                                                                                        | In this app                                                            |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Width                                        | Numeric text box, in percent, for the layer width. The paired Link icon is on by default since Photoshop 21.0, so a corner handle scales proportionally.                                                                                                                                                                                                         | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:254` |
-| Height                                       | Numeric text box, in percent, for the layer height, linked to Width by the Link icon.                                                                                                                                                                                                                                                                            | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:269` |
-| Maintain Aspect Ratio (Link)                 | Toggle between proportional and non-proportional scaling, on by default since Photoshop 21.0. Shift is bound to the same state and inverts it while held.                                                                                                                                                                                                        | `missing`                                                              |
-| Reference point location                     | A 3-by-3 grid of squares choosing the pivot, draggable in the document to move the transform origin. The reference point is hidden by default and must be shown from this control; transforms start from the object center until it is moved.                                                                                                                    | `missing`                                                              |
-| Rotation                                     | Numeric text box, in degrees, for the rotation angle. The same angle is produced by dragging outside the bounding box, where Shift snaps to 15-degree increments.                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:183` |
-| H                                            | Numeric text box, in degrees, for horizontal skew. Adobe names the field H: "To skew numerically, enter degrees in the H (horizontal skew) and V (vertical skew) text boxes in the options bar." The pair is absent from the bar when a Smart Object is the thing being transformed.                                                                             | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:203` |
-| V                                            | Numeric text box, in degrees, for vertical skew — Adobe's V, the other half of the H/V pair above.                                                                                                                                                                                                                                                               | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:218` |
-| Switch Between Free Transform And Warp Modes | Button that swaps the box for a warp mesh, after which a Warp pop-up menu offers the predefined warp styles and a square handle adjusts the chosen one.                                                                                                                                                                                                          | `missing`                                                              |
-| X                                            | Numeric text box for the horizontal position of the transform reference point. It is the numeric form of dragging the item inside its own bounding box, and Adobe describes it as taking "values for the new location of the reference".                                                                                                                         | `missing`                                                              |
-| Y                                            | Numeric text box for the vertical position of that same reference point, paired with X; which of the two positionings they express is the Relative Positioning button's state.                                                                                                                                                                                   | `missing`                                                              |
-| Relative Positioning                         | Button that switches what the X and Y values mean: click it "to specify the new position in relation to the current position", so the pair becomes a measured displacement from where the item already is rather than a coordinate.                                                                                                                              | `missing`                                                              |
-| Commit                                       | The checkmark that applies the transform. Enter works too — Adobe prints it as "Press Enter (Windows) or Return (macOS) to apply the transformation." A third route, clicking away from the transform controls once the pointer is a black arrow again rather than a handle cursor, is documented outside Adobe. Selecting a new tool commits the transform too. | `partial` — `src/components/ToolbarsRight/Transform/Transform.tsx:303` |
-| Cancel                                       | The cancel button that abandons the transform and restores the original shape and size. Esc does the same.                                                                                                                                                                                                                                                       | `present` — `src/components/ToolbarsRight/Transform/Transform.tsx:306` |
-
-**Modifiers**
-
-- **Shift** — With a rotation drag outside the bounding box, constrain the angle to 15-degree increments. With a handle drag, toggle proportional scaling off and on, which is what Shift means since Photoshop 21.0.
-- **Alt** — Distort relative to the center point of the bounding box, so the opposite handle moves at the same time in the opposite direction. Printed by Adobe as Alt on Windows and Option on macOS.
-- **Cmd** — Distort freely by dragging a handle, in any direction, with no constraint. Printed by Adobe as Command on macOS and Control on Windows.
-- **Cmd+Shift** — Skew: drag a side handle to slant that side while the opposite side stays parallel.
-- **Cmd+Alt+Shift** — Perspective: drag a corner handle so the layer recedes toward one edge, the two sides no longer meeting at a right angle.
+| Control                  | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | In this app                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Preset                   | Menu of predefined grayscale mixes and of any mix the user has saved, with Save Black & White Preset alongside it.                                                                                                                                                                                                                                                                                                                                                                                                                                                              | `missing`                                                       |
+| On-image adjustment icon | The Targeted Adjustment tool, sitting directly under the Preset option at the top of the panel. Adobe states the gesture as a drag of the icon itself: "Select and drag On-image adjustment icon onto the image to adjust tones." It moves the sextant slider for whichever family of hues dominates the pixels under the cursor, and that one slider moves every area containing those hues rather than a mark you place.                                                                                                                                                      | `missing`                                                       |
+| Auto                     | Sets a grayscale mix based on the values in the image itself — Adobe's own words are "Set a grayscale mix based on your image's color values" — so it reads the layer rather than asking you to weight six families by hand.                                                                                                                                                                                                                                                                                                                                                    | `missing`                                                       |
+| Tint                     | Checkbox that lays a uniform tone color over the monochrome result, which is what turns a neutral conversion into a toned or sepia one.                                                                                                                                                                                                                                                                                                                                                                                                                                         | `missing`                                                       |
+| Tint Color               | The color swatch beside the Tint checkbox. Choosing it opens the Color Picker, and the tone applied is called Tint Color.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `missing`                                                       |
+| Color sliders            | Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe's own page names the block and nothing inside it — "Color sliders: Drag sliders to adjust gray tones for specific colors" — so both the six family names and their order are third-party, as are their resting values: the default of 40, 60, 40, 60, 20 and 80 is documented, but the pages that print it print only the first three, "Reds set to 40%, Yellows set to 60%, and so on". | `missing`                                                       |
+| Reset                    | The reset icon that returns the sliders to their default values, and more generally the panel control that returns the adjustment to its original settings.                                                                                                                                                                                                                                                                                                                                                                                                                     | `partial` — `src/components/ToolbarsRight/Colors/Color.tsx:185` |
 
 **Shortcuts**
 
-- `Cmd+T` — Free Transform. Choosing the Move tool and checking Show Transform Controls enters the same state, which is how a pixel layer gets its box.
-- `Cmd+Option+T` — Duplicate the layer or selection and enter Free Transform on the duplicate, leaving the original untouched.
-- `Enter` — Commit the transform. Selecting another tool or another layer commits it too.
+- `Shift+Cmd+Opt+B` — Open the Black & White command. Printed by Adobe's shipped shortcut sheet as "Black & White... Opt+Shift+Cmd+B" on macOS, and Ctrl+Alt+Shift+B on Windows; the app binds no shortcut for it.
 
-**In this app:** `partial` — Free Transform is a command, not a tool. The primary evidence is a negative one and it is a good one: a complete, version-stamped inventory of the Photoshop 2026 Tools panel lists every entry in the bar — Move, the marquees, the crop, the pen family, the type tools, the shape tools, Hand, Zoom — and has no Transform entry in it, while Photoshop reaches the operation through Edit > Free Transform or Cmd+T. Adobe's own routing agrees, sending a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool. Note the shape of the menu, because it is two items and not one: Edit > Free Transform is a top-level Edit item, and Edit > Transform is a separate submenu carrying the six single modes — Scale, Rotate, Skew, Distort, Perspective and Warp. One counter-sentence exists on Adobe's marketing copy — "Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)" — but the very next clause of the same page is "You can also go to Edit > Free Transform": the page names the menu route itself, and uses "tool" for the interactive state rather than for a Tools-panel entry. The app registers it as a toolbar entry next to Colors and Levels, and none of the three has a Photoshop toolbar slot. That is a defensible choice, but it makes the panel in the options bar a different thing from Free Transform's bar, and the two should not be described as the same control set. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop's nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and the geometry is only committed, as one history entry, when the dirty tool is committed — on Apply, on tool switch or on export. Escape is the opposite of a commit route: it and the Cancel button both call the same cancel handler, which deletes the pending preview, resets the panel to its defaults and dispatches nothing, so what remains is the last committed state. Of Free Transform's own bindings, only Escape is wired; Enter does not commit, and the step back Adobe documents for a live transform is absent: "To undo the last handle adjustment, choose Edit > Undo." Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.
+**In this app:** `partial` — Black & White is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so it has no rail entry, and the app reaches the same three CSS filters from Image > Adjustments > Photo Filter. That name is a bounded divergence rather than a match: sepia IS the Warming preset Photo Filter ships and saturation is the nearest thing to its Density slider, but the grayscale slider is a control Photo Filter does not have, which is why the same submenu also carries Black and White itself as a disabled command. No control of Photoshop's seven is reproduced, and the three sliders that are rendered are not Black & White controls: there is no sextant weighting anywhere in the app, so no per-hue decision can be made and the conversion is a flat luminance desaturation rather than a mix. The one control whose name the app shares is Reset, and it does not behave as Photoshop's does: it is disabled unless an uncommitted preview is live, and it restores that panel's own defaults rather than the sextant defaults, so a committed conversion can only be undone. The grayscale slider is the nearest thing to the whole panel and it is the one control that cannot stand in for it, because a hue-weighted mix and a luminance average differ the moment any of the six families is pushed. Sepia is not the Tint checkbox either: Tint lays a uniform tone color over a conversion whose mix you still control, and applying sepia is a second filter stage that tints the whole image rather than replacing its channel weights, so the two can be combined and the result is not the same look. Saturation belongs to no part of Black & White; it is a Hue/Saturation control, and the fact that this app has one is a leftover from the identity question this tool's shape was chosen to answer. Presets, Auto, Tint, Tint Color, the on-image adjustment icon and the six sliders are all absent. As with Levels, the engine is a CSS filter string, and the surface it is assigned to is the visible canvas: the renderer builds an ordinary HTMLCanvasElement, sets ctx.filter from the layer's operations array and draws the layer stack into it. The OffscreenCanvas processors in src/tools/colors.ts are not on the editing, preview or commit path — color is registered as commit: 'layer-operation', so those paths append the operation and return before a pixel is produced — and the committed conversion is retained on the same terms as Levels, with the layer's own bitmap untouched and undo replaying the operation rather than a raster. The string is built once, so the renderer and the durable materializer cannot drift, and the test harness exposes filter as a writable property, so the emitted string is assertable; the jsdom mock still cannot rasterize it, so no test here shows what the filter looks like.
 
 Implementation:
 
-- `src/components/ToolbarsRight/Transform/Transform.tsx:155`
-- `src/components/ToolbarsRight/Transform/Transform.tsx:35`
-- `src/contexts/affine-transform.ts:173`
-- `src/contexts/affine-transform.ts:216`
-- `src/tools/transform.ts:119`
-- `src/tools/transform.ts:153`
-- `src/tools/toolProcessors.ts:141`
-- `src/contexts/useLayer.ts:552`
+- `src/components/ToolbarsRight/Colors/Color.tsx:134`
+- `src/components/ToolbarsRight/Colors/Color.tsx:110`
+- `src/tools/colors.ts:12`
+- `src/tools/functions.ts:60`
+- `src/tools/settings.ts:55`
+- `src/tools/toolProcessors.ts:127`
+- `src/contexts/useLayer.ts:571`
 - `src/contexts/useLayer.ts:348`
-- `toolbar-mapping.ts:64`
+- `src/contexts/history-replay.ts:172`
+- `src/contexts/layer-renderer.ts:16`
+- `src/contexts/materialization.ts:78`
+- `src/test/setup.ts:320`
+- `toolbar-mapping.ts:189`
 
 Sources:
 
-- <https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html>
-- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/adjust-scale-rotation-and-perspective.html>
-- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/apply-transformations.html>
-- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/duplicate-objects-as-you-transform.html>
-- <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/move-reference-point-for-transformations.html>
-- <https://helpx.adobe.com/photoshop-elements/using/keys-transforming-selections.html>
-- <https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/manage-image-states.html>
-- <https://jkost.com/blog/2019/06/new-free-transform-preference-in-photoshop.html>
-- <https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf>
+- <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/convert-a-color-image-to-black-and-white.html>
+- <https://helpx.adobe.com/photoshop/using/color-adjustments.html>
+- <https://helpx.adobe.com/photoshop/using/color-monochrome-adjustments-using-channels.html>
+- <https://www.photoshopessentials.com/photo-editing/black-and-white-cs3>
+- <https://www.photoshopessentials.com/photo-editing/converting-color-photos-to-black-and-white-in-photoshop>
+- <https://www.photoshopessentials.com/photo-effects/easy-selective-color-effect-with-photoshop>
+- <https://photoshoptrainingchannel.com/black-white-photos-photoshop/>
 - <https://glensmith.co.uk/photoshop/tools>
-- <https://www.adobe.com/products/photoshop/resize-image.html>
-- <https://www.photoshopessentials.com/basics/free-transform>
-- <https://www.peachpit.com/articles/article.aspx?p=3150375>
-- <https://community.adobe.com/questions-712/horizontal-h-and-vertical-v-skew-fields-are-missing-in-the-options-bar-on-photoshop-cc-2019-1078402>
+- <https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview>
+- <https://training-nyc.com/legacy/photoshop_cs6_all_keyboard_shortcuts_sheet.pdf>
 
 ---
 
@@ -2572,7 +2557,7 @@ The Eyedropper reads pixels and hands the result to the color controls, so a col
 | Control     | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                           | In this app                                                             |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Sample Size | Sets the sampling footprint, and Adobe enumerates the whole menu: Point Sample "Reads the exact value of the clicked pixel", and 3 by 3 / 5 by 5 / 11 by 11 / 31 by 31 / 51 by 51 / 101 by 101 Average "Reads the average color value within the selected pixel area". There are no Median entries in it. Adobe lists the menu without saying which entry ships selected, and states no default for it; the app seeds Point Sample. | `present` — `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22` |
-| Sample      | Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox. The app renders no control for it at all, and its `sampleAllLayers` field persists in settings and is refused loudly on click.                                                 | `inert` — `src/tools/settings.ts:217`                                   |
+| Sample      | Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox. The app renders no control for it at all, and its `sampleAllLayers` field persists in settings and is refused loudly on click.                                                 | `inert` — `src/tools/settings.ts:226`                                   |
 
 **Modifiers**
 
@@ -2583,7 +2568,7 @@ The Eyedropper reads pixels and hands the result to the color controls, so a col
 - `I` — Selects the Eyedropper, or temporarily switches to it while held.
 - `Shift+I` — Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count.
 
-**In this app:** `partial` — The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:217`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:309` and `:455`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:451` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all (`HANDOFF.md` §51 (`HANDOFF.md:1080`)).
+**In this app:** `partial` — The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:226`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:334` and `:480`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:475` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all.
 
 Implementation:
 
@@ -2593,9 +2578,9 @@ Implementation:
 - `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22`
 - `src/tools/eyedropper.ts:7`
 - `src/tools/eyedropper.ts:34`
-- `src/tools/toolProcessors.ts:81`
-- `src/tools/toolsMap.ts:127`
-- `toolbar-mapping.ts:57`
+- `src/tools/toolProcessors.ts:82`
+- `src/tools/toolsMap.ts:148`
+- `toolbar-mapping.ts:64`
 
 Sources:
 
@@ -2622,7 +2607,7 @@ Sources:
 
 ### Draw Tool
 
-`draw` · **B**
+`draw`
 
 Photoshop's name for it is **No Photoshop tool — this app’s own tool (nearest Photoshop: Brush tool)**.
 
@@ -2647,7 +2632,7 @@ There is no Photoshop tool called Draw, in this app or in Adobe’s Tools panel,
 - `[` — Decreases brush Size.
 - `]` — Increases brush Size.
 
-**In this app:** `implemented` — No Photoshop provenance is claimed and none is invented: the Tools panel has no freehand-annotation or pen-stroke tool, and this app’s Draw tile sits in the tonal group where Photoshop has no tool at all. The nearest Photoshop tools are the Pen tool family, for path work, and the Brush, for freehand paint. The `shortcut` field on a toolbar entry is display-only and binds nothing: its only consumers are the tile tooltip and the <kbd> in the flyout, and the key bindings live in a separate hand-written table. That table is where the `B` goes. `B` is bound to the brush group — brush, pencil, color replacement, eraser — and `Shift+B` cycles it, so pressing `B` selects the Brush and can never select this tool. The `B` badged on the Draw Tool is therefore wrong twice over: the letter belongs to the Brush in Photoshop, and in this app the letter is taken by the Brush as well, leaving this tool reachable by pointer only. Photoshop’s spring-loaded switch is also absent: no key in the table selects this tool, so holding a letter cannot reach it either. The two fields the Photoshop paint bar exposes as Mode and Smoothing are declared on the draw args but unreachable from this bar — no draw control writes either, the default args set neither, and a draw stroke’s layer is forced to Normal by the blend-mode gate that admits only the paint tools. Two app-only controls, Dash and Gap, have no Photoshop counterpart in the paint bar. Three of the Brush bar’s controls diverge rather than go missing. Size is `partial` on its range alone: the slider starts at 0.5 px where Photoshop starts at 1 and stops at 500 px where Photoshop reaches 5000. Opacity is `partial` for the same kind of reason, and the build-up rule is the part that diverges: the value is measured and applied correctly, but a draw stroke is one `beginPath`/`stroke()` over the whole path at the tool’s alpha, so where a stroke crosses itself the color does not compound within that stroke, and Adobe’s rule is that the color does not exceed the set level however many times the pointer crosses the same pixels until the button is released. And the airbrush toggle is `missing` rather than approximate: the Draw bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing that builds color up under a held button. The Spray pen type is the nearest thing and it diverges twice over — it is reached from the Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer is moving and a press that is then held still adds nothing after the single dot it already laid down. The bracket keys Photoshop binds to resize the tip reach no tool here, because this tool is the one the binding could serve and is not in its table: `[` and `]` are registered, but only for the tools `tipSizeField` names — brush, pencil, color replacement, eraser, smudge, dodge, burn and clone stamp — and this tool’s Size writes the same `lineWidth` field the brush uses while being absent from that list, so the two keys are inert for it rather than unbound. And Photoshop’s Shift-constrains-a-freehand-stroke-to-a-straight-line has no implementation here either — the draw area reads no modifier at all, so a Shift-held drag produces the identical freehand path.
+**In this app:** `implemented` — No Photoshop provenance is claimed and none is invented: the Tools panel has no freehand-annotation or pen-stroke tool, and this app’s Draw tile sits in the tonal group where Photoshop has no tool at all. The nearest Photoshop tools are the Pen tool family, for path work, and the Brush, for freehand paint. The `shortcut` field on a toolbar entry is display-only and binds nothing: its only consumers are the tile tooltip and the <kbd> in the flyout, and the key bindings live in a separate hand-written table. This tool declares no shortcut, and the reason is that Photoshop’s letter for it is taken here: Photoshop binds the Draw tool to `Shift+W`, and this app spends both `W` and `Shift+W` on the Object Selection tool, so there is no free key to declare. It was previously badged `B`, which was wrong twice over — `B` belongs to the Brush in Photoshop, and in this app `B` is bound to the brush group (brush, pencil, color replacement, eraser) with `Shift+B` cycling it, so pressing `B` selected the Brush and could never select this tool. The badge is gone rather than reassigned because a declared shortcut the app does not implement is a falsehood the rail prints, and reassigning it is a product decision about which tool wins the chord. So this tool is reachable by pointer only. Photoshop’s spring-loaded switch is also absent: no key in the table selects this tool, so holding a letter cannot reach it either. The two fields the Photoshop paint bar exposes as Mode and Smoothing are declared on the draw args but unreachable from this bar — no draw control writes either, the default args set neither, and a draw stroke’s layer is forced to Normal by the blend-mode gate that admits only the paint tools. Two app-only controls, Dash and Gap, have no Photoshop counterpart in the paint bar. Three of the Brush bar’s controls diverge rather than go missing. Size is `partial` on its range alone: the slider starts at 0.5 px where Photoshop starts at 1 and stops at 500 px where Photoshop reaches 5000. Opacity is `partial` for the same kind of reason, and the build-up rule is the part that diverges: the value is measured and applied correctly, but a draw stroke is one `beginPath`/`stroke()` over the whole path at the tool’s alpha, so where a stroke crosses itself the color does not compound within that stroke, and Adobe’s rule is that the color does not exceed the set level however many times the pointer crosses the same pixels until the button is released. And the airbrush toggle is `missing` rather than approximate: the Draw bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing that builds color up under a held button. The Spray pen type is the nearest thing and it diverges twice over — it is reached from the Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer is moving and a press that is then held still adds nothing after the single dot it already laid down. The bracket keys Photoshop binds to resize the tip reach no tool here, because this tool is the one the binding could serve and is not in its table: `[` and `]` are registered, but only for the tools `tipSizeField` names — brush, pencil, color replacement, eraser, smudge, dodge, burn and clone stamp — and this tool’s Size writes the same `lineWidth` field the brush uses while being absent from that list, so the two keys are inert for it rather than unbound. And Photoshop’s Shift-constrains-a-freehand-stroke-to-a-straight-line has no implementation here either — the draw area reads no modifier at all, so a Shift-held drag produces the identical freehand path.
 
 Implementation:
 
@@ -2655,9 +2640,9 @@ Implementation:
 - `src/components/Main/DrawToolArea.tsx:143`
 - `src/util/draw.ts:85`
 - `src/tools/draw.ts:6`
-- `src/tools/toolProcessors.ts:152`
-- `src/tools/settings.ts:37`
-- `toolbar-mapping.ts:97`
+- `src/tools/toolProcessors.ts:153`
+- `src/tools/settings.ts:39`
+- `toolbar-mapping.ts:116`
 
 Sources:
 

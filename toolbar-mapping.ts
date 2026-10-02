@@ -65,13 +65,6 @@ export const toolbarMap = [
   ],
   [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
   [
-    [
-      { label: 'Colors', name: 'color' },
-      { label: 'Levels', name: 'levels' },
-      { label: 'Transform', name: 'transform' },
-    ],
-  ],
-  [
     // The Brush stays the tile's default tool, so the eraser-family tools are appended
     // rather than inserted: `renderToolGroup` derives the tile's default identity from the
     // first entry (`SidebarLeft.tsx:578`). Six entries is the same length as the Pen family
@@ -106,7 +99,21 @@ export const toolbarMap = [
       // `burn` — only the tile's first entry carries the letter.
       { label: 'Sponge Tool', name: 'sponge' },
     ],
-    [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
+    // NO SHORTCUT, and the omission is the fix rather than an oversight. This entry
+    // previously declared `shortcut: 'B'`, which is the Brush's own shortcut and which
+    // `AppKeyboardShortcuts.tsx` binds to `selectBrushTool` on both `b` and `shift+b`. The
+    // Draw tool is bound to no key at all, so the rail rendered a `B` badge on the Draw flyout
+    // item (`SidebarLeft.tsx` draws `tool.shortcut` as a `<kbd>`, and passes it to
+    // `ToolTooltip`) and pressing `B` selected the Brush. `SidebarLeft` is the only place a
+    // declared shortcut reaches the user, so a declared shortcut the app does not implement is
+    // a falsehood, exactly like a tooltip that promises an Esc key the tool has no handler for.
+    //
+    // Photoshop binds the Draw tool to `Shift+W`, and that is not free here: `w` and `shift+w`
+    // both go to the Object Selection tool. Binding a key for fidelity is a product decision
+    // about which tool wins the chord, and it is not one this comment should make silently.
+    // `toolbar-mapping.test.ts` pins that no two entries may claim the same shortcut, so the
+    // fix cannot regress into a second collision.
+    [{ label: 'Draw Tool', name: 'draw' }],
   ],
   [
     [
@@ -176,4 +183,23 @@ export const availableTools: readonly ToolName[] = [
   'sponge',
 ];
 
+/**
+ * Tool ids with no Tools-rail entry, because Photoshop's Tools panel has none.
+ *
+ * `color`, `levels` and `transform` are `Image ▸ Adjustments` and `Edit ▸ Free Transform`
+ * COMMANDS, and a command is not a tool. They were the sole members of a three-wide flyout
+ * here until they were extracted; what hosts them now is
+ * `src/components/DesktopHeader/DesktopHeader.tsx` — `Image ▸ Adjustments` carries the
+ * first two and `Edit ▸ Free Transform` the third.
+ *
+ * Before that extraction this export was a declaration with no consumer at all, and it still
+ * has none: `toolbar-mapping.test.ts` is its only importer. What that test pins is the
+ * two-way relation with `toolbarMap` — nothing in `extraTools` may be a tile, and a rail
+ * entry dropped without being recorded here fails it the other way.
+ *
+ * It is NOT the answer to "which registered tool is not a tile", because five more ids are
+ * not tiles: `rectangle`, `ellipse`, `triangle`, `polygon` and `line`, reachable only as
+ * values of the `shape` tile's `figure`. The test carves those five out by name, so adding
+ * a sixth alias means adding it to that exemption too.
+ */
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

@@ -223,8 +223,8 @@ function toClip(rect: Rect): { x: number; y: number; width: number; height: numb
  * publishes a flyout of its own: a group only does when `group.length > 1`
  * (`SidebarLeft.tsx:604`). Whether it has a TILE is a different question, and at this viewport
  * the answer is no — the rail drops whole rows that do not fit into the three-dots tile
- * (`SidebarLeft.tsx:1002-1017`, planned by `planToolbarOverflow`), and Type is the FIFTEENTH
- * of the sixteen groups while 1280x720 fits SEVEN of them, so at this viewport it is reached
+ * (`SidebarLeft.tsx:1002-1017`, planned by `planToolbarOverflow`), and Type is the FOURTEENTH
+ * of the fifteen groups while 1280x720 fits SEVEN of them, so at this viewport it is reached
  * through the three-dots flyout. `clickToolButton` has a route for that, but it ends
  * in a click, and the click is a pointer at a coordinate this file does not control.
  *
@@ -233,20 +233,21 @@ function toClip(rect: Rect): { x: number; y: number; width: number; height: numb
  * window and the Type entry was therefore off-screen with nothing to click. The 31 rows and
  * the 1254px were the folded set at a FIVE-row window, which is what this viewport used to
  * show; the rail now fills its whole slot (`TOOLBAR_HEIGHT_BUDGET = 1`,
- * `toolbar-overflow.ts:43`), seven of the sixteen groups fit at 720, and the folded set is
- * the nine groups from Brush (the eighth) down, which is 27 rows. The menu is also bounded
- * and scrollable rather than unbounded (`SidebarLeft.tsx:859`, `max-h-[calc(100vh-1rem)]`
+ * `toolbar-overflow.ts:52`), seven of the fifteen groups fit at 720, and the folded set is
+ * the eight groups from the Clone Stamp (the eighth) down, which is 22 rows. The menu is also
+ * bounded and scrollable rather than unbounded (`SidebarLeft.tsx:859`, `max-h-[calc(100vh-1rem)]`
  * with `overflow-y-auto`), which is what makes the old claim untrue twice over: measured at
- * 1280x720 those 27 rows at 24.5px each are a 666px menu against a 704px bound, with
- * `scrollHeight === clientHeight` — nothing scrolls, the Type row renders at y 537..561.5,
+ * 1280x720 those 22 rows at 24.5px each are a 543px menu against a 704px bound, with
+ * `scrollHeight === clientHeight` — nothing scrolls, the Type row renders at y 537.5..562,
  * and a plain `click()` on it succeeds.
  *
  * What survives is the property that made the route worth choosing: the row's position is a
  * function of HOW MANY GROUPS THE WINDOW FOLDED, and that count is what the fit planner
- * decides, so it is not a constant this helper can aim at. At 566..622 five rows fit, so the
- * menu carries the 31 rows of groups Crop (the sixth) down — about 764px at 24.5px a row
- * against a bound of 550..606 — and the Type row, the twenty-fifth, lands at or below the fold
- * of a menu the rail scrolls. A helper that four tests depend on, in a file
+ * decides, so it is not a constant this helper can aim at. At 566..631 five rows fit, so the
+ * menu carries the 29 rows of groups Crop (the sixth) down — 715px of content at 24.5px a row
+ * against a bound of 550..615, so the menu DOES scroll, and at the BOTTOM of that range the
+ * Type row, the twenty-third, is clipped by the fold rather than below it. A helper that four
+ * tests depend on, in a file
  * whose whole subject is a tool the rail cannot show, should not have its route change with a
  * planner constant in another file. The menu's own `onKeyDown` activates the focused entry
  * with Enter (`SidebarLeft.tsx:887-901`), which is the app's supported way to pick an entry,

@@ -4,7 +4,7 @@
 architecture, we skip the implementation and record it here rather than shipping a fake or a
 half-version. A capability listed here is a decision, not a backlog item: nobody re-audits it, nobody
 estimates it, and nobody treats its absence as a defect. An entry is deleted only when the capability
-lands — see the lifecycle rule in `docs/DOCUMENTATION.md:145-158`: **fixed and verified DELETES the
+lands — see the lifecycle rule in `docs/DOCUMENTATION.md:170-183`: **fixed and verified DELETES the
 entry**, never rewrites it into a closed one.
 
 **Photoshop's documentation is the source of truth for what Photoshop does.** Every "What Photoshop
@@ -105,13 +105,14 @@ workspace where the result is refined with a Refine Edge Brush, a plain Brush, a
 Contrast, Shift Edge and Decontaminate Colors, then output as a selection, a layer mask, a new layer or
 a new document. <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 
-**What this app does.** There is no Select menu, and no menu bar to put one in: `src/components/Menu/Menu.tsx`
-is a 13-line component that renders a `DesktopHeader` and a `ToolbarHorizontal` and nothing else
-(`src/components/Menu/Menu.tsx:1-13`).
+**What this app does.** There is no `Select` menu. The menu bar exists and has five menus — File,
+Tools, Image, Edit, Window (`src/components/DesktopHeader/DesktopHeader.tsx:322`, `:423`, `:452`,
+`:472`, `:512`) — and `Select` is not one of them, so there is nothing for Select and Mask to hang
+from.
 
 **Why it is too hard.** Select and Mask is not a dialog over the existing model — it is the workspace
 where most of a selection tool's real accuracy actually lives, and it consumes the missing combination
-modes above as its substrate. Building it means building a menu system first, a per-tool
+modes above as its substrate. Building it means adding a `Select` menu, a per-tool
 `Select and Mask` button, a Refine Edge Brush with its own edge-detection model, and an output
 dialog. That is a build, not a feature.
 
@@ -127,8 +128,10 @@ it; and Quick Mask mode shows the selection as a red overlay that brushes can cu
 Contract are the three every selection workflow depends on. Feather and Grow in particular are
 reachable from the same Select menu Select and Mask is.
 
-**What this app does.** None of them exist, anywhere. There is no menu surface that could host them
-(`src/components/Menu/Menu.tsx:1-13`), and no selection operation implements them — `src/util/selection.ts`
+**What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
+that exist are File, Tools, Image, Edit and Window
+(`src/components/DesktopHeader/DesktopHeader.tsx:322`, `:423`, `:452`, `:525`, `:559`) — and no
+selection operation implements them: `src/util/selection.ts`
 exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection, though
 it does compute a feathered alpha for the outline it draws.
 
@@ -192,8 +195,8 @@ path can be stroked, filled or converted to a selection.
 <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/overview-of-pen-tool-settings.html>
 
 **What this app does.** All six are `commit: 'unimplemented'` in the processor registry
-(`src/tools/toolProcessors.ts:300-325`), against a shared null-bitmap stub declared at
-`src/tools/toolProcessors.ts:110`:
+(`src/tools/toolProcessors.ts:343-368`), against a shared null-bitmap stub declared at
+`src/tools/toolProcessors.ts:118`:
 
 ```ts
 const unimplemented = () => () => [null as never] as ToolResult;
@@ -201,8 +204,8 @@ const unimplemented = () => () => [null as never] as ToolResult;
 
 They are in the rail, with Adobe's names, because the rail is a clone and the grouping is the
 specification. None of them has a gesture surface: `Main`'s tool-area dispatch has no branch for any
-of them, so the default handler stands (`src/components/Main/Main.tsx:213`) and the same fallback
-closes the dispatch (`src/components/Main/Main.tsx:236`), which is the inert `display: none` surface
+of them, so the default handler stands (`src/components/Main/Main.tsx:225`) and the same fallback
+closes the dispatch (`src/components/Main/Main.tsx:250`), which is the inert `display: none` surface
 every unrouted tool gets.
 
 **Why it is too hard.** A work path is a first-class document object: anchors, bezier direction
@@ -221,7 +224,7 @@ Photoshop grouping and naming are the specification, and the stub bar is the deb
 can add to it with Edit ▸ Define Custom Shape and manage it in the Preset Manager. Star is the
 seventh entry in the shape flyout alongside Rectangle, Ellipse, Triangle, Polygon and Line.
 
-**What this app does.** `commit: 'unimplemented'` at `src/tools/toolProcessors.ts:331-335`, the same
+**What this app does.** `commit: 'unimplemented'` at `src/tools/toolProcessors.ts:374-378`, the same
 null-bitmap stub, and no gesture surface. The tool is in the rail under Adobe's name.
 
 **Why it is too hard.** It is three things, not one: a parser for the shape-preset format, the preset
@@ -229,7 +232,7 @@ library itself, and the authoring and management surfaces. None of the format's 
 and shipping a hardcoded star would be exactly the fake this policy refuses.
 
 **What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts:109-116`) and Star is the missing one, which `AGENTS.md` records as a
+(`toolbar-mapping.ts:114-121`) and Star is the missing one, which `AGENTS.md` records as a
 requirement rather than an omission to be filled by a placeholder.
 
 ### Live type
@@ -274,10 +277,14 @@ Perspective and Warp, a draggable reference point for the transform origin, Shif
 commit on Enter. <https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html>
 
 **What this app does.** A fixed-parameter panel. The options bar publishes a preview through
-`tempUpdateLayer` and nothing is committed until the user presses Apply —
-`src/components/ToolbarsRight/Transform/Transform.tsx:48` is the `tempUpdateLayer` call inside the
-throttled change handler, and the Apply button is at
-`src/components/ToolbarsRight/Transform/Transform.tsx:303-305`.
+`tempUpdateLayer`, and the geometry is committed when the gesture ends: a drag previews until the
+pointer is released and then lands as one history entry, bound to the browser's native `change`
+event rather than to React's `onChange`, which is the per-frame `input` event
+(`src/components/ToolbarsRight/Transform/Transform.tsx:54-69` and `:80`). Switching tool
+(`src/hooks/useApp.ts:167`) and exporting still commit too. The bar carries no commit control and no
+discard control; the whole right-hand column is the two mirror toggles, centered in the slack the
+removed links left behind (`:314`), and Escape — handled at `:31-39` — is the only route that
+discards a preview.
 
 **Why it is too hard.** The bounding box is a gesture surface that owns the pointer for its duration
 and resolves to an arbitrary affine or projective transform. This app's transform path is
@@ -285,8 +292,9 @@ parameter-driven and previewed as a layer, with Distort and Warp in particular n
 displacement field rather than a matrix. It is also a different commit discipline: one gesture, one
 result, committed on a keypress rather than a panel change.
 
-**What the app does instead.** Numeric fields and a Reset control. The preview is real and it is
-correct; it is just not draggable, so every transform is a round trip through the panel.
+**What the app does instead.** Numeric fields and a gesture that commits when you let go. The
+preview is real and it is correct; it is just not draggable, so every transform is a round trip
+through the panel.
 
 ### Crop: Straighten, Curve and Content-Aware
 
@@ -335,8 +343,10 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
 ```
 
 `grayscale()` is a flat luminance average with no hue dependence at all, and `sepia()` is a fixed
-one-directional warm shift. The app's tool is labelled "Colors", not "Black and White" — see the
-operator-decision section below, which is where that label belongs.
+one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Photo Filter`,
+where **Black and White is a disabled item** (`src/components/DesktopHeader/DesktopHeader.tsx:193`)
+because nothing computes it — see the operator-decision section below for why `Photo Filter` is the
+name the enabled item carries.
 
 **Why it is too hard.** No CSS filter chain can express a per-hue weighting; the filter primitives are
 whole-image and order-dependent, and six independent sextant weights are neither. A faithful
@@ -354,9 +364,95 @@ implementation happens to use, which is exactly what a per-hue conversion replac
 constrains. What survives the rewrite is Adobe's six-sextant behaviour, which is the product
 requirement and is unchanged by anything an agent decides about the mechanism.
 
+### Real Levels — the three-point remap, the histogram and the channel selector
+
+**What Photoshop does.** The Levels adjustment "correct[s] the tonal range and color balance of an
+image by adjusting intensity levels of image shadows, midtones, and highlights", with a histogram as
+"a visual guide for adjusting the image key tones". It has **three Input Levels sliders** — black
+point, a middle gamma slider and white point — **two Output sliders** ("By default, the Output sliders
+are at level 0, where the pixels are black, and level 255, where the pixels are white"), a **channel
+selector**, three **eyedroppers** (black, grey and white point) and an **Auto** button whose algorithm
+is configurable in the Auto Color Correction Options dialog.
+<https://helpx.adobe.com/photoshop/using/levels-adjustment.html>
+
+**What this app does.** There is no Levels. `Image ▸ Adjustments ▸ Levels` is a **disabled** menu
+item (`src/components/DesktopHeader/DesktopHeader.tsx:208`), and the tool registered under the id
+`levels` is not Levels either: `LevelsToolArgs` is `{ brightness, contrast }`
+(`src/tools/levels.ts:5`) and the processor emits a single `brightness(%) contrast(%)` string
+(`src/tools/functions.ts:66-70`). It is the app's `Brightness/Contrast`, reached at
+`Image ▸ Adjustments ▸ Brightness/Contrast` (`DesktopHeader.tsx:187`).
+
+**Why it is too hard.** Levels is a per-channel **lookup table**: three control points map an input
+level to an output level, and every pixel in the selected channel is then a table index. The app has no
+per-channel pixel path to build the table against — what it owns is a CSS `ctx.filter` string handed to
+the canvas by `getLayerFilter` (`src/contexts/layer-renderer.ts:32`, applied at `:99`), and a filter
+string cannot express an arbitrary LUT. The histogram is a second, separable piece: it is a 256-bucket
+count per channel over the composited image, which means reading back what the renderer just wrote.
+
+**What the app does instead.** Two global CSS filters. It moves brightness and contrast; it cannot move
+a black or a white point, cannot address one channel, cannot show the histogram and cannot Auto.
+
+**Levels is one of the two commands the operator named on 2026-10-01**, so the suspension recorded on
+the Black-and-White entry above applies to this one too: the "why it is too hard" describes the
+CSS-filter mechanism being replaced, not a constraint on the replacement. The load-bearing question is
+still unanswered and is not this file's to answer — whether `Image ▸ Adjustments` bakes pixels or
+creates adjustment layers changes the durable schema, not the UI. `HANDOFF.md` §172 carries it.
+
+### Curves — a spline over the tonal range
+
+**What Photoshop does.** "In the Curves adjustment, you adjust points throughout an image's tonal
+range. Initially, the image's tonality is represented as a straight diagonal line on a graph"; adding
+and dragging **control points** reshapes the curve, up to **14** of them, with per-channel overlays,
+presets, an on-image adjustment tool, and a histogram behind the graph.
+<https://helpx.adobe.com/photoshop/using/curves-adjustment.html>
+
+**What this app does.** Nothing. `Image ▸ Adjustments ▸ Curves` is a **disabled** menu item
+(`src/components/DesktopHeader/DesktopHeader.tsx:191`). There is no curve type, no control-point
+model, and no evaluator anywhere in `src`.
+
+**Why it is too hard.** Curves is the same missing primitive as Levels with a worse control surface: a
+monotone spline through N points, evaluated per input level, per channel. The evaluator is a day; the
+editor — draggable points on a graph over a live histogram, with channel switching, numeric readouts
+and preset curves — is the work, and it needs the same histogram as the Levels entry above.
+
+**What the app does instead.** The disabled item. Nothing is rendered inert, so nothing pretends.
+
+### Adjustment layers, and the Properties panel that edits them
+
+**What Photoshop does.** "In adjustment layers, apply color and tonal corrections (like brightness,
+contrast, or vibrance) **without permanently changing pixel data**" — each adjustment is its own layer
+carrying its own settings and a mask, edited afterwards in the **Properties** panel, and the whole
+family (Brightness/Contrast, Levels, Curves, Exposure, Hue/Saturation, Color Balance, Black & White,
+Photo Filter, Channel Mixer, Color Lookup, Selective Color, Invert, Posterize, Threshold, Gradient Map)
+is created from `Layer > New Adjustment Layer`.
+<https://helpx.adobe.com/photoshop/desktop/create-manage-layers/color-adjustment-fill-layers/work-with-adjustment-and-fill-layers.html>
+
+**What this app does.** No adjustment layer exists as a type, a layer kind or an import path.
+`src/contexts/psd-utils.ts:88-106` warns that `adjustment`, `mask` and `clipping` are "unsupported and
+not preserved" on import, so a PSD written by Photoshop loses them on the way in. There is no Properties
+panel (`PanelId = 'history' | 'layers'`, `src/contexts/PanelLayout.tsx:89`). What exists is a
+**retained per-layer operation stack** — `FilterLayerOperation | AffineLayerOperation`
+(`src/contexts/layer-types.ts:31-46`) — which retains an adjustment and re-renders it, and cannot
+re-edit it: the only writer is the tool that created it, and the stack is a list, not a settings object
+with a UI.
+
+**Why it is too hard.** An adjustment layer is not a rendering feature; it is a **document-model** one.
+It needs a layer kind, a settings payload that survives serialization, a mask, and a Properties panel
+that can render and write back settings that no tool owns — plus the history interaction, since an
+adjustment's parameters change without changing pixels and the linear history model has no entry for
+that. Every one of those is a type change with a durable-path consequence, which is why the whole
+`Image > Adjustments` family above it is recorded as disabled rather than half-built.
+
+**What the app does instead.** Destructive `Image > Adjustments` on the active layer, and a retained
+operation stack that can re-render but not re-edit. It is non-destructive in retention only, which is a
+narrower thing than the word means and must not be described as smart objects — `docs/FEATURES.md`'s
+Non-destructive editing section is where that distinction is already drawn.
+
+### Dodge, Burn and Smudge build-up while the button is held
+
 **Not a handoff item.** The gap is real but it is recorded here as a capability decision, and per
 this file's own policy nobody treats its absence as a defect. The rail entries for the two ids are
-`HANDOFF.md` §117's, which is a separate decision.
+`HANDOFF.md` §170's, which is a separate decision.
 
 ### Dodge, Burn, Sponge and Smudge build-up while the button is held
 
@@ -369,7 +465,7 @@ retouches with a low Flow and repeated passes, so a one-shot commit at Flow 50% 
 a setting — it is half the whole effect in one pass.
 
 **What this app does.** One commit per stroke, on pointer-up. The reason is written down where the
-implementation is (`src/tools/dodgeBurn.ts:292-296`, and the same paragraph restated at
+implementation is (`src/tools/dodgeBurn.ts:248-252`, and the same paragraph restated at
 `src/tools/sponge.ts:351-356`):
 
 > There is no build-up. Photoshop's dodge and burn accumulate for as long as the button is held, which
@@ -518,7 +614,7 @@ into the layer that is already there.
 **What this app does.** Layer opacity has no writer: `Layer.opacity` is a required field
 (`src/contexts/layer-types.ts:58`), PSD import populates it (`src/contexts/psd-utils.ts:159,229`) and
 materialization applies it, and nothing in the app ever writes it. The defect and its
-blast radius are `HANDOFF.md` §56 (`HANDOFF.md:1273`); it is recorded here only because closing it is
+blast radius are `HANDOFF.md` §56 (`HANDOFF.md:816`); it is recorded here only because closing it is
 not a small change.
 
 The paint model is the larger half. A brush stroke commits as a **new layer** rather than painting the
@@ -544,108 +640,62 @@ cleanly, which is legible, and it is why a canvas with many strokes has many lay
 ## Needs an operator decision
 
 These are not engineering calls. Each one is a trade the operator owns: honouring the Photoshop-clone
-rule costs a real capability in one case, and building a menu system is a budget decision in another.
-They are recorded here so they are not re-derived, and so nobody implements them as if they were
-engineering judgements.
+rule costs a real capability in one case, and what an enabled menu item is allowed to promise is a
+naming decision in another. They are recorded here so they are not re-derived, and so nobody
+implements them as if they were engineering judgements.
 
-### The three adjustment "tools" must leave the rail, and it is a two-list change
+### The two enabled `Image ▸ Adjustments` items are named for capabilities the app does not have
 
-`color` ("Colors"), `levels` ("Levels") and `transform` ("Transform") are `Image ▸ Adjustments` and
-`Edit ▸ Transform` commands. Photoshop's Tools panel contains no such entries. Adobe's name for
-`color` is Black and White, which is not a tool either — and the app's `color` is not Black and White
-either, it is a three-filter CSS chain (the Black and White entry below), so the identification is
-unresolved in both directions. Adobe's name for what the app's `levels` actually implements is
-Brightness/Contrast: `LevelsToolArgs` is `{ brightness, contrast }` (`src/tools/levels.ts:4`) and the
-processor emits one `ctx.filter` from those two (`src/tools/levels.ts:12`), where Adobe's Levels is a
-three-control-point piecewise-linear remap with a channel selector, a histogram, output levels and
-Auto. Both are still `Image ▸ Adjustments` commands, so the rail verdict is the same for all three.
-`AGENTS.md` requires they leave the rail, and that they have no replacement tool, because Photoshop
-puts nothing in their place.
+`color`, `levels` and `transform` left the Tools rail on 2026-10-01 — the operator's ruling, recorded
+in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Transform`
+**commands**, and `toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
+rail entry (`toolbar-mapping.ts:172-189`). What is still open is not where they live but **what the two
+enabled items are called**, because both names are a partial match and neither is a match.
 
-**The flag exists and has exactly one reader, which is a test.** `toolbar-mapping.ts:164` declares it:
+`ADJUSTMENTS_ITEMS` (`src/components/DesktopHeader/DesktopHeader.tsx:186-209`) carries Adobe's list in
+a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
+`toolName` and nothing else (`DesktopHeader.tsx:147-150`, `:488`), so a disabled item is a recorded
+absence rather than a fake.
 
-```ts
-export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];
-```
+**`levels` is `Brightness/Contrast`, not Levels — and that is honest, not a dodge.**
+`LevelsToolArgs` is `{ brightness, contrast }` (`src/tools/levels.ts:5`) and the processor emits one
+`brightness(…) contrast(…)` filter (`src/tools/functions.ts:66-70`), which is Adobe's Brightness /
+Contrast. **Adobe's Levels is unbuilt**: three control points, a histogram, a channel selector, output
+levels and Auto. That capability has its own entry below.
 
-The only reader in the repository is
-`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`, which asserts the list does not
-contain `shape`. Nothing in `src/` imports it, so all three entries still render in the rail, in the
-three-wide flyout at `toolbar-mapping.ts:62-64`.
+**`color` is `Photo Filter`, and `grayscale` is a control Photo Filter does not have.** Its three
+controls are grayscale, sepia and saturation (`src/tools/functions.ts:60-63`). Adobe's Photo Filter is a
+hue adjustment from a preset filter or a custom colour, with a Density slider and Preserve Luminosity
+(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — so `sepia` picks
+the kind of colour Adobe's presets pick and `saturation` is the trim Preserve Luminosity performs, but
+**`grayscale` is a conversion to luminance that Photo Filter never performs**. The alternative name is
+worse: the app's `color` is not Adobe's Black and White either (that entry, below), so the honest
+options were a bounded partial match or a wrong name. The open question is whether to drop the
+`grayscale` control or move it to `Desaturate`, which is the operator's to make — `HANDOFF.md` §168.
 
-**They are also live entries in a second surface — and the menu to receive them already exists.**
-`src/components/Menu/Menu.tsx` renders a `DesktopHeader` and a `ToolbarHorizontal` and nothing else
-(`src/components/Menu/Menu.tsx:1-13`), so the app has **no `Image` menu**. It **does** have an
-`Edit` menu, and that menu is already an `Image ▸ Adjustments` host: `DesktopHeader.tsx:313-375`
-hard-codes items for `color`, `blur`, `levels`, `transform`, `draw` and `text`
-(`:319`, `:329`, `:339`, `:349`, `:359`, `:369`), each calling the same `handleToolSelection` the
-rail calls (`:121`-`:127`). `DesktopHeader.tsx:27-32` additionally declares a `TOOL_MENU_ITEMS`
-array whose `:29`, `:31` and `:32` are `color`, `levels` and `transform`.
+**The rest of `Image ▸ Adjustments` is disabled, and that is the accurate state of this app.** The app
+has no adjustment-layer machinery at all: `src/contexts/psd-utils.ts:88-106` warns that `adjustment`,
+`mask` and `clipping` are unsupported and not preserved on import. What exists instead is a retained
+per-layer operation stack — `layer.operations[]` re-rendered as a CSS filter string by
+`getLayerFilter` (`src/contexts/layer-renderer.ts:32`, applied at `:99`) — which retains an adjustment
+but cannot re-edit it and has no properties panel. That capability has its own entry below.
 
-**So the earlier claim here — that extraction "means building a real menu bar first" — was wrong,
-and is corrected here.** No menu has to be built. What is needed is the same three-id change in
-**two** hand-written lists (the rail flyout and `TOOL_MENU_ITEMS`), a relabel of `Edit` to
-`Image ▸ Adjustments`, and a decision about `blur`/`draw`/`text`, which are real Tools-panel tools
-currently reachable from a menu and not from the rail — the inverse of the three being fixed.
+**The operator has put this family back on the list**, 2026-10-01: Levels, Colors and the other
+`Image ▸ Adjustments` commands "will be implemented". That makes every entry above a **known gap with
+a known destination** rather than a decision to skip, and it **suspends this file's own "nobody
+re-audits it, nobody estimates it" policy for the `Image ▸ Adjustments` family** — otherwise the next
+session reads this file by its stated policy and treats the gap as closed. The requirements are not
+written down, so none of this is a spec: Adobe's behaviour in each entry is the requirement, and an
+agent implementing from the requirement rather than from the app's current CSS-filter chain is
+implementing it correctly. The black-and-white entry above carries the same signal for the same
+reason.
 
-**Why this is a decision and not a refactor.** Removing the rail entries does not relocate the
-functionality, it deletes it. Nothing carries `color`, `levels` or `transform` anywhere else, and
-nothing needs to be built for them to leave: it is the same three-id change in the **two**
-hand-written lists named above, which is a routing edit rather than a flag flip — and a routing edit
-with no destination is a deletion, which is why the operator owns it.
-
-**DECIDED — 2026-10-01. The operator: "I decide to remove them."** All three come **out of the
-rail**, which is where Photoshop does not have them. The **processors are not deleted** — the
-capability is restructured, not dropped. `HANDOFF.md` §117 §"The operator has decided: delete the
-three" is the record.
-
-This is **not an override** and `docs/OVERRIDES.md` gains no entry. Its own definition
-(`docs/OVERRIDES.md:11-18`) is a decision to _not_ replicate Photoshop's behaviour; removing three ids
-Adobe's Tools panel does not contain moves this app _toward_ Adobe. What remains undecided is
-narrower than the whole entry above suggests, and is listed in `HANDOFF.md` §117:
-
-- the rail flyout at `toolbar-mapping.ts:62-64` goes, **and** so do the three `TOOL_MENU_ITEMS`
-  entries at `src/components/DesktopHeader/DesktopHeader.tsx:29`, `:31`, `:32` — a second surface
-  that would otherwise keep contradicting Photoshop after the first is gone;
-- `extraTools` (`toolbar-mapping.ts:164`) starts meaning something, or is deleted as dead;
-- **`levels` is the capability question.** The app's "Levels" is Brightness/Contrast
-  (`src/tools/levels.ts:4`, `functions.ts:66-70`), so moving the tile unchanged puts
-  `Brightness/Contrast` under a `Levels` label in the menu — a new falsehood in a new place. The
-  honest item is `Brightness/Contrast`; real Levels is **unbuilt** (see below).
-
-**The processors in `src/tools/colors.ts` and `src/tools/levels.ts` are DEAD CODE, and that changes
-what a restructure moves.** Both are `commit: 'layer-operation'`, and `useLayer.ts:576` returns
-before the `imageProcessor` call at `useLayer.ts:603`. What actually paints is a CSS string:
-`layer-renderer.ts:15-18` builds it, `ctx.filter = getLayerFilter(layer.operations)` at
-`layer-renderer.ts:77` applies it, and `functions.ts:60-62` is literally
-`grayscale(%) sepia(%) saturate(%)`. Their only callers are `image-processors.test.ts`.
-`transform` is split — affine bypassed at `useLayer.ts:550-566`, trapezoid live.
-
-**And the app has no adjustment-layer machinery at all**, which is the capability the Adjustment
-Brush exposes and the app cannot imitate. `psd-utils.ts:88-106` refuses `adjustment`, `mask` and
-`clipping` on import. What exists is a retained per-layer operation stack
-(`layer.operations[]` → `apply-filter`) — non-destructive in retention, but with no way to re-edit
-a committed adjustment and no properties panel. Real **Levels** (three-point piecewise remap,
-channel selector, histogram) and real **Curves** (spline) are therefore unbuilt, and belong in this
-file rather than in a restructure of what exists.
-
-**The operator has signalled these will be built** (2026-10-01: Levels, Colors and the other
-`Image ▸ Adjustments` commands "will be implemented"), so this paragraph records a **known gap with
-a known destination**, not a decision to skip. The requirements are not written down, so this is
-still not a spec — but it changes what a future session may conclude from this file. Under this
-file's own policy an entry here means "nobody re-audits it, nobody estimates it"; that is **suspended
-for the `Image ▸ Adjustments` family**, because the operator has put it back on the list. Adobe's
-behaviour in each entry below remains the requirement and is unchanged by that signal — an agent
-implementing from the requirement, not from the app's current CSS-filter chain, is implementing it
-correctly.
-
-**One correction the decision did not survive on its stated premise.** Adobe's **Adjustment Brush
-Tool** is a real Tools-panel entry — GA in Photoshop 25.11 (July 2024), own toolbar slot, no
-single-letter shortcut — and it generates an adjustment layer with a layer mask. So "adjustments
-are not tools" is false as a general statement. The decision stands anyway, because `color` and
-`levels` here are whole-image adjustments with **no mask** and the Adjustment Brush can only apply
-an adjustment where you paint. `HANDOFF.md` §117 records the falsified premise so a later rail audit
-does not invert the doc and the tree.
+**One thing this file does not decide, because it is not a capability question.** Whether
+`Image ▸ Adjustments` bakes pixels or creates adjustment layers changes the durable schema, not the
+UI, and it is unanswered. `HANDOFF.md` §172 carries it, and `docs/PHOTOSHOP-UX.md`'s "No adjustment is
+a tool is too strong" bullet carries the separate fact that Adobe's Adjustment Brush is a real
+Tools-panel entry — which is why the rail decision and the general statement about adjustments are
+different claims.
 
 ### Three invented controls on the Magnetic Lasso bar
 
@@ -672,9 +722,9 @@ The rail does not carry a number of Adobe tools. The full roster, keyed by Adobe
 identity for each tool — name, group, shortcut, headline options, and a source — is
 [`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md), which took this list over. That file also records
 the roster counts that disagree — the 30 names this section used to carry against "34 to
-add" in `HANDOFF.md` §74 (`HANDOFF.md:1757`) — and leaves the discrepancy unresolved for
+add" in `HANDOFF.md` §74 (`HANDOFF.md:1271`) — and leaves the discrepancy unresolved for
 the operator. **One addition to its arithmetic, from this pass:** `HANDOFF.md` §74 names a
-**sixth** absent tool the 30 never listed, **Content-Aware Move** (`HANDOFF.md:1807`), so the
+**sixth** absent tool the 30 never listed, **Content-Aware Move** (`HANDOFF.md:1325`), so the
 union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` now carries
 that name, at its Selection row.
 
@@ -683,7 +733,7 @@ list itself.
 
 **Star is the notable one**, because it is not a missing tool so much as a missing entry: the
 shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts:109-116`) and Star is the shape Adobe's list has that the flyout does
+(`toolbar-mapping.ts:114-121`) and Star is the shape Adobe's list has that the flyout does
 not. It is listed there rather than filed here separately because the same custom-shape work is
 recorded as too hard above, and a hardcoded star would be the fake this policy refuses.
 
@@ -693,4 +743,4 @@ segmentation comparable to the Quick Selection entry. History Brush and Art Hist
 need the retained-raster history model that Erase to History needs. Perspective Crop is the
 Crop entry's transform work. Zoom is worth one note of accuracy: the app has a zoom
 _interaction mode_ on the canvas, and no Zoom _tool_ — the registry at
-`src/contexts/tool-types.ts:28-79` has no entry for it, and the rail has none either.
+`src/contexts/tool-types.ts:30-89` has no entry for it, and the rail has none either.

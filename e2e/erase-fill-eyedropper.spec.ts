@@ -47,12 +47,14 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *
  * Toolbar placement (`toolbar-mapping.ts`): `eyedropper` is its OWN single-tool tile, and at the
  * suite's 1280x720 the rail fills its slot, so its seven visible tiles are the first seven of its
- * sixteen groups and the eyedropper — the fifth — is one of them: `clickToolButton(page,
+ * fifteen groups and the eyedropper — the fifth — is one of them: `clickToolButton(page,
  * 'eyedropper')` selects it directly and there is no flyout to open. The other three share ONE
  * flyout whose primary tool is `brush` (six entries: brush, pencil, color-replacement, eraser,
  * magic-eraser, paint-bucket), so `clickToolButton(page, 'brush')` only ever selects the Brush
- * and the other three need `openToolFlyout` + `selectFromFlyout` — through the three-dots tile at
- * that window, because the brush group is the EIGHTH of the sixteen and is therefore folded.
+ * and the other three need `openToolFlyout` + `selectFromFlyout` — through the BRUSH TILE at that
+ * window, because the brush group is the SEVENTH of the fifteen and so is the LAST tile the rail
+ * shows there: it is on the rail, and `openToolFlyout` long-presses that tile instead of taking
+ * its three-dots branch. The fold begins one group further down, at the Clone Stamp (the eighth).
  *
  * Geometry: the app seeds an 800x600 opaque white `Blank 1` base layer on load (there is no
  * file input and no "open image" gesture), so every colour a tool acts on in this spec is
@@ -235,16 +237,17 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
  * and that chosen tool's own name afterwards: the flyout is only reachable again from whichever
  * tile currently leads it.
  *
- * At 1280x720 there is no such tile: the rail folds a SUFFIX, and the brush group is the EIGHTH
- * of the sixteen, so it is in the three-dots tile and this helper's `openToolFlyout` reaches it
- * through the collapse branch rather than through the long press. Filling the slot moved the
- * boundary up the list and not this group: seven tiles fit at that window, the eighth group is
- * still folded, and the selection is therefore proved on the tile that REPRESENTS the tool, which
- * for a collapsed tool is the three-dots tile and nothing else.
+ * At 1280x720 that tile IS on the rail: the rail folds a SUFFIX, the brush group is the SEVENTH
+ * of the fifteen, and seven tiles fit at that window, so the Brush is the LAST of them. This
+ * helper's `openToolFlyout` therefore reaches the flyout by long-pressing the Brush's own tile
+ * rather than through its collapse branch, and the selection is proved on `aria-pressed` of that
+ * tile. The fold begins at the Clone Stamp (the eighth), and it is the three-dots tile that
+ * stands for a collapsed tool and nothing else.
  *
  * That tile is read as SELECTION STATE, not as an accessible name, and `expectToolSelected` picks
- * the right channel for whichever of the two kinds of tile it is handed. The three-dots tile
- * deliberately renders NO `aria-pressed` (`SidebarLeft.tsx:635` — a control that opens a menu must
+ * the right channel for whichever of the two kinds of tile it is handed. It is the Brush's own
+ * tile on this spec's path; the three-dots tile is the helper's other branch, and it deliberately
+ * renders NO `aria-pressed` (`SidebarLeft.tsx:635` — a control that opens a menu must
  * not also claim to be a pressed toggle for a tool the user cannot see), so what it does still
  * render for the selected member of the collapsed set is the lit class
  * `TOOL_BUTTON_ACTIVE_CLASS`, painted off the same `group.some(tool => tool.name === toolName)`
@@ -255,7 +258,7 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
  * ACCESSIBLE NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name
  * is "More Tools" and never the tool's label. It now says exactly that when a tool has no tile of
  * its own, instead of failing on an empty text content. The eyedropper tests below do NOT share
- * that reason: the eyedropper is the fifth of the sixteen and the fifth of the seven the rail
+ * that reason: the eyedropper is the fifth of the fifteen and the fifth of the seven the rail
  * shows at 720, so it has a tile of its own and the helper selects it directly. They confirm the
  * selection through the eyedropper's own options bar all the same, because that is the one
  * element in the document driven by `toolName` itself.

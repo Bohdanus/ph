@@ -130,7 +130,7 @@ export function appendSelectionClear({
   };
 
   try {
-    const { entry, durableEntry } = planHistoryAppend({
+    const result = planHistoryAppend({
       item,
       id,
       timeline: { entries: history, cursor: historyIndex, branchRevision },
@@ -140,18 +140,26 @@ export function appendSelectionClear({
       // than a harmless one, because the item does carry a previous state.
       currentSelections: previousSelectionState,
     });
-    dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates,
+        historyItem: result.entry,
+        durableEntry: result.durableEntry,
+        durableDiagnostics: result.diagnostics,
+      },
+    });
   } catch (error) {
     // The plan never published, so nothing was appended and nothing was
     // cleared. Re-dispatch the same edit with no durable plan rather than
     // letting a shadow-projection failure reject a valid deselect; the store
     // rebuilds durable state from the legacy timeline instead.
     //
-    // Reported with the error VALUE because HANDOFF.md §98 makes the console the
-    // app's only error channel, so a recovery that is silent here is a lost edit
-    // the user can never learn about. One line per deselect, which is one user
-    // intent, so it cannot scrub.
-    console.error(error);
+    // The error is bound and reported because the fallback makes a planning
+    // failure indistinguishable from a writer that never planned: both end in
+    // an edit carrying no `durableEntry`. Without this line the only trace is a
+    // missing field.
+    console.error('Unable to plan durable history for a selection clear', error);
     dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item, id) } });
   }
 }
@@ -179,7 +187,9 @@ export function appendSelectionClear({
  *    shadow projection, not the render authority, so a plan that throws must not
  *    cost the user their deselect. The fallback below re-dispatches the identical
  *    action with no `durableEntry`, which leaves the durable state to the store's
- *    whole-timeline reconversion — the same path a pre-existing action takes.
+ *    whole-timeline reconversion — the same path a pre-existing action takes. A
+ *    plan that throws is also reported on the console, because that fallback is
+ *    otherwise indistinguishable from a writer that never planned one.
  *
  * Scope note: every gesture that ends in a committed selection is routed here —
  * the Clear/Deselect controls, the magic wand, the rectangle, and the polygon and
@@ -292,7 +302,7 @@ export const useSelectionHistory = () => {
       };
 
       try {
-        const { entry, durableEntry } = planHistoryAppend({
+        const result = planHistoryAppend({
           item,
           id,
           timeline: { entries: history, cursor: historyIndex, branchRevision },
@@ -302,18 +312,25 @@ export const useSelectionHistory = () => {
           // harmless default — the entry does carry a real previous state.
           currentSelections: previousSelectionState,
         });
-        dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
+        dispatch({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates,
+            historyItem: result.entry,
+            durableEntry: result.durableEntry,
+            durableDiagnostics: result.diagnostics,
+          },
+        });
       } catch (error) {
         // The plan never published, so nothing was appended and the gesture's
         // selection did not land. Re-dispatch the same edit with no durable plan
         // rather than letting a shadow-projection failure reject a valid
         // selection; the store rebuilds durable state from the legacy timeline.
         //
-        // Reported with the error VALUE, for the reason HANDOFF.md §98 gives: the
-        // console is the app's only error channel, and the selection the user
-        // just drew is precisely what they would otherwise never learn is not
-        // durable. One line per commit, and a commit is one user intent.
-        console.error(error);
+        // Reported for the same reason as the clear above: the fallback is the
+        // only thing distinguishing a failed plan from a writer that never
+        // planned one.
+        console.error('Unable to plan durable history for a selection commit', error);
         dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item, id) } });
       }
     },
