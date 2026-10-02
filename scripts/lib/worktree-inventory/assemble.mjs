@@ -177,6 +177,13 @@ export function buildInventory({
       mergedIntoMain: wt.mergedIntoBase,
       dirty: wt.workingTree.modified,
       untracked: wt.workingTree.untracked,
+      // The subset of `dirty` whose content main does NOT already hold, plus
+      // every untracked path. Reported beside `dirty` and never instead of it:
+      // `dirty` counts what differs from this worktree's own HEAD, so on a
+      // branch behind main it is mostly "main moved on", and a reader who
+      // treats it as the size of the salvage gets an answer several times too
+      // large. `dirty` stays the number the disposal test uses.
+      notOnMain: wt.workingTree.notOnBase,
       dirtyPaths: wt.workingTree.paths,
 
       lastCommit: wt.tip,

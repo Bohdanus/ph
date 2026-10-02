@@ -332,7 +332,7 @@ Sources:
 
 ### Magnetic Lasso Tool
 
-`feather-magnetic-lasso` · **Shift+L**
+`feather-magnetic-lasso`
 
 Click a starting point and the border snaps to the strongest image edge within Width as you move the pointer.
 

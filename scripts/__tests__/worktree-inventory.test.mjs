@@ -441,6 +441,64 @@ describe('git.mjs against a real repository', () => {
     }
   });
 
+  it('separates "the branch is behind" from "this content is on no ref"', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      // The shape that produced the false alarm: main moves `one.txt` on to
+      // content the side branch has never seen, and then the side worktree is
+      // given those same bytes. `one.txt` is `modified` — side's tip still
+      // holds the old ones — while the content on disk is exactly what main
+      // already has. Deleting that worktree loses nothing, and reporting it as
+      // uncommitted work at risk is wrong by the only measure that matters.
+      writeFileSync(join(dir, 'one.txt'), 'same-on-both');
+      g('commit', '--quiet', '-am', 'main moves one');
+      g('checkout', '--quiet', 'side');
+      writeFileSync(join(dir, 'one.txt'), 'same-on-both');
+
+      const behind = __testables.workingTreeState(dir, 'main');
+      expect(behind.modified).toBe(1);
+      expect(behind.paths).toEqual(['one.txt']);
+      // The point of the field: main already holds these exact bytes.
+      expect(behind.notOnBase).toBe(0);
+
+      // An edit main does NOT have is content no commit anywhere holds.
+      writeFileSync(join(dir, 'two.txt'), 'only-on-side');
+      const real = __testables.workingTreeState(dir, 'main');
+      expect(real.modified).toBe(2);
+      expect(real.notOnBase).toBe(1);
+
+      // An untracked file cannot be on the base branch by definition: the
+      // branch never tracked it. It is the shape `remove --force` destroys.
+      writeFileSync(join(dir, 'loose.txt'), 'untracked');
+      const withUntracked = __testables.workingTreeState(dir, 'main');
+      expect(withUntracked.untracked).toBe(1);
+      expect(withUntracked.notOnBase).toBe(2);
+
+      // A path the base branch does not have AT ALL counts as not-on-base:
+      // side added `four.txt`, main never did, and it is in side's tip so it
+      // is not even reported as modified — the risk is `main` deleting nothing
+      // here, and this asserts the field does not claim otherwise.
+      expect(withUntracked.notOnBase).toBeLessThanOrEqual(withUntracked.modified + withUntracked.untracked);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a base branch that cannot be resolved as not-on-base rather than as clean', () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, 'one.txt'), 'edited');
+      // The direction to be wrong in is the one that keeps the work: an
+      // unresolvable base cannot prove anything is on it.
+      const tree = __testables.workingTreeState(dir, 'no-such-branch');
+      expect(tree.modified).toBe(1);
+      expect(tree.notOnBase).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reports whether the commit list was cut off at the cap', () => {
     const dir = makeRepo();
     try {
