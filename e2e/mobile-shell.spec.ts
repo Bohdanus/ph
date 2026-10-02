@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
 
 /**
@@ -113,6 +113,12 @@ test.describe('Mobile shell', () => {
 
   test('the theme toggle in the drawer moves the document, as it does from the header', async ({ page }) => {
     const root = page.locator('html');
+    // Starts LIGHT because the shared `test` pins `localStorage.theme` to `light` before
+    // the app's first statement — the `pinnedTheme` fixture in
+    // `e2e/fixtures/extended-test.ts`, and the reason every spec is. The app's own
+    // default with nothing stored is DARK, which is a separate test's claim
+    // (`e2e/document-dialogs.spec.ts`); asserting a light start here without that would
+    // pin the app's default rather than the suite's.
     await expect(root).toHaveClass(/\blight\b/);
     await page.getByTestId('mobile-menu-button').click();
     await page.getByTestId('mobile-menu-theme-button').click();

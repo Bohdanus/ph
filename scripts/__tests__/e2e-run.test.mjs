@@ -497,11 +497,13 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
   });
 
   it('renews the lease while the suite runs, and says so if a renewal fails', async () => {
-    // A file lock is never renewed by the board itself, so this wrapper owns the
-    // lease for as long as the suite lives. An earlier version defined the renewal
-    // and never started it: the timer existed, was documented, and no code path
-    // reached it. It survived a real full-suite run purely because the 30-minute
-    // lease outlasted it, which is exactly the kind of pass that is not evidence.
+    // The board renews this run's own lock too (`renewOwnLocks`, while the
+    // worktree is on disk), so this timer is belt and braces rather than the only
+    // thing standing between a live run and the sweep. An earlier version defined
+    // the renewal and never started it: the timer existed, was documented, and no
+    // code path reached it. It survived a real full-suite run purely because the
+    // 30-minute lease outlasted it, which is exactly the kind of pass that is not
+    // evidence — and the reason it still has to start is the same.
     //
     // A failed renewal is now a MESSAGE, not a kill. The old version stopped the
     // suite, which was correct when the lock was the guarantee and is wrong now that

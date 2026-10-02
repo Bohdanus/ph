@@ -1,4 +1,4 @@
-import { expect, type Page, test, type TestInfo } from '@playwright/test';
+import { expect, type Page, test, type TestInfo, useAppDefaultTheme } from './fixtures/extended-test';
 import { readFile } from 'node:fs/promises';
 import {
   type BoundingBox,
@@ -141,19 +141,29 @@ async function openSaveDialogAndWait(page: Page): Promise<void> {
  */
 test.use({
   viewport: { width: 1280, height: 1100 },
-  // PINNED, and this is the fix for a guarantee that used to rest on nothing. The
+  // THE THEME IS NOT PINNED HERE ANY MORE, and that is a deletion rather than a
+  // demotion. `colorScheme: 'light'` stood in this block for a real dependency: the
   // workspace backdrop is the 20px checkerboard the canvas's parent div carries
-  // (`chessboard-light` / `chessboard-dark`, chosen from the resolved theme at
-  // `src/components/Main/Main.tsx:222`), and the theme resolves through
-  // `src/contexts/ThemeContext.tsx:13-22`'s `prefers-color-scheme` fallback whenever
-  // `localStorage` has no saved theme — which is every fresh Playwright context. So the
-  // colour scheme decides whether the opacity test's direction holds at all, and under
-  // dark it inverts. Playwright's own default is `light`, so this run was passing by an
-  // inherited value that neither this file nor `playwright.config.ts` ever stated. Stated
-  // now, and the opacity test additionally MEASURES the margin the direction depends on
-  // rather than trusting the pin: a pinning mistake then fails as a named assertion, not
-  // as six unexplained monotonicity failures.
-  colorScheme: 'light',
+  // (`chessboard-light` / `chessboard-dark`, picked from the resolved theme at
+  // `src/components/Main/Main.tsx:263`), so the colour scheme decided whether the
+  // opacity test's direction held at all — under dark it inverts, because the dark rule
+  // paints `#000` and `#121212` where the light one paints `#fff` and `#f3f3f3`
+  // (`src/index.scss:140-151` against `:153-164`).
+  //
+  // It stopped being able to decide that when `src/contexts/ThemeContext.tsx:20` replaced
+  // the `prefers-color-scheme` fallback with a hard-coded `DEFAULT_THEME` of `dark`. The
+  // media query this option sets now reaches no code at all, so leaving it here would
+  // have been a comment claiming to pin the theme while pinning nothing — and the worst
+  // version of that, because the app's default is now DARK and this file's pixel
+  // arithmetic needs light, so a reader would take the line at face value and believe the
+  // backdrop was accounted for.
+  //
+  // It is pinned in `e2e/fixtures/extended-test.ts`, which every spec's `test` comes from,
+  // and whose header comment says why the suite is light at all and what silently passes
+  // if it is not. The measurement is still here rather than delegated to the pin: the
+  // opacity test reads the real backdrop off the real pixels and asserts the margin the
+  // direction depends on, so a pinning mistake fails as a named assertion instead of as
+  // six unexplained monotonicity failures.
 });
 
 /**
@@ -176,7 +186,7 @@ const SAVE_DIALOG_TEST_TIMEOUT_MS = INTEGRATION_TEST_TIMEOUT_MS;
  * the same three numbers make the order invert.
  *
  * And the backdrop is not one colour to compare against. It is a 20px checkerboard
- * (`src/index.scss:126-137` light: `#fff` plus `#f3f3f3` gradients; `:139-150` dark: `#000`
+ * (`src/index.scss:140-151` light: `#fff` plus `#f3f3f3` gradients; `:153-164` dark: `#000`
  * plus `#121212` — the two rules are identical but for those two colours, and both pin
  * `background-size: 20px 20px`), so the composite reads whichever cell a sample lands on.
  * The real precondition is therefore per channel, `backdrop[channel] > colour[channel]`,
@@ -418,7 +428,7 @@ async function documentColourSample(page: Page, testInfo: TestInfo, name: string
  * rather than of the layout. Measured at this file's 1280x1100: the element is 974x963 and
  * the 800x600 document renders 974x730.5 centred, so both the top and the bottom 4% are
  * bare checkerboard — light theme darkest 243, brightest 255, which are exactly the two
- * colours `src/index.scss:126-137` mixes. At 1280x720 the element is 974x583 and the same
+ * colours `src/index.scss:140-151` mixes. At 1280x720 the element is 974x583 and the same
  * document renders 777x583 filling the element's whole height, so NEITHER strip is bare:
  * that is why the viewport above is bumped, and why this strip only needs the top. The
  * bottom 4% would additionally be below the fold at 720, where it carries no checkerboard
@@ -1070,9 +1080,11 @@ test('the theme toggle switches the whole document between light and dark', asyn
   const root = page.locator('html');
   const toggle = page.getByTestId('theme-toggle-button');
 
-  // The `prefers-color-scheme` fallback in `src/contexts/ThemeContext.tsx:13-22` resolves
-  // from whatever scheme the context was given, and this file PINS it to `light` in the
-  // `test.use` above — so the starting class is stated rather than inherited.
+  // Starts LIGHT because the shared `test` pins `localStorage.theme` to `light` before
+  // the app's first statement — see the `pinnedTheme` fixture in
+  // `e2e/fixtures/extended-test.ts`. That is a property of the oracle and not of the app:
+  // with nothing stored the app is DARK, which is what the next test asserts. Stating it
+  // here means this file no longer depends on a `test.use` line that was removed.
   await expect(root).toHaveClass(/\blight\b/);
 
   await toggle.click();
@@ -1087,4 +1099,53 @@ test('the theme toggle switches the whole document between light and dark', asyn
   await page.getByTestId('theme-toggle-button').click();
   await expect(root).toHaveClass(/\blight\b/);
   await expect(root).not.toHaveClass(/\bdark\b/);
+});
+
+/**
+ * The other half of the toggle test above, and the only test in the suite that runs with
+ * the pin RELEASED.
+ *
+ * WHY IT EXISTS. `src/contexts/ThemeContext.tsx:20` makes `dark` the default for a
+ * visitor with no stored preference, and that replaced a `prefers-color-scheme` fallback
+ * — so the app's default is a decision in the source, not an accident of the OS, and
+ * nothing else in this suite can see it. Every other spec runs pinned light (see the
+ * `pinnedTheme` fixture in `e2e/fixtures/extended-test.ts`), which is correct for the
+ * pixel arithmetic and means a flip of the default would break tests LOUDLY: measured
+ * with that pin's write neutered and a full headless suite run, **11 failed, 3 skipped,
+ * 337 passed**. But a flip BACK, or a change of the default's shape, would be silent
+ * everywhere else, because the loud ones are the ones that name a colour in an assertion.
+ *
+ * WHAT IT ASSERTS, and what it does not: the `dark` class on `<html>` and `dark` in
+ * `localStorage`. Not rendering. A `dark:` Tailwind variant that stopped applying
+ * leaves both of those true, so this test is a declaration about `DEFAULT_THEME` and must
+ * not be read as dark-mode coverage — `e2e/accessibility.spec.ts` records two extra
+ * `color-contrast` violations on the panel tab labels
+ * (`src/components/SidebarRight/PanelGroup.tsx:42`) that only the dark palette has.
+ *
+ * WHAT IT DOES NOT DO. It does not weaken or parametrise the pin. `useAppDefaultTheme`
+ * turns the pin off for this tab and removes the stored value in the same step, then the
+ * reload makes the app resolve with nothing stored — the one condition the default is
+ * about. A test that merely cleared `localStorage` and reloaded would measure the pin,
+ * because the init script writes `light` back on every navigation; that is why the
+ * release is a flag in `sessionStorage` and why the helper removes the key too.
+ */
+test('with nothing stored the document starts dark', async ({ page }) => {
+  await page.goto('/');
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+  await useAppDefaultTheme(page);
+  // `ThemeProvider` read the stored value once, in its `useState` initializer, and nothing
+  // since has asked it again — a reload is the only way to make the app resolve with an
+  // empty `localStorage`.
+  await page.reload();
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+  const root = page.locator('html');
+  await expect(root, 'DEFAULT_THEME is dark, and it is applied as a class on <html>').toHaveClass(/\bdark\b/);
+  await expect(root).not.toHaveClass(/\blight\b/);
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('theme')), {
+      message: 'the resolved default is written back to storage, so the next load is not a default load',
+    })
+    .toBe('dark');
 });

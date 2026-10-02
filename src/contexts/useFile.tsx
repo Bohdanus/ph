@@ -7,7 +7,7 @@ import type { Size } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
-import type { BlankImageParams } from './tool-types.ts';
+import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
 
 export type ImageUploadResponse =
@@ -32,7 +32,7 @@ export type ImageSaveResponse = {
 };
 
 export interface FileContextType {
-  openNewImageDialog: () => Promise<BlankImageParams | null>;
+  openNewImageDialog: () => Promise<NewDocumentBlankParams | null>;
   openLoadImageDialog: () => Promise<ImageUploadResponse | null>;
   openSaveImageDialog: (data: ImageSaveInput) => Promise<ImageSaveResponse | null>;
 }
@@ -51,7 +51,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   // Resolver refs allow promise-based API for consumers
   const uploadResolverRef = useRef<((data: ImageUploadResponse | null) => void) | null>(null);
-  const newResolverRef = useRef<((data: BlankImageParams | null) => void) | null>(null);
+  const newResolverRef = useRef<((data: NewDocumentBlankParams | null) => void) | null>(null);
   const saveResolverRef = useRef<((res: ImageSaveResponse | null) => void) | null>(null);
 
   useEffect(() => {
@@ -93,7 +93,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   const openNewImageDialog = () => {
     setShowNewDialog(true);
-    return new Promise<BlankImageParams | null>((resolve) => {
+    return new Promise<NewDocumentBlankParams | null>((resolve) => {
       newResolverRef.current = resolve;
     });
   };
@@ -152,7 +152,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     }
   }
 
-  const handleNewImageCreate = (data: BlankImageParams) => {
+  const handleNewImageCreate = (data: NewDocumentBlankParams) => {
     // Resolve the waiting promise (if any) with data or undefined
     newResolverRef.current?.(data);
     newResolverRef.current = null;

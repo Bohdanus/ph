@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/extended-test';
 import type { Page } from '@playwright/test';
 import { clickToolButton, getToolButton, toggleToolbarLayout, verifyPrimaryTool } from './toolbar-helpers';
 

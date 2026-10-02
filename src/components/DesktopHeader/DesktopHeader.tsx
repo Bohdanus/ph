@@ -23,7 +23,25 @@ import type { FigureType } from '../../tools/shape.ts';
  * The eleven entries added with the tool expansion carry the same labels
  * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
  * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
+ *
+ * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly three
+ * tools.** Add Anchor Point, Delete Anchor Point and Convert Point are absent because they
+ * are absent from Photoshop's own Tools panel too — they modify a path rather than paint, and
+ * Photoshop reaches them from the Pen's context menu and the path-modification commands, not
+ * from the Tools panel or the Tools menu. They are in `availableTools` because they are
+ * selectable tools; they are not in this menu because they are not menu items.
+ *
+ * Every OTHER `availableTools` name must produce a row. That was not true until the test
+ * below was derived from the registry: the assertion was a hand-written list of 24 names that
+ * never mentioned the Dodge, the Burn, the Smudge, the Sharpen or the Magic Eraser, so the
+ * Sponge shipped with no Tools-menu entry and the test stayed green.
  */
+/**
+ * The registered tools this menu deliberately does not list. See the note on
+ * `TOOL_MENU_ITEMS` above: these three are not Tools-panel entries in Photoshop either.
+ */
+export const MENUS_EXCLUDE: readonly ToolName[] = ['add-anchor-point', 'delete-anchor-point', 'convert-point'];
+
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
   { toolName: 'color', label: 'Colors' },
@@ -41,6 +59,8 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'quick-selection', label: 'Quick Selection Tool' },
   { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
   { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
+  { toolName: 'single-row-marquee', label: 'Single Row Marquee Tool' },
+  { toolName: 'single-column-marquee', label: 'Single Column Marquee Tool' },
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
@@ -49,9 +69,11 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'sharpen', label: 'Sharpen Tool' },
   { toolName: 'smudge', label: 'Smudge Tool' },
   { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
+  { toolName: 'magic-eraser', label: 'Magic Eraser Tool' },
   { toolName: 'gradient', label: 'Gradient Tool' },
   { toolName: 'dodge', label: 'Dodge Tool' },
   { toolName: 'burn', label: 'Burn Tool' },
+  { toolName: 'sponge', label: 'Sponge Tool' },
   { toolName: 'eyedropper', label: 'Eyedropper Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
@@ -170,6 +192,12 @@ const DesktopHeader = () => {
 
   return (
     <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950">
+      {/* The document's top-level heading, so a screen-reader user has something to
+          navigate by and axe's `page-has-heading-one` has something to find. It sits
+          INSIDE the header landmark: a bare grid child would fail axe's `region` rule
+          instead, which is the rule that caught it here. `sr-only` keeps it out of the
+          visual design. `MobileHeader` carries the same heading for the mobile shell. */}
+      <h1 className="sr-only">Photo App</h1>
       <ul className="mr-auto flex list-none items-center p-0">
         <li className="relative" ref={fileMenuRef}>
           <button

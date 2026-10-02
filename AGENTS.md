@@ -1,5 +1,29 @@
 Photoshop clone production-grade photo editor
 
+## Worktree FIRST — no tracked edit happens outside one
+
+**100% of work that changes a tracked file happens in its own worktree, on its own
+branch. `main` is for reading and merging.** The exceptions are enumerated, none of
+them a judgement call, in
+[`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
+
+```bash
+git rev-parse --show-toplevel                        # FIRST. Every time. Non-negotiable.
+# `git worktree list` puts the MAIN checkout first, and $MAIN is absolute: the new
+# worktree lands under the main checkout and never nests inside the one you are in.
+MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
+git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
+```
+
+- **A commit from `main` is refused**, not warned about: `scripts/main-worktree-guard.mjs`
+  runs first in `.husky/pre-commit`, and the refusal names this recipe. It is the floor
+  under the rule rather than the rule: it runs after the edit, so a session that writes
+  into `main` and never commits is not stopped by it. What stops the write is the process
+  above.
+
+The three traps that follow from having a worktree are in **Worktrees and dev servers**
+below.
+
 ## Subagents INSTRUCTION
 
 LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.
@@ -12,10 +36,12 @@ ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE
 
 1. A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION
 2. A GPT SESSION MAY LAUNCH GPT SUBAGENTS
-3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is correct provider for GPT models, "kilo", is CORRECT provider for SpaceBunny.
+3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is CORRECT provider for GPT models, "kilo", is CORRECT provider for SpaceBunny.
 4. `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless. The `kilo` provider also lists it as plain `Space Bunny Alpha`; the dated spelling is the one that resolves on this gateway.
 5. Cost doubles past 200k of context FOR GPT Luna, and doubles above 270k of context for GPT Terra and Sol. Space Bunny does not have such restriction. IMPORTANT THAT GPT MODELS stay below threshold!
 6. `agent_manager`: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
+7. THE GATEWAY PRICES IN THE NAME, AND A CATALOG ENTRY IS NOT A FREE ENTRY. `(free)` is free; a bare name may be paid.
+8. **NEVER OMIT `model` AND `provider`!**
 
 ```ts
 task({
@@ -27,19 +53,19 @@ task({
 });
 ```
 
-- Omitting those three fields inherits the current turn's model.
 - `agent_manager` (visible sessions, git worktrees) is a different tool: only when the user wants visible sessions or worktrees. `task` for everything else — it creates no sessions.
-- Audit before spawning a fleet, not after: `sqlite3 ~/.local/share/kilo/kilo.db "SELECT id, model, parent_id, title FROM session WHERE json_extract(data,'\$.model') …"`. On 2026-09-28 a free orchestrator (`ses_f1b1bccb…`) sent two subagents with a bare model name, the resolver fell through to the Kilo Gateway onto `~openai/gpt-luna-latest`, and both died in under a second on `APIError: Add credits to continue, or switch to a free model` at zero tokens — rule 1 breached by an agent that was itself free.
 
 ### Rules of delegation
 
 - **NEVER MORE THAN 15 SUBAGENTS RUNNING AT ONCE, IN ANY COMBINATION** — `task` subagents plus Agent Manager sessions plus background processes you have running. Fan-out is good; a fan-out that saturates the host is not, and 16 is past that point on this machine. Queue the remainder and launch as results land, or split the concern further. The cap is on **simultaneously running**, not on total: a hundred subagents in waves of fifteen is fine.
-- **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** If this chat is in `main`, every subagent you launch writes into `main` — 1398 of them did in seven days, and no permission can stop it. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work. `docs/ORCHESTRATION.md`.
+- **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** NEVER WORK on `main` worktree, unless allowed by operator. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work.
 - **NEVER TWO SUBAGENTS ON THE SAME FILE.** Split by concern, not by convenience.
 - **Self-contained briefs.** A subagent has a fresh context: give it the goal, your constraints, whether it may edit code, and exactly what its final message must contain. "Return file:line for every match" beats "investigate the caching layer".
 - **Ask for evidence.** A claim without `file:line` or command output is not verified. Have subagents report candidate results _and_ how they got them, then check the load-bearing ones yourself.
+- **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.**. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
+- **A post that will not fit is a path, not a shorter post.** `board_post` rejects a body over 4096 characters and the rejection ABORTS THE TURN — a finished review, its mutations and all its evidence, gone, ending on a tool error. Write the finding to a handoff document and post the path. `docs/ORCHESTRATION.md` has the cap and the rest of the swarm text rules.
 
 ## NEVER OPEN A BROWSER WINDOW
 
@@ -56,7 +82,19 @@ The e2e suite is headless by default and must stay that way.
 | `PLAYWRIGHT_ALLOW_HEADED=1`     | the human's opt-in, not yours                              |
 | `test.use({ headless: false })` | a live window                                              |
 
-`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. If something only reproduces visually, that is the operator's call; ask them to run `npm run test:e2e:headed` themselves.
+`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set.
+
+### Looking at a live page is allowed, and does not need a window
+
+ALWAYS use headless browser. `npm run probe:console` loads a page
+headlessly and reports every console error, page error and failed request, deduplicated with
+counts — which is how the nine invalid props on a `<div>` in `useRect` were found, on a suite
+of 339 tests that could not see them. `--url`, `--viewport`, `--dsf` and `--allow` are its only
+options; `headless` is hardcoded in the script and is not read from the environment.
+
+Do not add a browser MCP server to get this. `permission.bash` globs match shell commands and
+`global-setup.ts` only runs inside a Playwright process, so an `mcp_*_navigate_page` call is
+neither and would reopen the window these two layers exist to close.
 
 ## Commands
 
@@ -67,6 +105,7 @@ npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
+npm run probe:console   # playwright, HEADLESS - one page load, reports console + page errors
 ```
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
@@ -76,11 +115,13 @@ npm run build           # production bundle, and a real CI step
 
 ## Worktrees and dev servers
 
-One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
+The three traps that follow from having one, each a consequence of a second checkout of
+the same repository:
 
-- **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
+- **`node_modules` is missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **A run starts its own dev server, on a port of its own.** `scripts/e2e-run.mjs` picks a free port, so `test:e2e` never tests a checkout it did not start. Never set `PLAYWRIGHT_REUSE_EXISTING_SERVER`: `playwright.config.ts` hard-codes `reuseExistingServer: false` and the runner refuses that variable on TRUTHINESS, so even `=false` exits with an error. A bare `npx playwright test` skips the port picker and collides with whatever holds :5173 — use `npm run test:e2e`, or pass `PLAYWRIGHT_PORT=<free>`.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
+- **Never remove a worktree by hand.** `npm run dispose -- <name>` is the only path: it checks the inventory's `action`, the board's claims and locks, and the session database, then anchors the branch before it deletes. `git worktree remove --force` and `git branch -D` are denied or gated in `kilo.jsonc`, and there is no reason to defeat them. A refusal names the signal that produced it — an in-flight task is `in-use`, and only the operator may stop a writing chat.
 
 ## Test traps
 
@@ -88,6 +129,8 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds two `auto` fixtures: `consolePolice`, which fails a test on any unaccepted console error or page error, and `pinnedTheme`, which seeds `localStorage.theme` so the suite's pixel oracles keep the light backdrop they are calibrated for under the app's dark default. `auto` is the load-bearing part — it is opt-out, not opt-in. `consolePolice` is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates
 
@@ -98,7 +141,7 @@ Two husky hooks, both delegating to a script in `package.json`, so the gated seq
 | Command               | Runs from           | Contents                                                       |
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
-| `npm run gate:verify` | —                   | `tsc` -> `build` -> `test:e2e:unit`                            |
+| `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
 | `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
 | `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
 
@@ -128,7 +171,7 @@ The commit hook is two gates because they answer different questions. `gate:veri
 
 ## Known failures and how to read one
 
-On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by declaration. Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
+On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by declaration (`e2e/sidebar-flyout.spec.ts` right-click on single-tool groups, `e2e/viewport-drawing.spec.ts` line-under-cursor after resize, `e2e/export/photopea.spec.ts` the Photopea round trip). Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
 
 - The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
 - A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `expected-fail` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.
@@ -158,4 +201,4 @@ On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by dec
 
 The legacy `HistoryItem[]` path is the **PRODUCTION REPLAY AUTHORITY**: it writes history, replays through `history-replay.ts`, renders runtime `Layer` objects and exports from the runtime canvas and layers. The durable document is still a shadow projection, NOT the authority for rendering. Treat that as the state to read, not a fact to assume — the history work is in flight. Re-read the code and the plans before designing across the legacy/durable boundary.
 
-The single-writer cutover's old blocker is GONE, not merely moved: it was gated on a canvas-promotion helper that no longer exists (`HANDOFF.md` §127 records the deletion), and the hazard it named is closed — presentation caches are published through the reducer by a typed action, so a cache cannot be promoted outside reducer publication. Do not re-derive that gate from this sentence's predecessor; check the current reducer.
+The single-writer cutover's old blocker is GONE, not merely moved. It was gated on a canvas-promotion helper that no longer exists — there is no `HANDOFF.md` entry for that gate, live or retired, so this sentence carries no citation and invents none. What the reducer does establish, and all it establishes: a presentation cache reaches a layer only through the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm, which re-checks `isSamePresentationCanvas` and then replaces the affected layer records wholesale. The guard that proves a publication moves no durable layer state is `layersDifferOnlyByPresentation`, and it is applied on the `PUBLISH_RUNTIME_PRESENTATION` path, NOT on the promotion path — so "a cache cannot be promoted outside reducer publication" was stronger than the code. Check the current reducer rather than re-deriving this from its predecessor.

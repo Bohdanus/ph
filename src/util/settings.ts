@@ -83,8 +83,18 @@ export function saveLastSettings(args: ToolArgs) {
     // Typed rather than bare even though nothing here is geometric: Sample Size is a real user
     // choice, and the bare group exists for tools whose only setting is that they exist.
     lastSavedSettings.eyedropper = cloneDeep({ ...args });
-  } else if (toolName === 'rectangular-selection') {
-    lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
+  } else if (
+    toolName === 'rectangular-selection' ||
+    toolName === 'single-row-marquee' ||
+    toolName === 'single-column-marquee'
+  ) {
+    // Typed rather than falling through to the bare group below, because a tool with NO
+    // settings still has to persist its identity: an unmatched `toolName` never reaches
+    // `lastSavedSettings` at all, and `cloneSavedToolArgs` then seeds the bar from
+    // `defaultSettings` on every switch. Harmless for these three today, and the reason
+    // this arm exists rather than a note is that it stops being harmless the day one of
+    // them grows a control.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ toolName });
   } else if (toolName === 'triangle' || toolName === 'polygon') {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
       withNormalizedFigure(omit(args as unknown as ShapeToolArgs, 'start', 'end'))
@@ -131,19 +141,22 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'smudge' ||
     toolName === 'dodge' ||
     toolName === 'burn' ||
-    toolName === 'clone-stamp' ||
-    toolName === 'eraser'
+    toolName === 'sponge' ||
+    toolName === 'clone-stamp'
   ) {
     // These five are brushes, so `points` is the stroke that was just committed and not
     // a setting: reseeding it would hand the next drag the previous one. Emptied the
-    // way `draw` (:27) and `feather-magnetic-lasso` (:44) empty theirs. Note that
+    // way `draw` and `feather-magnetic-lasso` empty theirs. Note that
     // `clone-stamp.source` survives — a source point is a setting, and losing it is the
     // difference between "stamp where you last cloned" and "stamp nothing".
     //
-    // The eraser is here rather than in the arm above for exactly that reason: it erases
-    // along a stroke, so its `points` is the stroke too, and `EraserToolArgs.points` is
-    // required rather than optional. Persisting the last erased stroke would reappear in
-    // the options bar on the next tool switch.
+    // The eraser is NOT in this group, and must not be added to it. It erases along a
+    // stroke too, so the same reasoning applies to it — but it also has settings of its
+    // own (Mode, Size, Opacity, the foreground), which is why it has its own typed arm
+    // earlier in this chain that already empties `points`. It used to be listed here as
+    // well, which made this arm unreachable for it and left a comment justifying a
+    // placement that had been dead for as long as the typed arm existed: an `else if`
+    // chain takes its first match, so the later duplicate could never run.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else {
     // Every `ToolName` is persisted above by design. Without this trap a tool added to

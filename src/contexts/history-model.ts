@@ -36,6 +36,12 @@ export type DurableLayerSource =
     }>
   | Readonly<{
       kind: 'text';
+      /**
+       * Always `'text'` for this variant. Declared rather than inferred: the adapter
+       * emitted it from the start, and `Object.freeze`'s inferred return type defeated
+       * excess-property checking, so a reader had to probe for it at runtime.
+       */
+      toolName: string;
       args: PlainObject;
       size: Size;
       sourcePos: Readonly<{ x: number; y: number; width: number; height: number }>;
@@ -104,7 +110,6 @@ export type DurableOperation =
       version: number;
       args: PlainObject;
     }>
-  | Readonly<{ kind: 'rasterize-layer'; layerId: LayerId; result: DurableLayerSnapshot }>
   | Readonly<{ kind: 'set-document-frame'; previous: DocumentFrame; next: DocumentFrame }>
   | Readonly<{ kind: 'merge-document'; result: DurableLayerSnapshot; removedLayerIds: readonly LayerId[] }>
   | Readonly<{ kind: 'set-selection'; before: SelectionSnapshot; after: SelectionSnapshot }>;
@@ -163,9 +168,6 @@ export function collectDurableAssetIds(document: DurableDocument): ReadonlySet<A
       case 'create-layer':
         collectLayerAsset(entry.operation.layer, assetIds);
         break;
-      case 'rasterize-layer':
-        collectLayerAsset(entry.operation.result, assetIds);
-        break;
       case 'merge-document':
         collectLayerAsset(entry.operation.result, assetIds);
         break;
@@ -182,7 +184,12 @@ function clonePlainValue(value: PlainValue | undefined): PlainValue | undefined 
   );
 }
 
-function cloneSelectionSnapshot(snapshot: SelectionSnapshot): SelectionSnapshot {
+/**
+ * The single copy of a selection snapshot for the durable path. `durable-replay.ts`
+ * imports this rather than reimplementing it, because its private predecessor
+ * omitted `metadata` unconditionally and a second copy is how that survived.
+ */
+export function cloneSelectionSnapshot(snapshot: SelectionSnapshot): SelectionSnapshot {
   return Object.freeze({
     selections: Object.freeze(
       snapshot.selections.map((selection) =>
@@ -247,13 +254,7 @@ export function cloneLayerSnapshot(layer: DurableLayerSnapshot): DurableLayerSna
 function cloneOperation(operation: DurableOperation): DurableOperation {
   switch (operation.kind) {
     case 'create-layer':
-    case 'rasterize-layer':
-      return Object.freeze({
-        ...operation,
-        ...(operation.kind === 'create-layer'
-          ? { layer: cloneLayerSnapshot(operation.layer) }
-          : { result: cloneLayerSnapshot(operation.result) }),
-      });
+      return Object.freeze({ ...operation, layer: cloneLayerSnapshot(operation.layer) });
     case 'apply-affine-transform':
       return Object.freeze({ ...operation, transform: Object.freeze({ ...operation.transform }) });
     case 'apply-filter':
@@ -323,7 +324,13 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
     ...document,
     baseline,
     history,
-    cursor: Math.max(-1, Math.min(document.cursor, history.length - 1)),
+    /**
+     * Total cursor clamp: a non-finite or non-integer index has no position in the
+     * timeline and refuses to `-1`; a finite integer is clamped into `[-1, tip]`.
+     * Kept byte-identical in `history-model.ts` and `durable-replay.ts`;
+     * `setDurableCursor` refuses with the same `Number.isInteger` predicate.
+     */
+    cursor: Number.isInteger(document.cursor) ? Math.max(-1, Math.min(document.cursor, history.length - 1)) : -1,
   });
 }
 

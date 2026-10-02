@@ -11,7 +11,7 @@ This page is about how.
 **`store.durableDocument` is a complete, correctly-typed, fully-populated
 document that is not the truth.**
 
-It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
+It has eleven operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
 rebuilt on every commit and every navigation. It is read at exactly one place.
 Four separate files say so in comments, and a newcomer who reads
@@ -191,15 +191,15 @@ counter, not a branch (`src/contexts/history-timeline.ts:28-32`).
 
 ### The durable document — the shadow
 
-Typed in `src/contexts/history-model.ts`: twelve operation kinds
+Typed in `src/contexts/history-model.ts`: eleven operation kinds
 (`create-layer`, `remove-layer`, `set-layer-properties`, `reposition-layer`,
 `reorder-layers`, `apply-filter`, `apply-affine-transform`,
-`apply-raster-processor`, `rasterize-layer`, `set-document-frame`,
-`merge-document`, `set-selection`), wrapped in a versioned entry, deep-frozen on
-every write (`freezeDurableDocument` `:305`, `cloneOperation` `:247`).
+`apply-raster-processor`, `set-document-frame`, `merge-document`,
+`set-selection`), wrapped in a versioned entry, deep-frozen on
+every write (`freezeDurableDocument` `:306`, `cloneOperation` `:254`).
 
 The boundary is `history-adapter.ts`: `legacyHistoryToDurable` (`:568`) in,
-`DurableDocument` (`history-model.ts:133-141`) out, with a whitelist —
+`DurableDocument` (`history-model.ts:138-146`) out, with a whitelist —
 `LAYER_PROPERTY_BY_ACTION` (`:376`), `deriveSetSelectionEntry` (`:342`),
 `operationForTool` (`:473-551`). An unsupported tool throws
 `UnsupportedHistoryFeatureError` (`:550`) rather than fabricating a no-op, and one
@@ -228,8 +228,9 @@ Two registries with different key sets, which is easy to misread as one:
   processor and adds an `icon` and a `toolboxComponent`. This is the whole-tool
   map, including `eyedropper`, which has _only_ icon and component (`:125-127`),
   and the six pen-family `placeholderTool` entries (`:128-153`).
-- **`src/tools/toolProcessors.ts`** — 40 entries, `PixelToolName =
-Exclude<ToolName, 'eyedropper'>`. Each is curried: `(params) => (args) =>
+- **`src/tools/toolProcessors.ts`** — 40 entries, `PixelToolName` derived by
+  `Exclude` from `PIXEL_FREE_TOOLS` (`:88`, `:91`), which is how a tool that needs
+  no raster stays out of this registry. Each entry is curried: `(params) => (args) =>
 pixels`, where `params` carries the layer's raster and size and `args` the stroke
   (`:58-68`). `commit` is one of eight kinds (`:48-56`) and `replay` is a typed
   descriptor naming a durable operation.
@@ -330,6 +331,6 @@ between them is `documentPointsToLayerLocal`.
 
 This is the codebase's most reliable defect class, and also the one with the
 largest false-positive rate: `HANDOFF.md` §132 investigated exactly this and
-concluded the three conversions in the shape path were already correct, pinned by
-a test. Read the conversion at both call sites before assuming the other one is
-wrong.
+concluded the three conversions in the shape path were already correct. It
+derives the arithmetic; it is not pinned by a test. Read the conversion at both
+call sites before assuming the other one is wrong.

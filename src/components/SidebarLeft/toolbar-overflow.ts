@@ -12,16 +12,42 @@
  */
 
 /**
- * The share of the rail's tool slot the tiles are allowed to occupy.
+ * The share of the rail's tool slot the tiles may occupy.
  *
- * Not a tolerance: the point of collapsing is that the rail must stop demanding
- * vertical room, and a rail that filled 100% of its slot would be one scrollbar
- * away from the defect this exists to prevent. The remaining fifth is headroom, so
- * the rule does not flip on the last pixel of a window drag — the same shape as
- * Photoshop's own answer to a short window, which is a two-column toolbar that
- * leaves the panel shorter than the screen rather than one that exactly fills it.
+ * **One.** It was `0.8`, on the stated grounds that "the remaining fifth is headroom, so the
+ * rule does not flip on the last pixel of a window drag". The stability claim was true and the
+ * arithmetic behind it was not, in a way that is worth writing down because the wrong version of
+ * it is the obvious one.
+ *
+ * Rows are accepted WHOLE, so the count is a step function of the slot's height either way — that
+ * part holds, and it is why the rail does not shimmer while a window is dragged. What the fraction
+ * changed is the WIDTH OF THE STEPS, and by different amounts at different rows. A row inside a
+ * section costs 50px — a 44px tile and the grid's 6px gap — so with a budget of `0.8 × A` the
+ * count moved every `50 / 0.8 = 62.5`px of window and with a budget of `A` it moves every 50px: a
+ * quarter more tolerance for a drag. A row that OPENS A SECTION costs 57px, because the boundary
+ * adds its own 7px, and those steps went from `57 / 0.8 = 71.25` to 57. So of the fifteen gaps in
+ * this rail's map, eleven were 12.5px stickier and four were 14.25px stickier.
+ *
+ * That is not what the trade was worth. 12.5px of tolerance is felt only as an absence of flicker,
+ * while the price is visible and permanent, and it is the wrong trade for the SEQUENCE of a drag:
+ * a wider band means the rail holds a stale count for longer as the window crosses each boundary,
+ * and a stale count here is not a number, it is a tool the user cannot see.
+ *
+ * What the old budget actually cost, measured: on a 448px slot — an ordinary 1280x720 window — it
+ * admitted six tool tiles where seven fit and left 97px of the slot empty. The rail now leaves 40,
+ * which is the fraction of a row no whole row can use. The three-dots tile still appears at 720, and
+ * it now lists the Brush group down instead of the Colors/Levels group down — one row further
+ * down the map, and the group that was first to fold is no longer reachable by accident of depth.
+ *
+ * **THE HEADROOM THAT IS REAL IS THE FLOOR, not the fraction.** {@link planToolbarOverflow} floors
+ * the budget, so a slot is never shorter than the pixels it was measured at, and a fractional
+ * device pixel cannot push the grid one row past a boundary the arithmetic had accepted. That is a
+ * whole pixel of slack at most, against the fifth of the rail the fraction was spending.
+ *
+ * The parameter is still here because it is the policy seam, and a caller that wants a rail to
+ * leave room below its tiles can ask for it. Nothing in this repository does.
  */
-export const TOOLBAR_HEIGHT_BUDGET = 0.8;
+export const TOOLBAR_HEIGHT_BUDGET = 1;
 
 /**
  * One ROW of the tool grid, which is not the same thing as one tool group.
@@ -117,7 +143,13 @@ export const planToolbarOverflow = (
   if (metrics.tileHeight <= 0 || metrics.availableHeight <= 0) return everythingVisible(0, 0, slots.length);
 
   const { tileHeight, rowGap, sectionBreakHeight, availableHeight } = metrics;
-  const budget = availableHeight * budgetFraction;
+  // FLOORED, and that is the whole of the safety margin. `availableHeight` is a measured
+  // `getBoundingClientRect` height, so it can be fractional, and a budget of exactly that
+  // fraction compares a sum of whole rows against a number the grid will then lay out
+  // against the same fraction — which is sound arithmetic and one device pixel away from a
+  // scrollbar. Flooring spends at most one pixel and cannot move a row boundary that is not
+  // already a pixel away, which is why it replaces the fifth the fraction used to spend.
+  const budget = Math.floor(availableHeight * budgetFraction);
 
   /** The space that goes ABOVE row `index`, which is what makes the total more than rows x height. */
   const gapAbove = (index: number): number => {
@@ -154,6 +186,12 @@ export const planToolbarOverflow = (
     collapsedKeys,
     // With no row accepted the tile stands alone, so the gap the fit charged it is not
     // rendered — a lone tile is `tileHeight` and nothing more.
+    //
+    // WHICH SECTION it stands alone in is therefore load-bearing, and it is `SidebarLeft`'s
+    // job to put it in section 0: a `<ul>` for any section after the first carries
+    // `mt-1.5 border-t pt-1.5`, which is 13px of chrome for a separator with nothing above it.
+    // The fallback to the last section was 13px of unaccounted height in the one state where
+    // the slot is too short to hold anything at all.
     showOverflowTile: collapsedKeys.length > 0,
     naturalHeight,
     budget,

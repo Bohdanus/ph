@@ -16,25 +16,30 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 | [`../AGENTS.md`](../AGENTS.md)         | The rules an agent reads first: delegation, worktrees, gates, no browser windows           |
 | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)   | The product requirement for the Tools rail, and its open violations                        |
 
-## The ladder, short form
-
-**Operator → Adobe → this repository → judgement.** Stop at the first that speaks.
-
-- For **what Photoshop does**, Adobe's documentation wins. If it disagrees with
-  anything here, Adobe is right and this repository is wrong.
-- For **what this code does and must do**, the documents here win — during code
-  review, refactoring and improvement, these are the source of truth.
-- The only thing above Adobe is [`OVERRIDES.md`](OVERRIDES.md), and only the
-  operator writes it.
+The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
+[`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
+deliberately carries none of it.
 
 ## Contract
 
-| Document                                 | Its one job                                                                                           |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)     | The Tools rail is a clone of Photoshop's Tools panel — the requirement, and the open violations of it |
-| [`TOOLS.md`](TOOLS.md)                   | The per-tool specification. **Generated** — do not edit; run `npm run docs:tools`                     |
-| [`LAYERS-PANEL.md`](LAYERS-PANEL.md)     | The Layers panel's requirements and status                                                            |
-| [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md) | Capabilities deliberately not built, so nobody re-audits them                                         |
+| Document                                   | Its one job                                                                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)       | The Tools rail is a clone of Photoshop's Tools panel — the requirement, and the open violations of it            |
+| [`TOOLS.md`](TOOLS.md)                     | The per-tool specification. **Generated** — do not edit; run `npm run docs:tools`                                |
+| [`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md) | The Adobe Tools-panel tools the rail does **not** have — the complement of `TOOLS.md`, keyed to Adobe's identity |
+| [`LAYERS-PANEL.md`](LAYERS-PANEL.md)       | The Layers panel's requirements and status                                                                       |
+| [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md)   | Capabilities deliberately not built, so nobody re-audits them                                                    |
+
+The eight per-family research notes live outside this directory, one per tool family:
+`src/tools/descriptions/selection.notes.md`, `src/tools/descriptions/paint.notes.md`,
+`src/tools/descriptions/focus.notes.md`, `src/tools/descriptions/shape.notes.md`,
+`src/tools/descriptions/pen.notes.md`, `src/tools/descriptions/type-crop.notes.md`,
+`src/tools/descriptions/transform.notes.md` and `src/tools/descriptions/eyedropper-draw.notes.md`.
+They carry the per-family research notes and the claims `TOOLS.md` deliberately could not source.
+
+And one requirements document outside this directory:
+`src/components/ToolbarsRight/Text/TEXT_TOOL_REQUIREMENTS.md`, the Type tool's requirements, in the
+same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## System
 
@@ -45,15 +50,24 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Working practice
 
-| Document                                             | Its one job                                                          |
-| ---------------------------------------------------- | -------------------------------------------------------------------- |
-| [`../AGENTS.md`](../AGENTS.md)                       | Rules every agent reads first                                        |
-| [`ORCHESTRATION.md`](ORCHESTRATION.md)               | Worktrees, delegation, the swarm board, dead-agent recovery          |
-| [`CODE-REVIEW.md`](CODE-REVIEW.md)                   | The verbatim prompt and rules for the mandatory review subagent      |
-| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md) | The protocol a per-tool-family research agent works under            |
-| [`TESTING.md`](TESTING.md)                           | Every gate, what it proves, and what to read when it fails           |
-| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)           | The dependency licence policy, and the fact that nothing enforces it |
-| [`../README.md`](../README.md)                       | Install, run, test, and the CI jobs — for a new clone                |
+| Document                                               | Its one job                                                             |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                           |
+| [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery             |
+| [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds |
+| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the mandatory review subagent         |
+| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under               |
+| [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails              |
+| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)             | The dependency licence policy, and the fact that nothing enforces it    |
+| [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                   |
+| [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec       |
+| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words    |
+
+The agent procedures live outside this directory, under `.skills/`:
+`.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,
+`.skills/worktree-merge-harvest.md` and `.skills/broad-test-improvement.md`. `AGENTS.md` states the
+rules; a skill states the procedure for one of them. `e2e/fixtures/README.md` is the Playwright
+fixture conventions note.
 
 ## Open problems
 
@@ -85,12 +99,15 @@ hierarchy.
 | `next-target-useLayer.md`           | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it          |
 
 They are still where they are because `scripts/lib/worktree-inventory/curated.mjs`
-keys on four of the root paths as `ref:` values — 9 references in all. The other 30
-prose occurrences live in `../HANDOFF.md`, `../AUDIT-STASHED-DOCS.md`,
-`../TEST_ISSUES.md` and the two recovered `docs/*.md` rows above; `.skills/` names
-none of them. Moving them is a change to that data file and to those references, and
-it belongs in its own worktree rather than inside a documentation change. See
-`HANDOFF.md` §139.
+keys on four of the root paths as `ref:` values, and the two `docs/*.md` rows
+cross-reference each other and `../AUDIT-STASHED-DOCS.md` by name. Moving them is
+a change to that data file plus a sweep of every tracked markdown file that names
+them, which is why it belongs in its own worktree rather than inside a
+documentation change. See `HANDOFF.md` §139.
+
+Do not hand-maintain a count of how many files mention them here. That number was
+in this sentence once, was wrong within a day, and `git grep` is the answer when
+you need it.
 
 A document earns a place in this directory by describing the system as it is. An
 investigation describes the system as it was on one day, which stops being true
