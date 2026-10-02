@@ -115,6 +115,8 @@ export function buildInventory({
       nowMs: effectiveNow,
       boardAgents,
       writeHistory,
+      shellHistory,
+      readHistory,
       liveWritersSuppressed,
     });
 
@@ -271,6 +273,7 @@ export function buildInventory({
       // "nobody is working here" was derived or declared.
       live: verdict.live,
       derivedLive: verdict.derivedLive,
+      liveSignals: verdict.liveSignals,
       liveSuppressed: verdict.liveSuppressed,
 
       board: {

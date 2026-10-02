@@ -3326,6 +3326,75 @@ describe('the call history', () => {
     expect(verdict.reasons.join(' ')).toContain('wrote a file');
   });
 
+  it('calls a worktree live on recent command I/O alone, with no session and no board record', () => {
+    // The case this exists for: an agent opened in the MAIN checkout drove into
+    // this worktree and ran commands there. Its `session.directory` is the main
+    // checkout, so `chatSummary` cannot see it, and the board is keyed on the
+    // branch, so it cannot see it either. Every git fact about the worktree can
+    // be correct — clean, merged, nothing ahead — and it is still occupied.
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0 } }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 40 * 60_000, derivedChatIds: [], activeNow: false },
+    });
+    expect(verdict.live).toBe(true);
+    expect(verdict.derivedLive).toBe(true);
+    expect(verdict.liveSignals.io).toBe(true);
+    expect(verdict.liveSignals.chat).toBe(false);
+    expect(verdict.liveSignals.board).toBe(false);
+    // The reason has to name the timestamp, because "in-use" with no stated cause
+    // is what a reader cannot act on.
+    expect(verdict.reasons.join(' ')).toContain('a command ran inside this worktree');
+  });
+
+  it('counts a reader as occupying the worktree, and honours the read release', () => {
+    // A read is weaker evidence than a write and is admitted on the same window,
+    // because the skill treats a read as grounds for LIVE unless the hit can be
+    // shown to be an inventory row. Without this, a worktree whose agent only
+    // read its spec — and then went quiet for the rest of its task — read as
+    // empty while its owner was still live.
+    const reading = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      readHistory: { lastAtMs: NOW - 90 * 60_000 },
+    });
+    expect(reading.live).toBe(true);
+    expect(reading.liveSignals.io).toBe(true);
+
+    // A released reader must read as no signal rather than as a standing claim,
+    // or every worktree any agent ever inspected becomes permanently in-use.
+    const released = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      readHistory: { lastAtMs: null, releasedBefore: NOW - 60_000 },
+    });
+    expect(released.derivedLive).toBe(false);
+  });
+
+  it('stops calling a worktree live once its I/O falls outside the window', () => {
+    const stale = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 5 * 60 * 60_000, derivedChatIds: [] },
+    });
+    expect(stale.derivedLive).toBe(false);
+    expect(stale.liveSignals.io).toBe(false);
+
+    // `prunable` must not become reachable through this. A worktree with
+    // uncommitted work stays un-prunable whatever its I/O looks like.
+    const held = classify(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 3, untracked: 0 } }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 60_000 },
+    });
+    expect(held.prunable).toBe(false);
+  });
+
   it('lets a declared hard state outrank every liveness signal, and says so', () => {
     const liveSignal = { count: 1, lastActivity: NOW - 60_000 };
     expect(classify(wt({}), { chatSummary: liveSignal, chatSessions: [], nowMs: NOW }).live).toBe(true);
