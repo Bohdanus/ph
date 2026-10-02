@@ -65,6 +65,7 @@ export type MigrationDiagnostic = Readonly<{
     | 'document-replacement'
     | 'invalid-history-entry'
     | 'conversion-failed'
+    | 'array-arg-hole-preserved'
     | 'durable-append-mismatch';
   message: string;
 }>;
@@ -99,16 +100,49 @@ export type LegacyConversionOptions = Readonly<{
   registry?: AssetRegistry;
 }>;
 
-function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject] {
+/**
+ * Where an array argument carried an absence that {@link plainValue} preserved
+ * as a hole rather than the legacy explicit `undefined`.
+ *
+ * The hole is value-preserving and observation-preserving in different ways, and
+ * this file does not trade either for silence — see the array arm. The caller
+ * turns each path into a `warning` so a shadow that reports `current` while
+ * holding something other than the authority's observation is never silent.
+ */
+type ArrayCompaction = { paths: string[] };
+
+function plainValue(value: unknown, path: string, compaction?: ArrayCompaction): PlainObject[keyof PlainObject] {
   if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`Non-finite value at ${path}`);
     return value;
   }
   if (Array.isArray(value)) {
+    // `undefined` is absence, not a value, and a history arg carrying one is a
+    // sparse array rather than a defect. Treating it as one WAS the bug: a throw
+    // here became an `error` diagnostic, and `convertLegacyHistorySafely`
+    // withholds the WHOLE shadow on the first one, so one holey tool-arg array
+    // was enough to lose the document (`HANDOFF.md` §93).
+    //
+    // The absence is PRESERVED rather than compacted away, because legacy replay
+    // (`history-replay.ts`) hands the processor the original array and an index
+    // IS the meaning: `lineDash: [4, undefined, 2]` compacting to `[4, 2]` is a
+    // different dash pattern, and every positional consumer would read a
+    // different value. So the result keeps the legacy length and keeps the hole
+    // at the legacy index.
+    //
+    // It is still not the legacy observation, which is what `compaction` is for:
+    // `1 in durableStops` is `false` where legacy's explicit `undefined` makes
+    // it `true`, so the hole is recorded and reported by the caller rather than
+    // adopted quietly — the same trade this file already refuses further down,
+    // where a conversion that cannot fail still emits a diagnostic rather than
+    // losing a frame silently.
     const result = new Array<Exclude<PlainObject[keyof PlainObject], undefined>>(value.length);
     for (let index = 0; index < value.length; index += 1) {
-      if (!Object.hasOwn(value, index) || value[index] === undefined) continue;
-      result[index] = plainValue(value[index], `${path}[${index}]`) as Exclude<
+      if (!Object.hasOwn(value, index) || value[index] === undefined) {
+        compaction?.paths.push(`${path}[${index}]`);
+        continue;
+      }
+      result[index] = plainValue(value[index], `${path}[${index}]`, compaction) as Exclude<
         PlainObject[keyof PlainObject],
         undefined
       >;
@@ -120,13 +154,13 @@ function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject
     Object.fromEntries(
       Object.entries(value)
         .filter(([key]) => Object.prototype.propertyIsEnumerable.call(value, key))
-        .map(([key, item]) => [key, item === undefined ? undefined : plainValue(item, `${path}.${key}`)])
+        .map(([key, item]) => [key, item === undefined ? undefined : plainValue(item, `${path}.${key}`, compaction)])
     )
   ) as PlainObject;
 }
 
-function plainObject(value: unknown, path: string): PlainObject {
-  const result = plainValue(value, path);
+function plainObject(value: unknown, path: string, compaction?: ArrayCompaction): PlainObject {
+  const result = plainValue(value, path, compaction);
   if (!result || Array.isArray(result) || typeof result !== 'object') throw new Error(`Expected object at ${path}`);
   return result as PlainObject;
 }
@@ -476,7 +510,11 @@ export function isEntryEnabled(item: HistoryItem): boolean {
   return !item.disabled && nested?.enabled !== false;
 }
 
-export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): DurableOperation | null {
+export function operationForTool(
+  item: HistoryItem,
+  layer: DurableLayerSnapshot,
+  compaction?: ArrayCompaction
+): DurableOperation | null {
   const candidate = item.args as { args?: unknown } | undefined;
   const args = (candidate && candidate.args && typeof candidate.args === 'object' ? candidate.args : item.args) as
     ToolArgs | undefined;
@@ -498,7 +536,7 @@ export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot)
         layerId: item.layerId,
         processorId: 'transform',
         version: processor.replay.version,
-        args: plainObject(args, `history:${item.id}.args`),
+        args: plainObject(args, `history:${item.id}.args`, compaction),
       });
     }
     let transform;
@@ -519,7 +557,7 @@ export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot)
   }
 
   if (processor.commit === 'layer-operation') {
-    const filterArgs = plainObject(args, `history:${item.id}.args`);
+    const filterArgs = plainObject(args, `history:${item.id}.args`, compaction);
     if (!['blur', 'color', 'levels'].includes(args.toolName)) {
       throw new UnsupportedHistoryFeatureError(`Unsupported filter ${args.toolName}`, item.id);
     }
@@ -549,7 +587,7 @@ export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot)
       layerId: item.layerId,
       processorId: args.toolName,
       version: processor.replay.version,
-      args: plainObject(args, `history:${item.id}.args`),
+      args: plainObject(args, `history:${item.id}.args`, compaction),
     });
   }
   if (processor.commit === 'document-operation' || processor.commit === 'selection') return null;
@@ -809,7 +847,31 @@ export function legacyHistoryToDurable(
       } else if (item.actionName === TOOL_ACTION) {
         const layer = currentLayers.get(item.layerId);
         if (!layer) throw new UnsupportedHistoryFeatureError(`Layer ${item.layerId} is unavailable`, item.id);
-        operation = operationForTool(item, layer);
+        const compaction: ArrayCompaction = { paths: [] };
+        operation = operationForTool(item, layer, compaction);
+        // An absent element in an array keeps its index and its length, so the
+        // sequence of values the processor reads is the legacy one — but the
+        // durable array is a real hole where legacy's is an explicit
+        // `undefined`, and `1 in array` is `false` where legacy makes it `true`.
+        // The shadow therefore publishes `status: 'current'` holding a value the
+        // authority does not hold, and the only thing that keeps that from being
+        // silent is this report.
+        //
+        // `warning`, not `error`: an error withholds the ENTIRE durable document
+        // through `convertLegacyHistorySafely`, so refusing to convert over a
+        // sparse array would cost the user every entry in the timeline to report
+        // a divergence the shadow already carries. The divergence is named
+        // instead, so `status: 'current'` is never a claim of faithfulness on its
+        // own.
+        for (const path of compaction.paths) {
+          diagnostics.push({
+            historyId: item.id,
+            actionName: item.actionName,
+            severity: 'warning',
+            code: 'array-arg-hole-preserved',
+            message: `History entry ${item.id} carries an absent element in the array argument at ${path}, which the durable conversion preserved as a hole at the same index. Legacy replay hands the processor an explicit value at that position, so the durable array is not the legacy observation even though its length and its values match.`,
+          });
+        }
         if (operation?.kind === 'reposition-layer') {
           const pos = {
             ...layer.pos,
