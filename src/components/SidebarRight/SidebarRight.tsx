@@ -385,7 +385,7 @@ const SidebarRight = () => {
       // `display: none` item, and only an `auto` track collapses to nothing for one. See the
       // note above, and `App.tsx` for the `auto` tracks.
       style={{ width: layout.effectiveDockWidth }}
-      className={`relative flex h-full flex-col bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
+      className={`relative flex h-full min-h-0 flex-col bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
         layout.dockOnLeft ? 'border-r border-gray-300 [grid-area:left]' : 'border-l border-gray-300 [grid-area:right]'
       }`}
     >

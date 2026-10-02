@@ -4,7 +4,7 @@ import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { AssetRegistry } from '../asset-registry.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
-import type { DocumentFrame } from '../document-frame.ts';
+import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
 import type { AssetId, DurableLayerSnapshot, DurableLayerSource, DurableOperation } from '../history-model.ts';
 import { createMaterializationKey, materializeDocument, materializeLayer } from '../materialization.ts';
 import type { MaterializationRequest } from '../materialization.ts';
@@ -122,6 +122,7 @@ function makeReplay(layers: Record<string, DurableReplayLayer>): DurableReplayRe
     durableRevision: 0,
     cursor: 0,
     frame: { ...defaultFrame },
+    totalSize: documentFrameSize(defaultFrame),
     layers: Object.freeze({ ...layers }),
     selections: Object.freeze({ selections: Object.freeze([]), activeSelectionId: null }),
     activeLayerId: Object.keys(layers)[0] ?? null,
@@ -502,6 +503,7 @@ describe('materialization source kinds', () => {
       'layer-1',
       Object.freeze({
         kind: 'text' as const,
+        toolName: 'text',
         args: Object.freeze({ toolName: 'text', text: 'hi' }),
         size: { width: 32, height: 16 },
         sourcePos: Object.freeze({ x: 0, y: 0, width: 32, height: 16 }),
@@ -873,8 +875,18 @@ describe('materialization document frame presentation', () => {
 });
 
 describe('staging before publication', () => {
-  it('does not publish a partially materialized document when a later layer fails', async () => {
+  // SD-8: a refused layer does not refuse the document. This used to assert
+  // `rejects.toThrow(/Unknown or disposed asset/)`, and its trailing block then went on
+  // to measure whether the whole-document rollback had dropped the good layer's cache
+  // entry to `retainCount` 0. Both of those described a behaviour that no longer exists:
+  // `materializeDocument` catches a per-layer failure, reports it, and continues, so
+  // there is no rejection to await and no rollback to measure. The property that took
+  // its place is strictly sharper — the document resolves, the refused layer is ABSENT
+  // from the composed set, the refusal is reported rather than silent, and the surviving
+  // layer keeps its lease until the published document releases it.
+  it('omits only the refused layer, reports it, and still publishes the rest', async () => {
     const registry = new AssetRegistry();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const good = makeLayer('layer-good', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 });
     const bad = makeLayer('layer-bad', rasterSource('missing' as AssetId, 20, 20), {
       x: 0,
@@ -883,34 +895,53 @@ describe('staging before publication', () => {
       height: 20,
     });
     const replay = makeReplay({ 'layer-good': good, 'layer-bad': bad });
+    const request = makeRequest(registry);
 
-    await expect(materializeDocument(replay, makeRequest(registry))).rejects.toThrow(/Unknown or disposed asset/);
-
-    // The all-or-nothing part is what `materializeDocument` already pins in
-    // `materialization.ordering.test.ts:367` ("releases already-materialized
-    // layer leases when a later layer fails"): delete the rollback there and the
-    // contexts suite goes red. It is NOT pinned here, and this comment used to
-    // claim it was.
-    //
-    // What this test actually shows is narrower, and measured: the rollback in
-    // `materializeDocument` drops the good layer's cache entry to `retainCount`
-    // 0 after the rejection, and without the rollback the entry is still at
-    // `retainCount` 1. `producerRuns` is 1 either way, because
-    // `AssetRegistry.materialize` serves a cached entry whenever one exists
-    // (`asset-registry.ts:305-310`) and never consults `retainCount` — so the
-    // assertion below cannot detect the lease leak it was written to detect, and
-    // is kept only as a regression guard on the retry succeeding at all.
-    const producerRuns = vi.fn();
+    const releaseSpy = vi.fn();
+    const releasedKeys: string[] = [];
     const originalMaterialize = registry.materialize.bind(registry);
     vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
-      producerRuns();
-      return originalMaterialize(input);
+      const lease = await originalMaterialize(input);
+      const originalRelease = lease.release;
+      return {
+        ...lease,
+        release: () => {
+          releaseSpy();
+          releasedKeys.push(input.key);
+          originalRelease();
+        },
+      };
     });
-    const retry = await materializeLayer(good, makeRequest(registry));
 
-    expect(producerRuns).toHaveBeenCalled();
-    expect(retry.layerId).toBe('layer-good');
-    retry.lease.release();
+    const result = await materializeDocument(replay, request);
+
+    // The refused layer is omitted rather than published empty, and the layer before
+    // it still composed — the omission is local, not a truncated document.
+    expect(Object.keys(result.layers)).toEqual(['layer-good']);
+    expect(result.layers['layer-bad']).toBeUndefined();
+    expect(result.layers['layer-good'].layerId).toBe('layer-good');
+    expect(result.layers['layer-good'].bitmap).toBeDefined();
+    expect(Object.isFrozen(result.layers)).toBe(true);
+
+    // The refusal is reported, not swallowed: one line naming the skipped layer,
+    // carrying the underlying error as the second argument so the cause survives.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [message, reported] = consoleError.mock.calls[0] as [string, Error];
+    expect(message).toBe('Unable to materialize durable layer layer-bad; skipping layer');
+    expect(reported.message).toMatch(/Unknown or disposed asset/);
+
+    // Nothing is rolled back and nothing is released early. The surviving layer holds
+    // its lease until the published document releases it; the refused layer never took
+    // one, so its key is absent from the released set below by construction.
+    expect(releaseSpy).not.toHaveBeenCalled();
+
+    result.release();
+    expect(releasedKeys).toEqual([createMaterializationKey(good, request)]);
+
+    // Double-release stays a no-op.
+    result.release();
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+
     registry.shutdown();
   });
 

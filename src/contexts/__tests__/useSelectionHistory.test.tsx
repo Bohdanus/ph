@@ -1,5 +1,5 @@
 import { renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useSelectionHistory } from '../useSelectionHistory.ts';
 import type { ClearedSelectionState, Selection } from '../general-types.ts';
@@ -144,6 +144,12 @@ beforeEach(() => {
   seed([], null);
 });
 
+// The planning-failure assertions spy on `console.error`, so the spy is undone
+// after every test rather than left installed over the ones that follow.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('useSelectionHistory no-op guard', () => {
   it('dispatches nothing for a clear that would not change the selection state', () => {
     seed([], null);
@@ -218,7 +224,9 @@ describe('useSelectionHistory durable-plan fallback', () => {
     const existing = makeSelection('existing');
     seed([existing], existing.id);
     const drawn = makeGesturePayload('drawn');
-    appendControl.failure = new Error('shadow projection failed');
+    const failure = new Error('shadow projection failed');
+    appendControl.failure = failure;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     mountWriter().commitSelection(drawn, 'create');
 
@@ -240,12 +248,20 @@ describe('useSelectionHistory durable-plan fallback', () => {
       ],
       activeSelectionId: drawn.id,
     });
+    // The thrown error itself reaches the console. A bare `catch {}` cannot
+    // report this: the fallback edit is byte-identical to the one a writer that
+    // never planned would emit, so without the bound error a planning failure is
+    // indistinguishable from no planning at all.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('Unable to plan durable history for a selection commit', failure);
   });
 
   it('re-dispatches the clear without a durable entry, keeping the same history item id', () => {
     const existing = makeSelection('existing');
     seed([existing], existing.id);
-    appendControl.failure = new Error('shadow projection failed');
+    const failure = new Error('shadow projection failed');
+    appendControl.failure = failure;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     mountWriter().clearSelections();
 
@@ -253,12 +269,46 @@ describe('useSelectionHistory durable-plan fallback', () => {
     const action = onlyDispatch();
     expect(action.payload.historyItem.id).toBe(appendControl.calls[0].id);
     expect(action.payload).not.toHaveProperty('durableEntry');
+    // The deselect lands: an empty selection set and no active selection.
     expect(action.payload.updates).toMatchObject({ selections: [], activeSelectionId: null });
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('Unable to plan durable history for a selection clear', failure);
+  });
+
+  it('reports a planning failure on a move exactly as it does on a create, and commits the moved geometry', () => {
+    const dragged = makeSelection('dragged');
+    const active = makeSelection('active');
+    seed([dragged, active], active.id);
+    const moved = makeGesturePayload('dragged', {
+      pos: { x: 9, y: 9, width: 8, height: 6 },
+      points: [{ x: 9, y: 9 }],
+      metadata: { featherRadius: 1, movedAtVersion: 3 },
+    });
+    const failure = new Error('shadow projection failed');
+    appendControl.failure = failure;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    mountWriter().commitSelection(moved, 'move');
+
+    // Both modes of `commitSelection` share one fallback branch, so the
+    // diagnostic and the surviving edit are asserted for each of them rather
+    // than inferred from the create path.
+    const action = onlyDispatch();
+    expect(action.payload).not.toHaveProperty('durableEntry');
+    expect(action.payload.historyItem.id).toBe(appendControl.calls[0].id);
+    expect(action.payload.updates.selections).toEqual([
+      { ...moved, isActive: false, lifecycle: 'committed', geometry: 'polygon' },
+      active,
+    ]);
+    expect(action.payload.updates.activeSelectionId).toBe(active.id);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('Unable to plan durable history for a selection commit', failure);
   });
 
   it('publishes the planned durable entry under the same history item id when the plan succeeds', () => {
     seed([], null);
     const drawn = makeGesturePayload('drawn');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     mountWriter().commitSelection(drawn, 'create');
 
@@ -266,9 +316,11 @@ describe('useSelectionHistory durable-plan fallback', () => {
     const planned = appendControl.calls[0].result;
     expect(planned).not.toBeNull();
     // The contrast that gives the fallback assertions their meaning: the same
-    // writer, same id, with a durable plan attached when one is available.
+    // writer, same id, with a durable plan attached when one is available — and
+    // nothing on the console, because nothing failed.
     expect(action.payload.durableEntry).toEqual(planned?.durableEntry);
     expect(action.payload.historyItem.id).toBe(appendControl.calls[0].id);
+    expect(consoleError).not.toHaveBeenCalled();
   });
 });
 

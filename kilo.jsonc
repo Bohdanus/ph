@@ -56,6 +56,18 @@
       // variable inside package.json, which Kilo never inspects.
       "*PLAYWRIGHT_ALLOW_HEADED*": "deny",
 
+      // `scripts/probe-console.mjs` hardcodes `headless: true` and refuses a
+      // `--headed` flag or the variable above, exiting 2 with an explanation. These
+      // rules stop the same attempt before the process starts, and they cover the
+      // browser a script could launch on its own - which no Playwright-side guard
+      // can see, because that guard only runs inside a Playwright process.
+      //
+      // This is the whole reason the probe is a script and not an MCP server: a
+      // `permission.bash` glob matches this command, and an `mcp_*_navigate_page`
+      // call matches nothing at all.
+      "*probe-console*--headed*": "deny",
+      "*PLAYWRIGHT_HEADLESS=false*": "deny",
+
       // A bare `npx tsc` at this repo's root type-checks ZERO files and exits 0,
       // because the root tsconfig is a solution stub - indistinguishable from a
       // clean typecheck, and something a model that never read a doc will run.
@@ -69,6 +81,104 @@
       "*npx tsc*": "deny",
       "*npx tsc -b*": "allow",
       "*npx tsc --build*": "allow",
+
+      // Destroying a worktree. On 2026-10-01 a sweep removed a live chat's
+      // worktree with a hard-coded `git worktree remove` / `git branch -D` pair,
+      // and `node scripts/dispose-worktree.mjs` is now the path that checks the
+      // inventory's `action`, the board's claims and locks, and the session
+      // database before it deletes anything.
+      //
+      // The patterns are scoped to a path containing `kilo/`, which covers both
+      // `.kilo/worktrees/<name>` and the salvage worktrees under the temp
+      // `kilo/` directory. The documented throwaway recipe
+      // (`git worktree remove --force /tmp/verify-main`) does not match, so it
+      // keeps working — that worktree was created minutes earlier by the same
+      // command and holds nothing but a checkout.
+      //
+      // `-f` is listed beside `--force` because git accepts both, and a rule that
+      // only spelled one of them would be defeated by the other.
+      //
+      // AND THE REVERSED ORDER, which is the same bug twice. git takes
+      // `worktree remove [<options>] <path>` and `<path>` first, so
+      // `git worktree remove .kilo/worktrees/alpha --force` is the form a model
+      // writes by habit — and it matched NONE of the rules above, which all
+      // require the flag before `kilo/`, falling through to the catch-all
+      // `"*": "allow"` at the top of this table.
+      //
+      // SO THE TWO RULES BELOW ARE ORDER-AGNOSTIC, and that is the whole design.
+      // Every earlier version of this list spelled the order out, and a
+      // demonstrated bypass survived every spelling: `git -C
+      // .kilo/worktrees/alpha worktree remove --force .` puts `kilo/` BEFORE
+      // `worktree remove`, and the throwaway spelling `cd
+      // .kilo/worktrees/alpha && git worktree remove --force .` does too. Both
+      // returned `allow`, and the first one actually removed a worktree on a
+      // scratch repo. Writing the flag, the path, and the order into the pattern
+      // is what made this fragile; a pattern that only requires the two tokens to
+      // be present cannot be defeated by rearranging them.
+      //
+      // NEITHER RULE NAMES A FLAG, which closes the second half: a PLAIN
+      // `git worktree remove <path>` was allowed, and that is the spelling the
+      // 2026-10-01 incident used. Git only refuses it when the tree is dirty,
+      // and the victim was CLEAN. So "no --force" was never a property of this
+      // layer — the flag was the only thing being matched, and its absence is
+      // what the incident looked like.
+      //
+      // The documented throwaway recipe, `git worktree remove --force
+      // /tmp/verify-main`, does not mention `kilo/` and keeps working. Neither
+      // rule touches `npm run dispose`, which reaches git through `execFileSync`
+      // rather than through this table: the program is the guard, and this layer
+      // is the speed bump in front of it.
+      "*worktree remove*kilo*": "deny",
+      "*kilo*worktree remove*": "deny",
+      "*rm -rf*.kilo*": "deny",
+      "*rm -fr*.kilo*": "deny",
+      "*rm -r -f*.kilo*": "deny",
+
+      // `-d` refuses an unmerged branch, and that refusal is the guard on the
+      // irreversible step. `-D` overrides it, so it reaches a human rather than a
+      // silent block: a branch the inventory called `dispose` needs `-d`, and one
+      // it did not needs `scripts/dispose-worktree.mjs` to say so.
+      "*branch -D*": "ask",
+    },
+  },
+
+  // Chrome DevTools, scoped to this project rather than the global config, and
+  // headless because of the rule above.
+  //
+  // WHY IT IS HERE AND NOT `browser_open`: nothing in the 36 Playwright specs measures
+  // time or memory. For a Canvas 2D editor that replays history and materializes
+  // layers, long tasks during a stroke and heap growth across undo/redo are the one
+  // axis with no instrument at all. That is a gap `npm run probe:console` cannot close:
+  // it reports what the page logged, not what it cost.
+  //
+  // WHY A SERVER RATHER THAN A SCRIPT, given that a browser MCP call bypasses every
+  // permission rule in this file: `permission.bash` matches shell commands and
+  // `global-setup.ts` only runs inside a Playwright process, so neither constrains an
+  // `mcp_*` call. That is a real hole and it is why `--headless` is passed here rather
+  // than relied upon, and why the flags below are not optional.
+  //
+  //   --headless               no window, per the rule at the top of this file
+  //   --no-performance-crux    stops the server sending a trace URL to a Google
+  //                            endpoint, which is the whole reason a performance tool
+  //                            needs a flag
+  //   --no-usage-statistics    the server collects anonymous usage data by default
+  //
+  // DELIBERATELY NOT `--slim`: it reduces the server to three tools — navigation,
+  // JavaScript execution and screenshots — which is exactly the set that measures
+  // nothing. It would have disabled the performance tools this server exists for.
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--headless",
+        "--no-performance-crux",
+        "--no-usage-statistics",
+      ],
+      "enabled": true,
+      "timeout": 60000,
     },
   },
 }

@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from '../fixtures/extended-test';
 import {
   INTEGRATION_TEST_TIMEOUT_MS,
   exportIcoAndVerify,

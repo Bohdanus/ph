@@ -22,21 +22,33 @@ export const paintDescriptions: Record<
         detail:
           "The tip thumbnail and the chevron beside it, and the leftmost of the bar's own controls once the Tool Preset Picker is set aside. Clicking it opens a popout from which the tip’s Size and Hardness can be changed temporarily, plus an Angle/Roundness drag widget, a settings gear, a New Preset button and a grid of tip thumbnails. Size is the tip diameter in pixels, 1 to 5000. Current Photoshop carries no top-bar Size and no top-bar Hardness for this tool: both live in this popout and in the Brush Settings panel, and the popout is where a temporary change is made. The settings-snapshot picker this app renders in the same position is not standing in for the Tool Preset Picker.",
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
+        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:137',
+      },
+      {
+        control: 'Toggle the Brush Settings panel',
+        detail:
+          'The button immediately right of the Brush Preset Picker, third from the left of the bar’s own controls. Opens the Brush Settings panel, where Brush Tip Shape, Shape Dynamics, Scattering, Texture, Dual Brush, Color Dynamics, Transfer, Brush Pose, Noise, Wet Edges, Airbrush, Smoothing and Protect Texture live.',
+        status: 'missing',
       },
       {
         control: 'Mode',
         detail:
           "The blend mode the stroke composites with, offering the 27 layer blend modes — Dissolve among them — plus the two the painting tools add, Behind and Clear. Behind is the Brush's alone, and works only on a layer whose transparency is not locked. Default Normal.",
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:117',
+        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
       {
         control: 'Opacity',
         detail:
           'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke, not a per-dab rate. The app seeds its Brush at 90 percent, not Photoshop’s 100.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:109',
+        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
+      },
+      {
+        control: 'Always Use Pressure for Opacity',
+        detail:
+          'A toggle that forces stylus pressure to drive opacity regardless of the numeric field and of the tip’s own Transfer settings. Off by default.',
+        status: 'missing',
       },
       {
         control: 'Flow',
@@ -48,18 +60,6 @@ export const paintDescriptions: Record<
         control: 'Airbrush',
         detail:
           'A toggle that keeps stamping while the pointer is stationary, so a stroke that stops still darkens up to Opacity. With it on, the number keys drive Flow and Shift with them drives Opacity, the reverse of the normal binding.',
-        status: 'missing',
-      },
-      {
-        control: 'Always Use Pressure for Opacity',
-        detail:
-          'A toggle that forces stylus pressure to drive opacity regardless of the numeric field and of the tip’s own Transfer settings.',
-        status: 'missing',
-      },
-      {
-        control: 'Always Use Pressure for Size',
-        detail:
-          'A toggle that forces stylus pressure to drive tip size regardless of the tip’s Shape Dynamics. On by default for the Hard Round class of presets and off for most others.',
         status: 'missing',
       },
       {
@@ -76,15 +76,21 @@ export const paintDescriptions: Record<
         status: 'missing',
       },
       {
-        control: 'Symmetry',
+        control: 'Brush Angle',
         detail:
-          'A butterfly button. Offers Vertical, Horizontal, Dual Axis, Diagonal, Wavy, Circle, Spiral, Parallel Lines, Radial (2 to 12 segments) and Mandala (3 to 10 segments), so every dab is mirrored live. Present for the Brush, the Pencil and the Eraser only.',
+          'A numeric field of degrees beside a small tip widget, placed after Smoothing and before Symmetry. It sets the exact tip angle for the stroke and is the precise counterpart to the Angle widget inside the Brush Preset picker popout. It does nothing on a round tip.',
         status: 'missing',
       },
       {
-        control: 'Toggle the Brush Settings panel',
+        control: 'Always Use Pressure for Size',
         detail:
-          'The button at the far right of the bar. Opens the Brush Settings panel, where Brush Tip Shape, Shape Dynamics, Scattering, Texture, Dual Brush, Color Dynamics, Transfer, Brush Pose, Noise, Wet Edges, Airbrush, Smoothing and Protect Texture live.',
+          'A toggle that forces stylus pressure to drive tip size regardless of the tip’s Shape Dynamics. On by default for the Hard Round class of presets and off for most others.',
+        status: 'missing',
+      },
+      {
+        control: 'Symmetry',
+        detail:
+          'A butterfly button. Offers Vertical, Horizontal, Dual Axis, Diagonal, Wavy, Circle, Spiral, Parallel Lines, Radial (2 to 12 segments) and Mandala (3 to 10 segments), so every dab is mirrored live. Present for the Brush, the Pencil and the Eraser only.',
         status: 'missing',
       },
     ],
@@ -109,16 +115,17 @@ export const paintDescriptions: Record<
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:256',
-      'src/components/ToolbarsRight/Paint/Paint.tsx:136',
+      'src/tools/toolProcessors.ts:276',
+      'src/tools/brush.ts:70',
+      'src/components/ToolbarsRight/Paint/Paint.tsx:43',
       'src/components/Main/DrawToolArea.tsx:143',
       'src/tools/brush.ts:109',
-      'src/contexts/layer-utils.ts:146',
-      'src/tools/settings.ts:130',
-      'src/components/Common/AppKeyboardShortcuts.tsx:240',
+      'src/contexts/layer-utils.ts:230',
+      'src/tools/settings.ts:140',
+      'src/components/Common/AppKeyboardShortcuts.tsx:538',
     ],
     appNotes:
-      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path, though the bar seeds it at 90 percent where Photoshop’s is 100. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s 29 for this tool, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here, both living in the Brush Preset picker popout and the Brush Settings panel — and it is capped at 500 px, not the 5000 the picker offers, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one. One caveat on the bindings above: `B` is the app’s only one. `AppKeyboardShortcuts.tsx` is the complete global table and registers no bracket, no digit and no Alt or Shift override for any paint tool, so `[`, `]`, `0`, `1` and both modifiers above are Photoshop’s own and this app binds none of them — there is no Alt eyedropper swap and no Shift straight-line constraint on a stroke.',
+      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path, though the bar seeds it at 90 percent where Photoshop’s is 100. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture, and so no Brush Angle; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s 29 for this tool, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here, both living in the Brush Preset picker popout and the Brush Settings panel — and it is capped at 500 px, not the 5000 the picker offers, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one. One caveat on the bindings above, and it is narrower than an earlier version of this record claimed: `B` selects the tool, and the four shortcut rows that follow it ARE implemented. `AppKeyboardShortcuts.tsx` keeps a per-tool `tipSizeField` table and a per-tool `opacityField` table, the brush appears in both, and `[`, `]`, `0` and `1` are registered against them — so `[` and `]` step the tip size by one pixel and `0` and `1` set Opacity to 100 and 10 percent, which is exactly what those four rows describe. What the app binds none of is the two MODIFIER rows: no Alt eyedropper swap and no Shift straight-line constraint on a stroke, because `DrawToolArea.tsx` reads no modifier at all and `AppKeyboardShortcuts.tsx` registers no Alt-bearing keybinding for any paint tool.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://asktimgrey.com/2023/09/01/flow-versus-opacity-for-brushes',
@@ -133,6 +140,8 @@ export const paintDescriptions: Record<
       'https://helpx.adobe.com/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
+      'https://www.glensmith.co.uk/photoshop/brush',
+      'https://www.practicalphotoshop.com/downloads/Practical-Photoshop-2022-Level1-sample-chapters.pdf',
       'http://www.jkost.com/pdf/photoshop/cs3/PSTips&Tech.pdf',
       'https://community.adobe.com/questions-712/changing-brush-size-shortcuts-ctrl-alt-second-click-and-drag-1167556',
     ],
@@ -155,21 +164,32 @@ export const paintDescriptions: Record<
         detail:
           "The tip thumbnail and its chevron, and the leftmost of the bar's own controls once the Tool Preset Picker is set aside. Clicking it opens a popout whose Size and Hardness change the tip temporarily, plus an Angle/Roundness widget, a settings gear, a New Preset button and a grid of tips. Size is the tip diameter in pixels, 1 to 5000. The Pencil offers hard-edged tips only, so its Hardness is fixed. Current Photoshop carries no top-bar Size and no top-bar Hardness for this tool, for the same reason as on the Brush. The settings-snapshot picker this app renders in the same position is not standing in for the Tool Preset Picker.",
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
+        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:137',
+      },
+      {
+        control: 'Toggle the Brush Settings panel',
+        detail: 'The button immediately right of the Brush Preset Picker, opening the Brush Settings panel.',
+        status: 'missing',
       },
       {
         control: 'Mode',
         detail:
           "The blend mode the stroke composites with, offering the 27 layer blend modes — Dissolve among them — plus Clear. Behind is the Brush's alone, so it is not offered here; Clear is offered to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command. Default Normal.",
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:117',
+        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
       {
         control: 'Opacity',
         detail:
           'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke. The app seeds its Pencil at 90 percent, not Photoshop’s 100.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:109',
+        appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
+      },
+      {
+        control: 'Always Use Pressure for Opacity',
+        detail:
+          'A toggle that forces stylus pressure to drive opacity regardless of the numeric field and of the tip’s own Transfer settings. Off by default.',
+        status: 'missing',
       },
       {
         control: 'Auto Erase',
@@ -191,14 +211,21 @@ export const paintDescriptions: Record<
         status: 'missing',
       },
       {
-        control: 'Symmetry',
+        control: 'Brush Angle',
         detail:
-          'A butterfly button offering Vertical, Horizontal, Dual Axis, Diagonal, Wavy, Circle, Spiral, Parallel Lines, Radial and Mandala. Present for the Brush, the Pencil and the Eraser only.',
+          'A numeric field of degrees beside a small tip widget, placed after Smoothing and before Auto Erase. It sets the exact tip angle for the stroke and is the precise counterpart to the Angle widget inside the Brush Preset picker popout. It does nothing on a round tip.',
         status: 'missing',
       },
       {
-        control: 'Toggle the Brush Settings panel',
-        detail: 'The button at the far right of the bar, opening the Brush Settings panel.',
+        control: 'Always Use Pressure for Size',
+        detail:
+          'A toggle that forces stylus pressure to drive tip size regardless of the tip’s Shape Dynamics. On by default for the Hard Round class of presets and off for most others.',
+        status: 'missing',
+      },
+      {
+        control: 'Symmetry',
+        detail:
+          'A butterfly button offering Vertical, Horizontal, Dual Axis, Diagonal, Wavy, Circle, Spiral, Parallel Lines, Radial and Mandala. Present for the Brush, the Pencil and the Eraser only.',
         status: 'missing',
       },
     ],
@@ -209,20 +236,48 @@ export const paintDescriptions: Record<
       },
       {
         keys: 'Shift',
-        action: 'Constrains the stroke to a straight line from the last stroke point.',
+        action:
+          'Click once, then Shift-click a second point and the stroke is drawn between the two as a straight line.',
       },
     ],
-    shortcuts: [{ keys: 'N', action: 'Selects the Pencil Tool.' }],
+    shortcuts: [
+      {
+        keys: 'B',
+        action:
+          'Selects the Brush Tool. Holding Shift while pressing it cycles the shared slot — Brush, Pencil, Color Replacement Tool, Mixer Brush Tool.',
+      },
+      { keys: 'N', action: 'Selects the Pencil Tool.' },
+      {
+        keys: '[',
+        action:
+          'Decreases the brush size to the next smaller preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.',
+      },
+      {
+        keys: ']',
+        action:
+          'Increases the brush size to the next larger preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.',
+      },
+      {
+        keys: '0',
+        action:
+          'Sets the brush Opacity to 100 percent. On the Brush, Pencil, Eraser, Color Replacement Tool and Clone Stamp.',
+      },
+      {
+        keys: '1',
+        action:
+          'Sets the brush Opacity to 10 percent. On the Brush, Pencil, Eraser, Color Replacement Tool and Clone Stamp.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:264',
-      'src/components/ToolbarsRight/Paint/Paint.tsx:136',
+      'src/tools/toolProcessors.ts:297',
+      'src/components/ToolbarsRight/Paint/Paint.tsx:43',
       'src/components/Main/DrawToolArea.tsx:143',
-      'src/tools/settings.ts:147',
-      'src/components/Common/AppKeyboardShortcuts.tsx:18',
+      'src/tools/settings.ts:157',
+      'src/components/Common/AppKeyboardShortcuts.tsx:538',
     ],
     appNotes:
-      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. Mode offers sixteen canvas operations and is applied to the layer the stroke creates, not to the stroke’s pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 90 percent where Photoshop’s is 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. The Pencil has no keyboard shortcut of its own here: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
+      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. Mode offers sixteen canvas operations and is applied to the layer the stroke creates, not to the stroke’s pixels. The Size the app renders directly on the bar is the app’s own addition — current Photoshop carries no top-bar Size or Hardness here — and it is capped at 500 px rather than the 5000 the picker offers, and the shared bar seeds Opacity at 90 percent where Photoshop’s is 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. The `[`, `]`, `0` and `1` shortcut rows, by contrast, ARE implemented: the global table’s `tipSizeField` and `opacityField` maps both list the pencil. The Pencil has no keyboard shortcut of its own here for the tool-select row: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html',
@@ -235,6 +290,7 @@ export const paintDescriptions: Record<
       'https://asktimgrey.com/2025/08/08/pencil-versus-brush/',
       'https://asktimgrey.com/2017/03/21/pencil-brush-shape/',
       'https://flylib.com/books/en/4.462.1.114/1/',
+      'https://www.glensmith.co.uk/photoshop/pencil',
       'https://helpx.adobe.com/photoshop/using/paint-symmetry.html',
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
     ],
@@ -254,15 +310,8 @@ export const paintDescriptions: Record<
       {
         control: 'Brush Preset Picker',
         detail:
-          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus an Angle/Roundness widget, a settings gear, a New Preset button and a grid of tips.',
+          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus an Angle/Roundness widget, a settings gear, a New Preset button and a grid of tips. Size is the tip diameter in pixels, 1 to 5000, and it sets how much of the target colour the stroke reaches in Discontiguous mode; under Contiguous it seeds the flood rather than bounding it. This tool has no top-bar Size of its own — the popout is where Adobe puts it, which is why there is no Size row here.',
         status: 'missing',
-      },
-      {
-        control: 'Size',
-        detail:
-          'The tip diameter in pixels, 1 to 5000. It sets how much of the target colour the stroke reaches in Discontiguous mode, and under Contiguous it seeds the flood rather than bounding it.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:148',
       },
       {
         control: 'Mode',
@@ -279,14 +328,14 @@ export const paintDescriptions: Record<
       {
         control: 'Sampling',
         detail:
-          'Three small icons. Continuous resamples the color under the crosshair as you drag; Once locks the color of the first click for the whole stroke; Background Swatch replaces only areas containing the current background color. Adobe does not state which is the default.',
+          'Three small icons. Continuous resamples the color under the crosshair as you drag; Once locks the color of the first click for the whole stroke; Background Swatch replaces only areas containing the current background color. Adobe does not state which is the default; a third-party walkthrough of the current tool says Continuous.',
         status: 'inert',
         appRef: 'src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:94',
       },
       {
         control: 'Limits',
         detail:
-          'A dropdown. Contiguous replaces colors contiguous with the pixel under the pointer; Discontiguous replaces the sampled color wherever it occurs under the pointer; Find Edges replaces connected areas containing the sampled color while preserving the sharpness of shape. Adobe does not state which is the default.',
+          'A dropdown. Contiguous replaces colors contiguous with the pixel under the pointer; Discontiguous replaces the sampled color wherever it occurs under the pointer; Find Edges replaces connected areas containing the sampled color while preserving the sharpness of shape. Adobe does not state which is the default; two third-party walkthroughs of the current tool say Contiguous.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:105',
       },
@@ -302,25 +351,45 @@ export const paintDescriptions: Record<
         detail: 'A checkbox giving the deposited color anti-aliased edges. On by default.',
         status: 'missing',
       },
+      {
+        control: 'Brush Angle',
+        detail:
+          'A numeric field of degrees beside a small tip widget, placed after Anti-alias. It sets the exact tip angle for the stroke and is the precise counterpart to the Angle widget inside the Brush Preset picker popout. It does nothing on a round tip.',
+        status: 'missing',
+      },
+      {
+        control: 'Always Use Pressure for Size',
+        detail:
+          'A toggle that forces stylus pressure to drive tip size regardless of the tip’s Shape Dynamics. Off by default for most presets.',
+        status: 'missing',
+      },
     ],
     modifiers: [],
-    shortcuts: [],
+    shortcuts: [
+      {
+        keys: 'B',
+        action:
+          'Reaches the Color Replacement Tool through the slot it shares with the Brush, the Pencil and the Mixer Brush. It is the tile’s default letter that selects, and Shift+B cycles between them.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolsMap.ts:117',
-      'src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:105',
+      'src/tools/toolsMap.ts:138',
+      'src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:71',
       'src/components/Main/ColorReplacementToolArea.tsx:141',
       'src/tools/colorReplacement.ts:182',
       'src/tools/colorReplacement.ts:313',
-      'src/tools/toolProcessors.ts:277',
-      'src/tools/settings.ts:164',
-      'src/components/Common/AppKeyboardShortcuts.tsx:18',
+      'src/tools/toolProcessors.ts:310',
+      'src/tools/settings.ts:174',
+      'src/components/Common/AppKeyboardShortcuts.tsx:368',
     ],
     appNotes:
-      'A real substitution, and nothing like the spray can in black the previous version of this record described. The gesture is two steps in one area: a click with no sample yet is an eyedropper that reads the active layer’s own pixels and stores the colour to replace (`ColorReplacementToolArea.tsx:108-116`), and every press after that opens a drag. The replacement colour is read off the live store at pointer-up (`ColorReplacementToolArea.tsx:141`) rather than mirrored into the args by a bar, so changing the foreground while the tool stays selected takes effect on the next stroke — which is why the options bar renders the foreground as a readout and writes no colour at all. What the commit writes is the substitution the tool is named for: `replaceColorPreservingLuminance` (`colorReplacement.ts:182`) applies a single luminance OFFSET, `out = replacement + (L − L_replacement)`, so each replaced pixel keeps its own shading and only its hue and chroma move. It edits the ACTIVE layer in place through `updateLayerByTool` (`ColorReplacementToolArea.tsx:166`) and never creates one, and Opacity is the strength of the substitution rather than a canvas `globalAlpha`, so a 50 percent replacement is a half-tint of the same shading rather than a half-transparent wash of a solid. Four of the controls are genuinely live and the region arithmetic behind them is real: Tolerance is a squared three-channel RGB distance, and Limits decides reach rather than membership, with Contiguous flooding out from every matching pixel the stroke touched, one call per region (`colorReplacement.ts:376-398`), and Discontiguous replacing only what is under the brush. Five things diverge. `Limits` offers two of Adobe’s three entries, so Find Edges is unreachable, and the second is spelled `Discontinuous` where Adobe writes `Discontiguous` (`ColorReplacement.tsx:22`). `Tolerance` is 0-100 on this tool’s own scale, converted before it reaches the shared fill code, against Adobe’s documented 0-255. `Sampling` is a real `disabled` select whose options are `Current Layer` and `All Layers` — neither of Adobe’s Continuous / Once / Background Swatch, and the app has no background color for Background Swatch to name — so the one control that decides which colour is the target cannot reach the tool at all. `Mode` and the Brush Preset Picker are absent, so the Color blend mode Adobe calls the reason this tool is a replacement is unreachable and there is no tip. The bar also carries one control Photoshop does not have: `Smoothness` (`ColorReplacement.tsx:130-144`), a 0-50 feathering of the boundary the user can see, which is recorded here rather than in `options[]` because `types.ts` reserves that array for Photoshop’s own controls. Photoshop repaints the replaced pixels live as the stroke moves; the app draws no preview at all, for the reason its own tool area states — an honest overlay needs the full-layer plan recomputed on every pointer move. It also has no keyboard shortcut of its own: the app reaches it only by cycling the Brush tile with Shift+B, where Photoshop binds it separately.',
+      'A real substitution, and nothing like the spray can in black the previous version of this record described. The gesture is two steps in one area: a click with no sample yet is an eyedropper that reads the active layer’s own pixels and stores the colour to replace (`ColorReplacementToolArea.tsx:108-116`), and every press after that opens a drag. The replacement colour is read off the live store at pointer-up (`ColorReplacementToolArea.tsx:141`) rather than mirrored into the args by a bar, so changing the foreground while the tool stays selected takes effect on the next stroke — which is why the options bar renders the foreground as a readout and writes no colour at all. What the commit writes is the substitution the tool is named for: `replaceColorPreservingLuminance` (`colorReplacement.ts:182`) applies a single luminance OFFSET, `out = replacement + (L − L_replacement)`, so each replaced pixel keeps its own shading and only its hue and chroma move. It edits the ACTIVE layer in place through `updateLayerByTool` (`ColorReplacementToolArea.tsx:166`) and never creates one, and Opacity is the strength of the substitution rather than a canvas `globalAlpha`, so a 50 percent replacement is a half-tint of the same shading rather than a half-transparent wash of a solid. Four of the controls are genuinely live and the region arithmetic behind them is real: Tolerance is a squared three-channel RGB distance, and Limits decides reach rather than membership, with Contiguous flooding out from every matching pixel the stroke touched, one call per region (`colorReplacement.ts:376-398`), and Discontiguous replacing only what is under the brush. Five things diverge. `Limits` offers two of Adobe’s three entries, so Find Edges is unreachable, and the second is spelled `Discontinuous` where Adobe writes `Discontiguous` (`ColorReplacement.tsx:22`). `Tolerance` is 0-100 on this tool’s own scale, converted before it reaches the shared fill code, against Adobe’s documented 0-255. `Sampling` is a real `disabled` select whose options are `Current Layer` and `All Layers` — neither of Adobe’s Continuous / Once / Background Swatch, and the app has no background color for Background Swatch to name — so the one control that decides which colour is the target cannot reach the tool at all. `Mode` and the Brush Preset Picker are absent, so the Color blend mode Adobe calls the reason this tool is a replacement is unreachable and there is no tip, and the top-bar Size slider the app renders in that position has no Photoshop counterpart on this bar at all — Adobe’s own manual opens the tool with “Choose a brush tip in the options bar” and never lists a Size — so it is capped at 200 px (`ColorReplacement.tsx:148`) rather than the 5000 the picker offers, and it is the app’s addition recorded here rather than in `options[]`. The bar also carries one control Photoshop does not have: `Smoothness` (`ColorReplacement.tsx:130-144`), a 0-50 feathering of the boundary the user can see, which is recorded here rather than in `options[]` because `types.ts` reserves that array for Photoshop’s own controls. Photoshop repaints the replaced pixels live as the stroke moves; the app draws no preview at all, for the reason its own tool area states — an honest overlay needs the full-layer plan recomputed on every pointer move. Its tool-select key is the one above, and the app agrees with it: the tool sits in the Brush group, so `B` reaches the slot and `Shift+B` cycles to it — the same binding the app already had. `AppKeyboardShortcuts.tsx` also lists it in the `tipSizeField` table, so `[` and `]` resize its tip and the `0` and `1` opacity rows apply here as they do on the Brush.',
     sources: [
       'https://www.photoshopessentials.com/photo-editing/photoshop-color-replacement-tool-tutorial',
       'https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/215',
+      'https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=209',
+      'https://www.glensmith.co.uk/photoshop/color-replace',
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://www.photoshopessentials.com/photo-editing/color-replacement-tool/',
       'https://www.creativebloq.com/how-to/photoshop-colour-change',
@@ -336,43 +405,61 @@ export const paintDescriptions: Record<
       'The Eraser removes pixels under a dragged tip, writing transparency on a layer and the background color on a Background layer or one whose transparency is locked. Its Mode chooses the tip: Brush is a soft round tip with adjustable hardness, Pencil is hard-edged, and Block is a fixed-size square with no opacity control at all. Opacity is a per-stroke ceiling as on the Brush, while Flow is the per-dab rate that builds erasure up within that ceiling. Erase to History turns the same drag into a restore, painting the area back to whichever state or snapshot is set in the History panel.',
     options: [
       {
+        control: 'Tool Preset Picker',
+        detail: 'The leftmost button on the bar, applying a whole saved options-bar state in one action.',
+        status: 'missing',
+      },
+      {
         control: 'Brush Preset Picker',
         detail:
-          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus a settings gear and a grid of tips. Block mode uses a square and no preset. Unlike the Brush, the Pencil and the Clone Stamp, the Eraser also keeps Size and Hardness on the bar itself, so the two are not in competition here.',
+          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus an Angle/Roundness widget, a settings gear, a New Preset button and a grid of tips. Block mode uses a square and no preset. Unlike the Brush, the Pencil and the Clone Stamp, the Eraser also keeps Size and Hardness on the bar itself, so the two are not in competition here.',
+        status: 'missing',
+      },
+      {
+        control: 'Toggle the Brush Settings panel',
+        detail: 'The button immediately right of the Brush Preset Picker, opening the Brush Settings panel.',
         status: 'missing',
       },
       {
         control: 'Mode',
         detail:
-          'A dropdown of Brush, Pencil and Block. Brush erases with adjustable softness and opacity; Pencil erases with hard edges; Block erases in a fixed-size square shape with no opacity control.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:56',
+          'A dropdown of Brush, Pencil and Block. Brush erases with adjustable softness and opacity; Pencil erases with hard edges and is fixed at 100 percent hardness; Block erases in a fixed-size square shape with no opacity control.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:38',
       },
       {
         control: 'Size',
-        detail: 'The tip diameter in pixels, 1 to 1000.',
+        detail:
+          'The tip diameter in pixels. Adobe’s current page names the control on the bar but gives no range, and a third-party Elements walkthrough gives 1 to 2500; neither figure could be confirmed against an Adobe page for this tool.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:36',
+        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:42',
       },
       {
         control: 'Hardness',
         detail:
           'A slider, 0 to 100 percent, in the Brush and Pencil modes. Pencil mode is fixed at 100. Block mode has no hardness.',
-        status: 'missing',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:46',
       },
       {
         control: 'Opacity',
         detail:
           'A label with a numeric field, 0 to 100 percent. Default 100. 100 erases pixels completely, lower erases partially. Not available in Block mode, and Adobe removes the control there rather than greying it.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:43',
+        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:57',
+      },
+      {
+        control: 'Always Use Pressure for Opacity',
+        detail:
+          'A toggle that forces stylus pressure to drive the erase strength regardless of the numeric field. Off by default.',
+        status: 'missing',
       },
       {
         control: 'Flow',
         detail:
           'A label with a numeric field, 0 to 100 percent. Default 100. How quickly the erasure is applied, so repeated passes over one area build up to the Opacity ceiling. Adobe states the range and the default but not the minimum.',
         status: 'inert',
-        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:100',
+        appRef: 'src/components/ToolbarsRight/Eraser/Eraser.tsx:146',
       },
       {
         control: 'Airbrush',
@@ -381,9 +468,32 @@ export const paintDescriptions: Record<
         status: 'missing',
       },
       {
+        control: 'Smoothing',
+        detail:
+          'A numeric field, 0 to 100 percent, beside a gear. Default 10. One of only four tools that carry it, with the Brush, the Mixer Brush and the Pencil.',
+        status: 'missing',
+      },
+      {
+        control: 'Smoothing Options',
+        detail:
+          'The gear beside Smoothing: Pulled String Mode, Stroke Catch-up, Catch-up on Stroke End and Adjust for Zoom.',
+        status: 'missing',
+      },
+      {
+        control: 'Brush Angle',
+        detail:
+          'A numeric field of degrees beside a small tip widget, placed after Smoothing and before Erase to History. It sets the exact tip angle for the erase and is the precise counterpart to the Angle widget inside the Brush Preset picker popout.',
+        status: 'missing',
+      },
+      {
         control: 'Erase to History',
         detail:
           'A checkbox. With a state or snapshot set in the History panel, a drag paints the area back to that state instead of erasing it. Holding Alt while dragging turns this mode on temporarily.',
+        status: 'missing',
+      },
+      {
+        control: 'Always Use Pressure for Size',
+        detail: 'A toggle that forces stylus pressure to drive tip size regardless of the tip’s Shape Dynamics.',
         status: 'missing',
       },
       {
@@ -399,28 +509,63 @@ export const paintDescriptions: Record<
         action:
           'While dragging, temporarily switches the stroke to Erase to History, restoring the area to the state or snapshot set in the History panel.',
       },
+      {
+        keys: 'Shift',
+        action:
+          'Click once, then Shift-click a second point and the erase is drawn between the two as a straight line.',
+      },
     ],
-    shortcuts: [{ keys: 'E', action: 'Selects the Eraser Tool.' }],
+    shortcuts: [
+      { keys: 'E', action: 'Selects the Eraser Tool.' },
+      {
+        keys: 'Shift+E',
+        action: 'Cycles the slot shared with the Magic Eraser and the Background Eraser.',
+      },
+      {
+        keys: '[',
+        action:
+          'Decreases the brush size to the next smaller preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.',
+      },
+      {
+        keys: ']',
+        action:
+          'Increases the brush size to the next larger preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.',
+      },
+      {
+        keys: '0',
+        action:
+          'Sets the brush Opacity to 100 percent. On the Brush, Pencil, Eraser, Color Replacement Tool and Clone Stamp.',
+      },
+      {
+        keys: '1',
+        action:
+          'Sets the brush Opacity to 10 percent. On the Brush, Pencil, Eraser, Color Replacement Tool and Clone Stamp.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolsMap.ts:122',
-      'src/tools/eraser.ts:39',
-      'src/tools/eraser.ts:79',
-      'src/components/Main/EraserToolArea.tsx:169',
-      'src/components/ToolbarsRight/Eraser/Eraser.tsx:47',
-      'src/tools/settings.ts:182',
-      'src/components/Common/AppKeyboardShortcuts.tsx:355',
+      'src/tools/toolsMap.ts:143',
+      'src/tools/eraser.ts:26',
+      'src/tools/eraser.ts:85',
+      'src/tools/eraser.ts:215',
+      'src/components/Main/EraserToolArea.tsx:211',
+      'src/components/ToolbarsRight/Eraser/Eraser.tsx:38',
+      'src/tools/settings.ts:192',
+      'src/components/Common/AppKeyboardShortcuts.tsx:483',
     ],
     appNotes:
-      'The Eraser edits the active layer in place by subtracting alpha, which is the right model, and it produces exactly one history state per stroke because the commit is the pointer-up. Its Mode list is Photoshop-shaped but not Photoshop-capable: the `brush` option is rendered with Adobe’s real label and is `disabled` on the DOM node, because a soft tip needs a stamped-dab engine and this renderer issues one `stroke()` per stroke, which has no falloff — so a Brush eraser would silently render as Pencil. Hardness is absent for the same reason, and the app’s Pencil and Block modes are the hard edge and the square. Size is capped at 500 px rather than 1000. Opacity is present and works as Photoshop’s per-stroke ceiling, and the control is correctly withheld in Block mode. Flow is the notable finding: the bar renders Photoshop’s real `Flow` label over a 1–100 range and a hardcoded 100 percent value, and Adobe documents neither bound, but the input carries `disabled` and writes nothing, because Flow is a per-dab alpha ramp and a single `stroke()` cannot honour one. Airbrush and Erase to History are absent, and so is the Alt-drag temporary Erase to History gesture.',
+      'The Eraser edits the active layer in place by subtracting alpha, which is the right model, and it produces exactly one history state per stroke because the commit is the pointer-up. A previous version of this record said the Mode list was Photoshop-shaped but not Photoshop-capable, because the `brush` option was rendered with Adobe’s real label and `disabled` on the DOM node and Hardness was absent for the same reason. Both halves of that are no longer true: `Eraser.tsx` offers Brush, Pencil and Block with none of them disabled, Brush mode reaches the shared stamped-dab tip engine through `eraseWithTip` (`eraser.ts:215`), and Hardness renders as a live slider in Brush mode wired through `handleHardnessChange`. Mode is therefore `present` and Hardness `partial` rather than `missing` — partial because the bar withholds it in Pencil mode, where Adobe’s page still lists Hardness among the four controls adjustable there and where the app’s Pencil mode is hard-edged by construction. Two app-only controls are on the bar and are recorded here rather than in `options[]`: a `Spacing` slider in Brush mode, wired to the tip engine’s spacing, which Adobe puts in the Brush Settings panel rather than on this bar, and the mode-gated rendering of Hardness itself. Size is capped at 500 px. Opacity is present and works as Photoshop’s per-stroke ceiling, and the control is correctly withheld in Block mode. Flow remains the notable finding: the bar renders Photoshop’s real `Flow` label over a 1–100 range and a hardcoded 100 percent value, and Adobe documents neither bound, but the input carries `disabled` and writes nothing, because Flow is a per-dab alpha ramp and one stamped pass cannot honour one. Airbrush, Smoothing and the two pressure toggles, Brush Angle, Erase to History and Symmetry are absent, and so is the Alt-drag temporary Erase to History gesture. The Shift straight-line constraint, by contrast, is implemented and is the one modifier row on this bar the app honours: `EraserToolArea.tsx` anchors the stroke on a plain click and draws from that anchor on a Shift-click, the two-click gesture Adobe describes. Because Brush and Pencil modes stamp through the tip engine, the tip spacing is 1 and each dab removes `alpha * (1 - weight)` where the weight is the hardness falloff — so this is a real erase, not the hard edge an earlier version of this record described.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/erase-parts-of-an-image-with-the-eraser-tool.html',
       'https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=335',
       'https://www.mediacollege.com/adobe/photoshop/tool/eraser.html',
       'https://www.underwaterphotography.com/photoshop/photoshop/1_12_3_1.html',
       'https://www.glensmith.co.uk/photoshop/eraser',
+      'https://www.dummies.com/article/technology/software/adobe-products/photoshop/how-to-erase-image-areas-with-eraser-tools-in-photoshop-elements-9-190185/',
       'https://helpx.adobe.com/photoshop/using/paint-symmetry.html',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
       'https://flylib.com/books/en/4.462.1.114/1/',
+      'https://flylib.com/books/en/2.547.1.71/1/',
     ],
   },
   'magic-eraser': {
@@ -465,18 +610,24 @@ export const paintDescriptions: Record<
       },
     ],
     modifiers: [],
-    shortcuts: [],
+    shortcuts: [
+      {
+        keys: 'Shift+E',
+        action:
+          'Cycles the slot shared with the Eraser and the Background Eraser. Adobe’s own help page prints the bare letter E beside the tool, but the tool does not have E to itself \u2014 the Eraser does.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolsMap.ts:123',
+      'src/tools/toolsMap.ts:144',
       'src/tools/fill.ts:163',
       'src/util/floodFill.ts:76',
       'src/components/Main/FillToolArea.tsx:91',
-      'src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:48',
-      'src/tools/settings.ts:190',
+      'src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:24',
+      'src/tools/settings.ts:206',
     ],
     appNotes:
-      'A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the tool has no keyboard shortcut of its own: the app’s fill shortcut group contains the Paint Bucket and the Gradient only.',
+      'A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-alias is the finding: it renders with the app’s own legacy `Anti-aliased` spelling, which current Adobe pages have dropped in favour of `Anti-alias`, and with Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the app does not bind `Shift+E`: the eraser family shares one plain `E` registration with no Shift twin (`AppKeyboardShortcuts.tsx:483`), so the tool is selected only by cycling with Shift+B from the eraser slot rather than the cycle Photoshop uses. Its bar is the shared fill bar, built by `createFillToolbar` and rendered at `MagicEraser.tsx:24`.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/magic-eraser-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/change-similar-pixels-with-the-magic-eraser-tool.html',
@@ -495,6 +646,11 @@ export const paintDescriptions: Record<
     purpose:
       'The Paint Bucket fills the whole connected region of similar color around the click in a single click. Tolerance decides how far a pixel’s color may differ from the clicked pixel and still be filled, Contiguous limits the fill to the region connected to the click rather than every match in the layer, Anti-alias smooths the boundary, and Fill chooses the foreground color or a pattern. Mode and Opacity composite the fill, so a fill is a real layer edit rather than a paste. It shares a Tools-panel slot with the Gradient tool. Unlike the Magic Eraser it fills rather than clears; and unlike the Color Replacement tool it is committed by the single click that starts it, with no drag gesture to continue or extend the region.',
     options: [
+      {
+        control: 'Tool Preset Picker',
+        detail: 'The leftmost button on the bar, applying a whole saved options-bar state in one action.',
+        status: 'missing',
+      },
       {
         control: 'Fill',
         detail:
@@ -548,17 +704,17 @@ export const paintDescriptions: Record<
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolsMap.ts:124',
+      'src/tools/toolsMap.ts:145',
       'src/tools/fill.ts:129',
       'src/tools/fill.ts:151',
       'src/components/Main/FillToolArea.tsx:154',
       'src/components/Main/FillToolArea.tsx:160',
       'src/components/ToolbarsRight/MagicEraser/PaintBucket.tsx:35',
-      'src/tools/settings.ts:199',
-      'src/components/Common/AppKeyboardShortcuts.tsx:314',
+      'src/tools/settings.ts:215',
+      'src/components/Common/AppKeyboardShortcuts.tsx:335',
     ],
     appNotes:
-      'One click, one atomic commit on the active layer, with the foreground color read off the live store at the moment of the click rather than mirrored into the args, and the fill composited as a real source-over so a 50 percent fill over transparent pixels is half coverage of clean red rather than half-black — that is the one place where this implementation is more correct than a naive lerp. Tolerance, Contiguous and Opacity are genuinely wired and share the fill code with the Magic Eraser. Three controls diverge. Pattern renders `disabled` under the real `Fill` label: there is no pattern registry, no tile and no processor branch that could read one, so it is present in the DOM and inert rather than absent. Anti-alias is the shared fill bar’s `disabled` checkbox, which carries the app’s own legacy `Anti-aliased` spelling and is inert for the same hard-threshold reason as the Magic Eraser’s. Mode is absent outright and cannot be added cheaply: the tool’s args type declares no blend mode, and the fill is applied to the active layer’s pixels rather than to a new layer, so a blend mode would be a per-pixel composite against a destination the processor does not address. All Layers is absent, and the tool reads only the active layer’s raster. As in Photoshop the commit is the click, with no drag gesture and no multi-region sequence.',
+      'One click, one atomic commit on the active layer, with the foreground color read off the live store at the moment of the click rather than mirrored into the args, and the fill composited as a real source-over so a 50 percent fill over transparent pixels is half coverage of clean red rather than half-black — that is the one place where this implementation is more correct than a naive lerp. Tolerance, Contiguous and Opacity are genuinely wired and share the fill code with the Magic Eraser. Four of the fill controls diverge. Pattern renders `disabled` under the real `Fill` label: there is no pattern registry, no tile and no processor branch that could read one, so it is present in the DOM and inert rather than absent. Anti-alias is the shared fill bar’s `disabled` checkbox, which carries the app’s own legacy `Anti-aliased` spelling and is inert for the same hard-threshold reason as the Magic Eraser’s. Mode is absent outright and cannot be added cheaply: the tool’s args type declares no blend mode, and the fill is applied to the active layer’s pixels rather than to a new layer, so a blend mode would be a per-pixel composite against a destination the processor does not address. All Layers is absent, and the tool reads only the active layer’s raster. As in Photoshop the commit is the click, with no drag gesture and no multi-region sequence.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/fill-paint-bucket-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html',
@@ -569,6 +725,7 @@ export const paintDescriptions: Record<
       'https://www.glensmith.co.uk/photoshop/paint-bucket',
       'https://www.photoshopbuzz.com/how-to-use-paint-bucket-tool/',
       'https://shotkit.com/paint-bucket-photoshop/',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
     ],
   },
   'clone-stamp': {
@@ -609,6 +766,12 @@ export const paintDescriptions: Record<
         status: 'missing',
       },
       {
+        control: 'Airbrush',
+        detail:
+          'A toggle that keeps cloning while the pointer is stationary, so a stopped stroke keeps building toward Opacity.',
+        status: 'missing',
+      },
+      {
         control: 'Always Use Pressure for Opacity',
         detail: 'A toggle forcing stylus pressure to drive the opacity of each stamped copy.',
         status: 'missing',
@@ -638,6 +801,12 @@ export const paintDescriptions: Record<
         status: 'missing',
       },
       {
+        control: 'Brush Angle',
+        detail:
+          'A numeric field of degrees beside a small tip widget, placed after Flow. It sets the exact tip angle for the stroke and is the precise counterpart to the Angle widget inside the Brush Preset picker popout.',
+        status: 'missing',
+      },
+      {
         control: 'Toggle the Clone Source panel',
         detail:
           'The button at the far right of the bar. Opens the Clone Source panel, which holds up to five sampling sources, each with its own flip, rotate, scale and opacity, plus a Show Overlay checkbox that draws the sampled source live under the brush.',
@@ -651,21 +820,49 @@ export const paintDescriptions: Record<
           'Click, at pointer-down, to set the clone source point. The decision is made at pointer-down, so a drag that began as a plain press keeps cloning even if the modifier is released mid-stroke, and a press that began with the modifier down never starts a stroke.',
       },
     ],
-    shortcuts: [{ keys: 'S', action: 'Selects the Clone Stamp Tool.' }],
+    shortcuts: [
+      {
+        keys: 'S',
+        action:
+          'Selects the Clone Stamp Tool. Holding Shift while pressing it cycles the slot shared with the Pattern Stamp Tool.',
+      },
+      {
+        keys: '[',
+        action:
+          'Decreases the brush size to the next smaller preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.',
+      },
+      {
+        keys: ']',
+        action:
+          'Increases the brush size to the next larger preset diameter. On the Brush, Pencil, Eraser, Color Replacement Tool, Smudge, Dodge, Burn and Clone Stamp.',
+      },
+      {
+        keys: '0',
+        action:
+          'Sets the brush Opacity to 100 percent. On the Brush, Pencil, Eraser, Color Replacement Tool and Clone Stamp.',
+      },
+      {
+        keys: '1',
+        action:
+          'Sets the brush Opacity to 10 percent. On the Brush, Pencil, Eraser, Color Replacement Tool and Clone Stamp.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolsMap.ts:96',
+      'src/tools/toolsMap.ts:111',
       'src/components/Main/CloneStampToolArea.tsx:343',
+      'src/components/Main/CloneStampToolArea.tsx:352',
       'src/components/Main/CloneStampToolArea.tsx:210',
       'src/tools/cloneStamp.ts:89',
       'src/tools/cloneStamp.ts:210',
-      'src/contexts/useLayer.ts:557',
-      'src/components/ToolbarsRight/CloneStamp/CloneStamp.tsx:118',
-      'src/tools/settings.ts:256',
-      'src/components/Common/AppKeyboardShortcuts.tsx:362',
+      'src/contexts/useLayer.ts:334',
+      'src/contexts/useLayer.ts:589',
+      'src/components/ToolbarsRight/CloneStamp/CloneStamp.tsx:71',
+      'src/tools/settings.ts:286',
+      'src/components/Common/AppKeyboardShortcuts.tsx:383',
     ],
     appNotes:
-      'The most nearly complete of the seven, and the only one whose Alt gesture is implemented. Alt-click sets the source at pointer-down and paints nothing; the source and the stroke are both rebased into the active layer’s frame, which is safe precisely because the processor only ever uses their difference. With no source set the gesture is refused outright — not-allowed cursor, no stroke, no history entry — rather than accepted and committed as a no-op that would make undo appear to do nothing. The copy is a genuine copy: a soft-edged tip and a straight-alpha source-over per texel, carrying the source texel’s own alpha so a clone out of a transparent region leaves the destination transparent rather than painting it opaque black, with every read indexed into an immutable copy of the raster and every write into the buffer, so no dab can sample a texel a previous dab laid down. That read-back is taken once per stroke and not per dab for a second reason worth naming: the live preview re-runs the processor on every pointer move but always against the store’s own pre-stroke raster, never the previous frame’s preview, and the commit re-runs it once more over the whole path before publishing. Aligned is the one control that is wired and still diverges, and the divergence is worth stating precisely because the checkbox is real and the arithmetic beneath it is not Adobe’s. Adobe fixes the offset at the displacement of the first stroke after the Alt-click and holds it for every later stroke; the app recomputes the offset from the current gesture’s own first point on every invocation, so the offset is constant within a stroke — which matches — and re-anchors at the start of each new one, which is exactly the drift the mode exists to remove. Unaligned is not the other half of Adobe’s pair either: Adobe keeps the sampling point fixed at the Alt-click and moves only the destination, while the app measures from the gesture’s current end, so the read point slides backwards as the drag progresses. Both arms are one subtraction, so this is a missing anchor rather than a wrong formula, and the fix is a stored offset on the args rather than new pixel code. Size, Hardness and Opacity are all wired and the tip is borrowed from the shared brush engine, so a soft Clone edge is the same soft edge the other paint tools stamp. Eight of the eleven controls are absent because the args type declares no field for any of them: Tool Preset Picker, Brush Preset Picker, Mode, Flow, both pressure toggles, Sample, Ignore Adjustment Layers and the Clone Source panel. Ignore Adjustment Layers has nothing to ignore in this app even in principle — a layer source is blank, an image, a tool or an affine transform, and Levels, Color, Transform and Blur are destructive operations on a raster rather than layers sitting above a clone target. Mode is the one that would change visible behavior: the tool is a raster commit on the active layer, so a blend mode is a composite against the layer beneath and the one primitive here takes no mode. Size is capped at 500 px rather than 5000. The layer gate refuses the Bedrock layer but does not check the layer’s lock flag, so a locked layer still accepts a cloned stroke — and that lock round-trips to PSD as composite and position protection, which means a layer can be protected in a saved file and freely overwritten in the editor. The scope of that is worth stating precisely: `layer.locked` is only ever set true by importing a PSD, and no panel in this app renders a lock control or a lock icon, so there is no in-app route to a locked layer and nothing on screen to contradict the flag.',
+      'The most nearly complete of the seven, and the only one whose Alt gesture is implemented. Alt-click sets the source at pointer-down and paints nothing; the source and the stroke are both rebased into the active layer’s frame, which is safe precisely because the processor only ever uses their difference. With no source set the gesture is refused outright — not-allowed cursor, no stroke, no history entry — rather than accepted and committed as a no-op that would make undo appear to do nothing. The copy is a genuine copy: a soft-edged tip and a straight-alpha source-over per texel, carrying the source texel’s own alpha so a clone out of a transparent region leaves the destination transparent rather than painting it opaque black, with every read indexed into an immutable copy of the raster and every write into the buffer, so no dab can sample a texel a previous dab laid down. That read-back is taken once per stroke and not per dab for a second reason worth naming: the live preview re-runs the processor on every pointer move but always against the store’s own pre-stroke raster, never the previous frame’s preview, and the commit re-runs it once more over the whole path before publishing. Aligned is the one control that is wired and still diverges, and the divergence is worth stating precisely because the checkbox is real and the arithmetic beneath it is not Adobe’s. Adobe fixes the offset at the displacement of the first stroke after the Alt-click and holds it for every later stroke; the app recomputes the offset from the current gesture’s own first point on every invocation, so the offset is constant within a stroke — which matches — and re-anchors at the start of each new one, which is exactly the drift the mode exists to remove. Unaligned is not the other half of Adobe’s pair either: Adobe keeps the sampling point fixed at the Alt-click and moves only the destination, while the app measures from the gesture’s current end, so the read point slides backwards as the drag progresses. Both arms are one subtraction, so this is a missing anchor rather than a wrong formula, and the fix is a stored offset on the args rather than new pixel code. Size, Hardness and Opacity are all wired and the tip is borrowed from the shared brush engine, so a soft Clone edge is the same soft edge the other paint tools stamp. Ten of the thirteen controls are absent because the args type declares no field for any of them: Tool Preset Picker, Brush Preset Picker, Mode, Flow, Airbrush, both pressure toggles, Sample, Ignore Adjustment Layers, Brush Angle and the Clone Source panel. Ignore Adjustment Layers has nothing to ignore in this app even in principle — a layer source is blank, an image, a tool or an affine transform, and Levels, Color, Transform and Blur are destructive operations on a raster rather than layers sitting above a clone target. Mode is the one that would change visible behavior: the tool is a raster commit on the active layer, so a blend mode is a composite against the layer beneath and the one primitive here takes no mode. Size is capped at 500 px rather than 5000. The layer gate refuses the Bedrock layer and requires a source, and a previous version of this record added that it did not check the layer’s lock flag, so a locked layer would still accept a cloned stroke. That is no longer true, and the guard is central rather than local: `updateLayerByTool` returns early on an `isLayerLocked` layer (`useLayer.ts:334`) and so does `tempUpdateLayer` (`useLayer.ts:535`), which is the path the live preview and the source write both go through, so neither can reach a locked layer. What remains true is the narrower, verified fact: `layer.locked` is only ever set true by importing a PSD, and no panel in this app renders a lock control or a lock icon, so there is no in-app route to setting one.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/heal-clone/retouch-images-with-the-clone-stamp-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/clone-stamp-tool.html',
@@ -681,6 +878,8 @@ export const paintDescriptions: Record<
       'https://www.photoshopforphotographers.com/CC_2013/Help_guide/tp/Clone_stamp_tool.html',
       'https://www.webpages.uidaho.edu/larc246/toolBarPages/cloneStamp.htm',
       'https://www.glensmith.co.uk/photoshop/clone-stamp',
+      'https://enviragallery.com/guide-to-the-clone-tool-in-photoshop/',
+      'https://phlearn.com/tutorial/photoshop-basics-the-clone-stamp-tool/',
       'https://www.psdvault.com/basics/photoshop-clone-stamp-tool/',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
       'https://graphicdesign.stackexchange.com/questions/21866/why-does-the-clone-stamp-tool-seem-to-be-misaligned',

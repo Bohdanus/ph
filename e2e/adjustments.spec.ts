@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   DEFAULT_LINE_CLIP,
@@ -21,7 +21,7 @@ import {
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { cssPointToImage } from './helpers/screenshot-scale';
-import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 /**
@@ -198,6 +198,25 @@ const isNot =
   async (png) =>
     !(await predicate(png));
 
+/**
+ * Selects the Colors panel through `Image ▸ Adjustments ▸ Photo Filter`.
+ *
+ * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
+ * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
+ * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
+ * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
+ * hold it is gone from `toolbarMap`. `Photo Filter` is the enabled item that selects it, and
+ * the slug is `slugifyToolLabel('Photo Filter')` (`toolbar-mapping.ts`).
+ *
+ * The other sixteen items in that submenu render `disabled`, so this is the one path in and a
+ * spec cannot reach the panel any other way.
+ */
+async function openColorsPanel(page: Page): Promise<void> {
+  await page.getByTestId('header-image-menu-button').click();
+  await page.getByTestId('image-menu-adjustments-button').click();
+  await page.getByTestId('image-menu-adjustments-photo-filter-button').click();
+}
+
 test.describe('Colors adjustment', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -209,8 +228,7 @@ test.describe('Colors adjustment', () => {
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
     const beforeBounds = await inkBounds(before);
 
-    await openToolFlyout(page, 'color');
-    await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
+    await openColorsPanel(page);
     const panelBox = await remeasureCanvasBox(page);
 
     // The panel's discard can only remove a live preview, so it is disabled until one
@@ -289,8 +307,7 @@ test.describe('Colors adjustment', () => {
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
     const beforeBounds = await inkBounds(before);
 
-    await openToolFlyout(page, 'color');
-    await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
+    await openColorsPanel(page);
     const panelBox = await remeasureCanvasBox(page);
 
     const saturation = page.getByRole('slider', { name: /Saturation/ });

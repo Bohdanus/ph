@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test } from '../fixtures/extended-test';
 import { containerVerifiedFormats, exportAndVerify, INTEGRATION_TEST_TIMEOUT_MS, setupExportTest } from './helpers';
 
 // TIFF and PSD: no browser decodes either, so `exportAndVerify` parses their bytes in Node

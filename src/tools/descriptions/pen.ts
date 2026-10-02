@@ -40,7 +40,7 @@ const NO_APP_OPTIONS =
  * to change and no path for a key to act on, which is why nothing above is bound.
  */
 const NO_APP_GESTURE_SURFACE =
-  'It has no gesture surface either. The canvas dispatch turns a tool name into an interaction mode and names none of the six Pen tools in any of its branches, so all six mount the dummy tool area — a `display: none` div — instead of a canvas handler. There is no drag for a modifier to change and no path for a key to act on, which is why none of the modifiers or shortcuts above is bound: the app registers no `Escape` for this family, and the only four `Escape` handlers bound to a tool anywhere in it belong to the lasso (twice), the font picker and the transform box.';
+  'It has no gesture surface either. The canvas dispatch turns a tool name into an interaction mode and names none of the six Pen tools in any of its branches, so all six mount the dummy tool area — a `display: none` div — instead of a canvas handler. There is no drag for a modifier to change and no path for a key to act on, which is why none of the modifiers or shortcuts above is bound: the app registers no `Escape` for this family, and the only five `Escape` handlers bound to a tool anywhere in it belong to the lasso (twice), the crop tool, the font picker and the transform box.';
 
 /**
  * The rail's Pen flyout holds six tools and the app's keyboard cycle holds three, so the
@@ -177,18 +177,18 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:300',
+      'src/tools/toolProcessors.ts:333',
       'src/tools/toolProcessors.ts:110',
-      'src/tools/toolsMap.ts:128',
+      'src/tools/toolsMap.ts:149',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
-      'src/tools/settings.ts:265',
-      'src/contexts/tool-types.ts:58',
-      'src/util/settings.ts:101',
-      'src/components/Main/Main.tsx:226',
-      'src/components/Common/AppKeyboardShortcuts.tsx:387',
-      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:30',
-      'src/tools/__tests__/tool-processors.test.ts:336',
+      'src/tools/settings.ts:295',
+      'src/contexts/tool-types.ts:68',
+      'src/util/settings.ts:111',
+      'src/components/Main/Main.tsx:250',
+      'src/components/Common/AppKeyboardShortcuts.tsx:513',
+      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:45',
+      'src/tools/__tests__/tool-processors.test.ts:344',
     ],
     appNotes: `Not implemented. The processor exists but is the shared stub that returns a null bitmap, and its commit kind is unimplemented, so a drag over the canvas produces no layer, no history state and no durable operation. ${NO_APP_OPTIONS} ${NO_APP_GESTURE_SURFACE} The app does bind the letter P and Shift+P cycling for the Pen group — and those two keys are the whole of the Pen's Photoshop chrome here, along with a tool-preset entry for the tool. Neither of the two shortcuts the bar above names that act on a path, \`Ctrl+Enter\` and \`Ctrl+Alt\`, is bound anywhere in the app. The options table above is the Shape and Path mode bar; Adobe's own enumeration of the Pixels-mode controls — \`Mode\`, \`Opacity\` and \`Anti-alias\` — carries the scope line "When using the Line tool or other shape tools", and the Pen settings page confirms that the Pen has a Pixels mode without ever listing what that mode's bar contains, so no row above describes Pixels mode and none is invented for it.`,
     sources: PEN_SOURCES,
@@ -268,17 +268,17 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:301',
+      'src/tools/toolProcessors.ts:335',
       'src/tools/toolProcessors.ts:110',
-      'src/tools/toolsMap.ts:132',
+      'src/tools/toolsMap.ts:153',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24',
-      'src/tools/settings.ts:266',
-      'src/contexts/tool-types.ts:59',
-      'src/util/settings.ts:102',
-      'src/components/Main/Main.tsx:226',
-      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:156',
-      'src/components/Common/AppKeyboardShortcuts.tsx:32',
+      'src/tools/settings.ts:296',
+      'src/contexts/tool-types.ts:69',
+      'src/util/settings.ts:112',
+      'src/components/Main/Main.tsx:250',
+      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172',
+      'src/components/Common/AppKeyboardShortcuts.tsx:53',
     ],
     appNotes:
       "Not implemented, and the placeholder config is itself wrong for this tool in a way a test pins. The chip list the Freeform Pen actually renders is the standard Pen's — the config entry written for the Freeform Pen, with its Magnetic and Curve Fit chips, is dead configuration that no tool reaches, and a test asserts that it stays dead. So the two controls that are this tool's entire reason for existing are the two it does not even name in its bar. " +
@@ -377,24 +377,24 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:306',
+      'src/tools/toolProcessors.ts:340',
       'src/tools/toolProcessors.ts:110',
-      'src/tools/toolsMap.ts:137',
+      'src/tools/toolsMap.ts:158',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:25',
-      'src/tools/settings.ts:267',
-      'src/contexts/tool-types.ts:60',
-      'src/util/settings.ts:103',
-      'src/components/Main/Main.tsx:226',
-      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:156',
-      'src/components/Common/AppKeyboardShortcuts.tsx:32',
+      'src/tools/settings.ts:297',
+      'src/contexts/tool-types.ts:70',
+      'src/util/settings.ts:113',
+      'src/components/Main/Main.tsx:250',
+      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172',
+      'src/components/Common/AppKeyboardShortcuts.tsx:53',
     ],
     appNotes:
       "Not implemented, and the placeholder config is wrong for this tool the same way it is wrong for the Freeform Pen: the chip list this tool renders is the standard Pen's, and the config entry written for the Curvature Pen is dead configuration that no tool reaches. That entry also lists Magnetic and Curve Fit, which are the Freeform Pen's controls and not this tool's. " +
       NO_APP_OPTIONS +
       ' ' +
       NO_APP_GESTURE_SURFACE +
-      ' `Esc` is named above as Photoshop’s way of stopping a path, and the app binds no `Escape` for this tool or any other in the family: its four `Escape` handlers belong to the lasso (twice), the font picker and the transform box.',
+      ' `Esc` is named above as Photoshop’s way of stopping a path, and the app binds no `Escape` for this tool or any other in the family: its five `Escape` handlers belong to the lasso (twice), the crop tool, the font picker and the transform box.',
     sources: CURVATURE_SOURCES,
   },
 
@@ -408,16 +408,16 @@ export const penDescriptions: Record<
     shortcuts: [],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:311',
+      'src/tools/toolProcessors.ts:345',
       'src/tools/toolProcessors.ts:110',
-      'src/tools/toolsMap.ts:142',
+      'src/tools/toolsMap.ts:163',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
-      'src/tools/settings.ts:268',
-      'src/contexts/tool-types.ts:61',
-      'src/util/settings.ts:104',
-      'src/components/Main/Main.tsx:226',
-      'src/components/SidebarLeft/toolIcons.tsx:77',
+      'src/tools/settings.ts:298',
+      'src/contexts/tool-types.ts:71',
+      'src/util/settings.ts:114',
+      'src/components/Main/Main.tsx:250',
+      'src/components/SidebarLeft/toolIcons.tsx:83',
     ],
     appNotes:
       "Not implemented. Photoshop documents no options-bar control specific to this tool — selecting it shows the Pen group's bar, so every control on it belongs to the Pen and none is the Add Anchor Point tool's own — which is why its options table is empty. What the app does render is the standard Pen's chip list, on a panel with a TODO badge, over a tool whose registered processor is the same shared stub that returns a null bitmap the whole Pen family uses, over state that is nothing but its own name, and over no Paths panel to select a path in. The app's SidebarLeft gives this tool the same pen-nib icon as the Pen itself, so the three anchor-point tools are visually indistinguishable from it. " +
@@ -437,16 +437,16 @@ export const penDescriptions: Record<
     shortcuts: [],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:316',
+      'src/tools/toolProcessors.ts:350',
       'src/tools/toolProcessors.ts:110',
-      'src/tools/toolsMap.ts:147',
+      'src/tools/toolsMap.ts:168',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
-      'src/tools/settings.ts:269',
-      'src/contexts/tool-types.ts:62',
-      'src/util/settings.ts:105',
-      'src/components/Main/Main.tsx:226',
-      'src/components/SidebarLeft/toolIcons.tsx:78',
+      'src/tools/settings.ts:299',
+      'src/contexts/tool-types.ts:72',
+      'src/util/settings.ts:115',
+      'src/components/Main/Main.tsx:250',
+      'src/components/SidebarLeft/toolIcons.tsx:84',
     ],
     appNotes:
       "Not implemented. Photoshop documents no options-bar control specific to this tool — selecting it shows the Pen group's bar, so every control on it belongs to the Pen and none is the Delete Anchor Point tool's own — which is why its options table is empty. What the app does render is the standard Pen's chip list, on a panel with a TODO badge, over a tool whose registered processor is the same shared stub that returns a null bitmap the whole Pen family uses, over state that is nothing but its own name, and over no Paths panel to select a path in. The app's SidebarLeft gives this tool the same pen-nib icon as the Pen itself. " +
@@ -472,22 +472,23 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:321',
+      'src/tools/toolProcessors.ts:355',
       'src/tools/toolProcessors.ts:110',
-      'src/tools/toolsMap.ts:152',
+      'src/tools/toolsMap.ts:173',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
-      'src/tools/settings.ts:270',
-      'src/contexts/tool-types.ts:63',
-      'src/util/settings.ts:106',
-      'src/components/Main/Main.tsx:226',
-      'src/components/SidebarLeft/toolIcons.tsx:79',
+      'src/tools/settings.ts:300',
+      'src/contexts/tool-types.ts:73',
+      'src/util/settings.ts:116',
+      'src/components/Main/Main.tsx:250',
+      'src/components/SidebarLeft/toolIcons.tsx:85',
       'src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242',
+      'src/contexts/history-adapter.ts:550',
     ],
     appNotes:
       "Not implemented. Photoshop documents no options-bar control specific to this tool — selecting it shows the Pen group's bar, so every control on it belongs to the Pen and none is the Convert Point tool's own — which is why its options table is empty. What the app does render is the standard Pen's chip list, on a panel with a TODO badge, over a tool whose registered processor is that same shared null-bitmap stub and over state that is nothing but its own name. This is also one of the tools the durable document refuses: converting a history item that names it is rejected as an unsupported feature rather than silently replayed. " +
       NO_APP_GESTURE_SURFACE +
-      ' `Ctrl+Alt` is named above as the way to reach this tool from the Direct Selection tool, and the app registers no Alt-bearing keybinding at all: the four tools that read `altKey` are the shape tool, the elliptical marquee, the clone stamp and the magnetic lasso, none of which is in this family. ' +
+      ' `Ctrl+Alt` is named above as the way to reach this tool from the Direct Selection tool, and the app registers no Alt-bearing keybinding at all: the five tools that read `altKey` are the shape tool, the elliptical marquee, the eyedropper, the clone stamp and the magnetic lasso, none of which is in this family. ' +
       PEN_KEYBOARD_GAP,
     sources: [...ANCHOR_TOOL_SOURCES, 'https://helpx.adobe.com/illustrator/using/tool-techniques/pen-tool.html'],
   },
