@@ -4,11 +4,9 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import {
   createCommittedPolygonSelection,
-  drawSelectionOutline,
   getActiveSelection,
   getSelectionAbsolutePoints,
 } from '../../util/selection.ts';
@@ -54,9 +52,12 @@ function readDocumentImageData(canvas: HTMLCanvasElement | null): ImageData | nu
 /**
  * The grown region's outline, drawn as a closed path.
  *
- * Same choice as the elliptical marquee and for the same reason: `drawSelectionOutline`
- * puts a white anchor dot on every vertex of a polygon selection, and a traced mask
- * boundary is a staircase with a vertex per step.
+ * The transient picture of a stroke in progress: the committed border is the ants canvas's
+ * job — `quick-selection` is in `Main.tsx`'s `SELECTION_INTERACTION_MODES`, so
+ * `useSelectionMarchingAnts` owns it on a canvas of its own (`useSelectionAnts.ts:51`-`:58`)
+ * — and nothing painted here survives release. Hand-rolled rather than a call into
+ * `util/selection.ts`'s outline painters because those put a white anchor dot on every
+ * vertex, and a traced mask boundary is a staircase with a vertex per step.
  */
 function drawRegionPreview(ctx: CanvasRenderingContext2D, points: Point[]): void {
   if (points.length < 2) return;
@@ -88,7 +89,6 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     ref: containerRef,
     imageSize: totalSize,
   });
-  const containScale = useContainScale(containerRef, totalSize);
 
   const pointerIdRef = useRef<number | null>(null);
   const strokeRef = useRef<Point[]>([]);
@@ -96,6 +96,20 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
   const accumulatorRef = useRef<QuickSelectionAccumulator | null>(null);
   const previewPointsRef = useRef<Point[] | null>(null);
 
+  /**
+   * Repaint the whole overlay: the live preview, and nothing else.
+   *
+   * The committed border is not painted here. `quick-selection` is in `Main.tsx`'s
+   * `SELECTION_INTERACTION_MODES`, so `useSelectionMarchingAnts` owns that border on a canvas
+   * of its own, and the static stroke this used to draw put two outlines of one selection on
+   * screen in two colours on two canvases. It has no move arm, so unlike the elliptical marquee
+   * it publishes nothing to the ants and has no drag representation on this overlay.
+   *
+   * The single dependency is why the effect at the bottom of this component is now
+   * mount-only: nothing read here moves when the store does, so a store change has nothing to
+   * repaint. That is sound because every stroke's exit route calls this explicitly, and the
+   * committed geometry follows the store on the ants loop instead.
+   */
   const redrawOverlay = useCallback(
     ({ previewPoints }: { previewPoints?: Point[] | null } = {}) => {
       const ctx = overlayCtxRef.current;
@@ -103,10 +117,9 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       resetOverlayAlpha(ctx);
-      selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame, containScale.current));
       if (previewPoints && previewPoints.length > 0) drawRegionPreview(ctx, previewPoints);
     },
-    [documentFrame, overlayCtxRef, selections, containScale]
+    [overlayCtxRef]
   );
 
   /**

@@ -1,9 +1,10 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
-import type { Point, Selection } from '../contexts/general-types.ts';
+import type { Selection } from '../contexts/general-types.ts';
 import { type DocumentFrame, documentToCanvasPoint } from '../contexts/document-frame.ts';
 import { getSelectionAbsolutePoints } from '../util/selection.ts';
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
+import { readSelectionDragPreview } from './selection-drag-preview.ts';
 
 /**
  * The two strokes that make the classic marching-ants border: a black dash and a
@@ -34,8 +35,9 @@ export type SelectionMarchingAntsProps = {
 
 type AntsShape = { id: string; path: Path2D };
 
-/** A closed contour through `points`, or `null` when there is nothing to stroke. */
-function toClosedSelectionPath(points: Point[]): Path2D | null {
+/** A closed contour through a selection's absolute points, or `null` when there is nothing to stroke. */
+function shapePath(selection: Selection, frame: DocumentFrame): Path2D | null {
+  const points = getSelectionAbsolutePoints(selection).map((point) => documentToCanvasPoint(point, frame));
   if (points.length < 3) return null;
 
   const path = new Path2D();
@@ -47,12 +49,17 @@ function toClosedSelectionPath(points: Point[]): Path2D | null {
 }
 
 /**
- * Marching ants for committed polygon selections — the lasso, freehand lasso,
- * feather magnetic lasso and magic wand border.
+ * Marching ants for committed selections — every one of them.
+ *
+ * Adobe documents the border as the universal display of a pixel selection rather than a per-tool
+ * feature: its selection-tools table lists all nine marquee and lasso tools as making selections,
+ * and nothing in any of them is documented as producing a different kind of border. So this hook
+ * takes every active selection, whatever made it, and the tool areas that used to draw their own
+ * dashed outline no longer do.
  *
  * The border gets a canvas of its own instead of sharing `toolOverlayRef` with the
  * tool areas, because all three polygon tool areas full-clear that canvas before
- * every repaint (`PolygonClickToolArea.tsx:81`, `MagicWandToolArea.tsx:38`,
+ * every repaint (`PolygonClickToolArea.tsx:84`, `MagicWandToolArea.tsx:38`,
  * `FeatherMagneticLassoToolArea.tsx:79`) and a loop painting into it would be
  * erased mid-gesture. Owning the canvas outright is also why each frame clears all
  * of it rather than erasing only the previously painted bounds: two selections can
@@ -68,19 +75,15 @@ export function useSelectionMarchingAnts({
   const animationIdRef = useRef<number | null>(null);
   const dashOffsetRef = useRef(0);
   const shapesRef = useRef<AntsShape[]>([]);
+  const documentFrameRef = useRef(documentFrame);
 
   const shapes = useMemo<AntsShape[]>(() => {
     if (!enabled) return [];
 
     return selections.flatMap((selection) => {
       if (!selection.isActive) return [];
-      // A rectangle already has a border and its own handles from `useRect`, which
-      // runs on the tool overlay; marching it here would double the outline.
-      if (selection.geometry === 'rectangle') return [];
 
-      const path = toClosedSelectionPath(
-        getSelectionAbsolutePoints(selection).map((point) => documentToCanvasPoint(point, documentFrame))
-      );
+      const path = shapePath(selection, documentFrame);
 
       return path ? [{ id: selection.id, path }] : [];
     });
@@ -94,7 +97,7 @@ export function useSelectionMarchingAnts({
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }, [overlayRef]);
 
-  // Reads the latest shapes through a ref rather than closing over them, so that
+  // Reads the latest shapes and frame through refs rather than closing over them, so that
   // replacing one selection with another repaints on the next frame instead of
   // cancelling and restarting the loop.
   const step = useCallback(
@@ -102,9 +105,28 @@ export function useSelectionMarchingAnts({
       animationIdRef.current = null;
       const canvas = overlayRef.current;
       const ctx = canvas?.getContext('2d');
-      const current = shapesRef.current;
+      const committed = shapesRef.current;
 
-      if (!canvas || !ctx || current.length === 0) {
+      // Nothing to restore once every selection is gone, so the loop parks itself here and the
+      // effect below starts it again when shapes come back.
+      if (!canvas || !ctx || committed.length === 0) {
+        clearCanvas();
+        return;
+      }
+
+      // Rescheduled before anything that can return. Every branch below leaves a live loop
+      // behind on purpose: what to paint is read fresh from outside React every frame, so a
+      // loop that stopped would need a re-render to start again — and the one state that
+      // paints nothing (a marquee in flight) is exactly the state that has to be escapable.
+      animationIdRef.current = requestAnimationFrame(frame);
+
+      const drag = readSelectionDragPreview();
+
+      // A marquee in flight is already painted on the tool overlay, which sits above this
+      // canvas. Painting the committed border beside it would show two outlines of one
+      // selection, one of them stale. The dash offset is deliberately left where it is rather
+      // than advanced, so the ants resume on the phase they left rather than jumping.
+      if (drag?.kind === 'marquee') {
         clearCanvas();
         return;
       }
@@ -135,22 +157,38 @@ export function useSelectionMarchingAnts({
       ctx.lineCap = 'butt';
       ctx.setLineDash([dashLength, gapLength]);
 
-      for (const shape of current) {
+      // A selection being dragged replaces its own committed shape rather than joining it: the
+      // committed one is the pre-drag geometry, and both together would be two borders of one
+      // selection, the stale one anchored where the pointer left.
+      const dragged = drag?.kind === 'follow' ? drag.selection : null;
+      const paths: Path2D[] = (dragged ? committed.filter(({ id }) => id !== dragged.id) : committed).map(
+        ({ path }) => path
+      );
+      if (dragged) {
+        const path = shapePath(dragged, documentFrameRef.current);
+        if (path) paths.push(path);
+      }
+
+      for (const path of paths) {
         ctx.strokeStyle = ANT_STROKE_COLOR;
         ctx.lineDashOffset = offset;
-        ctx.stroke(shape.path);
+        ctx.stroke(path);
         ctx.strokeStyle = ANT_GAP_COLOR;
         ctx.lineDashOffset = offset + dashLength;
-        ctx.stroke(shape.path);
+        ctx.stroke(path);
       }
 
       ctx.restore();
 
       // A per-frame distance, so it is divided by the same factor as the dash it walks along: at
-      // scale 1 this is the original `SPEED`, and below it the ants keep the same apparent pace
-      // instead of crawling in slow motion.
-      dashOffsetRef.current = (offset - SPEED / scale) % dashCycle;
-      animationIdRef.current = requestAnimationFrame(frame);
+      // scale 1 this is `SPEED`, and below it the ants keep the same apparent pace instead of
+      // crawling in slow motion.
+      //
+      // Skipped while a selection is being dragged. The dash is still PAINTED on every one of
+      // those frames — a border that stopped crawling but stopped showing would be worse than
+      // one that crawls — so the hold is here and not in a cancelled frame: a stopped loop
+      // would need a re-render to restart, and the drag itself produces none.
+      if (!dragged) dashOffsetRef.current = (offset - SPEED / scale) % dashCycle;
     },
     [clearCanvas, overlayRef]
   );
@@ -158,9 +196,12 @@ export function useSelectionMarchingAnts({
   // Every render, no dependency list: `shapes` is a fresh array whenever the store
   // or the frame changes identity, and the frames must follow it without the loop
   // being torn down. Declared before the effect below so a re-render's shapes are
-  // already in the ref when that effect decides whether a loop is needed.
+  // already in the ref when that effect decides whether a loop is needed. The frame is
+  // mirrored for the same reason: a dragged preview is rebuilt per pointermove without a
+  // re-render, so `shapePath` inside the loop cannot close over the value from render.
   useEffect(() => {
     shapesRef.current = shapes;
+    documentFrameRef.current = documentFrame;
   });
 
   useEffect(() => {

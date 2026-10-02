@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import Main from '../Main.tsx';
+import Main, { SELECTION_INTERACTION_MODES } from '../Main.tsx';
 import { DummyToolArea } from '../DummyToolArea.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 
@@ -426,36 +426,68 @@ describe('Main tool-area routing', () => {
     expect([ants.width, ants.height]).toEqual([800, 600]);
   });
 
-  it('shows the selection ants overlay for every polygon selection tool and hides it otherwise', () => {
+  it('shows the selection ants overlay for every selection tool and hides it otherwise', () => {
     storeState.toolName = 'polygonal-lasso';
     const { container, rerender } = render(<Main />);
     const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
 
     expect(ants().style.display).toBe('block');
 
-    for (const toolName of ['freehand-lasso', 'feather-magnetic-lasso', 'magic-wand'] as const) {
-      storeState.toolName = toolName;
-      rerender(<Main />);
-
-      expect(ants().style.display).toBe('block');
-    }
-
-    // `rectangular-selection` is the one selection tool excluded: `useRect` already
-    // strokes that border, with handles, on the tool overlay. The elliptical and quick
-    // selection tools are excluded for the same reason in reverse — they are not in
-    // `POLYGON_SELECTION_MODES`, so they keep the static `drawSelectionOutline` border.
+    // Every selection tool in the rail, by its tool name. The list is exhaustive over
+    // `ToolIconName` rather than over the interaction modes, so a new selection tool that nobody
+    // added here shows up as a failure here instead of as a tool with no border.
     for (const toolName of [
-      'rectangular-selection',
-      'elliptical-selection',
+      'freehand-lasso',
+      'feather-magnetic-lasso',
+      'magic-wand',
       'quick-selection',
-      'reposition',
-      'brush',
-      'zoom',
+      'elliptical-selection',
+      'single-row-marquee',
+      'single-column-marquee',
+      'rectangular-selection',
     ] as const) {
       storeState.toolName = toolName;
       rerender(<Main />);
 
+      expect(ants().style.display, `${toolName} is a selection tool and must own the ants canvas`).toBe('block');
+    }
+
+    // A non-selection tool must not run a 60fps loop into a canvas nobody can see. The canvas and
+    // the loop are gated on one boolean (`selectionToolActive`), so they cannot disagree; this
+    // loop is the half of that claim which is not about the list above.
+    for (const toolName of ['reposition', 'brush', 'crop', 'text', 'zoom', 'paint-bucket', 'eyedropper'] as const) {
+      storeState.toolName = toolName;
+      rerender(<Main />);
+
       expect(ants().style.display).toBe('none');
+    }
+  });
+
+  it('names every selection interaction mode in the exported gate, and nothing else', () => {
+    // The list in `Main.tsx` and the assertion above are the same rule stated twice, so the test
+    // asserts the export rather than a copy of it. A tool name that routes to a mode the gate
+    // does not list is a selection tool with no border, and this is where it is caught.
+    const modesOfSelectionTools: Record<string, string> = {
+      'polygonal-lasso': 'lasso',
+      'freehand-lasso': 'lasso',
+      'feather-magnetic-lasso': 'feather-magnetic-lasso',
+      'magic-wand': 'magic-wand',
+      'quick-selection': 'quick-selection',
+      'elliptical-selection': 'elliptical-selection',
+      'single-row-marquee': 'single-row-column-marquee',
+      'single-column-marquee': 'single-row-column-marquee',
+      'rectangular-selection': 'rectangular-selection',
+    };
+
+    for (const mode of Object.values(modesOfSelectionTools)) {
+      expect(SELECTION_INTERACTION_MODES.has(mode), `${mode} must own the ants canvas`).toBe(true);
+    }
+
+    // Two interaction modes, both `useRect`, and neither a selection: the Move tool repositions
+    // a LAYER and Crop frames the document. Marching either would animate a layer outline and a
+    // crop frame as if they were selections.
+    for (const mode of ['reposition', 'crop']) {
+      expect(SELECTION_INTERACTION_MODES.has(mode), `${mode} is not a selection`).toBe(false);
     }
   });
 

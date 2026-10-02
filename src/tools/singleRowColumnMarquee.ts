@@ -31,24 +31,23 @@ export type SingleRowOrColumnMarqueeToolArgs = SingleRowMarqueeToolArgs | Single
  *
  * `SelectionSourceTool` in `src/contexts/general-types.ts:17` does not carry these two
  * names, and this is the honest answer to what to do about that rather than the elliptical
- * tool's: the elliptical marquee commits under `'magic-wand'` (`ellipticalSelection.ts:48`)
- * because a borrowed member was the smaller change, and that lie is why `drawSelectionOutline`
- * skips anchors for its own border (`selection.ts:156`-`:159`). A 1-pixel band is a
- * rectangle whose corners Photoshop does not decorate either, so the truthful value here is
- * the one the geometry actually is: `'rectangular-selection'`. The alternative — widening
- * `SelectionSourceTool` — is the real fix and it is a separate change, because every
- * `sourceTool` comparison in `selection.ts` and the anchors that key off it would have to
- * be re-read for the two new members.
+ * tool's: the elliptical marquee commits under `'magic-wand'` (`ellipticalSelection.ts:50`)
+ * because a borrowed member was the smaller change, and that lie buys it the two
+ * `selection.ts` exclusions a tessellated ellipse wants anyway (`ellipticalSelection.ts:40`-`:43`).
+ * A 1-pixel band is a rectangle whose corners Photoshop does not decorate either, so the
+ * truthful value here is the one the geometry actually is: `'rectangular-selection'`. The
+ * alternative — widening `SelectionSourceTool` — is the real fix and it is a separate change,
+ * because every `sourceTool` comparison in `selection.ts` and the anchors that key off it
+ * would have to be re-read for the two new members.
  *
- * The visible cost of borrowing is that `drawSelectionOutline` draws its four white anchor
- * dots for anything that is not `freehand-lasso` or `magic-wand` (`selection.ts:196`), so a
- * band gains four handles the moment it commits, where the transient preview that became it
- * has none (`SingleRowColumnMarqueeToolArea.tsx` `drawMarqueePreview`). The dots are not
- * draggable here — a band is placed by its press — so they are decoration rather than a
- * control, but they are decoration the user sees and Photoshop does not. Fixing it means
- * either giving `SelectionSourceTool` its own members and teaching every `sourceTool`
- * comparison about them, or teaching the outline painter which geometries have anchors,
- * which is the same change wearing a different hat.
+ * Truthful also means the borrowed source costs this pair nothing. The four white anchor discs
+ * the elliptical tool's borrow buys it as a side effect are not painted for a band: nothing
+ * calls `drawSelectionAnchors` from `SingleRowColumnMarqueeToolArea.tsx`, which draws only its
+ * own `drawMarqueePreview`, so a committed band shows the marching ants and no handles — which
+ * is what Photoshop shows. The discs were never draggable here either; a band is placed by its
+ * press, so they were decoration the user saw and Photoshop does not, and they are gone. The
+ * fix is not pending: `drawSelectionAnts` draws the border for every active selection whatever
+ * made it, so nothing needed to know this source at all.
  */
 export const SINGLE_ROW_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangular-selection';
 export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangular-selection';
@@ -76,7 +75,7 @@ export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangul
  * aborted by its `onPointerLeave` before any further axis value is read, so the last row it
  * clamps to is the one under the pointer at the moment of leaving, and the gesture commits
  * nothing. That is house convention rather than a choice of these two tools —
- * `EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, and the Rectangular
+ * `EllipticalSelectionToolArea.tsx:317`-`:318` wires the same pair, and the Rectangular
  * Marquee wires `pointercancel` alone — but it does mean the two marquee families disagree
  * about what an out-of-document pointer does, and Photoshop keeps tracking instead of
  * dropping. Recorded in `HANDOFF.md` rather than fixed here, because narrowing the abort to

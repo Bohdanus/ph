@@ -57,7 +57,7 @@ type SourceMarker = {
  * a crosshair under the cursor and a ring at the source.
  *
  * Module-level rather than inline in the component for the same reason
- * `src/util/selection.ts`'s `drawSelectionOutline` is: it is pure overlay painting, it needs
+ * `src/util/selection.ts`'s `drawSelectionAnchors` is: it is pure overlay painting, it needs
  * no state, and the react-compiler lint rule reads a property assignment on a prop-supplied
  * context as a mutation of the component's inputs. `MagicWandToolArea.tsx:35` and
  * `ShapeToolArea.tsx:62` sidestep it the same way — by calling a drawer.

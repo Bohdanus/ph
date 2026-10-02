@@ -1806,71 +1806,38 @@ fails if `xAnchor` is removed.
 
 ---
 
-## 86. No `useRect` border animates, so the crop, move, text and rectangular-selection rects all sit still
+## 86. `useRect`'s border still sits still for the three callers that are not a selection
 
 **Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
 `ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
-(`src/hooks/useRect.ts:235-236`). No `lineDashOffset` is ever assigned, and the file's one
-`requestAnimationFrame` (`:483-488`) throttles the DRAG, not the border: it recomputes the rect and
-calls `drawMask(true)`, which redraws the same fixed dash. It looks alive during a drag only because
-the drag is RAF-throttled, so the line is redrawn at pointer rate — the dashes never move.
+(`src/hooks/useRect.ts:326-327`). No `lineDashOffset` is ever assigned, and the file's one
+`requestAnimationFrame` throttles the DRAG, not the border: it recomputes the rect and calls
+`drawMask(true)`, which redraws the same fixed dash. It looks alive during a drag only because the
+drag is RAF-throttled, so the line is redrawn at pointer rate — the dashes never move.
 
-**`useRect` is the one border in the app that redraws without advancing, and THREE selection
-borders are drawn that way — not one.** `useMarchingAnts`
-(`src/hooks/useAnts.ts:24,48-70`) is the real marching-ants loop, and its only production consumer is
-`MoveToolArea.tsx:6`, which paints the outline of a **hovered layer** in `reposition` mode. So
-"marching ants on a rectangle" is the Move tool's layer outline.
+**Three of its four callers are not selections and have no ants to fall back on.** `useRect` is
+shared by `MoveToolArea.tsx`, `CropToolArea.tsx` and `TextToolArea.tsx` as well as
+`RectangularSelectionToolArea.tsx`, and only the last one is a selection. The crop rectangle, the
+move rectangle and the text frame therefore still have a still border, and the ants
+(`useMarchingAnts`, `src/hooks/useAnts.ts`) cannot reach them: the hook takes arbitrary point lists
+and has no rectangle mode, and its only production consumer is `MoveToolArea.tsx`, which paints a
+**hovered layer** outline in `reposition` mode — which is a fourth, different thing again.
 
-**Three selection borders still sit still, not one.** A polygon selection animates
-(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx:40`'s
-`POLYGON_SELECTION_MODES`. The elliptical and quick selection tools are deliberately absent from it
-and map to their own `interactionMode`s (`Main.tsx:104,106`), so their borders stay the static
-`drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
-(`createCommittedPolygonSelection`, `src/util/selection.ts:29`, whose `geometry: 'polygon'` is at `:51`), so nothing about the selection's
-own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
-(`useRect`), the elliptical marquee and quick selection. Fixing only the rectangle — the cheap half
-of the choice below — would leave two behind, which is why they are named here together.
+**Fix.** Animate inside `useRect`: advance a `lineDashOffset` ref by a few pixels per frame inside
+`drawMask`, keeping the current colour and the four handles. It needs its own loop, because
+`drawMask` is only called while something is changing — the drag throttle is not a frame clock, and
+reusing it would make the crawl rate a function of how fast the pointer moves. Reuse `SPEED` from
+`src/hooks/useAnts.ts:29`, dividing by the contain fit the way the dash is, or the frame crawls in
+slow motion below 1:1.
 
-**The rectangle and the polygon no longer match each other** in colour or weight (`#007bff` at 2px,
-plus four square handles, versus black/white ants at 1px), and the two marquee tools match neither.
+**The one thing NOT to change here.** `borderMode: 'while-dragging'` is load-bearing for the
+rectangular selection and must keep its current meaning (`src/hooks/useRect.ts:323`): the marquee
+being dragged is the only evidence of itself, because a marquee in progress has not been committed
+and so has no ants, and the ants stand down for the duration so the committed rectangle does not
+appear beside the one being dragged. Animating the border must not move it out from under that
+gate, and must not be applied to the handles (`:335-341`), which are the resize hit area.
 
-**It affects four tools, not one.** `useRect` is shared by `MoveToolArea.tsx:117`, `CropToolArea.tsx:61`,
-`RectangularSelectionToolArea.tsx:65` and `TextToolArea.tsx:24`, so the crop rectangle, the move
-rectangle, the text frame and the rectangular selection all have the same still border.
-
-**Fix.** Three shapes, and the choice is a recording decision rather than a mechanical one. Fixing
-the rectangle alone is a real option, but it is not the same task as fixing all three still
-borders, and the entry above says which is which — pick the scope deliberately.
-
-- Animate inside `useRect` — advance a `lineDashOffset` ref by a few pixels per frame inside the
-  existing draw path, keeping the current colour and the four handles. Cheapest, and the only option
-  that covers all four callers at once. It needs its own loop, because `drawMask` is only called while
-  something is changing. Fixes the rectangle and the crop, move and text frames with it; leaves the
-  two marquee tools static.
-- Or give the rect the ants treatment the polygon got: stop `useRect` stroking the border, drop
-  `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
-  (`useSelectionAnts.ts:69` currently skips rectangles on the assumption that `useRect` still paints
-  one), and let the ants canvas own the rect. Note the constraint this has to respect: `useRect` also
-  draws the dim-out scrim (`:226`) and, in the same pass, the border and the corner handles (`:233-246`), so the border and the handles have to
-  end up on different canvases or the scrim will wipe the ants mid-drag.
-- Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
-  three: add `'elliptical-selection'` and `'quick-selection'` to `POLYGON_SELECTION_MODES`
-  (`Main.tsx:40`) and stop those two tool areas calling `drawSelectionOutline`
-  (`EllipticalSelectionToolArea.tsx:112`, `QuickSelectionToolArea.tsx:104`). This one is not only a
-  mode list, because both commit `sourceTool: 'magic-wand'`
-  (`ellipticalSelection.ts:48`, `quickSelection.ts:43`) — the constant each borrows from the wand —
-  and `drawSelectionAnchors` skips that source, so the anchors have to be taught the difference
-  between a wand selection and a marquee selection or the two tools lose their handles as well as
-  their border. `EllipticalSelectionToolArea.test.tsx`'s 'strokes a committed selection border' pins
-  the current ownership and will fail until this is done on purpose.
-
-Whichever is chosen, `useRect.drag.test.ts:136,252` pins the current `setLineDash` values and has to be
-updated in the same change.
-
-**Files.** `src/hooks/useRect.ts:233-246,483-488`, `src/hooks/useAnts.ts:24,48-70`,
-`src/components/Main/MoveToolArea.tsx:6,117`, `src/components/Main/CropToolArea.tsx:61`,
-`src/components/Main/RectangularSelectionToolArea.tsx:65`, `src/components/Main/TextToolArea.tsx:24`,
-`src/hooks/useSelectionAnts.ts:69-70`, `src/hooks/__tests__/useRect.drag.test.ts:136,252`
+**Files.** `src/hooks/useRect.ts:307-341`, `src/hooks/useAnts.ts:11-13,29`
 
 ## 87. The append boundary never checks that its base is at its own tip
 
@@ -4166,3 +4133,23 @@ That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export
 `src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
 `src/components/Main/RectangularSelectionToolArea.tsx:176`,
 `src/tools/singleRowColumnMarquee.ts:65-82`.
+
+## 151. The rectangular marquee's in-flight border is the one piece of selection chrome that never crawls
+
+**Problem.** A selection's border is the marching ants for every selection tool now, so the crawl
+is uniform across all nine of them. The exception is the rectangle BETWEEN press and release: while
+a gesture is in flight the ants stand down (`selection-drag-preview.ts`, published by `useRect`'s
+`beginGesture`) and the only border on screen is `useRect`'s own stroke, whose dashes are static for
+the reason in §86. The user sees the border appear — a dashed rectangle where there was none — and
+then not move, for the whole drag, on the one tool whose border is otherwise indistinguishable from
+the other eight at rest.
+
+**It is a smaller defect than it looks, and the fix is the fix.** The drag is RAF-throttled, so the
+rectangle itself tracks the pointer; only the dashes are frozen, and a still dash around a moving
+rectangle reads as a marquee rather than as a stalled border. Animating it means §86's loop, and
+that loop has to reach this branch too — `borderMode: 'while-dragging'` is the only place the
+rectangle's stroke is on screen while `useRect` owns it, so the offset ref has to advance there
+without advancing for `'always'`, where the Move tool's own dashed rect would start crawling under
+a different rule than the ants use.
+
+**Files.** `src/hooks/useRect.ts:323-329`, `src/hooks/selection-drag-preview.ts`

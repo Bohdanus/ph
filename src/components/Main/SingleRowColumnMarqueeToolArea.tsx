@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { useContainScale } from '../../hooks/useContainScale.ts';
+import { clearSelectionDragPreview, publishSelectionDragPreview } from '../../hooks/selection-drag-preview.ts';
 import {
   claimDocumentGesture,
   releaseDocumentGesture,
@@ -12,7 +12,6 @@ import {
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import {
   createCommittedRectangleSelection,
-  drawSelectionOutline,
   getActiveSelection,
   getSelectionAbsolutePoints,
   hasSameSelectionGeometry,
@@ -38,7 +37,7 @@ type SingleRowColumnMarqueeToolAreaProps = {
  * A running gesture, in both arms, carrying the pointer id it was taken with.
  *
  * The `move` arm exists because a press inside the active selection moves it, which is
- * what every selection tool in this editor does (`EllipticalSelectionToolArea.tsx:159`).
+ * what every selection tool in this editor does (`EllipticalSelectionToolArea.tsx:155`).
  * It matters here more than it does elsewhere: the committed selection spans the whole
  * document on one axis, so a press that misses the 1-pixel band is the ONLY way to draw a
  * new one, and the band-hit test below is what keeps the two apart.
@@ -48,7 +47,7 @@ type SingleRowColumnMarqueeToolAreaProps = {
  * band is a pure function of where the pointer IS (see `movedBand`), so a drag that goes
  * out and comes back ends where it started no matter how many frames it took. A field
  * holding an advancing origin would look like the obvious way to extend the gesture and
- * would reintroduce exactly the defect `EllipticalSelectionToolArea.test.tsx:318` pins
+ * would reintroduce exactly the defect `EllipticalSelectionToolArea.test.tsx:347` pins
  * for that tool, so it is not here to be found.
  */
 type MarqueeDrag =
@@ -58,10 +57,15 @@ type MarqueeDrag =
 /**
  * The transient 1-pixel band, drawn as a dashed closed path.
  *
- * Deliberately not `drawSelectionOutline`: that draws a white anchor dot on every vertex,
- * and the corners of a 1-pixel band are not draggable in Photoshop — the band is placed by
- * the press, not by dragging its handles. The committed outline is the store's business;
- * this is the same dashed closed path a committed marquee shows, without the handles.
+ * Hand-rolled rather than a call into `util/selection.ts`'s outline painters, because they draw
+ * a white anchor dot on every vertex and the corners of a 1-pixel band are not draggable in
+ * Photoshop — the band is placed by the press, not by dragging its handles. This file calls
+ * neither of them, so that was true of the four discs the committed outline painted here as well
+ * as of the band: decoration on a hit target one pixel tall, which is why
+ * `e2e/single-row-column-marquee.spec.ts:36`-`:50` excludes a frame from its scan and reads ~3
+ * document px where the discs themselves measure ~13. The committed border is the ants canvas's
+ * business now; this is the same dashed closed path a committed marquee shows, without the
+ * handles.
  */
 function drawMarqueePreview(ctx: CanvasRenderingContext2D, points: Point[]): void {
   if (points.length < 2) return;
@@ -107,7 +111,6 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
       ref: containerRef,
       imageSize: totalSize,
     });
-  const containScale = useContainScale(containerRef, totalSize);
 
   /**
    * The band this tool would commit from a document-space axis value.
@@ -175,22 +178,30 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
       : null;
   }
 
+  /**
+   * Repaint the whole overlay: the live marquee, and nothing else.
+   *
+   * The committed border is not painted here any more. This tool is in `Main.tsx`'s
+   * `SELECTION_INTERACTION_MODES`, so `useSelectionMarchingAnts` owns that border on a canvas of
+   * its own, and the static stroke here put two outlines of one selection on screen in two
+   * colours on two canvases. The drag that used to arrive as `selectionOverride` goes to the
+   * ants too — it is published to them instead of drawn — so the move arm has no representation
+   * on this overlay at all.
+   */
   const redrawOverlay = useCallback(
-    ({
-      selectionOverride,
-      previewPoints,
-    }: { selectionOverride?: Selection[]; previewPoints?: Point[] | null } = {}) => {
+    ({ previewPoints }: { previewPoints?: Point[] | null } = {}) => {
       const ctx = overlayCtxRef?.current;
       if (!ctx) return;
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      // Not optional, and not `drawMarqueePreview`'s to do: the tool overlay is one 2D context
+      // for the whole session and the preview painter is `save()`/`restore()`, so it inherits
+      // whatever `globalAlpha` the last painting tool left behind. Nothing else in this
+      // repository skips the reset before painting an overlay (`useSelectionAnts.ts:137`-`:143`).
       resetOverlayAlpha(ctx);
-      (selectionOverride ?? selections).forEach((selection) =>
-        drawSelectionOutline(ctx, selection, documentFrame, containScale.current)
-      );
       if (previewPoints && previewPoints.length > 0) drawMarqueePreview(ctx, previewPoints);
     },
-    [containScale, documentFrame, overlayCtxRef, selections]
+    [overlayCtxRef]
   );
 
   /** Read and clear in one step, so two routes out of a gesture cannot both commit it. */
@@ -295,12 +306,12 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
 
     if (drag.mode === 'create') {
       drag.axis = isColumn ? documentPoint.x : documentPoint.y;
-      // The preview painter draws straight into the overlay context, which is CANVAS space:
-      // `drawSelectionOutline` maps a committed selection's stored document points back with
-      // `documentToCanvasPoint` before painting (`selection.ts:176`-`:178`), and this preview
-      // is the transient twin of that outline, so it converts the same way. Feeding it
-      // `rectForAxis`'s document-space corners directly would draw the band a frame origin
-      // off from where the same gesture commits.
+      // The preview painter draws straight into the overlay context, which is CANVAS space. A
+      // committed selection's stored points are DOCUMENT space, and every painter of them maps
+      // them back with `documentToCanvasPoint` before stroking — `useSelectionAnts.ts:40` for
+      // the ants canvas this tool's border now lives on — so this preview converts the same way.
+      // Feeding it `rectForAxis`'s document-space corners directly would draw the band a frame
+      // origin off from where the same gesture commits.
       redrawOverlay({
         previewPoints: rectCorners(rectForAxis(drag.axis)).map((point) => documentToCanvasPoint(point, documentFrame)),
       });
@@ -313,7 +324,7 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     // so a drag that goes out and comes back ends on the band it started from no matter how many
     // frames it took. Accumulating a delta instead — each frame measured against an advancing
     // origin and applied to the baseline — makes the net displacement of such a drag equal to
-    // one frame's worth, which is the defect `EllipticalSelectionToolArea.test.tsx:318` pins for
+    // one frame's worth, which is the defect `EllipticalSelectionToolArea.test.tsx:347` pins for
     // that tool, and with a single-frame drag the two forms coincide, so it is invisible there.
     //
     // `drag.preview` is passed only so the BAND'S ORIENTATION survives the gesture: the hit test
@@ -322,7 +333,13 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     const preview = movedBand(drag.preview, documentPoint);
     if (!preview) return;
     drag.preview = preview;
-    redrawOverlay({ selectionOverride: selections.map((s) => (s.id === preview.id ? preview : s)) });
+    // The ants canvas is what follows the band, not this overlay. It owns the committed border
+    // and reads this channel every frame, painting `preview` in place of the committed one with
+    // the dash offset held, so the ants freeze rather than crawl away from the pointer
+    // (`useSelectionAnts.ts:163`-`:191`). Publishing exactly what the overlay used to draw is
+    // what keeps one selection to one outline.
+    publishSelectionDragPreview({ kind: 'follow', selection: preview });
+    redrawOverlay();
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -331,6 +348,10 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     if (!isPointerUpValid(event)) return;
 
     takeDrag();
+    // Unconditional, and here before either arm can return: the create arm never publishes, so
+    // the slot may already be empty, and clearing it anyway is what lets the route that did
+    // publish be written without asking which arm ran.
+    clearSelectionDragPreview();
 
     // FIRST, before anything can return — see the note on `releaseDocumentClaim`.
     releaseDocumentClaim();
@@ -375,7 +396,7 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     // the frame, but that tool starts from a CANVAS-space rect out of `useRect`, and
     // canvas + frame is document. Adding the frame to a rect that is already document space
     // applies the same offset twice, which on a cropped document commits the band one whole
-    // frame origin below the row that was pressed. `EllipticalSelectionToolArea.tsx:246` is
+    // frame origin below the row that was pressed. `EllipticalSelectionToolArea.tsx:255` is
     // the same rule stated the other way round: it maps canvas points to document
     // (`canvasToDocumentPoint`) and then commits, with nothing added afterwards.
     commitSelection(selection, 'create');
@@ -393,8 +414,10 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
     // every later press was refused by `isPointerDownValid`'s first-pointer-wins check.
     releasePointer();
     releaseDocumentClaim();
-    // The store still shows the un-moved selection, so the repaint below is the
-    // snap-back an abandoned drag gets.
+    clearSelectionDragPreview();
+    // What the repaint still has to do is drop the create arm's band. The snap-back an
+    // abandoned MOVE gets is not drawn here: the store still shows the un-moved selection, and
+    // the ants canvas picks that geometry up again the moment the preview above is gone.
     redrawOverlay();
     if (drag.mode === 'create') {
       dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
@@ -413,6 +436,11 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
       // through the same primitive, so a gesture that ends here can never commit.
       takeDrag();
       releaseDocumentClaim();
+      // The route easiest to miss, because nothing about an unmount looks like a gesture. The
+      // preview slot is a module-level variable that outlives this mount, so an entry left
+      // behind would freeze the ants on a selection that no longer exists for every later tool
+      // — `selection-drag-preview.ts:56`-`:64`.
+      clearSelectionDragPreview();
       if (ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }
