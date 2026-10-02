@@ -10,6 +10,49 @@ argument, and each takes a `SelectionType` of `REPLACE`, `EXTEND`, `SUBTRACT` or
 for what to do with an existing selection. The combination modes are therefore per-pixel
 boolean operations on a coverage mask, and nothing about them lives on the tool.
 
+## Second-pass audit (line numbers re-derived; three findings no longer true)
+
+This file was written against a tree that commit `7f3b0d19` ("fix(selection): the marquee's
+modifiers, the wand's Contiguous, the lasso's Frequency") moved underneath. That commit fixed
+three of this file's headline findings, and an earlier version of this record asserted each as a
+current defect. Every `file:line` in the data file has also drifted, because that commit and its
+neighbours inserted and removed lines in the very files this record cites.
+
+**Three findings are now stale and the data file says so.** The rectangular marquee's
+Shift/Alt/Shift+Alt are implemented, not absent; the Magic Wand's `Contiguous` is `present`, not
+permanently-on-and-unreachable; the Magnetic Lasso's `Frequency` is `present`, not inverted. Each
+correction is in the data file's own `appNotes` with the code that proves it, so a reader who
+arrives from the table sees the current state and the reader who remembers the old text sees
+exactly why it changed. Nothing was deleted: a finding that silently vanishes is indistinguishable
+from one that was never right.
+
+**Two `partial` verdicts were re-derived rather than carried.** The Magnetic Lasso's `Width` was
+`present` on the reasoning that the control is a real detection-width slider wired to the edge
+detector. It is `partial`, because the app renders a hard 1–64px ceiling
+(`FeatherMagneticLasso.tsx:288`-`:289`) and Adobe states the field only as "a pixel value" with
+no maximum at all — an app-invented ceiling is a range divergence, exactly what `partial` names.
+The Quick Selection's `Size` stays `partial` on a second ground this pass added: the brush slider
+runs 1–500px and Photoshop exposes Size together with Hardness in the same control.
+
+**The strongest claim in the previous pass is now the one that most needed checking.** It called
+the Quick Selection bar's "Shift and Alt drag on the canvas" hint "the only false claim in the
+family a user reads without opening anything". `7f3b0d19` removed the promise rather than
+implementing the gesture, and `QuickSelection.tsx:105`-`:105` now carries a comment naming
+Photoshop's Alt-drag tip resize and Shift-drag circular constraint as deliberately unimplemented,
+over a hint that says only what the gesture does. The finding was accurate when written, it was
+the sharpest one in the file, and it is closed. It is kept in the data file's `appNotes` because
+a description that says only "this works" is less useful to the next reader than one that says
+"this used to lie here".
+
+**Citation discipline.** Every `options[].appRef` and every `implementationRefs` entry was
+re-derived by reading the cited line in this worktree, not by trusting the prior pass. That
+moved 24 of them. The most consequential single drift: the notes had cited
+`src/util/selection.ts:554`-`:581` for `copyPolygonSelectionToCanvas` and its "clips with no
+anti-aliasing" property; that line range is now an unrelated error-class constructor, and the
+function is at `:554`, with the `ctx.clip()` that carries the claim at `:581`. Every citation in
+the data file now resolves to a line that is the wiring, and none points at a blank line or a
+neighbouring statement.
+
 Target version: **Photoshop 2025–2026**, with two controls named by their older labels where
 Adobe's own documentation is version-split (see the Quick Selection and Magic Wand entries).
 
@@ -29,17 +72,25 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 - **No selection tool reads a combination-mode modifier, and most read no modifier at all.**
   A grep for `shiftKey|altKey|metaKey|ctrlKey` across `src/components/Main/*.tsx` returns
   production hits in `CloneStampToolArea`, `EllipticalSelectionToolArea`,
-  `FeatherMagneticLassoToolArea`, `ShapeToolArea` and `TextToolArea` only — five files, none of
-  them a selection tool but the two marquee-family ones. Of the seven tools here, that leaves
-  exactly two whose `modifiers[]` rows describe anything real: the elliptical marquee (Shift →
-  circle, Alt → from centre, `EllipticalSelectionToolArea.tsx:172`-`:173`) and the magnetic
-  lasso's one `Alt` read (`FeatherMagneticLassoToolArea.tsx:449`, the freehand segment). The
-  freehand lasso, polygonal lasso, Magic Wand and Quick Selection read no modifier key
-  whatsoever, so every combination-mode row on those four — and the Quick Selection's two
+  `FeatherMagneticLassoToolArea`, `RectangularSelectionToolArea`, `ShapeToolArea` and
+  `TextToolArea` only. Of the seven tools here, that leaves exactly three whose `modifiers[]`
+  rows describe anything real: the rectangular marquee (Shift → square, Alt → from centre,
+  `RectangularSelectionToolArea.tsx:74`-`:75` asking for them and
+  `useRect.ts:400`-`:403` sampling them per pointer event), the elliptical marquee
+  (`EllipticalSelectionToolArea.tsx:176`-`:177`, as `constrainToCircle` and `fromCentre`), and
+  the magnetic lasso's one `Alt` read (`FeatherMagneticLassoToolArea.tsx:458`, the freehand
+  segment). The freehand lasso, polygonal lasso, Magic Wand and Quick Selection read no modifier
+  key whatsoever, so every combination-mode row on those four — and the Quick Selection's two
   modifier rows — is a Photoshop binding with no implementation. The `options[]` rows already
   said `missing`; the `modifiers[]` rows did not say anything, which read as implemented. They
   are kept, because the file describes Photoshop, and each absence is now stated in `appNotes`
   with the file that proves it.
+  **`RectangularSelectionToolArea` is on that list because of the second pass.** The previous
+  version of this section put it there and then reported — wrongly — that the marquee's
+  Shift/Alt did nothing during a fresh drag, on the strength of reading `useRect`'s single
+  `shiftKey` hit as the whole story. It is not: that read is inside `getEdgeAtPoint`, which runs
+  on a HANDLE RESIZE, and the fresh-drag path is separate and opt-in. A tool area that asks for
+  a modifier is the check that should have been run first.
 - **The keyboard.** `src/components/Common/AppKeyboardShortcuts.tsx` is the app's complete
   global table. It binds `Z`/`Y` (undo, redo), `Cmd/Ctrl+C` (copy the selection), `Cmd/Ctrl+V`
   (paste), `Cmd/Ctrl+J` (layer via copy), and the tool letters `V` (reposition), `I`
@@ -49,7 +100,7 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   no `[`, `]`, `,`, `.`, `Caps Lock`, or `Return`.
   The two click-built lassos register four keys of their own on
   their own gesture — `Escape`, `Enter`, `Backspace`, `Delete`
-  (`PolygonClickToolArea.tsx:914`-`:950`, `FeatherMagneticLassoToolArea.tsx:534`-`:570`) — and
+  (`PolygonClickToolArea.tsx:922`-`:958`, `FeatherMagneticLassoToolArea.tsx:543`-`:579`) — and
   that is the whole of the per-tool keyboard. Every Photoshop binding in this family's
   `shortcuts[]` that is not a tool letter is therefore in one of two states: bound as `Enter`
   or `Delete` on those two tools, or unbound everywhere. The unbound ones are kept, as the
@@ -68,16 +119,32 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   further refine or preview the selection as a mask"), both 2025-11-04 — and a third, Adobe's own
   feather-edges product page, reaches it from the Quick Selection ("Mask it: Choose Select and Mask
   from the options bar"), with a fourth naming it on a lasso bar
-  (`helpx.adobe.com/ph_fil/photoshop/how-to/retouch-remove-background.html`). It is
-  therefore recorded as a `missing` control on all seven tools rather than on the one whose own
-  page happens to name it. The seven-tool generalization therefore no longer rests on the 2022
+  (`helpx.adobe.com/ph_fil/photoshop/how-to/retouch-remove-background.html`). A fifth, and the
+  strongest, is Adobe's **current desktop `refine-and-soften-selection-edges` page**
+  (2025-10-27, last updated 2026-02-23), which says flatly that "Selecting Select and Mask from
+  the options bar or from Select > Select and Mask gives you access to dedicated tools for refining
+  edges" and frames the whole page around it — a page whose subject is the options bar itself.
+  It is therefore recorded as a `missing` control on all seven tools rather than on the one whose
+  own page happens to name it. The seven-tool generalization no longer rests on the 2022
   sentence alone; see the Quick Selection section. The workspace it opens is documented by Adobe
   (`refine-your-selection-and-mask.html`, last updated February 2026) as carrying a Refine Edge
   Brush for soft edges, a plain Brush for manual work, View Modes of `On Black`, `On White`,
   `Black and White`, `On Layers` and `Show Edge`, and an `Output To` menu that can produce a
   selection, a layer mask, a new layer or a new document.
+- **Adobe now enumerates which tools carry `Anti-alias` and which carry `Feather`, and it is not
+  the shape this file's tables assume.** The same 2026-02-23 page states: anti-aliasing "can be
+  enabled for tools such as the **Lasso, Polygonal Lasso, Magnetic Lasso, Elliptical Marquee, and
+  Magic Wand**" — five tools, and **the Rectangular Marquee is not among them** — while
+  "Feathering can be applied when using tools like the **Rectangular Marquee, Lasso, Polygonal
+  Lasso, or Magnetic Lasso**" — four, and **the Magic Wand is not among them**. Both lists say
+  "such as" and "like", so neither is a closed enumeration, but together they are the first
+  Adobe desktop statement found of the set membership in either direction, and they are what
+  this file's per-tool rows now rest on. It confirms as a byproduct that the marquee family's
+  `Anti-alias` row belongs to the **elliptical** tool alone, which the file already said, and it
+  is why the Magic Wand's row carries no `Feather` and the rectangular marquee's carries no
+  `Anti-alias`.
 - **The app has one active selection.** `committedSelectionUpdate` in
-  `src/contexts/useSelectionHistory.ts:42` deactivates every existing selection on a
+  `src/contexts/useSelectionHistory.ts:48`-`:55` deactivates every existing selection on a
   `create` commit, so there is no model in which a second selection can be unioned, subtracted
   from or intersected with the first. Every combination mode in this family is therefore
   `missing` for a structural reason, not an oversight in one bar.
@@ -116,24 +183,47 @@ from the center.
 tool declares no settings at all, so there is nothing that could be `inert`. Its bar renders a
 sentence and three buttons.
 
-**The modifier finding.** The rectangle is drawn through `useRect`, and `useRect` reads
-`event.ctrlKey || event.metaKey || event.shiftKey` in one place only — `src/hooks/useRect.ts:97`,
-and a whole-file grep for those four properties returns no other line: when a **handle of an
-already-committed rectangle is being resized**, where it locks the aspect ratio to the one the
-rect already has. Nothing reads Shift during the initial drag, so Shift-to-square is not
-implemented at all, and what _is_ implemented is a different feature that happens to use the
-same key.
+**The modifier finding, and its correction.** This section previously read that the marquee's
+Shift/Alt were not implemented, on the strength of a whole-file grep for
+`event.ctrlKey || event.metaKey || event.shiftKey` in `useRect` returning **one** hit at `:97`,
+inside `getEdgeAtPoint` — the HANDLE RESIZE path, where it locks the aspect ratio to the one the
+rect already has. The premise was that nothing reads Shift during the initial drag. That is
+false, and it was false when written: a grep that finds one hit in a hook shared with crop and
+the Move tool is evidence of a narrowed search, not of an absent feature.
 
-**The `M` group has two members, not four.** `marqueeGroup` in
-`src/components/Common/AppKeyboardShortcuts.tsx:25` is `['rectangular-selection',
-'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:144`-`:145` lists
-under the marquee tile. Adobe documents four marquee tools — Rectangular, Elliptical, Single Row
-and Single Column — so two of Photoshop's four are real tools the app simply does not have, and
-an earlier version of the data file described the `M` cycle as running through
-"single-row/column variants" that do not exist in the app. Both entries now say the group is the
-rectangular and the elliptical marquee, and `appNotes` records that the app has no single-row or
-single-column marquee at all. This is a missing capability, **not** a claim that Photoshop lacks
-the tool.
+There are now three, and the two added by `7f3b0d19` are the fresh-drag ones.
+`sampleFreshDragModifiers` (`src/hooks/useRect.ts:400`-`:403`) samples `event.shiftKey` and
+`event.altKey` per pointer event into a ref; `adjustFreshPoint` (`:314`-`:329`) applies them;
+and `RectangularSelectionToolArea.tsx:74`-`:75` opts in by passing `constrainToSquare: true` and
+`fromCentre: true`. All three rows of the data file's `modifiers[]` are real, including
+Shift+Alt, which the code gets right in a way worth naming: the square is taken on the **radius
+per axis before the drag is mirrored**, so Shift+Alt is a square centred on the press point rather
+than one that has drifted off it. Sampling per event rather than at press time means Shift pressed
+halfway through a drag takes hold immediately, and `:502` samples once more before the commit so
+that a modifier released between the last move and the pointer-up governs the rect actually
+committed. The handle RESIZE is deliberately untouched, which is what keeps the resize's
+aspect-ratio lock a separate feature from the marquee's Shift.
+
+**The `M` group has four members, and which four was a real question.** `marqueeGroup` in
+`src/components/Common/AppKeyboardShortcuts.tsx` is `['rectangular-selection',
+'elliptical-selection', 'single-row-marquee', 'single-column-marquee']` and the same four names
+are what `toolbar-mapping.ts` lists under the marquee tile. That was NOT always so: until
+2026-10-01 the group held only the first two, and this section recorded the pair as the honest
+state — Adobe documents four marquee tools, so two were real tools the app did not have. The two
+1-pixel marquees are now implemented (`src/tools/singleRowColumnMarquee.ts`) and the group carries
+all four.
+
+Which is itself unsettled, and the app had to pick. Adobe publishes "Switch between marquee tools
+— SHIFT+M" (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`)
+without enumerating the tools the cycle covers, and its default-shortcut table names only the
+Rectangular and Elliptical Marquees against `M`. Third-party sources disagree outright:
+`guides.wmlcloud.com`, reproducing Adobe's own CS5 _Basic Selection Tools_ text, says Adobe never
+assigned `M` to the 1-pixel pair; `flylib.com`'s _Real World Adobe Photoshop CS2_ says the cycle
+covers all four. The app follows the group, on the reasoning that a tool the rail shows behind the
+very key a user has just pressed is a tool they will expect the key to reach. Neither 1-pixel tool
+gets a `shortcut` of its own in `toolbar-mapping.ts`, so nothing here claims Adobe assigns them
+one — `M` alone does not select them. This remains **unverified** against an Adobe page that
+enumerates the cycle's membership.
 
 ## Elliptical Marquee Tool — `elliptical-selection`
 
@@ -148,8 +238,8 @@ anti-aliasing on or off for the Elliptical Marquee tool." Modifiers: `Shift` for
 | New / Add To / Subtract From / Intersect With | four modes                                         | `missing`  | —                             |
 | Feather                                       | pixel radius, default 0                            | `missing`  | —                             |
 | Anti-alias                                    | on by default; marquee tools only                  | `missing`  | —                             |
-| Style                                         | Normal / Fixed Ratio / Fixed Size                  | `partial`  | `EllipticalSelection.tsx:96`  |
-| Width and Height                              | decimal pair (ratio) / whole pixels (size) / units | `partial`  | `EllipticalSelection.tsx:130` |
+| Style                                         | Normal / Fixed Ratio / Fixed Size                  | `partial`  | `EllipticalSelection.tsx:98`  |
+| Width and Height                              | decimal pair (ratio) / whole pixels (size) / units | `partial`  | `EllipticalSelection.tsx:116` |
 | Select and Mask                               | on every selection tool's bar                      | `missing`  | —                             |
 
 **App fidelity: `implemented`** — the one verdict in the family that moved this pass, and the one
@@ -178,7 +268,7 @@ inverted `Frequency` is the same kind of finding. Both compute a different thing
 Photoshop documents, and both are `partial` on that basis. The elliptical marquee does not:
 `applyRatio` (`src/tools/ellipticalSelection.ts:121`-`:131`) is the width-to-height ratio Adobe's
 own worked example states, `resolveEllipseRect` (`:155`-`:204`) makes `fixed-size` ignore the drag
-with the press point supplying only the centre, and `EllipticalSelectionToolArea.tsx:172`-`:173`
+with the press point supplying only the centre, and `EllipticalSelectionToolArea.tsx:176`-`:177`
 passes `event.shiftKey` and `event.altKey` as `constrainToCircle` and `fromCentre`, which are
 Photoshop's two modifiers. The tessellation is a bounded _representation_ of the same computation,
 not a different computation, and the bound is derived from the radius rather than fixed
@@ -188,7 +278,7 @@ would.
 **The comparison that decided it.** This tool's own boundary fidelity is dominated by the
 `Anti-alias` row this table already scores `missing`. Photoshop's marquee edge is a coverage ramp
 about a pixel wide; this app's is a hard step — `copyPolygonSelectionToCanvas`
-(`src/util/selection.ts:447`-`:482`) clips the canvas to the polygon with no anti-aliasing. So the
+(`src/util/selection.ts:554`-`:581`) clips the canvas to the polygon with no anti-aliasing. So the
 quarter-pixel inward chord bias and the missing anti-aliasing are two errors on the same boundary,
 and the second is several times the first. Scoring the polygon as "a wrong algorithm" while scoring
 the anti-aliasing as a missing capability would rank a quarter-pixel representation error above a
@@ -253,7 +343,7 @@ high, enter **2 for the width and 1 for the height**"
 (`https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`) — which is a
 width-to-height ratio, which is exactly what `applyRatio` computes
 (`src/tools/ellipticalSelection.ts:121`-`:131`) and exactly what the bar's hint tells the user,
-`Drag at ${args.fixedRatio}:1` (`EllipticalSelection.tsx:88`). What the app loses is expressiveness
+`Drag at ${args.fixedRatio}:1` (`EllipticalSelection.tsx:90`). What the app loses is expressiveness
 in the field, not fidelity in the geometry: the ratio must be entered as one number with a floor of
 0.05, where a Width/Height pair can take any two decimals. `resolveEllipseRect` does implement
 `fixed-size` the way Photoshop does —
@@ -352,10 +442,10 @@ Feather field to focus. The rows stay and the absence is stated in `appNotes`.
 tool "is only reachable by re-making the selection with the tool". Neither half of that is true.
 Re-making a selection applies no feather at all — `featherRadius` is a field of
 `FeatherMagneticLassoToolArgs` alone (`src/tools/featherMagneticLasso.ts:6`), and it is the only
-tool area that writes it into the selection's metadata (`src/components/Main/FeatherMagneticLassoToolArea.tsx:385`).
+tool area that writes it into the selection's metadata (`src/components/Main/FeatherMagneticLassoToolArea.tsx:394`).
 And the magnetic lasso's feather is not a selection feather: `copySelectionToCanvas` routes
 **only** the magnetic lasso through `copyFeatheredPolygonSelectionToCanvas`
-(`src/util/selection.ts:727`-`:733`), so the radius softens the copied alpha mask and leaves the
+(`src/util/selection.ts:834`-`:840`), so the radius softens the copied alpha mask and leaves the
 selection the marching ants are drawn from unchanged. The corrected sentence is in `appNotes` and
 is deliberately narrower than the one it replaces.
 
@@ -390,48 +480,58 @@ option. The tool is "not available for 32-bits-per-channel images".
 | Control                                       | Photoshop                                                                | App status | App ref                        |
 | --------------------------------------------- | ------------------------------------------------------------------------ | ---------- | ------------------------------ |
 | New / Add To / Subtract From / Intersect With | four modes                                                               | `missing`  | —                              |
-| Feather                                       | pixel radius, default 0                                                  | `partial`  | `FeatherMagneticLasso.tsx:252` |
-| Anti-alias                                    | on by default                                                            | `partial`  | `FeatherMagneticLasso.tsx:331` |
-| Width                                         | pixel detection radius; `[`/`]` adjust; `Caps Lock` shows it as a circle | `present`  | `FeatherMagneticLasso.tsx:265` |
-| Contrast                                      | 1%–100%                                                                  | `partial`  | `FeatherMagneticLasso.tsx:278` |
-| Frequency                                     | 0–100 rate; **higher anchors the border sooner**                         | `partial`  | `FeatherMagneticLasso.tsx:291` |
+| Feather                                       | pixel radius, default 0                                                  | `partial`  | `FeatherMagneticLasso.tsx:272` |
+| Anti-alias                                    | on by default                                                            | `partial`  | `FeatherMagneticLasso.tsx:351` |
+| Width                                         | pixel detection radius; `[`/`]` adjust; `Caps Lock` shows it as a circle | `partial`  | `FeatherMagneticLasso.tsx:285` |
+| Contrast                                      | 1%–100%                                                                  | `partial`  | `FeatherMagneticLasso.tsx:298` |
+| Frequency                                     | 0–100 rate; **higher anchors the border sooner**                         | `present`  | `FeatherMagneticLasso.tsx:311` |
 | Stylus Pressure                               | checkbox; narrows Width under stylus pressure                            | `missing`  | —                              |
 | Select and Mask                               | on every selection tool's bar                                            | `missing`  | —                              |
 
 **App fidelity: partial.**
 
-**The Frequency inversion — the finding most likely to be wrong, and the one worth a second
-look.** The app stores `frequency` as a maximum path length in pixels and uses it as
-`if (pathLength(segment.path) < args.frequency) return false;` in the auto-fastening-point
-predicate: longer spacing means _fewer_ anchors. Its own options-bar help text says "Lower
-values add more anchors and track detailed edges more tightly." Adobe's sentence is narrower than
-the finding: **"A higher value anchors the selection border in place more quickly."** The step from
-that to "a higher value lays fastening points down more densely" is **this campaign's inference**,
-corroborated by two third parties — `photoshopessentials.com` gives a default Frequency of 57 and
-states "The higher the value, the more anchor points will be added", and `lifewire.com` documents
-the same `Feather / Width / Contrast / Frequency` set and the `[`/`]` width keys — but not by Adobe.
+**The Frequency inversion — found, argued, and then FIXED.** The previous version of this section
+reported that the app stored `frequency` as a maximum path length in pixels and gated on
+`if (pathLength(segment.path) < args.frequency) return false;`, so that longer spacing meant
+_fewer_ anchors: the exact opposite of Adobe's **"A higher value anchors the selection border in
+place more quickly."** That finding was correct, and it was the most carefully hedged in the
+file — Adobe's sentence is narrower than the finding, and the step from "anchors sooner" to
+"lays fastening points down more densely" is a third-party reading, not Adobe's.
 
-The data file now quotes Adobe and labels the density reading, in the `Frequency` row and in
-`appNotes`, so the inversion is a documented divergence plus a stated inference rather than a
-finding dressed as a citation. The two readings are internally consistent; they are not the same
-control, and a user who transfers a muscle memory from one slider to the other gets the opposite
-result. This is marked `partial` rather than `missing` because the control is rendered and
-genuinely wired — it just means something else.
+`7f3b0d19` fixed it, and this record was not updated. It is now Adobe's own range and direction:
+`MAGNETIC_LASSO_FREQUENCY_MIN`/`_MAX` are `0`/`100` (`src/tools/featherMagneticLasso.ts:20`-`:21`,
+under the comment `Adobe's Frequency range: "between 0 and 100"`), the bar's readout is a plain
+number with no `px` suffix (`FeatherMagneticLasso.tsx:311`), and the direction is decided in
+exactly one function — `magneticLassoAnchorSpan` (`:43`-`:54`) — which maps Frequency 0 to the
+longest 120px anchor span and Frequency 100 to the shortest 8px one. The gate is now
+`pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)`
+(`FeatherMagneticLassoToolArea.tsx:476`). The bar's own help text was rewritten to Adobe's
+wording rather than the app's. The row is `present`.
 
-**The other three `partial` verdicts, and the two that are the same defect.** `Contrast` allows 0%
-where Adobe's documented range starts at 1%. `Feather` and `Anti-alias` are the same divergence in
-the same function of the same file, and until this pass the file contradicted itself by scoring them
-differently: `Anti-alias` was `present` beside a `partial` `Feather`, and the two are wired
-identically. `args.featherRadius` and `args.antiAlias` are both written into the selection's
-metadata at commit
-(`src/components/Main/FeatherMagneticLassoToolArea.tsx:385`-`:387`) and both are read back in
+**The lesson worth carrying: a `partial` finding is a snapshot, not a verdict.** This file spent
+three findings on defects that were fixed between the pass that found them and the pass that
+re-read them, and the band of this file's claims about the Magnetic Lasso's `Frequency`, the
+Wand's `Contiguous` and the marquee's modifiers all had to be walked back. The failure was not
+the finding — it was treating a `file:line` reading as durable.
+
+**`Width` is now `partial`, and it is the one verdict this pass moved in the other direction.** It
+was `present` on the reasoning that the control is a real detection-width slider wired to the
+edge detector, which is true. It is `partial` because the app renders a hard 1–64px ceiling
+(`FeatherMagneticLasso.tsx:288`-`:289`) and Adobe states the field only as "a pixel value" with no
+maximum — so the ceiling is the app's own, and an app-invented bound is a range divergence, which
+is precisely what `types.ts:19`-`:20` names. Contrast has the same shape of defect for a smaller
+reason: it allows 0% where Adobe's documented range starts at 1%.
+
+**`Feather` and `Anti-alias` are the same divergence, and are both `partial` for it.**
+`args.featherRadius` and `args.antiAlias` are both written into the selection's metadata at commit
+(`src/components/Main/FeatherMagneticLassoToolArea.tsx:394`-`:396`) and both are read back in
 exactly **one** place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas`
-(`src/util/selection.ts:729`-`:730`). So both reach the **copied alpha mask** and nothing else:
+(`src/util/selection.ts:836`-`:837`). So both reach the **copied alpha mask** and nothing else:
 un-ticking Anti-alias changes the copy and leaves the selection the marching ants are drawn from
-untouched, which is exactly what `Feather` already said. Both are now `partial`.
+untouched, which is exactly what `Feather` already said.
 
 **The 100-pixel cap was never a divergence.** It was carried as one because the app's slider stops
-at 100 (`FeatherMagneticLasso.tsx:256`) and because "Adobe never states the field's bound" was
+at 100 (`FeatherMagneticLasso.tsx:275`) and because "Adobe never states the field's bound" was
 recorded in `## Unverified`. Adobe does state it, and states the same number: "In the text box,
 enter a value of between 0 and 100 pixels" (`https://www.adobe.com/products/photoshop/feather-edges.html`).
 The `0.1–1000` figure that made the two look different is the UXP range for the
@@ -448,16 +548,16 @@ and the `Preview feather` outline. None has a Photoshop counterpart, so none app
 **Shortcut gap.** `[`/`]`, `,`/`.`, `Caps Lock` and `Return` are documented by Adobe or by two
 independent third parties; none of them is bound in the app, whose complete global table is
 `src/components/Common/AppKeyboardShortcuts.tsx`. `Delete` **is** bound, on this tool's own
-gesture (`src/components/Main/FeatherMagneticLassoToolArea.tsx:564`), and so is `Enter`
-(`:542`) — an earlier version of this file grouped `Delete` with the unbound keys and was wrong.
+gesture (`src/components/Main/FeatherMagneticLassoToolArea.tsx:573`), and so is `Enter`
+(`:551`) — an earlier version of this file grouped `Delete` with the unbound keys and was wrong.
 
 **Modifier gap — the one real modifier in the family.** This tool reads `Alt`, and only as
-`magneticEnabled: !event.altKey` at `src/components/Main/FeatherMagneticLassoToolArea.tsx:449`.
+`magneticEnabled: !event.altKey` at `src/components/Main/FeatherMagneticLassoToolArea.tsx:458`.
 That single read is what makes the freehand-segment row true. Everything else is absent: `Shift`,
 `Alt`-as-a-combination-mode, `Shift+Alt`, and the `Alt`-double-click straight close — the
-double-click detector at `:430` calls `finishSelection` without consulting a modifier. So the
-`modifiers[]` list is a Photoshop description annotated, not an app capability list, and the
-annotation is in `appNotes`.
+double-click detector calls `finishSelection` without consulting a modifier. So the `modifiers[]`
+list is a Photoshop description annotated, not an app capability list, and the annotation is in
+`appNotes`.
 
 ## Magic Wand Tool — `magic-wand`
 
@@ -487,9 +587,9 @@ it is a different product. See `## Unverified`.
 | --------------------------------------------- | ----------------------------------------------------------------------------- | ---------- | ------------------ |
 | New / Add To / Subtract From / Intersect With | four modes; `Shift`-click adds, `Alt`-click subtracts                         | `missing`  | —                  |
 | Sample Size                                   | how much image is sampled for sensitivity                                     | `missing`  | —                  |
-| Tolerance                                     | 0–255 (Adobe); the 32 default is third-party                                  | `partial`  | `MagicWand.tsx:54` |
+| Tolerance                                     | 0–255 (Adobe); the 32 default is third-party                                  | `partial`  | `MagicWand.tsx:63` |
 | Anti-alias                                    | on by default, third-party / Elements                                         | `missing`  | —                  |
-| Contiguous                                    | on by default, third-party / Elements; off = same colors throughout the image | `missing`  | —                  |
+| Contiguous                                    | on by default, third-party / Elements; off = same colors throughout the image | `present`  | `MagicWand.tsx:77` |
 | Sample All Layers                             | reported off by default, CS5-era third-party                                  | `missing`  | —                  |
 | Select and Mask                               | on every selection tool's bar                                                 | `missing`  | —                  |
 
@@ -502,14 +602,29 @@ Photoshop's bindings with no implementation here, and they were unannotated unti
 rows are kept, because the file's job is to describe Photoshop's tool, and the absence now
 appears in `appNotes`.
 
-**`Contiguous` is the finding here, and it is not `inert`.** It is absent from
-`MagicWandToolArgs` entirely, so it is neither declared nor rendered and the honest status is
-`missing`. But the behaviour is not absent: `MagicWandSelectionOptions` carries a
-`contiguous?: boolean`, and the util takes the contiguous branch unless the value is
-_explicitly_ `false`. The tool area constructs its options from `tolerance` and `smoothing`
-alone, so the global branch is unreachable from the toolbar. The non-contiguous selection — the
-one that makes the wand useful on a repeated sky or a duplicated product shot — cannot be made
-at all.
+**`Contiguous` was the finding here, and it is now `present`.** The previous version of this
+section reported it `missing` on a careful reading: absent from `MagicWandToolArgs`, so neither
+declared nor rendered, with the behaviour nonetheless latent — `MagicWandSelectionOptions` carried
+a `contiguous?: boolean` and the util took the contiguous branch unless the value was
+_explicitly_ `false`, while the tool area built its options from `tolerance` and `smoothing`
+alone, leaving the non-contiguous branch unreachable from the toolbar. That was true, and it was
+the exact definition of a defect a documentation pass should not call `present`.
+
+`7f3b0d19` made the latent branch reachable, and this record was not updated. `contiguous` is now
+a declared field of `MagicWandToolArgs` carrying Adobe's own sentence as its doc comment
+(`src/tools/magicWand.ts:7`-`:12`), seeded `true` in `settings.ts:127` so that no default click
+changes what is selected, and rendered as a checkbox wired to `patchToolArgs`
+(`MagicWand.tsx:76`-`:79`), sitting where Adobe puts it — straight after `Tolerance`. The commit
+notes the placement decision, and the status is `present`: the control is rendered, it is wired,
+and unticking it now takes the non-contiguous path, which is the selection that makes the wand
+useful on a repeated sky or a duplicated product shot.
+
+The `inert` question this section raised is now a useful contrast rather than a live finding.
+`Contiguous` was the case that a boolean flag exists in a util and a branch nobody can reach —
+`inert` in everything but name, and the one that would have justified a fifth status if the bar
+had rendered it. It was correctly filed `missing` rather than `inert`, because nothing was on
+screen. Had a chip been drawn for it, `inert` would have been the right value and the screenshot
+would have been the tell.
 
 **`Sample All Layers` is missing in the worst way: it is permanently on.** The tool area passes
 `canvasRef.current` to `createMagicWandSelectionFromCanvas`, i.e. the merged document canvas, so
@@ -793,8 +908,8 @@ the app binds nothing.
 | Control                      | Photoshop                                                                           | App status | App ref                  |
 | ---------------------------- | ----------------------------------------------------------------------------------- | ---------- | ------------------------ |
 | Tool presets                 | leftmost item; saves and recalls the tool's whole bar state                         | `missing`  | —                        |
-| New / Add to / Subtract from | **three** modes, no Intersect; auto-switches to Add after the first stroke          | `partial`  | `QuickSelection.tsx:138` |
-| Size                         | brush diameter, from the preset picker, with Hardness / Spacing / Angle / Roundness | `partial`  | `QuickSelection.tsx:104` |
+| New / Add to / Subtract from | **three** modes, no Intersect; auto-switches to Add after the first stroke          | `partial`  | `QuickSelection.tsx:148` |
+| Size                         | brush diameter, from the preset picker, with Hardness / Spacing / Angle / Roundness | `partial`  | `QuickSelection.tsx:111` |
 | Select and Mask              | opens the Select and Mask workspace to refine the result                            | `missing`  | —                        |
 | Sample All Layers            | makes the selection from all visible layers, not just the current one               | `missing`  | —                        |
 | Auto-Enhance (Enhance Edge)  | smoother, more refined edges; flows toward image edges; slower                      | `missing`  | —                        |
@@ -847,13 +962,25 @@ decrease/increase brush hardness"
 its `action` states the macOS and Windows forms and says the plain-`Alt` gesture is not bound. The
 `[`/`]` rows on the same tool are Photoshop's and are unaffected.
 
-**The bar promises a gesture it does not honour.** The quick-selection bar's own hint text reads
-"Shift and Alt drag on the canvas" on the Subtract branch
-(`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:99`) and the same sentence on the
-default branch (`:100`), while the tool area consults neither key.
-That is an on-screen promise to the user, not a documentation gap, and it is recorded in
-`appNotes` as one. It is the sharpest instance of the defect this pass is about, because it is
-the only false claim in the family a user reads without opening anything.
+**The bar promised a gesture it did not honour — and the promise is now gone.** This section used
+to be the sharpest finding in the family: the quick-selection bar's hint text read "Shift and Alt
+drag on the canvas" on both the Subtract branch (then `QuickSelection.tsx:99`) and the default
+branch (`:100`), while the tool area consulted neither key. An on-screen promise to the user, not
+a documentation gap — and the only false claim in the family a user reads without opening
+anything.
+
+`7f3b0d19` **removed the promise rather than implementing the gesture**, and this record was not
+updated. The bar's hint is now `Drag over an object to grow the selection along the stroke.`
+(`QuickSelection.tsx:105`), with a comment directly above it naming Photoshop's Alt-drag brush-tip
+resize and Shift-drag circular constraint as things the app does not do, and saying why that is
+preferable to shipping a guess (`:99`-`:101`). The rationale is worth preserving because it is a
+judgement, not an implementation: Photoshop's Alt-drag resize maps _drag distance to size_, not a
+flag, so implementing it badly would replace one false promise with a wrong gesture.
+
+Both `modifiers[]` rows therefore remain unimplemented and are still recorded as such in
+`appNotes`; what is gone is the on-screen claim, and the finding is retained in the data file
+rather than deleted, because a record that says only "this works" is less useful to the next
+reader than one that says "this used to lie here".
 
 ### Sources
 
@@ -896,7 +1023,7 @@ from the data file's `appNotes`; a gap is cheaper than a broken cross-reference.
    and 100 pixels** to determine how heavily the Feather effect will be applied to the selected
    area" (`https://www.adobe.com/products/photoshop/feather-edges.html`). That is the **options-bar
    box**, the same one the magnetic lasso renders, and 0–100 is the same ceiling the app's slider
-   uses (`FeatherMagneticLasso.tsx:256`) — so the cap was never a divergence and the
+   uses (`FeatherMagneticLasso.tsx:275`) — so the cap was never a divergence and the
    `feather-magnetic-lasso` `appNotes` no longer claims it is. The `0.1–1000` figure in the UXP
    reference belongs to `Select > Modify > Feather`, which is a **separate command applied to an
    existing selection** with a `Feather Radius` argument, not a field on any tool's bar; the
@@ -1040,3 +1167,32 @@ from the data file's `appNotes`; a gap is cheaper than a broken cross-reference.
     asserting a default flatly; the ranges and effects, which are Adobe's, are stated without
     qualification. Item 7 above covers the same ground for the Quick Selection's `Sample All
 Layers` and `Auto-Enhance`.
+
+14. **Whether the Magic Wand's desktop options bar carries a `Feather` control at all — OPEN, and
+    the two sides of it are both Adobe's.** This is the one row in the family that exists only
+    because the sources disagree, so the disagreement is recorded rather than resolved in favour
+    of whichever page was read last.
+
+    - **Against:** Adobe's **current desktop** page on softening selection edges
+      (`https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-and-soften-selection-edges.html`,
+      last updated 2026-02-23) enumerates what can be feathered — "tools like the **Rectangular
+      Marquee, Lasso, Polygonal Lasso, or Magnetic Lasso**" — and the wand is not in the list,
+      while the anti-aliasing list on the same page ("Lasso, Polygonal Lasso, Magnetic Lasso,
+      Elliptical Marquee, and Magic Wand") does include it. The wand's own current desktop page
+      (2025-11-04) lists `Sample Size`, `Tolerance`, `Anti-alias`, `Contiguous` and
+      `Sample All Layers` and no `Feather`. A third-party tutorial of the Photoshop CS era labels
+      the control "**Feather (Lasso Tool Only)**"
+      (`http://www.neathphotographicsociety.co.uk/Tutorials/Photoshop/Making_Selections.pdf`).
+    - **For:** Adobe's own **mobile** page for this tool
+      (`https://helpx.adobe.com/ee/photoshop/mobile/edit-images/make-selections/enhance-selections-with-the-magic-wand.html`,
+      last updated 2025-07-02) instructs the reader to "Select Magic wand **again** to access the
+      more menu and adjust the **Feather** slider to define the feathering width as needed", and
+      lists only `Anti-alias`, `Contiguous` and `Tolerance` beside it — which is a bar with a
+      Feather and a three-control rest, matching the CS-era shape. The UXP `Selection` reference
+      also carries a `feather` argument defaulting to 0 on its selection-creating calls.
+
+    Both hedged words are Adobe's ("such as", "like"), so neither list is a closed enumeration and
+    neither page settles it. What the record can say is narrower and is what the data file's row
+    says: **the desktop bar as documented in 2025–2026 carries no `Feather`, and earlier releases
+    did.** The app renders none either way, so the row's `status` is `missing` and the row's
+    presence is a statement about Photoshop, not about a gap the app has.

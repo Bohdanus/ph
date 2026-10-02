@@ -17,6 +17,13 @@ import { documentToCanvasPoint } from '../contexts/document-frame.ts';
 export const SELECTION_ANCHOR_RADIUS = 5;
 export const SELECTION_ANCHOR_HIT_RADIUS = 8;
 
+// Outline chrome, in CSS px. The tool overlay is sized to the DOCUMENT and displayed with
+// `object-contain`, so a context draws in document px while these are CSS px; both painters below
+// divide them by the contain fit before they reach a context. See `drawSelectionOutline`.
+const OUTLINE_LINE_WIDTH = 2;
+const OUTLINE_DASH_LENGTH = 6;
+const OUTLINE_DASH_GAP = 4;
+
 export function normalizeSelectionPoints(points: Point[]): Pick<Selection, 'points' | 'pos'> | null {
   if (points.length < 3) return null;
 
@@ -150,14 +157,31 @@ export function drawClosedSelectionPath(ctx: CanvasRenderingContext2D, points: P
  * (`ELLIPTICAL_SELECTION_SOURCE_TOOL` at `ellipticalSelection.ts:48`,
  * `QUICK_SELECTION_SOURCE_TOOL` at `quickSelection.ts:43`), and the anchors skip that
  * source, so asking for anchors alone leaves them with no border at all.
+ *
+ * `scale` is CSS px per document px — the contain fit — and it is what makes the chrome the same
+ * thickness on screen at any zoom. It defaults to 1, the identity divisor, so a caller that does
+ * not measure it reproduces exactly what this drew before the divisor existed. It is a parameter
+ * rather than a measurement taken here because this is a pure function and `getBoundingClientRect()`
+ * in a paint path is a forced layout; callers get it from `useContainScale`, which is the same
+ * number `getLocalCoords` divides the pointer by.
  */
-export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: Selection, frame?: DocumentFrame): void {
+export function drawSelectionOutline(
+  ctx: CanvasRenderingContext2D,
+  selection: Selection,
+  frame?: DocumentFrame,
+  scale = 1
+): void {
   if (!selection.isActive) return;
 
   const points = getSelectionAbsolutePoints(selection).map((point) =>
     frame ? documentToCanvasPoint(point, frame) : point
   );
   if (points.length < 3) return;
+
+  const lineWidth = OUTLINE_LINE_WIDTH / scale;
+  const dash = OUTLINE_DASH_LENGTH / scale;
+  const gap = OUTLINE_DASH_GAP / scale;
+  const anchorRadius = SELECTION_ANCHOR_RADIUS / scale;
 
   ctx.save();
   // The tool overlay is one 2D context for the whole session and every tool area is handed the
@@ -167,8 +191,8 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
   // one tool at a time and were missing the magic wand's.
   resetOverlayAlpha(ctx);
   ctx.strokeStyle = 'rgba(0,123,255,0.95)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = lineWidth;
+  ctx.setLineDash([dash, gap]);
   drawClosedSelectionPath(ctx, points);
 
   if (selection.sourceTool !== 'freehand-lasso' && selection.sourceTool !== 'magic-wand') {
@@ -177,8 +201,8 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
       ctx.beginPath();
       ctx.fillStyle = 'white';
       ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
-      ctx.lineWidth = 2;
-      ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      ctx.lineWidth = lineWidth;
+      ctx.arc(point.x, point.y, anchorRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     });
@@ -193,8 +217,18 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
  * Only the anchors. The border itself is the animated marching-ants outline owned
  * by `useSelectionMarchingAnts` on its own canvas, so painting a second static
  * stroke here would show both.
+ *
+ * `scale` is CSS px per document px, the same divisor `drawSelectionOutline` takes and the same one
+ * the marching ants take: the dot has to be the same size on screen as the dashes it belongs to,
+ * and below a scale of 1 an undivided radius puts a sub-pixel dot inside a hit target that does not
+ * move with it.
  */
-export function drawSelectionAnchors(ctx: CanvasRenderingContext2D, selection: Selection, frame?: DocumentFrame): void {
+export function drawSelectionAnchors(
+  ctx: CanvasRenderingContext2D,
+  selection: Selection,
+  frame?: DocumentFrame,
+  scale = 1
+): void {
   if (!selection.isActive) return;
   // A traced boundary can carry hundreds of sampled points, so freehand and the
   // magic wand get a border and no handles.
@@ -204,6 +238,9 @@ export function drawSelectionAnchors(ctx: CanvasRenderingContext2D, selection: S
     frame ? documentToCanvasPoint(point, frame) : point
   );
   if (points.length < 3) return;
+
+  const lineWidth = OUTLINE_LINE_WIDTH / scale;
+  const anchorRadius = SELECTION_ANCHOR_RADIUS / scale;
 
   ctx.save();
   // The tool overlay is one 2D context for the whole session and every tool area is handed the
@@ -220,8 +257,8 @@ export function drawSelectionAnchors(ctx: CanvasRenderingContext2D, selection: S
     ctx.beginPath();
     ctx.fillStyle = 'white';
     ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
-    ctx.lineWidth = 2;
-    ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    ctx.lineWidth = lineWidth;
+    ctx.arc(point.x, point.y, anchorRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   });
@@ -235,11 +272,21 @@ export function distanceBetweenPoints(a: Point, b: Point): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-export function findSelectionAnchorAtPoint(selection: Selection, point: Point): number | null {
+/**
+ * The anchor whose point falls within the grab radius, or null.
+ *
+ * `scale` is CSS px per document px, the same divisor `drawSelectionAnchors` uses. It is a parameter
+ * rather than a measurement because this function and that one receive a document-space point from
+ * the same caller, and a hit target that is not the same size on screen as the dot it is meant to
+ * grab is a worse defect than the one the divisor fixes: making the dot constant on screen while
+ * leaving the radius in document px shrinks the target below the visible dot at every zoom below 1.
+ */
+export function findSelectionAnchorAtPoint(selection: Selection, point: Point, scale = 1): number | null {
   if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return null;
 
+  const hitRadius = SELECTION_ANCHOR_HIT_RADIUS / scale;
   const points = getSelectionAbsolutePoints(selection);
-  const anchorIndex = points.findIndex((anchor) => distanceBetweenPoints(anchor, point) <= SELECTION_ANCHOR_HIT_RADIUS);
+  const anchorIndex = points.findIndex((anchor) => distanceBetweenPoints(anchor, point) <= hitRadius);
 
   return anchorIndex === -1 ? null : anchorIndex;
 }

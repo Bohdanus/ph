@@ -128,9 +128,28 @@ const mocks = vi.hoisted(() => {
       return { ...matchers, not: negated };
     }),
     matchers,
-    exportedFile: Buffer.alloc(512),
+    // A real PNG, because `exportAndVerify` decodes the file it reads back to check the
+    // export carries ink. `Buffer.alloc(512)` was opaque bytes: larger than the
+    // byte-length floor, and not an image at all, so it could not have stood in for an
+    // export. This one is 8x8 white with a black diagonal, so it decodes and it has ink.
+    exportedFile: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAK0lEQVQImWNgYGD4jw2ARLHKQYUw5RB8NDlUDpIchgkwOWzWguVwuJWBAQBi96dZMmQ13QAAAABJRU5ErkJggg==',
+      'base64'
+    ),
   };
 });
+
+// A blank 256x256 PNG, built rather than pasted: an 8x8 blank is 93 bytes and would have been
+// stopped by `exportAndVerify`'s byte-length check, which would make the test prove nothing about
+// the ink guard. This one is ~776 bytes, so it clears that floor and is rejected only by the guard.
+async function blankExportedFile(): Promise<Buffer<ArrayBuffer>> {
+  const blank = await sharp({ create: { width: 256, height: 256, channels: 3, background: '#ffffff' } })
+    .png()
+    .toBuffer();
+  // sharp types its output over `ArrayBufferLike`. A freshly encoded PNG is not backed by
+  // shared memory, and `mockResolvedValueOnce` only accepts the narrow `ArrayBuffer` form.
+  return blank as Buffer<ArrayBuffer>;
+}
 
 // The Playwright expect is replaced by a recording validator so that assertions
 // made inside the helpers really fail the test instead of always passing.
@@ -1147,6 +1166,25 @@ describe('Export Helpers', () => {
       ).rejects.toThrow(`${PNG_FORMAT.label} file should not be empty`);
 
       expect(download.saveAs).toHaveBeenCalled();
+    });
+
+    it('rejects a BLANK export, which the byte-length check and the pixel comparison both accept', async () => {
+      // 776 bytes, so it clears the byte-length floor; and the pixel comparison is never
+      // reached, which is the point: at `CHANGED_CHANNEL_THRESHOLD_GENERAL` a blank
+      // differs from a sparse drawing in far fewer than 50,000 of 196,608 channels, so
+      // the comparison on its own would call this export correct.
+      vi.mocked(readFile).mockResolvedValueOnce(await blankExportedFile());
+      const { page } = createSaveDialogPage({
+        // Stands in for the comparison that would wrongly pass. If the ink guard is
+        // removed this returns `ok: true` and the export is reported as verified.
+        evaluate: vi.fn().mockResolvedValue({ ok: true }),
+      });
+
+      await expect(
+        exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock())
+      ).rejects.toThrow('carries no ink');
+
+      expect(page.evaluate).not.toHaveBeenCalled();
     });
 
     it('rejects with the environment cause when the browser gives no canvas context to compare in', async () => {

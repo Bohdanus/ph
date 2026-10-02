@@ -187,14 +187,14 @@ describe('SidebarLeft overflow', () => {
     const before = visibleTools();
 
     // Five rows at 44px. The plan renders exactly the rows the budget holds and makes the
-    // LAST of them the three-dots tile, so four tool rows survive out of sixteen.
+    // LAST of them the three-dots tile, so five tool rows survive out of the map's fifteen.
     setSlotHeight(300);
 
     const after = visibleTools();
-    expect(after).toHaveLength(4);
+    expect(after).toHaveLength(5);
     // A PREFIX of the list, from the top: the top of a tool rail is the most-used end, and a
     // collapse that made holes would move tools around under the user's cursor.
-    expect(after).toEqual(before.slice(0, 4));
+    expect(after).toEqual(before.slice(0, 5));
     expect(overflowTile(), 'the tile appears exactly when it has something to hold').not.toBeNull();
   });
 
@@ -208,13 +208,19 @@ describe('SidebarLeft overflow', () => {
     // collapsed group. A flyout listing one entry per collapsed GROUP would put the Pencil
     // and the Eraser out of reach for as long as the window is short, which is the defect
     // the two-column rail exists to avoid and the three-dots tile must not reintroduce.
-    for (const label of ['Eyedropper Tool', 'Brush Tool', 'Pencil Tool', 'Eraser Tool', 'Horizontal Type Tool']) {
+    //
+    // The list is walked from BOTH ends of the boundary rather than naming three tools from
+    // the middle: the first collapsed group's primary proves the boundary is where the fit
+    // says it is, and a deep group proves the flyout reaches past the sections in between.
+    for (const label of ['Crop Tool', 'Brush Tool', 'Pencil Tool', 'Eraser Tool', 'Horizontal Type Tool']) {
       expect(items, `${label} must be reachable from the three-dots tile`).toContain(label);
     }
     // And nothing that still has a tile is offered again — a tool with two ways in is a tool
-    // whose identity is ambiguous.
+    // whose identity is ambiguous. The Eyedropper is the LAST group that survived at 300px,
+    // so it is the one that would be offered twice if the boundary were a row too far down.
     expect(items).not.toContain('Move Tool');
     expect(items).not.toContain('Magic Wand Tool');
+    expect(items).not.toContain('Eyedropper Tool');
 
     // Every tool in the map is reachable from EITHER a tile or the flyout, and from exactly
     // one of them. That is the whole contract the feature exists to keep, so it is stated as
@@ -337,7 +343,7 @@ describe('SidebarLeft overflow', () => {
     const { rerender } = render(<SidebarLeft />);
     setSlotHeight(300);
     const collapsed = visibleTools();
-    expect(collapsed).toHaveLength(4);
+    expect(collapsed).toHaveLength(5);
 
     // A different window at the same slot height changes nothing, which is exactly what a
     // panel that is no longer the window's child would do: the same slot, a different page

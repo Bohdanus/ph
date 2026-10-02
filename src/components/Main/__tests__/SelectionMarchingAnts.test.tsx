@@ -16,6 +16,11 @@ const storeState = vi.hoisted(
       selections: [] as Selection[],
       totalSize: { width: 200, height: 120 },
       documentFrame: { x: 0, y: 0, width: 200, height: 120 },
+      // The component measures the contain fit off this to divide the chrome, and it reads it off
+      // the store rather than taking a prop — the same source every tool area's
+      // `usePointerPosition({ ref: containerRef })` reads. A mock without it is not a thinner
+      // mock, it is a `ref.current` on `undefined` inside `useContainScale`'s first layout effect.
+      containerRef: { current: null },
     }) as Record<string, unknown>
 );
 
@@ -136,5 +141,25 @@ describe('SelectionMarchingAnts', () => {
 
     expect(rafMocks.frames.size).toBe(0);
     expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('divides the chrome by the measured contain fit, not by a hardcoded 1', () => {
+    // The component now measures the workspace container, so the border is a screen-constant
+    // thickness at any zoom rather than a document-px one. `current: null` is the un-measured
+    // state and yields the identity divisor; this drives the measured one by giving the container
+    // a real box half the document's size.
+    storeState.selections = [polygon()];
+    const container = document.createElement('div');
+    container.getBoundingClientRect = () => ({ width: 100, height: 60 }) as DOMRect;
+    storeState.containerRef = { current: container };
+
+    const { ctx } = setup();
+    frame();
+
+    // 200x120 document in a 100x60 box is a fit of 0.5, so the 6 CSS px dash is 12 document px.
+    expect(ctx.setLineDash).toHaveBeenCalledWith([12, 12]);
+    expect(ctx.lineWidth).toBe(2);
+
+    storeState.containerRef = { current: null };
   });
 });

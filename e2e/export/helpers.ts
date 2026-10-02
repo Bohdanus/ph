@@ -23,10 +23,17 @@ export interface ExportFormat {
 
 /**
  * Upper bound on differing colour channels tolerated when comparing an export
- * against the canvas it was encoded from. 50,000 channels is ~1.5% of the
+ * against the canvas it was encoded from. 50,000 channels is 25.4% of the
  * 196,608 channels on a 256x256 image, which is wide enough to absorb lossy
- * re-encoding artifacts (chroma subsampling, dithering) without masking a
- * genuinely wrong or empty export.
+ * re-encoding artifacts (chroma subsampling, dithering) without failing a
+ * correct export over noise.
+ *
+ * It is NOT a correctness gate on its own, and the number above used to claim
+ * it was: at 25.4% a blank export of a sparse drawing differs from the source in
+ * far fewer than 50,000 channels and would PASS. What actually keeps that from
+ * being a false green is the ink guard in `exportAndVerify`, which runs before
+ * this comparison and fails an export carrying no ink at all. Read a green
+ * pixel comparison together with that guard, never on its own.
  */
 export const CHANGED_CHANNEL_THRESHOLD_GENERAL = 50_000;
 
@@ -453,6 +460,28 @@ export async function exportAndVerify(
   expect(file.byteLength, `${format.label} file should not be empty`).toBeGreaterThan(100);
 
   if (format.comparePixels) {
+    // An empty file is not an empty image: a blank 256x256 PNG is a kilobyte, so the
+    // byteLength check above passes one. Without this guard a blank export would also
+    // pass the pixel comparison, because `CHANGED_CHANNEL_THRESHOLD_GENERAL` tolerates
+    // 25.4% of all channels and a sparse drawing changes far fewer than that — the
+    // threshold alone cannot tell a correct export from an empty one.
+    //
+    // Decoding is best-effort. `measureInk` rasterises through sharp, which reads every
+    // pixel-compared format except a flattened SVG, and a container sharp cannot read is
+    // not evidence of a blank export — it is evidence this guard cannot judge. Those
+    // formats fall through to the pixel comparison below, which still gates them.
+    let carriesNoInk: boolean;
+    try {
+      carriesNoInk = (await measureInk(file)) === null;
+    } catch {
+      carriesNoInk = false;
+    }
+    await expect(
+      carriesNoInk,
+      `${format.label} export carries no ink: the encoder produced a blank image, which both a ` +
+        'byte-length check and a pixel-difference check at this threshold would accept'
+    ).toBe(false);
+
     const payload = {
       source: sourceDataUrl,
       exported: file.toString('base64'),
