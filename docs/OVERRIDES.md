@@ -46,8 +46,16 @@ misread:
 
 ## Entries
 
-_None. The operator has not written one yet._
+### OVR-1 — Photoshop fills the area an extended crop adds with the
 
-An empty register is not a gap to be filled by the next agent to notice something
-awkward. It is a statement that this app follows Adobe, and that changing that is
-the operator's decision to make deliberately.
+Background layer's colour when the bottom layer is a locked Background
+
+**This app:** An extended crop always leaves the added band transparent,
+whatever the bottom layer is.
+
+**Operator decided:** 2026-10-02
+
+**Why:** This is the Background-layer case of Photoshop's Fill dropdown,
+and it is the only cheap one. The other two values — Content-Aware and
+Generative Expand — are a patch-based synthesis model and a cloud
+generative feature, and are recorded in TOOLS-TOO-HARD.md instead.
