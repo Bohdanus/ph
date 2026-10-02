@@ -4863,36 +4863,49 @@ unreachable until real Black and White is built, which is a larger loss than a d
 `src/tools/functions.ts:60-63`, `docs/TOOLS-TOO-HARD.md` (the enabled-items entry and Black and
 White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
 
-## 171. `color`'s and `levels`'s `imageProcessor` may be unreachable, and the claim that they are is UNPROVEN in both directions
+## 171. `color`'s and `levels`' `imageProcessor` is unreachable from every production call site, which leaves two files maintained on a path nothing runs
 
-**Problem.** `src/tools/colors.ts` and `src/tools/levels.ts` export only an `imageProcessor`; the
-tool definitions declare `commit: 'layer-operation'` (`src/tools/toolProcessors.ts:137`, `:143`). For
-a `layer-operation` tool, `src/contexts/useLayer.ts:620` returns `true` **before** the
-`processor.imageProcessor(...)` call at `:655`, so the editing path never reaches either processor.
-A prior pass asserted flatly that both are "DEAD CODE" whose "only callers are
-`image-processors.test.ts`". **That assertion is not carried forward as fact, because it does not
-follow from the one call site it was derived from.** There are five other `imageProcessor` call sites
-in `src` — `useHistory.ts:96`, `materialization.ts:177` and `:288`, `layer-utils.ts:225`,
-`layer-renderer.ts:80` — and whether any of them can be reached with a `color` or `levels` tool name
-has not been traced. `layer-renderer.ts:80` is guarded to vector sources only, so it is excluded;
-`materialization.ts:288` iterates retained operations and is the one that matters.
+**Problem.** `src/tools/colors.ts` and `src/tools/levels.ts` export only an `imageProcessor`, and both
+tools declare `commit: 'layer-operation'` (`src/tools/toolProcessors.ts:132-152`). This entry existed to
+record that the reachability claim was UNPROVEN, because it had been derived from the single call site in
+`useLayer` and five others had not been traced. All six are traced now, and the claim holds for these two
+tools:
 
-**Why it matters anyway.** If the processors really are unreachable, then the CSS-filter string
-(`buildColorsFilter` / `buildLevelsFilter`, `src/tools/functions.ts:60-70`) is the whole of the
-capability, and the `OffscreenCanvas` work in both files is maintenance on a path nothing runs. That
-is worth knowing before real Levels and real Black and White are built on top of either. If they are
-reachable, the "dead code" claim is itself a doc defect that has now appeared in three documents.
+- `useLayer.ts:731` — closed by the `commit === 'layer-operation'` arm at `:695-703`, which appends the
+  retained operation, redraws and returns.
+- `useHistory.ts:96` (`applyRasterTool`) — closed by replay: `history-replay.ts:173-193` re-appends the
+  retained operation for a `layer-operation` tool and `continue`s, so the raster branch is never taken for
+  either id.
+- `materialization.ts:136` — requires `processor.creator`, which neither tool sets. The module has no
+  runtime importer at all: `durable-compositor.ts` is its only non-test importer, and nothing outside
+  tests imports that.
+- `materialization.ts:251` — reached only by an `apply-raster-processor` operation, and
+  `history-adapter.ts:521-533` maps every `layer-operation` tool to `apply-filter`, whitelisting exactly
+  `['blur', 'color', 'levels']`.
+- `layer-utils.ts:226` — needs a `tool` layer source, and `createLayerFromTool`'s callers are the text,
+  draw and shape paths.
+- `layer-renderer.ts:67` — gated by `isVectorSource`, whose set is the six shape ids.
 
-**Fix.** Trace `materialization.ts:288` and `useHistory.ts:96` for the `color` and `levels` tool
-names — specifically whether a retained `FilterLayerOperation` for either id is ever resolved back
-through `findToolProcessor` into a processor call. Then either delete the two processors and their
-`imageProcessor` entries, or record in `docs/TOOLS-TOO-HARD.md` that the retained-operation path is
-the one that runs. Do not delete them on the strength of the `useLayer` early return alone; that is
-the mistake that produced the current disagreement.
+**`transform` is not in this class and must not be lumped with them.** It is `commit: 'affine-operation'`
+(`src/tools/toolProcessors.ts:146-152`), which falls past that early return: the trapezoid path calls
+`applyRasterTool` at replay time, and `history-adapter.ts:493-499` emits `apply-raster-processor` with
+`processorId: 'transform'`. Its processor runs.
 
-**Files.** `src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/toolProcessors.ts:137`, `:143`,
-`src/contexts/useLayer.ts:620`, `:655`, `src/contexts/materialization.ts:288`,
-`src/contexts/useHistory.ts:96`, `docs/TOOLS-TOO-HARD.md`
+**Why it matters.** If a processor is unreachable then the CSS-filter string (`buildColorsFilter` /
+`buildLevelsFilter`, `src/tools/functions.ts:60-70`) is the whole of the capability, and the
+`OffscreenCanvas` work in both files is maintenance on a path nothing runs. That is worth knowing before a
+real Levels and a real Black and White are built on top of either.
+
+**Fix.** Decide, and record the decision where the next session reads it: either delete the two
+processors and their `imageProcessor` entries, since replay and materialization are both closed, or keep
+them and say in `docs/TOOLS-TOO-HARD.md` that they are the raster implementations waiting behind the
+canvas-filter requirement, so the two files are not later mistaken for dead code. Do not delete
+`transform`'s processor: it runs.
+
+**Files.** `src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/toolProcessors.ts:132-152`,
+`src/contexts/useLayer.ts:695-731`, `src/contexts/history-replay.ts:173-193`,
+`src/contexts/history-adapter.ts:493-533`, `src/contexts/materialization.ts:126-136`, `:237-251`,
+`src/contexts/layer-utils.ts:222-226`, `src/contexts/layer-renderer.ts:49-67`, `docs/TOOLS-TOO-HARD.md`
 
 ## 172. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers is unanswered, and it changes the durable schema
 
