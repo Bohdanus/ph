@@ -91,6 +91,57 @@ const BAND_LUMA = 102;
 const BAND_MEAN = 104;
 
 /**
+ * What a full-Flow, `Vibrance`-on Saturate writes into `#c85020`, derived rather than captured.
+ *
+ * `sponge.ts:290` caps `k` at `chromaHeadroom`, and blue is the binding channel at
+ * `102.05 / (102.05 - 32) = 1.4568`, so `k = 1.4568` rather than the `2` an uncapped stroke would
+ * use. The three results are the module's own arithmetic through `clampChannel`'s rounding:
+ * red `244.7 -> 245`, green `69.9 -> 70`, blue `0.0 -> 0`.
+ *
+ * Blue ON the gamut boundary and red 10 short of clipping is the cap working, so these three
+ * numbers and not `(255, 42, 0)` are what a correct Vibrance-on stroke must produce.
+ */
+const BAND_SATURATED_RED = 245;
+const BAND_SATURATED_GREEN = 70;
+const BAND_SATURATED_BLUE = 0;
+
+/**
+ * The document-spanning fixture's geometry, for the case that probes a document-sized layer away
+ * from the gesture that made it. See that test's header for why each figure is what it is.
+ *
+ * `WIDE_DRAW_SIZE` is `BRUSH_SIZE_MAX`, and the Draw bar's own `Size` slider runs `0.5-500`
+ * (`src/components/ToolbarsRight/Draw/Draw.tsx:151-153`), so this is the widest tip the app owns.
+ */
+const WIDE_DRAW_SIZE = 500;
+const WIDE_DRAW_FROM = { x: 250, y: 150 };
+const WIDE_DRAW_TO = { x: 550, y: 150 };
+/**
+ * The two rows the Sponge strokes run along: 100 and 200 document pixels BELOW the row the Draw
+ * stroke swept, so neither probe sits on the path that created the layer. 100 document pixels
+ * apart against a 30px tip, so the two strokes cannot reach each other's row.
+ */
+const WIDE_ROW_A = 250;
+const WIDE_ROW_B = 350;
+/**
+ * Both Sponge strokes run horizontally from here to `WIDE_SPONGE_TO_X`, on `WIDE_ROW_A` and then
+ * on `WIDE_ROW_B`. The row is a parameter rather than baked in, because a stroke that starts on
+ * one row and ends on the other is a DIAGONAL that misses both probes.
+ */
+const WIDE_SPONGE_FROM_X = 200;
+const WIDE_SPONGE_A = { x: WIDE_SPONGE_FROM_X, y: WIDE_ROW_A };
+const WIDE_SPONGE_TO_X = 400;
+/** The two probes sit ON their own stroke's centre line, `WIDE_PROBE_MID` from either end. */
+const WIDE_PROBE_MID = 300;
+const WIDE_PROBE_A = { x: WIDE_PROBE_MID, y: WIDE_ROW_A };
+const WIDE_PROBE_B = { x: WIDE_PROBE_MID, y: WIDE_ROW_B };
+/**
+ * 200 document pixels past the end of a 30px tip on row A, and still inside the drawn disc: the
+ * nearest point of the Draw segment to it is 50px away, against a 250px radius. This is the
+ * brush-not-filter probe at document scale.
+ */
+const WIDE_PROBE_OUTSIDE = { x: 600, y: WIDE_ROW_A };
+
+/**
  * The drawn band's extent, from `pointsBoundingPos` (`src/util/draw.ts:6-27`), which pads the
  * stroke's bounding box by `lineWidth` on EVERY side:
  *
@@ -782,5 +833,154 @@ test.describe('Sponge tool', () => {
     expect
       .soft(options, 'the Mode dropdown carries exactly Adobe two modes, in Adobe order')
       .toEqual(['Saturate', 'Desaturate']);
+  });
+
+  /**
+   * The Sponge on a layer the size of the DOCUMENT, probed away from the gesture that made it.
+   *
+   * ## Why this case is not the one test 2 already covers
+   *
+   * Test 2 proves the tool on a 420x120 band — a layer the size of the drag that made it, with
+   * the Sponge stroke running along the very row being probed. That is a small, exactly-known
+   * rectangle. **A real photo is neither**: the layer is document-sized, and the gesture that made
+   * it is nowhere near the pixel being edited. Those are the conditions a user reports as "it
+   * does nothing", and neither is in test 2's geometry.
+   *
+   * So the fixture here is one Draw stroke at `BRUSH_SIZE_MAX` (500), whose disc sweeps a band
+   * 500 document pixels tall and past both sides of the 800x600 document. The layer it leaves is
+   * therefore at least document-sized, and each probe below is a point that is 100 or 200 document
+   * pixels BELOW the row the Draw stroke swept — nowhere near the gesture that created the layer —
+   * while still deep inside the drawn disc, which is what makes its before-read equal to
+   * `BAND_COLOUR` rather than to the white backing image. The geometry that guarantees the second
+   * half: the nearest point of the Draw segment is 100px from probe A and 200px from probe B, both
+   * inside the 250px radius, and the 8-pixel probe window does not move either figure past it.
+   *
+   * `WIDE_PROBE_OUTSIDE` is the brush-not-filter half at document scale: 200 document pixels past
+   * the end of a 30px tip, on the same layer and inside the same buffer the processor was handed.
+   * A per-pixel operation over that buffer would have moved it; a stroke walk cannot. Byte for byte,
+   * the same oracle test 2 uses on the band.
+   *
+   * ## What each assertion is worth
+   *
+   * The Desaturate half is exact for the reason test 2's is: `Flow 100` on a coverage-1 pixel
+   * makes `amount === 1`, so every channel becomes the pivot and `#c85020` must read `(102,102,102)`.
+   *
+   * The Saturate half is exact too, and the numbers are the module's own arithmetic rather than a
+   * captured baseline. `Vibrance` is the seeded default (`src/tools/settings.ts:272`), so
+   * `k = min(1 + 1, chromaHeadroom)` and blue is the binding channel at `102.05 / 70.05 = 1.4568`:
+   *
+   * ```
+   *   r = 102.05 + (200 - 102.05) * 1.4568 = 244.7  -> 245
+   *   g = 102.05 + ( 80 - 102.05) * 1.4568 =  69.9  ->  70
+   *   b = 102.05 + ( 32 - 102.05) * 1.4568 =   0.0  ->   0
+   * ```
+   *
+   * Blue landing on exactly 0 and red stopping at 245 rather than clipping at 255 is the headroom
+   * cap doing its job, so the triple is the assertion. The two rows are 100 document pixels apart
+   * against a 30px tip, so neither stroke reaches the other's probe and the two directions are
+   * independently observable in one fixture.
+   */
+  test('saturates and desaturates a document-sized layer, probed away from the gesture that made it', async ({
+    page,
+  }) => {
+    await clickToolButton(page, 'draw');
+    await setSlider(page, 'Size', String(WIDE_DRAW_SIZE));
+    await setDrawOpacity(page);
+    await setForegroundColor(page, BAND_COLOUR, true);
+    const geometry = await workspaceGeometry(page);
+    await strokeDocument(page, geometry, WIDE_DRAW_FROM, WIDE_DRAW_TO, 20);
+
+    // The fixture reads as the colour that was drawn at all three probes, which is what makes the
+    // assertions below about the Sponge rather than about the Draw.
+    for (const point of [WIDE_PROBE_A, WIDE_PROBE_B, WIDE_PROBE_OUTSIDE]) {
+      expect
+        .soft(
+          meanChannels(await readWindow(page, geometry, point)),
+          `the wide band is painted at ${JSON.stringify(point)}`
+        )
+        .toEqual({ r: BAND_RED, g: BAND_GREEN, b: BAND_BLUE });
+    }
+    const outsideBefore = await readWindow(page, geometry, WIDE_PROBE_OUTSIDE);
+
+    // DESATURATE, 100 document pixels below the row the Draw stroke swept.
+    const sponged = await selectSponge(page, 'desaturate');
+    await strokeDocument(page, sponged, WIDE_SPONGE_A, { x: WIDE_SPONGE_TO_X, y: WIDE_ROW_A }, 20);
+    await expect
+      .poll(async () => meanChannels(await readWindow(page, sponged, WIDE_PROBE_A)), {
+        message: 'a full-Flow Desaturate must reach a probe 100px from the gesture that made the layer',
+        ...pollOptions,
+      })
+      .toEqual({ r: BAND_LUMA, g: BAND_LUMA, b: BAND_LUMA });
+
+    // SATURATE, 200 document pixels below the Draw stroke, so the two rows cannot have contaminated
+    // each other even after the Desaturate has flattened the first one to grey.
+    await setMode(page, 'saturate');
+    const saturated = await workspaceGeometry(page);
+    await strokeDocument(
+      page,
+      saturated,
+      { x: WIDE_SPONGE_FROM_X, y: WIDE_ROW_B },
+      { x: WIDE_SPONGE_TO_X, y: WIDE_ROW_B },
+      20
+    );
+    await expect
+      .poll(async () => meanChannels(await readWindow(page, saturated, WIDE_PROBE_B)), {
+        message: 'a full-Flow Saturate must reach a probe 200px from the gesture that made the layer',
+        ...pollOptions,
+      })
+      .toEqual({ r: BAND_SATURATED_RED, g: BAND_SATURATED_GREEN, b: BAND_SATURATED_BLUE });
+
+    // THE BRUSH HALF, at document scale. Byte for byte, on the same layer, past the tip's reach.
+    expect
+      .soft(
+        await readWindow(page, saturated, WIDE_PROBE_OUTSIDE),
+        'pixels outside the brush footprint must be byte-identical on a document-sized layer too'
+      )
+      .toEqual(outsideBefore);
+  });
+
+  /**
+   * THE TRIPWIRE FOR THE FINDING IN `HANDOFF.md`: on a fresh document the desktop Layers panel
+   * offers NO way to obtain a layer a tonal tool can edit.
+   *
+   * ## The defect this pins
+   *
+   * `SpongeToolArea.tsx:54` refuses the gesture when the active layer `isBedrock`, and
+   * `useApp.ts:161` marks BOTH the blank document (`App.tsx:25`) and an opened image file as
+   * bedrock. `LayersTab.tsx` therefore cannot be reached for a fix through the UI: it has no
+   * New Layer, no Duplicate Layer and no convert-or-unlock control — while
+   * `MobileLayersDrawer.tsx:172-186` DOES publish one, so the affordance exists in the codebase
+   * and is absent from the desktop panel. A user who opens a photo and picks the Sponge gets a
+   * refused gesture, and no visible way out. That is the whole of "the Sponge does not work".
+   *
+   * `LayersTab.test.tsx:312` pins the panel's own bedrock looseness as intended, and
+   * `docs/LAYERS-PANEL.md` [§12] records the same hole with a planned fix, so this test is the
+   * third leg of one agreed finding rather than a new claim.
+   *
+   * **It is a pin, so a fix MUST delete it in the same change** — the moment the panel grows any
+   * of the three controls, one of these three counts turns red. The absence assertions are scoped
+   * to the Layers panel and matched by role rather than by test id, so the fix may name them
+   * anything; the scope matters because the page carries other buttons whose names would collide
+   * with these words.
+   */
+  test('the desktop Layers panel publishes no control that yields an editable layer', async ({ page }) => {
+    const panel = page.getByTestId('panel-group-layers');
+    await expect(panel, 'the Layers panel is mounted on a desktop viewport').toBeVisible();
+
+    // One row: the backing image. A second row would mean the panel can already create one.
+    await expect(page.getByTestId('layer-row'), 'a fresh document is exactly one layer deep').toHaveCount(1);
+
+    for (const name of [/new layer/i, /duplicate/i, /unlock|convert/i]) {
+      await expect(
+        panel.getByRole('button', { name }),
+        `the Layers panel must publish no "${name}" control for a tonal tool to be reachable through`
+      ).toHaveCount(0);
+    }
+    // The mobile drawer's own New Layer button, which is the affordance the desktop lacks. It is
+    // named here so the gap is a missing mount rather than a missing action.
+    await expect(
+      page.getByTestId('mobile-add-layer-button'),
+      'the mobile affordance is not mounted on desktop'
+    ).toHaveCount(0);
   });
 });

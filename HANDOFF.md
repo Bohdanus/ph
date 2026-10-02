@@ -4988,3 +4988,59 @@ change closed.
 **Files.** `toolbar-mapping.ts`, `src/components/Mobile/mobile-tools.ts:50`,
 `src/components/Mobile/MobileBottomBar.tsx:33`, `src/components/Mobile/MobileToolSheet.tsx:24`,
 `src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx:302`
+## 174. The Sponge — and every other tonal tool — is unreachable on a document a user opens, and the desktop Layers panel has no control that yields an editable layer
+
+`src/components/Main/SpongeToolArea.tsx:54`, `src/hooks/useApp.ts:161`, `src/components/SidebarRight/LayersTab.tsx`
+
+Reported as "the Sponge tool does not work". **The Sponge is not at fault and needs no fix.** Its
+own e2e spec passes 8/8, and the two cases added with this entry prove it on a document-sized
+layer at exact arithmetic (`e2e/sponge-tool.spec.ts`, "saturates and desaturates a document-sized
+layer, probed away from the gesture that made it": Desaturate lands the pivot luma `102,102,102`
+and Vibrance-on Saturate lands `245,70,0` from `200,80,32`, with a byte-identical read 200px past
+the tip so the brush-not-filter half holds at document scale too).
+
+**The defect is reachability.** `SpongeToolArea.tsx:54` refuses the gesture when the active layer
+`isBedrock`. Both ways a user obtains a document produce exactly one bedrock layer: the blank
+document (`src/App.tsx:25`) and an opened image file (`src/hooks/useApp.ts:161`). On desktop the
+Layers panel publishes no New Layer, no Duplicate Layer and no convert-or-unlock control —
+`LayersTab.tsx` carries a visibility toggle, a drag handle, an inline rename and a trash button and
+nothing else — while `MobileLayersDrawer.tsx:172-186` **does** publish one, so the affordance
+exists in the codebase and is absent from the panel. The only non-bedrock layers a desktop user can
+reach are the ones a layer-creating tool makes, and those rasters are the drawn extent
+(`src/components/Main/DrawToolArea.tsx:143`, one layer per gesture), so a Sponge stroke can only
+ever touch what was already drawn.
+
+**The full set this disables, not just the Sponge.** The same `!activeLayer.isBedrock` guard is in
+`DodgeToolArea.tsx:59`, `BurnToolArea.tsx:65`, `SmudgeToolArea.tsx:79`, `EraserToolArea.tsx:79`,
+`CloneStampToolArea.tsx:210`, `GradientToolArea.tsx:85` and `FillToolArea.tsx:107`. Every
+pixel-editing tool in the app is dead on a freshly opened document, and fixing only the Sponge would
+fix one eighth of the report.
+
+**Why this is not a one-line fix, and must not be taken as one.** The two candidate fixes are
+opposed and both are the operator's:
+
+- **Let the tonal tools edit the backing image.** Photoshop's answer is that the Sponge is not a
+  painting tool for lock purposes: pro retouching guidance states the Dodge and the Burn "have to
+  be used on the background layer or another layer with real pixels in it", and a Sponge
+  specifically — on the locked Background layer, not a new blank one. If that is right, the guard is
+  a deviation and it belongs in `docs/OVERRIDES.md`, which no agent may author.
+- **Give the panel the conversion affordances** (`Layer from Background`, Duplicate Layer, New
+  Layer). That is a missing feature rather than a deviation, so it is buildable — but a New Layer
+  alone does not unblock the Sponge: the mobile one creates an **opaque white** full-canvas layer
+  (`MobileLayersDrawer.tsx:175-179`), which hides the photo, and a transparent one has no stored
+  chroma for `spongeLuma` to scale. The useful variant is the documented Photoshop recipe —
+  convert or duplicate the backing image so the tonal tools have the pixels to work on.
+
+`docs/LAYERS-PANEL.md` [§12] already records the panel's `isBedrock` blind spot and [§17] row 2
+plans "Honor `isBedrock` in the panel", so this entry joins an agreed finding rather than opening
+one. Note that fix would also require editing `LayersTab.test.tsx:312`, which pins the trash
+control on a bedrock row as intended.
+
+**Pinned by** `e2e/sponge-tool.spec.ts`, "the desktop Layers panel publishes no control that yields
+an editable layer" — a deliberate tripwire asserting the three controls are absent. It is a pin, so
+**a fix must delete it in the same change.**
+
+**Files.** `src/components/Main/SpongeToolArea.tsx:47-74`, `src/hooks/useApp.ts:158-162`,
+`src/App.tsx:20-26`, `src/components/SidebarRight/LayersTab.tsx:106-300`,
+`src/components/Mobile/MobileLayersDrawer.tsx:172-186`, `src/components/Main/DrawToolArea.tsx:133-143`,
+`docs/LAYERS-PANEL.md` §12 and §17, `e2e/sponge-tool.spec.ts`
