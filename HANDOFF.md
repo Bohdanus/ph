@@ -3685,9 +3685,9 @@ references alone. Verify by grepping for each old path afterwards, and by runnin
 would catch a stale key.
 
 **Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
-`docs/README.md:78-94`, `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
-`docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`,
-`e2e/OPEN_PROBLEMS.md`
+`docs/README.md:78-94` ("Not maintained here"), `TEST_ISSUES.md:3-8`,
+`CANVAS-RESOLUTION-PLAN.md:1-4`, `docs/next-target-useLayer.md:3-8`,
+`docs/save-settings-inconsistency.md:3-11`, `e2e/OPEN_PROBLEMS.md`
 ---
 
 ## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
@@ -4315,42 +4315,6 @@ process rule, converting "rogue commits nobody can attribute" into "a dirty tree
 `scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
 `kilo.jsonc:31-69`, `AGENTS.md` (delegation section)
 
-## 155. The export branch validates the composited canvas against the document frame's WIDTH and never checks its HEIGHT
-
-`fix/export-decouple-display` decouples the export surface from the visible workspace
-canvas, which is the right change and unblocks the retina work. Its one real defect is a
-half-written guard in the new module. `renderExportCanvas` composites into a canvas and
-then asserts it got the right shape:
-
-```ts
-if (!published || canvas.width !== documentFrameSize(documentFrame).width) {
-  throw new Error('Unable to render the document for export');
-}
-```
-
-The height is never compared. A compositor that sized the target to the correct width and
-the wrong height passes this check, and the encoder then writes a file of the wrong
-dimensions from a surface that reported success.
-
-**The file exists on no other ref.** `git cat-file -e main:src/contexts/export-canvas.ts`
-fails — the branch is the only holder of the module, the `useFile.tsx` call site and the
-three header call sites. Deleting the worktree, or letting a sweep dispose it as
-`0 commits ahead`, loses all of it: the branch reads as disposable by commit count and
-merged-by-`git cherry` means neither that it is safe to drop nor that it is already landed.
-`git cherry main fix/export-decouple-display` reports `+` for both patches.
-
-**Fix.** Add the height disjunct so the guard is a shape check and not a width check:
-
-```ts
-const { width, height } = documentFrameSize(documentFrame);
-if (!published || canvas.width !== width || canvas.height !== height) {
-```
-
-Add the wrong-height-only case beside the existing wrong-width one, so the guard is pinned
-by a test that fails without the disjunct.
-
-**Files.** `fix/export-decouple-display:src/contexts/export-canvas.ts:55`
-
 ## 156. `fix/overnight-test-red` restores an attribute a written prohibition forbids, and narrows a machine-wide gate to one worktree
 
 The branch is 12 commits that fixed a genuinely red suite, and it should not be merged:
@@ -4632,3 +4596,170 @@ at `src/contexts/__tests__/useLayer.lifecycle.test.tsx:702-730`.
 
 **Files.** `src/tools/descriptions/type-crop.ts:230-231,302`, `src/util/rect.ts:36-50`,
 `src/contexts/useLayer.ts:719`, `docs/OVERRIDES.md`
+---
+
+## 162. A failed export tells the user nothing, and `SaveDialog` has nowhere to tell them
+
+`src/components/SaveDialog/SaveDialog.tsx:14-17`
+
+`renderExportCanvas` throws when the compositor reports failure, which `useFile.handleImageSave`
+catches at `src/contexts/useFile.tsx:142-152`: it logs and resolves `null`. The dialog is
+deliberately left open so a retry is possible — that teardown placement is itself a documented
+fix at `useFile.tsx:131-139` — but `SaveDialog` holds exactly three pieces of state
+(`fileName`, `format`, `jpegQuality`) plus `saving`, has no error state, and no render slot
+for one. Its only visual signal is `saving ? 'Saving…' : 'Save'` at `:141`. Its own `catch` at
+`:23-24` is unreachable from this path, because `handleImageSave` catches internally and always
+resolves.
+
+So a broken layer bitmap — a transferred or detached `ImageBitmap` raises `InvalidStateError`
+inside `drawImage`, which `layer-renderer.ts:152-155` catches into a `false` return — produces a
+click with no visible consequence at all. Before the export decouple, the same broken layer left
+the display canvas holding the last good composite (`layer-renderer.ts:122-126` states that
+preservation as its contract) and the export encoded a stale-but-real file.
+
+**Fix.** Add an error state to `SaveDialog` and render it in the panel body between `:122` and
+`:124`. This requires a signature change: `onSave` is `(data) => Promise<void>` (`:9`) and must
+become in-band, since today the only signal is the in-band `null` every caller already guards
+with. Decide the copy and whether the message is dismissible; that is a product judgement, not
+a mechanical edit.
+
+**Files.** `src/components/SaveDialog/SaveDialog.tsx:14-17,23-24,141`,
+`src/contexts/useFile.tsx:142-152`
+
+---
+
+## 163. Every paint stroke is bilinearly resampled, at DPR 1, because the layer box is fractional
+
+`src/util/draw.ts:22-25`, `src/tools/draw.ts:102`
+
+`pointsBoundingPos` returns `width: maxX - minX + 2 * lineWidth` with no rounding of any kind,
+and its inputs are pointer coordinates divided by the contain fit, so `pos.width` is generally
+fractional. `draw.ts:102` then does `new OffscreenCanvas(size.width, size.height)`, whose
+constructor **truncates** — the mechanism `src/tools/shape.ts:131-137` already documents. The
+composite draws at the _untruncated_ size (`src/contexts/presentation-evaluator.ts:168`,
+`ctx.drawImage(bitmap, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height)`) with
+`imageSmoothingEnabled` at its default `true`, because nothing in the composite path sets it.
+
+So every brush, pencil and `penType: 'pen'` stroke is stretched by
+`pos.width / trunc(pos.width)` onto a fractional destination x. For a 200px pencil drag that is
+a 0.12% horizontal stretch — an order of magnitude weaker than the retina blur, and it bites
+hardest on exactly the 1–3px strokes, where the fixed sub-pixel destination offset is largest
+relative to the stroke.
+
+**This is in `CANVAS-RESOLUTION-PLAN.md:184`'s "Paint algorithms — CLEAR — do not touch" row, and
+that row is wrong for this file.** The correct pattern is four lines away in concept and already
+in the tree: `shapeGeometryBounds` (`src/tools/shape.ts:149-162`) floors the origin and ceils the
+far edge, producing four integers.
+
+**Fix.** Round `pointsBoundingPos` outward the way `shapeGeometryBounds` does. Verify against
+`e2e/paint-tool-pixels.spec.ts:250-251`, whose `edge.height < 30` is a **capture-pixel**
+measurement with no scale correction and is recorded in DPR-1 numbers — a 0.12% resample moves
+it, and it sits closest to its limit of anything in the suite.
+
+**Files.** `src/util/draw.ts:6-27`, `src/tools/draw.ts:99-103`,
+`src/contexts/presentation-evaluator.ts:168`, `CANVAS-RESOLUTION-PLAN.md:184`,
+`e2e/paint-tool-pixels.spec.ts:250-251`
+
+---
+
+## 164. No stroke geometry is aligned to the pixel grid, so a 1px line is two half-grey rows
+
+`src/tools/shape.ts:171-175`, `src/tools/draw.ts:76-97`, `src/util/draw.ts:151-154`
+
+Neither context setup contains a half-pixel offset, a coordinate snap, or any `Math.round` on a
+point. `setShapeCtx` (`shape.ts:164-175`) sets `strokeStyle`, `fillStyle`, `lineWidth`,
+`lineCap`, `globalAlpha` and `setLineDash` and nothing else; `setupDrawCtx` (`draw.ts:76-97`)
+adds `globalCompositeOperation`, `lineJoin` and `lineCap`. A `lineWidth: 1` horizontal stroke at
+an integer y therefore covers `y ∈ [y-0.5, y+0.5]` — row `y-1` at 50% and row `y` at 50% — a
+2px band of grey where the user asked for a 1px line. Visible at DPR 1, and orthogonal to the
+retina upscale: it is about where geometry lands within a pixel, not how many pixels the surface
+has.
+
+**Re-derive Adobe's rule from Adobe before implementing anything here.** There is no entry in
+`docs/OVERRIDES.md`, and per `AGENTS.md`'s ladder the product's own behaviour is the source of
+truth for what Photoshop does. Two facts make a naive fix wrong: the thickness slider reaches
+half-integers (`src/components/ToolbarsRight/Figures/Shape.tsx:165`, `step="0.5"`), so "crisp" is
+undefined for a 1.5px stroke and any snap rule is a policy choice; and only axis-aligned strokes
+can be snapped this way, so a 45° line would stay soft — a half-measure that looks fixed in a
+demo.
+
+**This is the one candidate that collides with a gate.** Alignment changes _document_ pixels, so
+it moves the committed raster, therefore the exported file, therefore the baselines in
+`e2e/export/visual-regression.spec.ts`, which `AGENTS.md` forbids re-recording to accommodate a
+change. Raising the display resolution (D2c) does not.
+
+**Files.** `src/tools/shape.ts:164-175`, `src/tools/draw.ts:76-97`, `src/util/draw.ts:151-154`,
+`src/components/ToolbarsRight/Figures/Shape.tsx:160-167`, `e2e/export/visual-regression.spec.ts`
+
+---
+
+## 165. Nothing in the suite can detect a change to a canvas backing store
+
+`e2e/check-dpr.spec.ts:8`, `e2e/helpers/screenshot-scale.ts:177-185`
+
+`imageBoundsToCss` derives its scale from the decoded capture's extent over the measured box's
+extent, so it is invariant under capture scaling: `check-dpr.spec.ts` passes identically whether
+the store is 1×, 2× or 8×. Its tolerance is 25 CSS px (`CSS_POSITION_TOLERANCE`, declared at `:8`,
+asserted at `:66-68`), roughly 50× the measured pointer-mapping error, so it distinguishes
+"mapping is DPR-invariant" from "mapping is grossly broken" and nothing finer. It is the only
+`page.goto('/')` in the suite under an emulated `deviceScaleFactor: 2`; every other 2× test uses
+`page.setContent` on synthetic HTML. Two further sites divide by a canvas's own extent
+(`e2e/selection-marching-ants.spec.ts:130-132`, `e2e/selection-gestures.spec.ts:254-256`), so
+doubling the store halves the derived scale and leaves the CSS position unchanged — equally blind.
+
+The three overlay stores (`tool-overlay-canvas`, `rect-overlay-canvas`, `selection-ants-canvas`,
+`src/components/Main/Main.tsx:260,300,313`) are compared against nothing, not even each other, so
+a change that raised one and not the others is undetectable.
+
+**The relation to pin is `store / data-fit-document-* === 1`, in BOTH a dpr-1 and a dpr-2
+context** — the dpr-2 copy is load-bearing, not redundant, since a dpr-conditional raise passes
+at dpr 1. The right-hand side comes from the app's own `data-fit-document-*`
+(`src/hooks/usePointerPosition.ts:107-108`, from the store's `totalSize`), which is a different
+subsystem from `resizeCanvas`.
+
+**Do not write `canvas.width === box.width * devicePixelRatio`.** It is false today twice over:
+`src/util/canvas.ts:3-6` assigns the width in JS, so no device property is in the causal chain;
+and the element is `h-full w-full object-contain` (`Main.tsx:255`), so the store is a _document_
+quantity and the box enters only through the contain fit, on the **binding axis** alone. At
+1280×720 the fit is height-limited (583/600 = 0.9717), so the width-axis form is red today
+(777.3 vs 974). `e2e/text-tool.spec.ts:481` already rejects the DPR form in writing, for captures.
+
+**Files.** `e2e/check-dpr.spec.ts`, `e2e/helpers/screenshot-scale.ts:5-7,177-185`,
+`e2e/selection-marching-ants.spec.ts:130-132`, `e2e/selection-gestures.spec.ts:254-256`,
+`src/components/Main/Main.tsx:260,300,313`, `src/hooks/usePointerPosition.ts:107-108`,
+`playwright.config.ts` (no `deviceScaleFactor`; `devices['Desktop Chrome HiDPI']` exists with the
+same 1280×720 viewport, and nothing in `e2e/` reads `window.screen`, so a second project would not
+move any layout arithmetic — but it would put the six known 2× failures in
+`e2e/OPEN_PROBLEMS.md:822-829` into the default run)
+
+---
+
+## 166. The raster and PSD export branches size from different fields, and nothing reconciles them
+
+`src/contexts/export-canvas.ts:61-66`, `src/contexts/psd-utils.ts:243`
+
+`renderExportCanvas` derives its extent from `documentFrame` and ignores its `size` argument
+whenever the frame is valid. `savePsd` does the opposite: it sizes the composite from `size`
+(`canvas2d(size.width, size.height)`) and uses the frame only for layer offsets. A second
+asymmetry in the same path: `src/contexts/useFile.tsx:122` gates the PSD frame on truthiness
+alone, so an invalid-but-truthy frame reaches `savePsd` unvalidated, while the raster branch
+validates it with `isValidDocumentFrame`.
+
+**Unreachable today, and that is the whole risk.** Every store writer that sets a frame re-derives
+`totalSize` from it (`src/contexts/StoreContext.tsx:419,455-456,1197-1198,1243-1244,1288`), and
+the one reducer arm that could set `size` alone — `SET_SIZE` at `StoreContext.tsx:588-600` — has
+no dispatcher anywhere; the only non-test reference is commented out at `:1379-1384`. A future
+dispatcher is what turns a comment defect into a silent one-document-two-sizes bug.
+
+**Fix.** Reconcile them at the boundary rather than documenting the gap: have the raster branch
+size from `size` and take only the origin from the frame, or make both branches read one field.
+Whatever is chosen, the `isValidDocumentFrame` check should move to the shared boundary so the
+two branches cannot disagree about what a valid frame is. Both halves are now
+pinned: the extent at `src/contexts/__tests__/export-canvas.test.ts`, and the origin — through
+the call site, which is where a frame can be dropped — at `src/contexts/__tests__/useFile.test.tsx`
+("renders the export surface from the staged documentFrame, not from size alone"), which gives
+the frame a non-zero origin and an extent that disagrees with `size`.
+
+**Files.** `src/contexts/export-canvas.ts:44,61-66`, `src/contexts/psd-utils.ts:209-213,243`,
+`src/contexts/useFile.tsx:122`,
+`src/contexts/StoreContext.tsx:419,455-456,588-600,1197-1198,1243-1244,1288,1379-1384`

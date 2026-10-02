@@ -130,8 +130,14 @@ function createSnapshotSurface(size: Size): SnapshotSurface {
 
 function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size): SnapshotSurface | null {
   try {
-    const snapshot = createSnapshotSurface(size);
-    const context = snapshot.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    let snapshot = createSnapshotSurface(size);
+    let context = snapshot.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    if (!context || typeof context.drawImage !== 'function') {
+      const fallback = document.createElement('canvas');
+      resizeCanvas(fallback, size.width, size.height);
+      snapshot = fallback;
+      context = fallback.getContext('2d') as CanvasRenderingContext2D | null;
+    }
     if (!context) return null;
     context.drawImage(canvas, 0, 0);
     return snapshot;

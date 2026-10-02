@@ -109,7 +109,7 @@ const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
 };
 
 const DesktopHeader = () => {
-  const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
+  const [{ currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
@@ -271,13 +271,12 @@ const DesktopHeader = () => {
                   type="button"
                   onClick={async () => {
                     try {
-                      if (!hasImage || !canvasRef.current) return;
+                      if (!hasImage) return;
                       let exportLayers!: ReturnType<typeof commitDirtyTool>;
                       flushSync(() => {
                         exportLayers = commitDirtyTool();
                       });
                       const data = await openSaveImageDialog({
-                        canvas: canvasRef.current,
                         fileName,
                         layers: exportLayers,
                         size: totalSize,
