@@ -4,6 +4,7 @@ import {
   type CssBounds,
   type ImageDataResult,
   type PixelPredicate,
+  containFit,
   drawLine,
   getSelectionBounds,
   getWorkspaceCanvas,
@@ -766,6 +767,232 @@ function styleToggle(page: Page, name: string) {
   return page.getByRole('button', { name, exact: true });
 }
 
+/* -------------------------------------------------------------------------------------------------
+ * The two kinds of type, and the box each of them grows.
+ *
+ * Everything below measures the DRAFT, on the tool overlay, before Apply: the draft rectangle
+ * `useRect` paints IS the box (`src/hooks/useRect.ts:203-224` draws the outline and the four
+ * handles from `rectUnsortedRef`, and the effect at `:84-95` re-points that ref at `initialRect`
+ * — which is `args.rect`, the box `calculateNewRect` just recomputed — on every commit), and the
+ * type on the overlay is drawn in the tool's own colour by `renderText`
+ * (`src/components/Main/TextToolArea.tsx:61-69`). So before Apply the canvas carries two things
+ * this file can read separately: red ink for the type, `#007bff` for the box.
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * The selection blue, as a predicate: the same three constants `getSelectionBounds` reads, so a
+ * pixel this matches is the same pixel that helper reports (`canvas-helpers.ts:755-788`).
+ *
+ * It cannot be confused with the type's own red (`isRedInk` above), because the frame's red
+ * channel is 0 against the ink's 180+, and it cannot be confused with the `rgba(0, 0, 0, 0.7)`
+ * dim `drawMask` lays over everything outside the box (`useRect.ts:205-211`): that dims white to
+ * RGB 76,76,76, whose green channel is below `SELECTION_GREEN_MIN`.
+ */
+const isDraftFrame: PixelPredicate = (red, green, blue, alpha) =>
+  alpha !== 0 &&
+  red <= STROKE_ANALYSIS.SELECTION_RED_MAX &&
+  green >= STROKE_ANALYSIS.SELECTION_GREEN_MIN &&
+  blue >= STROKE_ANALYSIS.SELECTION_BLUE_MIN;
+
+/**
+ * How far outside the box the frame's blue reaches, in DOCUMENT px, on every side.
+ *
+ * Both things that paint it are CENTRED on the box's own edge rather than inside it, which is
+ * why the frame is wider and taller than the box it reports: the dashed stroke is `2 / scale`
+ * wide (`useRect.ts:209-212`) so 1 document px of it lies outside, and each handle is an
+ * `HANDLE_SIZE / scale` square centred on a corner (`useRect.ts:218-224`) so `HANDLE_SIZE / 2`
+ * of it does too. `HANDLE_SIZE` is 12 (`src/util/constants.ts:1`), so 6 + 1 = 7.
+ *
+ * It is used only as a DERIVATION of where the box's own edge is from where the blue stops, never
+ * as a tolerance, so it does not widen any margin in this file.
+ */
+const FRAME_OVERHANG_DOC_PX = 7;
+
+/**
+ * `TEXT_PADDING`, copied rather than imported for the reason `DRAW_TOOL_STROKE_WIDTH` documents:
+ * nothing under `e2e/` imports app source (`vitest.e2e.config.ts` records the boundary), so a
+ * number the app owns is written out here with its citation.
+ */
+const TEXT_PADDING_DOC_PX = 5; // src/util/constants.ts:3
+
+/**
+ * The overflow icon's edge, in document px — `OVERFLOW_INDICATOR_PX`
+ * (`src/tools/text.ts:471`). Named there as a reconstruction, so this is a copy of the app's own
+ * choice rather than an Adobe figure, and the assertions that use it are about the icon's
+ * POSITION in the box's corner and about its being absent, not about how it looks.
+ */
+const OVERFLOW_INDICATOR_DOC_PX = 8;
+
+/**
+ * The whole canvas box, as a screenshot clip.
+ *
+ * A clip over the box rather than over a rectangle is what makes the two scans below
+ * unconditional: a crop can only report the ink inside itself, so `measureDraft` photographs the
+ * whole canvas and maps the bounds back onto the box, the same argument the committed-ink test
+ * makes at length (`:891-901`).
+ */
+function canvasBoxClip(box: BoundingBox): Required<{ x: number; y: number; width: number; height: number }> {
+  return { x: box.x, y: box.y, width: box.width, height: box.height };
+}
+
+/**
+ * What one draft reads: the type's ink and the box it is laid out in, both in page CSS px.
+ *
+ * The capture is the whole canvas box, so every figure below is a bound over everything on it
+ * rather than over a crop, and both scans are run on the same decoded image — the two colours are
+ * disjoint, so the pair cannot be double-counted.
+ */
+interface DraftMeasurement {
+  ink: CssBounds;
+  frame: CssBounds;
+  /** Device pixels per CSS pixel of the capture, which is what makes the two comparable. */
+  scale: { x: number; y: number };
+}
+
+/** Waits for the draft's ink anywhere on the canvas, then measures the ink and the box. */
+async function measureDraft(page: Page, testInfo: TestInfo, box: BoundingBox, name: string): Promise<DraftMeasurement> {
+  const capture = await captureCanvasScreenshot(page, box, testInfo, name);
+  const image = await loadImageData(capture);
+  const ink = await scanPixelsForBounds(image, isRedInk);
+  const frame = await scanPixelsForBounds(image, isDraftFrame);
+  expect(ink.found, `no red type on the canvas in ${name}`).toBe(true);
+  expect(frame.found, `no draft frame on the canvas in ${name}`).toBe(true);
+
+  const extent = { width: image.width, height: image.height };
+  return {
+    ink: imageBoundsToCss(extent, box, ink),
+    frame: imageBoundsToCss(extent, box, frame),
+    scale: { x: image.width / box.width, y: image.height / box.height },
+  };
+}
+
+/**
+ * The type's own size, read off the bar rather than assumed.
+ *
+ * Both fields are CONTROLLED inputs (`Text.tsx:159` and `:177-182`), so what they read is what
+ * `resolveTextStyle` hands the renderer, and reading them keeps the line-step arithmetic below a
+ * derivation instead of a copy of the seed in `src/tools/settings.ts:86-88`. Neither is set by
+ * these three tests, so a change to the default moves the measurement rather than breaking it.
+ */
+async function typeMetrics(page: Page): Promise<{ fontSize: number; lineHeight: number }> {
+  const fontSize = Number(await page.locator('#font-size-input').inputValue());
+  const lineHeight = Number(await page.locator('#line-height-slider').inputValue());
+  expect(Number.isFinite(fontSize) && fontSize > 0, `#font-size-input reads "${fontSize}"`).toBe(true);
+  expect(Number.isFinite(lineHeight) && lineHeight > 0, `#line-height-slider reads "${lineHeight}"`).toBe(true);
+  return { fontSize, lineHeight };
+}
+
+/**
+ * One baseline-to-baseline step ON SCREEN, in CSS px.
+ *
+ * `renderText` steps the baseline by `fontSize * lineHeight` in DOCUMENT px
+ * (`src/tools/text.ts:519`, `:537`), and the document is displayed at a contain scale rather than
+ * 1:1 (`canvas-helpers.ts:91-99`), so the step is that product times the fit's own scale. This is
+ * the figure the "one line or more than one line" comparisons below are made against: a single
+ * line's ink is always shorter than a line box, and two lines' ink is always longer than one.
+ */
+const lineStepOnScreen = (metrics: { fontSize: number; lineHeight: number }, fit: { scale: number }): number =>
+  metrics.fontSize * metrics.lineHeight * fit.scale;
+
+/**
+ * The four containment comparisons against the box the frame is drawn around, on the same
+ * `INK_MARGIN` every other containment assertion in this file uses, and for the same reason: the
+ * margin is a statement about placement, and it is not widened here.
+ *
+ * The box is taken from the measured frame rather than from the dragged rectangle because the two
+ * are not the same thing for a paragraph — its height is content-derived
+ * (`src/util/rect.ts:157-161`) — and because the frame is what the user is shown.
+ */
+function expectInkInsideFrame(draft: DraftMeasurement, label: string) {
+  const allowed = {
+    left: draft.frame.left + INK_MARGIN,
+    top: draft.frame.top + INK_MARGIN,
+    right: draft.frame.right - INK_MARGIN,
+    bottom: draft.frame.bottom - INK_MARGIN,
+  };
+  expect.soft(draft.ink.left, `${label}: ink escaped the left of the box`).toBeGreaterThanOrEqual(allowed.left);
+  expect.soft(draft.ink.top, `${label}: ink escaped the top of the box`).toBeGreaterThanOrEqual(allowed.top);
+  expect.soft(draft.ink.right, `${label}: ink escaped the right of the box`).toBeLessThanOrEqual(allowed.right);
+  expect.soft(draft.ink.bottom, `${label}: ink escaped the bottom of the box`).toBeLessThanOrEqual(allowed.bottom);
+}
+
+/** The width of a measured span, which `CssBounds` carries as a pair of edges rather than a size. */
+const spanWidth = (bounds: CssBounds): number => bounds.right - bounds.left;
+const spanHeight = (bounds: CssBounds): number => bounds.bottom - bounds.top;
+
+/**
+ * Red ink inside a page-CSS region, and `null` when the region holds none.
+ *
+ * `page.screenshot({ clip })` takes VIEWPORT coordinates and adds the scroll offset itself
+ * (`screenshot-scale.ts:118-123`), which is the space every box in this file is already in at
+ * scroll 0 — the committed-ink test's own tripwire, restated: this region is derived from a
+ * measured frame rather than from anything assumed about where the page sits.
+ */
+async function colourBoundsIn(page: Page, region: Rect, predicate: PixelPredicate): Promise<CssBounds | null> {
+  const image = await loadImageData(await page.screenshot({ clip: toClip(region) }));
+  const bounds = await scanPixelsForBounds(image, predicate);
+  if (!bounds.found) return null;
+  return imageBoundsToCss(
+    { width: image.width, height: image.height },
+    { x: region.left, y: region.top, width: region.right - region.left, height: region.bottom - region.top },
+    bounds
+  );
+}
+
+async function redBoundsIn(page: Page, region: Rect): Promise<CssBounds | null> {
+  return colourBoundsIn(page, region, isRedInk);
+}
+
+/** The same read for the box: where `#007bff` is inside a region. */
+async function blueBoundsIn(page: Page, region: Rect): Promise<CssBounds | null> {
+  return colourBoundsIn(page, region, isDraftFrame);
+}
+
+/**
+ * The string the paragraph tests lay out, chosen off the geometry rather than off taste.
+ *
+ * The dragged box is 400 CSS px wide, which is 411 document px at this viewport's 0.97167 fit,
+ * and the wrap width a paragraph box offers its text is the box less the padding on both sides
+ * (`textWrapWidth`, `src/tools/text.ts:374-376`) — 401 document px. At 64px Arial those seven
+ * words measure about 1078 document px with their spaces, which is 2.7 line widths: the greedy
+ * breaker fills the first line to 386, cannot fit `inside` after it and breaks there, fits
+ * `inside the` on the second, and puts `dragged box` on the third. Three lines, and the third is
+ * not a runt of one short word, which is what keeps the ink's bottom edge clear of the box's.
+ */
+const PARAGRAPH_TEXT = 'wrap this text inside the dragged box';
+
+/** One line, and three words — see the paragraph test for why the count matters there. */
+const POINT_TEXT = 'one line only';
+
+/** Where a point-type draft is placed, in canvas-box coordinates. A press, not a drag. */
+const CLICK_POINT = { x: 200, y: 300 };
+
+/**
+ * The rectangle the overflow test drags, low in the canvas box so that the text can outgrow it
+ * without leaving the document.
+ *
+ * 400 CSS px wide and 160 tall, at box y 400..560 — inside the 583-row box with 23 rows below
+ * it, and inside the 720-row window as page y 500..660. The height is the point: a box 165
+ * document px tall holds two lines (2 x 76.8 = 153.6) and not three (240.4), so one line fits
+ * and three do not, which is what lets the test watch the same gesture move between the two
+ * states without clearing anything.
+ */
+const OVERFLOW_RECT: DraftRect = { x1: 200, y1: 400, x2: 600, y2: 560 };
+
+/**
+ * Three lines of one character each, so that the only ink anywhere in the box is a single narrow
+ * stripe at its top-LEFT.
+ *
+ * That is what makes the icon findable without a fragile pixel guess: the icon lives in the
+ * box's bottom-RIGHT corner, and a 17px-wide 'I' at the top-left of a 400px box cannot reach it.
+ * `'I\nI\nI'` is three lines under the greedy breaker because `\n` is a hard break the renderer
+ * splits on itself (`layoutText`, `src/tools/text.ts:453-457`) — the wrap width never enters it.
+ */
+const OVERFLOW_TEXT = 'I\nI\nI';
+
+/** The one line that fits {@link OVERFLOW_RECT} at this type size. */
+const FITS_TEXT = 'I';
+
 test.describe('Text tool', () => {
   test.describe.configure({ timeout: TEXT_TOOL_TIMEOUT_MS });
 
@@ -1507,5 +1734,364 @@ test.describe('Text tool', () => {
     );
     expect(css.right, 'ink ran off the right of the canvas').toBeLessThanOrEqual(box.x + box.width);
     expect(css.left, 'ink ran off the left of the canvas').toBeGreaterThanOrEqual(box.x);
+  });
+
+  /**
+   * A drag places PARAGRAPH type: the lines wrap to the width that was dragged, and the box keeps
+   * that width and grows its HEIGHT instead.
+   *
+   * Adobe's own words for the pair are the spec: `PARAGRAPHTEXT` is "Text that wraps within a
+   * bounding box" and `POINTTEXT` is "Text that does not wrap"
+   * (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem). The app
+   * decides between them on the gesture alone — `isClick = w <= 3 && h <= 3`
+   * (`TextToolArea.tsx:37`), so a 400x120 press is a drag on both axes and the box it produces
+   * is a paragraph box whatever else is true.
+   *
+   * Three assertions, and each one fails on a specific way the wrapping could be absent:
+   *
+   *   1. the ink is TALLER THAN ONE LINE BOX — which is what "wrapped" means, stated in the
+   *      renderer's own units (`lineStepOnScreen` is the baseline step, `text.ts:519`), so it is
+   *      a comparison of two measured figures rather than a constant;
+   *   2. the ink stays inside the dragged WIDTH — the wrap width is the box less the padding on
+   *      both sides (`textWrapWidth`, `text.ts:374-376`), so the widest line must end short of
+   *      the right edge, and the four comparisons on the width are what say it did;
+   *   3. the BOX kept that width — which is the load-bearing half, and the one a point-type
+   *      growth cannot satisfy. `calculateNewRect` grows a paragraph box only in height
+   *      (`rect.ts:152-161`), so an implementation that grew the width instead would put the
+   *      whole 1078px string in one line and widen the box to hold it: past this canvas box, in
+   *      fact, which is why the bound below is a ratio rather than an equality.
+   */
+  test('a drag places paragraph type: the type wraps to the dragged width and the box keeps that width', async ({
+    page,
+  }, testInfo) => {
+    const input = page.locator('#text-input');
+    const box = await canvasBox(page);
+    const fit = containFit(box);
+    const metrics = await typeMetrics(page);
+    const step = lineStepOnScreen(metrics, fit);
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box, DRAFT_RECT);
+    await input.fill(PARAGRAPH_TEXT);
+
+    // The wait is for the draft's own repaint and nothing else: nothing red is on the canvas
+    // before this (`fill` is the first ink of the session and no layer has been committed), so
+    // the poll cannot be satisfied by a previous state. What it waits for is the LIVE DRAFT —
+    // `TextToolArea.tsx:55-59` redraws through `renderText` on every keystroke — which is why the
+    // measurement below is about the draft's box and not about a committed layer.
+    await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, { description: 'the draft type on the overlay' });
+
+    const draft = await measureDraft(page, testInfo, box, 'text-paragraph-draft');
+    const draggedWidth = DRAFT_RECT.x2 - DRAFT_RECT.x1;
+
+    // 1. MORE THAN ONE LINE BOX OF INK. A single line's ink is always shorter than the line box
+    // it is laid out in, and two lines' ink is always longer than one, so this is the comparison
+    // that separates "wrapped" from "not wrapped" without naming a font or a glyph. Measured on
+    // this host: the step is 74.6 CSS px at 64px/1.2 through the 0.97167 fit, the capture's three
+    // bands of this string stand 64, 46 and 58 px, and the ink spans 205 — so the assertion has
+    // room on the side it must not fail (no single band reaches 75) and a wide margin on the side
+    // it must (three bands reach 205).
+    expect(spanHeight(draft.ink), 'the draft type is one line tall, so nothing wrapped').toBeGreaterThan(step);
+
+    // 2. INSIDE THE DRAGGED WIDTH, which is what the wrap width promises: a line that fits is at
+    // most `boxWidth - 2 * TEXT_PADDING` wide, so no line may reach the right edge. The bottom
+    // edge is deliberately NOT compared against the dragged rectangle — a paragraph box grows
+    // downward to hold its lines, so the bottom boundary is the box, which is the next assertion.
+    const allowed = draftRectCss(box, INK_MARGIN, DRAFT_RECT);
+    expect
+      .soft(draft.ink.left, 'the wrapped type escaped the left of the dragged width')
+      .toBeGreaterThanOrEqual(allowed.left);
+    expect
+      .soft(draft.ink.top, 'the wrapped type escaped above the dragged rectangle')
+      .toBeGreaterThanOrEqual(allowed.top);
+    expect
+      .soft(draft.ink.right, 'the wrapped type escaped the right of the dragged width')
+      .toBeLessThanOrEqual(allowed.right);
+    // And the line STOPS SHORT rather than merely landing inside the margin above: the wrap width
+    // is the box less the padding on both sides, so the widest line's ink must end short of the
+    // box's own right edge. Measured on this host at 4 CSS px of clearance, asserted at 2 —
+    // a comparison that is a statement about a break, not about a rounding.
+    expect(
+      box.x + DRAFT_RECT.x2 - draft.ink.right,
+      'the widest wrapped line ran to the edge of the box rather than stopping inside it'
+    ).toBeGreaterThanOrEqual(2);
+
+    // 3. THE BOX KEPT THAT WIDTH. The tight form first, because it is the one that carries the
+    // claim: the frame is the box plus `2 * FRAME_OVERHANG_DOC_PX` document px of its own paint,
+    // so its width is a DERIVATION of the dragged width and not a constant that could drift.
+    // Measured 413 CSS px against a derived 413.6, so the 4 is a rounding allowance and not slack.
+    expect(
+      Math.abs(spanWidth(draft.frame) - (draggedWidth + 2 * FRAME_OVERHANG_DOC_PX * fit.scale)),
+      'the paragraph box did not keep the width that was dragged'
+    ).toBeLessThanOrEqual(4);
+    // And the loose form, which is what actually fails without wrapping: a box that grew to the
+    // text would be about 1042 CSS px wide — the string measures 1042 in the 64px Arial context
+    // — which is wider than this 974px canvas box, so the growth would be 2.5x outside this bound
+    // rather than a few pixels outside it.
+    expect(spanWidth(draft.frame), 'the paragraph box grew to fit the whole string').toBeLessThanOrEqual(
+      draggedWidth * 1.1
+    );
+
+    // And the ink is inside the box it was laid out in. This is `expect.soft`, so the wrapping
+    // claims above are reported even when this one fails — which, on the same defect, it does: the
+    // ink runs 39 CSS px below a box that was sized for one line.
+    expectInkInsideFrame(draft, 'the wrapped paragraph draft');
+
+    // The complement, and it is the other half of `calculateNewRect`'s paragraph branch: the box
+    // grew in HEIGHT, because three lines do not fit in the 120 rows that were dragged.
+    //
+    // RED AGAINST THE CURRENT TREE, and it is a defect rather than a mis-stated expectation, so
+    // it is left asserting what the code is written to do:
+    //
+    //   `getTextLineCount` (`src/tools/text.ts:572-576`) is the only measuring function in
+    //   `text.ts` that does not `applyTextStyle` the context it measures with — `getTextWidth`
+    //   brackets its own `measureText` with save/restore and the style inside it, at `:551-566`.
+    //   It is handed the WORKSPACE canvas's context (`Text.tsx:41` passes `canvasRef`), and that
+    //   context carries `10px sans-serif`: read off the live page in this run, the workspace
+    //   canvas measured this string at 162.9px in `10px sans-serif` while the tool overlay
+    //   measured it at 1042.4px in `64px Arial`. So the wrapped line count comes back as 1, the
+    //   required height as one line's 86.8 document px, and the box never grows — while
+    //   `renderText`, which does style its context, draws all three lines.
+    //
+    //   The visible consequence, measured by committing the same three lines in this run: the
+    //   committed layer carries ONE band of ink (document rows 217..273 of the capture) instead
+    //   of three, because the layer's own canvas is the one-line box the type was laid out in and
+    //   `renderText` clips to it.
+    expect(
+      spanHeight(draft.frame),
+      'the paragraph box did not grow downward to hold its wrapped lines'
+    ).toBeGreaterThan(DRAFT_RECT.y2 - DRAFT_RECT.y1);
+  });
+
+  /**
+   * A click places POINT type: nothing wraps, and the box grows sideways to hold the whole line.
+   *
+   * The same gesture, the other side of `isClick = w <= 3 && h <= 3`
+   * (`TextToolArea.tsx:37`): a press that travels no more than 3 CSS px on EITHER axis collapses
+   * its rect to a point and is laid out as point type, for which the renderer offers its text an
+   * infinite width (`renderText`, `src/tools/text.ts:533`) and the box grows to the measured
+   * string (`src/util/rect.ts:162-181`). Both halves of that are asserted here, and they are
+   * asserted against the two different things that could go wrong:
+   *
+   *   1. the ink is no taller than ONE LINE BOX — the no-wrap claim. Had this press been read as
+   *      a drag it would have been a paragraph box of the drag's width, and three words that do
+   *      not fit it would have become three lines, i.e. an ink about 3x taller than the step.
+   *   2. the BOX is as wide as the ink plus its own padding — the grew-to-fit claim, and the one
+   *      that fails outright against a box left at the click point. The click's rect is collapsed
+   *      to zero width, and a point box that never grew would measure about 14 CSS px of frame
+   *      around nothing, against the 370 CSS px of frame measured around the 345 CSS px line here.
+   */
+  test('a click places point type: the line does not wrap and the box grows to fit it', async ({ page }, testInfo) => {
+    const input = page.locator('#text-input');
+    const box = await canvasBox(page);
+    const fit = containFit(box);
+    const metrics = await typeMetrics(page);
+    const step = lineStepOnScreen(metrics, fit);
+
+    await setTextToolColor(page, TEXT_COLOR);
+
+    // A press, not a drag. `page.mouse.click` moves, presses and releases at ONE coordinate, so
+    // `useRect`'s rect is zero-width and zero-height and `isClick` is true on both axes. Nothing
+    // else in the gesture is load-bearing: the threshold is 3 CSS px, so a press that travelled
+    // 4 on either axis would be a paragraph press and this test would be measuring the wrong box.
+    await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    await input.fill(POINT_TEXT);
+
+    await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, { description: 'the point draft type' });
+
+    const draft = await measureDraft(page, testInfo, box, 'text-point-draft');
+    const inkWidth = spanWidth(draft.ink);
+    const boxWidth = spanWidth(draft.frame);
+
+    // 1. ONE LINE, against the same line-box figure the paragraph test uses, so the two tests are
+    // read against one scale. Measured: this string stands 56 CSS px tall against a 74.6px step,
+    // and an ink that had wrapped would be at least two of those bands deep.
+    expect(spanHeight(draft.ink), 'the point draft wrapped onto a second line').toBeLessThanOrEqual(step);
+
+    // 2. THE BOX GREW TO FIT. The derived figure is what the arithmetic says it must be: the
+    // point box is `TEXT_PADDING` wider than the ink on each side (`rect.ts:164`), and the frame
+    // is `FRAME_OVERHANG_DOC_PX` wider than the box on each side. Measured 25 CSS px against a
+    // derived 23.3, so the two bounds are 4 px of measurement allowance on a figure whose failure
+    // mode is a frame 350 px narrower — a margin far too narrow to hide one.
+    const paddingAndFrame = (2 * TEXT_PADDING_DOC_PX + 2 * FRAME_OVERHANG_DOC_PX) * fit.scale;
+    expect(boxWidth - inkWidth, 'the point box is not the line plus its padding').toBeGreaterThanOrEqual(
+      paddingAndFrame - 4
+    );
+    expect(boxWidth - inkWidth, 'the point box is much wider than the line it holds').toBeLessThanOrEqual(
+      paddingAndFrame + 4
+    );
+    // The same claim without the arithmetic above: a box still collapsed at the click point is
+    // about 14 CSS px wide, which is a fortieth of the 370 measured here, and one that grew to the
+    // text would be 470 — so both wrong answers are outside the band this pair admits.
+    expect(boxWidth, 'the point box did not grow off the click point').toBeGreaterThan(100);
+    expect(boxWidth, 'the point box is wider than the line it grew to fit').toBeLessThanOrEqual(inkWidth * 1.2);
+
+    // And it grew RIGHTWARDS from the click, which is what `align: 'left'` resolves to
+    // (`rect.ts:166-169` moves `x2` and leaves `x1`), so the box's left edge is still the point
+    // the user pressed — one handle's width of overhang away from it here.
+    expect(
+      Math.abs(draft.frame.left + FRAME_OVERHANG_DOC_PX * fit.scale - (box.x + CLICK_POINT.x)),
+      'the point box grew from somewhere other than the click'
+    ).toBeLessThanOrEqual(3);
+
+    expectInkInsideFrame(draft, 'the point draft');
+  });
+
+  /**
+   * Adobe's overflow icon: "If you enter more text that can fit within a paragraph boundary…, a
+   * small box or circle containing a plus symbol (+) appears in place of a handle in the corner of
+   * the boundary" (https://helpx.adobe.com/photoshop/using/creating-type.html). The app draws it
+   * as a stroked square with a plus, `OVERFLOW_INDICATOR_PX` document px on a side, in the
+   * bottom-right corner, and only ever on the DRAFT's overlay: `renderText` draws it under
+   * `options.overflowIndicator` (`src/tools/text.ts:559-561`), which the tool area passes
+   * (`TextToolArea.tsx:68`) and the creator does not (`src/tools/text.ts:611`).
+   *
+   * WHERE THE OVERFLOW COMES FROM, and it is not obvious enough to leave out: `layoutText` calls a
+   * draft overflowing when its lines need more height than the box has (`text.ts:459`), and
+   * `calculateNewRect` grows a paragraph box to exactly that height (`rect.ts:157-161`) — so a box
+   * inside the document never overflows, and the one state that does is a box the document edge
+   * clamped (`trimRect2`, `rect.ts:192`). Hence {@link OVERFLOW_RECT} low in the canvas: three
+   * hard-broken lines need 240 document px and the rectangle gives 165, the box grows, the clamp
+   * stops it, and the type is then taller than the box it is in.
+   *
+   * THREE STATES OF ONE GESTURE, which is what makes "only while" a claim rather than a caption:
+   * a line that fits has no icon, three lines that do not have one, and the committed layer never
+   * carries one at all.
+   */
+  test('the overflow icon is on the draft overlay only while the type outgrows the box', async ({ page }) => {
+    const input = page.locator('#text-input');
+    const apply = page.getByRole('button', { name: 'Apply' });
+    const box = await canvasBox(page);
+    const fit = containFit(box);
+
+    // The document's bottom edge, on screen. This is the one assumption the icon's position rests
+    // on — that the contain fit is height-limited and so maps document y 600 to the canvas box's
+    // own bottom row — and it is asserted rather than assumed, so a layout that letterboxes
+    // vertically turns this test red instead of quietly measuring a region 8px away.
+    expect(
+      Math.abs(fit.offsetY),
+      'the contain fit letterboxes the document vertically, so its bottom edge is not the canvas bottom'
+    ).toBeLessThanOrEqual(1);
+
+    // A strip of canvas BELOW the rectangle that was dragged and inside the document: the box's
+    // bottom edge is inside it while the type outgrows the box, and above it while it does not.
+    // That is the wait between the two states, and it is a wait rather than a timeout because the
+    // frame is what moves.
+    const documentEdgeStrip: Rect = {
+      left: box.x + OVERFLOW_RECT.x1 - 20,
+      top: box.y + OVERFLOW_RECT.y2 + 12,
+      right: box.x + OVERFLOW_RECT.x2 + 20,
+      bottom: box.y + box.height,
+    };
+    const waitForBoxAtDocumentEdge = () =>
+      waitForCanvasPixels(page, toClip(documentEdgeStrip), async (png) => (await getSelectionBounds(png)) !== null, {
+        description: 'the paragraph box reaching the bottom edge of the document',
+      });
+
+    // Where the icon has to be, derived from the code that draws it rather than measured off a
+    // previous run: `x2 - TEXT_PADDING - OVERFLOW_INDICATOR_PX` from the box's right edge, and
+    // `y2 - TEXT_PADDING - OVERFLOW_INDICATOR_PX` from its bottom, which the clamp put on the
+    // document's bottom edge. The region is the derived centre plus 16 CSS px, which is twice the
+    // icon's own size — slack enough that a two-pixel error in any term of the derivation cannot
+    // turn into a miss, and tight enough that an icon anywhere else is not found by it.
+    const iconCentre = {
+      x: box.x + OVERFLOW_RECT.x2 - (TEXT_PADDING_DOC_PX + OVERFLOW_INDICATOR_DOC_PX / 2) * fit.scale,
+      y: box.y + box.height - (TEXT_PADDING_DOC_PX + OVERFLOW_INDICATOR_DOC_PX / 2) * fit.scale,
+    };
+    const iconRegion: Rect = {
+      left: iconCentre.x - 16,
+      top: iconCentre.y - 16,
+      right: iconCentre.x + 16,
+      bottom: Math.min(box.y + box.height, iconCentre.y + 16),
+    };
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box, OVERFLOW_RECT);
+
+    // STATE A — one line, which fits: no icon. The wait is for the ink itself, so the assertion
+    // that follows is about a painted draft rather than about an empty canvas.
+    await input.fill(FITS_TEXT);
+    await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, {
+      description: 'the type of the draft that fits inside its box',
+    });
+    expect(
+      await redBoundsIn(page, iconRegion),
+      'the fitting draft already carries an overflow icon, so the icon is not reporting an overflow'
+    ).toBeNull();
+
+    // STATE B — three hard-broken lines, which do not: the box grows to the document's bottom
+    // edge and the icon appears in its bottom-right corner.
+    await input.fill(OVERFLOW_TEXT);
+    await waitForBoxAtDocumentEdge();
+
+    const icon = await redBoundsIn(page, iconRegion);
+    expect(icon, 'no overflow icon while the type outgrows its box').not.toBeNull();
+    // The icon is not "some red pixels in the region": it is an OUTLINE of the size the renderer
+    // draws, in a corner no glyph in this test can reach (see OVERFLOW_TEXT). Measured here at
+    // 8.0 x 8.25 CSS px against a derived 7.8, and asserted at 2 — the stroke is centred on the
+    // drawn square, so the rasterised bound lands within a pixel of the nominal size either way,
+    // and the region's 32 x 25 px is four times the icon, so nothing else could produce these
+    // two numbers.
+    expect(
+      Math.abs(spanWidth(icon!) - OVERFLOW_INDICATOR_DOC_PX * fit.scale),
+      'what is in the corner is not the size of the overflow icon'
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(spanHeight(icon!) - OVERFLOW_INDICATOR_DOC_PX * fit.scale),
+      'what is in the corner is not the shape of the overflow icon'
+    ).toBeLessThanOrEqual(2);
+    // And it is in THAT corner, not merely inside the region: the centre of what was found is
+    // measured 1.0 CSS px right of and 0.5 px below the point the arithmetic above names, and the
+    // bound is 3. The whole box is 400 x 180 CSS px here, so a misplaced icon is 100s away.
+    expect(
+      Math.abs((icon!.left + icon!.right) / 2 - iconCentre.x),
+      'the overflow icon is not in the right-hand side of the box'
+    ).toBeLessThanOrEqual(3);
+    expect(
+      Math.abs((icon!.top + icon!.bottom) / 2 - iconCentre.y),
+      'the overflow icon is not in the bottom of the box'
+    ).toBeLessThanOrEqual(3);
+
+    // STATE C — back to the one line that fits, so nothing outgrows the box any more and the icon
+    // goes with it. THE WAIT IS ON THE ICON, and that is not a convenience: a box never shrinks
+    // (`calculateNewRect` only ever grows, `rect.ts:159-161`), so the frame the overflow grew is
+    // still there after the text shrinks and a wait on the frame would wait for a repaint that
+    // never comes. The next two assertions say so, rather than leaving it as an assumption.
+    await input.fill(FITS_TEXT);
+    await expect
+      .poll(() => redBoundsIn(page, iconRegion), {
+        message: 'the overflow icon leaving the corner of the box',
+        timeout: 10_000,
+      })
+      .toBeNull();
+    expect(
+      await redBoundsIn(page, iconRegion),
+      'the overflow icon survived the type going back inside its box'
+    ).toBeNull();
+    // The box really is still where the overflow left it, which is the rule the wait above had to
+    // be written around: the frame is on the document's bottom edge and stays there.
+    expect(
+      await blueBoundsIn(page, documentEdgeStrip),
+      'the box shrank back instead of keeping the height the overflow grew it to'
+    ).not.toBeNull();
+
+    // STATE D — and it is never IN the image. The overflowing type is committed, so the layer's
+    // own canvas is what is on the screen, and the same region that held the icon must hold no
+    // ink at all: `renderText` is called without `overflowIndicator` from the creator
+    // (`src/tools/text.ts:611`), and baking the icon into the layer would paint a box-and-plus
+    // into the user's photograph.
+    await input.fill(OVERFLOW_TEXT);
+    await expect
+      .poll(() => redBoundsIn(page, iconRegion), {
+        message: 'the overflow icon coming back with the third line',
+        timeout: 10_000,
+      })
+      .not.toBeNull();
+    await apply.click();
+    await expect(input).toHaveValue('');
+    await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, {
+      description: 'the committed text layer',
+    });
+    expect(await redBoundsIn(page, iconRegion), 'the overflow icon was baked into the committed layer').toBeNull();
   });
 });

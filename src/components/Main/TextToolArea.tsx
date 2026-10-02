@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useRef } from 'react';
-import { renderText, type TextToolArgs } from '../../tools/text.ts';
+import { POINT_TYPE_MAX_DRAG_PX, renderText, type TextToolArgs, type TextKind } from '../../tools/text.ts';
 import { useRect } from '../../hooks/useRect.ts';
 import { calculateNewRect } from '../../util/rect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -28,10 +28,20 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     overlayRef: toolOverlayRef,
     onRepaint: redrawText,
     onChangeEnd: (rect: RectXYSorted) => {
-      const newRect = calculateNewRect({ ...args, rect }, toolOverlayRef, totalSize);
+      // Adobe distinguishes the two gestures by intent and documents no threshold, so this is the
+      // app's own: a press that travelled no more than POINT_TYPE_MAX_DRAG_PX on either axis is a
+      // click and places point type, and anything further is a drag and places paragraph type.
+      // The click's rect is collapsed to zero width, which is what `adjustFreePoint` already
+      // produces for a press with no movement, so the point-type box is grown from the click point
+      // by the same code path that always grew it.
+      const isClick = rect.x2 - rect.x1 <= POINT_TYPE_MAX_DRAG_PX && rect.y2 - rect.y1 <= POINT_TYPE_MAX_DRAG_PX;
+      const kind: TextKind = isClick ? 'point' : 'paragraph';
+      const placed: RectXYSorted = isClick ? { ...rect, x1: rect.x1, x2: rect.x1, y1: rect.y1, y2: rect.y1 } : rect;
+
+      const newRect = calculateNewRect({ ...args, rect: placed, kind }, toolOverlayRef, totalSize);
       if (!newRect) return;
 
-      const newArgs = { ...args, rect: newRect };
+      const newArgs = { ...args, rect: newRect, kind };
       setToolArgs(newArgs);
 
       textareaRef.current?.focus();
@@ -55,7 +65,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
-    renderText(ctx, { ...currentArgs, rect });
+    renderText(ctx, { ...currentArgs, rect }, { overflowIndicator: true });
   }
 
   // function handleBeforeInput(e: React.FormEvent<HTMLDivElement>) {

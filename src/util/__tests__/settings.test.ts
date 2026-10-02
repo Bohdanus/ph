@@ -960,6 +960,7 @@ describe('defaultSettings and lastSavedSettings', () => {
         'fontFamily',
         'fontSize',
         'italic',
+        'kind',
         'lineHeight',
         'rect',
         'smallCaps',
