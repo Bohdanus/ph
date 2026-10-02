@@ -39,45 +39,12 @@ async function open(page: Page, size: { width: number; height: number }) {
 const leftRail = (page: Page) => page.getByTestId('left-sidebar');
 
 /**
- * Select a tool through the header's Tools menu.
- *
- * `clickToolButton` looks for a sidebar tile, and a tile exists only for a group's PRIMARY
- * tool and only while the group is not collapsed. The Type group is the fourteenth of the
- * rail's fifteen, so it is one of the ten the fit folds into the three-dots tile at 600px. The
- * header menu lists every tool, and the header is visible at every width this spec uses.
- *
- * It is NOT a route to `color`, `levels` or `transform`: they are `Image ▸ Adjustments` and
- * `Edit ▸ Free Transform` commands, they are in `MENUS_EXCLUDE` because a command is not a tool,
- * and no rail group or Tools-menu row exists for any of them. `e2e/levels.spec.ts` and
- * `e2e/adjustments.spec.ts` select them through their own three-click menu sequence.
- *
- * Addressed by the menu's OWN test id, taking the tool's name — which is what it was not.
- * It used to be addressed by accessible name, and the menu and the rail are two different
- * vocabularies: the menu calls the Type tool `Text` and the rail calls it `Horizontal Type
- * Tool`. So `selectToolFromMenu(page, 'Horizontal Type Tool')` matched the RAIL TILE, the
- * menu never opened, and the test passed for a reason that had nothing to do with the menu.
- * The tile then collapsed, and the same call became a 60-second wait for a button that was
- * never coming. A name that the menu does not use is a selector that resolves somewhere
- * unintended or nowhere, and both look like a pass or a hang rather than a mistake.
- *
- * ONLY the tools that have a Tools-menu entry. `color`, `levels` and `transform` are
- * `Image ▸ Adjustments` and `Edit ▸ Transform` COMMANDS in Photoshop, have no Tools-panel
- * entry, and are gone from this menu along with the `[Colors, Levels, Transform]` rail
- * flyout that used to hold them — so there is no `tools-menu-transform-button` for
- * `selectToolFromMenu` to address. {@link selectFreeTransform} is the path for that one.
- */
-async function selectToolFromMenu(page: Page, toolName: string) {
-  await page.getByTestId('header-tools-menu-button').click();
-  await page.getByTestId(`tools-menu-${toolName}-button`).click();
-}
-
-/**
  * Selects the transform tool through `Edit ▸ Free Transform`.
  *
- * Two clicks, both necessary: `header-edit-menu-button` opens the menu, and
- * `Free Transform` is the only item in it. Its options bar is the subject of the test that
- * calls this, so the same reason it lives on a header command rather than a rail tile — the
- * panel is not a Tools-panel surface — is why this cannot be `selectToolFromMenu`.
+ * `header-edit-menu-button` opens the menu and `Free Transform` is the item in it. Its options
+ * bar is the subject of the test that calls this, so the same reason it lives on a header
+ * command rather than a rail tile — the panel is not a Tools-panel surface — is why this is not
+ * `clickToolButton`.
  */
 async function selectFreeTransform(page: Page) {
   await page.getByTestId('header-edit-menu-button').click();
@@ -377,16 +344,18 @@ test.describe('Tool option popovers are not clipped', () => {
   // 50px box. Anchored `absolute` inside a clipping ancestor, the 240px font list rendered
   // as an 8px strip: the text tool's font family was unselectable and no test noticed.
   //
-  // The Type tool is selected from the header menu rather than from a tile, because at these
+  // The Type tool is selected through the RAIL rather than from a header menu, because at these
   // heights the Type group — the fourteenth of fifteen — is one of the groups the fit folds into
   // the three-dots tile: an 800px window keeps nine tiles, a 400px window keeps one, and neither
-  // reaches the fifteenth. And because what is under test here is the OPTION ROW's overflow, not
-  // the rail. A popover that cannot be opened is not a popover that is not clipped.
+  // reaches the fifteenth. `clickToolButton` follows that fold rather than needing a second
+  // route around it, which is also what Photoshop offers: the Tools panel and its overflow, and
+  // nothing else. And because what is under test here is the OPTION ROW's overflow, not the
+  // rail. A popover that cannot be opened is not a popover that is not clipped.
   test('the text tool font list opens fully and every font is clickable', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
-    await selectToolFromMenu(page, 'text');
+    await clickToolButton(page, 'text');
     const trigger = page.locator('#font-family-select');
     await expect(trigger).toBeVisible();
     await trigger.click();
@@ -418,7 +387,7 @@ test.describe('Tool option popovers are not clipped', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, { width: 1280, height: 400 });
 
-    await selectToolFromMenu(page, 'text');
+    await clickToolButton(page, 'text');
     await page.locator('#font-family-select').click();
 
     const listBox = await page.locator('#font-family-list').boundingBox();
@@ -494,10 +463,9 @@ test.describe('Tablet band', () => {
   // content is mostly flexible sliders, so it compresses to the row instead of overflowing.
   // Reaching for it would have asserted nothing.
   const MIN_PANEL_WIDTH = TABLET.width + 100;
-  // `{ name, label }` because the header menu is addressed by the tool's NAME (`selectToolFromMenu`
-  // takes a `tools-menu-<name>-button` test id) while the panels and the test titles are named by
-  // the LABEL. Passing the label as the argument used to read as "pick this out of the menu" while
-  // actually matching a rail tile — see that helper.
+  // `{ name, label }` because `clickToolButton` is addressed by the tool's NAME while the panels
+  // and the test titles are named by the LABEL, and the two vocabularies do not agree: the rail
+  // calls the Type tool `Horizontal Type Tool` and the registry calls it `text`.
   for (const { name, label } of [
     { name: 'shape', label: 'Shape' },
     { name: 'text', label: 'Horizontal Type Tool' },
@@ -506,7 +474,7 @@ test.describe('Tablet band', () => {
       test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       await open(page, TABLET);
 
-      await selectToolFromMenu(page, name);
+      await clickToolButton(page, name);
       const toolbar = page.locator('[class*="grid-area:toolbar"]').first();
       const metrics = await toolbar.evaluate((el) => ({
         overflowX: getComputedStyle(el).overflowX,

@@ -1017,7 +1017,7 @@ replaced (`ErrorBoundary.tsx:5-13`), so it does not know which region it wrapped
 
 **The auto-placement half of the original claim is wrong, and the consequence is different.** The
 grid template at `App.tsx:82` names `header`, `toolbar`, `left`, `main`, `right` and `footer`, but
-`header` and `toolbar` are claimed by `DesktopHeader.tsx:302` and `ToolbarHorizontal.tsx:5`, both
+`header` and `toolbar` are claimed by `DesktopHeader.tsx:646` and `ToolbarHorizontal.tsx:5`, both
 rendered by `Menu.tsx:7-8` **before** the boundaries in document order — so auto-placement does not
 start at the toolbar row. With `left` claimed by `SidebarLeft.tsx:1056`, the first free cell in
 document order is row 3 col 2, which is exactly the canvas's own cell; the second boundary's
@@ -1759,7 +1759,7 @@ several panels into one body, not moving a group.
 **7. There are no workspaces.** Adobe documents saving, switching, deleting and restoring them
 as four separate operations, and a workspace "remembers the size and position of panels". This
 app has one unnamed workspace persisted under one key, with a single hard-coded
-`Window > Reset Workspace` and no panel list to remove a panel from — "Select Window from the
+`Window > Workspace > Reset Essentials` and no panel list to remove a panel from — "Select Window from the
 menu bar. Select the panel name to remove it from the workspace", and the per-tab
 **Close / Close Tab Group** context menu, are both absent.
 
@@ -2399,13 +2399,13 @@ PROBE hasUnsavedChanges = true
 
 Consequence: a document the user just created from scratch is named after a file that had nothing to
 do with it. The stale name reaches the export path through three hops — the store's `fileName` into
-`openSaveImageDialog` (`src/components/DesktopHeader/DesktopHeader.tsx:390`), into `setFileInput`
+`openSaveImageDialog` (`src/components/DesktopHeader/DesktopHeader.tsx:350`), into `setFileInput`
 (`src/contexts/useFile.tsx:110`), and out as `SaveDialog`'s `proposedName`
 (`src/contexts/useFile.tsx:174`) — so the save dialog is pre-filled from the old file. On mobile the
 staleness is also on screen, in the two components that render it (`MobileHeader.tsx:107`,
 `MobileMenuDrawer.tsx:110`); on desktop nothing displays it, so there the stale name is invisible until
 a save. `hasUnsavedChanges` is not rendered anywhere, so there is no dirty-marker reading either way —
-its only consumers are the two `confirm()` guards at `DesktopHeader.tsx:340` and `:365`.
+its only consumers are the two `confirm()` guards at `DesktopHeader.tsx:322` and `:335`.
 
 **Fix.** Add `fileName` to the `updates` block in `_addLayer`'s `newDocument` branch
 (`src/contexts/useLayer.ts:199`). A new document's name is a product decision, not a derivation — the
@@ -2419,7 +2419,7 @@ same change.
 
 **Files.** `src/contexts/useLayer.ts:199-212`, `src/contexts/StoreContext.tsx:574`,
 `src/hooks/useApp.ts:128`, `:164`, `src/contexts/useFile.tsx:110`, `:174`,
-`src/components/DesktopHeader/DesktopHeader.tsx:390`, `src/components/Mobile/MobileHeader.tsx:107`
+`src/components/DesktopHeader/DesktopHeader.tsx:350`, `src/components/Mobile/MobileHeader.tsx:107`
 
 ---
 
@@ -2748,12 +2748,13 @@ conclusion from a missing policy is that no policy was ever written down.
 ```
 
 All four activation surfaces translate — `SidebarLeft.tsx:603-606`,
-`Mobile/mobile-tools.ts:77-85`, `DesktopHeader.tsx:248-254`,
-`AppKeyboardShortcuts.tsx:130-157` — and `useApp.ts:196` is the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx:110-123` records that dispatching the
-key directly was a **bug they fixed**: it mounted the Shape panel where the
-`toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the colour publish, so the well said
-red and the shape committed black.
+`Mobile/mobile-tools.ts:77-85`, `AppKeyboardShortcuts.tsx:130-157` — and `useApp.ts:196` is the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. The header was a fourth surface until 2026-10-02, when
+the menu bar was rebuilt against Adobe's list and the `Tools` menu was removed; what it recorded
+is still true of the two that remain, and it is why `SidebarLeft.tsx` and `Mobile/mobile-tools.ts`
+dispatch `shape` plus the figure rather than the figure key: dispatching the key directly mounted
+the Shape panel where the `toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the colour
+publish, so the well said red and the shape committed black.
 
 So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
 (`src/contexts/tool-types.ts:75-87`), a per-figure settings bucket (`src/tools/settings.ts:301-335`),
@@ -2807,21 +2808,23 @@ the four controls.
 `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:36-48`,
 `src/tools/descriptions/selection.notes.md:92`
 
-## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
+## 116. Three of the six pen tools have no shortcut, and Adobe's own Tools panel has no entry for them either
 
 `AppKeyboardShortcuts.tsx:53` binds `penGroup = ['pen', 'freeform-pen', 'curvature-pen']`, so
 `P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
-`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx:99-101` lists
-only the three pens. `AppKeyboardShortcuts.tsx:130-158` is the only `DEFAULT_KEYBOARD_SHORTCUTS`
+`convert-point` have **no keybinding**, and they are **absent from Adobe's own Tools panel**, which
+is why they are absent here too — the rail gives each of the three its own entry at
+`toolbar-mapping.ts:109-111`, and the header has no tool list to belong to. `AppKeyboardShortcuts.tsx:130-158` is the only `DEFAULT_KEYBOARD_SHORTCUTS`
 consumer and `useApp.ts:196` the only `SET_TOOL_NAME` dispatch, so the enumeration is complete.
 
 **Both other halves of the earlier version of this heading are wrong, and the rail never needed
 them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx:81-85` gives `freeform-pen` its
 own `FreeformPenIcon`, and `toolbar-mapping.ts:106-111` gives each of the six its own label. The
-Tools-menu absence is Adobe's own doing — Adobe's keyboard-shortcut reference (Adobe, primary, and
-the source `docs/PHOTOSHOP-UX.md:233` cites for its own shortcut list) lists **no** shortcut for
-`Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, so a menu row for them would be a
-departure rather than a fix, and `docs/OVERRIDES.md` has no entry authorising one. What
+absence is Adobe's own doing on both counts — Adobe's keyboard-shortcut reference (Adobe, primary,
+and the source `docs/PHOTOSHOP-UX.md:233` cites for its own shortcut list) lists **no** shortcut for
+`Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, and its Tools panel carries no tile for
+them either, so supplying either would be a departure rather than a fix and `docs/OVERRIDES.md` has
+no entry authorising one. What
 `docs/TOOLS.md:1910`, `:1942`, `:1978` record is only that the shortcuts do not exist, which is what
 this entry says.
 
@@ -2833,7 +2836,7 @@ pen family. So the "incomplete hiding" framing has no premise: nothing was hidde
 not add a shortcut here without asking.** What remains is a record, not a defect.
 
 **Files.** `src/components/Common/AppKeyboardShortcuts.tsx:53,109-137`,
-`src/components/DesktopHeader/DesktopHeader.tsx:99-101`,
+`toolbar-mapping.ts:109-111`,
 `src/components/SidebarLeft/SidebarLeft.tsx:158-170`,
 `src/components/SidebarLeft/toolIcons.tsx:81-85`, `docs/TOOLS.md:1910,1787,1823`,
 `docs/PHOTOSHOP-UX.md:30-98,110,191`
@@ -4416,7 +4419,8 @@ header describes the state that commit fixed:
   attribution block at `:429-480`, describe a red suite. `npm run test:e2e -- accessibility` is
   **3 passed, 0 violation(s)**.
 - The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
-  File (New/Open/Save) and Tools menus only.
+  Adobe's ten menus (File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help) and no Export
+  among them.
 - `:94` says the Save dialog is unscanned. It was measured here: 0 violations, 45 nodes, both
   themes. (Not added to the gate, so the header is still right about the gate and wrong about the
   state.)
@@ -4640,9 +4644,10 @@ the frame a non-zero origin and an extent that disagrees with `size`.
 ## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
 
 **Problem.** `Edit` carries exactly one item, `Free Transform`
-(`src/components/DesktopHeader/DesktopHeader.tsx:523-532`), because that is where Adobe puts it at
-the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt, and it is
-where a user who knows Photoshop looks for eleven commands. Adobe's own page enumerates them —
+(`src/components/DesktopHeader/DesktopHeader.tsx:425-431`), because that is where Adobe puts it at
+the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt — it is now
+on screen with its six modes disabled () — and it is where a user who knows Photoshop looks
+for eleven commands. Adobe's own page enumerates them —
 "You can find these commands under `Edit > Transform`" —
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html>
 (fetched 200 on 2026-10-01 with a default `curl` User-Agent; it 403s a browser-shaped one):
@@ -4707,14 +4712,14 @@ is what keeps a slider drag from writing one history entry per frame. Constraint
 not a computation one: reconcile the slider's range with the `±90` button pair at
 `Transform.tsx:95-105`, which already wraps through 360.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:503-535`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:425-450`,
 `src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:168`, `:183-190`,
 `src/contexts/useCurrentTool.tsx:56-81`, `src/contexts/useLayer.ts:565`
 
 ## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
 
 **Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
-(`DesktopHeader.tsx:194`), and selecting it shows the `color` command's options bar, which renders
+(`DesktopHeader.tsx:152`), and selecting it shows the `color` command's options bar, which renders
 three sliders — **Grayscale**, **Sepia**, **Saturation**
 (`src/components/ToolbarsRight/Colors/Color.tsx:126-180`) — wired to `buildColorsFilter`
 (`src/tools/functions.ts:60-63`), which emits `grayscale(%) sepia(%) saturate(%)`.
@@ -4735,7 +4740,7 @@ is enabled under a name that promises a capability its bar does not have, in the
 precisely to find out what the app can do.
 
 **The control cannot simply be deleted without a decision, and that is the operator's call.** This bar
-is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (`DesktopHeader.tsx:200`) is
+is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (`DesktopHeader.tsx:158`) is
 **disabled**, because no second command owns desaturation. `Black and White` is disabled too (`:154`) —
 it needs per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
 
@@ -4754,48 +4759,14 @@ it needs per-hue sextant weighting, and there is no hue decomposition anywhere i
 `grayscale(%) sepia(%) saturate(%)`. That is a fake control dressed in Adobe's words, which is the one
 thing this repo's policy refuses, and doing it in a menu is worse than doing it in a rail.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:169-175`, `:186-209`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:144-166`,
 `src/components/ToolbarsRight/Colors/Color.tsx:121-180`, `src/tools/functions.ts:60-63`,
 `src/tools/colors.ts`
-
-## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
-
-**Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
-(`DesktopHeader.tsx:322`, `:423`, `:452`, `:525`, `:559`). Adobe's is eleven: File, Edit, Image, Layer,
-Type, Select, Filter, 3D, View, Window, Help. Two of the five that exist are nearly empty: `Edit` holds
-one item, and `Image` holds one submenu.
-
-The gap is not cosmetic. A user who knows Photoshop reaches for `Select > Deselect`,
-`Select > Modify > Feather`, `Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds
-nothing. Worse, several of those are **unreachable entirely**, not merely unreachable from a menu: the
-app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a selection
-(`src/util/selection.ts` exports no such function), and no adjustment layers at all
-(`src/contexts/psd-utils.ts:88-106` warns `adjustment`, `mask` and `clipping` are unsupported and not
-preserved on import).
-
-**The documentation consequence is the part to fix first.** `docs/TOOLS-TOO-HARD.md` files the Select
-gaps as capability absences and justifies them with a menu that does not exist — "There is no menu
-surface that could host them". There **is** a menu bar now; there is no `Select` menu on it. Adding that
-menu is separable work from the selection-model work, and conflating the two is how a menu gap got filed
-as an algorithm gap in the first place.
-
-**Fix.** Add the missing top-level menus in Adobe's order, each carrying the commands the app can
-already do and a **disabled** item for each it cannot — the shape `Image ▸ Adjustments` already uses
-(`DesktopHeader.tsx:147-150`, `:488`), where an item is enabled by having a `toolName` and nothing else.
-Start with **`Select`**: its honest contents are the smallest, because Select All and Deselect are
-trivial and Feather / Grow / Modify / Inverse are `disabled` items until the model work lands. Then
-**`Layer`**, almost all of it disabled while adjustment layers do not exist. **`View`** and **`Filter`**
-follow the same rule. **`Type`** last of the plausible ones; **`3D`** is a candidate for never shipping
-at all, and should be decided rather than deferred.
-
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:313-570`, `:147-150`, `:186-209`,
-`src/util/selection.ts`, `src/contexts/psd-utils.ts:88-106`,
-`docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
 
 ## 170. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
 
 **Problem.** `ADJUSTMENTS_ITEMS` enables exactly two items
-(`src/components/DesktopHeader/DesktopHeader.tsx:186-209`), and both name a capability the app does
+(`src/components/DesktopHeader/DesktopHeader.tsx:144-166`), and both name a capability the app does
 not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args really are
 `{ brightness, contrast }` and whose processor really does emit `brightness(…) contrast(…)` — so that
 label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
@@ -4858,7 +4829,7 @@ overturned by writing one line above. The cost of taking it is that a user can r
 an Adobe name that Adobe's dialog does not have; the cost of the alternative is that `color` is
 unreachable until real Black and White is built, which is a larger loss than a documented partial.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:147-150`, `:186-209`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:73-83`, `:144-166`,
 `src/components/DesktopHeader/__tests__/DesktopHeader.test.tsx`, `src/tools/colors.ts`,
 `src/tools/functions.ts:60-63`, `docs/TOOLS-TOO-HARD.md` (the enabled-items entry and Black and
 White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
@@ -4974,4 +4945,4 @@ change closed.
 
 **Files.** `toolbar-mapping.ts`, `src/components/Mobile/mobile-tools.ts:50`,
 `src/components/Mobile/MobileBottomBar.tsx:33`, `src/components/Mobile/MobileToolSheet.tsx:24`,
-`src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx:302`
+`src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx:646`

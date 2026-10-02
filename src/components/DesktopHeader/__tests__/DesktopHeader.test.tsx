@@ -1,10 +1,8 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import DesktopHeader, { MENUS_EXCLUDE } from '../DesktopHeader.tsx';
-import { availableTools } from '../../../../toolbar-mapping.ts';
+import DesktopHeader from '../DesktopHeader.tsx';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
-import type { TextToolArgs } from '../../../tools/text.ts';
 
 const committedLayers = createMockLayers(1);
 
@@ -43,10 +41,7 @@ const file = vi.hoisted(() => ({
 
 const layers = vi.hoisted(() => ({
   commitDirtyTool: vi.fn(),
-}));
-
-const currentTool = vi.hoisted(() => ({
-  patchToolArgs: vi.fn(),
+  mergeAllLayers: vi.fn(),
 }));
 
 const themeState = vi.hoisted(() => ({ theme: 'light' as 'light' | 'dark', toggleTheme: vi.fn() }));
@@ -56,7 +51,6 @@ vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => app }));
 vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => file }));
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => layers }));
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
   useTheme: () => themeState,
 }));
@@ -81,9 +75,16 @@ function stubConfirm(result: boolean) {
   return confirm;
 }
 
-function openMenu(name: 'File' | 'Tools' | 'Image' | 'Edit') {
+function openMenu(name: string) {
   fireEvent.click(screen.getByRole('button', { name }));
 }
+
+/**
+ * Adobe's ten, in Adobe's order. This is the whole point of the menu bar, so it is written
+ * out once here and asserted against rather than imported from the component: a constant the
+ * test and the component share proves only that they agree, and agreeing is not the claim.
+ */
+const ADOBE_MENUS = ['File', 'Edit', 'Image', 'Layer', 'Type', 'Select', 'Filter', 'View', 'Window', 'Help'] as const;
 
 /**
  * `Image ▸ Adjustments` is a two-level menu, so reaching an item needs the host opened and
@@ -133,73 +134,56 @@ afterEach(() => {
 });
 
 describe('DesktopHeader', () => {
-  it('renders the File, Tools, Image, Edit and Window menu buttons', () => {
-    render(<DesktopHeader />);
-
-    expect(screen.getByRole('button', { name: 'File' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Image' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Window' })).toBeInTheDocument();
-  });
-
-  it('shows all available tools in the Tools menu', () => {
-    render(<DesktopHeader />);
-
-    openMenu('Tools');
-
-    // Derived from the registry rather than written out by hand. This was a literal list of
-    // 24 names that never included the Dodge, the Burn, the Smudge, the Sharpen or the eraser
-    // family, so it could not have caught a tool missing from `TOOL_MENU_ITEMS` — which is
-    // exactly how the Sponge shipped without a menu entry. Every `availableTools` name now has
-    // to produce a row, so the next omission fails here instead of in the app.
-    const missing = availableTools
-      .filter((tool) => !MENUS_EXCLUDE.includes(tool))
-      .filter((tool) => screen.queryByTestId(`tools-menu-${tool}-button`) === null);
-    expect(missing, `tools absent from the Tools menu: ${missing.join(', ')}`).toEqual([]);
-  });
-
   /**
-   * The registry-derived test above proves every non-excluded tool HAS a row. It cannot see
-   * the other half: a tool that is absent for no stated reason is skipped by `MENUS_EXCLUDE`
-   * just as silently as one that is absent on purpose. This is the half that names them.
+   * The one assertion the menu bar exists to satisfy: Adobe's list, left to right.
    *
-   * The Tools menu lists TOOLS. `color`, `levels` and `transform` are `Image ▸ Adjustments`
-   * and `Edit ▸ Free Transform` commands, so a Tools-menu entry for any of them would be the
-   * same falsehood the rail carried — in the other direction, and in the surface whose own
-   * header comment calls a missing tool "a visible inconsistency". `toolbar-mapping.ts`'s
-   * `extraTools` names them as the ids with no rail entry; `MENUS_EXCLUDE` names them as the
-   * ids with no menu row. This is the pin that keeps the two in step, and it is the only
-   * thing standing between "excluded on purpose" and "excluded by accident".
+   * This replaces two weaker pins. One asked whether five named buttons existed, which a menu
+   * bar can do while being in the wrong order and carrying two menus Photoshop does not have.
+   * The other derived the `Tools` menu's rows from the tool registry — real coverage of a real
+   * defect, and it is not deleted so much as relocated: `Tools` is not a Photoshop menu, so
+   * there is nothing there to be complete about, and the guarantee it carried ("no registered
+   * tool is unreachable") now lives where the tools are, in
+   * `SidebarLeft/__tests__/toolbar-mapping.test.ts`, which walks the same registry against the
+   * rail and cannot be satisfied by a hand-written list of menu rows.
+   *
+   * ORDER is asserted, not membership: `ADOBE_MENUS` is compared to the rendered sequence, so
+   * a menu moved back next to `File` fails here.
    */
-  it('keeps the three non-tool commands out of the Tools menu, and says why', () => {
+  it("renders Adobe's ten menus, in Adobe's order", () => {
     render(<DesktopHeader />);
 
-    openMenu('Tools');
-
-    expect(screen.queryByTestId('tools-menu-color-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-levels-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-transform-button')).toBeNull();
-    expect(MENUS_EXCLUDE).toEqual(expect.arrayContaining(['color', 'levels', 'transform']));
+    const bar = screen.getByRole('heading', { level: 1 }).parentElement!.querySelector('ul')!;
+    const labels = [...bar.children].map((item) => item.querySelector('button')?.textContent);
+    expect(labels).toEqual(ADOBE_MENUS);
   });
 
   /**
-   * `MENUS_EXCLUDE` is the ONLY sanctioned way for a registered tool to have no Tools-menu
-   * row, so it is the list that decides which omissions are deliberate. Left open, it grows
-   * without anyone reading it and the registry-derived test above keeps passing — which is
-   * precisely the failure mode it was written to end. Pinned at six, for the six stated
-   * reasons in `DesktopHeader.tsx`: three pen point-tools that modify a path, and three
-   * adjustment commands that are not tools at all.
+   * The two menus that were in this bar and are not in Adobe's. `Tools` is the load-bearing
+   * one — Photoshop reaches the tool set through the Tools panel and the single-key tool
+   * bindings, never a menu — and `3D` is the one this repository believed in until the menu
+   * bar was checked against Adobe, which removed the 3D features outright in 2020.
    */
-  it('holds MENUS_EXCLUDE to exactly the six tools with a stated reason', () => {
-    expect([...MENUS_EXCLUDE].sort()).toEqual([
-      'add-anchor-point',
-      'color',
-      'convert-point',
-      'delete-anchor-point',
-      'levels',
-      'transform',
-    ]);
+  it('carries no menu Photoshop does not have', () => {
+    render(<DesktopHeader />);
+
+    expect(screen.queryByRole('button', { name: 'Tools' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '3D' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Analysis' })).toBeNull();
+  });
+
+  /**
+   * Adobe nests the workspace reset one level down, so this follows it there rather than
+   * asserting the old flat shape. `DesktopHeader.window-menu.test.tsx` covers the command
+   * itself; what is pinned here is that `Window` has a `Workspace` parent to hang it from.
+   */
+  it('nests the workspace reset under Window > Workspace, as Adobe does', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Window');
+    expect(screen.queryByTestId('window-menu-workspace-reset-essentials-button')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('window-menu-workspace-button'));
+    expect(screen.getByTestId('window-menu-workspace-reset-essentials-button')).toBeInTheDocument();
   });
 
   it('toggles the file menu open and closed', () => {
@@ -376,49 +360,51 @@ describe('DesktopHeader theme icon', () => {
 });
 
 describe('DesktopHeader menu lifecycle', () => {
+  /**
+   * Walks the whole bar rather than four of its ten, and asserts the list rather than the
+   * absence of one row. The old version named which menu replaced which, which is a shape that
+   * stays true as the bar grows — a second dropdown left hanging over the canvas is exactly
+   * the defect, and it does not care which two hosts cause it.
+   */
   it('keeps only one menu open at a time', () => {
-    render(<DesktopHeader />);
+    const { container } = render(<DesktopHeader />);
+    const openHostLists = () => container.querySelectorAll('[data-testid^="header-"][data-testid$="-menu"]');
 
-    openMenu('File');
-    expect(screen.getByTestId('header-file-new-button')).toBeInTheDocument();
-
-    openMenu('Tools');
-    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
-
-    openMenu('Image');
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
-    expect(screen.getByTestId('image-menu-adjustments-button')).toBeInTheDocument();
-
-    openMenu('Edit');
-    expect(screen.queryByTestId('image-menu-adjustments-button')).toBeNull();
-    expect(screen.getByTestId('edit-menu-free-transform-button')).toBeInTheDocument();
+    for (const menu of ADOBE_MENUS) {
+      openMenu(menu);
+      expect(openHostLists()).toHaveLength(1);
+      expect(screen.getByTestId(`header-${menu.toLowerCase()}-menu`)).toBeInTheDocument();
+    }
   });
 
-  it('closes the tools menu on a second click of the Tools button', () => {
+  it('closes a menu on a second click of its own button', () => {
     render(<DesktopHeader />);
 
-    openMenu('Tools');
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
+    openMenu('Layer');
+    expect(screen.getByTestId('layer-menu-flatten-image-button')).toBeInTheDocument();
 
-    openMenu('Tools');
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
+    openMenu('Layer');
+    expect(screen.queryByTestId('layer-menu-flatten-image-button')).toBeNull();
   });
 
-  it.each([
-    ['File', 'header-file-new-button'],
-    ['Tools', 'tools-menu-draw-button'],
-    ['Image', 'image-menu-adjustments-button'],
-    ['Edit', 'edit-menu-free-transform-button'],
-  ] as const)('closes the open %s menu when a mousedown lands outside of it', (menu, itemTestId) => {
+  /**
+   * Every host, not the four this file happened to cover. The outside-click handler used to
+   * be five hand-written branches over five named refs, so a sixth host was one forgotten
+   * branch away from a menu that never closed — a defect with no other symptom. The `Map` it
+   * runs on and this `it.each` both exist because of that, and the second assertion is the
+   * load-bearing one: it proves the host's own `<li>` registered, which is the half a
+   * hard-coded branch list got right for the five that existed and would have silently missed
+   * for the next one.
+   */
+  it.each(ADOBE_MENUS)('closes the open %s menu when a mousedown lands outside of it', (menu) => {
     render(<DesktopHeader />);
 
     openMenu(menu);
-    expect(screen.getByTestId(itemTestId)).toBeInTheDocument();
+    expect(screen.getByTestId(`header-${menu.toLowerCase()}-menu`)).toBeInTheDocument();
 
     fireEvent.mouseDown(document.body);
 
-    expect(screen.queryByTestId(itemTestId)).toBeNull();
+    expect(screen.queryByTestId(`header-${menu.toLowerCase()}-menu`)).toBeNull();
   });
 
   it('keeps the menu open when a mousedown lands inside it', () => {
@@ -435,10 +421,9 @@ describe('DesktopHeader menu lifecycle', () => {
 
     fireEvent.mouseDown(document.body);
 
-    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
-    expect(screen.queryByTestId('image-menu-adjustments-button')).toBeNull();
-    expect(screen.queryByTestId('edit-menu-free-transform-button')).toBeNull();
+    for (const id of ADOBE_MENUS.map((menu) => `header-${menu.toLowerCase()}-menu`)) {
+      expect(screen.queryByTestId(id)).toBeNull();
+    }
   });
 
   it('stops reacting to outside mousedowns after unmount', () => {
@@ -483,136 +468,108 @@ describe('DesktopHeader menu commands', () => {
    * Adobe's `Edit` menu holds `Free Transform` at the top level, not inside a `Transform`
    * submenu, and a menu whose items are all tool switches is not Adobe's `Edit` at all.
    * `blur`, `draw` and `text` are all Tools-panel tools, so none of them may appear here.
+   *
+   * Asserted as "no tool switch is present" rather than as an exact list, because the menu is
+   * meant to grow: `Undo` and `Step Forward` were added in the same change that made this
+   * menu Adobe-ordered, and pinning the whole list would turn the next Adobe command into a
+   * test edit instead of a decision. The list that must not grow is the tool switches.
    */
   it('holds no tool switches in the Edit menu', () => {
     render(<DesktopHeader />);
 
     openMenu('Edit');
 
-    expect(
-      within(screen.getByTestId('header-edit-menu'))
-        .getAllByRole('button')
-        .map((button) => button.textContent)
-    ).toEqual(['Free Transform']);
-    for (const toolName of ['blur', 'draw', 'text']) {
+    for (const toolName of ['blur', 'draw', 'text', 'crop', 'brush', 'eyedropper']) {
       expect(screen.queryByTestId(`edit-menu-${toolName}-button`)).toBeNull();
     }
+    const rows = within(screen.getByTestId('header-edit-menu'))
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    expect(rows).toContain('Free Transform');
+    expect(rows.filter((row) => /Tool$/.test(row ?? ''))).toEqual([]);
   });
 
-  it('opens one Tools menu entry and closes the menu', () => {
+  it('offers the two history commands Adobe puts at the top of Edit', () => {
+    history.canUndo.mockReturnValue(true);
+    history.canRedo.mockReturnValue(true);
     render(<DesktopHeader />);
 
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-polygonal-lasso-button'));
+    openMenu('Edit');
 
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('polygonal-lasso');
-    expect(screen.queryByTestId('tools-menu-polygonal-lasso-button')).toBeNull();
+    const undo = screen.getByTestId('edit-menu-undo-button');
+    const stepForward = screen.getByTestId('edit-menu-step-forward-button');
+    expect(undo).toBeEnabled();
+    expect(stepForward).toBeEnabled();
+
+    fireEvent.click(undo);
+    expect(history.undo).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('header-edit-menu')).toBeNull();
+
+    openMenu('Edit');
+    fireEvent.click(screen.getByTestId('edit-menu-step-forward-button'));
+    expect(history.redo).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['tools-menu-crop-button', 'crop'],
-    ['tools-menu-magic-wand-button', 'magic-wand'],
-    ['tools-menu-custom-shape-button', 'custom-shape'],
-  ] as const)('selects %s from the Tools menu', (testId, toolName) => {
+  it('greys the two history commands out when history cannot move, as Adobe does', () => {
     render(<DesktopHeader />);
 
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId(testId));
+    openMenu('Edit');
 
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith(toolName);
+    expect(screen.getByTestId('edit-menu-undo-button')).toBeDisabled();
+    expect(screen.getByTestId('edit-menu-step-forward-button')).toBeDisabled();
+    // Step Backward is a different kind of unavailable: the command does not exist at all, so
+    // it is inert whatever the history says. It is the row beside the two that work, and it is
+    // what makes the pair legible as "the history group".
+    expect(screen.getByRole('button', { name: 'Step Backward' })).toBeDisabled();
+  });
+
+  it("nests Adobe's six single modes under Edit > Transform", () => {
+    render(<DesktopHeader />);
+
+    openMenu('Edit');
+    expect(screen.queryByTestId('edit-menu-transform-button')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('edit-menu-transform-button'));
+    const submenu = screen.getByTestId('edit-menu-transform-button').nextElementSibling as HTMLElement;
+    const leaves = within(submenu)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    expect(leaves).toEqual(['Scale', 'Rotate', 'Skew', 'Distort', 'Perspective', 'Warp']);
+    for (const leaf of leaves) expect(screen.getByRole('button', { name: leaf })).toBeDisabled();
+  });
+
+  it('flattens the document through Layer > Flatten Image', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Layer');
+    fireEvent.click(screen.getByTestId('layer-menu-flatten-image-button'));
+
+    expect(layers.mergeAllLayers).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('header-layer-menu')).toBeNull();
   });
 });
 
-describe('DesktopHeader Tools menu figure entries', () => {
-  // These five entries are the second selection surface for the figures. The sidebar
-  // already reaches them as `goToTool('shape')` plus a `figure` patch; dispatching the
-  // registered figure `ToolName`s mounted the Shape panel with e.g. `toolName: 'rectangle'`,
-  // where the `args.toolName !== 'shape'` guard at Shape.tsx:32 suppressed the store-colour
-  // publish — so Tools > Rectangle Tool + a red colour well committed black.
-  //
-  // `ellipse` is the trap: the registered `ToolName` is `ellipse`, the stored figure is `oval`.
-  it.each([
-    ['tools-menu-rectangle-button', 'rectangle'],
-    ['tools-menu-ellipse-button', 'oval'],
-    ['tools-menu-triangle-button', 'triangle'],
-    ['tools-menu-polygon-button', 'polygon'],
-    ['tools-menu-line-button', 'line'],
-  ] as const)('selects %s as the shape tool with its figure, and closes the menu', (testId, figure) => {
-    render(<DesktopHeader />);
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId(testId));
-
-    expect(currentTool.patchToolArgs).toHaveBeenCalledExactlyOnceWith('shape', { figure });
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('shape');
-    expect(screen.queryByTestId(testId)).toBeNull();
-  });
-
-  // The order of those two calls is load-bearing, but not for the reason a
-  // call-order assertion suggests. `goToTool` runs `commitDirtyTool()` against the
-  // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the live
-  // `currentArgsRef` (`useCurrentTool.tsx:61`). Patch first and the text branch at
-  // `useLayer.ts:329` reads shape args — no `.text`, no `.rect` — and early-returns, so
-  // an unapplied text layer is dropped with no layer and nothing to undo.
-  //
-  // So this models the real side effects instead of only the call shape:
-  // `patchToolArgs` overwrites the live args ref exactly as `_setToolArgs` does, and
-  // `goToTool` reads it exactly as `commitDirtyTool` does. The assertion is therefore
-  // about what the outgoing commit SEES, not about which mock ran first. Both calls are
-  // batched in one click handler, so no stale-figure render can exist between them.
-  it('commits the pending text draft before the tool changes', () => {
-    const pendingText: TextToolArgs = {
-      toolName: 'text',
-      text: 'draft',
-      rect: { x1: 0, y1: 0, x2: 40, y2: 12 },
-      align: 'left',
-      bold: false,
-      italic: false,
-      color: '#000000',
-      fontFamily: 'Roboto',
-      fontSize: 12,
-      lineHeight: 1.2,
-    };
-    const shapeArgs: ToolArgs = { toolName: 'shape', figure: 'oval' } as ToolArgs;
-    storeState.toolName = 'text';
-    storeState.currentArgs = { current: pendingText };
-
-    // What `commitDirtyTool` does on the way through `goToTool`.
-    const seenByCommit: Array<{ args: ToolArgs; outcome: 'committed' | 'dropped' }> = [];
-    currentTool.patchToolArgs.mockImplementationOnce(() => {
-      storeState.currentArgs.current = shapeArgs;
-    });
-    app.goToTool.mockImplementationOnce(() => {
-      const args = storeState.currentArgs.current;
-      // `useLayer.ts:328-330`: the same cast, then the guard that drops the draft.
-      const { text, rect } = args as TextToolArgs;
-      seenByCommit.push({ args, outcome: !text || !rect ? 'dropped' : 'committed' });
-    });
-
-    render(<DesktopHeader />);
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-ellipse-button'));
-
-    expect(seenByCommit).toHaveLength(1);
-    // The commit must read the outgoing tool's args...
-    expect(seenByCommit[0].args).toBe(pendingText);
-    // ...so it takes the commit branch rather than the drop branch.
-    expect(seenByCommit[0].outcome).toBe('committed');
-    // And the reorder must not cost the figure the entry exists to select.
-    expect(storeState.currentArgs.current).toBe(shapeArgs);
-  });
-
-  it('leaves a non-figure tool on its own selection path', () => {
-    render(<DesktopHeader />);
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-crop-button'));
-
-    expect(currentTool.patchToolArgs).not.toHaveBeenCalled();
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('crop');
-  });
-});
+/**
+ * The figure routing this describe used to cover is gone with the `Tools` menu, and it is
+ * worth saying where it went rather than leaving a hole.
+ *
+ * The five figure rows were a SECOND selection surface over the rail, and they had a trap in
+ * them: `tools-menu-ellipse-button` had to dispatch `goToTool('shape')` plus a
+ * `patchToolArgs('shape', { figure: 'oval' })`, because dispatching the registered
+ * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where the
+ * `args.toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the store-colour publish —
+ * a red colour well committing black. Neither the trap nor the fix is affected: both live in
+ * `SidebarLeft`, which selects a figure as `goToTool('shape')` plus the `figure` value
+ * `toolbarMap` carries, and `toolbar-mapping.test.ts` pins that mapping's order and members
+ * directly.
+ *
+ * The other thing this describe proved was that the header's tool rows committed a pending
+ * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
+ * OUTGOING tool and patching first would leave that commit reading shape args. With no
+ * figure rows left the header has exactly two tool commands, `Edit ▸ Free Transform` and the
+ * two `Image ▸ Adjustments` rows, and both are a plain `goToTool` with nothing patched — so
+ * there is no ordering left to get wrong here.
+ */
 
 describe('DesktopHeader File > New', () => {
   it('creates a blank image without a discard prompt on a pristine document and closes the menu', async () => {

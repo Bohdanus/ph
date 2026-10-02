@@ -105,10 +105,12 @@ workspace where the result is refined with a Refine Edge Brush, a plain Brush, a
 Contrast, Shift Edge and Decontaminate Colors, then output as a selection, a layer mask, a new layer or
 a new document. <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 
-**What this app does.** There is no `Select` menu. The menu bar exists and has five menus — File,
-Tools, Image, Edit, Window (`src/components/DesktopHeader/DesktopHeader.tsx:322`, `:423`, `:452`,
-`:472`, `:512`) — and `Select` is not one of them, so there is nothing for Select and Mask to hang
-from.
+**What this app does.** The `Select` menu exists, and every item in it is disabled. The
+menu bar carries Adobe's ten (`src/components/DesktopHeader/DesktopHeader.tsx`, the `menus`
+array) and `Select ▸ All`, `Deselect`, `Inverse`, `Select and Mask…`, `Modify ▸`,
+`Grow` and `Similar` are all on screen and inert — a disabled row records a capability as
+unbuilt, which is why `Select and Mask` has somewhere to hang from even though there is
+nothing behind it.
 
 **Why it is too hard.** Select and Mask is not a dialog over the existing model — it is the workspace
 where most of a selection tool's real accuracy actually lives, and it consumes the missing combination
@@ -128,10 +130,10 @@ it; and Quick Mask mode shows the selection as a red overlay that brushes can cu
 Contract are the three every selection workflow depends on. Feather and Grow in particular are
 reachable from the same Select menu Select and Mask is.
 
-**What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
-that exist are File, Tools, Image, Edit and Window
-(`src/components/DesktopHeader/DesktopHeader.tsx:322`, `:423`, `:452`, `:525`, `:559`) — and no
-selection operation implements them: `src/util/selection.ts`
+**What this app does.** None of them exist, anywhere. The `Select` menu hosts them — `Modify` with its
+five leaves in Adobe's order, and `Inverse`, `Deselect`, `Grow` and `Similar` beside it
+(`src/components/DesktopHeader/DesktopHeader.tsx`, the `select` entry of the `menus` array) — and every one
+of those rows is disabled, because no selection operation implements them: `src/util/selection.ts`
 exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection, though
 it does compute a feathered alpha for the outline it draws.
 
@@ -339,7 +341,7 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
 
 `grayscale()` is a flat luminance average with no hue dependence at all, and `sepia()` is a fixed
 one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Photo Filter`,
-where **Black and White is a disabled item** (`src/components/DesktopHeader/DesktopHeader.tsx:193`)
+where **Black and White is a disabled item** (`src/components/DesktopHeader/DesktopHeader.tsx:151`)
 because nothing computes it — see the operator-decision section below for why `Photo Filter` is the
 name the enabled item carries.
 
@@ -371,11 +373,11 @@ is configurable in the Auto Color Correction Options dialog.
 <https://helpx.adobe.com/photoshop/using/levels-adjustment.html>
 
 **What this app does.** There is no Levels. `Image ▸ Adjustments ▸ Levels` is a **disabled** menu
-item (`src/components/DesktopHeader/DesktopHeader.tsx:208`), and the tool registered under the id
+item (`src/components/DesktopHeader/DesktopHeader.tsx:165`), and the tool registered under the id
 `levels` is not Levels either: `LevelsToolArgs` is `{ brightness, contrast }`
 (`src/tools/levels.ts:5`) and the processor emits a single `brightness(%) contrast(%)` string
 (`src/tools/functions.ts:66-70`). It is the app's `Brightness/Contrast`, reached at
-`Image ▸ Adjustments ▸ Brightness/Contrast` (`DesktopHeader.tsx:187`).
+`Image ▸ Adjustments ▸ Brightness/Contrast` (`DesktopHeader.tsx:145`).
 
 **Why it is too hard.** Levels is a per-channel **lookup table**: three control points map an input
 level to an output level, and every pixel in the selected channel is then a table index. The app has no
@@ -402,7 +404,7 @@ presets, an on-image adjustment tool, and a histogram behind the graph.
 <https://helpx.adobe.com/photoshop/using/curves-adjustment.html>
 
 **What this app does.** Nothing. `Image ▸ Adjustments ▸ Curves` is a **disabled** menu item
-(`src/components/DesktopHeader/DesktopHeader.tsx:191`). There is no curve type, no control-point
+(`src/components/DesktopHeader/DesktopHeader.tsx:146`). There is no curve type, no control-point
 model, and no evaluator anywhere in `src`.
 
 **Why it is too hard.** Curves is the same missing primitive as Levels with a worse control surface: a
@@ -647,10 +649,10 @@ in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Ed
 rail entry (`toolbar-mapping.ts:172-189`). What is still open is not where they live but **what the two
 enabled items are called**, because both names are a partial match and neither is a match.
 
-`ADJUSTMENTS_ITEMS` (`src/components/DesktopHeader/DesktopHeader.tsx:186-209`) carries Adobe's list in
-a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
-`toolName` and nothing else (`DesktopHeader.tsx:147-150`, `:488`), so a disabled item is a recorded
-absence rather than a fake.
+`ADJUSTMENTS_ITEMS` (`src/components/DesktopHeader/DesktopHeader.tsx:144-166`) carries Adobe's list in
+a reconstructed order, with **two items enabled and twenty disabled**. A row is enabled by carrying a
+`toolName` and nothing else — `adjustmentMenuItem` branches on exactly that field
+(`DesktopHeader.tsx:262`) — so a disabled item is a recorded absence rather than a fake.
 
 **`levels` is `Brightness/Contrast`, not Levels — and that is honest, not a dodge.**
 `LevelsToolArgs` is `{ brightness, contrast }` (`src/tools/levels.ts:5`) and the processor emits one

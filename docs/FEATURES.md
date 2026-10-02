@@ -52,7 +52,7 @@ platform limit.
 | Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only         |
 | History           | `have`      | Linear, unbounded, with a History panel                                        |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
-| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
+| Menu bar          | `divergent` | Adobe's ten in Adobe's order; Type, Select, Filter, View and Help are inert |
 | View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
 | Keyboard          | `partial`   | 41 bindings against Photoshop's ~200                                           |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
@@ -210,8 +210,8 @@ Actions, Measurement Log — dockable, with panel groups.
 **This app:** exactly two dockable panels, `PanelId = 'history' | 'layers'`
 (`src/contexts/PanelLayout.tsx:89`). They dock, drag-reorder, resize, collapse to
 icons and roll up (`src/contexts/PanelLayout.tsx:330-344`,
-`src/components/SidebarRight/PanelGroup.tsx`), and Window has Reset Workspace
-(`src/components/DesktopHeader/DesktopHeader.tsx:566`).
+`src/components/SidebarRight/PanelGroup.tsx`), and Window has `Workspace ▸ Reset
+Essentials`.
 
 **Status:** `partial`
 
@@ -224,30 +224,62 @@ which are options bars, not panels.
 
 ## Menu bar
 
-**Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, 3D, View, Window,
-Help.
+**Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help.
+The macOS bar prefixes that with the application menu, `Photoshop`, and a `Plugins`
+menu appears when a third-party plugin is installed. There is **no `3D` menu** — Adobe
+removed the 3D features outright in 2020 — and no top-level `Analysis` menu, whose
+commands sit at `Image ▸ Analysis`. There is **no `Tools` menu**: Photoshop exposes the
+tool set through the Tools panel, its flyouts and the single-key bindings
+(<https://helpx.adobe.com/photoshop/kb/3d-faq.html>,
+<https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/spring-loaded-shortcuts.html>).
 
-**This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
-(`src/components/DesktopHeader/DesktopHeader.tsx:313-570`). File has New, Open,
-Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
-Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
-twenty **disabled** (`DesktopHeader.tsx:186-209`); a disabled item records a capability
-the app does not have rather than faking it. Edit holds one item, `Free Transform`,
-which is where Adobe puts it (`DesktopHeader.tsx:518-534`). Window has Reset Workspace.
+**This app:** Adobe's ten, in Adobe's order, and nothing else decides the list
+(`src/components/DesktopHeader/DesktopHeader.tsx`, the `menus` array). File has New,
+Open, Save. Edit opens with the history group — `Undo`, `Step Forward`, then a
+disabled `Step Backward` — and carries `Free Transform` and a `Transform` submenu.
+Image carries `Adjustments`, Adobe's item list with **two enabled** (`Brightness/Contrast`
+and `Photo Filter`) and twenty disabled. Layer carries `Flatten Image`, the only
+enabled row, over ten Adobe rows this app cannot run. Type, Select, Filter, View and
+Help exist with Adobe's items in Adobe's order, every one disabled. Window carries
+`Workspace ▸ Reset Essentials`, nested where Adobe nests it.
 
 **Status:** `divergent`
 
-**Gap:** The Layer, Type, Select, Filter, 3D, View and Help menus do not exist, and
-Image and Edit are each a stub — Image has no Mode, Image Size, Canvas Size, Crop,
-Trim or Canvas Rotation, and Edit has nothing but Free Transform. So Undo, Cut, Copy,
-Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask, Group, Merge, Select All,
-Deselect, Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
-unreachable from the menu bar — several are unreachable entirely.
+**Gap:** Membership inside each host, not the structure. `File` has no `Close`,
+`Save As`, `Place`, `Export` or `Print`. `Edit` has no `Cut`, `Copy`, `Paste`,
+`Fill`, `Stroke`, `Content-Aware Fill` or `Puppet Warp`. `Image` has no `Mode`,
+`Image Size`, `Canvas Size`, `Crop`, `Trim`, `Image Rotation` or `Analysis`. `Layer`
+has no `New`, `Delete`, masks, `Create Clipping Mask`, `Group Layers`, `Arrange` or
+`Merge Layers`. `Type`, `Select`, `Filter`, `View` and `Help` are inert in full, and the
+category submenus — `Filter ▸ Blur`, `Type ▸ OpenType`, `View ▸ Proof Setup`,
+`View ▸ Show` — are not rendered at all, because every one of their leaves is
+unbuildable and Adobe publishes no stable order for them. `Window` has no `Arrange`,
+no panel toggles and no open-document list.
 
-Undo and Redo exist as buttons (`src/components/HistoryControls/HistoryControls.tsx:43-62`)
+So Undo, Cut, Copy, Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask,
+Group, Merge, Select All, Deselect, Modify, the Filter gallery, Zoom, Fit Screen,
+Rulers, Guides and Print are unreachable from the menu bar — several are unreachable
+entirely. Zoom is the load-bearing one: `docs/FEATURES.md`'s next section records that
+the canvas cannot be magnified or panned at all, so every `View` row is inert for the
+same reason.
+
+A row the app cannot run renders `disabled` rather than being omitted, so the gap is
+visible where a user looks for it. That is why `Select ▸ All` is on screen and greyed:
+this app has selection tools and no selection commands, and an absent menu would hide
+that in a document instead.
+
+Tools are reachable the two ways Photoshop reaches them: the rail
+(`src/components/SidebarLeft/SidebarLeft.tsx`, with its `role="menu"` flyouts) and the
+single-key bindings (`src/components/Common/AppKeyboardShortcuts.tsx`).
+`SidebarLeft/__tests__/toolbar-mapping.test.ts` pins that every registered tool is a
+rail tile or is named in `toolbar-mapping.ts`'s `extraTools` — which is where the "no
+tool is unreachable" guarantee lives now that there is no `Tools` menu to be complete.
+
+Undo and Redo also exist as buttons (`src/components/HistoryControls/HistoryControls.tsx`)
 and are bound to `Ctrl+Z` / `Shift+Ctrl+Z`
-(`src/components/Common/AppKeyboardShortcuts.tsx:259`, `:271`); they are missing
-from the menu, not from the app.
+(`src/components/Common/AppKeyboardShortcuts.tsx`); the menu rows call the same
+guarded commands through `src/hooks/useHistoryCommands.ts`, so a pointer gesture
+cannot truncate the redo tail from any of the three surfaces.
 
 ## View and navigation
 

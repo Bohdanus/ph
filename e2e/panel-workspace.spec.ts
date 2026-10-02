@@ -309,7 +309,7 @@ test.describe('Panel workspace (fast)', () => {
     expect(painted, 'the flyout is in the DOM with a real box but paints nothing — the rail clips it').toBe(true);
   });
 
-  test('keeps the layout across a reload, and Window > Reset undoes it', async ({ page }) => {
+  test('keeps the layout across a reload, and Window > Workspace > Reset Essentials undoes it', async ({ page }) => {
     const handle = (await page.locator(RESIZE_HANDLE).boundingBox())!;
     await page.mouse.move(handle.x + handle.width / 2, 400);
     await page.mouse.down();
@@ -322,8 +322,13 @@ test.describe('Panel workspace (fast)', () => {
     await expect(page.locator(RAIL)).toBeVisible();
     expect(await width(page.locator(DOCK))).toBeCloseTo(resized, 0);
 
+    // Three clicks, and the middle one is not incidental: Adobe nests the workspace commands
+    // inside `Window > Workspace`, so a two-click path here would be asserting a menu shape
+    // Photoshop does not have. The submenu is a real button rather than a hover, so all three
+    // are reachable by keyboard too.
     await page.getByTestId('header-window-menu-button').click();
-    await page.getByTestId('window-menu-reset-workspace-button').click();
+    await page.getByTestId('window-menu-workspace-button').click();
+    await page.getByTestId('window-menu-workspace-reset-essentials-button').click();
 
     expect(await width(page.locator(DOCK))).toBeCloseTo(250, 0);
     expect(await panelOrder(page)).toEqual(['history', 'layers']);
