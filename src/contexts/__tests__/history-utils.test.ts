@@ -307,6 +307,7 @@ describe('toLayerSnapshot source cloning', () => {
     };
     const text: DurableLayerSource = {
       kind: 'text',
+      toolName: 'text',
       args: { text: 'hello' },
       size: { width: 40, height: 20 },
       sourcePos: { ...pos },

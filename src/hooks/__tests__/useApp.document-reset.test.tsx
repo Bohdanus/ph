@@ -8,10 +8,12 @@ import { createHistoryItem } from '../../contexts/history-utils.ts';
 import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
 import { selectionSnapshot } from '../../contexts/selection-baseline.ts';
+import { legacyHistoryToDurable } from '../../contexts/history-adapter.ts';
+import { getAssetRegistry } from '../../contexts/asset-registry.ts';
 import type { DurableDocument } from '../../contexts/history-model.ts';
 import type { Layer, LayersRecord } from '../../contexts/layer-types.ts';
 import type { Selection, SelectionClipboard } from '../../contexts/general-types.ts';
-import type { BlankImageParams } from '../../contexts/tool-types.ts';
+import type { NewDocumentBlankParams } from '../../contexts/tool-types.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
 
 /**
@@ -291,9 +293,6 @@ function durableLayerIds(durable: DurableDocument): string[] {
       case 'create-layer':
         ids.add(operation.layer.id);
         break;
-      case 'rasterize-layer':
-        ids.add(operation.result.id);
-        break;
       case 'remove-layer':
       case 'set-layer-properties':
       case 'reposition-layer':
@@ -380,7 +379,7 @@ function expectOutgoingDocumentKilled(result: Result) {
   expect(store.documentId).not.toBe(OUTGOING_DOCUMENT_ID);
 }
 
-const BLANK: BlankImageParams = {
+const BLANK: NewDocumentBlankParams = {
   color: '#ffffff',
   opacity: 1,
   size: { width: 320, height: 240 },
@@ -392,7 +391,7 @@ const createImage = (width: number, height: number) =>
 
 /**
  * A layered import with one raster-backed layer, so the import arm's raster handling
- * and its follow-up `ADOPT_LAYER_BITMAPS` registration both run — the two steps a
+ * and its follow-up raster adoption registration both run — the two steps a
  * single-layer raster open never exercises. `psd-vector`'s source geometry matches
  * its own `pos`, which `makeLayer`'s default would not.
  */
@@ -638,6 +637,29 @@ describe('opening an image kills the outgoing document history and layers', () =
     expect(Object.keys(result.current.store.layers).sort()).toEqual(['psd-raster', 'psd-vector']);
     expect(result.current.store.fileName).toBe('design.psd');
     expect(result.current.store.totalSize).toEqual({ width: 200, height: 150 });
+  });
+
+  it('seeds the PSD baseline with the same document as a fresh whole-timeline conversion', async () => {
+    const result = setup();
+
+    await act(async () => {
+      await result.current.app.setImageFromUpload({ fileName: 'design.psd', document: createPsdDocument() });
+    });
+
+    const store = result.current.store;
+    const seeded = store.durableDocument;
+    expect(seeded).not.toBeNull();
+
+    const converted = legacyHistoryToDurable(store.history, {
+      documentId: store.documentId,
+      documentRevision: store.documentRevision,
+      branchRevision: store.branchRevision,
+      durableRevision: seeded!.durableRevision,
+      registry: getAssetRegistry(),
+    });
+
+    expect(converted.diagnostics).toEqual([]);
+    expect(seeded).toEqual(converted.document);
   });
 
   it('leaves the store untouched when undo is pressed with nothing to undo', async () => {

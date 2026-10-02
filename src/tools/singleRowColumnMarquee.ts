@@ -132,10 +132,17 @@ export type BandOrientation = 'row' | 'column';
  * pixel wide, a thickness-only rule reads it as a column and transposes it mid-drag. Asking
  * twice, differently, is the defect; this is the one place that answers.
  *
- * The clauses are tested COLUMN FIRST and are the same two the span predicate has always
- * used, which is what makes the degenerate documents come out right rather than by accident:
- * on a document one pixel TALL, a 1x1 band spans its full height and so is a column; on a
- * document one pixel WIDE, the same rect spans its full width but only one of its 120 rows,
+ * **The order of the two clauses is arbitrary, and swapping them changes nothing.** Both can
+ * only be true at once when the rect is one pixel on both axes AND the document is at most one
+ * pixel on both axes, and there the two readings produce the identical rect, so the answer
+ * cannot surface. Every reachable band satisfies exactly one clause. (An earlier version of
+ * this comment claimed COLUMN FIRST was what made the degenerate documents come out right; a
+ * swap of the two clauses passes every test in the repository, which is how that claim was
+ * caught. The SPAN conditions are what separate the degenerate cases, not the order.)
+ *
+ * What the span conditions do is separate the two documents where a 1x1 rect is a real band.
+ * On a document one pixel TALL, a 1x1 band reaches its full height and so is a column; on a
+ * document one pixel WIDE, the same rect reaches its full width but only one of its 120 rows,
  * so it is a row. A rect that satisfies neither clause — a 1x1 band on a document with both
  * dimensions above one pixel — is not a band at all and is `null`, which is why such a band
  * can never be reached through a press.

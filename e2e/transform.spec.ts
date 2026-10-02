@@ -172,6 +172,90 @@ test.describe('Transform tool', () => {
     expect(committed!.height / committed!.width, 'Apply must not drop the rotation').toBeGreaterThan(3);
   });
 
+  /**
+   * The history half, which the two geometry tests above deliberately never touched.
+   *
+   * `transform` declares `commit: 'affine-operation'` and `crop` declares
+   * `commit: 'document-operation'`, and they are the only two commit kinds in the registry that
+   * are not a raster. A raster commit is a whole-canvas operation whose undo is obvious; an
+   * affine commit rewrites the layer's transform, so its undo has to put the ORIGINAL transform
+   * back rather than merely drop a delta — and nothing in this file asserted that it did.
+   *
+   * The assertion is the bar's ASPECT, not its position, and that is the load-bearing choice. A
+   * 90 degree rotation is a whole-number change of orientation, so the same stroke reads as a
+   * horizontal bar before and after the undo and as a vertical bar in between. A replay that
+   * dropped the entry, replayed to the wrong index, or left the affine operation applied with a
+   * negated scale all of them show up as a bar that is not the shape it was, and a position-only
+   * assertion would pass on some of them.
+   */
+  test('a rotate is one history entry that one undo returns to the original pixels', async ({ page }, testInfo) => {
+    await page.goto('/');
+    const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
+    expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
+    const box = canvasBox!;
+    // Full canvas clip for every read, for the reason the first test gives: a 90 degree rotation
+    // moves the bar into a different band, so a fixed band would read a correct rotation as "the
+    // ink disappeared".
+    const wholeCanvas: Required<ClipOptions> = {
+      x: box.x,
+      y: box.y,
+      width: Math.floor(box.width),
+      height: Math.floor(box.height),
+    };
+
+    await clickToolButton(page, 'draw');
+    await page.locator('#size-slider').fill(String(BRUSH_SIZE));
+    await drawLine(page, box, BAR_START_X, Math.round(box.height * 0.5), BAR_END_X, Math.round(box.height * 0.5));
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const before = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'undo-rotate-before', testInfo, wholeCanvas)
+    );
+    expect(before, 'the drawn bar should be dark enough for the dark-pixel bounds').not.toBeNull();
+    expect(before!.width / before!.height, 'a horizontal bar is wider than it is tall').toBeGreaterThan(3);
+
+    await openTransformTool(page);
+    await page.getByTitle('Rotate 90° Right').click();
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+    await applyTransform(page);
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const committed = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'undo-rotate-applied', testInfo, wholeCanvas)
+    );
+    expect(committed, 'the committed layer should still be dark').not.toBeNull();
+    expect(
+      committed!.height / committed!.width,
+      'the committed layer is the rotated bar, so the rotation is on the timeline'
+    ).toBeGreaterThan(3);
+    await expect(page.getByTestId('undo-button'), 'Apply committed a history entry').toBeEnabled();
+
+    // ONE UNDO, and the bar is the horizontal one again — the original pixels, not merely
+    // something dark.
+    await page.getByTestId('undo-button').click();
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+    const afterUndo = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'undo-rotate-undone', testInfo, wholeCanvas)
+    );
+    expect(afterUndo, 'the undone layer should still be dark').not.toBeNull();
+    expect(
+      afterUndo!.width / afterUndo!.height,
+      'one undo must restore the original horizontal bar, so the affine operation is off the layer'
+    ).toBeGreaterThan(3);
+    // Dimension-for-dimension against the pre-transform bar, so "restored" means this stroke at
+    // this size rather than some other horizontal bar. A rotate-then-restore path that rebuilt
+    // the layer through a raster round trip loses a pixel row per hop and still passes the aspect
+    // ratio; a tolerance is what separates that from a replay.
+    expect(
+      Math.abs(afterUndo!.width - before!.width) / before!.width,
+      'the restored bar is the same length as the one that was drawn'
+    ).toBeLessThan(0.05);
+    expect(
+      Math.abs(afterUndo!.height - before!.height) / before!.height,
+      'the restored bar is the same thickness as the one that was drawn'
+    ).toBeLessThan(0.15);
+  });
+
   test('tapers a layer so the bottom narrows and the top does not, and keeps it after Apply', async ({
     page,
   }, testInfo) => {

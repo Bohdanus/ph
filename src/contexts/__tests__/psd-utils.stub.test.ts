@@ -261,6 +261,19 @@ describe('loadPsd flattened-composite fallback', () => {
     expect(result.warnings).toEqual(['No leaf layers; imported the flattened composite image.']);
   });
 
+  it('a composite PSD layer is bedrock through its source, not its snapshot', async () => {
+    stubDocument({ children: [] }, { width: 2, height: 2 });
+    getCompositeImageData.mockReturnValue(pixelsOf(2, 2, [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]));
+
+    const result = await loadPsd(psdBuffer({ width: 2, height: 2 }));
+    const layer = Object.values(result.layers)[0];
+
+    expect(layer).toMatchObject({
+      isBedrock: false,
+      source: { kind: 'image', isBedrock: true, size: { width: 2, height: 2 } },
+    });
+  });
+
   it('falls back to the composite when the document carries no child list at all', async () => {
     readPsd.mockReturnValue({ width: 2, height: 2 });
     getCompositeImageData.mockReturnValue(pixelsOf(2, 2, [9, 9, 9, 255, 8, 8, 8, 255, 7, 7, 7, 255, 6, 6, 6, 255]));

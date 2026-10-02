@@ -55,6 +55,46 @@ export const IDLE_LIVE_MS = 6 * 60 * 60 * 1000;
 /** "No cap" for an internal aggregation, as opposed to a displayed page. */
 export const NO_LIMIT = Number.MAX_SAFE_INTEGER;
 
+/**
+ * The longest a single board MESSAGE may be, in characters.
+ *
+ * The board is a log, not a document. A note is a pointer — "ph-12 fixed, files
+ * A and B" — and the finding it points at belongs in a handoff document, where
+ * it can be linked, reviewed and kept. `watch` prints one line per event, so an
+ * unbounded message is one unbounded line: a 5000-character note turns the log
+ * into a wall, and every reader after it has to scroll past.
+ *
+ * It REJECTS rather than truncates, which is the whole point. This repository has
+ * already paid for the alternative: `truncate()` exists because a title clipped
+ * with `slice(0, 70)` and no ellipsis read as a finished sentence, and an agent
+ * working from half a message cannot tell that is what it has. A note that was
+ * silently clipped at 4096 characters is the same defect wearing a larger number,
+ * and it is worse here because the author would never see it happen.
+ *
+ * 4096 is chosen to match Kilo's own `board_post` limit, so a finding that
+ * survives one channel survives the other, and an agent that learned the number
+ * in one place is right in the other.
+ */
+export const MAX_MESSAGE_CHARS = 4096;
+
+/**
+ * One guard for every text-carrying event, at the single point they all pass
+ * through.
+ *
+ * `note`, `comment`, `claim --note`, `resolve --note`, `close`, `defer` and
+ * `reopen` all reach `addEvent`, so a cap anywhere else could be bypassed by
+ * adding a command. The error names the limit, the field and the way out.
+ */
+function assertMessageLength(kind, message) {
+  if (message.length <= MAX_MESSAGE_CHARS) return;
+  throw new BoardError(
+    `${kind}: ${message.length} characters is over the ${MAX_MESSAGE_CHARS}-character board limit, ` +
+      `so nothing was written. The finding belongs in a handoff document — put its path in a note of ` +
+      `at most ${MAX_MESSAGE_CHARS} characters and the next agent can follow it. Nothing is truncated.`,
+    { code: 1 }
+  );
+}
+
 const PRIORITY_ORDER = { critical: 0, high: 1, normal: 2, low: 3 };
 export const PRIORITIES = Object.keys(PRIORITY_ORDER);
 
@@ -339,30 +379,57 @@ export class Board {
       throw new BoardError(`no board at ${this.path}`, { code: 2 });
     }
     this.db = new DatabaseSync(this.path);
-    // ORDER MATTERS, and setting the timeout first is NECESSARY BUT NOT
-    // SUFFICIENT.
+    // A THROW ANYWHERE IN HERE MUST NOT LEAVE A HALF-OPEN BOARD. `this.db` is
+    // assigned on the line above, and the first line of this method is
+    // `if (this.db) return this`, so a caller that catches the failure and
+    // retries — the natural reaction to an error message that says exactly what
+    // to fix — got a board back on the second call with the rest of `open()`
+    // never run and no error, because the short-circuit returned the object that
+    // was already holding a live handle. Measured before this: open threw, a
+    // second `open()` returned NORMALLY, and the caller held a usable unmigrated
+    // board.
     //
-    // The timeout first: without it, a second process opening a board gets
-    // SQLITE_BUSY immediately instead of waiting.
-    //
-    // The retry: SQLite does not run the busy handler for the exclusive lock a
-    // journal-mode conversion needs, so on a board that does not exist yet — the
-    // moment the whole swarm opens it at once — one process in three hundred
-    // still lost that lock and died with "database is locked". Reordering alone
-    // turned a 12% failure rate into a 0.2% one, which is worse than a fix
-    // because it looks like a fix.
-    //
-    // Giving up is survivable: WAL is what lets a reader run while a writer
-    // holds the write lock, and without it SQLite falls back to the rollback
-    // journal, where the same BEGIN IMMEDIATE transactions and the same
-    // busy_timeout still make every claim exclusive. Correctness comes from the
-    // transactions, not from this line; this line buys concurrency, and a board
-    // that stays on the rollback journal is slower, not wrong.
-    this.db.exec('PRAGMA busy_timeout = 5000');
-    this.enableWriteAheadLog();
-    this.db.exec('PRAGMA foreign_keys = ON');
-    this.migrate();
-    return this;
+    // THE `try` STARTS IMMEDIATELY AFTER THE ASSIGNMENT, and that placement is
+    // the whole fix. Wrapping only `migrate()` left the same leak reachable by
+    // every statement between here and there: on a corrupt `board.db`,
+    // `new DatabaseSync` succeeds and the first `PRAGMA` throws, so `migrate()`
+    // is never reached and the try/catch never runs. Verified against both the
+    // previous commit and main — same half-open board, same silent second open.
+    try {
+      // ORDER MATTERS, and setting the timeout first is NECESSARY BUT NOT
+      // SUFFICIENT.
+      //
+      // The timeout first: without it, a second process opening a board gets
+      // SQLITE_BUSY immediately instead of waiting.
+      //
+      // The retry: SQLite does not run the busy handler for the exclusive lock a
+      // journal-mode conversion needs, so on a board that does not exist yet —
+      // the moment the whole swarm opens it at once — one process in three
+      // hundred still lost that lock and died with "database is locked".
+      // Reordering alone turned a 12% failure rate into a 0.2% one, which is
+      // worse than a fix because it looks like a fix.
+      //
+      // Giving up is survivable: WAL is what lets a reader run while a writer
+      // holds the write lock, and without it SQLite falls back to the rollback
+      // journal, where the same BEGIN IMMEDIATE transactions and the same
+      // busy_timeout still make every claim exclusive. Correctness comes from
+      // the transactions, not from this line; this line buys concurrency, and a
+      // board that stays on the rollback journal is slower, not wrong.
+      this.db.exec('PRAGMA busy_timeout = 5000');
+      this.enableWriteAheadLog();
+      this.db.exec('PRAGMA foreign_keys = ON');
+      this.migrate();
+      return this;
+    } catch (err) {
+      try {
+        this.db.close();
+      } catch {
+        /* the handle is being discarded either way; a close that fails must not
+           replace the error the caller needs to see */
+      }
+      this.db = null;
+      throw err;
+    }
   }
 
   /**
@@ -432,6 +499,15 @@ export class Board {
         { code: 1 }
       );
     }
+    // BEFORE `exec(SCHEMA)`, like the version guard above, and for the same
+    // reason. `CREATE TABLE IF NOT EXISTS` would otherwise leave the board
+    // holding eight tables it was about to declare it could not understand —
+    // measured: a v2 board refused by a v3 script gained every table in SCHEMA
+    // and kept its v2 stamp. Additive and idempotent, so not corruption, but it
+    // is the half-adoption this method exists to avoid, and the two refusals in
+    // one method ought to have the same contract.
+    if (existing > 0 && existing < SCHEMA_VERSION) this.requireMigrationStep(existing);
+
     this.db.exec(SCHEMA);
     const migrated = existing > 0 && existing < SCHEMA_VERSION ? this.runMigrations(existing) : false;
     if (existing === 0) {
@@ -463,11 +539,60 @@ export class Board {
    * current while its data is not, and there is no error to send anyone back.
    */
   runMigrations(fromVersion) {
-    const steps = { 1: () => this.migrateFileLockAttribution() };
-    const step = steps[fromVersion];
+    this.requireMigrationStep(fromVersion);
     // RETURNED, not just called: `if (step) step();` discarded it, the version
     // row never advanced, and every open re-ran the migration.
-    return step ? step() : false;
+    return this.migrationSteps()[fromVersion]();
+  }
+
+  /**
+   * The migrations this script knows, each keyed by the version it follows.
+   *
+   * A METHOD rather than a literal inside `runMigrations`, because `migrate()`
+   * has to ask the same question BEFORE it runs `exec(SCHEMA)` and a literal
+   * scoped to the other method cannot answer it. Two tables would be two
+   * answers.
+   */
+  migrationSteps() {
+    return { 1: () => this.migrateFileLockAttribution() };
+  }
+
+  /**
+   * A MISSING STEP IS A BUG IN THIS SCRIPT, and it used to pass for a
+   * successful open.
+   *
+   * `SCHEMA_VERSION` was raised to 3 by two branches that both called their
+   * first step "v2", while main's `steps` still started at 1 — so a board
+   * stamped 2 found no `steps[2]`, got `false`, and the caller read that as
+   * "no migration ran", which is precisely the value that WITHHOLDS the version
+   * stamp. The board stayed at 2 with the new table created empty by
+   * `exec(SCHEMA)` and nothing anywhere reporting an error.
+   *
+   * `integration/merge-sweep` shipped exactly that: v3, an `issue_files` table,
+   * and no `steps[2]`. It reproduces on demand — open a main-written v2 board
+   * with it and you get version 2, an empty `issue_files`, and exit 0.
+   *
+   * So a version this script claims to migrate, with no step to migrate it, now
+   * REFUSES. The failure a caller can act on beats the one it cannot: "fix the
+   * board script" is answerable, "your index is empty and nothing said so" is
+   * not.
+   *
+   * It does NOT close the neighbouring hole: a v3 script whose `steps` are
+   * `{1, 2}` opening a **v1** board runs only step 1 and then stamps v3 anyway,
+   * because `migrate()` advances to `SCHEMA_VERSION` rather than to
+   * `fromVersion + 1`. That is the same class of silent under-migration and the
+   * more likely mistake for a branch that orders its steps wrongly. Left alone
+   * deliberately: fixing it means deciding how a chain of steps composes, which
+   * is a design question about the next migration rather than a repair of this
+   * one.
+   */
+  requireMigrationStep(fromVersion) {
+    if (!this.migrationSteps()[fromVersion]) {
+      throw new BoardError(
+        `board schema is v${fromVersion} and this script writes v${SCHEMA_VERSION}, but it has no v${fromVersion} migration step; add the step to migrationSteps() in db.mjs`,
+        { code: 1 }
+      );
+    }
   }
 
   currentSchemaVersion() {
@@ -560,6 +685,9 @@ export class Board {
   // --- events -------------------------------------------------------------
 
   addEvent(kind, fields = {}) {
+    if (typeof fields.message === 'string') {
+      assertMessageLength(kind, fields.message);
+    }
     const result = this.db
       .prepare(
         `INSERT INTO events (ts, agent_id, kind, issue_id, path, message, data)
@@ -1114,9 +1242,9 @@ export class Board {
    * `liveLocks`, and never through this.
    */
   locksFor(issueId, at = this.now()) {
-    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path} ${lock.agent_id}`, lock]));
+    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path}\0${lock.agent_id}`, lock]));
     return this.issueLocks(issueId, at)
-      .map((pairing) => live.get(`${pairing.path} ${pairing.agent_id}`))
+      .map((pairing) => live.get(`${pairing.path}\0${pairing.agent_id}`))
       .filter(Boolean);
   }
 

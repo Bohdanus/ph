@@ -346,11 +346,13 @@ this file; the "not researched" cells in the tables above are the same fact at r
   the Elliptical Marquee and `Style`, `Fixed Ratio` and `Fixed Size` to the Rectangular and
   Elliptical Marquees **by name**
   (`helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`), so neither 1-pixel tool has
-  any of them. What is left on their bars is the four selection modes, `Feather` and
-  `Select and Mask`; the scripting API is the sharper evidence on the first two, since
-  `selectRow`/`selectColumn` take neither a `feather` nor an `antiAlias` parameter where
-  `selectRectangle` takes both. Their cycling key is still unverified — see the `M` group
-  section of `src/tools/descriptions/selection.notes.md`.
+  any of them. What is left on **Adobe's** bar for each is the four selection modes, `Feather`
+  and `Select and Mask` — and **this app renders none of those three either**, which is why they
+  are `missing` in `docs/TOOLS.md` rather than absent from this file: the tools exist, so their
+  gaps belong to the description system, not here. The scripting API is the sharper evidence on
+  the first two, since `selectRow`/`selectColumn` take neither a `feather` nor an `antiAlias`
+  parameter where `selectRectangle` takes both. Their cycling key is still unverified — see the
+  `M` group section of `src/tools/descriptions/selection.notes.md`.
 
 **Third-party only — membership may be confirmed, the shortcut is not**
 
