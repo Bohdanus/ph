@@ -112,6 +112,79 @@ describe('cloneDurableDocument selection cloning', () => {
   });
 });
 
+/**
+ * `replayDurableDocument` had its own private `cloneSelectionSnapshot`. It copied
+ * `points` and `pos` but not `metadata`, so the `...selection` spread aliased the
+ * INPUT's metadata object into the result — a shared, mutable object, not a copy.
+ * Verified by mutation: reinstating that function at the two replay call sites turns
+ * the first test below red on `expect(replayed.metadata).not.toBe(input.metadata)`.
+ *
+ * The first case feeds the reducer an UNFROZEN document built by hand, which is the
+ * only way to reach the copy at all: `replayDurableAtCursor` and `cloneDurableDocument`
+ * both hand the reducer input that is already deep-frozen. The frozen case is the
+ * companion, and it is deliberately understood to be the weaker one — on frozen input
+ * the aliased metadata is already a frozen copy made by `cloneDurableDocument`, so it
+ * is a different object from the original and already deep-frozen, and all three
+ * assertions hold. It pins that the frozen path is honest; it cannot detect the alias.
+ * That asymmetry is the blind spot, not a gap in the assertions.
+ */
+describe('replayDurableDocument selection metadata', () => {
+  const withMetadata = () =>
+    selection({
+      geometry: 'rectangle',
+      sourceTool: 'rectangular-selection',
+      metadata: {
+        featherRadius: 3,
+        magneticLasso: {
+          width: 12,
+          contrast: 0.5,
+          frequency: 1,
+          snapStrength: 2,
+          smoothing: 3,
+          antiAlias: true,
+          pathPointCount: 4,
+        },
+      },
+    });
+
+  function replayedSelection(input: Selection) {
+    const replay = replayDurableDocument(document([], [input], 'selection-1'));
+    const result = replay.selections.selections[0];
+    if (!result) throw new Error('the replayed selection is missing');
+    return result;
+  }
+
+  it('copies metadata out of an unfrozen document and deep-freezes it', () => {
+    const input = withMetadata();
+
+    expect(Object.isFrozen(input)).toBe(false);
+    const replayed = replayedSelection(input);
+
+    expect(replayed.metadata).toStrictEqual(input.metadata);
+    expect(replayed.metadata).not.toBe(input.metadata);
+    expect(replayed.metadata?.magneticLasso).not.toBe(input.metadata?.magneticLasso);
+    expect(Object.isFrozen(replayed.metadata)).toBe(true);
+    expect(Object.isFrozen(replayed.metadata?.magneticLasso)).toBe(true);
+  });
+
+  it('copies metadata out of an already-frozen document identically', () => {
+    const input = withMetadata();
+    const replayed = replayedSelection(
+      cloneDurableDocument(document([], [input], 'selection-1')).baseline.selections.selections[0]!
+    );
+
+    expect(replayed.metadata).toStrictEqual(input.metadata);
+    expect(replayed.metadata).not.toBe(input.metadata);
+    expect(Object.isFrozen(replayed.metadata?.magneticLasso)).toBe(true);
+  });
+
+  it('omits the metadata key entirely when the replayed selection carries none', () => {
+    const replay = replayDurableDocument(document([], [selection()], 'selection-1'));
+
+    expect(replay.selections.selections[0]).not.toHaveProperty('metadata');
+  });
+});
+
 describe('cloneDurableDocument operation cloning', () => {
   it('clones a set-layer-properties position patch without aliasing the operation', () => {
     const pos = { x: 5, y: 6, width: 20, height: 10 };

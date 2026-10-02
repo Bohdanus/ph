@@ -33,6 +33,7 @@ const harness = vi.hoisted(() => {
     canvasSize,
     currentArgs: { current: {} as Record<string, unknown> },
     dispatch: vi.fn(),
+    adoptLayerBitmaps: vi.fn(),
     events,
     fileName,
     listeners,
@@ -63,6 +64,7 @@ vi.mock('../../contexts/StoreContext.tsx', () => ({
       selections: [],
       toolName: 'draw',
       toolOverlayRef: { current: null },
+      adoptLayerBitmaps: harness.adoptLayerBitmaps,
     },
     harness.dispatch,
   ],
@@ -130,6 +132,9 @@ describe('useApp setImageFromUpload', () => {
         harness.fileName.current = action.payload;
         for (const listener of [...harness.listeners]) listener();
       }
+    });
+    harness.adoptLayerBitmaps.mockImplementation(() => {
+      harness.events.push('ADOPT_LAYER_BITMAPS');
     });
     layerMocks.createLayerFromBitmap.mockImplementation(async () => {
       harness.events.push('createLayerFromBitmap');

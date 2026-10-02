@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoreProvider, useStore } from '../StoreContext.tsx';
-import { ADOPT_LAYER_BITMAPS, useLayers } from '../useLayer.ts';
+import { useLayers } from '../useLayer.ts';
 import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
@@ -19,10 +19,10 @@ vi.mock('../layer-renderer.ts', async (importOriginal) => {
 /**
  * Every action `useStore` hands out is recorded before it reaches the real
  * provider, so the store still runs its own reducer while the registration this
- * file pins — an `ADOPT_LAYER_BITMAPS` action, its payload and the order it is
- * dispatched in — stays observable. The registration itself belongs to
+ * file pins — the `adoptLayerBitmaps` handle, its payload and the order it is
+ * called in — stays observable. The registration itself belongs to
  * `StoreContext`'s dispatcher, which is where `documentId` lives; this is the half
- * `useLayers` owns, and the half that decides *when* the action is dispatched.
+ * `useLayers` owns, and the half that decides *when* the handle is called.
  */
 const recorded = vi.hoisted(() => [] as { type: string; payload?: unknown }[]);
 
@@ -36,7 +36,14 @@ vi.mock('../StoreContext.tsx', async (importOriginal) => {
         recorded.push(action as { type: string });
         dispatch(action);
       };
-      return [store, recording] as unknown as ReturnType<typeof actual.useStore>;
+      const recordingStore = {
+        ...store,
+        adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => {
+          recorded.push({ type: 'adoptLayerBitmaps', payload: { bitmaps } });
+          store.adoptLayerBitmaps(bitmaps);
+        },
+      };
+      return [recordingStore, recording] as unknown as ReturnType<typeof actual.useStore>;
     }) as typeof actual.useStore,
   };
 });
@@ -106,7 +113,7 @@ function immutableBitmap(): ImageBitmap {
 }
 
 function adoptionActions(): { type: string; payload?: unknown }[] {
-  return recorded.filter((action) => action.type === ADOPT_LAYER_BITMAPS);
+  return recorded.filter((action) => action.type === 'adoptLayerBitmaps');
 }
 
 function indexOfType(type: string): number {
@@ -171,7 +178,7 @@ describe('useLayers adopted raster presentation ownership', () => {
     // retirement on the very next edit, which closes a bitmap the live history
     // entry still names.
     const commit = indexOfType('COMMIT_DOCUMENT_EDIT');
-    const adopt = indexOfType(ADOPT_LAYER_BITMAPS);
+    const adopt = indexOfType('adoptLayerBitmaps');
     expect(commit).toBeGreaterThanOrEqual(0);
     expect(adopt).toBeGreaterThan(commit);
   });
@@ -194,7 +201,7 @@ describe('useLayers adopted raster presentation ownership', () => {
     });
 
     const replace = indexOfType('REPLACE_DOCUMENT');
-    const adopt = indexOfType(ADOPT_LAYER_BITMAPS);
+    const adopt = indexOfType('adoptLayerBitmaps');
     expect(replace).toBeGreaterThanOrEqual(0);
     // The scope is keyed by the document that owns the bitmap, and the store's
     // dispatcher reads `currentState.documentId`. An import registered before its
@@ -230,7 +237,7 @@ describe('useLayers adopted raster presentation ownership', () => {
     expect(payload!.bitmaps[0]).toBe(layer!.bitmap);
     expect(payload!.bitmaps[0]).toBe((layer!.source as ImageLayerSource).bitmap);
     const commit = indexOfType('COMMIT_DOCUMENT_EDIT');
-    expect(indexOfType(ADOPT_LAYER_BITMAPS)).toBeGreaterThan(commit);
+    expect(indexOfType('adoptLayerBitmaps')).toBeGreaterThan(commit);
   });
 
   it('adopts nothing when the merge has no canvas to rasterize', async () => {

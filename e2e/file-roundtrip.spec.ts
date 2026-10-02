@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';

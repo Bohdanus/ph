@@ -82,6 +82,7 @@ vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') })
 vi.mock('../SmudgeToolArea.tsx', () => ({ SmudgeToolArea: marker('smudge') }));
 vi.mock('../DodgeToolArea.tsx', () => ({ DodgeToolArea: marker('dodge') }));
 vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
+vi.mock('../SpongeToolArea.tsx', () => ({ SpongeToolArea: marker('sponge') }));
 vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
 vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
 
@@ -109,6 +110,7 @@ const TOOL_AREA_IDS = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
   'fill',
   'color-replacement',
   'gradient',
@@ -175,6 +177,10 @@ describe('Main tool-area routing', () => {
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
+    // The Sponge gets its OWN area rather than `Tonal`'s pair, and this row pins that it
+    // still resolves: a tool the routing table forgot falls through to the hidden dummy,
+    // which renders no marker and would otherwise pass as a working area.
+    ['sponge', 'sponge'],
     ['magic-eraser', 'fill'],
     ['paint-bucket', 'fill'],
     ['gradient', 'gradient'],
@@ -218,6 +224,7 @@ describe('Main tool-area routing', () => {
       'smudge',
       'dodge',
       'burn',
+      'sponge',
       'paint-bucket',
       'gradient',
     ] as const;

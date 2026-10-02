@@ -21,6 +21,7 @@ import { selection } from './selection.ts';
 import { shape } from './shape.ts';
 import { sharpen } from './sharpen.ts';
 import { smudge } from './smudge.ts';
+import { sponge } from './sponge.ts';
 import { text } from './text.ts';
 import { transform } from './transform.ts';
 
@@ -57,6 +58,13 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
+  /**
+   * The tool's pixels or its retained presentation depend on `CanvasRenderingContext2D.filter`,
+   * which is not Baseline: caniuse records Safari 3.1 - 17.6 as unsupported (WebKit bug 198416,
+   * since resolved) and MDN states the feature is not Baseline. Set this on every such tool so the
+   * refusal in `src/util/canvas-filter.ts` has one place to read the answer from.
+   */
+  requiresCanvasFilter?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;
@@ -117,18 +125,21 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: reposition,
   },
   blur: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: blur,
   },
   color: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: colors,
   },
   levels: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
@@ -210,6 +221,25 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: ellipticalSelection,
   },
+  // The 1-pixel marquees are the Rectangular Marquee's processor verbatim: it is a
+  // pass-through that returns the document bitmap untouched, because a selection is
+  // geometry in the store and no pixels at all (`rectangularSelection.ts:9`-`:13`).
+  // Two separate `replay(...)` calls rather than one shared result, because
+  // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
+  'single-row-marquee': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: rectangularSelection,
+  },
+  'single-column-marquee': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: rectangularSelection,
+  },
   'quick-selection': {
     commit: 'selection',
     creator: true,
@@ -246,6 +276,19 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: burn,
+  },
+  // The Sponge rides the same generic durable arm as the Dodge and the Burn:
+  // `src/contexts/history-adapter.ts` maps any `commit: 'raster'` processor to an
+  // `apply-raster-processor` operation with `processorId: args.toolName` and no allowlist,
+  // so registering the tool here is the whole of what undoability costs. Its own function
+  // reference is required, not optional — the identity test in
+  // `src/tools/__tests__/tool-processors.test.ts` allows a shared processor only where two
+  // names are one operation (`selection`, `shape`).
+  sponge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: sponge,
   },
   'clone-stamp': {
     commit: 'raster',

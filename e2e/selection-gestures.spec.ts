@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import {
   CANVAS_REDRAW_POLL_INTERVAL_MS,
   CANVAS_REDRAW_TIMEOUT_MS,

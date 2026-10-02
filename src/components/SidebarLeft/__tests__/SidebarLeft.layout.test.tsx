@@ -121,6 +121,15 @@ const declaredRailWidthRem = (sidebar: HTMLElement): number => {
   return magnitude;
 };
 
+/**
+ * The text of a control, as a reader receives it.
+ *
+ * `textContent` rather than a character class, because the glyph is wrapped in a decorative
+ * `aria-hidden` span inside the button, so this is what ends up on screen and nothing else about
+ * the control states a direction.
+ */
+const glyphOf = (button: HTMLElement): string => button.textContent?.trim() ?? '';
+
 const resetMocks = () => {
   goToTool.mockReset();
   Object.assign(toolArgsRef, { toolName: 'draw', figure: undefined });
@@ -176,6 +185,13 @@ describe('SidebarLeft layout toggle', () => {
     // and the width at the bottom is compared as a relation for the same reason.
     expect(toggle).toHaveAttribute('aria-label', 'Use two-column toolbar');
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    // THE GLYPH, because it is the one thing on this control a user reads and nothing else here
+    // does. It points the way the rail is about to MOVE, which is why one column shows `»`: a
+    // second column grows to the right. It was the other way round — one column showed `«`, which
+    // says "press me and the rail moves left" — and no assertion in this repository noticed, which
+    // is what a character in a JSX span is worth. Photoshop's own mapping is the same: the Tools
+    // panel's double chevrons face right in one column and left once the toolbar is two columns.
+    expect(glyphOf(toggle), 'one column: the chevrons point the way pressing this grows the rail').toBe('»');
     // One `<ul>` per toolbar section; the two-column rail interleaves them into one grid.
     expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(toolbarMap.length);
     expect(toolbar.querySelector('ul')).toHaveClass('grid-cols-1');
@@ -186,6 +202,7 @@ describe('SidebarLeft layout toggle', () => {
 
     expect(toggle).toHaveAttribute('aria-label', 'Use one-column toolbar');
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(glyphOf(toggle), 'two columns: and now the other way, because the rail shrinks back').toBe('«');
     expect(toolbar.querySelector('ul')).toHaveClass('grid-cols-2');
     expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(1);
 

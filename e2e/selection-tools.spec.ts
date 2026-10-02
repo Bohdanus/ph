@@ -1,4 +1,4 @@
-import { expect, type Page, test, type TestInfo } from '@playwright/test';
+import { expect, type Page, test, type TestInfo } from './fixtures/extended-test';
 import {
   type BoundingBox,
   type BoundsResult,
@@ -506,13 +506,22 @@ test.describe('Eyedropper', () => {
   });
 
   test('the eyedropper is reachable from its own sidebar tile', async ({ page }) => {
-    // The window is grown, because the test's NAME is its claim: it is about the eyedropper's OWN
-    // tile, and at the suite's 1280x720 the eyedropper is the fifth of sixteen rows, so the
-    // collapse — which is a suffix — has already taken it. Measured by `e2e/toolbar-fit.spec.ts`:
-    // 720 shows four tool tiles, and 900 shows seven. So this test would otherwise be asserting
-    // its own premise rather than the app, and `toBeVisible` against a tile that is correctly
-    // absent fails as "element not found" against a test id that is right.
-    await page.setViewportSize({ width: 1280, height: 900 });
+    // The window is NOT grown, and the test's NAME is why that is worth saying: it is about the
+    // eyedropper's OWN tile, and at the suite's 1280x720 the rail fills its slot with whole rows,
+    // so its seven visible tiles are its first seven groups and the eyedropper is the fifth of
+    // those seven. Measured by `e2e/toolbar-fit.spec.ts`, which sweeps the heights: 720 shows
+    // seven tool tiles, leaving 40px of the slot that no whole row fits in.
+    //
+    // The window used to be grown to 900, because the budget reserved a fifth of the slot, only
+    // four tiles fit at 720, and the collapse is a suffix, so the fifth group was already gone
+    // while `toBeVisible` was still a correct assertion about a tile that is correctly absent —
+    // it failed as "element not found" against a test id that was right.
+    //
+    // What this pins now is the DEFAULT window rather than a grown one, and that is the whole
+    // difference between the two forms. A rail that stopped filling its slot again — a fraction
+    // back in the budget, or rows accepted other than whole — would fold the fifth group away at
+    // 720 and fail here by name. A viewport the test grows for itself cannot catch that at all,
+    // because the growth is the only reason the tile is there.
     await expect(page.getByTestId('tool-button-eyedropper')).toBeVisible();
     await clickToolButton(page, 'eyedropper');
     // The eyedropper's bar is a real panel, not the `PlaceholderTool` the other unimplemented

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Board } from '../lib/agent-board/db.mjs';
-import { releaseBlocker, releaseMerged, releaseWorktree } from '../merge-release.mjs';
+import { formatReport, releaseBlocker, releaseMerged, releaseWorktree } from '../merge-release.mjs';
 
 /**
  * These drive a REAL git repository with REAL worktrees and a REAL board.
@@ -82,28 +82,45 @@ describe('releaseBlocker — the three facts a release requires', () => {
   const base = { base: 'main', worktreePath: repo, branch: 'feat/x' };
 
   it('refuses a worktree whose directory is gone', () => {
-    expect(releaseBlocker({ ...base, exists: false })).toMatch(/directory is gone/);
+    expect(releaseBlocker({ ...base, exists: false })).toMatchObject({ code: 'directory-gone' });
+    expect(releaseBlocker({ ...base, exists: false }).message).toMatch(/directory is gone/);
   });
 
   it('refuses a detached HEAD, which has no branch to have merged', () => {
-    expect(releaseBlocker({ ...base, branch: null })).toMatch(/detached/);
+    expect(releaseBlocker({ ...base, branch: null })).toMatchObject({ code: 'detached' });
+    expect(releaseBlocker({ ...base, branch: null }).message).toMatch(/detached/);
   });
 
   it('refuses the base branch itself', () => {
-    expect(releaseBlocker({ ...base, branch: 'main' })).toMatch(/base branch/);
+    expect(releaseBlocker({ ...base, branch: 'main' })).toMatchObject({ code: 'base-branch' });
+    expect(releaseBlocker({ ...base, branch: 'main' }).message).toMatch(/base branch/);
   });
 
   it('refuses a branch that is not on the base', () => {
     const path = makeWorktree('unmerged', { commit: true });
-    expect(releaseBlocker({ ...base, worktreePath: path, branch: 'feat/unmerged' })).toMatch(/not on main yet/);
+    const blocker = releaseBlocker({
+      ...base,
+      worktreePath: path,
+      branch: 'feat/unmerged',
+    });
+    // The code is the stable half and the message the human half. Both are asserted because
+    // `formatReport` buckets on the one and prints the other, so a change to either alone
+    // is a change to what the report does.
+    expect(blocker).toMatchObject({ code: 'not-on-base' });
+    expect(blocker.message).toMatch(/not on main yet/);
   });
 
   it('refuses a merged branch whose working tree is dirty', () => {
     const path = makeWorktree('dirt', { commit: true, dirty: true });
     git(['merge', '-q', '--no-ff', '-m', 'land dirt', 'feat/dirt'], repo);
-    expect(
-      releaseBlocker({ ...base, worktreePath: path, branch: 'feat/dirt', dirtyOutput: ' M uncommitted.txt' })
-    ).toMatch(/working tree is dirty/);
+    const blocker = releaseBlocker({
+      ...base,
+      worktreePath: path,
+      branch: 'feat/dirt',
+      dirtyOutput: ' M uncommitted.txt',
+    });
+    expect(blocker).toMatchObject({ code: 'dirty' });
+    expect(blocker.message).toMatch(/working tree is dirty/);
   });
 
   it('accepts a merged, clean worktree', () => {
@@ -237,5 +254,80 @@ describe('releaseMerged — the whole sweep a merge triggers', () => {
     const path = makeWorktree('noboard', { commit: true });
     git(['merge', '-q', '--no-ff', '-m', 'land noboard', 'feat/noboard'], repo);
     expect(() => releaseMerged({ repoRoot: repo, base: 'main', board: undefined })).toThrow(); // no board dir yet — the CLI layer catches this, and the test pins that it throws here
+  });
+});
+
+describe('formatReport — the report the hook actually prints', () => {
+  const text = (results, opts) => formatReport(results, opts).join('\n');
+
+  it('names a released worktree and counts it', () => {
+    const out = text([{ worktree: 'wt', branch: 'feat/landed', releasedClaims: ['a'], releasedLocks: ['x', 'y'] }]);
+    expect(out).toContain('feat/landed — claims a, 2 lock(s)');
+    expect(out).toContain('released 1 of 1 worktree(s)');
+  });
+
+  it('says the dry run would release rather than that it released', () => {
+    const out = text([{ worktree: 'wt', branch: 'feat/dry', wouldRelease: { claims: ['a'], locks: [] } }], {
+      dryRun: true,
+    });
+    expect(out).toContain('would release 1 of 1 worktree(s)');
+    expect(out).not.toContain('released 1 of');
+  });
+
+  it('reports a worktree that still holds something but was not released', () => {
+    // The case a bare `skipped` string could not express, and the reason the skip is worth
+    // reading: a branch landed by SQUASH merge reports `not on main yet` forever, because
+    // `--is-ancestor` is false for it permanently.
+    const out = text([
+      {
+        worktree: 'wt',
+        branch: 'feat/squashed',
+        skipped: 'feat/squashed is not on main yet',
+        skipCode: 'not-on-base',
+        held: { claims: ['a', 'b'], locks: ['src/x.ts'] },
+      },
+      { worktree: 'other', branch: 'feat/quiet', skipped: 'nothing held', skipCode: 'nothing-held' },
+    ]);
+    expect(out).toContain('1 worktree(s) still HOLD something and were NOT released:');
+    expect(out).toContain('feat/squashed (wt) — feat/squashed is not on main yet; still holds 2 claim(s), 1 lock(s)');
+    expect(out).toContain('1 skipped — 1 nothing-held');
+  });
+
+  it('reduces the ordinary skips to counts instead of a line each', () => {
+    const out = text([
+      { worktree: 'a', branch: 'a', skipped: 'nothing held', skipCode: 'nothing-held' },
+      { worktree: 'b', branch: 'b', skipped: 'nothing held', skipCode: 'nothing-held' },
+      {
+        worktree: 'c',
+        branch: 'c',
+        skipped: 'the worktree directory is gone',
+        skipCode: 'directory-gone',
+      },
+    ]);
+    expect(out).toContain('3 skipped — 2 nothing-held, 1 directory-gone');
+    expect(out).not.toContain('HOLD something');
+    expect(out).toContain('released 0 of 3 worktree(s)');
+  });
+
+  it('collapses different branches that share a reason into one bucket', () => {
+    // The reason the grouping is on `skipCode` and not on the message: the message names
+    // the branch, so thirty unmerged worktrees are thirty distinct strings. Measured on
+    // this repository, which is where the report first printed one line per worktree.
+    const out = text(
+      ['feat/a', 'feat/b', 'docs/c'].map((branch) => ({
+        worktree: branch,
+        branch,
+        skipped: `${branch} is not on main yet`,
+        skipCode: 'not-on-base',
+      }))
+    );
+    expect(out).toContain('3 skipped — 3 not-on-base');
+    expect(out.split('\n')).toHaveLength(2);
+  });
+
+  it('survives a result with no `held` field', () => {
+    // `releaseMerged` builds the gone-directory row without one, so a report that read
+    // `held` unconditionally would throw on a row its own sibling produces.
+    expect(() => text([{ worktree: 'wt', branch: 'feat/x', skipped: 'the worktree directory is gone' }])).not.toThrow();
   });
 });

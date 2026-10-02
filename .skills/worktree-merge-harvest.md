@@ -295,7 +295,7 @@ of the chat that wrote it.
   paid GPT id and killed the subagent at zero tokens with `Add credits to
 continue`. Two rules ride with that: **a free session must never launch a GPT
   subagent**, so the free default is
-  `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'`; and
+  `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'`; and
   `agent_manager` inherits the current turn's model unless both fields are set, so
   a main turn on a paid model silently spawns paid worktrees. The subagent also
   **inherits the working directory** — so launch reviews with the branch's absolute
@@ -451,12 +451,31 @@ git merge --ff-only <branch> 2>/dev/null || git merge <branch>
 Then, and only once the merge is on `main`:
 
 ```bash
-git worktree remove .kilo/worktrees/<name>
-git branch -d <branch>          # -d, not -D: refuses while unmerged
+node scripts/worktree-inventory.mjs          # a fresh verdict: disposal reads it
+npm run dispose -- <name> --dry-run          # says which signal refuses, if any
+npm run dispose -- <name>
 ```
 
-`git branch -d` refusing is a finding, not an obstacle. `-D` on a branch the
-inventory called unlanded is how uncommitted work is destroyed.
+**That is the only sanctioned removal path**, and the reason is in the header of
+`scripts/dispose-worktree.mjs` and in `docs/ORCHESTRATION.md` under "Removal
+goes through one program": on 2026-10-01 a harvest-adjacent sweep ran a
+hard-coded list of
+`git worktree remove` and `git branch -D` and destroyed a live chat's worktree,
+because a fourteen-hour-old merge commit carried that branch's _name_ in its
+subject and the sweep read that as proof the work was already landed.
+
+`dispose-worktree.mjs` checks the generated `action`, the board's claims and file
+locks, and the session database, then anchors the branch at
+`refs/keep/disposed/<name>` and salvages uncommitted work before removing
+anything. It has no `--force`, and `kilo.jsonc` denies
+`git worktree remove --force` against a `kilo/` path and puts `git branch -D`
+behind a prompt.
+
+If it refuses, the refusal names the signal that produced it. `in-use` means a
+chat is in there: **only the operator may stop a writing chat**, so report it and
+move on. A dirty tree means commit it or carry it as a patch. `git branch -d`
+refusing is likewise a finding, not an obstacle — and `dispose` already uses `-d`,
+so a branch it kept is anchored and recoverable.
 
 **Record the outcome.** `.skills/stale-worktree-reclaim.md` and this file both
 exist because a harvest that lands silently teaches the next agent nothing. Put
