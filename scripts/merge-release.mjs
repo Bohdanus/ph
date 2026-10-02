@@ -98,11 +98,21 @@ function listWorktrees(repoRoot) {
   return records;
 }
 
-/** Why this worktree is or is not releasable. Null means releasable. */
+/**
+ * Why this worktree is or is not releasable. Null means releasable.
+ *
+ * Returns `{ code, message }` rather than the message alone, because the message is
+ * prose with the branch and the base interpolated into it — which is right for a human
+ * and useless for counting. A repository with thirty worktrees has a different message
+ * for every one of them, so a report that grouped on the string printed thirty lines
+ * where four would do. `code` is the stable half, and it is what `formatReport` buckets on.
+ */
 export function releaseBlocker({ worktreePath, branch, base, dirtyOutput, exists = true }) {
-  if (!exists) return 'the worktree directory is gone';
-  if (!branch) return 'HEAD is detached, so there is no branch to have merged';
-  if (branch === base) return 'this is the base branch itself';
+  if (!exists) return { code: 'directory-gone', message: 'the worktree directory is gone' };
+  if (!branch) {
+    return { code: 'detached', message: 'HEAD is detached, so there is no branch to have merged' };
+  }
+  if (branch === base) return { code: 'base-branch', message: 'this is the base branch itself' };
   // `git merge-base --is-ancestor` exits 0 for yes and 1 for no, so the boolean is the
   // exit code rather than stdout.
   const merged = (() => {
@@ -116,8 +126,10 @@ export function releaseBlocker({ worktreePath, branch, base, dirtyOutput, exists
       return false;
     }
   })();
-  if (!merged) return `${branch} is not on ${base} yet`;
-  if (dirtyOutput) return `${branch} is on ${base} but its working tree is dirty`;
+  if (!merged) return { code: 'not-on-base', message: `${branch} is not on ${base} yet` };
+  if (dirtyOutput) {
+    return { code: 'dirty', message: `${branch} is on ${base} but its working tree is dirty` };
+  }
   return null;
 }
 
@@ -141,12 +153,36 @@ export function releaseWorktree(board, { worktreePath, branch, base, dryRun = fa
     base,
     dirtyOutput: dirty === null ? null : dirty !== '',
   });
-  if (blocker) return { worktree: path.basename(worktreePath), branch, skipped: blocker };
 
-  const claims = board.listIssues({ claimedBy: branch });
-  const locks = board.locksHeldBy(branch);
+  // Queried even when a blocker stopped the release, because "was NOT released" is only
+  // actionable when the reader can see what is still being held. Without it the skip was
+  // bare, and the case that matters most was indistinguishable from the case that does
+  // not: a branch landed by SQUASH merge can never satisfy `--is-ancestor`, so it reports
+  // `not on main yet` forever while its locks go on blocking other agents — and the
+  // output said nothing at all about it.
+  //
+  // Guarded on `branch`, not just on the blocker: `listIssues` treats a falsy `claimedBy`
+  // as "no filter" (`db.mjs:864`), so asking for a detached HEAD's holdings would name
+  // every claim on the board as that worktree's.
+  const claims = branch ? board.listIssues({ claimedBy: branch }) : [];
+  const locks = branch ? board.locksHeldBy(branch) : [];
+  if (blocker) {
+    return {
+      worktree: path.basename(worktreePath),
+      branch,
+      skipped: blocker.message,
+      skipCode: blocker.code,
+      held: { claims: claims.map((c) => c.id), locks: locks.map((l) => l.path) },
+    };
+  }
+
   if (claims.length === 0 && locks.length === 0) {
-    return { worktree: path.basename(worktreePath), branch, skipped: 'nothing held' };
+    return {
+      worktree: path.basename(worktreePath),
+      branch,
+      skipped: 'nothing held',
+      skipCode: 'nothing-held',
+    };
   }
   if (dryRun) {
     return {
@@ -194,6 +230,7 @@ export function releaseMerged({ repoRoot = process.cwd(), base = 'main', dryRun 
         worktree: path.basename(worktree.path),
         branch: worktree.branch,
         skipped: 'the worktree directory is gone',
+        skipCode: 'directory-gone',
       });
       continue;
     }
@@ -207,6 +244,66 @@ export function releaseMerged({ repoRoot = process.cwd(), base = 'main', dryRun 
     );
   }
   return results;
+}
+
+/**
+ * The human-readable report, as an array of lines.
+ *
+ * Split in two on purpose. A repository with thirty-odd worktrees produces a `skipped`
+ * for nearly all of them, and `nothing held` is the normal answer rather than news — so
+ * printing one line each buried the two outcomes that need a human. This names every
+ * worktree that HOLDS something and was not released, with the reason, and reduces the
+ * rest to counts by reason.
+ *
+ * Exported separately from the CLI so a test can drive it over hand-built results, which
+ * is the part with the arithmetic in it.
+ */
+export function formatReport(results, { dryRun = false } = {}) {
+  const lines = [];
+  const released = results.filter((r) => !r.skipped);
+  for (const r of released) {
+    const what = [
+      r.releasedClaims?.length ? `claims ${r.releasedClaims.join(', ')}` : null,
+      r.releasedLocks?.length ? `${r.releasedLocks.length} lock(s)` : null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    lines.push(`merge-release: ${r.branch} — ${what}`);
+  }
+
+  const skipped = results.filter((r) => r.skipped);
+  const heldBack = skipped.filter((r) => (r.held?.claims.length ?? 0) + (r.held?.locks.length ?? 0) > 0);
+  if (heldBack.length > 0) {
+    lines.push(`merge-release: ${heldBack.length} worktree(s) still HOLD something and were NOT released:`);
+    for (const r of heldBack) {
+      const what = [
+        r.held.claims.length ? `${r.held.claims.length} claim(s)` : null,
+        r.held.locks.length ? `${r.held.locks.length} lock(s)` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      lines.push(`merge-release:   ${r.branch} (${r.worktree}) — ${r.skipped}; still holds ${what}`);
+    }
+  }
+
+  const quiet = skipped.filter((r) => !heldBack.includes(r));
+  if (quiet.length > 0) {
+    // Bucketed on `skipCode`, never on `skipped`: the message interpolates the branch, so
+    // every unmerged worktree carries a different one and grouping on it prints a line each.
+    // `skipCode` is absent only on a row this module did not build, and those fall together.
+    const byReason = new Map();
+    for (const r of quiet) {
+      const key = r.skipCode ?? r.skipped;
+      byReason.set(key, (byReason.get(key) ?? 0) + 1);
+    }
+    const summary = [...byReason].map(([reason, n]) => `${n} ${reason}`).join(', ');
+    lines.push(`merge-release: ${quiet.length} skipped — ${summary}`);
+  }
+
+  lines.push(
+    `merge-release: ${dryRun ? 'would release' : 'released'} ${released.length} of ${results.length} worktree(s)`
+  );
+  return lines;
 }
 
 function main() {
@@ -231,20 +328,7 @@ function main() {
     console.log(JSON.stringify(results, null, 2));
     return 0;
   }
-  const released = results.filter((r) => !r.skipped);
-  for (const r of results) {
-    if (r.skipped) continue;
-    const what = [
-      r.releasedClaims?.length ? `claims ${r.releasedClaims.join(', ')}` : null,
-      r.releasedLocks?.length ? `${r.releasedLocks.length} lock(s)` : null,
-    ]
-      .filter(Boolean)
-      .join(', ');
-    console.log(`merge-release: ${r.branch} — ${what}`);
-  }
-  console.log(
-    `merge-release: ${dryRun ? 'would release' : 'released'} ${released.length} of ${results.length} worktree(s)`
-  );
+  for (const line of formatReport(results, { dryRun })) console.log(line);
   return 0;
 }
 

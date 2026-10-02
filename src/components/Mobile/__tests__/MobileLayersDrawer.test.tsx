@@ -30,6 +30,7 @@ const storeStateMock = vi.hoisted(() => ({
   history: [] as Array<Record<string, unknown>>,
   historyIndex: 0,
   totalSize: { width: 800, height: 600 },
+  documentFrame: { x: 120, y: 90, width: 800, height: 600 },
 }));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
@@ -90,11 +91,6 @@ const freshLayers = () => ({
 });
 
 /**
- * The layer names in render order, which is top-of-stack first. Each row also
- * carries its visibility / rename / reorder controls, so a clone has those
- * removed before the row's own text is read.
- */
-/**
  * Each row's name, in display order (top of the stack first).
  *
  * The name is the row's own selection control — a `<button aria-pressed>` — because the row
@@ -112,6 +108,18 @@ const layerRow = (name: string) => {
   const item = screen.getByRole('button', { name }).closest('li');
   if (!item) throw new Error(`no layer row rendered for ${name}`);
   return item.firstElementChild as HTMLElement;
+};
+
+/**
+ * Every `role="button"` between a control and the document. One of them is enough to make
+ * the control presentational, so the list is the assertion: an empty one is the property.
+ */
+const fakeButtonAncestors = (control: HTMLElement) => {
+  const found: HTMLElement[] = [];
+  for (let el = control.parentElement; el !== null; el = el.parentElement) {
+    if (el.getAttribute('role') === 'button') found.push(el);
+  }
+  return found;
 };
 
 // The gesture slot is module-level and outlives every mount, so a case that leaked
@@ -318,13 +326,34 @@ describe('MobileLayersDrawer', () => {
     expect(activeName).toHaveAccessibleName(/Upper/i);
   });
 
-  it('keeps the layer name control a sibling of the row actions, not nested in a fake button', () => {
+  it('keeps the row controls out of a fake button in BOTH tabs, because a button makes its descendants presentational', async () => {
+    const user = userEvent.setup();
+    storeStateMock.history = [
+      { id: 'h0', actionName: 'new document', layerId: 'bottom' },
+      { id: 'h1', actionName: 'rename', layerId: 'bottom' },
+    ];
+    storeStateMock.historyIndex = 1;
+
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
-    // No element with role="button" may contain another button: a button's descendants are
-    // presentational, so rename/reorder/visibility would be announced away.
-    const nested = Array.from(document.querySelectorAll('[role="button"]')).filter((el) => el.querySelector('button'));
-    expect(nested).toEqual([]);
+    // The old guard was `querySelectorAll('[role="button"]').filter((el) => el.querySelector('button'))`
+    // over the default tab — and the default tab is LAYERS, which renders no
+    // `role="button"` at all, so the filter was `[]` by construction and the history tab,
+    // the one tab whose row WAS a fake button, was never rendered. The property is
+    // per control instead: nothing above it may present itself as a button, or the control
+    // is announced away.
+    expect(fakeButtonAncestors(screen.getByRole('button', { name: 'Hide Lower' }))).toEqual([]);
+    expect(fakeButtonAncestors(screen.getByRole('button', { name: 'Lower' }))).toEqual([]);
+
+    await user.click(screen.getByRole('button', { name: /History \(2\)/ }));
+
+    // The eye toggle is the control a `role="button"` row hid, and the title is the
+    // keyboard-reachable rewind that replaced the row's own `role="button"` + `tabIndex`.
+    expect(fakeButtonAncestors(screen.getAllByRole('button', { name: /history step/i })[0])).toEqual([]);
+    const rewind = screen.getByRole('button', { name: 'new document' });
+    expect(rewind.tagName).toBe('BUTTON');
+    expect(rewind).not.toHaveAttribute('tabindex', '-1');
+    expect(fakeButtonAncestors(rewind)).toEqual([]);
   });
 
   it('keeps the row controls from selecting the layer they sit in', async () => {
@@ -338,7 +367,7 @@ describe('MobileLayersDrawer', () => {
     expect(setActiveLayerMock).not.toHaveBeenCalled();
   });
 
-  it('creates a blank layer at the document size', async () => {
+  it('creates an ordinary blank layer covering the document frame', async () => {
     const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
@@ -347,8 +376,7 @@ describe('MobileLayersDrawer', () => {
     expect(createBlankLayerMock).toHaveBeenCalledWith({
       color: '#ffffff',
       opacity: 1,
-      size: { width: 800, height: 600 },
-      isBedrock: true,
+      pos: { x: 120, y: 90, width: 800, height: 600 },
     });
   });
 
@@ -378,11 +406,11 @@ describe('MobileLayersDrawer', () => {
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: /History \(2\)/ }));
 
-    const rows = screen.getAllByRole('listitem').map((row) => {
-      const clone = row.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll('button').forEach((button) => button.remove());
-      return clone.textContent;
-    });
+    // A row's only text is its title plus the `Current` badge — the eye toggle is named by
+    // `aria-label`, not by content — so the title needs no stripping even though it is a
+    // `<button>` now. The old strip-every-button clone read the title off the row and threw
+    // the assertion away.
+    const rows = screen.getAllByRole('listitem').map((row) => row.textContent);
 
     // Rendered newest first, so the `TOOL_ACTION` patch entry is row 0. The real
     // `getHistoryItemTitle` reads `args.toolName` for a `TOOL_ACTION` entry and
@@ -479,8 +507,9 @@ describe('MobileLayersDrawer', () => {
  * shortcuts while a pointer gesture owns the document, and the Undo/Redo buttons
  * were closed off in the same change class afterwards (`HistoryControls.tsx`,
  * `MobileHeader.tsx`). The drawer's history tab is a third way into the same
- * `APPLY_HISTORY_REPLAY`, and all THREE of its dispatch paths — the row click, the
- * row's Enter/Space, and the row's enable control — reached it ungated.
+ * `APPLY_HISTORY_REPLAY`, and all THREE of its entry points — a tap on a step,
+ * Enter or Space on that step's own control, and the step's enable control —
+ * reached it ungated.
  *
  * Inside a gesture's window the replay is destructive. `resetHistoryTo` replays
  * `selections` from the SAME `history` array, so `history.length` never moves and
@@ -515,15 +544,26 @@ describe('MobileLayersDrawer document gesture gate', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: /History \(3\)/ }));
   };
 
-  /** The `div[role="button"]` row behind a given history step title. */
+  /**
+   * The row div behind a given history step title: a plain `div`, the `li`'s own child,
+   * since the row is no longer `role="button"` (it holds two real buttons, and a button's
+   * descendants are presentational — see the tab-agnostic case in the suite above).
+   */
   const historyRow = (title: string) => {
-    const row = screen.getByText(title).closest('div[role="button"]');
-    if (!row) throw new Error(`no history row rendered for ${title}`);
-    return row as HTMLElement;
+    const row = screen.getByText(title).closest('li')?.firstElementChild;
+    if (!(row instanceof HTMLElement)) throw new Error(`no history row rendered for ${title}`);
+    return row;
   };
 
-  /** The row's own enable/disable control, which is a real `<button>`. */
-  const eyeControl = (row: HTMLElement) => within(row).getByRole('button');
+  /**
+   * The row's rewind control: the step title's own `<button>`, a sibling of the eye rather
+   * than a child of a fake button. It is the row's keyboard path too, since Enter and Space
+   * activate a native button themselves.
+   */
+  const rewindControl = (title: string) => screen.getByRole('button', { name: title });
+
+  /** The row's own enable/disable control, which is a real `<button>` named by its label. */
+  const eyeControl = (row: HTMLElement) => within(row).getByRole('button', { name: /history step/i });
 
   it('refuses to rewind from a history row while a document gesture is open, because the release-time commit would truncate the redo tail', async () => {
     seedHistory();
@@ -535,19 +575,24 @@ describe('MobileLayersDrawer document gesture gate', () => {
     claimDocumentGesture('shape-draw', 1);
     expect(isDocumentGestureOpen()).toBe(true);
 
-    fireEvent.click(historyRow('rename'));
+    fireEvent.click(rewindControl('rename'));
 
     expect(resetHistoryToMock).not.toHaveBeenCalled();
   });
 
   it('refuses to rewind from a history row with Enter while a document gesture is open, because the keyboard path is the same dispatch', async () => {
+    const user = userEvent.setup();
     seedHistory();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
     await openHistoryTab();
 
     claimDocumentGesture('freehand-lasso', 2);
 
-    fireEvent.keyDown(screen.getByRole('button', { name: /rename/ }), { key: 'Enter' });
+    // Enter on a real button activates it natively, so the key path and the click path are
+    // the same dispatch — and `fireEvent.keyDown` alone no longer reaches either, which is
+    // why this drives the key the way a user does: focus the control, then press Enter.
+    rewindControl('rename').focus();
+    await user.keyboard('{Enter}');
 
     expect(resetHistoryToMock).not.toHaveBeenCalled();
   });
@@ -561,12 +606,12 @@ describe('MobileLayersDrawer document gesture gate', () => {
     fireEvent.click(eyeControl(historyRow('rename')));
 
     expect(toggleDisabledMock).not.toHaveBeenCalled();
-    // `stopPropagation` runs before the gate, so a refused eye click still does not
-    // travel to the row and rewind behind it.
+    // `stopPropagation` runs before the gate, so a refused eye click stops here rather
+    // than travelling on to rewind anything behind it.
     expect(resetHistoryToMock).not.toHaveBeenCalled();
   });
 
-  it('leaves the row and its enable control enabled while a gesture is open, so the refusal is the handler and not an attribute', async () => {
+  it('leaves the rewind and enable controls enabled while a gesture is open, so the refusal is the handler and not an attribute', async () => {
     seedHistory();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
     await openHistoryTab();
@@ -575,6 +620,7 @@ describe('MobileLayersDrawer document gesture gate', () => {
     claimDocumentGesture('eraser-stroke', 4);
 
     expect(eyeControl(row)).toBeEnabled();
+    expect(rewindControl('rename')).toBeEnabled();
     expect(row).not.toHaveAttribute('disabled');
     expect(row).not.toHaveAttribute('aria-disabled');
   });
@@ -585,19 +631,34 @@ describe('MobileLayersDrawer document gesture gate', () => {
     await openHistoryTab();
     expect(isDocumentGestureOpen()).toBe(false);
 
-    fireEvent.click(historyRow('rename'));
+    fireEvent.click(rewindControl('rename'));
 
     expect(resetHistoryToMock).toHaveBeenCalledTimes(1);
     expect(resetHistoryToMock).toHaveBeenCalledWith(1);
   });
 
   it('rewinds from Enter with no gesture open, so the gated key path still works', async () => {
+    const user = userEvent.setup();
     seedHistory();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
     await openHistoryTab();
     expect(isDocumentGestureOpen()).toBe(false);
 
-    fireEvent.keyDown(screen.getByRole('button', { name: /rename/ }), { key: 'Enter' });
+    rewindControl('rename').focus();
+    await user.keyboard('{Enter}');
+
+    expect(resetHistoryToMock).toHaveBeenCalledTimes(1);
+    expect(resetHistoryToMock).toHaveBeenCalledWith(1);
+  });
+
+  it('rewinds from Space with no gesture open, because the title is a native button rather than a hand-rolled key handler', async () => {
+    const user = userEvent.setup();
+    seedHistory();
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    await openHistoryTab();
+
+    rewindControl('rename').focus();
+    await user.keyboard(' ');
 
     expect(resetHistoryToMock).toHaveBeenCalledTimes(1);
     expect(resetHistoryToMock).toHaveBeenCalledWith(1);
@@ -621,12 +682,12 @@ describe('MobileLayersDrawer document gesture gate', () => {
     await openHistoryTab();
 
     claimDocumentGesture('polygon-selection', 5);
-    fireEvent.click(historyRow('rename'));
+    fireEvent.click(rewindControl('rename'));
     expect(resetHistoryToMock).not.toHaveBeenCalled();
 
     resetDocumentGestures();
     expect(isDocumentGestureOpen()).toBe(false);
-    fireEvent.click(historyRow('rename'));
+    fireEvent.click(rewindControl('rename'));
 
     expect(resetHistoryToMock).toHaveBeenCalledTimes(1);
     expect(resetHistoryToMock).toHaveBeenCalledWith(1);

@@ -358,10 +358,10 @@ describe('drawLayersToCanvas', () => {
 
     expect(consoleError).not.toHaveBeenCalled();
     expectNoContextCalls(target.context);
-    // The resize happens before the context lookup, so the visible canvas dimensions change
-    // even though nothing is ever cleared or blitted.
-    expect(target.canvas.width).toBe(640);
-    expect(target.canvas.height).toBe(480);
+    // Context validation happens before the visible canvas is resized, so a missing
+    // destination leaves both the pixels and dimensions untouched.
+    expect(target.canvas.width).toBe(300);
+    expect(target.canvas.height).toBe(150);
   });
 
   it('reports a publish failure when clearing the visible canvas throws', () => {
@@ -381,6 +381,8 @@ describe('drawLayersToCanvas', () => {
     expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
     expect(target.context.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
     expect(target.context.drawImage).not.toHaveBeenCalled();
+    expect(target.canvas.width).toBe(300);
+    expect(target.canvas.height).toBe(150);
   });
 
   it('reports a publish failure when blitting the staging canvas throws', () => {
@@ -607,7 +609,7 @@ describe('drawLayersToCanvas', () => {
     expect(target.context.filter).toBe('none');
   });
 
-  it('resizes the staging canvas and then the visible canvas before publishing', () => {
+  it('resizes the staging canvas and then the visible canvas on successful publication', () => {
     const target = createTargetCanvas();
     const { createElement, stagingResizes } = trackStagingCanvasResizes();
     const targetResizes = trackCanvasResizes(target.canvas);

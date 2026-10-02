@@ -177,4 +177,17 @@ describe('useLayers drawAllLayers', () => {
 
     expect(drawLayersToCanvas).not.toHaveBeenCalled();
   });
+
+  it('reports a renderer publish failure without throwing through the pointer-move path', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    drawLayersToCanvas.mockReturnValue(false);
+    const { result } = setup({ layers: { edited: makeLayer('edited', 1) } });
+
+    act(() => {
+      expect(() => result.current.layers.drawAllLayers()).not.toThrow();
+    });
+
+    expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation');
+    consoleError.mockRestore();
+  });
 });

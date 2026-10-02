@@ -50,9 +50,9 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
       <div className="relative mx-auto my-6 w-full max-w-lg px-4">
         <div className="relative flex w-full flex-col rounded-lg border-0 bg-white shadow-lg outline-none focus:outline-none dark:bg-gray-800 dark:text-gray-100">
           <div className="flex items-center justify-between rounded-t border-b border-solid border-gray-200 p-4 dark:border-gray-700">
-            <h3 id="save-dialog-title" className="m-0 text-xl font-semibold">
+            <h2 id="save-dialog-title" className="m-0 text-xl font-semibold">
               Save File As...
-            </h3>
+            </h2>
             <button
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onClose}

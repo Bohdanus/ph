@@ -36,7 +36,7 @@ restating it.
 | Mutations                 | `src/contexts/useLayer.ts`                                                         | `updateLayer` `:473`, `removeLayer` `:441`, `setActiveLayer` `:511`, `toggleVisibility` `:513`, `moveLayerAfter` `:503` |
 | Property application      | `src/contexts/layer-renderer.ts:100-101`                                           | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                     |
 | Lock enforcement          | `src/contexts/useLayer.ts:101`, `:334`, `:529`                                     | `isLayerLocked`; the **only** source of `locked: true` is PSD import                                                    |
-| History / undo            | `src/contexts/history-replay.ts:59`                                                | Per-action arms: layer arms `:106-141`, plus the document-frame and selection arms at `:91` and `:99`                   |
+| History / undo            | `src/contexts/history-replay.ts:59`                                                | Per-action arms: layer arms `:126-161`, plus the document-frame and selection arms at `:111` and `:119`                 |
 | Durable property path     | `src/contexts/history-adapter.ts:344-350`                                          | `LayerPropertyKey = 'visible' \| 'name'` — the closed set                                                               |
 | Mobile panel              | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | A separate, richer surface: new-layer, delete, rename, move up/down                                                     |
 | Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | 792 / 369 / 415 unit lines, 506 / 126 e2e lines                                                                         |
@@ -152,10 +152,10 @@ Two controls on one row: an unlabelled blend-mode pop-up on the left (default **
 - `GAP` — no opacity control. `Layer.opacity` (`src/contexts/layer-types.ts:58`) is written by
   exactly three sites, none of them a UI: PSD import (`src/contexts/psd-utils.ts:159`), the import
   composite (`:191`), and `createLayerSource` defaulting it to `1` (`src/contexts/layer-utils.ts:189`).
-  **No user gesture in the app writes it.** The defect record is `HANDOFF.md` §56
-  (`HANDOFF.md:1244`), which uses the same loose phrasing; `docs/TOOLS-TOO-HARD.md:475` records only
-  that closing it is not a small change, and says so explicitly. This file does not restate that
-  defect — see [§9](#9-the-layer-model-the-panel-requires).
+  **No user gesture in the app writes it.** The defect record is `HANDOFF.md` §56, which uses the
+  same loose phrasing; `docs/TOOLS-TOO-HARD.md:493` records only that closing it is not a small
+  change, and says so explicitly. This file does not restate that defect — see
+  [§9](#9-the-layer-model-the-panel-requires).
 - Group default is **`Pass Through`**, not `Normal` — "By default, the blending mode of a layer group
   is Pass Through, which means that the group has no blending properties of its own." (Adobe, primary)
 - Adobe documents no preset list for the Opacity drop-down. **Unverified**: the exact preset values.
@@ -467,13 +467,14 @@ Layer`. (Adobe, primary, twice.)
   `e2e/layers-panel.spec.ts:87`, `e2e/erase-fill-eyedropper.spec.ts:146` — and by three unit files
   (`LayersTab.test.tsx:123`, `LayersTab.dispatch.test.tsx:79`, `LayersTab.store.test.tsx:77`).
   `PanelGroup`'s header `title` is written around it deliberately
-  (`src/components/SidebarRight/PanelGroup.tsx:57-62`, `HANDOFF.md:2271`). **Any work on the row that
+  (`src/components/SidebarRight/PanelGroup.tsx:57-62`). **Any work on the row that
   adds, removes or rewords that `title` silently repoints every one of those locators at a different
   element.** Keep it.
 
-  > The tally that `PanelGroup.tsx:58` and `HANDOFF.md:2270` state — "five e2e specs and three unit
-  > tests" — counts **files**, and it is right on that reading. It reads as a count of call sites and
-  > is short by two. Anyone auditing this trap should count sites, not files.
+> The tally "five e2e specs and three unit tests" — stated at `PanelGroup.tsx:58` and in
+> `HANDOFF.md` §83 — counts **files**, and it is right on that reading. It reads as a count of call
+> sites and is short by two: `getByTitle('Drag to reorder')` has seven call sites across five files.
+> Anyone auditing this trap should count sites, not files.
 
 ---
 
@@ -574,7 +575,7 @@ than repeated in every section.
 - `LAYER_TRANSPARENCY_ACTION` already exists at `src/util/constants.ts:26`, carrying the comment
   `// todo this is not triggered not recorded nor replayed yet`. It is a placeholder, not a
   half-implementation.
-- `HANDOFF.md` §56 (`HANDOFF.md:1244`) is the full worked example: a slider reaching for
+- `HANDOFF.md` §56 is the full worked example: a slider reaching for
   `updateLayer(id, { opacity }, TOOL_ACTION)` fails three times silently — no durable translation,
   legacy replay skips it, and the History panel grows an untitled row **per step**. It is the
   template for every property the panel adds. Read it before writing one.
@@ -822,17 +823,16 @@ A requirement is not done until a test fails without the change. For this panel 
 5. **Is the drag handle staying?** Photoshop's row is the drag handle
    ([§3](#3-layer-row-anatomy)). Keeping `DragHandleIcon` is a defensible affordance for a row that is
    also a rename target; removing it is more faithful. Nobody has decided.
-6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch — a _docs_ defect with no routed home.** The file
-   on disk is `e2e/OPEN_PROBLEMS.md` (underscore). The hyphen form is written in **only two files,
-   five lines**: `AGENTS.md:15`, `:165`, `:172` and `TEST-FLAKES.md:391`, `:657`.
-   `docs/TESTING.md:254`, `HANDOFF.md:593`, `:2471` and both `.skills/` documents use the
-   **correct** underscore form — so most of the tree is right and two files are wrong. It is also
-   **not** a macOS-only hazard: a hyphen and an underscore are different characters, so the hyphen
-   path does not resolve on a case-insensitive volume either; it is broken on every platform. And
-   because `AGENTS.md:170-173` scopes `e2e/OPEN_PROBLEMS.md` to Playwright and warns that "a
-   cross-scope entry is the one nobody reads", **a filename typo in `AGENTS.md` itself has no home
-   among the three routed files** — which is very likely why it has survived. Fix it as a one-line
-   correction in the two files that are wrong.
+6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch, still live in three files.** The file
+   on disk is `e2e/OPEN_PROBLEMS.md` (underscore). The hyphen form is written in
+   `TEST-FLAKES.md:722`, this file (`:825`), and `e2e/viewport-drawing.spec.ts:228` — three files,
+   three lines, and every line number below this one is re-derived at the time of the fix. It is not
+   a macOS-only hazard: a hyphen and an underscore are different characters, so the hyphen path does
+   not resolve on a case-insensitive volume either; it is broken on every platform. The route-by-scope
+   rule now lives at `docs/DOCUMENTATION.md:103-117`, and **the Playwright-spec occurrence has no
+   entry in `e2e/OPEN_PROBLEMS.md` at all**, which is why a fix confined to the two prose files
+   leaves the third standing. Fix all three, filing the spec one in `e2e/OPEN-PROBLEMS.md`, and then
+   delete this item — `HANDOFF.md` §96 is the defect record.
 
 ---
 

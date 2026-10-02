@@ -183,7 +183,7 @@ export function classify(
   // running them is gone — which is exactly the moment a reader most needs the
   // file to be true. The override is recorded rather than applied silently: the
   // reasons say it happened, and the evidence it overrode is still on the record
-  // in `writeHistory.derivedWriterChatIds`, so the file can be audited rather
+  // in `writeHistory.derivedChatIds`, so the file can be audited rather
   // than believed.
   const live = liveWritersSuppressed ? false : derivedLive;
   if (liveWritersSuppressed) {

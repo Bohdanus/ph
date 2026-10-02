@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../fixtures/extended-test';
 import { readFile } from 'node:fs/promises';
 import { exportFormats, setupExportTest, exportAndVerify } from './helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';

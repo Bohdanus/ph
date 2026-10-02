@@ -142,6 +142,15 @@ describe('LayersTab actions reaching the store', () => {
           actionName: HIDE_LAYER_ACTION,
           args: { visible: false },
         },
+        durableDiagnostics: [
+          {
+            actionName: HIDE_LAYER_ACTION,
+            code: 'invalid-history-entry',
+            historyId: 'history-id',
+            message: 'The append point is outside the legacy timeline, so durable cursor mapping is undefined.',
+            severity: 'error',
+          },
+        ],
         durableEntry: {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
@@ -183,6 +192,15 @@ describe('LayersTab actions reaching the store', () => {
           actionName: SHOW_LAYER_ACTION,
           args: { visible: true },
         },
+        durableDiagnostics: [
+          {
+            actionName: SHOW_LAYER_ACTION,
+            code: 'invalid-history-entry',
+            historyId: 'history-id',
+            message: 'The append point is outside the legacy timeline, so durable cursor mapping is undefined.',
+            severity: 'error',
+          },
+        ],
         durableEntry: {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
@@ -226,6 +244,15 @@ describe('LayersTab actions reaching the store', () => {
           actionName: RENAME_LAYER_ACTION,
           args: { name: 'Sky' },
         },
+        durableDiagnostics: [
+          {
+            actionName: RENAME_LAYER_ACTION,
+            code: 'invalid-history-entry',
+            historyId: 'history-id',
+            message: 'The append point is outside the legacy timeline, so durable cursor mapping is undefined.',
+            severity: 'error',
+          },
+        ],
         durableEntry: {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
