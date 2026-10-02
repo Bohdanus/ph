@@ -4540,10 +4540,10 @@ the frame origin.
 band. Cropping to document `(80,270)-(720,570)` — a `640x300` document with a non-`{0,0}` origin —
 then drawing a bar across the middle of the cropped document:
 
-| | read bands |
-|---|---|
-| **control**: a bar on the UNCROPPED document, at 50% height | `[false, true, false]` — strip 1, correct |
-| **after the crop**: a bar on the CROPPED document, at 50% height | `[true, false, false]` — strip 0 |
+|                                                                  | read bands                                |
+| ---------------------------------------------------------------- | ----------------------------------------- |
+| **control**: a bar on the UNCROPPED document, at 50% height      | `[false, true, false]` — strip 1, correct |
+| **after the crop**: a bar on the CROPPED document, at 50% height | `[true, false, false]` — strip 0          |
 
 The ink exists and is committed; it is drawn **one band too high**, which is the frame origin's
 signature. The control is what makes this a finding rather than a band-reading failure — the same
