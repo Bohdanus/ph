@@ -43,7 +43,7 @@ export interface ExportFormat {
 
 /**
  * Upper bound on differing colour channels tolerated when comparing an export
-* against the canvas it was encoded from. The fixture is the seeded 800x600
+ * against the canvas it was encoded from. The fixture is the seeded 800x600
  * document, so there are 1,440,000 colour channels and 50,000 of them is ~3.5%,
  * wide enough to absorb the re-encoding artifacts (chroma subsampling,
  * dithering) a lossy export necessarily introduces.
@@ -1133,7 +1133,7 @@ export async function exportAndVerify(
   const file = await readFile(target);
   expect(file.byteLength, `${format.label} file should not be empty`).toBeGreaterThan(100);
 
-if (format.verification === 'container') {
+  if (format.verification === 'container') {
     await verifyExportContainer(format, file, sourceDataUrl);
   } else {
     await verifyExportPixelsInBrowser(page, format, file, sourceDataUrl, CHANGED_CHANNEL_THRESHOLD_GENERAL, testInfo);
@@ -1189,7 +1189,7 @@ export async function setupIcoTest(page: Page): Promise<string> {
   // `src/hooks/useApp.ts:87` — and no export spec reaches it, because `verifyPsdInPhotopea`
   // hands its file to Photopea rather than to this app.)
   await page.getByTestId('header-file-new-button').click();
-await acceptDiscardPrompt(page);
+  await acceptDiscardPrompt(page);
   await page.getByTestId('new-image-width-input').fill(String(ICON_DOCUMENT_SIZE.width));
   await page.getByTestId('new-image-height-input').fill(String(ICON_DOCUMENT_SIZE.height));
   await page.getByTestId('new-image-dialog-submit-button').click();

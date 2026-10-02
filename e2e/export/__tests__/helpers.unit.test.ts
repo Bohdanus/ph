@@ -1781,7 +1781,7 @@ describe('Export Helpers', () => {
       const heightInput = createLocatorMock();
       const newImageSubmit = createLocatorMock();
       const drawTool = createLocatorMock();
-// The unsaved-changes prompt the app shows instead of a native `confirm()`.
+      // The unsaved-changes prompt the app shows instead of a native `confirm()`.
       // `count: 0` is the truth on the page `acceptDiscardPrompt` leaves behind — the same
       // convention `createSaveDialogPage` uses for `save-dialog` — and it is what makes the
       // helper's closing "the prompt is gone" check pass rather than silently skip.
@@ -1880,7 +1880,7 @@ describe('Export Helpers', () => {
       expect(result).toBe(SOURCE_DATA_URL);
     });
 
-/**
+    /**
      * THE REGRESSION PIN for the icon stroke, and the reason the offsets are document
      * pixels.
      *

@@ -15,7 +15,7 @@ import {
   fillSaveDialog,
   INTEGRATION_TEST_TIMEOUT_MS,
   mimeType,
-prepareExportDownloadDirectory,
+  prepareExportDownloadDirectory,
   openSaveDialog,
   setupExportTest,
   setupIcoTest,
