@@ -68,16 +68,17 @@ New time, and many documents open at once in tabs.
 **This app:** the canvas is a `DocumentFrame` — a `Pos` —
 `src/contexts/document-frame.ts:3` — plus a `Size` from
 `src/contexts/general-types.ts:2`. New offers presets, a DPI field shown only for
-physical-unit presets (`src/components/NewImageDialog/NewImageDialog.tsx:126`),
+physical-unit presets (`src/components/NewImageDialog/NewImageDialog.tsx:128-133`),
 background colour and opacity, and pixel dimensions clamped to 1–10000
-(`:197-198`, `:216-217`). Opening a file replaces the whole document and mints a new
-`documentId` (`src/hooks/useApp.ts:116-144`).
+(`src/components/NewImageDialog/NewImageDialog.tsx:199-200`, `:218-219`). Opening a
+file replaces the whole document and mints a new `documentId`
+(`src/hooks/useApp.ts:116-144`).
 
 **Status:** `partial`
 
 **Gap:** One document at a time. No colour mode or bit depth. No Image Size or
 Canvas Size dialog. DPI is a one-shot conversion at New time and is never stored on
-the document (`NewImageDialog.tsx:12-20`).
+the document (`src/components/NewImageDialog/NewImageDialog.tsx:13-19`).
 
 ## Import
 
@@ -114,7 +115,8 @@ below that a browser handles perfectly well today.
 HDR, each with its own options.
 
 **This app:** `saveImageToDisk` (`src/contexts/image-load-save-utils.ts:138`)
-writes PNG, JPEG and WebP through `canvas.toBlob` (`:203-205`), and dispatches TIFF,
+writes PNG, JPEG and WebP through `canvas.toBlob`
+(`src/contexts/image-load-save-utils.ts:201-205`), and dispatches TIFF,
 BMP, GIF, AVIF, ICO and SVG to their encoders (`:147-178`). PSD is written
 separately (`src/contexts/psd-utils.ts:205`).
 
@@ -161,15 +163,17 @@ masks, clipping masks and Blend If.
 
 **This app:** `LayerSource` has three discriminants — `blank`, `image`, `tool`
 (`src/contexts/layer-types.ts:9-26`). Both Type and a shape commit as a source
-(`src/tools/toolProcessors.ts:159-160`, `commit: 'source'` on each), but only the six
-tools in `vectorToolNames` (`src/contexts/layer-renderer.ts:32`) are re-rendered from
-their args at draw time; Type is not among them, so `getLayerBitmap` falls through to
-the layer's own bitmap (`layer-renderer.ts:53`), which replay materialises
-(`src/contexts/history-replay.ts:216`). Sixteen Photoshop blend modes map to
-canvas composite operations (`src/contexts/psd-utils.ts:16-33`), and opacity and
-blend mode are applied at draw time (`src/contexts/layer-renderer.ts:100-101`).
-The layer record is flat (`layer-types.ts:71`) and the panel offers visibility,
-reorder, rename and delete (`src/components/SidebarRight/LayersTab.tsx:174-263`).
+(`src/tools/toolProcessors.ts:159` and `:160-166`, `commit: 'source'` on each), but
+only the six tools in `vectorToolNames` (`src/contexts/layer-renderer.ts:32`) are
+re-rendered from their args at draw time; Type is not among them, so `getLayerBitmap`
+falls through to the layer's own bitmap (`src/contexts/layer-renderer.ts:53`), which
+replay materialises (`src/contexts/history-replay.ts:216`). Sixteen Photoshop blend
+modes map to canvas composite operations (`src/contexts/psd-utils.ts:16-33`), and
+opacity and blend mode are applied at draw time
+(`src/contexts/layer-renderer.ts:100-101`). The layer record is flat, a
+`Record<LayerId, Layer>` with no `parentId` (`src/contexts/layer-types.ts:48-69`,
+`:71`), and the panel offers visibility, reorder, rename and delete
+(`src/components/SidebarRight/LayersTab.tsx:133-263`).
 
 **Status:** `partial`
 
@@ -211,7 +215,7 @@ Actions, Measurement Log — dockable, with panel groups.
 (`src/contexts/PanelLayout.tsx:89`). They dock, drag-reorder, resize, collapse to
 icons and roll up (`src/contexts/PanelLayout.tsx:330-344`,
 `src/components/SidebarRight/PanelGroup.tsx`), and Window has Reset Workspace
-(`src/components/DesktopHeader/DesktopHeader.tsx:394`).
+(`src/components/DesktopHeader/DesktopHeader.tsx:397-403`).
 
 **Status:** `partial`
 
@@ -228,10 +232,10 @@ which are options bars, not panels.
 Help.
 
 **This app:** four menus — `file`, `tools`, `edit`, `window`
-(`src/components/DesktopHeader/DesktopHeader.tsx:140-151`). File has New, Open,
-Save. Tools lists every tool. Edit holds six entries — Colors, Blur, Levels,
-Transform, Draw, Text — which are tool switches, not Edit commands. Window has
-Reset Workspace.
+(`src/components/DesktopHeader/DesktopHeader.tsx:185`, `:283`, `:309`, `:390`).
+File has New, Open, Save. Tools lists every tool. Edit holds six entries — Colors,
+Blur, Levels, Transform, Draw, Text (`:320-370`) — which are tool switches, not Edit
+commands. Window has Reset Workspace.
 
 **Status:** `divergent`
 
@@ -243,7 +247,7 @@ unreachable entirely.
 
 Undo and Redo exist as buttons (`src/components/HistoryControls/HistoryControls.tsx:43-62`)
 and are bound to `Ctrl+Z` / `Shift+Ctrl+Z`
-(`src/components/Common/AppKeyboardShortcuts.tsx:238`, `:250`); they are missing
+(`src/components/Common/AppKeyboardShortcuts.tsx:237-238`, `:249-251`); they are missing
 from the menu, not from the app.
 
 ## View and navigation
@@ -255,7 +259,7 @@ screen-mode switching.
 **This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
 scaleY)` with centring offsets (`src/hooks/usePointerPosition.ts:135`,
 `src/util/contain-fit.ts:33-51`). The
-zoom transform is commented out (`src/components/Main/Main.tsx:248`) and so is
+zoom transform is commented out (`src/components/Main/Main.tsx:270`) and so is
 the store's zoom state (`src/contexts/StoreContext.tsx:142-143`, `:1171-1174`).
 There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-118`).
 

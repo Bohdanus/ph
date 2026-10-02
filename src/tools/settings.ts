@@ -2,6 +2,7 @@ import { cloneDeep } from 'lodash-es';
 
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
+import { AUTO_LEADING } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
 import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
@@ -82,13 +83,18 @@ export const defaultSettings = {
   text: {
     text: '',
     fontSize: 64,
-    lineHeight: 1.1,
+    lineHeight: AUTO_LEADING,
     fontFamily: 'Arial',
     color: '#000000',
     rect: null,
     align: 'left',
     bold: false,
     italic: false,
+    allCaps: false,
+    smallCaps: false,
+    strikethrough: false,
+    tracking: 0,
+    underline: false,
 
     toolName: 'text',
   } satisfies TextToolArgs,

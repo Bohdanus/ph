@@ -200,6 +200,12 @@ describe('calculateNewRect', () => {
   function makeCanvasRef(measureWidth: number) {
     const ctx = {
       measureText: vi.fn(() => ({ width: measureWidth })),
+      // `getTextWidth` brackets its `applyTextStyle` in save/restore because it is handed the live
+      // tool overlay by `calculateNewRect` and would otherwise leave that context wearing the Type
+      // tool's typography. These are `vi.fn()`s and so are not real state, but they have to be
+      // present for the bracket to be callable at all.
+      save: vi.fn(),
+      restore: vi.fn(),
     };
     return { current: { getContext: vi.fn(() => ctx) } } as unknown as RefObject<HTMLCanvasElement | null>;
   }

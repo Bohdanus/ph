@@ -1,10 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cloneDeep } from 'lodash-es';
+import { cloneDeep, omit } from 'lodash-es';
 import { saveLastSettings } from '../settings.ts';
 import { defaultSettings, lastSavedSettings, savedDrawPerPen, savedArgsPerFigure } from '../../tools/settings.ts';
 import { isFigureType, normalizeFigure, type FigureType } from '../../tools/shape.ts';
+import { AUTO_LEADING, resolveTextStyle, type TextToolArgs } from '../../tools/text.ts';
 import type { ToolArgs, ToolArgsFor, ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs } from '../../tools/draw.ts';
+
+/**
+ * Adobe's character attributes that arrived after the first version of the text tool. They are
+ * OPTIONAL on `TextToolArgs`, so a settings record persisted before they existed still satisfies
+ * the type — that is the whole reason this file asserts about a record that LACKS them.
+ */
+const characterAttributes = ['allCaps', 'smallCaps', 'strikethrough', 'tracking', 'underline'] as const;
+
+/** The resolved values {@link resolveTextStyle} owes a record that carries none of the above. */
+const resolvedAttributeDefaults = {
+  allCaps: false,
+  smallCaps: false,
+  strikethrough: false,
+  tracking: 0,
+  underline: false,
+  lineHeight: AUTO_LEADING,
+};
+
+/**
+ * The text record exactly as `saveLastSettings` persisted it before those five fields existed:
+ * the seeded defaults with the later fields omitted, which is the shape a settings object
+ * restored from an older build's storage actually has.
+ */
+const legacyTextArgs = (): TextToolArgs => omit(cloneDeep(defaultSettings.text), ...characterAttributes);
 
 /**
  * Hard-coded copy of the narrowed `FigureType` union. The imported type cannot be
@@ -102,6 +127,58 @@ describe('saveLastSettings', () => {
     expect(text.color).toBe('#0000ff');
     expect(text.bold).toBe(true);
     expect(text.align).toBe('center');
+  });
+
+  /**
+   * The text arm persists the record verbatim, which is what makes the five character attributes
+   * OPTIONAL on `TextToolArgs`: a record written before they existed must stay a valid record.
+   * So this pins BOTH directions at once — the attributes are kept when the bar writes them, and
+   * the save path does not back-fill the ones it was never given. Back-filling would silently
+   * retire the migration in `resolveTextStyle`, and nothing else in the tree would notice.
+   */
+  it('persists the text character attributes verbatim, and invents none of them', () => {
+    saveLastSettings({
+      text: 'hello',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
+      fontSize: 32,
+      lineHeight: 1.8,
+      fontFamily: 'Arial',
+      color: '#0000ff',
+      align: 'center',
+      bold: true,
+      italic: false,
+      allCaps: true,
+      smallCaps: true,
+      strikethrough: true,
+      tracking: -40,
+      underline: true,
+      toolName: 'text',
+    });
+
+    expect(lastSavedSettings.text).toEqual({
+      fontSize: 32,
+      lineHeight: 1.8,
+      fontFamily: 'Arial',
+      color: '#0000ff',
+      align: 'center',
+      bold: true,
+      italic: false,
+      allCaps: true,
+      smallCaps: true,
+      strikethrough: true,
+      tracking: -40,
+      underline: true,
+      toolName: 'text',
+    });
+
+    saveLastSettings(legacyTextArgs());
+    const persisted = lastSavedSettings.text as unknown as Record<string, unknown>;
+    for (const attribute of characterAttributes) {
+      expect(Object.hasOwn(persisted, attribute)).toBe(false);
+    }
+    expect(Object.keys(persisted).sort()).toEqual(
+      ['align', 'bold', 'color', 'fontFamily', 'fontSize', 'italic', 'lineHeight', 'toolName'].sort()
+    );
   });
 
   it('stores shape settings without start and end', () => {
@@ -610,7 +687,11 @@ describe('saveLastSettings figure migration', () => {
       text: 'hello',
       rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
       fontSize: 32,
-      lineHeight: 1.2,
+      // Deliberately NOT the seeded `AUTO_LEADING`, and not one of the five character attributes
+      // either: an exact `toEqual` can only prove VERBATIM persistence while the value it pins is
+      // a value the save path could not have produced on its own. Once `lineHeight` equalled the
+      // default this assertion would have passed against a save path that substituted the default.
+      lineHeight: 1.8,
       fontFamily: 'Arial',
       color: '#0000ff',
       align: 'center',
@@ -621,7 +702,7 @@ describe('saveLastSettings figure migration', () => {
 
     expect(lastSavedSettings.text).toEqual({
       fontSize: 32,
-      lineHeight: 1.2,
+      lineHeight: 1.8,
       fontFamily: 'Arial',
       color: '#0000ff',
       align: 'center',
@@ -672,6 +753,85 @@ describe('saveLastSettings figure migration', () => {
 
     expect(readBack.figure).toBe('rectangle');
     expect(legacyFigures).not.toContain(readBack.figure);
+  });
+});
+
+/**
+ * The five character attributes are OPTIONAL on `TextToolArgs` for one reason: `saveLastSettings`
+ * persists the text record VERBATIM, so a record written before a field existed comes back with that
+ * field absent, and it has to keep working. `resolveTextStyle` is the one place an absent optional
+ * becomes a value, and these assertions are what keep it that one place — the alternative is a `?? 0`
+ * at each of the eight call sites, and the one that was missed produced a `NaN` line coordinate
+ * rather than a visible default.
+ *
+ * They live here rather than beside `resolveTextStyle` in `src/tools/text.ts` because restoring an
+ * old payload is this file's subject: the record under test is the one `lastSavedSettings` hands back
+ * after a save and a switch.
+ */
+describe('a text settings record persisted before the character attributes existed', () => {
+  beforeEach(() => {
+    resetLastSavedSettings();
+  });
+
+  afterEach(() => {
+    resetLastSavedSettings();
+  });
+
+  it('resolves every absent attribute to a value rather than undefined', () => {
+    const style = resolveTextStyle(legacyTextArgs());
+
+    expect(style).toMatchObject(resolvedAttributeDefaults);
+    for (const attribute of characterAttributes) {
+      expect(style[attribute]).not.toBeUndefined();
+    }
+  });
+
+  it('does not mutate the record it resolves', () => {
+    const args = legacyTextArgs();
+    const before = cloneDeep(args);
+
+    const style = resolveTextStyle(args);
+
+    expect(args).toEqual(before);
+    for (const attribute of characterAttributes) {
+      expect(Object.hasOwn(args, attribute)).toBe(false);
+    }
+    expect(style).not.toBe(args);
+    expect(style.lineHeight).toBe(AUTO_LEADING);
+  });
+
+  it('is still attribute-less after a save and a tool switch, and resolves there', () => {
+    saveLastSettings(legacyTextArgs());
+    const restored = switchToTool('text');
+
+    // The point of the whole arrangement: `saveLastSettings` must not back-fill what it was never
+    // given, or the migration below would be dead code on the one path that produces old records.
+    for (const attribute of characterAttributes) {
+      expect(Object.hasOwn(restored, attribute)).toBe(false);
+    }
+    expect(resolveTextStyle(restored)).toMatchObject(resolvedAttributeDefaults);
+  });
+
+  it('prefers the persisted value over the default when the record does carry one', () => {
+    // Without this, a resolver that ignored its input and always returned the defaults would pass
+    // every assertion above — the migration would be indistinguishable from a discard.
+    const style = resolveTextStyle({
+      ...legacyTextArgs(),
+      allCaps: true,
+      smallCaps: true,
+      strikethrough: true,
+      tracking: -40,
+      underline: true,
+    });
+
+    expect(style).toMatchObject({
+      ...resolvedAttributeDefaults,
+      allCaps: true,
+      smallCaps: true,
+      strikethrough: true,
+      tracking: -40,
+      underline: true,
+    });
   });
 });
 
@@ -747,11 +907,25 @@ describe('defaultSettings and lastSavedSettings', () => {
     });
     expect(defaultSettings.text).toMatchObject({
       fontSize: 64,
-      lineHeight: 1.1,
+      // Adobe's default leading is Auto, and auto-leading is 120% of the type size:
+      // `JustificationProperties.autoLeadingAmount` defaults to `120`
+      // (https://developer.adobe.com/photoshop/uxp/2022/ps_reference/objects/options/justificationproperties/).
+      // `lineHeight` is a ratio here rather than an absolute distance, so `AUTO_LEADING` carries
+      // the 120% and the semantics stay divergent. The 1.1 this replaced was neither.
+      lineHeight: AUTO_LEADING,
       fontFamily: 'Arial',
       color: '#000000',
       text: '',
       align: 'left',
+      // The five character attributes are OPTIONAL in the type so that a record persisted before
+      // they existed still compiles, but the SEED has to carry them: the options bar reads them,
+      // and a bar that showed nothing on a fresh switch would be indistinguishable from a bar
+      // failing to read them.
+      allCaps: false,
+      smallCaps: false,
+      strikethrough: false,
+      tracking: 0,
+      underline: false,
       toolName: 'text',
     });
     expect(defaultSettings.shape).toMatchObject({
@@ -768,5 +942,33 @@ describe('defaultSettings and lastSavedSettings', () => {
       magneticWidth: 18,
       toolName: 'feather-magnetic-lasso',
     });
+  });
+
+  /**
+   * `toMatchObject` above is deliberately partial — it cannot notice a field that was dropped from
+   * the seed or one that arrived uninvited. This is the exhaustive companion for the text record
+   * alone, written out literally for the same reason `figureTypes` is: it pins the seed's whole key
+   * set, so a fifth character attribute cannot be added to `defaultSettings.text` and go unpinned.
+   */
+  it('seeds the text record with exactly these keys', () => {
+    expect(Object.keys(defaultSettings.text).sort()).toEqual(
+      [
+        'align',
+        'allCaps',
+        'bold',
+        'color',
+        'fontFamily',
+        'fontSize',
+        'italic',
+        'lineHeight',
+        'rect',
+        'smallCaps',
+        'strikethrough',
+        'text',
+        'toolName',
+        'tracking',
+        'underline',
+      ].sort()
+    );
   });
 });

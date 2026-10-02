@@ -177,7 +177,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   text: {
     summary:
-      'Creates live, resolution-independent type as a heading, a wrapped paragraph, or type flowing along a path.',
+      'Sets a typed string into the document as a raster text layer, with font, size, leading, tracking and caps controls.',
     implementation: 'partial',
   },
   crop: {

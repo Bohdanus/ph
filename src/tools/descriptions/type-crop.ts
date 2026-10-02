@@ -4,7 +4,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
   text: {
     photoshopName: 'Horizontal Type Tool',
     summary:
-      'Creates live, resolution-independent type as a heading, a wrapped paragraph, or type flowing along a path.',
+      'Sets a typed string into the document as a raster text layer, with font, size, leading, tracking and caps controls.',
     purpose:
       "Photoshop's Type tools create live, vector-based type: glyph outlines re-rendered from the font, so a type layer stays resolution-independent and editable until you deliberately rasterize it. Clicking places point type, whose lines are independent and never wrap; dragging a bounding box places paragraph type, whose lines wrap and reflow as you resize the box. Type can also flow along an open or closed work path, or fill the inside of a closed shape. Paragraph settings — alignment, justification, indents and hyphenation — apply to paragraph type only, because with point type each line is its own paragraph. The anti-aliasing pull-down — None, Sharp, Crisp, Strong and Smooth, Sharp by default — is no longer on the type options bar. The five presets themselves are unchanged and are reached from the Character panel, the layer's properties and the Type menu instead; Adobe's own help still lists the type options bar among the four places characters can be formatted, without naming anti-aliasing there. When the pull-down came off the bar is community-reported only — an Adobe Community report of August 2025 puts it at Photoshop 26.10 — and is not asserted here.",
     options: [
@@ -25,7 +25,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A combo box showing every font available to Photoshop in a WYSIWYG list, each entry rendered in its own face so the list previews the fonts.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:136',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:139',
       },
       {
         control: 'Font Style',
@@ -36,23 +36,23 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         control: 'Size',
         detail:
-          'The type size, entered in points by default and accepting a unit suffix (pt, px, mm, in, pica). 1 pt is 1/72 in. The value sets the em size, not the cap height, and the bound Adobe documents is on the field rather than on rendering.',
+          'The type size, entered in points by default and accepting a unit suffix (pt, px, mm, in, pica). 1 pt is 1/72 in. The value sets the em size, not the cap height, and the bound Adobe documents is on the field rather than on rendering. `CharacterStyle.size` is 0.01–1296, described as "The font size in pixels for a 72ppi document", so the documented field range is 0.01 to 1296 rather than a whole number from 1.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:149',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:158',
       },
       {
         control: 'Text color',
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:184',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:219',
       },
       {
         control: 'Align Text Left / Center Text / Align Text Right',
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:195',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:230',
       },
       {
         control: 'Toggle the type on a path',
@@ -83,7 +83,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The check mark and the cancel cross, which appear only while a type layer is in edit mode — Adobe\'s own test for edit mode is that they are there: "look in the options bar — if you see the Commit button and the Cancel button, the type tool is in edit mode." Commit also fires on the numeric keypad\'s Enter and on Ctrl+Enter (Windows) or Command+Return (Mac OS). Esc commits by default, and the Use Esc key to commit text preference that flips it to cancel moved from Edit > Preferences > Type to Settings > Type in 23.0.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:230',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:325',
       },
     ],
     modifiers: [],
@@ -97,10 +97,19 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/text.ts:28',
-      'src/tools/text.ts:72',
+      'src/tools/text.ts:14',
+      'src/tools/text.ts:34',
+      'src/tools/text.ts:150',
+      'src/tools/text.ts:191',
+      'src/tools/text.ts:287',
+      'src/tools/text.ts:331',
+      'src/tools/text.ts:353',
       'src/tools/toolProcessors.ts:160',
-      'src/components/ToolbarsRight/Text/Text.tsx:95',
+      'src/components/ToolbarsRight/Text/Text.tsx:98',
+      'src/components/ToolbarsRight/Text/Text.tsx:158',
+      'src/components/ToolbarsRight/Text/Text.tsx:203',
+      'src/components/ToolbarsRight/Text/Text.tsx:278',
+      'src/components/ToolbarsRight/Text/Text.tsx:300',
       'src/components/Main/TextToolArea.tsx:24',
       'src/contexts/useLayer.ts:369',
       'src/contexts/layer-renderer.ts:32',
@@ -108,11 +117,11 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/contexts/materialization.ts:171',
       'src/util/rect.ts:116',
       'src/util/settings.ts:31',
-      'src/tools/settings.ts:82',
+      'src/tools/settings.ts:83',
       'toolbar-mapping.ts:108',
     ],
     appNotes:
-      "The app's type layer is baked pixels, not live type. renderText paints the string into a 2D context with fillText, and the text creator hands back a single OffscreenCanvas, so what reaches the Layers panel is a bitmap. On the runtime path the layer renderer re-runs a tool's creator only for the six shape tools and text is not among them, so the visible canvas, undo replay and the PSD writer all draw `layer.bitmap` and enlarging a text layer rescales those pixels where a Photoshop type layer re-renders at the new size. The durable path is the exception and the runtime claim is not the whole truth: the durable materializer re-runs the text creator from the retained args, so the characters survive in one of the two engines and are re-derivable there. There is no text box either: the app grows the rect to the widest line instead of wrapping, so a long line runs to the canvas edge rather than reflowing, and every newline is a hard break. Text is typed into a textarea in the right-hand panel rather than onto the canvas, so there is no caret, no text selection and no per-character formatting; the draft is committed by Apply or implicitly by switching tools, and the commit creates a raster layer. The colour row is the one this file used to get backwards. There IS a colour control — a native colour input at Text.tsx:184 that writes through to the args and from there into renderText — and it is the tool's own setting: the bar no longer mirrors the global foreground swatch into the args on every render, which is what the earlier text claimed. What the app still lacks is Photoshop's Color Picker rather than the platform's, the Alt+Backspace and Ctrl+Backspace foreground/background bindings (there is no altKey registration anywhere in the keyboard table), per-character scoping, and Photoshop's default of seeding the type colour from the foreground swatch — the app's seed is a fixed black. Font size is a CSS pixel range of 8-500 rather than points, the font list is fourteen hard-coded families rather than the system enumeration, and leading is a unitless multiplier of the font size defaulting to 1.1 where Photoshop's Leading defaults to Auto, so every line the app draws is set to a fixed ratio rather than an automatic one. T is the only type key, and only while the textarea does not hold focus — the canvas tool area focuses it as soon as the tool is selected, and a shortcut that does not opt into inputs is refused while a field is focused, so a T pressed mid-edit types a letter rather than reselecting the tool. The type tile holds a single entry, so Shift+T re-selects the same tool instead of cycling a flyout — and that one entry stands in for a four-tool group.",
+      "The app's type layer is baked pixels, not live type. renderText paints the string into a 2D context with fillText, and the text creator hands back a single OffscreenCanvas, so what reaches the Layers panel is a bitmap. On the runtime path the layer renderer re-runs a tool's creator only for the six shape tools and text is not among them, so the visible canvas, undo replay and the PSD writer all draw `layer.bitmap` and enlarging a text layer rescales those pixels where a Photoshop type layer re-renders at the new size. The durable path is the exception and the runtime claim is not the whole truth: the durable materializer re-runs the text creator from the retained args, so the characters survive in one of the two engines and are re-derivable there. There is no text box either: the app grows the rect to the widest line instead of wrapping, so a long line runs to the canvas edge rather than reflowing, and every newline is a hard break. Text is typed into a textarea in the right-hand panel rather than onto the canvas, so there is no caret, no text selection and no per-character formatting; the draft is committed by Apply or implicitly by switching tools, and the commit creates a raster layer. The colour row is the one this file used to get backwards. There IS a colour control — a native colour input at Text.tsx:219 that writes through to the args and from there into renderText — and it is the tool's own setting: the bar no longer mirrors the global foreground swatch into the args on every render, which is what the earlier text claimed. What the app still lacks is Photoshop's Color Picker rather than the platform's, the Alt+Backspace and Ctrl+Backspace foreground/background bindings (there is no altKey registration anywhere in the keyboard table), per-character scoping, and Photoshop's default of seeding the type colour from the foreground swatch — the app's seed is a fixed black. Font size is now a number field over Adobe's `CharacterStyle.size` range of 0.01-1296, clamped on entry rather than only marked invalid, but the unit is still CSS px rather than points: the canvas carries no document resolution, so a point has no denominator here. The font list is still fourteen hard-coded families rather than the system enumeration, and there is no Font Style combo box at all — the Bold and Italic buttons are booleans, not a list of the family's own styles, so a family-specific weight like Semibold or Condensed is unreachable and the two toggles cannot express a faux style the way Photoshop synthesizes one for a family that lacks a weight. Leading is still a unitless multiplier of the font size rather than an absolute baseline-to-baseline distance, but its default is now 1.2, which is Adobe's auto-leading figure — `JustificationProperties.autoLeadingAmount` defaults to 120, the percentage of type size used for auto leading — so the number matches Photoshop's default and the semantics behind it do not. Tracking arrived as a slider over -1000..1000 in 1/1000 em, applied as `ctx.letterSpacing` where the platform has it and as a hand-placed per-grapheme advance where it does not, and that fallback drops kerning and ligatures across the cluster boundaries it measures. All Caps and Small Caps arrived through `ctx.fontVariantCaps`, assigned after `ctx.font` because assigning the font resets it, and the small-caps value synthesises where the family has no real small caps, which is Adobe's own documented rule. Underline and Strikethrough arrived as two more booleans drawn in the type colour, which is the whole of what Adobe documents about them: its `Underline` enum is `NONE / LEFTINVERTICAL / RIGHTINVERTICAL` with no style, weight, offset or colour of its own, and the Underline Options dialog is InDesign's. Two figures in that pair are this app's own and not Adobe's: the rule sits 0.1em below the baseline, which no Adobe page states, and its thickness is `max(1, round(fontSize / 16))`, which Adobe does not document at all. Rendering moved to `textBaseline = 'alphabetic'` with the baseline placed from the measured `fontBoundingBoxAscent`, because `'top'` is a font-dependent offset that matches no exposed metric. Font size is the unit that diverges, not the range. T is the only type key, and only while the textarea does not hold focus — the canvas tool area focuses it as soon as the tool is selected, and a shortcut that does not opt into inputs is refused while a field is focused, so a T pressed mid-edit types a letter rather than reselecting the tool. The type tile holds a single entry, so Shift+T re-selects the same tool instead of cycling a flyout — and that one entry stands in for a four-tool group.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/creating-type.html',
       'https://helpx.adobe.com/photoshop/using/editing-text.html',
@@ -126,6 +135,8 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'https://edex.adobe.com/teaching-resources/photoshop-type-mask-tool',
       'https://helpx.adobe.com/photoshop/using/layers.html',
       'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle',
+      'https://developer.adobe.com/photoshop/uxp/2022/ps_reference/objects/options/justificationproperties/',
+      'https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants',
       'https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer',
       'https://www.adobe.com/products/photoshop/rasterize.html',
       'https://www.adobe.com/products/photoshop/how-to-use.html',

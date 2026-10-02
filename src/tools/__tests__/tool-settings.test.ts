@@ -143,7 +143,11 @@ describe('defaultSettings', () => {
     expect(defaultSettings.text).toMatchObject({
       text: '',
       fontSize: 64,
-      lineHeight: 1.1,
+      // Adobe's default leading is Auto, and auto-leading is 120% of the type size:
+      // `JustificationProperties.autoLeadingAmount` defaults to `120`. This app's `lineHeight`
+      // is a ratio rather than an absolute baseline-to-baseline distance, so 1.2 reproduces the
+      // percentage and not the semantics.
+      lineHeight: 1.2,
       fontFamily: 'Arial',
       align: 'left',
       bold: false,

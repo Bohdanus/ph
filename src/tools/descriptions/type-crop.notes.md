@@ -17,7 +17,9 @@ the tally is worth recording because the file is better for it and not worse:
 
 **Kept, because this pass confirmed it against the working tree:**
 
-- The **Text color** row from `missing` to `partial`, with `Text.tsx:184` as its `appRef`. The
+- The **Text color** row from `missing` to `partial`, with `Text.tsx:184` as its `appRef` at
+  the time — **now `:219`**, because the bar gained four controls above it and every `appRef` in
+  this table moved with them; see the re-derivation above. The
   colour control exists, is wired to the args, and reaches `ctx.fillStyle`; the foreground
   mirroring the previous pass described is gone. This reversed a false verdict rather than
   creating one.
@@ -35,18 +37,26 @@ the tally is worth recording because the file is better for it and not worse:
 
 **Corrected here:**
 
-- `Font Style` went back from `partial` to `missing`: `Text.tsx:209` is the Bold toggle, and
-  there is no style combo box in the app at all.
-- The **`Size` row's "0.01 to 1296 at 72 ppi"** clause is removed. It contradicted this file's
-  own `Unverified` item 2, which says no Adobe page states a range, and matched no source in
-  the corpus either (which says 1–1296).
-- The **anti-aliasing version**. This file's heading said 27.x; the community report in the
+- `Font Style` went back from `partial` to `missing`: there is no style combo box in the app at
+  all. The verdict-list bullet that still said `partial` was deleted rather than left to
+  contradict the census — see the resolution in the census section below, which was written on a
+  later pass.
+- **The anti-aliasing version.** This file's heading said 27.x; the community report in the
   family says 26.10. The presets also still exist — only the bar control went.
 - The **`appNotes` claim that Photoshop's auto-leading is 120 percent**, which no source in
   this file supports, is now "Photoshop's Leading defaults to Auto".
 - The **three crop modifier rows** (Ctrl-alone → Straighten, Shift-rotate → 15°, Ctrl-rotate →
   no shrink) stay in the array but are filed as unverified, because `appNotes` was calling the
   same rows aspirational.
+
+**Reversed again, later, on the clause this list says was removed for the right reason.** The
+bullet above this one removed the `Size` row's "0.01 to 1296 at 72 ppi" clause on the grounds
+that `Unverified` item 2 said no Adobe page states a range. That reasoning was sound and its
+conclusion was wrong: `CharacterStyle` **does** state the range, and the page carrying it was
+already in `sources`. The clause is back, with the citation, and `Unverified` item 2 is deleted
+rather than annotated — see that item, and the `Size` bullet in the verdict list for the two
+divergences that remain, which are the **unit** and the **presentation** and never were the
+range.
 
 **Left in place but flagged, not fixed:** four added `sources` URLs and three added verbatim
 Adobe quotations that this pass did not open, including one this file had already recorded as
@@ -165,37 +175,75 @@ support, so the row no longer claims a position at all: the panel toggle is the 
 bar's settings controls, and the Commit / Cancel pair sits after it — a pair the same record
 says "appear only while a type layer is in edit mode". The app's own bar is a different
 surface and is not evidence for Adobe's order, but it is what this worktree can read, and it
-has the same shape: `Text.tsx:195` the align control, `:209` the B/I pair, then `Apply` at
-`:230` and `Clear` at `:233` at the right end.
+has the same shape: `Text.tsx:230` the align control, `:250` the B/I pair, then `Apply` at
+`:325` and `Clear` at `:328` at the right end. The bar has since grown by four controls — Line
+Height, Tracking and the caps/decorations pair — between the size field and the colour, which
+does not bear on Adobe's order and is recorded in the census section instead.
 
 ### Options-bar control census
 
 Twelve controls. `present` 1 · `partial` 4 · `inert` 0 · `missing` 7.
 
+**Re-derived on this pass.** Every `appRef` below moved, because the bar grew by four controls
+and every block below the font select shifted with it. The verdicts did not move with them:
+**no control changed status**, and that is the finding rather than an absence of one. The
+character formatting that arrived with this pass is **not** on Photoshop's type options bar at
+all — tracking, the caps toggles and the two decorations are Character-panel controls, which
+`formatting-characters.html` lists as one of four places characters can be formatted, and the
+Character panel is a panel rather than a bar. Putting them in this table would file them under a
+census whose contract is "every control Photoshop places in this tool's options bar, in bar
+order", so they are documented in the Character and Paragraph panel table below instead, and
+the app's placement of them on its own bar is recorded as an app-side divergence there.
+
 | #   | Control                                   | Status    | `appRef`                                         |
 | --- | ----------------------------------------- | --------- | ------------------------------------------------ |
 | 1   | Tool preset                               | `missing` | —                                                |
 | 2   | Text Orientation (`T` + direction marker) | `missing` | —                                                |
-| 3   | Font family                               | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:136` |
+| 3   | Font family                               | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:139` |
 | 4   | Font Style                                | `missing` | —                                                |
-| 5   | Size                                      | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:149` |
-| 6   | Text color                                | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:184` |
-| 7   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:195` |
+| 5   | Size                                      | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:158` |
+| 6   | Text color                                | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:219` |
+| 7   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:230` |
 | 8   | Toggle the type on a path                 | `missing` | —                                                |
 | 9   | Create Work Path                          | `missing` | —                                                |
 | 10  | Warp Text                                 | `missing` | —                                                |
 | 11  | Toggle the Character and Paragraph panels | `missing` | —                                                |
-| 12  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:230` |
+| 12  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:325` |
+
+**`Font Style` is `missing`, and this file used to say both `partial` and `missing` about the same
+row in two places two hundred lines apart.** Both sentences were correct about different objects,
+which is what made them read as a contradiction. The verdict-list bullet said `partial` because
+the B/I pair "stand[s] in for a style combo"; the census bullet below it said `missing` because
+there is no style combo box anywhere in `ToolbarsRight/Text/`. The census reading is the one the
+record uses, and the resolution is that a control's status describes **the control the row
+names**, not the nearest thing the app happens to have: the row names a combo over the styles the
+chosen family actually has, and the app renders two booleans, so the control is absent and the
+booleans are not a citation for it. `partial` is right for no row here, and the `partial` bullet
+is deleted rather than left to argue with the census.
+
+**The B/I pair got closer to Photoshop on this pass anyway, and it is worth saying why that did
+not move the verdict.** It used to be the app's _worst_ approximation of a style: the shorthand
+built `${italic}${bold}${size}px ${family}`, which the CSS grammar rejects, so Chrome silently
+kept the previous font and `64px bold Arial` and `64px italic Arial` rendered pixel-identically
+to the serif fallback — the Bold and Italic buttons changed the **typeface** rather than the
+weight. `fontShorthand` now emits `italic bold 64px Arial`, which the grammar accepts
+(`src/tools/text.ts:150`), so the two buttons weight the glyphs. That is a real fix to two
+buttons, and it is still not a Font Style control: a family-specific style, a faux-style choice
+and a per-character style all remain unreachable, and a boolean cannot express "Semibold" any
+more than it could before.
 
 **Two of these twelve verdicts moved on this pass, and one of them reverses a row this file
 previously called a false verdict.** Slot 6 is now `partial` where it was `missing`, because
 the bar **does** render a colour control and did not used to — see the verdict list below.
 Slot 4 is now `missing` where it was `partial`, because there is no Font Style combo box
 anywhere in `ToolbarsRight/Text/`: the app's bar is Font (`FontSelect`), Font Size, Line
-Height, Color, Align, a B/I pair and Apply/Clear. The B/I buttons at `Text.tsx:209` and
-`:218` are the app's nearest analogue to Faux Bold and Faux Italic, and they reach the canvas
+Height, Color, Align, a B/I pair and Apply/Clear — and, as of the later pass, Tracking and a
+caps/decorations group as well. The B/I buttons at `Text.tsx:250` and
+`:261` are the app's nearest analogue to Faux Bold and Faux Italic, and they reach the canvas
 as CSS `bold` / `italic` prefixes rather than synthesized faces, so they are not the control
-this row is about and the row carries no `appRef`.
+this row is about and the row carries no `appRef`. They now reach the canvas **correctly**,
+which the same sentence could not have said when it was written — see the shorthand section
+below — and it still does not make them a style control.
 
 **The thirteenth control is gone, and what replaced it in the array is not a row.**
 `Anti-Alias` sat at bar slot 6, between `Size` and `Text color`, while its own `detail` said
@@ -304,20 +352,23 @@ Why each verdict:
   `src/components/ToolbarsRight/Text/FontSelect.tsx:5-20` is a hard-coded array of fourteen
   families, not an enumeration of what the platform has, and Photoshop renders the list in
   each face.
-- **Font Style — `partial`.** Two toggle buttons stand in for a style combo. They reach the
-  canvas as the `bold ` / `italic ` prefixes of the CSS font shorthand, so faux styles are
-  never synthesized the way Photoshop synthesizes them for a family that lacks a weight.
-- **Size — `partial`.** A range slider over 8–500, labelled in **px**, applied as
-  `${fontSize}px`. Photoshop's default unit is points, the field is typed rather than slid,
-  and it accepts a unit suffix.
+- **Size — `partial`,** and the two ways it diverges are now **unit** and **presentation**, not
+  range. The control is a number field over `0.01 … 1296`, which is Adobe's `CharacterStyle.size`
+  bound (see `Unverified` item 2, now resolved), so the range matches and the verdict stays
+  `partial` for the other half: Photoshop's default unit is **points** with a unit suffix
+  (`pt`/`px`/`mm`/`in`/`pica`) and the app's is CSS px, because the canvas carries no document
+  resolution and a point has no denominator here. It is a number field rather than a slider
+  because a range input over a 1296-wide span puts one point in about a hundredth of a pixel of
+  track, so a slider cannot reach the top of the range Adobe documents; the entry handler clamps
+  rather than only marking the field invalid, which is the same rule applied one layer down.
 - **Text color — `partial`, and this verdict reversed the one this file called the row's one
   false verdict.** The previous pass wrote that `Text.tsx` "renders **no colour control at
   all**" and that it copied the store's foreground into the args one-way from
   `Text.tsx:16-20`. That was true when it was written and is **false in this tree**:
-  `Text.tsx:184` renders `<input id="text-color" type="color">`, `handleColorChange`
-  (`Text.tsx:79-81`) writes it into the args, and `renderText` consumes it as `ctx.fillStyle`
-  (`src/tools/text.ts:48`). The foreground mirroring it described is gone, and both the
-  component comment (`Text.tsx:71-78`) and the args type comment (`src/tools/text.ts:20-26`)
+  `Text.tsx:219` renders `<input id="text-color" type="color">`, `handleColorChange`
+  (`Text.tsx:94-96`) writes it into the args, and `renderText` consumes it as `ctx.fillStyle`
+  (`src/tools/text.ts:295`). The foreground mirroring it described is gone, and both the
+  component comment (`Text.tsx:83-93`) and the args type comment (`src/tools/text.ts:130-135`)
   say so in as many words — the latter names the exact change: `color` "used to be omitted
   because the bar mirrored the store's foreground into the args on every render". So `missing`
   was the second kind of false verdict: a control that is on screen and wired, understated.
@@ -326,14 +377,19 @@ Why each verdict:
   background bindings (there is no `alt` registration anywhere in
   `AppKeyboardShortcuts.tsx` — `useKeyboardEvents.tsx:76` is only the matcher), per-character
   scoping, and Photoshop's default of seeding the type colour from the foreground swatch,
-  where the app's seed is a fixed `color: '#000000'` (`src/tools/settings.ts:87`).
-- **Font Style — `missing`,** corrected on this pass. See the census note above: there is no
-  style combo box in `ToolbarsRight/Text/`, so `partial` with an `appRef` was a citation
-  pointing at the B toggle rather than at the control the row names.
+  where the app's seed is a fixed `color: '#000000'` (`src/tools/settings.ts:88`).
+- **Font Style — `missing`,** and the verdict-list bullet that said `partial` on this pass is
+  deleted rather than left to contradict the census. The reason both sentences existed is that
+  they were about different objects; see the resolution in the census section above. Short form:
+  the row names a style combo, the app has two booleans, and a status describes the control the
+  row names.
 - **Align — `present`.** A `<select>` rather than three icon buttons, but the same three
   values, the same default (left), and the same effect. The Justify variants are not on the
-  bar in Photoshop either.
-- **Commit / Cancel — `partial`.** `Apply` (`Text.tsx:230`) and `Clear` (`:233`) do what the
+  bar in Photoshop either. Note that this pass changed _how_ it reaches the args, not what it
+  does: alignment now goes through `publishStyle` rather than `onChange` directly, because
+  `calculateNewRect` has an alignment arm that re-places a box the text outgrew, so a box
+  moved by Left and then switched to Right is one the next measurement would move again.
+- **Commit / Cancel — `partial`.** `Apply` (`Text.tsx:325`) and `Clear` (`:328`) do what the
   check mark and the cross do, and the draft is also committed implicitly when the tool
   changes (`goToTool` calls `commitDirtyTool`, `src/hooks/useApp.ts:169`, whose text branch is
   `src/contexts/useLayer.ts:369`). There is no keyboard commit and no Escape. The app's pair
@@ -342,34 +398,111 @@ Why each verdict:
 
 **There is no `inert` control in this family, and that was checked rather than assumed.**
 `TextToolSettings` is `Omit<TextToolArgs, 'text' | 'rect'>`
-(`src/tools/text.ts:26`), so the persisted surface is **eight** keys — `align`, `bold`,
-`color`, `fontFamily`, `fontSize`, `italic`, `lineHeight` and the tool name — and all eight
-are rendered by `Text.tsx`. Every one that affects the drawing reaches `renderText`: `align`
-and `color` at `src/tools/text.ts:48-50`, and the font shorthand at `:49`. This was
-re-derived on this pass because the earlier count of six came from an omission list that
-still contained `color`, which is exactly the field the previous pass got wrong in the other
-direction. Nothing is declared and unrendered. The `inert` trap this family is usually
-suspected of is real but sits one level down: `fontSize` is a perfectly good state that only
-ever reaches the screen through a raster that was produced once, at
-`src/tools/text.ts:72-81`, and is then scaled rather than re-rendered.
+(`src/tools/text.ts:136`), so the persisted surface is **thirteen** keys, counted off the type
+rather than off this prose: the eight the previous count named — `align`, `bold`, `color`,
+`fontFamily`, `fontSize`, `italic`, `lineHeight` and the tool name — plus the five that arrived
+with this pass, `allCaps`, `smallCaps`, `strikethrough`, `tracking` and `underline`. **Eight
+became thirteen, and the growth is exactly five.** (A brief for this pass said fourteen; the type
+says thirteen, and thirteen is what is written down.) Every one is rendered by `Text.tsx` and
+reaches `renderText` through `resolveTextStyle` (`src/tools/text.ts:113`), the single place a
+field missing from an older persisted record becomes a value. That seam is also why the five
+arrived **optional**: `saveLastSettings` persists the record verbatim
+(`src/util/settings.ts:31`, which strips only `text` and `rect`), so a settings object written
+before a field existed has to keep loading, and a `??` missed at one of the call sites produces a
+`NaN` line coordinate rather than a visible default.
+
+**The app puts five Character-panel controls on its options bar, which is itself a divergence
+and is why the table above did not grow.** Photoshop reaches tracking, both caps toggles, the two
+decorations and the style synthesis through the **Character panel** — Adobe lists the Character
+panel first among the four places characters can be formatted — and the type options bar holds the
+family, the style, the size, the anti-aliasing choice and the colour. The app has no Character
+panel and no panel toggle for one, so it renders those five on the bar instead. That is a
+placement divergence, not a census entry: `options[]` is contractually the bar's own controls, so
+filing them there would describe a bar Adobe does not ship. The verdicts live in the next table.
+
+The `inert` trap this family is usually suspected of is real but sits one level down: all
+thirteen are perfectly good state that only ever reaches the screen through a raster produced
+once, by `text` (`src/tools/text.ts:353`), and is then scaled rather than re-rendered.
 
 ### Character and Paragraph panel controls
 
 Not part of the options-bar census above, but the other half of Photoshop's type surface and
-requested explicitly. **All eight are `missing`** in the app; there is no Character panel and
-no Paragraph panel, and the one control the app has that overlaps this set, line height, is
-semantically different from Photoshop's leading.
+requested explicitly. **Six are `missing` and two arrived on this pass** — Tracking and Leading
+were already `partial` and `missing` respectively; what changed is that Tracking stopped being
+absent, and that four controls this file previously did not enumerate now exist in the app. The
+app has no Character panel and no Paragraph panel; the one control the app has that overlaps the
+first row, line height, is semantically different from Photoshop's leading.
 
-| Control                                                                     | Photoshop                                                                                | App                                                                                        | Status                                                       |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| Leading                                                                     | absolute baseline-to-baseline distance in points; per-line, largest value in a line wins | unitless multiplier of the font size, 0.5–2.25, applied as `index * fontSize * lineHeight` | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:168` |
-| Tracking                                                                    | loose/tight in 1/1000 em, cumulative with manual kerning                                 | —                                                                                          | `missing`                                                    |
-| Kerning                                                                     | None / Metrics / Optical / manual, cumulative with tracking                              | —                                                                                          | `missing`                                                    |
-| Baseline shift                                                              | points, positive up                                                                      | —                                                                                          | `missing`                                                    |
-| OpenType                                                                    | per-feature toggles                                                                      | —                                                                                          | `missing`                                                    |
-| Indents (left / right / first line)                                         | paragraph type only                                                                      | —                                                                                          | `missing`                                                    |
-| Hyphenation                                                                 | paragraph type only                                                                      | —                                                                                          | `missing`                                                    |
-| Justification (Justify Last L/C/R, Justify All) + word/letter/glyph spacing | paragraph type only                                                                      | —                                                                                          | `missing`                                                    |
+**Five of these live in the app's options bar rather than in a panel**, which is the divergence
+the census section above declines to record. Tracking, All Caps, Small Caps, Underline and
+Strikethrough are all rendered by `Text.tsx` — `:203` the tracking slider, `:278` All Caps,
+`:289` Small Caps, `:300` Underline, `:311` Strikethrough — because the app has no panel to put
+them in. That is a placement difference and not a capability one, and it is why a reader of the
+census above and of this table sees twelve bar controls and thirteen panel controls of which five
+are in both places.
+
+| Control                                                                     | Photoshop                                                                                                                         | App                                                                                           | Status                                                                                                                     |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Leading                                                                     | absolute baseline-to-baseline distance in points; per-line, largest value in a line wins                                          | unitless multiplier of the font size, 0.5–2.25, applied as `index * fontSize * lineHeight`    | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:178`; default now `AUTO_LEADING`                                   |
+| Tracking                                                                    | loose/tight in 1/1000 em, cumulative with manual kerning                                                                          | slider over −1000…1000 in 1/1000 em, applied as `ctx.letterSpacing`                           | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:203`                                                               |
+| All Caps                                                                    | every character rendered as a capital                                                                                             | `ctx.fontVariantCaps = 'all-small-caps'`                                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:278`                                                               |
+| Small Caps                                                                  | synthesises where the font has none — "if the font does not include small caps, Photoshop generates faux small caps"              | `ctx.fontVariantCaps = 'small-caps'`; Chrome synthesises                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:289`                                                               |
+| Underline                                                                   | drawn in the type colour; `Underline` is `NONE / LEFTINVERTICAL / RIGHTINVERTICAL`, no style, weight, offset or colour of its own | a rule in the type colour, 0.1em below the baseline, thickness `max(1, round(fontSize / 16))` | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:300`; **the offset and the thickness are this app's, not Adobe's** |
+| Strikethrough                                                               | drawn in the type colour                                                                                                          | a rule at half the rendered x-height, in the type colour                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:311`                                                               |
+| Kerning                                                                     | None / Metrics / Optical / manual, cumulative with tracking                                                                       | —                                                                                             | `missing`                                                                                                                  |
+| Baseline shift                                                              | points, positive up                                                                                                               | —                                                                                             | `missing`                                                                                                                  |
+| OpenType                                                                    | per-feature toggles                                                                                                               | —                                                                                             | `missing`                                                                                                                  |
+| Indents (left / right / first line)                                         | paragraph type only                                                                                                               | —                                                                                             | `missing`                                                                                                                  |
+| Hyphenation                                                                 | paragraph type only                                                                                                               | —                                                                                             | `missing`                                                                                                                  |
+| Justification (Justify Last L/C/R, Justify All) + word/letter/glyph spacing | paragraph type only                                                                                                               | —                                                                                             | `missing`                                                                                                                  |
+
+**Leading's verdict did not move, and the reason is the whole of it.** The default is now
+`AUTO_LEADING = 1.2` (`src/tools/text.ts:34`), which is Adobe's figure —
+`JustificationProperties.autoLeadingAmount` defaults to `120`, "Percentage of type size to use for
+auto leading", configured in the Paragraph panel's flyout under _Justification…_ and not in
+Preferences — so the number this app draws with now matches Photoshop's default. The row stays
+`partial` because **the unit is still a ratio**: Photoshop's leading is an absolute
+baseline-to-baseline distance in points, per-line, where the largest value in a line wins, and
+this app has one ratio for the whole box with no per-line override. A reconstruction of a
+default is not a change of kind, and `AUTO_LEADING` reproducing 120% narrows the divergence
+without closing it. The old "defaults to 1.1" clause is gone; nothing in either file claims
+Photoshop's leading is 110% or 120% as a _hard_ default, because Auto is the default and 120% is
+what Auto computes.
+
+**Tracking is `partial` rather than `present` for two reasons, both about degradation.** The
+range, the unit and the sign all match Adobe — `CharacterStyle.tracking` is −1000…1000 and
+"Tracking and kerning are both measured in 1/1000 em… 100 tracking units in a 10-point font are
+equivalent to 1 point" — and the readout on the bar is in Adobe's unit with no rescaling on the
+way out; `trackingPx` (`src/tools/text.ts:155`) is the one place that converts to px. The first
+divergence is that Adobe's tracking is **cumulative with manual kerning**, and the app has no
+manual kerning to be cumulative with, so half the control is gone. The second is the fallback:
+where `ctx.letterSpacing` exists the whole line goes down in one `fillText` and the shaper
+handles it, and where it does not the app places each grapheme cluster itself — which drops
+kerning and any ligature the font would have formed across the boundary, measured at 11.875px
+wider than the kerned total on 'WAVE AV' at 64px. The fallback is feature-detected with
+`'letterSpacing' in ctx` (`src/tools/text.ts:165`) rather than by deleting the prototype
+property, which reports success on Chrome 154 and leaves it working.
+
+**Underline is `partial` and two of its numbers are this app's own.** Adobe's only rule is that
+the line "is always the same color as the type color", and its `Underline` enum has no style,
+weight, offset or colour of its own — the Underline Options dialog with an offset control is
+InDesign's and InCopy's, not Photoshop's. So where the rule sits is a **reconstruction**: 0.1em
+below the baseline (`UNDERLINE_BELOW_BASELINE_EM`, `src/tools/text.ts:47`), which no Adobe page
+states, and the thickness `max(1, round(fontSize / 16))` (`decorationThickness`, `:283`), which
+Adobe does not document at all. The row records the control as `partial` because the drawn
+thing exists, is in the right colour, and is switchable — and neither figure is claimed as
+Adobe's. Strikethrough is `partial` on the same grounds without the offset problem: half the
+measured x-height is where a strikethrough goes, and Adobe documents neither the position nor
+the thickness there either.
+
+**Caps needed the font assigned first, which is the kind of thing that silently eats a control.**
+`ctx.fontVariantCaps` is assigned **after** `ctx.font` (`applyTextStyle`, `:191`) because
+assigning the font resets `fontVariantCaps` to `'normal'` on Chrome 154 — `letterSpacing`,
+`wordSpacing` and `fontKerning` survive a font assignment and `fontVariantCaps` does not, so a
+caps toggle set before the font is lost on every redraw. The same ordering reason is why the
+options bar routes the caps toggles through `publishStyle` rather than calling `onChange`
+directly: All Caps and Small Caps change every character's advance, so both the drawing and the
+box measurement have to move together or the box is one metric out of date.
 
 ### Is the app's type layer live text or baked pixels?
 
@@ -377,13 +510,14 @@ semantically different from Photoshop's leading.
 because "the app's type layer is baked pixels" is otherwise only half true.** The chain,
 re-derived in this worktree:
 
-1. `src/tools/text.ts:28-57` — `renderText` splits the string on `\n` and calls
+1. `src/tools/text.ts:287` — `renderText` splits the string on `\n` and calls
    `ctx.fillText` per line onto a 2D context. There is no glyph outline, no font engine, and
    no retained text object anywhere in the module.
-2. `src/tools/text.ts:72-81` — the `text` creator allocates an `OffscreenCanvas`, calls
+2. `src/tools/text.ts:353` — the `text` creator allocates an `OffscreenCanvas`, calls
    `renderText` onto it and returns `[canvas]`. A creator tool's return value is a raster.
-3. `src/tools/toolProcessors.ts:160-166` — the `text` processor is `commit: 'source'`,
-   `creator: true`, so the layer source is that raster.
+3. `src/tools/toolProcessors.ts:160` — the `text` processor is `commit: 'source'`,
+   `creator: true`, so the layer source is that raster. (The block runs `:160-166`; an earlier
+   note in this file put it at `:170-176`, which is `'freehand-lasso'`.)
 4. `src/contexts/layer-renderer.ts:32` — `vectorToolNames` is a `Set` of **six** tool names:
    `shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`. `text` is not in it, so
    `isVectorSource` is false for a text layer and `getLayerBitmap` returns `layer.bitmap`
@@ -407,13 +541,57 @@ of the composited document — the visible canvas, undo replay, and the PSD writ
 The practical consequence: a text layer scaled up in the app is a resampled bitmap, where a
 Photoshop type layer re-renders from the font at the new size and stays crisp.
 
+### The font shorthand was wrong, and it changed the typeface
+
+**This is the defect on this pass that a status table cannot express, so it gets its own
+section.** `fontShorthand` built `` `${italic}${bold}${size}px ${family}` `` — `64px bold Arial`
+— and the CSS grammar rejects that: `font-style` and `font-weight` come **before** the size, and
+a weight after it is rejected too. Chrome does not throw on a rejected `ctx.font`; it silently
+keeps the previous font. Measured on this host, `64px bold Arial` and `64px italic Arial` render
+pixel-identically to the serif fallback, so **the Bold and Italic buttons changed the typeface
+instead of weighting it** — the two most visible controls on the bar did the opposite of what
+they said. It is now `` `${italic} ${bold} ${size}px ${family}` `` — `italic bold 64px Arial`
+(`src/tools/text.ts:150`).
+
+**Both renderers build it, not one, and the previous version of this file named only one.**
+`applyTextStyle` (`:191`) is reached from `renderText` (`:287`) **and** from `getTextWidth`
+(`:331`), so the shorthand is built on the drawing path and on the measurement path, and the
+options bar's `calculateNewRect` measures through the second one. A fix applied to `renderText`
+alone would have left the box measured against a font the drawing never used — which is the
+one-metric-out-of-date failure `publishStyle` in `Text.tsx` exists to prevent.
+
+**The baseline moved, because `'top'` is a metric no API exposes.** `textBaseline` was `'top'`,
+which is a font-dependent constant: measured across fourteen families at 64px the offset runs
+0.762695em (Times New Roman) to 0.875977em (Impact), with Arial at 0.781250em and the generic
+families at exactly 0.75em. Every decoration this tool draws relative to a baseline — the
+underline, the strikethrough — needs a baseline it can name, and `'top'` is not one. It is now
+`'alphabetic'` with the baseline placed at
+`rect.y1 + TEXT_PADDING + fontBoundingBoxAscent + index * fontSize * lineHeight`
+(`baselineOffset`, `:222`, with a 0.8em fallback for a context whose `measureText` reports no
+ascent — the test harnesses model `measureText` as `{ width }` alone, and a real `undefined`
+there puts every baseline at `NaN`). `textAlign` is `'start'` for the same reason: the anchor is
+computed from the measured **ink** width, so the box and the glyphs cannot disagree.
+
+**Ink width is not advance width, and the difference is exactly one tracking gap.** Chrome's
+`letterSpacing` adds the spacing to every character's advance _including the last_, so
+`measureText('H').width` at 10px of tracking is 10px wider than untracked Arial even though one
+glyph has no gap in front of it — the advance grows by `n * spacing` for n = 1…10 while the ink
+grows by `(n - 1) * spacing`. Every number that positions something relative to a line uses
+`inkWidth` (`:248`), and `getTextWidth` uses it too, or the box grows by a gap the text never
+fills. At zero tracking `inkWidth` short-circuits to `ctx.measureText(line).width`, because the
+fallback measures a string one cluster at a time and there is no reason to throw away kerning
+when there is no spacing to place by hand.
+
 ### Two more app divergences worth stating
 
-- **No text box, and therefore no wrapping.** `src/util/rect.ts:116-166`
-  (`calculateNewRect`) measures the widest line and _grows_ the rect to fit it, then trims the
-  result to the document. A line longer than the canvas is clipped at the canvas edge rather
-  than wrapped. Photoshop's paragraph type does the opposite: the box is fixed and the text
-  reflows inside it, with an overflow icon when it no longer fits.
+- **No text box, and therefore no wrapping.** `src/util/rect.ts:116`
+  (`calculateNewRect`) measures the widest line and _grows_ the rect to fit it — the width grows
+  at `:145-160` and the height at `:168-170`, and neither branch fires when the text is narrower
+  than the box already is — then trims the result to the document. A line longer than the canvas
+  is clipped at the canvas edge rather than wrapped. Photoshop's paragraph type does the
+  opposite: the box is fixed and the text reflows inside it, with an overflow icon when it no
+  longer fits.
+
 - **Content is typed in the panel.** The string comes from a `<textarea>` in the right-hand
   panel, and a canvas drag only sizes the box (`TextToolArea.tsx:24-39`). There is no caret,
   no insertion point, no selection and no per-character formatting.
@@ -458,10 +636,21 @@ Adobe official help:
 - https://helpx.adobe.com/photoshop/using/tool-techniques/horizontal-type-tool.html
 - https://helpx.adobe.com/photoshop/using/formatting-characters.html
 - https://helpx.adobe.com/photoshop/using/formatting-paragraphs.html
-- https://helpx.adobe.com/photoshop/using/line-character-spacing.html
+- https://helpx.adobe.com/photoshop/using/line-character-spacing.html — the tracking unit,
+  "Tracking and kerning are both measured in 1/1000 em… 100 tracking units in a 10-point font
+  are equivalent to 1 point"
 - https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/add-text-along-paths-or-inside-shapes.html
 - https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/warp-and-unwarp-text.html
 - https://helpx.adobe.com/photoshop/using/layers.html
+- https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle — the size
+  bound (`0.01 .. 1296`, "The font size in pixels for a 72ppi document") and the tracking bound
+  (`-1000 .. 1000`)
+- https://developer.adobe.com/photoshop/uxp/2022/ps_reference/objects/options/justificationproperties/ —
+  `autoLeadingAmount` defaults to `120`, "Percentage of type size to use for auto leading",
+  configured in the Paragraph panel's flyout under _Justification…_
+- https://developer.adobe.com/photoshop/uxp/2022/ps-reference/modules/constants — the `Underline`
+  enum, `NONE / LEFTINVERTICAL / RIGHTINVERTICAL`, with no style, weight, offset or colour of its
+  own
 - https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer
 - https://www.adobe.com/products/photoshop/rasterize.html
 - https://edex.adobe.com/teaching-resources/photoshop-type-mask-tool — Adobe's own teaching-resources page, and the source for the mask tools: "When you use the Horizontal Type Mask tool or Vertical Type Mask tool, you create a selection in the shape of the type." Reached through the live crawler; `webfetch` returns the page's empty app shell, so the quotation is the crawler's.
@@ -960,15 +1149,32 @@ appears as an assertion in `type-crop.ts`.
      **Do not re-raise this.** The claim is wrong, not unverified, and the data file never made it.
      The one thing that _is_ still open is item 3 below, which is a different question — when the
      control left the bar, not whether it works on live type.
-2. **Photoshop's font size range.** The research corpus gives 1–1296 pt. No Adobe page
-   states a range, and none was found in this pass or the last. The _default unit being
-   points_ is sourced (a Photoshop community answer notes "the default unit for type layers in
-   Points"); the range is not. The app's 8–500 px is therefore described as diverging without
-   claiming what Photoshop's bounds are. **The inherited pass broke this rule anyway**: it had
-   written "Adobe's reference gives the field a range of 0.01 to 1296 at 72 ppi" into the
-   `Size` row, with no source in this file for either number and neither in the previous
-   corpus's shape (1–1296). The clause is removed from `type-crop.ts` on this pass; nothing
-   replaces it.
+2. **RESOLVED — and this entry was itself the defect. Photoshop's font size range is 0.01–1296,
+   and it is Adobe's.** This item was filed twice: first as an open question, then as the reason
+   the `Size` row's "0.01 to 1296 at 72 ppi" clause had to be **removed** from `type-crop.ts`. Both
+   halves were wrong, and the entry contradicted the file it was auditing.
+   - **Adobe states the range.** `CharacterStyle.size` is documented as "The font size in pixels
+     for a 72ppi document", bounded `0.01 .. 1296`
+     (`https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle`).
+     That page was already in the data file's `sources` when the clause was struck — the clause
+     was removed for want of a citation while the citation sat unread in the same array two
+     hundred lines away.
+   - **The corpus figure was wrong, not just differently-shaped.** `01-photoshop-reference.md:480`
+     gives `1–1296`. Adobe gives `0.01 .. 1296`. The lower bound is a float, and it is the whole
+     difference between the two: a whole number from 1 is Adobe's bound with the fractional end
+     rounded away. That file is not this one's to edit, so the disagreement is reported and left.
+   - **What was corrected, and where.** The `Size` row carries the range again, with the
+     citation, and it states the 0.01 fractional bound explicitly rather than folding it into a
+     round number. `AUTO_LEADING`'s 120% and `CharacterStyle.tracking`'s -1000..1000 come from the
+     same page family and the same pass, and `JustificationProperties.autoLeadingAmount` and the
+     `Underline` constant enum were added to `sources` for the leading and underline claims.
+   - **Why the entry is deleted rather than rewritten:** an item under `## Unverified` is by
+     definition a claim this file cannot source, and this one is now sourced. Leaving a resolved
+     item in the list teaches the next reader that `sources` is not load-bearing.
+   - **One thing about the range that is still true and worth not re-deriving:** the bound is on
+     the FIELD, not on rendering. Free Transform scales a type layer past it, so the app
+     reproducing the field's range is not a claim that a 1296px type layer renders at 1296px in a
+     smaller document.
 3. **When exactly the anti-aliasing pull-down left the type options bar — community-reported
    as Photoshop 26.10, and asserted as nothing.** The evidence, re-checked on this pass and
    unchanged: an Adobe Community bug report dated **August 2025** saying the pull-down "is gone
