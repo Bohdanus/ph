@@ -7,16 +7,109 @@ Prose half of `src/tools/descriptions/shape.ts`. Seven keys: `shape`, `rectangle
 `ToolName`s that each resolve to the same processor through a different `figure` value.
 `custom-shape` is registered and selectable and renders a `PlaceholderTool`.
 
-Every `file:line` below was re-derived against this worktree by opening the line, not by shifting a
-previous number, and that pass found real drift. The corrected numbers are: the six figure blocks
-in `src/tools/settings.ts`, the figure rows and the `unimplemented` rasterizer in
-`src/tools/toolProcessors.ts`, the shape row in `src/tools/toolsMap.ts`, the custom-shape chip list
-in `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts`, the canvas dispatch in
-`src/components/Main/Main.tsx`, and the Radius control's own renderer in
-`src/components/ToolbarsRight/Figures/Shape.tsx`. `src/tools/shape.ts` and
-`src/components/Main/ShapeToolArea.tsx` were opened line by line and did not move. Every
-`file:line` in the previous campaign corpus was written against an older revision and is not
-reused.
+**Every `file:line` below and in the data file was re-derived against this worktree by opening the
+line, and the previous revision of this file was wrong about nearly all of them.** Its closing
+sentence claimed the numbers had been re-derived; they had not, and they had drifted. The correct
+map, each verified by printing the line:
+
+| Claimed                                | Actual             | What is actually there                                     |
+| -------------------------------------- | ------------------ | ---------------------------------------------------------- |
+| `Figures/Shape.tsx:129` (Mode)         | **:137**           | `<select aria-label="Tool mode">`                          |
+| `Figures/Shape.tsx:204` (Fill, Stroke) | **:212**           | `id="filled-toggle"`                                       |
+| `Figures/Shape.tsx:153` (Stroke width) | **:161**           | `id="thickness-slider"`                                    |
+| `Figures/Shape.tsx:219` (Stroke type)  | **:227**           | `id="dash-toggle"`                                         |
+| `Figures/Shape.tsx:284` (Opacity)      | **:292**           | `id="alpha-slider"`                                        |
+| `Figures/Shape.tsx:165` (Radius)       | **:182**           | `aria-label="Radius"`                                      |
+| `Figures/Shape.tsx:186` / `:189` (Cap) | **:197**           | `aria-label="Line cap"`                                    |
+| `src/tools/shape.ts:216`               | **:240**           | `const radius = args.cornerRadius ?? 0`                    |
+| `src/tools/shape.ts:172`               | **:196**           | `const hasFill = args.toolMode !== 'path' && args.hasFill` |
+| `src/tools/shape.ts:181`               | **:205**           | the shared triangle/polygon branch                         |
+| `src/tools/shape.ts:186`               | **:210**           | `const sides = figure === 'triangle' ? 3 : 5`              |
+| `src/tools/shape.ts:201`               | **:225**           | the rectangle branch                                       |
+| `src/tools/shape.ts:225`               | **:249**           | the oval branch                                            |
+| `src/tools/shape.ts:176`               | **:200**           | the line branch                                            |
+| `src/tools/shape.ts:71` / `:79`        | **:93** / **:103** | `normalizeShapeGeometry` and its `if (shiftKey)` arm       |
+| `src/tools/settings.ts:271…306`        | **:278…313**       | the six figure blocks, each 7 lines lower                  |
+| `src/components/Main/Main.tsx:74`      | **:82**            | `toolName === 'shape' \|\|`, first arm of the dispatch     |
+| `toolbar-mapping.ts:109-114`           | **:103-108**       | the six fly-out entries                                    |
+| `AppKeyboardShortcuts.tsx:76-78`       | **:116-118**       | `orderedFigures` and the index arithmetic                  |
+| `AppKeyboardShortcuts.tsx:89-95`       | **:129-135**       | the `U` handler: keep, else force `rectangle`              |
+
+Two of those were not drift but **wrong files of the right line**: `Figures/Shape.tsx:20` and
+`Figures/Shape.tsx:13` are the closing brace of `figureLabel` and the declaration of `figureLabel`
+respectively, so the entries that cited them were pointing one line above the code they meant.
+`docs/TOOLS-TOO-HARD.md:378` already carries `src/tools/shape.ts:196`, which is right, and this
+family carried the pre-drift number — one of the two documents in the repo is stale and it is not
+that one.
+
+---
+
+## What this pass found that was not a line-number problem
+
+**The Line tool's 45° Shift snap IS implemented, and the data file said it was not.** This is the
+one substantive reversal. The previous revision read `src/tools/shape.ts` as a single
+`if (shiftKey && figure !== 'line')` and concluded from it that "the app is the one figure in the
+family it declines" — and then removed `Shift` from the line's `modifiers` table on that basis. The
+file has since been refactored to give the line its own path:
+
+```ts
+if (figure === 'line') return snapLineGeometry(anchor, pointer, altKey, shiftKey); // :101
+```
+
+and `snapLineGeometry` quantizes the angle (`:77`):
+
+```ts
+const angle = Math.round(Math.atan2(dy, dx) / LINE_ANGLE_STEP) * LINE_ANGLE_STEP; // LINE_ANGLE_STEP = Math.PI / 4
+```
+
+which is Adobe's sentence — "To constrain the line angle to a multiple of 45 degrees, hold down
+shift as you drag and draw the line" (`helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html`)
+— implemented exactly, and the one place in the family where Shift is _not_ a box-squaring
+constraint. `Shift` is back in the `modifiers` table, and the `line` `appNotes` now spends its first
+sentence on the snap being right and its last on the thing that is actually missing: the arrowheads,
+which is what holds the verdict at `partial`.
+
+**"No bracket key is bound anywhere in the app" was false.** `[` and `]` _are_ bound —
+`AppKeyboardShortcuts.tsx:539` and `:547` — and they are a repeat-enabled scrub. They are gated on
+`tipSizeTool(toolName) !== null`, and `tipSizeField` (`:43-52`) lists exactly eight tools: brush,
+pencil, eraser, color-replacement, smudge, dodge, burn, clone-stamp. No shape figure is in it. The
+`polygon` `appNotes` now says the bracket keys "reach only the eight tools that carry a tip Size",
+which is the true statement; the old wording was a claim about the whole app resting on a claim
+about one family.
+
+**`Pixels mode is byte-identical to Shape mode` was both too kind and too vague.** It is literally
+true of the raster — `drawShape` branches only on `figure`, and `toolMode` is read in exactly one
+place, `src/tools/shape.ts:196` — but it hides the divergence that matters: the processor row is
+`commit: 'source'` with `creator: true` (`toolProcessors.ts:160`), so the app allocates a **new
+layer** in Pixels mode, where Photoshop paints into the active layer and adds nothing to the Layers
+panel. The `shape` and `ellipse` `appNotes` now say that.
+
+**Two internal counting errors, both of the "four things… — lists five" shape.** The `triangle`
+`appNotes` said "of the four things Adobe's click dialog offers — Width, Height, Corner Radius,
+Equilateral and From Center" (five). The `ellipse` `appNotes` said "the same five controls every
+figure gets" and then listed seven plus the preview. Both are corrected; the `ellipse` sentence now
+enumerates the bar instead of counting it.
+
+**Adobe's own ScriptListener dump is a better source for the stroke defaults than the 2012
+third-party page, and it was not being used.** An Adobe Community thread
+(`community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207`, 2025-07-27) dumps
+live `currentToolOptions` for the rectangle tool, and the `shape` block reads
+`"strokeStyleLineWidth": 1` px, `"strokeStyleLineAlignment": "strokeStyleAlignCenter"`,
+`"strokeStyleLineCapType": "strokeStyleButtCap"`,
+`"strokeStyleLineJoinType": "strokeStyleMiterJoin"`, and a `fillContents` RGB of (255, 3.9, 3.9) —
+white. The `pixels` block reads `"antiAlias": true` and `"opacity": 100`. That is four of this
+family's Unverified entries (1 px default stroke width, Centered default alignment, the Butt default
+cap, and the anti-alias-on default) answered from a first-hand current dump rather than from 2012
+and 2022 tutorials, and the URL is now in all seven `sources` arrays. The community thread is not an
+Adobe help page, so the _source_ is still not Adobe official — but it is Adobe-hosted and it is a
+measurement rather than a recollection, which is a different kind of thing from a tutorial.
+
+**A third-party source stronger than the two it replaced puts Custom Shape's Shift in better
+company.** `trainingonsite.com/images/downloads/Photoshop-2026-tools-modifiers-2026-01-01.pdf` — an
+Adobe training partner's modifier cheat sheet — lists, under VECTOR SHAPE TOOLS, "Custom Shape (U)
+shift constrains ratio; opt/alt draws from center". The claim was carried by two personal tutorial
+sites and marked accordingly in three places; it now has a second, more institutional witness. It
+is still not an Adobe help sentence and the markers stay.
 
 ---
 
@@ -34,7 +127,7 @@ the polygon's Sides field is a pre-draw
 parameter of a drag, not a click counter
 (`photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "Click and drag in the
 document to draw the polygon shape"). The app already does the right thing here —
-`src/tools/shape.ts:181-200` inscribes a regular n-gon.
+`src/tools/shape.ts:205-224` inscribes a regular n-gon.
 
 **What Adobe does _not_ say is that the n-gon is _regular_.** That word is this campaign's reading of
 "click and drag": a regular polygon inscribed in the drag box is the ordinary outcome of a drag
@@ -53,9 +146,9 @@ triangle, which means that two sides are of equal length"). As with the polygon 
 states the drag and the Shift half and never the resulting geometry**, so the isosceles reading is
 third-party plus inference; the data file's `summary` now describes the box (apex at top-centre,
 base across the bottom) rather than the classification, and the `purpose` labels the isosceles
-reading as this description's inference. The app's `src/tools/shape.ts:186` shares one branch with
+reading as this description's inference. The app's `src/tools/shape.ts:210` shares one branch with
 the polygon and hardcodes `figure === 'triangle' ? 3 : 5`, so it inscribes a regular triangle — the
-disproved behaviour — and `src/tools/shape.ts:79` squares the drag box for it, which is neither
+disproved behaviour — and `src/tools/shape.ts:103` squares the drag box for it, which is neither
 equilateral nor the equilateral constraint.
 
 **Version note on the Triangle tool.** The tool did not exist before Photoshop 2021 (v22), and that
@@ -88,29 +181,30 @@ arrangement, and Additional shape and path options"
 that bar at all and come last, and the Path-mode-only `Operation` row sits with the path rows
 rather than at the end.
 
-| Photoshop control  | Photoshop behaviour                                        | App status | App default                         | App site                    |
-| ------------------ | ---------------------------------------------------------- | ---------- | ----------------------------------- | --------------------------- |
-| `Mode`             | Shape / Path / Pixels, default Shape                       | partial    | `shape`                             | `Figures/Shape.tsx:129`     |
-| `Fill`             | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff` | `StoreContext.tsx:325`      |
-| `Stroke`           | outline swatch, same four contents                         | partial    | store `color` = `#000000`           | `StoreContext.tsx:324`      |
-| `Stroke width`     | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5              | `Figures/Shape.tsx:153`     |
-| `Stroke type`      | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins           | `Figures/Shape.tsx:219`     |
-| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | two `window.prompt` calls           | `ShapeToolArea.tsx:181-182` |
-| `Path Operations`  | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                   | —                           |
-| `Path Alignment`   | align and distribute components                            | missing    | —                                   | —                           |
-| `Path Arrangement` | bring forward / send back                                  | missing    | —                                   | —                           |
-| `Operation`        | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                   | —                           |
-| `Weight`           | path thickness — see below; mode-dependent                 | missing    | —                                   | —                           |
-| gear               | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                   | —                           |
-| `Mode` (blend)     | **Pixel mode only**, layer blend list                      | missing    | —                                   | —                           |
-| `Opacity`          | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes            | `Figures/Shape.tsx:284`     |
-| `Anti-alias`       | **Pixel mode only**, applied automatically                 | missing    | —                                   | —                           |
+| Photoshop control  | Photoshop behaviour                                        | App status | App default                          | App site                   |
+| ------------------ | ---------------------------------------------------------- | ---------- | ------------------------------------ | -------------------------- |
+| `Mode`             | Shape / Path / Pixels, default Shape                       | partial    | `shape`                              | `Figures/Shape.tsx:137`    |
+| `Fill`             | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff`  | `StoreContext.tsx:325`     |
+| `Stroke`           | outline swatch, same four contents                         | partial    | store `color` = `#000000`            | `StoreContext.tsx:324`     |
+| `Stroke width`     | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5               | `Figures/Shape.tsx:161`    |
+| `Stroke type`      | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins            | `Figures/Shape.tsx:227`    |
+| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | Create <Figure> dialog, 100×100 seed | `CreateShapeDialog.tsx:80` |
+| `Path Operations`  | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                    | —                          |
+| `Path Alignment`   | align and distribute components                            | missing    | —                                    | —                          |
+| `Path Arrangement` | bring forward / send back                                  | missing    | —                                    | —                          |
+| `Operation`        | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                    | —                          |
+| `Weight`           | path thickness — see below; mode-dependent                 | missing    | —                                    | —                          |
+| gear               | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                    | —                          |
+| `Mode` (blend)     | **Pixel mode only**, layer blend list                      | missing    | —                                    | —                          |
+| `Opacity`          | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes             | `Figures/Shape.tsx:292`    |
+| `Anti-alias`       | **Pixel mode only**, applied automatically                 | missing    | —                                    | —                          |
 
 **The Fill and Stroke app sites moved file, and the values did not.** Both defaults are still
-`#ffffff` and `#000000`; what was wrong was the file. `src/tools/shape.ts:143-144` is
+`#ffffff` and `#000000`; what was wrong was the file. `src/tools/shape.ts:167-168` is
 `ctx.strokeStyle = color;` and `if (hasFill && backgroundColor) {` inside `setShapeCtx` — where the
 colours are _consumed_, the same distinction the `Fill` and `Stroke` rows draw when they refuse to
-cite the processor. The store defaults are `src/contexts/StoreContext.tsx:324-325`.
+cite the processor. The store defaults are `src/contexts/StoreContext.tsx:324-325`, and those two
+numbers were already right — the audit checked them and left them.
 
 **`Weight` is not one behaviour across three modes, and the table row above used to say it was.**
 The old row read "on-screen path thickness, display only" flat, which is true of the Shape/Path
@@ -167,25 +261,34 @@ Note this does **not** undo the Arrowheads-section finding below: the gear lists
 Contextual Task Bar is where the Line tool's Start/End/Width/Length/Concavity values live, and both
 sentences are true at once.
 
-**The `Shape W&H` row's Photoshop column above is right, and its `detail` is now right too.** The
+**The `Shape W&H` row's Photoshop column above is right, and its `detail` is right too.** The
 `detail` field is Photoshop's behaviour (`types.ts:43-47`). It had drifted the other way — it was
 written as "The app does ask for them, but it asks with two sequential `window.prompt` calls",
 which is an `appNotes` sentence in a `detail` field, and it said so three lines after the same
 material already sat in the `rectangle` and `ellipse` `appNotes`. The `detail` describes Adobe's
-control and the click dialog; the app's version is now in the `appNotes` of every tool that renders
+control and the click dialog; the app's version is in the `appNotes` of every tool that renders
 the control — `shape`, `line`, `triangle` and `custom-shape` alongside the two that already had it.
-`src/components/Main/ShapeToolArea.tsx:180-186` is the whole of the app's version: a click is
-detected by `start.x === end.x && start.y === end.y`, and then two `window.prompt` calls run
-**sequentially**, Width first and Height second, and the shape is only committed if both parse to a
-number above zero. There is no Corner Radius field and no From Center anywhere in that path.
+`src/components/Main/ShapeToolArea.tsx:205-209` is where the app's version starts: a click is
+detected by `start.x === end.x && start.y === end.y`, and every figure except the Line sets a
+`pendingShape` and returns instead of committing, so **the click itself commits nothing**.
+`CreateShapeDialog` is a modal opened on that state and portalled to `document.body`
+(`ShapeToolArea.tsx:333-344`), offering Width, Height and From Center, plus a Corner Radius field
+on the rectangle only, seeded from that figure's live Radius slider
+(`CreateShapeDialog.tsx:186-214`) and handed to the commit as an argument rather than written back
+into the bar (`ShapeToolArea.tsx:230`). **OK is the only commit**: Cancel, the backdrop, the
+header × and Escape all route to the same `onClose` (`:220`, `:131`, `:141-146`, and
+`useDialogFocusContainment`'s `onEscape` at `:117`), and OK is `disabled` outright while a dimension
+is below 1 px or unparseable (`:95`, `:228`). The From Center checkbox is seeded from the Alt held
+at the press (`ShapeToolArea.tsx:126`, `:339`) and stays editable, and the press point is the
+shape's corner or, with the box checked, its centre (`:247-250`).
 
 Per-figure deltas:
 
 | Photoshop control | rectangle                             | ellipse                   | triangle           | polygon                                  | line                                  |
 | ----------------- | ------------------------------------- | ------------------------- | ------------------ | ---------------------------------------- | ------------------------------------- |
-| `Radius`          | **present** (`Figures/Shape.tsx:165`) | not offered (third-party) | **missing**        | **missing**                              | not offered (third-party)             |
-| `Sides`           | —                                     | —                         | —                  | **missing** (`shape.ts:186` hardcodes 5) | —                                     |
-| `Caps`            | inside Stroke type                    | inside Stroke type        | inside Stroke type | inside Stroke type                       | **partial** (`Figures/Shape.tsx:189`) |
+| `Radius`          | **present** (`Figures/Shape.tsx:182`) | not offered (third-party) | **missing**        | **missing**                              | not offered (third-party)             |
+| `Sides`           | —                                     | —                         | —                  | **missing** (`shape.ts:210` hardcodes 5) | —                                     |
+| `Caps`            | inside Stroke type                    | inside Stroke type        | inside Stroke type | inside Stroke type                       | **partial** (`Figures/Shape.tsx:197`) |
 | `Arrowheads`      | —                                     | —                         | —                  | —                                        | **missing**                           |
 
 **The Radius row is the one that looks like a bug and is not — and the "not" is itself
@@ -199,7 +302,7 @@ not allow rounded corners at all". The one Adobe page that enumerates per-tool s
 `photoshop-elements/using/creating-shapes.html`, which is a **different product** and cannot stand
 in for the desktop bar.
 
-So the app's gate at `figure === 'rectangle'` (`Figures/Shape.tsx:165`) is a **judgment**, not a
+So the app's gate at `figure === 'rectangle'` (`Figures/Shape.tsx:172`) is a **judgment**, not a
 match, and the data file now says so: withholding `Radius` from the ellipse and the line is
 probable but undocumented, and withholding it from the triangle is a real gap against an Adobe
 sentence while withholding it from the polygon is a real gap against a third-party one. The app
@@ -208,11 +311,11 @@ carry `cornerRadius: 0` for the oval (`settings.ts:46`) because the saved-args r
 across all five figures; that key is never read on that path.
 
 **The rectangle's `Radius` appRef was citing the consumer, which is the rule the same record
-states two rows earlier.** It pointed at `src/tools/shape.ts:216`, which is
+states two rows earlier.** It pointed at `src/tools/shape.ts:216` (now `:240`), which is
 `const radius = args.cornerRadius ?? 0;` — where the value is read. The `Fill` and `Stroke` rows
 carry a comment saying exactly why that is not an appRef ("they are where the value is consumed, not
 where the control is drawn"), and the Radius row broke it. The renderer is the
-`figure === 'rectangle'` gate and the slider it wraps, `Figures/Shape.tsx:165-184`, so that is what
+`figure === 'rectangle'` gate and the slider it wraps, `Figures/Shape.tsx:172-191`, so that is what
 the row cites now.
 
 **Align, Caps and Corners live in the Stroke Options panel, not the bar.** The bar has a single
@@ -222,12 +325,33 @@ the three cap styles and the Miter/Round/Bevel joins are set
 rather than given three rows of their own. The app's `Cap` select is a bar-level control that
 Photoshop does not have at that level, and it is rendered for the line figure only.
 
+**The two "too hard" items in the brief, and what the bar actually offers for each.**
+
+- _Per-shape Fill and Stroke swatches with Gradient and Pattern._ Recorded at
+  `docs/TOOLS-TOO-HARD.md:409` under that heading. The bar offers **one `Filled` checkbox**
+  (`Figures/Shape.tsx:212`) over the app's single foreground/background pair: `setShapeCtx` writes
+  `ctx.strokeStyle = color` and `ctx.fillStyle = backgroundColor` (`src/tools/shape.ts:167-169`),
+  so there is no second paint source to configure, let alone four choices per swatch. `partial` on
+  both rows is therefore the right reading, and the _detail_ is the Photoshop side — "a swatch
+  offering None, Solid Color, Gradient or Pattern" — which is exactly the control the policy file
+  says is out of reach.
+- _Path Type = Path for the shape tools._ Recorded at `docs/TOOLS-TOO-HARD.md:380`. The bar offers
+  the three-button **Mode** group — `Figures/Shape.tsx:136-146`, a `<select>` with `shape` / `path`
+  / `pixels` — and nothing else that could be a path type. What Path mode does in this app is the
+  single line `src/tools/shape.ts:196`, `const hasFill = args.toolMode !== 'path' && args.hasFill`,
+  so the same rasterized outline is committed with the fill suppressed. Adobe's own name for the
+  setting that _would_ create a work path is the Path-mode `Operation` row on the same page — "Select
+  how new paths interact with existing paths (Add, Subtract, Intersect, or Exclude)" — and there is
+  no `Path Type` control on a shape tool's bar in any Adobe page opened in any pass. The policy
+  file's phrase is its own framing of the gap, not Adobe's label, and the data file does not
+  reproduce it.
+
 **What each drawing mode actually commits**, per
 `helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html`:
 Shape creates a filled shape layer; Path creates a vector path with no pixels; Pixels rasterizes
 into the selected layer and is the only mode that carries a blend mode, an Opacity slider and an
 anti-alias control. The app's `toolMode` is read in exactly one place,
-`src/tools/shape.ts:172` — `const hasFill = args.toolMode !== 'path' && args.hasFill` — so Path mode
+`src/tools/shape.ts:196` — `const hasFill = args.toolMode !== 'path' && args.hasFill` — so Path mode
 suppresses the fill and nothing else. All three modes still commit a rasterized layer.
 
 ---
@@ -254,8 +378,8 @@ geometric figures resolve to one app tool name and differ only by `figure`, and
 `U`/`Shift+U` select and cycle it. All of them share the one processor, so this entry is the
 family's own summary and the figure entries are the specific ones.
 
-**The star's version is now sourced, and both of its sources are in the data file.** Photoshop
-26.10 added the Star tool — "You can now create customizable star polygons directly on the canvas
+**The star's version is now sourced, and both of its sources are in the data file, with one piece of
+counter-evidence recorded under Unverified.** Photoshop 26.10 added the Star tool — "You can now create customizable star polygons directly on the canvas
 using the Star tool, located within the Shapes tool group in the Tools panel" (Adobe Community
 announcement, 2025-08-20, thread 1181840), and CG Channel's release report for the same day is
 blunter: "The update adds a new Star tool … Photoshop 26.10 is a minor update, with the only new
@@ -275,14 +399,14 @@ below.
 Modifiers in Photoshop: Shift to constrain proportions (off by default, per
 `jkost.com/blog/2021/07/working-with-the-shape-tools-in-photoshop.html`), Alt/Option to draw from
 the centre, Spacebar to reposition while drawing. The app implements all three
-(`shape.ts:79`, `shape.ts:96`, `ShapeToolArea.tsx:52`).
+(`shape.ts:103`, `shape.ts:120`, `ShapeToolArea.tsx:52`).
 
 App verdict: **partial**. Live and committing, not a placeholder, but Path mode is not a path,
 Pixels mode is identical to Shape mode, there is no separate Fill/Stroke swatch pair, and the
 app's fly-out is six entries where Photoshop's group is seven.
 
 **The missing Star tool is the app's gap, and it is recorded in `shape`'s `appNotes` rather than
-left to be inferred.** The app's fly-out is `toolbar-mapping.ts:109-114` — Rectangle, Ellipse,
+left to be inferred.** The app's fly-out is `toolbar-mapping.ts:114-121` — Rectangle, Ellipse,
 Line, Triangle, Polygon, Custom Shape — and there is no `star` `ToolName`, no `FigureType` for it
 (`src/tools/shape.ts:5`), and no gear menu in which its points and radii could be set. The
 `polygon` `appNotes` used to read "the star is not this tool's to draw in the current release, so
@@ -298,6 +422,8 @@ Sources:
 - `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html` — "Select the Star tool from the shapes tool group in the Tools panel"
 - `https://community.adobe.com/questions-712/photoshop-v26-10-create-the-perfect-star-shape-for-your-designs-and-multiple-enhancements-1181840` — the 26.10 announcement thread
 - `https://www.cgchannel.com/2025/08/adobe-releases-photoshop-26-10/` — 26.10's new Star tool, third party, 2025-08-20
+- `https://helpx.adobe.com/photoshop/using/create-star-shape.html` — the same Star tool page on its older path, 2025-08-20; opens "Select the Star tool from the shapes tool group in the Tools panel" and lists Fill and Stroke, Stroke width, points, Corner radius, Inner Radius and Outer Radius in the Contextual Task Bar
+- `https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207` — a first-hand ScriptListener dump of `currentToolOptions` for the rectangle tool: 1 px stroke width, Centered alignment, Butt cap, Miter join, white fill; `antiAlias: true` and `opacity: 100` in pixel mode. Re-opened in this pass and added to all seven `sources` arrays
 - `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — Path outline is display-only; per-tool corner radius rules
 - `https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/` — 1 px default black stroke; stroke alignment defaults to centered
 
@@ -305,7 +431,7 @@ Sources:
 
 ## `rectangle` — Rectangle Tool
 
-Drag geometry, Shift-as-square and Alt-as-from-centre all match. `src/tools/shape.ts:201-224`
+Drag geometry, Shift-as-square and Alt-as-from-centre all match. `src/tools/shape.ts:225-248`
 derives a top-left corner and positive extents and applies `cornerRadius` through
 `roundedRectPath`, which clamps `r` to `min(|w|/2, |h|/2, radius)` — the same clamp a rounded
 rectangle needs.
@@ -316,35 +442,41 @@ default, broken out with Alt/Option-drag on the on-canvas control
 Tool, all four corners can be rounded at once, or a single corner can be rounded independently");
 the separate Rounded Rectangle tool was removed in 22.3
 (`helpx.adobe.com/photoshop/using/modify-shapes.html`); `[` and `]` nudge the radius by 1 px, or
-10 px with Shift (`jkost.com`); and a click without a drag opens the Create Rectangle dialog with
-Width, Height, corner radii and From Center. That last sentence is **Photoshop's** dialog and belongs
-to the Photoshop column above; the app has no counterpart to it beyond the two `window.prompt` calls
-in the shared-surface section.
+10 px with Shift (`jkost.com`); and a click without a drag opens the Create Rectangle dialog. Adobe
+documents that in one sentence and no more — "Click on the canvas to bring up the Create Rectangle
+dialog", where you manually set "the dimensions, corner radii of your rectangle, and choose to align
+from centre" (`helpx.adobe.com/photoshop/using/modify-shapes.html`) — so the rectangle's field list
+is the best-evidenced of the family and the only one Adobe spells out field by field. The app has
+a counterpart to it: `CreateShapeDialog` opens on the click with Width, Height, Corner Radius and
+From Center, which is all four of the fields Adobe names. What diverges is the entry point rather
+than the fields — `Shape W&H` is a control on Photoshop's bar and this app's bar has none — and the
+shared-surface section above has the click-detection code.
 
 **The `appNotes` used to contradict this entry's own `options` table, and the fix is a rewrite rather
 than a status change.** It ended "Everything else on the Rectangle bar, from the separate Fill and
 Stroke swatches down to the path-operation icons, is absent" — while `Fill` and `Stroke` were recorded
-as `partial` three lines above, and the code supports them: `Figures/Shape.tsx:204-213` renders a
+as `partial` three lines above, and the code supports them: `Figures/Shape.tsx:209-222` renders a
 `Filled` checkbox whose handler sets `hasFill` (`handleFillToggle`, `:53-56`), and `hasFill` is read
-in `drawShape` at `src/tools/shape.ts:172`. So what is missing is the **swatch form** — the two
+in `drawShape` at `src/tools/shape.ts:196`. So what is missing is the **swatch form** — the two
 separately clickable swatches with their None / Solid / Gradient / Pattern menu — and the sentence now
 says that, and then lists what is absent outright (the path weight, the pixel-mode blend mode, the
 anti-alias control, the three path-operation rows, the gear) and what the app's version of the W/H
-prompt is. The **ellipse** carried the same contradiction in a different form — "Everything the bar
+control is. The **ellipse** carried the same contradiction in a different form — "Everything the bar
 offers beyond the tool mode, thickness, dash and opacity is missing" — and is fixed the same way.
 
 App verdict: **partial**, and the verdict is the entry's, not this section's. Drag geometry,
 Shift-as-square and Alt-as-from-centre all match — the closest thing in this family to Photoshop, and
 the only figure whose own distinctive control (`Radius`) is `present`. It is filed `partial` rather
 than `implemented` because the three group-level divergences apply verbatim: Path mode is not a path,
-Pixels mode is byte-identical to Shape mode, and the bar carries one shared colour instead of the
+Pixels mode commits a new layer rather than painting into the active one, and the bar carries one
+shared colour instead of the
 Fill and Stroke swatches. `types.ts:93-96` puts that bar on the `implementation` field, and the
 earlier "implemented on behaviour" wording here read as a contradiction of the data file even though
 it was aimed at a different axis.
 
 Sources:
 
-- `https://helpx.adobe.com/photoshop/using/modify-shapes.html` — the bar, the 22.3 removal, the Create Rectangle dialog, cap and join styles
+- `https://helpx.adobe.com/photoshop/using/modify-shapes.html` — the bar, the 22.3 removal, the Create Rectangle dialog, cap and join styles. Re-opened in this pass (2023-11-20) and the removal note is verbatim: "With the March 2021 release of Photoshop 22.3, the Rounded Rectangle tool has been removed"
 - `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — four independent corner radii; Radius only on Rectangle/Triangle/Polygon
 - `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html` — mode-by-mode bar contents
 - `https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/` — 1 px default stroke, 3 pt default stroke width in the older bar, Align Edges
@@ -354,8 +486,8 @@ Sources:
 
 ## `ellipse` — Ellipse Tool
 
-`src/tools/shape.ts:225-236` draws a real `ctx.ellipse` from the drag box half-extents, and Shift
-through `shape.ts:79-93` squares the box, which for an ellipse is a circle. Correct.
+`src/tools/shape.ts:249-260` draws a real `ctx.ellipse` from the drag box half-extents, and Shift
+through `shape.ts:103-117` squares the box, which for an ellipse is a circle. Correct.
 
 `src/tools/shape.ts:17-22` records the repo's own version of Photoshop's rule: "Photoshop exposes
 Circle and Square as Shift-constrained outcomes of the Ellipse and Rectangle tools rather than as
@@ -396,10 +528,23 @@ below says the same thing.
 ## `line` — Line Tool
 
 The load-bearing fact: **Shift constrains to a multiple of 45 degrees, not 15.** Adobe verbatim,
-`helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html`: "To constrain the line angle to a
-multiple of 45 degrees, hold down shift as you drag and draw the line." The 15-degree figure is the
-Free Transform rotate snap, a different feature; the two are easy to conflate and the previous
-campaign's corpus recorded the 45° figure correctly while the task briefing carried the 15° one.
+`helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html` (2024-05-23): "To constrain the
+line angle to a multiple of 45 degrees, hold down shift as you drag and draw the line." The
+15-degree figure is the Free Transform rotate snap, a different feature; the two are easy to
+conflate and the previous campaign's corpus recorded the 45° figure correctly while the task
+briefing carried the 15° one.
+
+**And the app implements it — this section previously said the opposite, and the reversal is the
+single most important correction in this pass.** See "What this pass found" above. The line figure
+has its own branch in `normalizeShapeGeometry`, `src/tools/shape.ts:101`, which hands off to
+`snapLineGeometry`, and that function quantizes the drag angle against `LINE_ANGLE_STEP = Math.PI / 4`
+(`:61`, applied at `:77`). Shift is therefore **in** the `modifiers` table for the line, cited as
+`src/tools/shape.ts:101`, and it is the only figure in the family for which Shift does _not_ square
+the drag box — the `if (shiftKey)` arm at `:103` is unreachable for the line. The earlier reading
+("`shape.ts:79` reads `if (shiftKey && figure !== 'line')`") described a revision of the file that no
+longer exists; what it actually shows now is an early return for the line _above_ the box-squaring
+arm. `Shift` is listed for the line, `Alt` and `Space` stay, and the `appNotes` opens on the snap
+being right.
 
 **The page moved, and the old URL is not a shortened form of the new one.** The data file and this
 file cited `https://helpx.adobe.com/photoshop/using/line-tool.html`; the live page is
@@ -408,21 +553,11 @@ tool", last updated 2024-05-23. Same for the Triangle tool below. The quote is u
 path was wrong, which is the kind of rot a `sources` array accumulates silently because a dead URL
 still looks like a citation.
 
-The app declines to implement it. `src/tools/shape.ts:79` reads `if (shiftKey && figure !== 'line')`
-— the exclusion is deliberate and commented ("Line keeps its free angle, because constraining it
-would forbid shallow angles"), which is a defensible design opinion and a divergence from the tool
-it is imitating. `src/tools/shape.ts:176-180` strokes a bare `moveTo`/`lineTo` pair, so there is no
-arrowhead geometry of any kind. **`Shift` is therefore absent from the data file's `modifiers` table
-for the line**, and this is the one place in the family where removing a row loses the most: Shift is
-the modifier that _defines_ this tool, and the app is the one figure in the family it declines. The
-`purpose` keeps Photoshop's behaviour and the `appNotes` states the exclusion, so a reader gets the
-whole picture from prose while the table stays a table of modifiers that are in effect.
-
-**The Line tool is also the one figure for which `Weight` is the stroke, which is why the shared
-`Weight` row cannot state a single behaviour.** The same page: "To create a line as a shape, choose
-Shape mode in the Options bar and then set the Stroke and Weight. To create a pixel line, choose
-Pixels mode in the options bar and then set the Weight. To create a path, choose Path mode in the
-options bar and then set the Weight." See the shared-surface section above.
+**The same page is the source for the three-mode Weight split**, and it is the reason the shared
+`Weight` row cannot state a single behaviour: "To create a line as a shape, choose Shape mode in
+the Options bar and then set the Stroke and Weight. To create a pixel line, choose Pixels mode in
+the options bar and then set the Weight. To create a path, choose Path mode in the options bar and
+then set the Weight." See the shared-surface section above.
 
 Arrowheads: Start and End toggles with Width, Length and Concavity, and the panel is in the
 **Contextual Task Bar**, not the options bar. Adobe verbatim,
@@ -461,6 +596,7 @@ Sources:
 - `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/draw-an-arrow.html` — the Arrowheads panel lives in the Contextual Task Bar (Window > Contextual Task Bar)
 - `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html` — the bar; Corners explicitly not applicable to the Line tool
 - `https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/` — Concavity default 0% (2012 page, unverified); Weight default 1 px
+- `https://helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html` — re-opened 2024-05-23; the 45° sentence and the three-mode Weight split
 - `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — line colour is the stroke; no rounding options
 
 ---
@@ -475,13 +611,13 @@ that rounds all three corners at once, and there are no individual radius handle
 modifies the roundness of all corners equally" — note that this last quote is the only source for
 the _polygon_ half, since no Adobe page listing the polygon bar was found). The app's `drawShape`
 builds the triangle inside the branch shared with the polygon
-(`src/tools/shape.ts:181-200`), which never reads `cornerRadius`, so even if the field were
+(`src/tools/shape.ts:205-224`), which never reads `cornerRadius`, so even if the field were
 rendered it would do nothing. It is not rendered either.
 
 Shift is the other half. The gear menu carries persistent `Equilateral`, `Unconstrained`,
 `Fixed Size`, `Proportional` and `From Center` checkboxes, and Shift is the momentary `Equilateral`
 (`glensmith.co.uk/photoshop/triangle-tool`). The app's Shift for this figure is the shared
-square-the-box branch at `src/tools/shape.ts:79`.
+square-the-box branch at `src/tools/shape.ts:103`.
 
 App verdict: **partial**. Both disproved premises land on this figure at once.
 
@@ -504,19 +640,25 @@ options." That is `Shape W&H` sixth from the left end, which is the position the
 gives it.
 
 **The app's click-with-no-drag path is named in this entry's `appNotes` because this is the figure
-where it costs the most.** Adobe's dialog offers Width, Height, Corner Radius, Equilateral and From
-Center; the app's two `window.prompt` calls offer the first two only, and the Radius this tool has
-is the one the renderer ignores.
+where it costs the most.** Adobe documents five fields for this figure's click dialog — Width,
+Height, Corner Radius, Equilateral and From Center
+(`.../using/tool-techniques/triangle-tool.html`) — and the app's Create Triangle dialog has three
+of them, so **two are gaps**. Equilateral is absent outright, which is the same gap the Shift row
+above reaches from the other direction. Corner Radius is withheld rather than absent, and the reason
+is the renderer rather than the dialog: `drawShape` reads `cornerRadius` in its rectangle branch
+only (`src/tools/shape.ts:240`), so a triangle field would take a value and round nothing — and the
+Radius this tool has is the one the renderer ignores, so this figure's corners cannot be rounded
+here either way.
 
 ---
 
 ## `polygon` — Polygon Tool
 
-The premise correction is already the app's behaviour: `src/tools/shape.ts:181-200` builds a
+The premise correction is already the app's behaviour: `src/tools/shape.ts:205-224` builds a
 regular n-gon inscribed in the drag box. Sides defaults to 5 in Photoshop
 (`www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "you can leave
 these options at their defaults (sides = 5, radius = 0 px)"), and the app hardcodes 5 at
-`src/tools/shape.ts:186`. The default matches; nothing else about the control does, because there
+`src/tools/shape.ts:210`. The default matches; nothing else about the control does, because there
 is no control.
 
 **The star is not the Polygon tool's any more, and the data file no longer says it is.** The
@@ -555,6 +697,20 @@ Pre-Star-tool builds carried the side count, the indent percentage and the smoot
 the Properties panel (`jkost.com`, 2021); those are now the Star tool's fields. The app has no
 representation of any of it.
 
+**The polygon's click dialog is the one field list Adobe published and then stopped publishing, and
+the app's is the intersection rather than a subset of a current page.** Adobe's current documentation
+of a click dialog is a single sentence for the rectangle (`.../using/modify-shapes.html`), with the
+Triangle adding Corner Radius, Equilateral and From Center
+(`.../using/tool-techniques/triangle-tool.html`); a January 2021 archive of `drawing-shapes.html` is
+the only place the polygon's own list survives, naming Symmetric, Number of Sides, Corner Radius,
+Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page
+carries none of them. So the app's Create Polygon dialog — Width, Height, From Center — cannot be
+checked against a live Adobe list, and none of the five archived fields is missing from the app
+merely because the dialog omits it: `drawShape` hardcodes five sides at `src/tools/shape.ts:210` and
+reads no star or indent argument at all, so every one of them would be inert if a field offered it.
+They are gaps, and they are gaps in the renderer first — the dialog is the second place they would
+have to be closed, and it is not where they can be.
+
 Modifiers: Shift constrains proportions, off by default; Alt/Option draws from the centre, though a
 polygon is already centred in its drag box; Control/Cmd while dragging rotates it; Spacebar
 repositions. The app implements Space and the square-box Shift, and neither the from-centre
@@ -565,9 +721,13 @@ a machine-readable table that reads as "this key is in effect during the drag". 
 behaviour is not lost — it is in the `purpose` and in this paragraph.
 
 **`[` and `]` are gone from the data file for a stronger reason than "not bound".** They are Photoshop
-polygon shortcuts, and the notes' own Keyboard table already recorded that no bracket key is bound
-anywhere in the app. What makes them unrecordable rather than merely absent is that they change a side
-count which does not exist at runtime: `src/tools/shape.ts:186` is
+polygon shortcuts, and **the bracket keys are not unbound — the earlier version of this file said they
+were, which was false.** `AppKeyboardShortcuts.tsx:539` and `:547` register them, with
+`repeat: true` so that holding one scrubs. They are gated on `tipSizeTool(toolName) !== null`, and
+`tipSizeField` (`:43-52`) names exactly eight tools: brush, pencil, eraser, color-replacement, smudge,
+dodge, burn, clone-stamp. No shape figure is in that map, so for this family the keys are **inert,
+not unbound**. What makes them unrecordable here is that they change a side count which does not
+exist at runtime: `src/tools/shape.ts:210` is
 `const sides = figure === 'triangle' ? 3 : 5`, a literal — and a **two-branch** ternary, not the
 three-way one the data file's `appNotes` called it. The substance was right and the description was
 not, so `appNotes` now says "two-branch ternary" and quotes the declaration.
@@ -578,7 +738,7 @@ so there is nothing here to compare a star Ratio against", which put a missing c
 voice of a Photoshop statement — a reader could take it for a claim that 26.10 moved the control and
 not for a note that this app cannot draw a star at all. It now says the app has no Star tool. The
 absence is recorded on the `shape` entry as well, because that is where the group's membership lives
-(`toolbar-mapping.ts:109-114`, six entries against Photoshop's seven); see the `shape` section above.
+(`toolbar-mapping.ts:114-121`, six entries against Photoshop's seven); see the `shape` section above.
 
 App verdict: **partial**. The drag-defined model is right; the side count and the rotation are not
 there, and the app has no Star tool to compare a star Radius against.
@@ -596,10 +756,10 @@ Sources:
 
 ## `custom-shape` — Custom Shape Tool
 
-**A placeholder, stated as a fact rather than hidden.** `src/tools/toolProcessors.ts:331-335` is
+**A placeholder, stated as a fact rather than hidden.** `src/tools/toolProcessors.ts:364-368` is
 `commit: 'unimplemented'` with the shared `unimplemented` rasterizer (declared at
-`toolProcessors.ts:110`, not `:109`, which is a blank line); `src/tools/toolsMap.ts:159-163`
-renders `PlaceholderTool` with a TODO badge; `src/tools/settings.ts:306` persists nothing but the
+`toolProcessors.ts:110`, not `:110`, which is a blank line); `src/tools/toolsMap.ts:180-184`
+renders `PlaceholderTool` with a TODO badge; `src/tools/settings.ts:336` persists nothing but the
 tool name. The panel that does render is a chip list, and the chips are Photoshop's real control
 names rather than filler — `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37` reads
 `['Tool Mode', 'Fill', 'Stroke', 'W/H', 'Shape Picker', 'Path Operations']`.
@@ -616,17 +776,17 @@ sentence.** This entry had inherited the shared `sharedFigureOptions` consts, wh
 **bar's** statuses and the shape bar's `appRef`s — for a tool that never renders that bar. Six of the
 nine rows below were `partial` and three were `missing`; the correct reading is:
 
-| Row               | Was     | Now       | Why                                                                                                                |
-| ----------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------ |
-| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                                    |
-| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                         |
-| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                                       |
-| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                                 |
-| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the two `window.prompt` calls the other five figures get never run here |
-| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                              |
-| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                             |
-| `Stroke type`     | partial | `missing` | same                                                                                                               |
-| `Opacity`         | partial | `missing` | same                                                                                                               |
+| Row               | Was     | Now       | Why                                                                                                               |
+| ----------------- | ------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                                   |
+| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                        |
+| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                                      |
+| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                                |
+| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the Create <Figure> dialog the other five figures get never opens here |
+| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                             |
+| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                            |
+| `Stroke type`     | partial | `missing` | same                                                                                                              |
+| `Opacity`         | partial | `missing` | same                                                                                                              |
 
 The `inert` / `missing` split is the whole point of the two statuses, and it is the same split the Pen
 family already makes. `inert` is "declared **or displayed**, and nothing is wired behind it", whose
@@ -662,14 +822,14 @@ now reads `{ ...fillControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS }` like
 `Stroke` and `Shape W&H` neighbours, which produces the same four keys and the same values.
 
 **The chip list is not the only reason the shape bar does not render.** The canvas dispatch
-`src/components/Main/Main.tsx:74-82` names `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and
+`src/components/Main/Main.tsx:84-90` names `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and
 `line` and **not** `custom-shape`, so this tool matches no branch: `interactionMode` stays `'zoom'` and
 the canvas area is `DummyToolArea`, a `display: none` div
 (`src/components/Main/DummyToolArea.tsx:15`). That is why every `appRef` in the nine rows above points
 at the chip list and none at `Figures/Shape.tsx` or `src/tools/shape.ts`, and it is also why the three
 `modifiers` rows — Shift, Alt and Space — are bound to nothing: there is no drag for them to modify.
-The same absence is why the `Shape W&H` chip is `inert` rather than `partial`: the app's two
-`window.prompt` calls live in `ShapeToolArea`, which this tool never mounts, so a click with no drag
+The same absence is why the `Shape W&H` chip is `inert` rather than `partial`: the app's
+Create <Figure> dialog lives in `ShapeToolArea`, which this tool never mounts, so a click with no drag
 does nothing rather than asking for a size.
 
 **Path Operations, corrected.** The real set is New Shape Layer (or Create New Shape Layer),
@@ -741,20 +901,21 @@ Sources:
 - `https://www.pcworld.com/article/399355/photoshop-shapes-what-they-are-and-how-to-use-them.html` — the four default groups (2020; no longer current)
 - `https://community.adobe.com/questions-712/where-do-i-get-photoshop-custom-shapes-it-needs-csh-files-1137992` — Shapes panel and Legacy Shapes and More
 - `https://glensmith.co.uk/photoshop/custom-shape-tool` — third party: Shift preserves the preset's own aspect ratio
+- `https://trainingonsite.com/images/downloads/Photoshop-2026-tools-modifiers-2026-01-01.pdf` — an Adobe training partner's modifier cheat sheet, re-opened in this pass: "Custom Shape (U) shift constrains ratio", "Line (U) shift constrains to 0°, 45°, 90°", and a six-entry shape-tool list with no Star. It is also where the "Triangle (U) shift drag constrains circle" contradiction in Unverified comes from
 
 ---
 
 ## Keyboard
 
-| Keys      | Photoshop                                                                | App                                                                                                                       | App site                         |
-| --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`               | `AppKeyboardShortcuts.tsx:89-95` |
-| `Shift+U` | cycle through the whole group                                            | cycles only `rectangle → oval → line → custom-shape`; `triangle` and `polygon` index to `-1` and restart at the rectangle | `AppKeyboardShortcuts.tsx:76-78` |
-| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | not bound                                                                                                                 | —                                |
-| `Space`   | reposition while drawing                                                 | implemented                                                                                                               | `ShapeToolArea.tsx:52`           |
+| Keys      | Photoshop                                                                | App                                                                                                                       | App site                           |
+| --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`               | `AppKeyboardShortcuts.tsx:150-156` |
+| `Shift+U` | cycle through the whole group                                            | cycles only `rectangle → oval → line → custom-shape`; `triangle` and `polygon` index to `-1` and restart at the rectangle | `AppKeyboardShortcuts.tsx:137-139` |
+| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                                      | `AppKeyboardShortcuts.tsx:539`     |
+| `Space`   | reposition while drawing                                                 | implemented                                                                                                               | `ShapeToolArea.tsx:52`             |
 
 The `Shift+U` cycle is the gap: `triangle` and `polygon` are absent from the ordered list at
-`src/components/Common/AppKeyboardShortcuts.tsx:76`, so `Shift+U` never advances to them even though
+`src/components/Common/AppKeyboardShortcuts.tsx:137`, so `Shift+U` never advances to them even though
 both are registered `ToolName`s with their own entries in the tools map. **The failure mode is a
 restart, not a freeze**, and the distinction is load-bearing for the row's wording: the branch is
 `orderedFigures[(currentIndex + 1) % orderedFigures.length]` with `currentIndex = indexOf(currentFigure)`,
@@ -763,9 +924,9 @@ Shift+U from the Triangle or the Polygon "restarts at the rectangle instead of a
 
 **Plain `U` is not "always jumps to the rectangle" either, and that was the other half of the same
 mistake.** The five geometric figures in the rail all carry `name: 'shape'` and differ only by
-`figure` (`toolbar-mapping.ts:109-113`, applied at `SidebarLeft.tsx:224-227`), so
-`toolName === 'shape'` for all five and the early return at `AppKeyboardShortcuts.tsx:89-92` keeps the
-figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-mapping.ts:114`), so
+`figure` (`toolbar-mapping.ts:115-119`, applied at `SidebarLeft.tsx:590-605`), so
+`toolName === 'shape'` for all five and the early return at `AppKeyboardShortcuts.tsx:150-152` keeps the
+figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-mapping.ts:120`), so
 `U` from there is the one case that does force the rectangle. Both halves are now in the row rather
 than only in this table.
 
@@ -841,7 +1002,29 @@ Claims that could not be sourced to a URL that was opened. None of them appear i
   `purpose` and `appNotes` now call the withholding a judgment rather than a match.
 - **The documented numeric range of the Polygon tool's `Sides` field** (3–100, from
   `www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/`, a 2012 page). The default
-  of 5 is corroborated by a 2022 page; the range is not restated on any page of currency.
+  of 5 is corroborated by a 2022 page; the range is not restated on any page of currency. Note that
+  the same 2012 source documents a **Star** checkbox with an `Indent Sides By` default of 50% on the
+  Polygon tool's own bar — the pre-22.0 arrangement. The current Adobe star page attributes those
+  controls to the separate Star tool, so the two cannot both describe 2026, and the data file
+  attributes the star to the Star tool throughout.
+- **Whether the Star tool's `Points`, `Inner Radius` and `Outer Radius` replaced the pre-22.0
+  `Indent Sides By %` and `Smooth Indents`, or coexist with it.** The old labels are sourced to
+  `http://www.underwaterphotography.com/photoshop/photoshop/1_11_3_1.html` and to the 2012
+  third-party page above; the new ones to the current Adobe star page, which lists "Set number of
+  sides (or points on a star)", "Corner radius", "Inner Radius" and "Outer Radius" in the
+  Contextual Task Bar and says the same values are adjustable "from the Options panel". No page
+  opened states the migration, and none of them dates the star's introduction.
+- **Whether Photoshop's Triangle Shift was equilateral at introduction.** Unchanged from the last
+  pass and re-checked here: the behaviour is directly sourced to Adobe's current triangle page and
+  is asserted, the version of introduction is sourced to the 2020-10-20 launch announcement, and
+  what Shift did on day one is still not stated by anyone.
+- **Whether the Polygon tool's `Sides` and `Radius` fields are on the bar in 2026, or only in the
+  click dialog and the Properties panel.** The third-party pages that document them describe a
+  mixture — `photoshopessentials` puts Sides and Radius on the bar, `glensmith` puts them in the
+  "Create Polygon" dialog the click opens and shows the corner radius as an on-canvas handle. No
+  Adobe page enumerating the Polygon tool's bar has ever been found, so the data file's `Sides` row
+  gives the default (5, third-party) without a range, and its `Radius` row says which of the five
+  figures Adobe confirms and which it does not.
 - **The arrowhead `Width` and `Length` _ranges_, which this list used to state in the wrong unit.**
   The percentages — `Width` 10–1000% of line width, `Length` 10–5000% — came from
   `http://www.underwaterphotography.com/photoshop/photoshop/1_11_3_1.html`, an ImageReady-era page
@@ -855,23 +1038,65 @@ Claims that could not be sourced to a URL that was opened. None of them appear i
   2026-02-23). So the data file now asserts the three control names, Concavity's −50%…+50% range and
   the fact that Width and Length are pixel values, and asserts no numeric range for Width or Length.
   The 0% Concavity default still appears only on a 2012 page and remains out of the data file.
-- **The Line tool's `Weight` default of 1 px in the current release.** Sourced only to the 2012 and
-  2015 third-party pages above, not to a current Adobe sentence. The 1 px default _stroke_ is
-  separately and more recently sourced (2022, `www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/`).
-- **The default stroke alignment being Centered.** Sourced to
-  `www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/` (2022) only. Adobe's
-  current bar page lists the three alignment values without naming a default.
+- **The Line tool's `Weight` default of 1 px in the current release — now answered by a
+  measurement rather than by a tutorial, except for the line itself.** The ScriptListener dump in
+  the Adobe Community thread above reports `"strokeStyleLineWidth": { "_unit": "pixelsUnit",
+"_value": 1 }` for the rectangle tool in shape mode, alongside `strokeStyleAlignCenter`,
+  `strokeStyleButtCap` and `strokeStyleMiterJoin`. It reports no `Weight` default for the **line**
+  tool, and it is a community thread rather than an Adobe help page, so the 1 px default _stroke_
+  now rests on a first-hand dump instead of the 2012 and 2015 third-party pages while the line's own
+  `Weight` default stays out of the data file.
+- **The default stroke alignment being Centered — now answered twice, once first-hand.**
+  `strokeStyleAlignCenter` in that dump, and independently
+  `www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/` (2022). Adobe's
+  current bar page lists the three alignment values without naming a default. The data file's
+  `Stroke type` row now also names the **Butt** default cap, from the same dump. The **Miter** join
+  default is in the dump too and is not stated in the data file, because `Stroke type`'s `detail`
+  is one sentence and the default a reader is most likely to check first is the width.
+- **Whether the Star tool is in the shapes group in a 2024–2026 install — the evidence got
+  stronger, and one piece of it cuts the other way.** Two current Adobe help pages put it there and
+  give it its own controls: `create-star-shape.html` (2025-08-20) and
+  `desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html` (2026-02-23) both open "Select the
+  **Star tool** from the shapes tool group in the Tools panel", and both list its Contextual Task
+  Bar rows — Fill and Stroke, Stroke width, "Set number of sides (or points on a star)", Corner
+  radius, Inner Radius, Outer Radius. The **version** is still a community announcement plus one
+  third-party report, both 2025-08-20. **Against it:** Adobe's own training partner cheat sheet,
+  `trainingonsite.com/images/downloads/Photoshop-2026-tools-modifiers-2026-01-01.pdf`, dated well
+  after the 26.10 release, lists VECTOR SHAPE TOOLS as exactly six — Rectangle, Ellipse, Triangle,
+  Polygon, Line, Custom Shape — with no Star. That is a one-page summary, not a specification, and
+  two help pages of currency outrank it; but it is a real counter-example, it is recorded here rather
+  than dropped, and it is part of why the data file says "the Star arrived as a tool of its own in
+  26.10" on the strength of two sources rather than one.
+- **`Align Edges` on a shape tool's bar — a control this family never recorded, and it may be
+  gone.** Two third-party pages name it: `www.pcworld.com/article/399355/…` (2020) says the shape
+  bar ends with "the Align Edges feature, which aligns vector shape edges to the pixel grid", and
+  `www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/` (2012) lists Align Edges
+  in its bar inventory. **No Adobe page opened in any pass mentions it**, and none of the current
+  bar enumerations — `modify-shapes.html`, the Triangle page's own bar sentence, the mode-by-mode
+  page — include it. So it is either a control Adobe has since removed or one Adobe's help never
+  documented, and nothing available here tells the two apart. It is therefore **not** in the data
+  file: adding a row would assert a Photoshop fact the record cannot source, which is the same rule
+  that keeps the Concavity default out. **Checked against a running Photoshop before anyone
+  decides.**
 - **The current default shape groups in the Custom Shape picker.** The four groups
   (Leaf Trees, Wild Animals, Boats, Flowers) are from a 2020 PCWorld article; the 2019–2021 Adobe
   Community threads say the picker changed and those groups moved behind "Legacy Shapes and More",
-  and Adobe's overview carries a separate "Add legacy custom shapes" nav item. What a given
-  2024–2026 install shows on first launch was not established. The data file previously called
-  those four "the default groups" flatly, which **contradicted this entry**; it now names the
+  and Adobe's own `draw-custom-shapes.html` carries a separate "Add legacy custom shapes" nav item
+  (confirmed again in this pass, beside its Select-the-Shape-dropdown and Import-Shapes steps). What
+  a given 2024–2026 install shows on first launch was not established. The data file previously
+  called those four "the default groups" flatly, which **contradicted this entry**; it now names the
   library's contents, dates the "default" to the 2020 article, and says the current install is
   unestablished.
-- **That the Custom Shape tool's Shift preserves the preset's own width-to-height ratio.** Carried
-  entirely by `https://glensmith.co.uk/photoshop/custom-shape-tool` and a second blog; no Adobe page
-  opened in this pass states it. It appears three times in the data file, and all three now say so.
+- **That the Custom Shape tool's Shift preserves the preset's own width-to-height ratio — better
+  sourced, still not an Adobe help sentence.** Two tutorial sites carried it and nothing else; the
+  Adobe training partner's 2026 modifier sheet now says "Custom Shape (U) shift constrains ratio;
+  opt/alt draws from center", which is a second and more institutional witness. The data file's three
+  occurrences still say third-party and now name the cheat sheet as the corroboration. The same
+  sheet says "**Triangle** (U) shift drag constrains **circle**", which is Adobe's own one-line
+  summary contradicting Adobe's dedicated Triangle page — "Hold the Shift key while dragging to
+  create an **equilateral triangle**" — and three third parties. The page wins: it is the tool's own
+  page, it is specific, and a cheatsheet cell is not a specification. Recorded because the
+  contradiction is on Adobe's side of the line and the next session will trip over it.
 - **Whether Photoshop 2021 (v22)'s Triangle tool shipped with the Shift-equals-equilateral constraint
   unchanged, and what its geometry was at introduction.** The version of introduction is no longer
   open — Adobe's launch announcement of 2020-10-20 names "a new Triangle tool" in Photoshop 2021

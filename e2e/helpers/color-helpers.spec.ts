@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/extended-test';
 import { setForegroundColor } from './color-helpers';
 
 test.describe('Color Helpers', () => {

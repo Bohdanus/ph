@@ -13,22 +13,22 @@ icon and a `P`/`Shift+P` binding — and then does nothing at all when you use o
 
 The three facts that settle it, in the order they matter:
 
-1. **A processor exists for each, and it is the shared no-op stub.** `src/tools/toolProcessors.ts:300-325`
+1. **A processor exists for each, and it is the shared no-op stub.** `src/tools/toolProcessors.ts:333-358`
    gives all six `commit: 'unimplemented'`, `replay: replay('unimplemented', false, false)` and
    `imageProcessor: unimplemented`. That `unimplemented` is `() => () => [null as never]`
    (`src/tools/toolProcessors.ts:110`) — a zero-arity function returning a null bitmap, so a drag
    commits no pixels, records no history state and produces no durable operation. None of the six is a
-   `creator`. `src/tools/__tests__/tool-processors.test.ts:336-341` pins all six commit kinds, and
-   `src/tools/__tests__/tool-processors.test.ts:690-691` pins that all six share the one stub instance.
-2. **All six render `PlaceholderTool`, through the same config key.** `src/tools/toolsMap.ts:128-153`
+   `creator`. `src/tools/__tests__/tool-processors.test.ts:344-349` pins all six commit kinds, and
+   `src/tools/__tests__/tool-processors.test.ts:722-724` pins that all six share the one stub instance.
+2. **All six render `PlaceholderTool`, through the same config key.** `src/tools/toolsMap.ts:149-174`
    calls `placeholderTool('<Tool> Tool', 'pen')` for all six — note `'pen'`, not each tool's own key.
    `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8-36` renders an amber dashed panel with a
-   `TODO` badge and a row of static `<span>` chips. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:30-35`
+   `TODO` badge and a row of static `<span>` chips. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:42-50`
    pins all six to `configKey: 'pen'`.
 3. **There is no state behind any of it.** Each tool's args type is literally its own name and nothing
-   else — `src/contexts/tool-types.ts:58-63` — and `src/tools/settings.ts:265-270` seeds the same
-   `{ toolName }` default. The arm at `src/util/settings.ts:100-108` reduces all six back to
-   `{ toolName }` on every save (`:109`), and the comment at `src/util/settings.ts:93-98` names the pen
+   else — `src/contexts/tool-types.ts:68-73` — and `src/tools/settings.ts:295-300` seeds the same
+   `{ toolName }` default. The arm at `src/util/settings.ts:110-118` reduces all six back to
+   `{ toolName }` on every save (`:109`), and the comment at `src/util/settings.ts:103-108` names the pen
    family as the group that still does this. `src/tools/__tests__/tool-settings.test.ts:399-405`
    asserts that every `unimplemented` tool's seeded default is a bare tool name.
 
@@ -42,7 +42,7 @@ honest state rather than a gap someone forgot.
 
 The three anchor-point entries used to say each acts "over a tool that has no processor", and that is
 the one wording in this family that was strictly false while sounding like a caveat. In this codebase
-**no processor** has a precise meaning and it excludes these three: `src/tools/toolsMap.ts:125-127`
+**no processor** has a precise meaning and it excludes these three: `src/tools/toolsMap.ts:146-148`
 uses the phrase for the eyedropper, whose absence is real because the eyedropper is the only tool in
 `PIXEL_FREE_TOOLS` and so genuinely carries only an icon and a bar. All six Pen tools are registered
 in `toolProcessors`, and all three anchor-point tools are wired to the same `unimplemented` instance
@@ -56,49 +56,53 @@ asserted.
 Everything above is about the options bar and the processor. Two further facts are about what a user
 can actually do with the tool, and they are the ones that survive a screenshot of the amber panel:
 
-- **No Pen tool has a gesture surface at all.** `src/components/Main/Main.tsx:61-124` turns a tool name
+- **No Pen tool has a gesture surface at all.** `src/components/Main/Main.tsx:70-144` turns a tool name
   into an `interactionMode`, and none of the six appears in any branch of that chain, so
   `interactionMode` stays its `'zoom'` default and `EventHandler` stays `DummyToolArea`
-  (the default at `src/components/Main/Main.tsx:203`, the fallthrough every Pen tool takes at
-  `src/components/Main/Main.tsx:226`), which renders a `display: none` div
+  (the default at `src/components/Main/Main.tsx:225`, the fallthrough every Pen tool takes at
+  `src/components/Main/Main.tsx:250`), which renders a `display: none` div
   (`src/components/Main/DummyToolArea.tsx:15`). That is why no `modifiers` row in this family is
   backed by anything, and why `Esc` and `Ctrl+Alt` are recorded as absent rather than merely unlisted.
-  For the record, the app binds `Escape` in exactly four places and none is a Pen tool:
-  `PolygonClickToolArea.tsx:915` and `FeatherMagneticLassoToolArea.tsx:535` (the lasso pair),
-  `ToolbarsRight/Text/FontSelect.tsx:55` and `ToolbarsRight/Transform/Transform.tsx:37`. The Escape
-  branch in `TextToolArea.tsx:116` is commented out, which is why the text tool is not in that list.
+  For the record, the app binds `Escape` in exactly five places and none is a Pen tool:
+  `PolygonClickToolArea.tsx:923` and `FeatherMagneticLassoToolArea.tsx:544` (the lasso pair),
+  `CropToolArea.tsx:54`, `ToolbarsRight/Text/FontSelect.tsx:55` and
+  `ToolbarsRight/Transform/Transform.tsx:37`. The Escape branch in `TextToolArea.tsx:114` is commented
+  out, which is why the text tool is not in that list.
 - **The keyboard reaches three of the six.** The rail's Pen flyout lists six tools
-  (`toolbar-mapping.ts:100-105`) and `penGroup` holds three
-  (`src/components/Common/AppKeyboardShortcuts.tsx:32`), so `Shift+P` never reaches Add Anchor Point,
+  (`toolbar-mapping.ts:106-111`) and `penGroup` holds three
+  (`src/components/Common/AppKeyboardShortcuts.tsx:53`), so `Shift+P` never reaches Add Anchor Point,
   Delete Anchor Point or Convert Point — they are reachable from **no** key in the app, which is a
   stronger statement than "they have no shortcut of their own" and the one the data file now makes.
 
 **Plain `P` is not "select the Pen tool", and the data file used to say it was.** `selectPenTool`
-(`src/components/Common/AppKeyboardShortcuts.tsx:148-157`) resolves to the already-active member of
+(`src/components/Common/AppKeyboardShortcuts.tsx:209-218`) resolves to the already-active member of
 `penGroup` when the current tool is in it, and to `'pen'` otherwise. Two consequences the three `P`
 rows now state: `P` keeps the Freeform or the Curvature Pen where it is instead of snapping back to
 the Pen; and it never selects the Freeform or Curvature Pen from anything else, so the old wording on
 those two rows — "Selects the Freeform Pen tool" — was wrong in the same direction as the Pen's. The
-binding is also `enabled: hasImage` (`:387`), so it does nothing until an image is open.
+binding is also `enabled: hasImage` (`src/components/Common/AppKeyboardShortcuts.tsx:512-517`), so it
+does nothing until an image is open.
 
 Two further app facts, both first-class and both test-pinned:
 
 - **The Freeform Pen and the Curvature Pen render the wrong chip list.** `toolbarPlaceholderConfig.ts:24-25`
   defines a `[Tool Mode, Fill, Stroke, Magnetic, Curve Fit]` list for each — and `toolsMap.ts` never asks
-  for either key. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:156` asserts
+  for either key. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:172` asserts
   `unreachableKeys` is exactly `['freeform-pen', 'curvature-pen', 'rectangle']` (the binding it compares
-  is at `:150`), i.e. those two lists are
+  is at `:164`), i.e. those two lists are
   dead config that a test now requires to stay dead. So the Freeform Pen's bar names neither `Magnetic`
   nor `Curve Fit` — the two controls that are its entire reason for existing — and the Curvature Pen
   inherits the Freeform Pen's controls rather than its own. The unreachable list is the load-bearing
-  evidence; `:113-115` separately pins the dead lists' contents.
+  evidence; `:128-130` separately pins the dead lists' contents.
 - **The durable document refuses the family.** `src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242`
   asserts that converting a history item naming an `unimplemented` tool is rejected with an
-  unsupported-feature diagnostic, and `src/contexts/__tests__/history-replay.branches.test.ts:637-648`
-  pins that legacy replay keeps authority for `pen` and `freeform-pen` through the injected raster
-  adapter. So even a history item that names one of these tools cannot reach the durable path.
+  unsupported-feature diagnostic — the rejection itself is the unconditional throw at
+  `src/contexts/history-adapter.ts:550`, and that test's worked example happens to name `pen` — and
+  `src/contexts/__tests__/history-replay.branches.test.ts:781-800` pins that legacy replay keeps
+  authority for `pen` and `freeform-pen` through the injected raster adapter. So even a history item
+  that names one of these tools cannot reach the durable path.
 
-Also worth recording: `src/components/SidebarLeft/toolIcons.tsx:74-79` gives the Pen, the Curvature Pen
+Also worth recording: `src/components/SidebarLeft/toolIcons.tsx:80-85` gives the Pen, the Curvature Pen
 and all three anchor-point tools the _same_ pen-nib icon; only the Freeform Pen has its own. Five of the
 six are visually indistinguishable in the rail.
 
@@ -250,9 +254,10 @@ component that already exists. The app renders **one** chip of that name — the
 labels the Pen's own control "Path Operations" and because a chip on the Pen's bar can only stand for a
 control the Pen owns. So `Operation` stays `inert` with that `appRef`, and `Path Operations` is
 `missing` with no `appRef` at all: the app's bar does not carry it, and its row now says so in those
-words. That is the same call `shape.ts` makes, where `pathOperationsControl` is declared `missing`
-(`shape.ts:76-81`) and only overridden to `inert` for `custom-shape`, whose own chip list names the
-control (`shape.ts:446`). The earlier wording here — "That is honest — the app has one `Path
+words. That is the same call `descriptions/shape.ts` makes, where `pathOperationsControl` is declared
+`missing` (`descriptions/shape.ts:98-103`) and only overridden to `inert` for `custom-shape`, whose own
+chip list names the control (`descriptions/shape.ts:524`). The earlier wording here — "That is honest —
+the app has one `Path
 Operations` label standing in for two distinct Adobe controls on two distinct tools" — is what let two
 rows claim one rendering, and it is withdrawn: one chip cannot be the rendering of two controls the same
 record insists are different, so the record now claims the rendering only where it happens.
@@ -267,7 +272,7 @@ record insists are different, so the record now claims the rendering only where 
   modifier on the `pen` record.
 - `P`; `Shift+P` cycles the nested group. Adobe's own pages only ever state `P`
   (`tool-techniques/pen-tool.html`); `Shift+P` is a third-party and app fact, and the app implements it
-  at `src/components/Common/AppKeyboardShortcuts.tsx:32` for exactly the three pens — which matches
+  at `src/components/Common/AppKeyboardShortcuts.tsx:53` for exactly the three pens — which matches
   Photoshop, which gives the three anchor-point tools no shortcut of their own.
 - `Ctrl+Enter` loads the path as a selection; `Ctrl+Alt` / `Cmd+Option` over an anchor point reaches the
   Convert Point tool from the Direct Selection tool (`editing-paths.html`). **Neither is bound.** There
@@ -426,7 +431,7 @@ an empty array for, and why the brief says an empty array "means so only with a 
 reason is recorded there and the rows are inherited from the `pen` table above, where every control is
 `inert` or `missing`; there is no control in this family that is `present`.
 
-The app nonetheless renders the standard Pen's full seven-chip list on all three (`toolsMap.ts:142-152`),
+The app nonetheless renders the standard Pen's full seven-chip list on all three (`toolsMap.ts:163-173`),
 so the app shows these tools options that are not theirs and lacks the one thing they do need: a Paths
 panel to select a path in.
 

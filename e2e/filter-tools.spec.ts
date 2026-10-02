@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   canvasOffsetToDocument,
@@ -179,6 +179,25 @@ function besideTheLine(onLine: { x: number; y: number }): { x: number; y: number
   return { x: onLine.x + nx * OFF_THE_LINE, y: onLine.y + ny * OFF_THE_LINE };
 }
 
+/**
+ * Selects the Colors panel through `Image ▸ Adjustments ▸ Photo Filter`.
+ *
+ * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
+ * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
+ * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
+ * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
+ * hold it is gone from `toolbarMap`. `Photo Filter` is the enabled item that selects it, and
+ * the slug is `slugifyToolLabel('Photo Filter')` (`toolbar-mapping.ts`).
+ *
+ * The other sixteen items in that submenu render `disabled`, so this is the one path in and a
+ * spec cannot reach the panel any other way.
+ */
+async function openColorsPanel(page: Page): Promise<void> {
+  await page.getByTestId('header-image-menu-button').click();
+  await page.getByTestId('image-menu-adjustments-button').click();
+  await page.getByTestId('image-menu-adjustments-photo-filter-button').click();
+}
+
 test.describe('Adjustment tools', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -197,8 +216,7 @@ test.describe('Adjustment tools', () => {
       expect(original, 'the stroke must be on the canvas to be adjusted').toBeTruthy();
       expect(channelSpread(original!), 'the unadjusted stroke is not grey').toBeGreaterThan(12);
 
-      await openToolFlyout(page, 'color');
-      await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
+      await openColorsPanel(page);
       const grayscale = page.locator('#grayscale-slider');
       const reset = page.getByTestId('undo-button-reset');
 
@@ -262,8 +280,7 @@ test.describe('Adjustment tools', () => {
       const drawBox = await drawVioletStroke(page);
       const sample = canvasOffsetToDocument(drawBox, SAMPLE_X, STROKE_ROW);
 
-      await openToolFlyout(page, 'color');
-      await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
+      await openColorsPanel(page);
       const grayscale = page.locator('#grayscale-slider');
       const sepia = page.locator('#sepia-slider');
       await expect(grayscale).toHaveValue('0');

@@ -40,6 +40,13 @@ export const toolbarMap = [
     [
       { label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' },
       { label: 'Elliptical Marquee Tool', name: 'elliptical-selection' },
+      // The two 1-pixel marquees share this flyout and therefore carry no shortcut of
+      // their own: Adobe's published default table assigns `M` to the Rectangular and
+      // Elliptical Marquees only, and neither 1-pixel tool has a key. `Shift+M` still
+      // reaches them, because the cycle is over the whole group (see `marqueeGroup` in
+      // `AppKeyboardShortcuts.tsx`), which is a weaker and separately-labelled claim.
+      { label: 'Single Row Marquee Tool', name: 'single-row-marquee' },
+      { label: 'Single Column Marquee Tool', name: 'single-column-marquee' },
     ],
     [
       { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
@@ -57,13 +64,6 @@ export const toolbarMap = [
     [{ label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' }],
   ],
   [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
-  [
-    [
-      { label: 'Colors', name: 'color' },
-      { label: 'Levels', name: 'levels' },
-      { label: 'Transform', name: 'transform' },
-    ],
-  ],
   [
     // The Brush stays the tile's default tool, so the eraser-family tools are appended
     // rather than inserted: `renderToolGroup` derives the tile's default identity from the
@@ -93,6 +93,11 @@ export const toolbarMap = [
     [
       { label: 'Dodge Tool', name: 'dodge', shortcut: 'O' },
       { label: 'Burn Tool', name: 'burn' },
+      // The third member of the same flyout, and in the order Adobe's own shortcut
+      // references give it: Dodge, Burn, Sponge, each `O`, cycled with `Shift+O`. The
+      // `shortcut` is left off the other two entries for the same reason it is left off
+      // `burn` — only the tile's first entry carries the letter.
+      { label: 'Sponge Tool', name: 'sponge' },
     ],
     // NO SHORTCUT, and the omission is the fix rather than an oversight. This entry
     // previously declared `shortcut: 'B'`, which is the Brush's own shortcut and which
@@ -158,6 +163,8 @@ export const availableTools: readonly ToolName[] = [
   'transform',
   'rectangular-selection',
   'elliptical-selection',
+  'single-row-marquee',
+  'single-column-marquee',
   'freehand-lasso',
   'polygonal-lasso',
   'feather-magnetic-lasso',
@@ -173,6 +180,26 @@ export const availableTools: readonly ToolName[] = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
 ];
 
+/**
+ * Tool ids with no Tools-rail entry, because Photoshop's Tools panel has none.
+ *
+ * `color`, `levels` and `transform` are `Image ▸ Adjustments` and `Edit ▸ Free Transform`
+ * COMMANDS, and a command is not a tool. They were the sole members of a three-wide flyout
+ * here until they were extracted; what hosts them now is
+ * `src/components/DesktopHeader/DesktopHeader.tsx` — `Image ▸ Adjustments` carries the
+ * first two and `Edit ▸ Free Transform` the third.
+ *
+ * Before that extraction this export was a declaration with no consumer at all, and it still
+ * has none: `toolbar-mapping.test.ts` is its only importer. What that test pins is the
+ * two-way relation with `toolbarMap` — nothing in `extraTools` may be a tile, and a rail
+ * entry dropped without being recorded here fails it the other way.
+ *
+ * It is NOT the answer to "which registered tool is not a tile", because five more ids are
+ * not tiles: `rectangle`, `ellipse`, `triangle`, `polygon` and `line`, reachable only as
+ * values of the `shape` tile's `figure`. The test carves those five out by name, so adding
+ * a sixth alias means adding it to that exemption too.
+ */
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

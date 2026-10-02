@@ -9,6 +9,28 @@ const allGroups: readonly (readonly ToolbarTool[])[] = toolbarMap.flat() as read
 const shapeFlyout = allGroups.find((group) => group.some((tool) => tool.name === 'shape'))!;
 const allTools: readonly ToolbarTool[] = allGroups.flat();
 
+/** Every `name` on the rail, from the `name:` fields and never from a label. */
+const railNames: readonly string[] = [...new Set(allTools.map((tool) => tool.name))];
+
+/** Every `figure` on the rail, widened to `string` so a `ToolName` can be tested against it. */
+const railFigures: readonly string[] = [
+  ...new Set(allTools.map((tool) => tool.figure).filter((figure): figure is FigureType => Boolean(figure))),
+];
+
+/**
+ * The five shape figure aliases, and the only ids in `availableTools` that carry no rail
+ * `name`. They are not `extraTools`: the Rectangle, Ellipse, Triangle, Polygon and Line
+ * TILES are all in `toolbarMap`, as `figure` values on entries whose `name` is `shape`.
+ *
+ * Spelled out rather than derived, because it cannot be derived. `toolbarMap` writes the
+ * figure as `oval` while the registry calls that tool `ellipse`, so "is this id on the rail,
+ * as a name or as a figure" has no rule to apply to it — the mapping between the two
+ * vocabularies is data, and data has to be written down. The set is pinned as exactly these
+ * five by the assertions below, so a sixth alias cannot join the exception silently.
+ */
+const figureAliases = ['rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
+const figureAliasSet: ReadonlySet<string> = new Set(figureAliases);
+
 /**
  * Hard-coded copy of the narrowed `FigureType` union plus the expected shape flyout.
  * The imported type cannot be enumerated at runtime, so the contract is spelled out.
@@ -94,8 +116,39 @@ describe('toolbar mapping shape contract', () => {
     expect(availableTools).not.toContain('circle');
   });
 
-  it('keeps extraTools disjoint from the shape tool', () => {
-    expect(extraTools).not.toContain('shape');
+  it('lists exactly the registered tools that have no Tools-rail entry', () => {
+    // Forward direction: nothing in `extraTools` is a tile. Checked against BOTH `name` and
+    // `figure`, because "no entry anywhere in `toolbarMap`" is the promise the export's own
+    // comment makes and a `figure` is an entry.
+    expect([...extraTools].filter((id) => railNames.includes(id) || railFigures.includes(id))).toEqual([]);
+
+    // Converse direction: an id dropped from the rail without being recorded here is a
+    // failure too, and this is the direction that makes the export a pin rather than a
+    // description of itself.
+    const absentFromRail = [...new Set(availableTools)].filter((name) => !railNames.includes(name));
+    expect(
+      absentFromRail.filter((name) => !figureAliasSet.has(name)),
+      `registered tools with no rail entry that ${extraTools.join(', ')} does not list, ignoring the five shape figure aliases`
+    ).toEqual([...extraTools]);
+  });
+
+  it('keeps the figure-alias exception to that list at exactly the five shape figures', () => {
+    const absentFromRail = [...new Set(availableTools)].filter((name) => !railNames.includes(name));
+    const exempt = absentFromRail.filter((name) => figureAliasSet.has(name));
+
+    expect(exempt).toEqual([...figureAliases]);
+    // Each exempt id really is a figure of the `shape` flyout, so the exemption is justified
+    // by the map rather than by the size of the list. `ellipse` is the one that cannot be
+    // matched directly, which is why `figureAliases` is a written list at all.
+    const shapeFigures = shapeFlyout
+      .map((tool) => tool.figure)
+      .filter((figure): figure is FigureType => Boolean(figure));
+    for (const alias of figureAliases) {
+      expect(shapeFigures, `${alias}: not a figure of the shape flyout, so the exemption is unjustified`).toContain(
+        alias === 'ellipse' ? 'oval' : alias
+      );
+    }
+    expect(railNames).toContain('custom-shape');
   });
 });
 

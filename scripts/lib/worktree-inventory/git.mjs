@@ -245,6 +245,7 @@ export function mergeConflict(cwd, base) {
 export function collectWorktrees(cwd, { base = 'main' } = {}) {
   const root = resolve(cwd);
   const worktrees = listWorktrees(root);
+  const nameCollisions = historicalNameCollisions(root, base);
 
   return worktrees.map((w) => {
     const { ahead, behind } = aheadBehind(w.path, base);
@@ -264,8 +265,96 @@ export function collectWorktrees(cwd, { base = 'main' } = {}) {
       // branch that is already on main, or a detached HEAD, produces a
       // meaningless answer that would be read as a real one.
       merge: unmerged ? mergeConflict(w.path, base) : { conflict: null },
+      // Advisory, and deliberately not part of any verdict — see the note on
+      // `historicalNameCollisions` for the inference it exists to block.
+      nameCollisions: nameCollisions.get(w.branch) ?? [],
     };
   });
+}
+
+/**
+ * Branches whose NAME already appears in a merge subject on `base`.
+ *
+ * WHY THIS IS A FIELD AND NOT A STATUS
+ * ------------------------------------
+ * On 2026-10-01 a sweep read `git log --grep=fix/stale-citations`, found
+ * `merge(fix/stale-citations): two TEST-FLAKES citations no longer point at what
+ * they claim`, and concluded the branch was already landed — so it deleted a
+ * worktree a live chat was using. That merge was fourteen hours old and of an
+ * unrelated dead branch; the live branch's tip was not an ancestor of `main`, and
+ * `action` had already said so. The name was the only thing that misled.
+ *
+ * So this is advisory. It changes no status, no recommendation and no
+ * `action`, because a branch whose name was used before is neither safer nor more
+ * dangerous than one whose name was not — `mergedIntoBase` is the fact, and it is
+ * already computed. What the flag buys is that a reader who was about to make the
+ * name-shaped inference sees, in the same record, that the inference is available
+ * to make and does not hold.
+ *
+ * ONE SCAN FOR ALL WORKTREES
+ * --------------------------
+ * Scoped to `base` rather than `--all`, and run once per collection rather than
+ * once per worktree: at 99 worktrees the per-worktree form is 99 `git log`
+ * invocations over the whole history.
+ *
+ * EVERY BRANCH NAME THE SUBJECT MENTIONS, NOT THE FIRST ONE
+ * -------------------------------------------------------
+ * Two shapes exist and the naive reading of each is wrong. `merge(<name>):` names
+ * the merged branch. `Merge branch '<a>' into <b>` names TWO branches, and the
+ * first quoted one is the branch merged *in* — so matching only the leading
+ * quote credited `main` with every "Merge branch 'main' into <feature>" on a
+ * feature branch, 126 collisions on this repository, while a branch whose name
+ * only ever appears in the `into` position got an empty list. Both names are
+ * recorded. `base` is skipped entirely: every fast-forward into it says
+ * "Merge branch 'main'", so listing it would be the base branch claiming a
+ * hundred merges of itself.
+ *
+ * A base ref that does not resolve — `--base trunk` on a clone whose default is
+ * `main` — yields an empty map. `git()` returns its fallback and never throws,
+ * which is the contract `aheadBehind` and `isMergedInto` already rely on to
+ * degrade rather than fail; re-wrapping it in a `try` that expected a throw and
+ * then reading the result outside it turned that degradation into a
+ * `TypeError` that killed the whole generator.
+ */
+export function historicalNameCollisions(cwd, base = 'main') {
+  const out = git(cwd, ['log', base, '--format=%H%x09%cI%x09%s']);
+  const found = new Map();
+  if (!out) return found;
+  for (const line of out.split('\n')) {
+    const [sha, date, subject] = line.split('\t');
+    if (!sha || !subject) continue;
+    const names = new Set([...branchNamesInSubject(subject)].filter((n) => n && n !== base));
+    if (names.size === 0) continue;
+    for (const name of names) {
+      const list = found.get(name) ?? [];
+      // Newest first, because `git log` is newest first and a reader wants the
+      // most recent merge that carries this name, not the first one ever written.
+      list.push({ sha, subject, date });
+      found.set(name, list);
+    }
+  }
+  return found;
+}
+
+/**
+ * Every branch name a merge subject mentions.
+ *
+ * Exported for its own test rather than inlined, because the two shapes are
+ * easy to get wrong in the direction that matters: attributing a collision to
+ * the wrong branch is worse than reporting none, since the field exists to stop
+ * a reader trusting a name.
+ */
+export function branchNamesInSubject(subject) {
+  const names = [];
+  const paren = /^merge\(([^)]+)\)/.exec(subject);
+  if (paren) names.push(paren[1]);
+  const into = /^Merge branch '([^']+)' into (.+)$/.exec(subject);
+  if (into) names.push(into[1], into[2]);
+  // A bare `Merge branch '<name>'` is the fast-forward wording, where the merged
+  // branch is the only name present.
+  const plain = /^Merge branch '([^']+)'/.exec(subject);
+  if (plain && !into) names.push(plain[1]);
+  return names;
 }
 
 /**

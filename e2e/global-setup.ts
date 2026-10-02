@@ -54,6 +54,47 @@ const ALLOW_ENV = 'PLAYWRIGHT_ALLOW_HEADED';
  */
 const ALLOW_REMOTE_ENV = 'E2E_ALLOW_REMOTE';
 
+/**
+ * The two ways the HTML REPORT opens a window, which is a window this file's own
+ * name never mentioned.
+ *
+ * `playwright.config.ts` sets the reporter's `open: 'never'`, and that is the only
+ * thing standing between a red local run and a live Chrome window. It is not a
+ * guarantee, for two independent reasons, both read out of the installed runner:
+ *
+ * 1. `getHtmlReportOptionProcessEnv()` is consulted FIRST and the config's `open`
+ *    only second (`playwright/lib/runner/index.js:3450`), and it reads
+ *    `PLAYWRIGHT_HTML_OPEN` and `PW_TEST_HTML_REPORT_OPEN` (`:3510-3511`). Either
+ *    one set to `always` or `on-failure` REPLACES `never`. `never` is safe and
+ *    passes, so the guard is not "this variable is set" but "this variable is set to
+ *    a value that opens something".
+ * 2. A CLI `--reporter` REPLACES the config's reporter list wholesale
+ *    (`playwright/lib/common/index.js:522`), so `open: 'never'` is discarded along
+ *    with everything else and the default becomes `on-failure` (`:3450`).
+ *
+ * `on-failure` then opens a window when the run is red AND stdin is a TTY AND
+ * `isCodingAgent()` is false (`runner/index.js:3490`), and `isCodingAgent()` is only
+ * `CLAUDECODE` or `COPILOT_CLI` (`playwright-core/lib/coreBundle.js:8195-8197`) —
+ * neither is set under Kilo. So the shape of the failure is: a red local run, a
+ * reporter override nobody connected to a window, and a browser on the operator's
+ * desktop for the rest of the run.
+ *
+ * `--add-reporter` is the same hole, and for a subtler reason: it leaves the
+ * configured `['html', { open: 'never' }]` in place and ADDS a second `html` reporter
+ * with default options (`common/index.js:522`), so the run has one that never opens
+ * and one that opens on failure.
+ */
+const HTML_OPEN_ENV_VARS = ['PLAYWRIGHT_HTML_OPEN', 'PW_TEST_HTML_REPORT_OPEN'] as const;
+
+/** The only two accepted values that open something (`runner/index.js:3401`). */
+const HTML_OPEN_VALUES: ReadonlySet<string> = new Set(['always', 'on-failure']);
+
+/** The reporter name that has an `open` option at all. */
+const HTML_REPORTER = 'html';
+
+/** The CLI flags that can put an `html` reporter on the command line. */
+const REPORTER_FLAGS = ['--reporter', '--add-reporter'] as const;
+
 export interface OwnServerCheck {
   /** False only when the run would navigate somewhere its own dev server is not. */
   permitted: boolean;
@@ -108,9 +149,18 @@ export function checkOwnServer(options: {
 
   const target = parseHttpUrl(baseUrl);
   if (!target) {
+    // REFUSED, and this is the one branch that used to permit. A base URL this
+    // function cannot parse into an origin is a run whose destination cannot be
+    // compared with the server this run started, and `file:///…/other-checkout/dist`
+    // is a value somebody can reach by typing. `scripts/e2e-run.mjs` refuses the
+    // same variable, but that is the friendly caller; this is the load-bearing one,
+    // and it was the one hole in the pair: the reason it logged said "there is no
+    // origin to verify" while the run navigated somewhere this run did not start.
     return {
-      permitted: true,
-      reason: `base URL ${JSON.stringify(baseUrl)} is not an http(s) URL, so there is no origin to verify`,
+      permitted: false,
+      reason:
+        `base URL ${JSON.stringify(baseUrl)} is not an http(s) URL, so this run cannot show that it is ` +
+        'loading the server it started',
     };
   }
 
@@ -155,6 +205,69 @@ function refuseForeignOrigin(check: OwnServerCheck): void {
   );
 }
 
+export interface CliReporterOverride {
+  /** The flag and its value as they were written, for the refusal message. */
+  raw: string;
+  /** Lower-cased reporter names, comma-separated, with empty entries dropped. */
+  names: Set<string>;
+}
+
+/**
+ * The reporter list a CLI flag put on the command line, or `null`.
+ *
+ * Both spellings commander accepts are read, because both reach the same place:
+ * `--reporter html` and `--reporter=html`. A reporter may also be a path to a module
+ * (`program.js:213`), so a name that is not one of the built-ins is kept as-is and
+ * simply will not match `html` — which is the honest answer, not a guess: a custom
+ * reporter cannot open a window this guard can see, and a custom reporter NAMED
+ * `html.js` does not become the built-in.
+ *
+ * A trailing flag with no value (`--reporter` as the last argument) yields no
+ * override rather than a throw. This function's contract is that it does not fail a
+ * run: the flag is invalid and the runner's own argument parser has already said so
+ * by the time a browser could exist, so the interesting question is only whether a
+ * WINDOW was requested, and an empty answer is the safe one.
+ */
+export function cliReporterOverride(argv: readonly string[]): CliReporterOverride | null {
+  const found: CliReporterOverride[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    for (const flag of REPORTER_FLAGS) {
+      let value: string | undefined;
+
+      if (arg === flag) {
+        value = argv[index + 1];
+        if (value === undefined) continue;
+        index += 1;
+      } else if (arg.startsWith(`${flag}=`)) {
+        value = arg.slice(flag.length + 1);
+      } else {
+        continue;
+      }
+
+      // A flag's own value never looks like a flag; commander stops at the next one.
+      if (value.startsWith('-')) {
+        index -= 1;
+        continue;
+      }
+
+      found.push({
+        raw: `${flag} ${value}`,
+        names: new Set(
+          value
+            .split(',')
+            .map((name) => name.trim().toLowerCase())
+            .filter((name) => name !== '')
+        ),
+      });
+    }
+  }
+
+  return found.length === 0 ? null : found[found.length - 1];
+}
+
 function refuseVisibleBrowser(config: FullConfig): void {
   if (process.env[ALLOW_ENV] === '1') return;
 
@@ -166,6 +279,22 @@ function refuseVisibleBrowser(config: FullConfig): void {
   // opens in the default browser.
   for (const flag of ['--headed', '--debug', '--ui']) {
     if (config.argv.includes(flag)) reasons.push(`\`${flag}\``);
+  }
+
+  // The HTML REPORT — a window, and the only one this guard missed. The rationale,
+  // and the two installed-runner line numbers that prove it, are on
+  // `HTML_OPEN_ENV_VARS` above; do not repeat them here.
+  for (const envVar of HTML_OPEN_ENV_VARS) {
+    const value = process.env[envVar]?.trim();
+    if (value !== undefined && HTML_OPEN_VALUES.has(value)) {
+      reasons.push(`\`${envVar}=${value}\`, which overrides the config's \`open: 'never'\``);
+    }
+  }
+  const reporter = cliReporterOverride(config.argv);
+  if (reporter && reporter.names.has(HTML_REPORTER)) {
+    reasons.push(
+      `\`${reporter.raw}\`, which puts an \`html\` reporter on the command line and with it the default \`open\``
+    );
   }
 
   // The authoritative check. `use.headless` is `false` here for `--headed`,

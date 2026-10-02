@@ -73,9 +73,8 @@ describe('replayHistory document source and frame branches', () => {
     expect(result.totalSize).toEqual({ width: 640, height: 480 });
   });
 
-  it('adopts the frame and layer record of a document source replayed onto a non-empty document', () => {
+  it('refuses the frame and layer record of a document source carried mid-history', () => {
     const dependencies = createDependencies();
-    const seeded = createTestLayer('seed');
     const history: HistoryItem[] = [
       { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
       {
@@ -93,10 +92,17 @@ describe('replayHistory document source and frame branches', () => {
 
     const result = replayHistory(history, 1, initialSize, dependencies);
 
-    // The replacement is total: the pre-existing 'seed' layer must not survive.
-    expect(Object.keys(result.layers)).toEqual(['layer-9']);
-    expect(result.documentFrame).toEqual({ x: 3, y: 4, width: 200, height: 100 });
-    void seeded;
+    // A document replacement means to be a WHOLE new document, so it is honoured only
+    // as the FIRST entry (`history-replay.ts:89`). Carried mid-history it would swap
+    // the layer record and resize the canvas from anywhere in the timeline, which is
+    // the same shape the durable converter already refuses as an error
+    // (`history-adapter.ts:640`) — so honouring it here is exactly the
+    // authority/shadow disagreement that gate closes. Unreachable in production: the
+    // only writer is `REPLACE_DOCUMENT` with `history: [entry]` (`useApp.ts:120`), so
+    // a `documentSource` always lands at index 0.
+    expect(Object.keys(result.layers)).toEqual(['layer-1']);
+    expect(result.layers['layer-9']).toBeUndefined();
+    expect(result.documentFrame).toEqual({ x: 0, y: 0, width: 400, height: 300 });
   });
 
   it.each([

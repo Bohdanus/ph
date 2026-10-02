@@ -31,9 +31,32 @@ const TOOL_BUTTON_ACTIVE_CLASS =
 const TOOL_BUTTON_INACTIVE_CLASS =
   'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
+/**
+ * The one/two-column toggle's glyph, and WHICH WAY IT POINTS.
+ *
+ * It points the way the rail is about to MOVE, not the way it is currently arranged:
+ * a one-column rail grows a second column to the right when this is pressed, so it shows
+ * `»`, and a two-column rail shrinks back to one and shows `«`. That is Photoshop's own
+ * mapping, read off its toolbar screenshots in both states — a one-column Tools panel shows
+ * a right-pointing double chevron at the top of the rail, and the same button shows a
+ * left-pointing one once the toolbar has been expanded to two columns. Adobe's documentation
+ * does not describe the control's direction in words anywhere, so the glyph here rests on
+ * those images; what the documentation does say is only that the double arrows toggle the
+ * layout, which is what the `aria-label` and `title` below carry.
+ *
+ * It was the other way round, and nothing in the repository noticed: `«` in one column says
+ * "press me and the rail moves left", which is the opposite of what happens. That also made it
+ * the opposite of the dock's own collapse control, which draws `{isCollapsed ? '»' : '«'}`
+ * (`SidebarRight`'s `dock-collapse-toggle`) and therefore already used this mapping — outward to
+ * grow, inward to shrink. Two controls in one application pointing opposite ways at the same
+ * idea is the whole defect; the fix makes them agree rather than documenting that they differ.
+ *
+ * The glyph is pinned by `SidebarLeft.layout.test.tsx`, in both states, because a character in a
+ * JSX span is exactly the kind of thing a refactor silently swaps.
+ */
 const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   <span aria-hidden="true" className="flex items-center justify-center text-lg leading-none font-black tracking-tight">
-    <span>{singleColumn ? '«' : '»'}</span>
+    <span>{singleColumn ? '»' : '«'}</span>
   </span>
 );
 
@@ -994,7 +1017,14 @@ const SidebarLeft = () => {
     // axes — one column has one row per group, so row 12 is in section 4 — and using one for
     // the other is how the tile ends up pushed off the end of the array.
     const lastVisibleRow = toolbarSlots[overflowPlan.fittedThrough - 1];
-    const target = lastVisibleRow?.sectionIndex ?? singleColumnSections.length - 1;
+    // The LAST SECTION is the wrong fallback for the row that is not there. With nothing
+    // fitted — the degenerate band, a window too short to hold a tool row and the three-dots
+    // tile's row together — `toolbarSlots[-1]` is undefined, and the fallback put the lone tile
+    // in the last section, whose `<ul>` carries `mt-1.5 border-t pt-1.5`. That is 13px of separator
+    // chrome for a separator with nothing above it, and the planner charges a lone tile
+    // `tileHeight` and nothing more, so the model was 13px short of the screen in exactly the
+    // state where the slot has no pixels to spare. Section 0 carries none of it.
+    const target = lastVisibleRow?.sectionIndex ?? 0;
     singleColumnSections[target].entries.push({ kind: 'overflow' });
   }
 
@@ -1136,7 +1166,8 @@ const SidebarLeft = () => {
           // `overflow-y-auto`, not `overflow-hidden`, and the difference is the difference
           // between a tile that is somewhere else and a tile that is gone. The fit already
           // keeps the tiles inside the slot — it reserves a row for the three-dots tile and
-          // then fills no more than the 80% budget — so this scrollbar never appears. It is
+          // then fills the budget with whole rows, so what is left over is the fraction of a
+          // row that no tile can use — so this scrollbar never appears. It is
           // here so that IF the arithmetic is ever wrong, the tools it misjudged are still
           // reachable by scrolling rather than clipped out of existence. A rail that could
           // hide a tool is a worse failure than a rail that scrolls.
@@ -1148,7 +1179,9 @@ const SidebarLeft = () => {
           // nothing while the element that can actually overflow paints a bar. The slot is
           // narrow — 56px — and the degenerate band is where it goes, so the window is small,
           // but "the last tile is unreachable" is not a trade worth a pixel-wide bar.
-          className="scrollbar-none flex min-h-0 w-full flex-1 justify-center overflow-y-auto"
+          // Keep one overflow tile reachable in a degenerate short desktop row without letting
+          // the full tool list become the grid's minimum height.
+          className="scrollbar-none flex min-h-0 min-h-11 w-full flex-1 justify-center overflow-y-auto"
           data-testid="left-toolbar-slot"
           ref={attachSlot}
         >
@@ -1237,12 +1270,21 @@ const SidebarLeft = () => {
               data-testid="foreground-color-swatch"
             />
 
+            {/*
+              `opacity-0` hides PIXELS, not the accessibility tree and not the tab
+              order: `element.focus()` still lands on these, so without a name they
+              are two unlabelled "colour" controls a screen reader reaches between
+              the swatches. `e2e/accessibility.spec.ts` reports this as a CRITICAL
+              `label` violation, and all ~172 `getByRole` locators in `e2e/` miss it
+              because nothing ever queried them for an accessible name.
+            */}
             <input
               type="color"
               ref={colorInputRef}
               className="absolute opacity-0 pointer-events-none"
               value={color}
               onChange={handleColorChange}
+              aria-label="Foreground Color"
               data-testid="foreground-color-input"
             />
             <input
@@ -1251,13 +1293,15 @@ const SidebarLeft = () => {
               className="absolute opacity-0 pointer-events-none"
               value={backgroundColor}
               onChange={handleBgColorChange}
+              aria-label="Background Color"
               data-testid="background-color-input"
             />
           </div>
 
+          {/* gray-500 on the gray-100 panel measured 4.39:1, under WCAG AA's 4.5:1. */}
           <button
             onClick={handleSwapColors}
-            className="mt-1 text-[8px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 uppercase font-bold"
+            className="mt-1 text-[8px] text-gray-600 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-200 uppercase font-bold"
             title="Swap Colors"
             data-testid="swap-colors-button"
           >

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileMenuDrawer } from '../MobileMenuDrawer.tsx';
+import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
 
 const openNewImageDialogMock = vi.hoisted(() => vi.fn());
 const openLoadImageDialogMock = vi.hoisted(() => vi.fn());
@@ -17,6 +18,10 @@ const dispatchMock = vi.hoisted(() => vi.fn());
 const storeStateMock = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
   currentArgs: { current: {} as Record<string, unknown> },
+  // A REF, like `currentArgs`: the provider reads `previewLayers.current` at the moment the
+  // question is asked, and a plain object would make the whole tree see an in-flight preview
+  // transaction — a prompt with no possible answer but "Discard".
+  previewLayers: { current: {} as Record<string, unknown> },
   fileName: 'photo.jpg',
   totalSize: { width: 800, height: 600 },
   hasImage: true,
@@ -52,30 +57,59 @@ vi.mock('../../../contexts/ThemeContext.tsx', () => ({
   useTheme: () => ({ theme: 'dark', toggleTheme: vi.fn() }),
 }));
 
+/**
+ * The provider is REAL, never mocked: it reads the `useStore` mock above and nothing else,
+ * so `New` and `Open` below exercise the shipped guard and its shipped modal rather than a
+ * hand-written stand-in for one. It renders no DOM of its own while no prompt is up, so a
+ * closed drawer still leaves an empty container.
+ */
+const renderDrawer = (isOpen: boolean, onClose: () => void = vi.fn()) =>
+  render(
+    <UnsavedChangesProvider>
+      <MobileMenuDrawer isOpen={isOpen} onClose={onClose} />
+    </UnsavedChangesProvider>
+  );
+
 const Harness = () => {
   const [isOpen, setIsOpen] = useState(false);
   return (
-    <>
+    <UnsavedChangesProvider>
       <button type="button" onClick={() => setIsOpen(true)}>
         Open menu
       </button>
       <MobileMenuDrawer isOpen={isOpen} onClose={() => setIsOpen(false)} />
-    </>
+    </UnsavedChangesProvider>
   );
 };
+
+/**
+ * `renderDrawer` is given an `onClose` spy that unmounts nothing, so it cannot show WHEN
+ * the drawer closed. The stacked-`aria-modal` claim needs a drawer that really goes away,
+ * and this is that drawer.
+ */
+const ClosingDrawer = () => {
+  const [isOpen, setIsOpen] = useState(true);
+  return (
+    <UnsavedChangesProvider>
+      <MobileMenuDrawer isOpen={isOpen} onClose={() => setIsOpen(false)} />
+    </UnsavedChangesProvider>
+  );
+};
+
+const drawerDialog = () => screen.queryByRole('dialog', { name: 'Mobile Navigation Menu' });
 
 describe('MobileMenuDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     storeStateMock.hasUnsavedChanges = false;
     storeStateMock.currentArgs.current = {};
+    storeStateMock.previewLayers.current = {};
     storeStateMock.hasImage = true;
     storeStateMock.canvasRef.current = document.createElement('canvas');
     commitDirtyToolMock.mockReturnValue({});
     openNewImageDialogMock.mockResolvedValue({ color: '#fff', opacity: 1, size: { width: 4, height: 4 } });
     openLoadImageDialogMock.mockResolvedValue({ fileName: 'loaded.png' });
     openSaveImageDialogMock.mockResolvedValue({ fileName: 'out.png' });
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -85,23 +119,42 @@ describe('MobileMenuDrawer', () => {
   describe('New', () => {
     it('opens the new-document dialog on a clean document', async () => {
       const user = userEvent.setup();
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
-      expect(window.confirm).not.toHaveBeenCalled();
-      expect(openNewImageDialogMock).toHaveBeenCalledTimes(1);
+      // What `expect(window.confirm).not.toHaveBeenCalled()` used to claim — no prompt was put
+      // in front of the user — is now claimed against the prompt itself: `confirmDiscard`
+      // answers `true` outright when there is nothing to discard, so nothing is rendered.
+      await waitFor(() => expect(openNewImageDialogMock).toHaveBeenCalledTimes(1));
+      expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
       expect(setBlankImageMock).toHaveBeenCalledTimes(1);
     });
 
     it('refuses and opens nothing when there are unsaved changes and the user declines', async () => {
       const user = userEvent.setup();
       storeStateMock.hasUnsavedChanges = true;
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
-      expect(window.confirm).toHaveBeenCalledWith('Discard unsaved changes and start a new image?');
+      // The prompt is not there synchronously: the handler awaits `confirmDiscard`, which
+      // renders the dialog and resolves from the answer.
+      expect(await screen.findByTestId('confirm-dialog')).toBeInTheDocument();
+      // The copy is the one the native `confirm()` was given, verbatim, now in the app's own
+      // modal — so this is the same claim about the same question, asked of a different widget.
+      expect(screen.getByText('Discard unsaved changes and start a new image?')).toBeInTheDocument();
+      // The drawer is closed BEFORE the guard runs — `onClose()` precedes
+      // `confirmDiscard`, which is the ordering the desktop File menu uses and the one this
+      // file already used for Export. It is what keeps a single `aria-modal` promise in the
+      // tree: this drawer declares one and so does the prompt. `renderDrawer(true)` passes
+      // a mock `onClose` that does not unmount anything, so the drawer element is still
+      // here for the rest of the test; the ordering is asserted separately, in the two
+      // "closes the drawer before it asks" rows below.
+
+      await user.click(screen.getByTestId('confirm-dialog-cancel-button'));
+
+      await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
       expect(openNewImageDialogMock).not.toHaveBeenCalled();
       expect(setBlankImageMock).not.toHaveBeenCalled();
     });
@@ -109,13 +162,33 @@ describe('MobileMenuDrawer', () => {
     it('proceeds when the user accepts the discard', async () => {
       const user = userEvent.setup();
       storeStateMock.hasUnsavedChanges = true;
-      vi.spyOn(window, 'confirm').mockReturnValue(true);
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
-      expect(openNewImageDialogMock).toHaveBeenCalledTimes(1);
+      const confirm = await screen.findByTestId('confirm-dialog-confirm-button');
+      expect(confirm).toHaveTextContent('Discard');
+      await user.click(confirm);
+
+      await waitFor(() => expect(openNewImageDialogMock).toHaveBeenCalledTimes(1));
       expect(setBlankImageMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the drawer before it asks, so one aria-modal promise is ever in the tree', async () => {
+      const user = userEvent.setup();
+      storeStateMock.hasUnsavedChanges = true;
+      render(<ClosingDrawer />);
+
+      await user.click(screen.getByRole('button', { name: /New Document/ }));
+      expect(await screen.findByTestId('confirm-dialog')).toBeInTheDocument();
+
+      // The ordering, not merely the fact of closing: this drawer declares
+      // `aria-modal="true"` (`MobileMenuDrawer.tsx:86`) and so does the prompt, and two
+      // modal promises at once tell assistive technology nothing about which is topmost.
+      // `onClose()` therefore precedes `confirmDiscard`, which is the order the desktop
+      // File menu uses and the order Export in this same file already used.
+      expect(drawerDialog()).not.toBeInTheDocument();
+      expect(screen.getAllByRole('dialog')).toHaveLength(1);
     });
 
     it('guards on an unplaced text layer, which has not reached hasUnsavedChanges yet', async () => {
@@ -126,11 +199,13 @@ describe('MobileMenuDrawer', () => {
         text: 'hello',
         rect: { x: 0, y: 0, width: 10, height: 10 },
       };
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
-      expect(window.confirm).toHaveBeenCalled();
+      // `hasUnsavedChanges` is `false` for the whole of this gesture, and the prompt still
+      // appears: the guard reads the live refs, so the typed-but-unplaced box is caught.
+      expect(await screen.findByTestId('confirm-dialog')).toBeInTheDocument();
       expect(openNewImageDialogMock).not.toHaveBeenCalled();
     });
 
@@ -138,7 +213,7 @@ describe('MobileMenuDrawer', () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const user = userEvent.setup();
       openNewImageDialogMock.mockRejectedValue(new Error('dialog exploded'));
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
@@ -151,7 +226,7 @@ describe('MobileMenuDrawer', () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const user = userEvent.setup();
       openNewImageDialogMock.mockRejectedValue('plain failure');
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /New Document/ }));
 
@@ -165,23 +240,29 @@ describe('MobileMenuDrawer', () => {
   describe('Open', () => {
     it('opens the file dialog on a clean document', async () => {
       const user = userEvent.setup();
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Open Image/ }));
 
-      expect(window.confirm).not.toHaveBeenCalled();
-      expect(openLoadImageDialogMock).toHaveBeenCalledTimes(1);
+      // Same claim as the `New` counterpart: no prompt appeared, and the picker opened anyway.
+      await waitFor(() => expect(openLoadImageDialogMock).toHaveBeenCalledTimes(1));
+      expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
       expect(setImageFromUploadMock).toHaveBeenCalledTimes(1);
     });
 
     it('refuses and opens nothing when there are unsaved changes and the user declines', async () => {
       const user = userEvent.setup();
       storeStateMock.hasUnsavedChanges = true;
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Open Image/ }));
 
-      expect(window.confirm).toHaveBeenCalledWith('Discard unsaved changes and open another file?');
+      expect(await screen.findByTestId('confirm-dialog')).toBeInTheDocument();
+      expect(screen.getByText('Discard unsaved changes and open another file?')).toBeInTheDocument();
+
+      await user.click(screen.getByTestId('confirm-dialog-cancel-button'));
+
+      await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
       expect(openLoadImageDialogMock).not.toHaveBeenCalled();
       expect(setImageFromUploadMock).not.toHaveBeenCalled();
     });
@@ -189,20 +270,38 @@ describe('MobileMenuDrawer', () => {
     it('proceeds when the user accepts the discard', async () => {
       const user = userEvent.setup();
       storeStateMock.hasUnsavedChanges = true;
-      vi.spyOn(window, 'confirm').mockReturnValue(true);
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Open Image/ }));
 
-      expect(openLoadImageDialogMock).toHaveBeenCalledTimes(1);
+      const confirm = await screen.findByTestId('confirm-dialog-confirm-button');
+      expect(confirm).toHaveTextContent('Discard');
+      await user.click(confirm);
+
+      await waitFor(() => expect(openLoadImageDialogMock).toHaveBeenCalledTimes(1));
       expect(setImageFromUploadMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the drawer before it asks, so one aria-modal promise is ever in the tree', async () => {
+      const user = userEvent.setup();
+      storeStateMock.hasUnsavedChanges = true;
+      render(<ClosingDrawer />);
+
+      await user.click(screen.getByRole('button', { name: /Open Image/ }));
+      expect(await screen.findByTestId('confirm-dialog')).toBeInTheDocument();
+
+      // The `New` counterpart's claim, asserted on the second surface rather than trusted
+      // from the first: two `aria-modal="true"` elements at once is the ambiguity, and
+      // `onClose()` has to run before the guard for there to be only one.
+      expect(drawerDialog()).not.toBeInTheDocument();
+      expect(screen.getAllByRole('dialog')).toHaveLength(1);
     });
 
     it('logs the rejection with the picker detail and keeps the current document', async () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const user = userEvent.setup();
       openLoadImageDialogMock.mockRejectedValue(new Error('read failed'));
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Open Image/ }));
 
@@ -214,7 +313,7 @@ describe('MobileMenuDrawer', () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const user = userEvent.setup();
       openLoadImageDialogMock.mockRejectedValue({ code: 42 });
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Open Image/ }));
 
@@ -227,7 +326,7 @@ describe('MobileMenuDrawer', () => {
     it('commits the dirty tool before opening the save dialog, and carries the committed layers', async () => {
       const user = userEvent.setup();
       commitDirtyToolMock.mockReturnValue({ committed: 'layer' });
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
 
@@ -242,7 +341,7 @@ describe('MobileMenuDrawer', () => {
 
     it('is disabled with no document', () => {
       storeStateMock.hasImage = false;
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       expect(screen.getByRole('button', { name: /Export \/ Save Image/ })).toBeDisabled();
     });
@@ -251,7 +350,7 @@ describe('MobileMenuDrawer', () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const user = userEvent.setup();
       openSaveImageDialogMock.mockRejectedValue(new Error('encoder died'));
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
 
@@ -265,7 +364,7 @@ describe('MobileMenuDrawer', () => {
       commitDirtyToolMock.mockImplementation(() => {
         throw new Error('commit failed');
       });
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
 
@@ -279,7 +378,7 @@ describe('MobileMenuDrawer', () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const user = userEvent.setup();
       openSaveImageDialogMock.mockRejectedValue('disk offline');
-      render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+      renderDrawer(true);
 
       await user.click(screen.getByRole('button', { name: /Export \/ Save Image/ }));
 
@@ -288,9 +387,13 @@ describe('MobileMenuDrawer', () => {
     });
   });
 
+  // The tests from here on drive the drawer itself, and the store is clean in every one of
+  // them, so no discard prompt is in the tree: the role queries below see the drawer alone.
   it('renders nothing while closed, which is what keeps it out of the tab order', () => {
-    const { container } = render(<MobileMenuDrawer isOpen={false} onClose={vi.fn()} />);
+    const { container } = renderDrawer(false);
 
+    // The provider contributes no element while no prompt is pending, so an empty container
+    // is still a statement about the drawer.
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -302,6 +405,8 @@ describe('MobileMenuDrawer', () => {
     expect(screen.getByRole('dialog', { name: 'Mobile Navigation Menu' })).toBeInTheDocument();
 
     await user.keyboard('{Escape}');
+    // Valid because no prompt is open: with one up it is the PROMPT that owns Escape, and
+    // this query would be reading two dialogs rather than one.
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -341,9 +446,11 @@ describe('MobileMenuDrawer', () => {
   it('closes from the backdrop and the close button', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    render(<MobileMenuDrawer isOpen={true} onClose={onClose} />);
+    renderDrawer(true, onClose);
 
-    fireEvent.click(screen.getByRole('dialog').firstElementChild!);
+    // The backdrop is the drawer's own first child. Scoped to this dialog on purpose: with a
+    // discard prompt open there are two, and the prompt's backdrop would answer this click.
+    fireEvent.click(screen.getByRole('dialog', { name: 'Mobile Navigation Menu' }).firstElementChild!);
     expect(onClose).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole('button', { name: 'Close menu' }));
@@ -351,8 +458,10 @@ describe('MobileMenuDrawer', () => {
   });
 
   it('keeps every control at least 44px on both axes', () => {
-    render(<MobileMenuDrawer isOpen={true} onClose={vi.fn()} />);
+    renderDrawer(true);
 
+    // The drawer's own controls only: a discard prompt's buttons carry no `min-h-11`, so this
+    // is a claim about the drawer and holds because the store is clean here.
     for (const control of screen.getAllByRole('button')) {
       expect(control.className).toMatch(/min-h-11/);
     }

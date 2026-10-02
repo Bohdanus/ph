@@ -1,4 +1,4 @@
-import { expect, type Page, test, type TestInfo } from '@playwright/test';
+import { expect, type Page, test, type TestInfo } from './fixtures/extended-test';
 import {
   type BoundingBox,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
@@ -22,7 +22,7 @@ import {
 } from './helpers/canvas-helpers';
 import { cssPointToImage } from './helpers/screenshot-scale';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 /** `#cc0000`, the colour every spec here strokes with. */
@@ -189,6 +189,27 @@ async function remeasureCanvasBox(page: Page): Promise<BoundingBox> {
   return box!;
 }
 
+/**
+ * Selects the Levels panel through `Image ▸ Adjustments ▸ Brightness/Contrast`.
+ *
+ * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
+ * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
+ * is clicked. `levels` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
+ * and no `tools-menu-levels-button`, and the `[Colors, Levels, Transform]` flyout that used to
+ * hold it is gone from `toolbarMap`.
+ *
+ * NOT `image-menu-adjustments-levels-button`. That button exists, it carries the label
+ * `Levels`, and it is `disabled` — the real `Levels` adjustment is unbuilt, so the item
+ * carrying that name selects nothing. `Brightness/Contrast` is the enabled item that mounts
+ * the `levels` panel these specs drive, and the slug is `slugifyToolLabel('Brightness/Contrast')`
+ * (`toolbar-mapping.ts`), i.e. the `/` collapsed to one `-`.
+ */
+async function openLevelsTool(page: Page): Promise<void> {
+  await page.getByTestId('header-image-menu-button').click();
+  await page.getByTestId('image-menu-adjustments-button').click();
+  await page.getByTestId('image-menu-adjustments-brightness-contrast-button').click();
+}
+
 // The Levels sliders are labelled by a <label for> plus a live value suffix, so their
 // accessible names read "Brightness 0%" and "Contrast 0%" — `defaultSettings.levels`
 // is `{ brightness: 0, contrast: 0 }` and a fresh context starts there. Matching the
@@ -217,9 +238,8 @@ test.describe('Levels adjustment', () => {
     await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
     await waitForRedStroke(page, box!);
 
-    // Open Colors flyout and select Levels
-    await openToolFlyout(page, 'color');
-    await selectFromFlyout(page, { toolName: 'levels', label: 'Levels' });
+    // Image ▸ Adjustments ▸ Brightness/Contrast is the item that selects the Levels panel.
+    await openLevelsTool(page);
 
     const brightness = page.getByRole('slider', { name: /Brightness/ });
     await expect(brightness).toBeVisible();
@@ -285,9 +305,8 @@ test.describe('Levels adjustment', () => {
     await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
     await waitForRedStroke(page, box!);
 
-    // Open Colors flyout and select Levels
-    await openToolFlyout(page, 'color');
-    await selectFromFlyout(page, { toolName: 'levels', label: 'Levels' });
+    // Image ▸ Adjustments ▸ Brightness/Contrast is the item that selects the Levels panel.
+    await openLevelsTool(page);
 
     const contrast = page.getByRole('slider', { name: /Contrast/ });
     await expect(contrast).toBeVisible();
@@ -352,8 +371,7 @@ test.describe('Levels adjustment', () => {
     // state waited for below cannot have existed before the slider moved.
     expect(await hasDarkPixels(original), 'The unadjusted stroke should have no dark pixel').toBe(false);
 
-    await openToolFlyout(page, 'color');
-    await selectFromFlyout(page, { toolName: 'levels', label: 'Levels' });
+    await openLevelsTool(page);
     const adjustedBox = await remeasureCanvasBox(page);
 
     const brightness = page.getByRole('slider', { name: /Brightness/ });

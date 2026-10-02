@@ -89,6 +89,36 @@ afterEach(() => {
 });
 
 describe('useLayers commitDirtyTool presentation promotion', () => {
+  it('gives a pixel processor the retained affine presentation and transformed bounds', () => {
+    const raster = new OffscreenCanvas(80, 20);
+    const source = makeLayer('edited', 0, {
+      operations: [
+        {
+          id: 'scale',
+          kind: 'affine-transform',
+          transform: { a: 2, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+    });
+    const processor = vi.spyOn(toolProcessors.brush, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const params = processor.mock.calls[0]![0] as { bitmap: OffscreenCanvas; size: Layer['pos'] };
+    expect(params.bitmap).not.toBe(source.bitmap);
+    expect(params.bitmap.width).toBe(80);
+    expect(params.bitmap.height).toBe(20);
+    expect(params.size).toEqual({ x: 0, y: 0, width: 80, height: 20 });
+    processor.mockRestore();
+  });
+
   it('materialises a tool-less preview canvas onto the committed layer without a history entry', async () => {
     // A preview can be staged by a document-scoped consumer that only owns a
     // raster draft (no replayable tool args). Promoting it is a presentation
@@ -234,16 +264,11 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const before = result.current.store.layers;
 
-    // Dispatched through the store's own dispatch, the same function `useLayers`
-    // commits with, so this is the hook path and not a direct reducer call.
+    // Called through the store's internal handle, the same path `useLayers`
+    // commits with, so this is not a direct reducer call.
     act(() => {
-      result.current.dispatch({
-        type: 'PUBLISH_RUNTIME_PRESENTATION',
-        payload: {
-          layers: {
-            edited: { ...before.edited!, name: 'Renamed by a refused publication', bitmap: cache, tmpCanvas: null },
-          },
-        },
+      result.current.store.publishRuntimePresentation({
+        edited: { ...before.edited!, name: 'Renamed by a refused publication', bitmap: cache, tmpCanvas: null },
       });
     });
 

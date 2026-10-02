@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '../fixtures/extended-test';
 import { getSelectionBounds, getColorAtPoint, getDarkPixelBounds, loadImageData } from './canvas-helpers';
 
 interface DrawingShape {

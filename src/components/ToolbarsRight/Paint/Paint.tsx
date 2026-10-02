@@ -11,6 +11,7 @@ import {
   matchPaintPreset,
 } from '../../../tools/brush.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
+import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
 import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
@@ -44,6 +45,7 @@ export const createPaintToolbar = (toolName: PaintBarToolName): ToolbarRightComp
     const [{ color, containerRef, totalSize }] = useStore();
     const { getToolArgs, patchToolArgs, setToolArgs } = useCurrentTool();
     const [brushScale, setBrushScale] = useState<number>(0);
+    const dpr = useDevicePixelRatio();
     const previewRef = useRef<HTMLCanvasElement | null>(null);
 
     const args = getToolArgs(toolName);
@@ -74,9 +76,14 @@ export const createPaintToolbar = (toolName: PaintBarToolName): ToolbarRightComp
       ctx.imageSmoothingQuality = 'low';
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const radius = PREVIEW_HEIGHT / 2.2 / brushScale;
-      const centerX = PREVIEW_WIDTH / 2.1 / brushScale;
-      const centerY = PREVIEW_HEIGHT / 2.4 / brushScale;
+      // `brushScale` is the workspace contain fit (CSS px per document px), so the thumbnail is a
+      // miniature of the stroke at the size it will actually have on the canvas. `dpr` multiplies
+      // every length below: the raster is rendered at DEVICE resolution and then drawn 1:1 into a
+      // dpr-sized backing store. Drawing it scaled instead would put back exactly the softness this
+      // removes, because the source would be a low-resolution bitmap blown up.
+      const radius = (PREVIEW_HEIGHT / 2.2 / brushScale) * dpr;
+      const centerX = (PREVIEW_WIDTH / 2.1 / brushScale) * dpr;
+      const centerY = (PREVIEW_HEIGHT / 2.4 / brushScale) * dpr;
 
       // A three-point arc, so the Smoothing control has an interior sample to act
       // on: a straight two-point stroke is already its own smoothing.
@@ -92,13 +99,20 @@ export const createPaintToolbar = (toolName: PaintBarToolName): ToolbarRightComp
       // what the bar shows is what the canvas gets. `toolName` is `'draw'` because
       // that is the only renderer; brush and pencil both force `penType` at
       // `src/tools/toolProcessors.ts:169,182`.
-      const previewArgs: DrawToolArgs = { ...args, penType: 'pen', toolName: 'draw', color, points: arcPoints };
+      const previewArgs: DrawToolArgs = {
+        ...args,
+        penType: 'pen',
+        toolName: 'draw',
+        color,
+        points: arcPoints,
+        lineWidth: args.lineWidth * dpr,
+      };
       const [toolCanvas] = draw({
-        size: { width: PREVIEW_WIDTH / brushScale, height: PREVIEW_HEIGHT / brushScale },
+        size: { width: (PREVIEW_WIDTH * dpr) / brushScale, height: (PREVIEW_HEIGHT * dpr) / brushScale },
       })(previewArgs);
 
-      ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-    }, [args, brushScale, color]);
+      ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH * dpr, PREVIEW_HEIGHT * dpr);
+    }, [args, brushScale, color, dpr]);
 
     if (!args) return null;
 
@@ -214,7 +228,7 @@ export const createPaintToolbar = (toolName: PaintBarToolName): ToolbarRightComp
             isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
           }`}
         >
-          <canvas ref={previewRef} width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} />
+          <canvas ref={previewRef} width={PREVIEW_WIDTH * dpr} height={PREVIEW_HEIGHT * dpr} className="h-12 w-24" />
         </div>
       </div>
     );

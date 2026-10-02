@@ -96,9 +96,19 @@ const longPress = (button: HTMLElement) => {
 
 const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
 
+/**
+ * The "a flyout tile is named and captioned by its first entry" rule, over every flyout that
+ * is still on the rail.
+ *
+ * `color` is not here: it was the first entry of a three-wide flyout that also carried `levels`
+ * and `transform`, and all three are now `Image ▸ Adjustments` / `Edit ▸ Transform` COMMANDS
+ * with no Tools-panel tile. The rule itself is unchanged and still live here — the four
+ * remaining cases are all real multi-entry groups of `toolbarMap`, and the Brush and Pen cases
+ * are the ones that carry the rule for a group whose members are distinct tools rather than
+ * five figures of one `shape` name.
+ */
 const groupedToolCases = [
   { title: 'Lasso Tool', name: 'freehand-lasso', item: 'Lasso Tool' },
-  { title: 'Colors', name: 'color', item: 'Colors' },
   { title: 'Brush', name: 'brush', item: 'Brush Tool' },
   { title: 'Pen', name: 'pen', item: 'Pen Tool' },
   { title: 'Rectangle Tool', name: 'shape', item: 'Rectangle Tool' },
