@@ -49,9 +49,14 @@ export const toolbarMap = [
       { label: 'Single Column Marquee Tool', name: 'single-column-marquee' },
     ],
     [
+      // All three lasso tools share `L` in Photoshop, and `Shift+L` is the cycling key rather
+      // than a second binding on one member. So the letter belongs to the tile and only the
+      // tile declares it, exactly as the marquee group above does. The cycling key itself is
+      // recorded as the Photoshop shortcut in `src/tools/descriptions/selection.ts`, which is
+      // where a key that belongs to the group rather than to a tool belongs.
       { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
       { label: 'Polygonal Lasso Tool', name: 'polygonal-lasso' },
-      { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso', shortcut: 'Shift+L' },
+      { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso' },
     ],
     // The Quick Selection shares the Magic Wand's tile because Photoshop puts the two
     // adjacent, and the Wand is the tile's identity as the first entry.

@@ -748,6 +748,108 @@ describe('useRect drag geometry', () => {
   });
 });
 
+/**
+ * `allowOutsideCanvas` changes the PAINTED geometry, and only for the one consumer that asks.
+ *
+ * By default the rect is clamped to the canvas before it is painted, so a marquee, a Move box or a
+ * text box dragged past the image edge snaps back to it. That is what every consumer wants and
+ * what `useRect drag geometry` above pins. Crop's box is a window onto a canvas that extends past
+ * the image, and there the clamp was the wrong answer: the box shrank on screen while the rect
+ * `onChange`/`onChangeEnd` reported — and the crop committed — kept the overhang, so the two
+ * disagreed. With the prop the true rect is painted and the backing store clips it, which is why
+ * the overhang is still legible and why the DOM frame (a separate area's job) is needed at all.
+ */
+describe('useRect painting outside the canvas', () => {
+  beforeEach(resetPointerMock);
+
+  /** A drag from inside the document to up and to the left of its origin corner. */
+  function dragOutOfBounds(props: Partial<UseRectProps>) {
+    const { ctx, result, event, flushFrame } = setup(props);
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(-100, -50));
+    });
+    flushFrame();
+
+    return { ctx, result, event };
+  }
+
+  it('paints the true rect, its blend cut-out and its four handles where the pointer left it', () => {
+    const { ctx } = dragOutOfBounds({ allowOutsideCanvas: true });
+
+    // -100,-50 with a 150x110 extent: the overhang is painted, not pulled back to the origin.
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(-100, -50, 150, 110);
+    // The cut-out follows the true rect, and the backing store clips it to the document.
+    expect(ctx.clearRect).toHaveBeenLastCalledWith(-100, -50, 150, 110);
+    // The dim is the document, not the selection, so it is unchanged by the prop.
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
+
+    const handle = HANDLE_SIZE;
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
+  });
+
+  it('leaves the clamped painting and handles in place for a consumer that does not opt in', () => {
+    const { ctx } = dragOutOfBounds({});
+
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(0, 0, 50, 60);
+    expect(ctx.clearRect).toHaveBeenLastCalledWith(0, 0, 50, 60);
+
+    // The handles are derived from the painted rect, so the clamp moves them too — which is the
+    // snap-back this prop exists to switch off, pinned for everyone who does not set it.
+    const handle = HANDLE_SIZE;
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
+  });
+
+  it('paints a rect that stays inside the document identically with and without the prop', () => {
+    const painted = (props: Partial<UseRectProps>) => {
+      const { ctx, result, event, flushFrame } = setup(props);
+
+      // Fractional pointer coords, so this also pins that the prop does not smuggle a second
+      // rounding rule in: both paths round each edge once and derive the extent from the rounds.
+      startDrag({ result, event }, { x: 100.4, y: 100.6 });
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(event(300.4, 250.6));
+      });
+      flushFrame();
+
+      return vi.mocked(ctx.strokeRect).mock.calls.at(-1);
+    };
+
+    const clamped = painted({});
+    expect(clamped).toEqual([100, 101, 200, 150]);
+    expect(painted({ allowOutsideCanvas: true })).toEqual(clamped);
+  });
+
+  it('still reports the unclamped rect to onChange and onChangeEnd', () => {
+    const onChange = vi.fn();
+    const onChangeEnd = vi.fn();
+    const { result, event, flushFrame } = setup({ allowOutsideCanvas: true, onChange, onChangeEnd });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(-100, -50));
+    });
+    flushFrame();
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(-100, -50));
+    });
+
+    // The reports were never clamped — this prop must not have changed what crop commits either.
+    const expected = { x1: -100, y1: -50, x2: 50, y2: 60 };
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
 describe('useRect pointer up and move tool', () => {
   beforeEach(resetPointerMock);
 

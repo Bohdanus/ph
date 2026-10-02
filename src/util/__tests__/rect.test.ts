@@ -2,6 +2,7 @@ import type { RefObject } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   sortRect,
+  sortRoundRect,
   trimRect,
   trimRect2,
   sortedRectToPos,
@@ -127,6 +128,43 @@ describe('trimRect2', () => {
     const wide: Size = { width: 800, height: 800 };
     const rect: RectXY = { x1: 700, y1: 700, x2: 850, y2: 850 };
     expect(trimRect2(rect, wide)).toEqual({ x1: 700, y1: 700, x2: 800, y2: 800 });
+  });
+});
+
+describe('sortRoundRect', () => {
+  it('sorts an inverted rect into a positive-extent pos', () => {
+    const rect: RectXY = { x1: 50, y1: 60, x2: 10, y2: 20 };
+    expect(sortRoundRect(rect)).toEqual({ x: 10, y: 20, width: 40, height: 40 });
+  });
+
+  it('allows an edge past the image size, because it is never given one', () => {
+    // The crop rectangle may extend the canvas past the image, which is the whole point of
+    // this function: `trimRect` clamps the same input to `{x: 0, y: 100, width: 100, height: 400}`.
+    const rect: RectXY = { x1: -60, y1: 100, x2: 740, y2: 500 };
+    expect(sortRoundRect(rect)).toEqual({ x: -60, y: 100, width: 800, height: 400 });
+  });
+
+  it('derives the extent from the rounded edges, not the unrounded span', () => {
+    const rect: RectXY = { x1: -10.4, y1: 0.2, x2: 100.6, y2: 50.5 };
+    const result = sortRoundRect(rect);
+    expect(result.x).toBe(-10);
+    expect(result.y).toBe(0);
+    expect(result.width).toBe(111);
+    expect(result.height).toBe(51);
+    expect(result.x + result.width).toBe(Math.round(100.6));
+    expect(result.y + result.height).toBe(Math.round(50.5));
+  });
+
+  it('returns a zero extent for a degenerate rect, so emptiness guards keep working', () => {
+    const rect: RectXY = { x1: 30, y1: 30, x2: 30, y2: 30 };
+    expect(sortRoundRect(rect)).toEqual({ x: 30, y: 30, width: 0, height: 0 });
+  });
+
+  it('does not mutate its argument', () => {
+    const rect: RectXY = { x1: 50.4, y1: 60.6, x2: 10.4, y2: 20.6 };
+    const frozen = Object.freeze({ ...rect });
+    sortRoundRect(frozen);
+    expect(frozen).toEqual(rect);
   });
 });
 
