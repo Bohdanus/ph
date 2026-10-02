@@ -1,4 +1,4 @@
-import { expect, type Page, test, type TestInfo } from './fixtures/extended-test';
+import { expect, type Dialog, type Page, test, type TestInfo, useAppDefaultTheme } from './fixtures/extended-test';
 import { readFile } from 'node:fs/promises';
 import {
   type BoundingBox,
@@ -18,6 +18,12 @@ import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import {
+  acceptDiscardPrompt,
+  declineDiscardPrompt,
+  discardPromptMessage,
+  expectNoDiscardPrompt,
+} from './helpers/discard-prompt';
 /**
  * CROSS-MODULE COUPLING, and the only one of its kind in the suite: these six symbols
  * come from `e2e/export/helpers.ts`, which the `e2e/export` branch owns. This is the
@@ -76,11 +82,11 @@ const dimensionsReadout = (page: Page) => page.locator('footer');
  *
  * The File menu is a TOGGLE, so a menu left open by an earlier step would make the button
  * click CLOSE it and the item would never appear — which is why the closed state is
- * asserted rather than assumed. The `confirm()` guard that `openNewImageDialog` handles
- * is deliberately NOT armed here: `DesktopHeader` guards New and Open
- * (`src/components/DesktopHeader/DesktopHeader.tsx:188-189, 216-217`) and not Save, so a
- * dialog handler on this path would be an unconsumed `page.once` waiting to accept
- * something unrelated later in the test.
+ * asserted rather than assumed. The unsaved-changes guard that `openNewImageDialog` handles
+ * is deliberately NOT answered here: `DesktopHeader` guards New and Open and not Save
+ * (`src/components/DesktopHeader/DesktopHeader.tsx`, the two `confirmDiscard(...)` calls
+ * under the New and Open items), so the document in these save tests is irrelevant to it
+ * and answering it would be answering something the test never asked for.
  */
 async function openSaveDialogAndWait(page: Page): Promise<void> {
   const saveItem = page.getByTestId('header-file-save-button');
@@ -141,19 +147,29 @@ async function openSaveDialogAndWait(page: Page): Promise<void> {
  */
 test.use({
   viewport: { width: 1280, height: 1100 },
-  // PINNED, and this is the fix for a guarantee that used to rest on nothing. The
+  // THE THEME IS NOT PINNED HERE ANY MORE, and that is a deletion rather than a
+  // demotion. `colorScheme: 'light'` stood in this block for a real dependency: the
   // workspace backdrop is the 20px checkerboard the canvas's parent div carries
-  // (`chessboard-light` / `chessboard-dark`, chosen from the resolved theme at
-  // `src/components/Main/Main.tsx:222`), and the theme resolves through
-  // `src/contexts/ThemeContext.tsx:13-22`'s `prefers-color-scheme` fallback whenever
-  // `localStorage` has no saved theme — which is every fresh Playwright context. So the
-  // colour scheme decides whether the opacity test's direction holds at all, and under
-  // dark it inverts. Playwright's own default is `light`, so this run was passing by an
-  // inherited value that neither this file nor `playwright.config.ts` ever stated. Stated
-  // now, and the opacity test additionally MEASURES the margin the direction depends on
-  // rather than trusting the pin: a pinning mistake then fails as a named assertion, not
-  // as six unexplained monotonicity failures.
-  colorScheme: 'light',
+  // (`chessboard-light` / `chessboard-dark`, picked from the resolved theme at
+  // `src/components/Main/Main.tsx:263`), so the colour scheme decided whether the
+  // opacity test's direction held at all — under dark it inverts, because the dark rule
+  // paints `#000` and `#121212` where the light one paints `#fff` and `#f3f3f3`
+  // (`src/index.scss:140-151` against `:153-164`).
+  //
+  // It stopped being able to decide that when `src/contexts/ThemeContext.tsx:20` replaced
+  // the `prefers-color-scheme` fallback with a hard-coded `DEFAULT_THEME` of `dark`. The
+  // media query this option sets now reaches no code at all, so leaving it here would
+  // have been a comment claiming to pin the theme while pinning nothing — and the worst
+  // version of that, because the app's default is now DARK and this file's pixel
+  // arithmetic needs light, so a reader would take the line at face value and believe the
+  // backdrop was accounted for.
+  //
+  // It is pinned in `e2e/fixtures/extended-test.ts`, which every spec's `test` comes from,
+  // and whose header comment says why the suite is light at all and what silently passes
+  // if it is not. The measurement is still here rather than delegated to the pin: the
+  // opacity test reads the real backdrop off the real pixels and asserts the margin the
+  // direction depends on, so a pinning mistake fails as a named assertion instead of as
+  // six unexplained monotonicity failures.
 });
 
 /**
@@ -176,7 +192,7 @@ const SAVE_DIALOG_TEST_TIMEOUT_MS = INTEGRATION_TEST_TIMEOUT_MS;
  * the same three numbers make the order invert.
  *
  * And the backdrop is not one colour to compare against. It is a 20px checkerboard
- * (`src/index.scss:126-137` light: `#fff` plus `#f3f3f3` gradients; `:139-150` dark: `#000`
+ * (`src/index.scss:140-151` light: `#fff` plus `#f3f3f3` gradients; `:153-164` dark: `#000`
  * plus `#121212` — the two rules are identical but for those two colours, and both pin
  * `background-size: 20px 20px`), so the composite reads whichever cell a sample lands on.
  * The real precondition is therefore per channel, `backdrop[channel] > colour[channel]`,
@@ -244,32 +260,26 @@ function formatByLabel(label: string): ExportFormat {
 const jpegFormat = (): ExportFormat => formatByLabel('JPEG');
 
 /**
- * Opens File > New, accepting the single unsaved-changes prompt that click causes.
+ * Opens File > New, answering the unsaved-changes prompt that click raises.
  *
- * `page.once` immediately before the click, never a global `page.on('dialog')`: the
- * guard is `confirm()` in `DesktopHeader.tsx`, and a global accept would also swallow
- * every unexpected confirm/prompt in the suite, so those surfacing would stop being a
- * load-bearing signal. See the same note at e2e/export/helpers.ts:517-528.
+ * THE PROMPT IS ANSWERED, NOT DISMISSED, and that is the whole point of the helper rather
+ * than a detail of it. The app boots with a dirty document — the blank boot layer is
+ * created with `hasUnsavedChanges: true` (`src/contexts/useLayer.ts:290-293`), so this
+ * prompt appears on EVERY `openNewImageDialog` in this file, not only in the two tests
+ * named after the guard.
  *
- * The `prompted` flag and the `expect.poll` are what make a NON-firing prompt a failure
- * here instead of a leak. `page.once` is armed unconditionally and depends on this click
- * always producing a `confirm()`: if it ever stops, the handler is still armed, and
- * `once` consumes the NEXT dialog of any kind — a stray `prompt`, an unrelated confirm
- * later in the same test — accepting it. That is the hazard e2e/export/helpers.ts:517-528
- * warns about, arrived at from the other direction. A comment alone would not close it:
- * the flag is polled for, so a missing prompt fails this helper at a named line instead
- * of quietly accepting something else three steps later. The flag is already consumed by
- * the time the dialog is required to be visible, so this cannot mask a late prompt.
+ * While the guard was the browser's native `confirm()`, a spec that installed no
+ * `page.on('dialog')` handler got it AUTO-DISMISSED, so every one of those clicks was a
+ * silent no-op and none of them could tell "the guard declined" from "the menu item is
+ * broken". `acceptDiscardPrompt` waits for the prompt to be on screen before answering, so
+ * a guard that stopped firing fails here at a named line instead of leaving the New Image
+ * dialog unopened, which is what makes the eight tests below able to say anything about
+ * the dialog at all.
  */
 async function openNewImageDialog(page: Page): Promise<void> {
   await page.getByTestId('header-file-menu-button').click();
-  let prompted = false;
-  page.once('dialog', (dialog) => {
-    prompted = true;
-    void dialog.accept();
-  });
   await page.getByTestId('header-file-new-button').click();
-  await expect.poll(() => prompted, { message: 'the unsaved-changes prompt was never shown' }).toBe(true);
+  await acceptDiscardPrompt(page);
   await expect(page.getByTestId('new-image-dialog')).toBeVisible();
 }
 
@@ -418,7 +428,7 @@ async function documentColourSample(page: Page, testInfo: TestInfo, name: string
  * rather than of the layout. Measured at this file's 1280x1100: the element is 974x963 and
  * the 800x600 document renders 974x730.5 centred, so both the top and the bottom 4% are
  * bare checkerboard — light theme darkest 243, brightest 255, which are exactly the two
- * colours `src/index.scss:126-137` mixes. At 1280x720 the element is 974x583 and the same
+ * colours `src/index.scss:140-151` mixes. At 1280x720 the element is 974x583 and the same
  * document renders 777x583 filling the element's whole height, so NEITHER strip is bare:
  * that is why the viewport above is bumped, and why this strip only needs the top. The
  * bottom 4% would additionally be below the fold at 720, where it carries no checkerboard
@@ -489,20 +499,26 @@ async function drawAndWait(page: Page, box: BoundingBox, testInfo: TestInfo, nam
 }
 
 /**
- * Closes the File menu if it is open.
+ * Asserts the File menu is not left hanging, which is a claim and used to be a cleanup.
  *
- * Declining the unsaved-changes prompt returns before the menu is closed
- * (`src/components/DesktopHeader/DesktopHeader.tsx:152-157`), so the dropdown is still
- * rendered - and it overlaps the top-left corner of the canvas element's box, which is
- * the region a canvas-clipped capture reads. It has to be dismissed before two captures
- * can be compared, or the comparison measures the dropdown instead of the document. The
- * menu's own test id is the open flag: its items exist only while it is open.
+ * Activating an item now closes the dropdown FIRST and unconditionally, before the guard is
+ * even asked (`src/components/DesktopHeader/DesktopHeader.tsx`, `setOpenMenu(null)` ahead of
+ * `confirmDiscard`). It used to sit after the action, which left the decline path — the one
+ * branch that returns early — with the dropdown still rendered, overlapping the top-left
+ * corner of the canvas element's box, which is the region every canvas-clipped capture in
+ * this file reads. Two captures compared across a hanging dropdown measure the dropdown
+ * instead of the document.
+ *
+ * So this is an assertion rather than a click that repairs the state: the dropdown is gone
+ * before the pixels are compared, and a menu that stopped closing fails here instead of
+ * quietly poisoning the comparison. The menu's own item is the open flag — the items exist
+ * only while the menu is open.
  */
-async function closeFileMenu(page: Page): Promise<void> {
-  const newItem = page.getByTestId('header-file-new-button');
-  if ((await newItem.count()) === 0) return;
-  await page.getByTestId('header-file-menu-button').click();
-  await expect(newItem).toHaveCount(0);
+async function expectFileMenuClosed(page: Page): Promise<void> {
+  await expect(
+    page.getByTestId('header-file-new-button'),
+    'the File menu is left hanging over the top-left of the canvas, where every capture in this file reads'
+  ).toHaveCount(0);
 }
 
 /** Compares two captures pixel by pixel. Zero differing pixels is the whole claim. */
@@ -842,39 +858,43 @@ test.describe('New Image dialog', () => {
 });
 
 test.describe('unsaved-changes guard on File > New', () => {
-  test('dismissing the prompt leaves the document alone and stops the dialog opening', async ({ page }, testInfo) => {
+  test('declining the prompt leaves the document alone and stops the dialog opening', async ({ page }, testInfo) => {
     await page.goto('/');
     const canvas = getWorkspaceCanvas(page);
     await expect(canvas).toBeVisible();
     const box = await workspaceBox(page);
-    await drawAndWait(page, box, testInfo, 'guard-dismiss-drawn');
-    const before = await loadImageData(await captureWorkspace(page, testInfo, 'guard-dismiss-before'));
+    await drawAndWait(page, box, testInfo, 'guard-decline-drawn');
+    const before = await loadImageData(await captureWorkspace(page, testInfo, 'guard-decline-before'));
 
-    let prompted = false;
-    page.once('dialog', (dialog) => {
-      prompted = true;
-      void dialog.dismiss();
-    });
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-new-button').click();
-    // Wait for the prompt to actually be answered, so the absence below is a decision
-    // the app made rather than a dialog that had not appeared yet.
-    await expect.poll(() => prompted, { message: 'the unsaved-changes prompt was never shown' }).toBe(true);
+    // The copy and the button label are the decision being asked, and both are pinned here
+    // rather than only at the helper: they are what tells a DECLINE apart from any other
+    // dismissal of this modal — its header ×, its backdrop and Escape all take the same
+    // branch, and this test is about cancelling a document replacement.
+    await expect(discardPromptMessage(page)).toHaveText('Discard unsaved changes and start a new image?');
+    await expect(page.getByTestId('confirm-dialog-confirm-button')).toHaveText('Discard');
+    // Waiting for the prompt to be ON SCREEN and then waiting for it to leave is what makes
+    // the absence below a decision the app made rather than a dialog that had not appeared
+    // yet — the same reason the old `page.once` handler polled a `prompted` flag.
+    await declineDiscardPrompt(page);
+    await expectNoDiscardPrompt(page);
+
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
-    await closeFileMenu(page);
+    await expectFileMenuClosed(page);
     expectIdenticalPixels(
-      await loadImageData(await captureWorkspace(page, testInfo, 'guard-dismiss-after')),
+      await loadImageData(await captureWorkspace(page, testInfo, 'guard-decline-after')),
       before,
-      'dismissing the prompt must leave the drawing untouched'
+      'declining the prompt must leave the drawing untouched'
     );
 
-    // The same click DOES open the dialog when the prompt is accepted, so the count
-    // above cannot be satisfied by a File > New that never worked at all.
+    // The same click DOES open the dialog when the prompt is accepted, so the count above
+    // cannot be satisfied by a File > New that never worked at all — and it also proves the
+    // guard really is the only thing standing in the way, because this is the identical
+    // sequence with one button changed.
     await page.getByTestId('header-file-menu-button').click();
-    page.once('dialog', (dialog) => {
-      void dialog.accept();
-    });
     await page.getByTestId('header-file-new-button').click();
+    await acceptDiscardPrompt(page);
     await expect(page.getByTestId('new-image-dialog')).toBeVisible();
     await page.getByTestId('new-image-dialog-close-button').click();
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
@@ -890,14 +910,14 @@ test.describe('unsaved-changes guard on File > New', () => {
     await drawAndWait(page, box, testInfo, 'guard-accept-drawn');
     const before = await loadImageData(await captureWorkspace(page, testInfo, 'guard-accept-before'));
 
-    let prompted = false;
-    page.once('dialog', (dialog) => {
-      prompted = true;
-      void dialog.accept();
-    });
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-new-button').click();
-    await expect.poll(() => prompted, { message: 'the unsaved-changes prompt was never shown' }).toBe(true);
+    await expect(discardPromptMessage(page)).toHaveText('Discard unsaved changes and start a new image?');
+    // Answered in place, and the prompt is asserted to be GONE before the dialog it gates is
+    // asserted to be on screen — so the dialog below cannot have opened before the guard
+    // ran, which is the failure this test exists to rule out.
+    await acceptDiscardPrompt(page);
+    await expectNoDiscardPrompt(page);
     await expect(page.getByTestId('new-image-dialog')).toBeVisible();
 
     // Cancelling the dialog that the accepted prompt opened must put the still-dirty
@@ -905,12 +925,188 @@ test.describe('unsaved-changes guard on File > New', () => {
     // only remaining step before the document would be replaced.
     await page.getByTestId('new-image-dialog-cancel-button').click();
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
-    await closeFileMenu(page);
+    await expectFileMenuClosed(page);
     expectIdenticalPixels(
       await loadImageData(await captureWorkspace(page, testInfo, 'guard-accept-after')),
       before,
       'cancelling after an accepted prompt must leave the drawing untouched'
     );
+  });
+});
+
+/**
+ * The unload guard: the other half of the same change, and the one half that CANNOT be the
+ * app's modal.
+ *
+ * `beforeunload` is the one guard the browser owns. The handler at
+ * `src/contexts/UnsavedChangesContext.tsx:99-109` can only decide whether to set
+ * `returnValue` at all — the dialog, its wording and its two buttons are Chromium's, and
+ * Chrome, Safari and Firefox each word it differently. So it has to be observed through
+ * `page.on('dialog')` rather than through `e2e/helpers/discard-prompt.ts`, and this file
+ * mixing the two is a fact about the platform rather than an inconsistency in the tests.
+ *
+ * WHAT PLAYWRIGHT DOES WITH IT, measured in the installed client rather than recalled,
+ * because the whole describe depends on it. With no `dialog` listener registered, the client
+ * ACCEPTS a `beforeunload` and dismisses everything else
+ * (`node_modules/playwright-core/lib/coreBundle.js`: the `browserContext` channel's `dialog`
+ * handler branches on `dialogObject.type() === "beforeunload"`, and `Dialog._close()` does
+ * the same). A dismissed `beforeunload` is an unload that was REFUSED, but an auto-ACCEPTED
+ * one is an unload that happened without anybody asking — silently. So:
+ *
+ *   - "the guard fired" is only observable with a listener installed, because without one the
+ *     dialog never surfaces and the reload goes through; and
+ *   - a listener that DISMISSES makes a fired guard STOP the navigation, which is the only
+ *     honest way to prove the no-dialog case below. With no listener, a guard that fired and a
+ *     document that was clean would both end in a completed reload and be indistinguishable.
+ *
+ *   MEASURED, and it is not a rejection: Chromium reports the cancelled navigation as an
+ *   aborted one and the pending `page.reload()` then settles NEITHER way — it sits in
+ *   Playwright's "waiting for navigation until load" until the test budget runs out. Both
+ *   tests below are written against what is observable instead: the dialog, the page it left
+ *   behind, and whether the next navigation still works.
+ *
+ * The bare `page.reload()` calls elsewhere in this suite (the two theme tests at the bottom
+ * of the file) are on documents the app booted dirty, and they still pass for exactly the
+ * reason above: the auto-accept lets the navigation complete, and silently discards the
+ * drawing they were not testing. Their subject is the theme, not the unload.
+ */
+test.describe('unload guard on a document with unsaved work', () => {
+  test('reloading a document with unsaved work fires a beforeunload dialog, and dismissing it keeps the drawing', async ({
+    page,
+  }, testInfo) => {
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    const box = await workspaceBox(page);
+    // Drawn first, and not incidentally: a boot document is dirty on its own, but Chromium
+    // only shows the prompt for a document the user has interacted with, so the draw is what
+    // supplies the activation as well as the work.
+    await drawAndWait(page, box, testInfo, 'unload-dirty-drawn');
+    const before = await loadImageData(await captureWorkspace(page, testInfo, 'unload-dirty-before'));
+
+    // The listener CAPTURES the dialog rather than answering it, and both halves matter. It
+    // has to exist at all, or Playwright auto-accepts the unload and the reload below sails
+    // through on a page whose guard does not exist — the test would pass against the very
+    // thing it is checking for. And capturing rather than accepting in place keeps this
+    // distinct from the clean-document case: an in-place accept lets the navigation through.
+    let unloadPrompt: Dialog | undefined;
+    page.once('dialog', (dialog) => {
+      unloadPrompt = dialog;
+    });
+
+    // The reload is deliberately NOT awaited, and that is a measured property of the
+    // platform rather than a convenience. Chromium reports the cancelled main-frame
+    // navigation, and then nothing further happens: the `reload()` call settles neither as a
+    // resolution nor as a rejection, so awaiting it spends the whole test budget inside
+    // Playwright's "waiting for navigation until load" and asserts nothing at all. Measured
+    // on the run that produced this file — an `expect(reloading).rejects` against the abort
+    // message times out at 30s rather than passing. The claim below is therefore made about
+    // the PAGE, which is the thing the user would see.
+    void page.reload().catch(() => undefined);
+    await expect
+      .poll(() => unloadPrompt !== undefined, {
+        message:
+          'no beforeunload dialog fired, so the app let the unload through without asking and a reload destroyed the drawing',
+      })
+      .toBe(true);
+    expect(unloadPrompt?.type(), 'the browser supplies this dialog, so it is a native one').toBe('beforeunload');
+
+    await unloadPrompt?.dismiss();
+
+    // Same page, same drawing. The capture is clipped to the workspace canvas element, so a
+    // File dropdown hanging over its top-left corner would be measured here rather than
+    // ignored — which is why the menu is asserted closed before the pixels are read, not
+    // after. And undo still has the stroke on it, which is the half of "nothing happened"
+    // a canvas capture cannot see.
+    await expectFileMenuClosed(page);
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await expect(
+      page.getByTestId('undo-button'),
+      'the refused unload dropped the drawing off the history'
+    ).toBeEnabled();
+    expectIdenticalPixels(
+      await loadImageData(await captureWorkspace(page, testInfo, 'unload-dirty-after')),
+      before,
+      'dismissing the unload prompt must leave the drawing untouched'
+    );
+
+    // The refusal left the app able to navigate, which is what separates "the unload was
+    // declined" from "the page is wedged". This reload has no listener left on it — the
+    // `once` above is spent — so Playwright auto-accepts the unload and the navigation runs,
+    // and it lands on a fresh boot document: the drawing is gone, which is the same thing
+    // the refused reload above did NOT do.
+    await page.reload();
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await expect(dimensionsReadout(page)).toContainText('Dimensions: 800 × 600 px');
+    await expect(page.getByTestId('undo-button'), 'the reloaded document is a fresh one').toBeDisabled();
+  });
+
+  test('a document saved to disk reloads with no unload prompt, and the app comes back usable', async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(SAVE_DIALOG_TEST_TIMEOUT_MS);
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    const box = await workspaceBox(page);
+    await drawAndWait(page, box, testInfo, 'unload-clean-drawn');
+
+    // File > Save is the route to clean, and it is the ONLY one of the two replacements the
+    // app offers. `handleImageSave` dispatches `{ fileName, hasUnsavedChanges: false }`
+    // (`src/hooks/useApp.ts:68-72`), which clears the store term of `hasDiscardableWork`, and
+    // a completed drag leaves the other two empty — no unplaced text, no preview transaction.
+    // File > New would NOT do this: a blank document is created with
+    // `hasUnsavedChanges: true` (`src/contexts/useLayer.ts:290-293`), so a freshly created
+    // document is dirty again and would be guarded immediately.
+    await openSaveDialog(page);
+    await fillSaveDialog(page, 'clean-before-reload', 'PNG');
+    const download = await submitSaveDialogForDownload(page, formatByLabel('PNG'));
+    await download.delete();
+    await expect(page.getByTestId('save-dialog')).toHaveCount(0);
+    await expectFileMenuClosed(page);
+
+    // The guard's own reading of "clean", OBSERVED rather than assumed, and through the same
+    // `isDocumentDirty()` the unload handler reads: a clean document opens the New Image
+    // dialog directly, with no prompt in between. Ordered so the prompt is checked after the
+    // click has had a chance to raise one — a bare `toHaveCount(0)` would pass on the first
+    // poll of a prompt that had not mounted yet.
+    await page.getByTestId('header-file-menu-button').click();
+    await page.getByTestId('header-file-new-button').click();
+    await expect(
+      page.getByTestId('new-image-dialog'),
+      'File > Save did not clear the document: the guard is still up, so the click reached nothing'
+    ).toBeVisible();
+    await expectNoDiscardPrompt(page);
+    await page.getByTestId('new-image-dialog-close-button').click();
+    await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
+
+    // The dismissing listener, whose only job is to make a fired guard FAIL this test rather
+    // than be swallowed by the auto-accept described at the top of this describe. The claim
+    // below is NOT "the handler was never called" — that is unobservable from a spec, because
+    // an auto-accept and a real answer look identical from here. The claim is that the
+    // navigation COMPLETED, and this listener is what makes that outcome mean something.
+    page.on('dialog', (dialog) => {
+      void dialog.dismiss();
+    });
+
+    // The marker is the proof that the reload really RELOADED rather than leaving the page
+    // as it was: it lives on the old `window`, so only a fresh document can lose it.
+    await page.evaluate(() => {
+      (window as unknown as { reloadProbe?: string }).reloadProbe = 'set-before-reload';
+    });
+
+    await page.reload();
+
+    expect(
+      await page.evaluate(() => (window as unknown as { reloadProbe?: string }).reloadProbe),
+      'the reload did not navigate, which is what an unload prompt answered by dismissal looks like'
+    ).toBeUndefined();
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    // A fresh boot document — 800x600, empty, nothing to undo — so this also says the drawn
+    // document is gone rather than that the old page is still on screen behind the assertions.
+    await expect(dimensionsReadout(page)).toContainText('Dimensions: 800 × 600 px');
+    await expect(page.getByTestId('undo-button'), 'the fresh document has nothing to undo').toBeDisabled();
+    // Usable: the File menu opens and the items behind it are there.
+    await page.getByTestId('header-file-menu-button').click();
+    await expect(page.getByTestId('header-file-save-button')).toBeVisible();
   });
 });
 
@@ -1070,9 +1266,11 @@ test('the theme toggle switches the whole document between light and dark', asyn
   const root = page.locator('html');
   const toggle = page.getByTestId('theme-toggle-button');
 
-  // The `prefers-color-scheme` fallback in `src/contexts/ThemeContext.tsx:13-22` resolves
-  // from whatever scheme the context was given, and this file PINS it to `light` in the
-  // `test.use` above — so the starting class is stated rather than inherited.
+  // Starts LIGHT because the shared `test` pins `localStorage.theme` to `light` before
+  // the app's first statement — see the `pinnedTheme` fixture in
+  // `e2e/fixtures/extended-test.ts`. That is a property of the oracle and not of the app:
+  // with nothing stored the app is DARK, which is what the next test asserts. Stating it
+  // here means this file no longer depends on a `test.use` line that was removed.
   await expect(root).toHaveClass(/\blight\b/);
 
   await toggle.click();
@@ -1087,4 +1285,53 @@ test('the theme toggle switches the whole document between light and dark', asyn
   await page.getByTestId('theme-toggle-button').click();
   await expect(root).toHaveClass(/\blight\b/);
   await expect(root).not.toHaveClass(/\bdark\b/);
+});
+
+/**
+ * The other half of the toggle test above, and the only test in the suite that runs with
+ * the pin RELEASED.
+ *
+ * WHY IT EXISTS. `src/contexts/ThemeContext.tsx:20` makes `dark` the default for a
+ * visitor with no stored preference, and that replaced a `prefers-color-scheme` fallback
+ * — so the app's default is a decision in the source, not an accident of the OS, and
+ * nothing else in this suite can see it. Every other spec runs pinned light (see the
+ * `pinnedTheme` fixture in `e2e/fixtures/extended-test.ts`), which is correct for the
+ * pixel arithmetic and means a flip of the default would break tests LOUDLY: measured
+ * with that pin's write neutered and a full headless suite run, **11 failed, 3 skipped,
+ * 337 passed**. But a flip BACK, or a change of the default's shape, would be silent
+ * everywhere else, because the loud ones are the ones that name a colour in an assertion.
+ *
+ * WHAT IT ASSERTS, and what it does not: the `dark` class on `<html>` and `dark` in
+ * `localStorage`. Not rendering. A `dark:` Tailwind variant that stopped applying
+ * leaves both of those true, so this test is a declaration about `DEFAULT_THEME` and must
+ * not be read as dark-mode coverage — `e2e/accessibility.spec.ts` records two extra
+ * `color-contrast` violations on the panel tab labels
+ * (`src/components/SidebarRight/PanelGroup.tsx:42`) that only the dark palette has.
+ *
+ * WHAT IT DOES NOT DO. It does not weaken or parametrise the pin. `useAppDefaultTheme`
+ * turns the pin off for this tab and removes the stored value in the same step, then the
+ * reload makes the app resolve with nothing stored — the one condition the default is
+ * about. A test that merely cleared `localStorage` and reloaded would measure the pin,
+ * because the init script writes `light` back on every navigation; that is why the
+ * release is a flag in `sessionStorage` and why the helper removes the key too.
+ */
+test('with nothing stored the document starts dark', async ({ page }) => {
+  await page.goto('/');
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+  await useAppDefaultTheme(page);
+  // `ThemeProvider` read the stored value once, in its `useState` initializer, and nothing
+  // since has asked it again — a reload is the only way to make the app resolve with an
+  // empty `localStorage`.
+  await page.reload();
+  await expect(getWorkspaceCanvas(page)).toBeVisible();
+
+  const root = page.locator('html');
+  await expect(root, 'DEFAULT_THEME is dark, and it is applied as a class on <html>').toHaveClass(/\bdark\b/);
+  await expect(root).not.toHaveClass(/\blight\b/);
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('theme')), {
+      message: 'the resolved default is written back to storage, so the next load is not a default load',
+    })
+    .toBe('dark');
 });

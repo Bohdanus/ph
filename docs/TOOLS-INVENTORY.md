@@ -11,7 +11,7 @@ absent from the rail.
 There is no per-tool home for these tools inside the app's own description system. The eight
 family modules under `src/tools/descriptions/` merge into a `Record<ToolName,
 ToolDescription>` at `src/tools/descriptions/index.ts:37`, where `ToolName = keyof
-ToolArgsByName` (`src/contexts/tool-types.ts:81`). A tool the registry has no entry for cannot
+ToolArgsByName` (`src/contexts/tool-types.ts:91`). A tool the registry has no entry for cannot
 be given a description in that system at all: adding the key is a TypeScript error at the
 merge, not a tooltip that renders `undefined`. `docs/TOOLS.md` is generated from those
 modules, so it cannot carry them either. This file is the substitute, and it is prose, so it
@@ -47,11 +47,12 @@ gap is worth more here than an invented sentence.
 
 ## The roster: two sources, and a discrepancy that is not resolved here
 
-`docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits" named **30** absent tools in six
-Adobe groups. `HANDOFF.md` §74 records the same exercise as **"36 present, 34 to add, 5 to
+This list took the roster over from `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits",
+which carried **30** absent tools in six Adobe groups and no longer names them.
+`HANDOFF.md` §74 records the same exercise as **"36 present, 34 to add, 5 to
 delete"** out of a 41-`ToolName` → 70 target, and names absent tools the first list omits.
 **Six of them, not five:** Selection Brush, Adjustment Brush, Remove, Content-Aware Tracing,
-Artboard — and **Content-Aware Move** (`HANDOFF.md:1807`).
+Artboard — and **Content-Aware Move** (`HANDOFF.md:1325`).
 
 **30 + 6 = 36 against a stated 34** — the combined list is two over, not one.
 **This file does not resolve it.** An operator should, and this is deliberately left visible
@@ -67,7 +68,10 @@ What makes it unresolvable from the documents alone:
 
 - The **34 is arithmetic, not an observation.** `HANDOFF.md` §74 states the shape as
   "41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete", and
-  `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available. So 34 is forced by
+  `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available.
+  **That 41 is §74's own historical figure, not today's count** — the registry carries 42 now,
+  since the Sponge was added to it. The quotation is left as §74 states it rather than
+  silently re-derived, because §74 is a record of an exercise and not a live total. So 34 is forced by
   the **70-tool target**, not counted off a roster. A combined list of 35 means either the
   target is 71 or one entry does not belong.
 - Three combined-list entries are **documented as unsettled**, so any of them could be the
@@ -88,8 +92,9 @@ someone who trusts the source material.
 
 - **3D Material Eyedropper** and **3D Material Drop** — the removed 3D feature. They appear
   in third-party toolbar diagrams because those diagrams were written when 3D existed.
-- **Rounded Rectangle** — CC-era. It is in neither 2026 enumeration, and Adobe's Rectangle
-  tool carries a **Radius** field that subsumes it; `docs/TOOLS.md` records the removal.
+- **Rounded Rectangle** — absent. It is in neither 2026 enumeration, and Adobe's Rectangle
+  tool carries a **Radius** field that subsumes it; `docs/TOOLS.md` §Rectangle Tool records the
+  removal and names the release, and is the authority for that date.
 - **Clone Source** is **a panel**, `Window ▸ Clone Source`, not a Tools-panel entry. A name
   appearing in a panel's title is how a tool gets miscounted, and it is the specific trap
   `HANDOFF.md` §74 names.
@@ -101,42 +106,65 @@ someone who trusts the source material.
 
 ## Selection
 
-| Adobe tool                | Group                                                | Shortcut                                                                                                                | Headline options                                 | Source                                                                                                                                                                                                                                                                               |
-| ------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Star**                  | Drawing — shapes flyout, seventh entry               | none of its own; reached by cycling the shapes group                                                                    | Radius, and the sides count as figure parameters | Adobe's drawing-tools overview lists Star; `docs/TOOLS.md` and `src/tools/descriptions/shape.notes.md` §Star carry the two sources (the overview plus the Adobe page "Select the Star tool from the shapes tool group in the Tools panel")                                           |
-| **Object Selection**      | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched                                   | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                   |
-| **Single Row Marquee**    | Selection — marquee flyout, fourth entry             | the marquee letter, cycled — **the specific key is not researched**                                                     | not researched                                   | Adobe's selection-tools overview tabulates it                                                                                                                                                                                                                                        |
-| **Single Column Marquee** | Selection — marquee flyout, fifth entry              | the marquee letter, cycled — **the specific key is not researched**                                                     | not researched                                   | Adobe's selection-tools overview tabulates it                                                                                                                                                                                                                                        |
-| **Selection Brush**       | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched                                   | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                     |
-| **Content-Aware Move**    | Selection                                            | not researched                                                                                                          | not researched                                   | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md:1807` names it as a large tool needing a generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
+| Adobe tool             | Group                                                | Shortcut                                                                                                                | Headline options                                                                                                         | Source                                                                                                                                                                                                                                                                               |
+| ---------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Star**               | Drawing — shapes flyout, seventh entry               | none of its own; reached by cycling the shapes group                                                                    | Point count, plus inner and outer radii — `TOOLS.md` §Polygon Tool records that Sides is _Polygon_’s control, not Star’s | Adobe's drawing-tools overview lists Star; `docs/TOOLS.md` and `src/tools/descriptions/shape.notes.md` §Star carry the two sources (the overview plus the Adobe page "Select the Star tool from the shapes tool group in the Tools panel")                                           |
+| **Object Selection**   | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched                                                                                                           | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                   |
+| **Selection Brush**    | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched                                                                                                           | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                     |
+| **Content-Aware Move** | Selection                                            | not researched                                                                                                          | not researched                                                                                                           | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md:1807` names it as a large tool needing a generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
 
 **Star is the notable one**, because it is a missing _entry_ rather than a missing tool. The
 shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts:109-116`) — six of Adobe's seven — and Star is the one it lacks. The
+(`toolbar-mapping.ts:114-121`) — six of Adobe's seven — and Star is the one it lacks. The
 same custom-shape work is filed as too hard in [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md), so a
 hardcoded star is exactly what this repository's policy refuses.
 
 **The rest follow from what this app already lacks.** Object Selection needs an
-edge-following segmentation comparable to what the Quick Selection entry records as too hard;
-Single Row and Single Column are the two cheapest real additions in `HANDOFF.md` §74 — two
-lines of geometry reusing the rectangular-selection path.
+edge-following segmentation comparable to what the Quick Selection entry records as too hard.
+
+**Single Row and Single Column Marquee were listed here until 2026-10-01 and are now
+implemented**, so they have been deleted from that table rather than left in it: this file's
+one job is the tools the rail does NOT have, and it became false for both of them. They live
+in `src/tools/singleRowColumnMarquee.ts`, share the rectangular-selection commit path, and
+are covered by `e2e/single-row-column-marquee.spec.ts`.
 
 ## Retouch
 
-| Adobe tool             | Group                                                          | Shortcut                                                                                                                                | Headline options                                                                                                | Source                                                                                                                                                                                                                                                                                                                                        |
-| ---------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Spot Healing Brush** | Retouch — healing flyout, first entry                          | `J`, printed on Adobe's own page                                                                                                        | Size, Hardness, Spacing, Pressure; Content-Aware variants                                                       | Adobe: _"Select the Spot Healing Brush (J)"_, and the Options bar named as _"Size, Hardness, and Spacing"_                                                                                                                                                                                                                                    |
-| **Healing Brush**      | Retouch — healing flyout, second entry                         | `J`, printed on Adobe's own page                                                                                                        | Mode (Normal, Replace, Multiply, Screen, Darken), Source, Aligned, Sample, Diffusion                            | Adobe's Healing Brush page lists _"Mode, Source, Aligned, Sample, and Diffusion"_                                                                                                                                                                                                                                                             |
-| **Patch**              | Retouch — healing flyout, third entry                          | `J`, printed on Adobe's own page                                                                                                        | Patch option Normal, then Source or Destination                                                                 | Adobe's Patch page lists _"Normal"_ and _"Source or Destination"_                                                                                                                                                                                                                                                                             |
-| **Remove**             | Retouch                                                        | not researched                                                                                                                          | not researched                                                                                                  | `HANDOFF.md` §74: Adobe-documented, _"In the Tools panel, select Remove tool"_, and absent from the overview tables because it has its own page. Options bar not researched.                                                                                                                                                                  |
-| **Red Eye**            | Retouch — healing flyout                                       | the healing family letter — **not researched against a shortcut page**                                                                  | pupil size and darkness                                                                                         | Adobe has a page titled _"Remove red eye in flash photos"_, whose summary names pupil size and darkness. Options are one search excerpt deep, not an audited bar.                                                                                                                                                                             |
-| **Background Eraser**  | Retouch — **Eraser group**, beside the Eraser and Magic Eraser | `E`, shared with the Eraser family — **third-party**                                                                                    | not researched                                                                                                  | Adobe's page _"Change pixels to transparent with the Background Eraser tool"_ exists; its option list was not read.                                                                                                                                                                                                                           |
-| **Sponge**             | Focus — **toning flyout with Dodge and Burn**                  | `O`, cycled — the cycle is confirmed in this app's own `docs/TOOLS.md`, which documents the Sponge as the third member of the `O` cycle | Mode Saturate/Desaturate and Flow; **no Range and no Exposure**, which is what separates it from Dodge and Burn | `docs/TOOLS.md` (Sponge section) and `src/tools/descriptions/focus.notes.md`, which cite the CS2 Bible for the _"modifies two things: color saturation and color luminosity"_ distinction. Adobe's own page was not opened.                                                                                                                   |
-| **Adjustment Brush**   | Painting — **Brush flyout sibling**, not a retouch tool        | none of its own                                                                                                                         | not researched                                                                                                  | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, _"Select Adjustment Brush Tool from the toolbar"_, and _"a large feature involving an adjustment layer plus a painted mask"_. `HANDOFF.md` §74 is explicit that membership and size are different decisions. Options bar not researched. |
+| Adobe tool             | Group                                                          | Shortcut                                                               | Headline options                                                                     | Source                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Spot Healing Brush** | Retouch — healing flyout, first entry                          | `J`, printed on Adobe's own page                                       | Size, Hardness, Spacing, Pressure; Content-Aware variants                            | Adobe: _"Select the Spot Healing Brush (J)"_, and the Options bar named as _"Size, Hardness, and Spacing"_                                                                                                                                                                                                                                    |
+| **Healing Brush**      | Retouch — healing flyout, second entry                         | `J`, printed on Adobe's own page                                       | Mode (Normal, Replace, Multiply, Screen, Darken), Source, Aligned, Sample, Diffusion | Adobe's Healing Brush page lists _"Mode, Source, Aligned, Sample, and Diffusion"_                                                                                                                                                                                                                                                             |
+| **Patch**              | Retouch — healing flyout, third entry                          | `J`, printed on Adobe's own page                                       | Patch option Normal, then Source or Destination                                      | Adobe's Patch page lists _"Normal"_ and _"Source or Destination"_                                                                                                                                                                                                                                                                             |
+| **Remove**             | Retouch                                                        | not researched                                                         | not researched                                                                       | `HANDOFF.md` §74: Adobe-documented, _"In the Tools panel, select Remove tool"_, and absent from the overview tables because it has its own page. Options bar not researched.                                                                                                                                                                  |
+| **Red Eye**            | Retouch — healing flyout                                       | the healing family letter — **not researched against a shortcut page** | pupil size and darkness                                                              | Adobe has a page titled _"Remove red eye in flash photos"_, whose summary names pupil size and darkness. Options are one search excerpt deep, not an audited bar.                                                                                                                                                                             |
+| **Background Eraser**  | Retouch — **Eraser group**, beside the Eraser and Magic Eraser | `E`, shared with the Eraser family — **third-party**                   | not researched                                                                       | Adobe's page _"Change pixels to transparent with the Background Eraser tool"_ exists; its option list was not read.                                                                                                                                                                                                                           |
+| **Adjustment Brush**   | Painting — **Brush flyout sibling**, not a retouch tool        | none of its own                                                        | not researched                                                                       | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, _"Select Adjustment Brush Tool from the toolbar"_, and _"a large feature involving an adjustment layer plus a painted mask"_. `HANDOFF.md` §74 is explicit that membership and size are different decisions. Options bar not researched. |
+
+**The Sponge was on this table and is not any more, which is recorded here rather than left as a
+quiet deletion.** It was the third member of this table's `O` toning flyout row, and the app now
+ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
+its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
+sources behind it. Deleting the row keeps this file's contract — every row here is absent from
+`src/contexts/tool-types.ts` — and it is the reason this file's tables now show 29 of the 30 absent
+tools this file attributes to `TOOLS-TOO-HARD.md`: 35 rows across the six Adobe groups, less the six
+that group names at the top as coming from `HANDOFF.md` §74 instead. **Two claims the deleted row carried were themselves
+wrong**, and they are the reason this note exists rather than a bare `git log` entry:
+
+- It cited "`docs/TOOLS.md` (Sponge section)" as evidence for the `O` cycle. **There was no Sponge
+  section in `docs/TOOLS.md`**, and there could not have been: that file is generated from the
+  family modules under `src/tools/descriptions/`, and a tool the registry has no entry for cannot be
+  given a description in that system at all — the key's absence is a TypeScript error at the merge
+  in `src/tools/descriptions/index.ts`, not a gap in a rendered page. The row was citing a document
+  that the tooling makes impossible for an unimplemented tool to appear in.
+- It read "the cycle is confirmed in this app's own `docs/TOOLS.md`". The cycle is now confirmed
+  against **Adobe's own pages** instead, which is where it belonged: Adobe lists the Dodge, the Burn
+  and the Sponge as three rows carrying the same `O`, with `Shift+O` cycling the group.
 
 **Healing and Patch are one flyout, not three tools in a row.** All three share `J`, and
 `HANDOFF.md` §74 lists the Healing Brush, Red Eye and Sponge among the cheapest real
-additions because they are geometry and pixel loops rather than new subsystems.
+additions because they are geometry and pixel loops rather than new subsystems. **The Sponge was the
+one of those three that has actually been built**; the Healing Brush and Red Eye are still absent,
+and both are larger than the Sponge was.
 
 ## Painting
 
@@ -192,7 +220,7 @@ individual tool pages. That boundary is preserved here row by row.
 
 **Zoom deserves one note of accuracy, because it is the entry most likely to be
 mis-catalogued.** The app has a zoom **interaction mode** on the canvas and **no Zoom tool**:
-the registry at `src/contexts/tool-types.ts:28-78` has no entry for it and the rail has none
+the registry at `src/contexts/tool-types.ts:30-88` has no entry for it and the rail has none
 either. A zoom mode is not a tool.
 
 ## Path
@@ -263,7 +291,7 @@ established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not op
 **This repository**
 
 - `.kilo/plans/ps-research/00-tool-inventory.md` — the registered-tool audit. **Its line 15
-  reads "all 29 in `availableTools`" and that is stale: the registry now carries 41**
+  reads "all 29 in `availableTools`" and that is stale: the registry now carries 42**
   (`src/contexts/tool-types.ts`, counted at the `ToolArgsByName` block). Its **Note A**
   (`color` has no determinate Photoshop identity) and **Note B** (`levels` is actually
   Brightness/Contrast) describe tools this app _has_, so they do not bear on this roster, and
@@ -282,11 +310,13 @@ established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not op
 - `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits" — the 30-entry roster this file
   takes over, and the dependencies the absent tools follow from.
 - `docs/TOOLS.md` and `src/tools/descriptions/*.notes.md` — per-tool option censuses and the
-  shortcut citations for the families that overlap this roster (Star, Sponge, Path Selection,
-  Direct Selection, Color Sampler).
+  shortcut citations for the families that overlap this roster (Star, Path Selection,
+  Direct Selection, Color Sampler). **`docs/TOOLS.md` only carries a tool that is implemented**,
+  so its Sponge section appeared with the tool rather than before it; see the note in §Retouch for
+  what the deleted row got wrong by citing it as though it already existed.
 - `docs/TOOLS-RESEARCH-BRIEF.md` — the protocol this repository runs research under, including
   the rule that an unsourceable claim goes in an Unverified list rather than into the data.
-- `toolbar-mapping.ts:109-116` — the shape flyout's six entries, and the missing seventh.
+- `toolbar-mapping.ts:114-121` — the shape flyout's six entries, and the missing seventh.
 - `docs/LAYERS-PANEL.md` — the app side of the Artboard gap.
 
 ## Unverified
@@ -298,7 +328,6 @@ this file; the "not researched" cells in the tables above are the same fact at r
 **Not researched at all — no options bar, no source opened**
 
 - **Object Selection** options
-- **Single Row Marquee** and **Single Column Marquee** options, and their cycling keys
 - **Selection Brush** options
 - **Remove** options, and its shortcut
 - **Background Eraser** options
@@ -309,8 +338,21 @@ this file; the "not researched" cells in the tables above are the same fact at r
 - **Note** options
 - **Frame**, **Slice**, **Slice Select**, **Perspective Crop**, **Artboard** options
 - **Content-Aware Tracing** options and shortcut
-- **Object Selection**, **Single Row**, **Single Column**, **Frame**, **Artboard** placements
-  in the rail
+- **Object Selection**, **Frame**, **Artboard** placements in the rail
+
+**Settled since — researched, and no longer "not researched"**
+
+- **Single Row Marquee** and **Single Column Marquee** options. Adobe scopes `Anti-alias` to
+  the Elliptical Marquee and `Style`, `Fixed Ratio` and `Fixed Size` to the Rectangular and
+  Elliptical Marquees **by name**
+  (`helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`), so neither 1-pixel tool has
+  any of them. What is left on **Adobe's** bar for each is the four selection modes, `Feather`
+  and `Select and Mask` — and **this app renders none of those three either**, which is why they
+  are `missing` in `docs/TOOLS.md` rather than absent from this file: the tools exist, so their
+  gaps belong to the description system, not here. The scripting API is the sharper evidence on
+  the first two, since `selectRow`/`selectColumn` take neither a `feather` nor an `antiAlias`
+  parameter where `selectRectangle` takes both. Their cycling key is still unverified — see the
+  `M` group section of `src/tools/descriptions/selection.notes.md`.
 
 **Third-party only — membership may be confirmed, the shortcut is not**
 

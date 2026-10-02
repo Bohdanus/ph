@@ -12,7 +12,8 @@ import {
   measureInk,
   waitForCanvasRedraw,
 } from '../helpers/canvas-helpers';
-import { clickToolButton } from '../helpers/toolbar-helpers';
+import { clickToolButton, toggleToolbarLayout } from '../helpers/toolbar-helpers';
+import { acceptDiscardPrompt } from '../helpers/discard-prompt';
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';
 
 export interface ExportFormat {
@@ -23,10 +24,17 @@ export interface ExportFormat {
 
 /**
  * Upper bound on differing colour channels tolerated when comparing an export
- * against the canvas it was encoded from. 50,000 channels is ~1.5% of the
+ * against the canvas it was encoded from. 50,000 channels is 25.4% of the
  * 196,608 channels on a 256x256 image, which is wide enough to absorb lossy
- * re-encoding artifacts (chroma subsampling, dithering) without masking a
- * genuinely wrong or empty export.
+ * re-encoding artifacts (chroma subsampling, dithering) without failing a
+ * correct export over noise.
+ *
+ * It is NOT a correctness gate on its own, and the number above used to claim
+ * it was: at 25.4% a blank export of a sparse drawing differs from the source in
+ * far fewer than 50,000 channels and would PASS. What actually keeps that from
+ * being a false green is the ink guard in `exportAndVerify`, which runs before
+ * this comparison and fails an export carrying no ink at all. Read a green
+ * pixel comparison together with that guard, never on its own.
  */
 export const CHANGED_CHANNEL_THRESHOLD_GENERAL = 50_000;
 
@@ -301,9 +309,25 @@ export async function assertExportGeometry(
   return { actual, baseline: expected };
 }
 
+/**
+ * How the left toolbar's layout is set before the line is drawn.
+ *
+ * The toggle is a desktop-only control: `SidebarLeft` renders it behind `!isTablet`, so it
+ * does not exist below the `lg` breakpoint (1024px) and `toggled` is only reachable above it.
+ * The layout-independence test relies on that — it applies `toggled` only at widths where the
+ * control is present, and asserts its absence below `lg` rather than silently skipping.
+ */
+export type ToolbarLayout = 'default' | 'toggled';
+
+export interface SetupExportTestOptions {
+  /** Which left-toolbar layout to draw in. Defaults to `default`. */
+  toolbarLayout?: ToolbarLayout;
+}
+
 export async function setupExportTest(
   page: Page,
-  testInfo: TestInfo
+  testInfo: TestInfo,
+  options: SetupExportTestOptions = {}
 ): Promise<{
   box: { x: number; y: number; width: number; height: number };
   documentSize: { width: number; height: number };
@@ -317,6 +341,15 @@ export async function setupExportTest(
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
+
+  // BEFORE the box is read. The toggle restyles the left rail, which resizes the grid area the
+  // canvas fills, so a box measured before it would map the document line into a canvas that no
+  // longer exists — and the mapping would be wrong by the rail's width rather than by a
+  // rounding, which is exactly the class of error this helper exists to remove.
+  if (options.toolbarLayout === 'toggled') {
+    await toggleToolbarLayout(page);
+  }
+
   const box = await canvas.boundingBox();
   if (!box) throw new Error('Canvas not found');
 
@@ -453,6 +486,28 @@ export async function exportAndVerify(
   expect(file.byteLength, `${format.label} file should not be empty`).toBeGreaterThan(100);
 
   if (format.comparePixels) {
+    // An empty file is not an empty image: a blank 256x256 PNG is a kilobyte, so the
+    // byteLength check above passes one. Without this guard a blank export would also
+    // pass the pixel comparison, because `CHANGED_CHANNEL_THRESHOLD_GENERAL` tolerates
+    // 25.4% of all channels and a sparse drawing changes far fewer than that — the
+    // threshold alone cannot tell a correct export from an empty one.
+    //
+    // Decoding is best-effort. `measureInk` rasterises through sharp, which reads every
+    // pixel-compared format except a flattened SVG, and a container sharp cannot read is
+    // not evidence of a blank export — it is evidence this guard cannot judge. Those
+    // formats fall through to the pixel comparison below, which still gates them.
+    let carriesNoInk: boolean;
+    try {
+      carriesNoInk = (await measureInk(file)) === null;
+    } catch {
+      carriesNoInk = false;
+    }
+    await expect(
+      carriesNoInk,
+      `${format.label} export carries no ink: the encoder produced a blank image, which both a ` +
+        'byte-length check and a pixel-difference check at this threshold would accept'
+    ).toBe(false);
+
     const payload = {
       source: sourceDataUrl,
       exported: file.toString('base64'),
@@ -514,21 +569,30 @@ export const ICON_STROKE = { startX: 60, centerY: 128, endX: 196, steps: 10 } as
 export async function setupIcoTest(page: Page): Promise<string> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByTestId('header-file-menu-button').click();
-  // `File > New` in `src/components/DesktopHeader/DesktopHeader.tsx` asks
-  // `confirm()` before discarding a document that has unsaved changes, and
+  // `File > New` asks before discarding a document that has unsaved changes, and
   // `src/App.tsx` seeds a blank document on boot, so `hasUnsavedChanges` is
   // already true on a freshly loaded page and the prompt is shown from the very
-  // first click. Playwright auto-dismisses dialogs that have no handler, which
-  // the guard reads as "declined" — the New Image dialog would then never open
-  // and this helper would hang on the first input. Accept the single prompt this
-  // helper causes. `once` keeps the handler scoped to the one dialog: a global
-  // accept in a fixture or in `global-setup.ts` would silently swallow every
-  // unexpected `confirm`/`prompt` in the suite, and those surfacing is a
-  // load-bearing signal.
-  page.once('dialog', (dialog) => {
-    void dialog.accept();
-  });
+  // first click.
+  //
+  // That prompt used to be a native `confirm()` and needed `page.once('dialog', …)`
+  // here. It is now the app's own modal (`src/components/ConfirmDialog`), so answering
+  // it is an ordinary click — and a STRONGER pin than the handler was: `acceptDiscardPrompt`
+  // waits for the prompt to appear before answering it, so this helper cannot hang on the
+  // first fill because New was declined, and it fails with a message naming the prompt
+  // when the menu item itself is broken.
+  //
+  // No native dialog handler is installed here, deliberately. The scoping in the `once`
+  // this replaced existed so that an UNEXPECTED prompt would surface rather than be
+  // swallowed, and that intent is kept by not handling dialogs at all: Playwright
+  // auto-dismisses an unhandled `confirm()`, which the app reads as "declined", so a
+  // surprise native prompt on this path cannot be accepted away by anything and stops the
+  // flow at the very next step instead. A blanket `page.on('dialog', …)` in a fixture or
+  // in `global-setup.ts` is the thing that would swallow it, and it is still not done.
+  // (One native prompt does still exist — the PSD import-limitations question at
+  // `src/hooks/useApp.ts:87` — and no export spec reaches it, because `verifyPsdInPhotopea`
+  // hands its file to Photopea rather than to this app.)
   await page.getByTestId('header-file-new-button').click();
+  await acceptDiscardPrompt(page);
   await page.getByTestId('new-image-width-input').fill('256');
   await page.getByTestId('new-image-height-input').fill('256');
   await page.getByTestId('new-image-dialog-submit-button').click();

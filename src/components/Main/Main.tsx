@@ -12,6 +12,7 @@ import { FeatherMagneticLassoToolArea } from './FeatherMagneticLassoToolArea.tsx
 import { MagicWandToolArea } from './MagicWandToolArea.tsx';
 import { EllipticalSelectionToolArea } from './EllipticalSelectionToolArea.tsx';
 import { QuickSelectionToolArea } from './QuickSelectionToolArea.tsx';
+import { SingleRowColumnMarqueeToolArea } from './SingleRowColumnMarqueeToolArea.tsx';
 import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
@@ -20,6 +21,7 @@ import { SharpenToolArea } from './SharpenToolArea.tsx';
 import { SmudgeToolArea } from './SmudgeToolArea.tsx';
 import { DodgeToolArea } from './DodgeToolArea.tsx';
 import { BurnToolArea } from './BurnToolArea.tsx';
+import { SpongeToolArea } from './SpongeToolArea.tsx';
 import { GradientToolArea } from './GradientToolArea.tsx';
 import { FillToolArea } from './FillToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
@@ -31,7 +33,7 @@ import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
 import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
-import { hasPendingText } from '../../util/typeGuards.ts';
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
 
 // The tools that commit a polygon selection, and so the only modes with a border
@@ -41,23 +43,12 @@ const POLYGON_SELECTION_MODES: string[] = ['lasso', 'feather-magnetic-lasso', 'm
 
 const Main = () => {
   const [
-    {
-      canvasRef,
-      containerRef,
-      toolOverlayRef,
-      rectOverlayRef,
-      hasImage,
-      hasUnsavedChanges,
-      currentArgs,
-      layers,
-      toolName,
-      totalSize,
-      documentFrame,
-    },
+    { canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize, documentFrame },
   ] = useStore();
   const { theme } = useTheme();
   const { setBlankImage, setImageFromUpload } = useApp();
   const { openLoadImageDialog, openNewImageDialog } = useFile();
+  const { confirmDiscard } = useUnsavedChanges();
   const { drawAllLayers } = useLayers();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -97,6 +88,14 @@ const Main = () => {
     interactionMode = 'magic-wand';
   } else if (toolName === 'rectangular-selection') {
     interactionMode = 'rectangular-selection';
+  } else if (toolName === 'single-row-marquee' || toolName === 'single-column-marquee') {
+    // ONE mode for both tools, and the opposite choice from the elliptical one above:
+    // the two areas paint the same kind of geometry from the same code, and the only
+    // difference between them is which pointer axis is read, which
+    // `SingleRowColumnMarqueeToolArea` decides from `useStore().toolName`. Two mode
+    // strings would mean two entries in the overlay display list and the routing table
+    // below for a component that is mounted identically either way.
+    interactionMode = 'single-row-column-marquee';
   } else if (toolName === 'elliptical-selection') {
     // Its own mode rather than a second name on the rectangular one: the two areas
     // paint different geometry (an axis-aligned box and an ellipse) off different args,
@@ -118,6 +117,8 @@ const Main = () => {
     interactionMode = 'dodge';
   } else if (toolName === 'burn') {
     interactionMode = 'burn';
+  } else if (toolName === 'sponge') {
+    interactionMode = 'sponge';
   } else if (toolName === 'clone-stamp') {
     interactionMode = 'clone-stamp';
   } else if (toolName === 'sharpen') {
@@ -194,12 +195,12 @@ const Main = () => {
       setIsDragging(false);
       const file = event.dataTransfer.files?.[0];
       if (!file) return;
-      if (
-        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
-        !confirm('Discard unsaved changes and open another file?')
-      )
-        return;
+      // The one destructive entry point a bare gesture reaches on a populated document:
+      // unlike the empty-state buttons below, the drop handler is not gated on `!hasImage`.
+      // Inside the `try`, so a rejection from the guard is reported through the same channel
+      // as a decode failure rather than escaping as an unhandled rejection.
       try {
+        if (!(await confirmDiscard('open-document'))) return;
         await setImageFromUpload(await loadDocumentFile(file));
       } catch (error) {
         console.error('Failed to open file:', error);
@@ -220,12 +221,14 @@ const Main = () => {
       | typeof MagicWandToolArea
       | typeof RectangularSelectionToolArea
       | typeof EllipticalSelectionToolArea
+      | typeof SingleRowColumnMarqueeToolArea
       | typeof QuickSelectionToolArea
       | typeof EyedropperToolArea
       | typeof EraserToolArea
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
       | typeof BurnToolArea
+      | typeof SpongeToolArea
       | typeof CloneStampToolArea
       | typeof SharpenToolArea
       | typeof GradientToolArea
@@ -244,6 +247,7 @@ const Main = () => {
       else if (interactionMode === 'magic-wand') EventHandler = MagicWandToolArea;
       else if (interactionMode === 'rectangular-selection') EventHandler = RectangularSelectionToolArea;
       else if (interactionMode === 'elliptical-selection') EventHandler = EllipticalSelectionToolArea;
+      else if (interactionMode === 'single-row-column-marquee') EventHandler = SingleRowColumnMarqueeToolArea;
       else if (interactionMode === 'quick-selection') EventHandler = QuickSelectionToolArea;
       else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
@@ -251,6 +255,7 @@ const Main = () => {
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
       else if (interactionMode === 'burn') EventHandler = BurnToolArea;
+      else if (interactionMode === 'sponge') EventHandler = SpongeToolArea;
       else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
@@ -310,6 +315,7 @@ const Main = () => {
               // so keeping the overlay hidden for all three is what stops a stale overlay from an
               // earlier tool from sitting on top of the document.
               'elliptical-selection',
+              'single-row-column-marquee',
               'quick-selection',
               'clone-stamp',
             ].includes(interactionMode)

@@ -18,8 +18,8 @@ the tally is worth recording because the file is better for it and not worse:
 **Kept, because this pass confirmed it against the working tree:**
 
 - The **Text color** row from `missing` to `partial`, with `Text.tsx:184` as its `appRef` at
-  the time — **now `:219`**, because the bar gained four controls above it and every `appRef` in
-  this table moved with them; see the re-derivation above. The
+  the time — **now `:215`**, because the bar grew by five controls and every `appRef` in
+  this table moved with them; see the re-derivation below. The
   colour control exists, is wired to the args, and reaches `ctx.fillStyle`; the foreground
   mirroring the previous pass described is gone. This reversed a false verdict rather than
   creating one.
@@ -49,12 +49,13 @@ the tally is worth recording because the file is better for it and not worse:
   no shrink) stay in the array but are filed as unverified, because `appNotes` was calling the
   same rows aspirational.
 
-**Reversed again, later, on the clause this list says was removed for the right reason.** The
-bullet above this one removed the `Size` row's "0.01 to 1296 at 72 ppi" clause on the grounds
+**Reversed again, later, on the clause this list says was removed for the right reason.** An
+earlier pass removed the `Size` row's "0.01 to 1296 at 72 ppi" clause on the grounds
 that `Unverified` item 2 said no Adobe page states a range. That reasoning was sound and its
 conclusion was wrong: `CharacterStyle` **does** state the range, and the page carrying it was
-already in `sources`. The clause is back, with the citation, and `Unverified` item 2 is deleted
-rather than annotated — see that item, and the `Size` bullet in the verdict list for the two
+already in `sources`. The clause is back, with the citation, and `Unverified` item 2 is kept
+and headed **RESOLVED** rather than left reading as an open question — see that item, and the
+`Size` bullet in the verdict list for the two
 divergences that remain, which are the **unit** and the **presentation** and never were the
 range.
 
@@ -130,7 +131,7 @@ The type tool has a flyout: the four tools Photoshop 2024–2026 ships are Horiz
 Vertical Type, Horizontal Type Mask and Vertical Type Mask, with the mask variants creating
 a selection outline in the shape of the type instead of a type layer. `T` selects the tool
 and `Shift+T` cycles the group. **The app has one entry for that four-tool group**
-(`toolbar-mapping.ts:108`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
+(`toolbar-mapping.ts:113`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
 the record now says so in its `appNotes`, because an entry that names Adobe's exact string
 for one of four tools otherwise reads as a complete stand-in. Vertical Type sets type
 top-to-bottom, and the two mask variants are not a variant of the entry the app has at all —
@@ -175,16 +176,16 @@ support, so the row no longer claims a position at all: the panel toggle is the 
 bar's settings controls, and the Commit / Cancel pair sits after it — a pair the same record
 says "appear only while a type layer is in edit mode". The app's own bar is a different
 surface and is not evidence for Adobe's order, but it is what this worktree can read, and it
-has the same shape: `Text.tsx:230` the align control, `:250` the B/I pair, then `Apply` at
-`:325` and `Clear` at `:328` at the right end. The bar has since grown by four controls — Line
-Height, Tracking and the caps/decorations pair — between the size field and the colour, which
-does not bear on Adobe's order and is recorded in the census section instead.
+has the same shape: `Text.tsx:226` the align control, `:246` the B/I pair, then `Apply` at
+`:321` and `Clear` at `:324` at the right end. The bar has since grown by five controls —
+Tracking, All Caps, Small Caps, Underline and Strikethrough — which does not bear on Adobe's
+order and is recorded in the census section instead.
 
 ### Options-bar control census
 
 Twelve controls. `present` 1 · `partial` 4 · `inert` 0 · `missing` 7.
 
-**Re-derived on this pass.** Every `appRef` below moved, because the bar grew by four controls
+**Re-derived on this pass.** Every `appRef` below moved, because the bar grew by five controls
 and every block below the font select shifted with it. The verdicts did not move with them:
 **no control changed status**, and that is the finding rather than an absence of one. The
 character formatting that arrived with this pass is **not** on Photoshop's type options bar at
@@ -199,16 +200,16 @@ the app's placement of them on its own bar is recorded as an app-side divergence
 | --- | ----------------------------------------- | --------- | ------------------------------------------------ |
 | 1   | Tool preset                               | `missing` | —                                                |
 | 2   | Text Orientation (`T` + direction marker) | `missing` | —                                                |
-| 3   | Font family                               | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:139` |
+| 3   | Font family                               | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:133` |
 | 4   | Font Style                                | `missing` | —                                                |
-| 5   | Size                                      | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:158` |
-| 6   | Text color                                | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:219` |
-| 7   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:230` |
+| 5   | Size                                      | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:154` |
+| 6   | Text color                                | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:215` |
+| 7   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:226` |
 | 8   | Toggle the type on a path                 | `missing` | —                                                |
 | 9   | Create Work Path                          | `missing` | —                                                |
 | 10  | Warp Text                                 | `missing` | —                                                |
 | 11  | Toggle the Character and Paragraph panels | `missing` | —                                                |
-| 12  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:325` |
+| 12  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:321` |
 
 **`Font Style` is `missing`, and this file used to say both `partial` and `missing` about the same
 row in two places two hundred lines apart.** Both sentences were correct about different objects,
@@ -237,9 +238,9 @@ previously called a false verdict.** Slot 6 is now `partial` where it was `missi
 the bar **does** render a colour control and did not used to — see the verdict list below.
 Slot 4 is now `missing` where it was `partial`, because there is no Font Style combo box
 anywhere in `ToolbarsRight/Text/`: the app's bar is Font (`FontSelect`), Font Size, Line
-Height, Color, Align, a B/I pair and Apply/Clear — and, as of the later pass, Tracking and a
-caps/decorations group as well. The B/I buttons at `Text.tsx:250` and
-`:261` are the app's nearest analogue to Faux Bold and Faux Italic, and they reach the canvas
+Height, Tracking, Color, Align, a B/I pair, an All Caps / Small Caps / Underline /
+Strikethrough group and Apply/Clear. The B/I buttons at `Text.tsx:246` and
+`:257` are the app's nearest analogue to Faux Bold and Faux Italic, and they reach the canvas
 as CSS `bold` / `italic` prefixes rather than synthesized faces, so they are not the control
 this row is about and the row carries no `appRef`. They now reach the canvas **correctly**,
 which the same sentence could not have said when it was written — see the shorthand section
@@ -318,14 +319,14 @@ comment), so nothing but re-derivation catches it.
 
 **Every `implementationRefs` entry was re-opened for the same reason, and four were wrong in
 the way a bound check cannot see: each landed on the _previous_ entry's closing line.**
-`settings.ts:62` was `resizeX: 100,` inside the TRANSFORM block, and the crop seed is `:67`;
-`settings.ts:77` was `color: '#000000',` inside the SHAPE block, and the text seed is `:82`;
-`toolProcessors.ts:145` was the `},` that closes the transform processor, and the crop entry
-begins at `:146`; `toolProcessors.ts:159` was the `shape` processor, and the text entry
-begins at `:160`. Every other entry was opened and confirmed to be what its record claims —
-`crop.ts:26` the crop creator, `rect.ts:36` `trimRect`, `useRect.ts:223` the 0.7 fill,
-`layer-renderer.ts:32` the six-name `vectorToolNames` set, `toolbar-mapping.ts:59` the
-single crop entry, `toolbar-mapping.ts:107` the single type entry.
+`settings.ts:62` was `resizeX: 100,` inside the TRANSFORM block, and the crop seed is `:70`;
+`settings.ts:77` was `color: '#000000',` inside the SHAPE block, and the text seed is `:90`;
+`toolProcessors.ts:146` was the `},` that closes the transform processor, and the crop entry
+begins at `:157`; `toolProcessors.ts:160` was the `shape` processor, and the text entry
+begins at `:171`. Every other entry was opened and confirmed to be what its record claims —
+`crop.ts:26` the crop creator, `rect.ts:36` `trimRect`, `useRect.ts:223` the `hideBlend` guard
+in front of the 0.7 fill at `:226`, `layer-renderer.ts:49` the six-name `vectorToolNames` set,
+`toolbar-mapping.ts:66` the single crop entry, `toolbar-mapping.ts:113` the single type entry.
 
 **The numbers in the two paragraphs above are themselves history: they describe the pass
 before this one, and the lines have moved again.** Every `path:NNN` in both files was
@@ -334,16 +335,16 @@ census tables above and in `type-crop.ts`. Where they moved, and by how much:
 
 | Was                                                | Is                                         | What moved                                       |
 | -------------------------------------------------- | ------------------------------------------ | ------------------------------------------------ |
-| `toolbar-mapping.ts:107`                           | `toolbar-mapping.ts:108`                   | the text tile sits after a closing `],`          |
-| `Text.tsx:123` / `:136` / `:189` / `:175` / `:210` | `:136` / `:149` / `:195` / `:195` / `:230` | the textarea and five control rows all shifted   |
+| `toolbar-mapping.ts:107`                           | `toolbar-mapping.ts:113`                   | the text tile sits after a closing `],`          |
+| `Text.tsx:123` / `:136` / `:189` / `:175` / `:210` | `:112` / `:133` / `:154` / `:226` / `:321` | textarea, font, size, align and Apply, all again |
 | `useRect.ts:167`                                   | `useRect.ts:223` (fill at `:226`)          | `drawMask` grew; `:167` is now a handle hit-test |
-| `useLayer.ts:349`                                  | `useLayer.ts:369`                          | the `toolName === 'text'` branch                 |
+| `useLayer.ts:349`                                  | `useLayer.ts:447`                          | the `toolName === 'text'` branch                 |
 | `CropToolArea.tsx:21`                              | `CropToolArea.tsx:61`                      | the `useRect` call, after the key listener       |
 
-The crop `implementationRefs` are all correct as they stand (`toolProcessors.ts:146`,
-`CropToolArea.tsx:40,61`, `useRect.ts:156,223,342,454`, `rect.ts:36`, `useLayer.ts:644`,
-`settings.ts:39,67`, `toolbar-mapping.ts:59`, `crop.ts:26`), and so are the text ones except
-`Text.tsx:95`, which is `applyText` and is the right function for the commit row.
+The crop `implementationRefs` are all correct as they stand (`toolProcessors.ts:157`,
+`CropToolArea.tsx:40,61`, `useRect.ts:156,223,342,454`, `rect.ts:36`, `useLayer.ts:783`,
+`settings.ts:70`, `toolbar-mapping.ts:66`, `crop.ts:26`), and so are the text ones except
+`Text.tsx:92`, which is `applyText` and is the right function for the commit row.
 
 Why each verdict:
 
@@ -365,10 +366,10 @@ Why each verdict:
   false verdict.** The previous pass wrote that `Text.tsx` "renders **no colour control at
   all**" and that it copied the store's foreground into the args one-way from
   `Text.tsx:16-20`. That was true when it was written and is **false in this tree**:
-  `Text.tsx:219` renders `<input id="text-color" type="color">`, `handleColorChange`
-  (`Text.tsx:94-96`) writes it into the args, and `renderText` consumes it as `ctx.fillStyle`
-  (`src/tools/text.ts:295`). The foreground mirroring it described is gone, and both the
-  component comment (`Text.tsx:83-93`) and the args type comment (`src/tools/text.ts:130-135`)
+  `Text.tsx:215` renders `<input id="text-color" type="color">`, `handleColorChange`
+  (`Text.tsx:88-90`) writes it into the args, and `renderText` consumes it as `ctx.fillStyle`
+  (`src/tools/text.ts:300`). The foreground mirroring it described is gone, and both the
+  component comment (`Text.tsx:77-87`) and the args type comment (`src/tools/text.ts:130-135`)
   say so in as many words — the latter names the exact change: `color` "used to be omitted
   because the bar mirrored the store's foreground into the args on every render". So `missing`
   was the second kind of false verdict: a control that is on screen and wired, understated.
@@ -377,7 +378,7 @@ Why each verdict:
   background bindings (there is no `alt` registration anywhere in
   `AppKeyboardShortcuts.tsx` — `useKeyboardEvents.tsx:76` is only the matcher), per-character
   scoping, and Photoshop's default of seeding the type colour from the foreground swatch,
-  where the app's seed is a fixed `color: '#000000'` (`src/tools/settings.ts:88`).
+  where the app's seed is a fixed `color: '#000000'` (`src/tools/settings.ts:90`).
 - **Font Style — `missing`,** and the verdict-list bullet that said `partial` on this pass is
   deleted rather than left to contradict the census. The reason both sentences existed is that
   they were about different objects; see the resolution in the census section above. Short form:
@@ -389,10 +390,10 @@ Why each verdict:
   does: alignment now goes through `publishStyle` rather than `onChange` directly, because
   `calculateNewRect` has an alignment arm that re-places a box the text outgrew, so a box
   moved by Left and then switched to Right is one the next measurement would move again.
-- **Commit / Cancel — `partial`.** `Apply` (`Text.tsx:325`) and `Clear` (`:328`) do what the
+- **Commit / Cancel — `partial`.** `Apply` (`Text.tsx:321`) and `Clear` (`:324`) do what the
   check mark and the cross do, and the draft is also committed implicitly when the tool
-  changes (`goToTool` calls `commitDirtyTool`, `src/hooks/useApp.ts:169`, whose text branch is
-  `src/contexts/useLayer.ts:369`). There is no keyboard commit and no Escape. The app's pair
+  changes (`goToTool` calls `commitDirtyTool`, `src/hooks/useApp.ts:167`, whose text branch is
+  `src/contexts/useLayer.ts:447`). There is no keyboard commit and no Escape. The app's pair
   is also not edit-mode-only the way Adobe's is: it is always rendered, merely disabled while
   `text` or `rect` is empty.
 
@@ -422,33 +423,33 @@ filing them there would describe a bar Adobe does not ship. The verdicts live in
 
 The `inert` trap this family is usually suspected of is real but sits one level down: all
 thirteen are perfectly good state that only ever reaches the screen through a raster produced
-once, by `text` (`src/tools/text.ts:353`), and is then scaled rather than re-rendered.
+once, by `text` (`src/tools/text.ts:358`), and is then scaled rather than re-rendered.
 
 ### Character and Paragraph panel controls
 
 Not part of the options-bar census above, but the other half of Photoshop's type surface and
-requested explicitly. **Six are `missing` and two arrived on this pass** — Tracking and Leading
-were already `partial` and `missing` respectively; what changed is that Tracking stopped being
-absent, and that four controls this file previously did not enumerate now exist in the app. The
-app has no Character panel and no Paragraph panel; the one control the app has that overlaps the
-first row, line height, is semantically different from Photoshop's leading.
+requested explicitly. **Six are `missing` and six are `partial`** — Leading was already
+`partial`; what changed is that Tracking stopped being absent, and that four controls this
+file previously did not enumerate now exist in the app. The app has no Character panel and no
+Paragraph panel; the one control the app has that overlaps the first row, line height, is
+semantically different from Photoshop's leading.
 
 **Five of these live in the app's options bar rather than in a panel**, which is the divergence
 the census section above declines to record. Tracking, All Caps, Small Caps, Underline and
-Strikethrough are all rendered by `Text.tsx` — `:203` the tracking slider, `:278` All Caps,
-`:289` Small Caps, `:300` Underline, `:311` Strikethrough — because the app has no panel to put
+Strikethrough are all rendered by `Text.tsx` — `:199` the tracking slider, `:274` All Caps,
+`:285` Small Caps, `:296` Underline, `:307` Strikethrough — because the app has no panel to put
 them in. That is a placement difference and not a capability one, and it is why a reader of the
-census above and of this table sees twelve bar controls and thirteen panel controls of which five
+census above and of this table sees twelve bar controls and twelve panel controls of which five
 are in both places.
 
 | Control                                                                     | Photoshop                                                                                                                         | App                                                                                           | Status                                                                                                                     |
 | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Leading                                                                     | absolute baseline-to-baseline distance in points; per-line, largest value in a line wins                                          | unitless multiplier of the font size, 0.5–2.25, applied as `index * fontSize * lineHeight`    | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:178`; default now `AUTO_LEADING`                                   |
-| Tracking                                                                    | loose/tight in 1/1000 em, cumulative with manual kerning                                                                          | slider over −1000…1000 in 1/1000 em, applied as `ctx.letterSpacing`                           | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:203`                                                               |
-| All Caps                                                                    | every character rendered as a capital                                                                                             | `ctx.fontVariantCaps = 'all-small-caps'`                                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:278`                                                               |
-| Small Caps                                                                  | synthesises where the font has none — "if the font does not include small caps, Photoshop generates faux small caps"              | `ctx.fontVariantCaps = 'small-caps'`; Chrome synthesises                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:289`                                                               |
-| Underline                                                                   | drawn in the type colour; `Underline` is `NONE / LEFTINVERTICAL / RIGHTINVERTICAL`, no style, weight, offset or colour of its own | a rule in the type colour, 0.1em below the baseline, thickness `max(1, round(fontSize / 16))` | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:300`; **the offset and the thickness are this app's, not Adobe's** |
-| Strikethrough                                                               | drawn in the type colour                                                                                                          | a rule at half the rendered x-height, in the type colour                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:311`                                                               |
+| Leading                                                                     | absolute baseline-to-baseline distance in points; per-line, largest value in a line wins                                          | unitless multiplier of the font size, 0.5–2.25, applied as `index * fontSize * lineHeight`    | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:174`; default now `AUTO_LEADING`                                   |
+| Tracking                                                                    | loose/tight in 1/1000 em, cumulative with manual kerning                                                                          | slider over −1000…1000 in 1/1000 em, applied as `ctx.letterSpacing`                           | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:199`                                                               |
+| All Caps                                                                    | every character rendered as a capital                                                                                             | `ctx.fontVariantCaps = 'all-small-caps'`                                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:274`                                                               |
+| Small Caps                                                                  | synthesises where the font has none — "if the font does not include small caps, Photoshop generates faux small caps"              | `ctx.fontVariantCaps = 'small-caps'`; Chrome synthesises                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:285`                                                               |
+| Underline                                                                   | drawn in the type colour; `Underline` is `NONE / LEFTINVERTICAL / RIGHTINVERTICAL`, no style, weight, offset or colour of its own | a rule in the type colour, 0.1em below the baseline, thickness `max(1, round(fontSize / 16))` | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:296`; **the offset and the thickness are this app's, not Adobe's** |
+| Strikethrough                                                               | drawn in the type colour                                                                                                          | a rule at half the rendered x-height, in the type colour                                      | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:307`                                                               |
 | Kerning                                                                     | None / Metrics / Optical / manual, cumulative with tracking                                                                       | —                                                                                             | `missing`                                                                                                                  |
 | Baseline shift                                                              | points, positive up                                                                                                               | —                                                                                             | `missing`                                                                                                                  |
 | OpenType                                                                    | per-feature toggles                                                                                                               | —                                                                                             | `missing`                                                                                                                  |
@@ -488,7 +489,7 @@ the line "is always the same color as the type color", and its `Underline` enum 
 weight, offset or colour of its own — the Underline Options dialog with an offset control is
 InDesign's and InCopy's, not Photoshop's. So where the rule sits is a **reconstruction**: 0.1em
 below the baseline (`UNDERLINE_BELOW_BASELINE_EM`, `src/tools/text.ts:47`), which no Adobe page
-states, and the thickness `max(1, round(fontSize / 16))` (`decorationThickness`, `:283`), which
+states, and the thickness `max(1, round(fontSize / 16))` (`decorationThickness`, `:288`), which
 Adobe does not document at all. The row records the control as `partial` because the drawn
 thing exists, is in the right colour, and is switchable — and neither figure is claimed as
 Adobe's. Strikethrough is `partial` on the same grounds without the offset problem: half the
@@ -510,32 +511,35 @@ box measurement have to move together or the box is one metric out of date.
 because "the app's type layer is baked pixels" is otherwise only half true.** The chain,
 re-derived in this worktree:
 
-1. `src/tools/text.ts:287` — `renderText` splits the string on `\n` and calls
+1. `src/tools/text.ts:292` — `renderText` splits the string on `\n` and calls
    `ctx.fillText` per line onto a 2D context. There is no glyph outline, no font engine, and
    no retained text object anywhere in the module.
-2. `src/tools/text.ts:353` — the `text` creator allocates an `OffscreenCanvas`, calls
+2. `src/tools/text.ts:358` — the `text` creator allocates an `OffscreenCanvas`, calls
    `renderText` onto it and returns `[canvas]`. A creator tool's return value is a raster.
-3. `src/tools/toolProcessors.ts:160` — the `text` processor is `commit: 'source'`,
-   `creator: true`, so the layer source is that raster. (The block runs `:160-166`; an earlier
-   note in this file put it at `:170-176`, which is `'freehand-lasso'`.)
-4. `src/contexts/layer-renderer.ts:32` — `vectorToolNames` is a `Set` of **six** tool names:
+3. `src/tools/toolProcessors.ts:171` — the `text` processor is `commit: 'source'`,
+   `creator: true`, so the layer source is that raster. (The block runs `:171-177`; a single
+   line is a bad anchor here, because `:170` is the one-line `shape` processor and `:178` opens
+   `'polygonal-lasso'`.)
+4. `src/contexts/layer-renderer.ts:49` — `vectorToolNames` is a `Set` of **six** tool names:
    `shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`. `text` is not in it, so
    `isVectorSource` is false for a text layer and `getLayerBitmap` returns `layer.bitmap`
-   instead of re-running the creator (`layer-renderer.ts:53`).
-5. `src/contexts/layer-renderer.ts:81` — that bitmap is drawn with
-   `ctx.drawImage(bitmap, x, y, position.width, position.height)`, so enlarging a text layer
-   resamples it.
-6. `src/contexts/materialization.ts:171` — **the exception.** The durable materializer
+   instead of re-running the creator (`layer-renderer.ts:57`).
+5. `src/contexts/presentation-evaluator.ts:168` — that bitmap is blitted with
+   `ctx.drawImage(bitmap, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height)`, so
+   enlarging a text layer resamples it. `drawLayerSource` reaches it through
+   `drawEvaluatedPresentation` (`layer-renderer.ts:104`); the affine branch at `:181` is the one a
+   transformed layer takes instead, and it scales to the same `sourceSize`.
+6. `src/contexts/materialization.ts:136` — **the exception.** The durable materializer
    re-runs `processor.imageProcessor` from the retained args, so on that path the characters
    are re-derivable rather than only resampled. `AGENTS.md` is explicit that the legacy
    `HistoryItem[]` path is the production replay authority and the durable document is a
    shadow projection, so the runtime path above is what a user sees.
 
 The layer _does_ retain its `TextToolArgs` (`ToolLayerSource.args`,
-`src/contexts/layer-types.ts:21-24`, populated at `src/contexts/useLayer.ts:300`), so the
+`src/contexts/layer-types.ts:21-24`, populated at `src/contexts/useLayer.ts:353`), so the
 information needed to re-render survives; on the runtime path nothing reads it. Every consumer
 of the composited document — the visible canvas, undo replay, and the PSD writer at
-`src/contexts/psd-utils.ts:245`, which calls the same `drawLayerSource` — goes through
+`src/contexts/psd-utils.ts:249`, which calls the same `drawLayerSource` — goes through
 `getLayerBitmap`, so the raster is what is shown, replayed and exported.
 
 The practical consequence: a text layer scaled up in the app is a resampled bitmap, where a
@@ -554,8 +558,8 @@ they said. It is now `` `${italic} ${bold} ${size}px ${family}` `` — `italic b
 (`src/tools/text.ts:150`).
 
 **Both renderers build it, not one, and the previous version of this file named only one.**
-`applyTextStyle` (`:191`) is reached from `renderText` (`:287`) **and** from `getTextWidth`
-(`:331`), so the shorthand is built on the drawing path and on the measurement path, and the
+`applyTextStyle` (`:191`) is reached from `renderText` (`:292`) **and** from `getTextWidth`
+(`:336`), so the shorthand is built on the drawing path and on the measurement path, and the
 options bar's `calculateNewRect` measures through the second one. A fix applied to `renderText`
 alone would have left the box measured against a font the drawing never used — which is the
 one-metric-out-of-date failure `publishStyle` in `Text.tsx` exists to prevent.
@@ -567,7 +571,7 @@ families at exactly 0.75em. Every decoration this tool draws relative to a basel
 underline, the strikethrough — needs a baseline it can name, and `'top'` is not one. It is now
 `'alphabetic'` with the baseline placed at
 `rect.y1 + TEXT_PADDING + fontBoundingBoxAscent + index * fontSize * lineHeight`
-(`baselineOffset`, `:222`, with a 0.8em fallback for a context whose `measureText` reports no
+(`baselineOffset`, `:227`, with a 0.8em fallback for a context whose `measureText` reports no
 ascent — the test harnesses model `measureText` as `{ width }` alone, and a real `undefined`
 there puts every baseline at `NaN`). `textAlign` is `'start'` for the same reason: the anchor is
 computed from the measured **ink** width, so the box and the glyphs cannot disagree.
@@ -577,7 +581,7 @@ computed from the measured **ink** width, so the box and the glyphs cannot disag
 `measureText('H').width` at 10px of tracking is 10px wider than untracked Arial even though one
 glyph has no gap in front of it — the advance grows by `n * spacing` for n = 1…10 while the ink
 grows by `(n - 1) * spacing`. Every number that positions something relative to a line uses
-`inkWidth` (`:248`), and `getTextWidth` uses it too, or the box grows by a gap the text never
+`inkWidth` (`:253`), and `getTextWidth` uses it too, or the box grows by a gap the text never
 fills. At zero tracking `inkWidth` short-circuits to `ctx.measureText(line).width`, because the
 fallback measures a string one cluster at a time and there is no reason to throw away kerning
 when there is no spacing to place by hand.
@@ -599,7 +603,7 @@ when there is no spacing to place by hand.
 ### Which Photoshop type keys the app actually binds
 
 **`T`, and only `T`.** The complete key table is
-`src/components/Common/AppKeyboardShortcuts.tsx` — the registrations at `:159-551` cover
+`src/components/Common/AppKeyboardShortcuts.tsx` — the registrations at `:258-628` cover
 `z`, `y`, `c`, `v`, `i`, `j`, `b`, `u`, `t`, `l`, `w`, `g`, `o`, `e`, `s`, `m`, `p` and their
 shift/mod variants — plus three `Escape`/`Enter`/`Backspace`/`Delete` registrations in each of
 the two lasso tool areas (`PolygonClickToolArea.tsx:923-957`,
@@ -612,9 +616,9 @@ Photoshop rows the previous pass carried were all unbound, and two of them contr
 sentence already in the same file:
 
 - `Shift+T` "cycle the type tools in the flyout group" — the type tile is a **single entry**
-  (`toolbar-mapping.ts:108`), and the `t` registration passes no `shift`
-  (`AppKeyboardShortcuts.tsx:384-389`), so `Shift+T` simply re-selects the same tool. The
-  file says so in its own comment at `:451-452`: "there is nothing to cycle, so a
+  (`toolbar-mapping.ts:113`), and the `t` registration passes no `shift`
+  (`AppKeyboardShortcuts.tsx:405-410`), so `Shift+T` simply re-selects the same tool. The
+  file says so in its own comment at `:472-475`: "there is nothing to cycle, so a
   `shift: true` twin would select the same tool twice". The data file now carries that as a
   `shortcuts` row rather than only as an omission.
 - `Ctrl+Enter` / `⌘+Return`, `Enter` and `Esc` — no registration anywhere. `Enter` inside the
@@ -973,7 +977,7 @@ behaviour, not the control.
 
 **No `inert` control here either, also checked rather than assumed.** `CropToolArgs` has
 three keys — `rect`, `preRatioRect`, `aspectRatio` — plus the seed in
-`src/tools/settings.ts:67`. All three are read and written: `preRatioRect` by
+`src/tools/settings.ts:70`. All three are read and written: `preRatioRect` by
 `Crop.tsx:40,48` and cleared on both write paths, `aspectRatio` by `CropToolArea.tsx:21`
 and passed into `useRect`, `rect` by every writer. The `preRatioRect` field is a
 regression-repair field, not a user-facing control, so it has no Photoshop counterpart to be
@@ -981,12 +985,13 @@ regression-repair field, not a user-facing control, so it has no Photoshop count
 
 ### Is the app's crop destructive?
 
-**It is not — and the previous pass said the opposite.** `src/contexts/useLayer.ts:644`
+**It is not — and the previous pass said the opposite.** `src/contexts/useLayer.ts:783`
 (`applyDocumentCrop`) trims the rect to the canvas, converts it to the next `documentFrame`
 via `canvasRectToDocumentFrame`, and dispatches `COMMIT_DOCUMENT_EDIT` with a
 `SET_DOCUMENT_FRAME_ACTION` history entry carrying both the previous and next frame. The
-document shrinks immediately; `layer-renderer.ts:78-81` subtracts the frame origin and the
-canvas is sized to the frame, so anything outside it stops rendering.
+document shrinks immediately; the frame origin is subtracted in
+`src/contexts/presentation-evaluator.ts:163` and the canvas is sized from the frame at
+`layer-renderer.ts:174`, so anything outside it stops rendering.
 
 But nothing is destroyed. Layer positions and sources are untouched, so the bitmaps still hold
 the pixels, and the history entry carries `previousFrame`, so undo puts the frame back. That
@@ -1004,13 +1009,13 @@ see the discarded area again, and undo is not a control on the bar.
 
 **A crop is a document-frame history entry, and the raster trim the tool declares is
 unreachable.** The crop processor is registered as `commit: 'document-operation'`
-(`src/tools/toolProcessors.ts:146-151`), and every layer path refuses that commit kind:
+(`src/tools/toolProcessors.ts:157-162`), and every layer path refuses that commit kind:
 
 | Refusal                               | What it refuses                                           |
 | ------------------------------------- | --------------------------------------------------------- |
-| `src/contexts/useLayer.ts:335`        | painting the tool onto a layer, before any history append |
-| `src/contexts/history-replay.ts:215`  | replaying the tool into a layer                           |
-| `src/contexts/history-adapter.ts:549` | converting the tool into a durable layer                  |
+| `src/contexts/useLayer.ts:391`        | painting the tool onto a layer, before any history append |
+| `src/contexts/history-replay.ts:226`  | replaying the tool into a layer                           |
+| `src/contexts/history-adapter.ts:555` | converting the tool into a durable layer                  |
 
 So `src/tools/crop.ts:26` — the `imageProcessor` that trims the bitmap — is declared and never
 called. What actually commits is `applyDocumentCrop`, and it is a document edit, not a layer.
@@ -1019,16 +1024,18 @@ performs a document operation Photoshop also performs, but by a route no other t
 its own processor branch dead.
 
 **Two handoff entries were checked against the crop, and neither bears on it.** `HANDOFF.md`
-§68 ("A committed shape is painted twice, and its preview and its commit use different
-coordinate spaces", `HANDOFF.md:1575`) names `src/components/Main/ShapeToolArea.tsx` in its
-first sentence and its last: it is about the shape tool's overlay and its canvas-versus-document
-coordinate space, and the crop never paints through that overlay. The crop's preview is the
-tool overlay drawn by `drawMask` and its commit is `applyDocumentCrop`, which converts through
-`canvasRectToDocumentFrame` — a different code path from the one §68 describes.
-`docs/handoffs/ps-transform-geometry-review-and-merge.md` mentions the crop exactly once, in
-passing, about Perspective Crop being genuinely projective; it is a trapezoid/projective
-transform review and says nothing about the crop's commit or history. Neither entry changes a
-claim in `type-crop.ts`, and neither is a live crop defect.
+§68 ("A committed shape is painted twice, and nothing removes the overlay",
+`HANDOFF.md:1132`) names `src/components/Main/ShapeToolArea.tsx` in its first sentence: it is
+about the shape tool's overlay never being cleared on commit, and its own closing paragraph
+records that the coordinate-space half of the entry's earlier version was wrong — so the
+reading this file used to give it is the half the entry itself retracts. The crop never paints
+through that overlay at all. The crop's preview is the tool overlay drawn by `drawMask` and its
+commit is `applyDocumentCrop`, which converts through `canvasRectToDocumentFrame` — a different
+code path from the one §68 describes.
+`docs/handoffs/ps-transform-geometry-review-and-merge.md:33` names the crop exactly once, in
+passing, in the sentence "Photoshop's Perspective Crop is genuinely projective"; it is a
+trapezoid/projective transform review and says nothing about the crop's commit or history.
+Neither entry changes a claim in `type-crop.ts`, and neither is a live crop defect.
 
 ### Five interaction divergences
 
@@ -1048,7 +1055,7 @@ claim in `type-crop.ts`, and neither is a live crop defect.
   `omit(args, 'rect', 'preRatioRect')` — the draft rect and the pre-ratio rect are stripped
   before the write, with a comment saying they are "both presentation state" — so
   `lastSavedSettings.crop` holds only the aspect ratio. `goToTool`
-  (`src/hooks/useApp.ts:169`) commits the dirty tool, and `useCurrentTool.tsx:49-50` re-seeds
+  (`src/hooks/useApp.ts:165`) commits the dirty tool, and `useCurrentTool.tsx:49-50` re-seeds
   the crop from those persisted settings, which no longer hold a rect. Switching away and back
   therefore throws the draft away. Of Photoshop's two behaviours this is much closer to
   cancel-on-Escape than to commit-on-switch, and the aspect ratio _is_ sticky, which is
@@ -1059,7 +1066,7 @@ claim in `type-crop.ts`, and neither is a live crop defect.
   and there is no Alt from-center drag anywhere — which is why the `Alt` and `Alt+Shift` rows
   of that array are aspirational and are described as Photoshop's rather than the app's.
 - **The crop owns no keyboard shortcut of its own, and one line of it is not a table
-  registration.** `C` comes from the shared table (`AppKeyboardShortcuts.tsx:362-367`), and
+  registration.** `C` comes from the shared table (`AppKeyboardShortcuts.tsx:383-388`), and
   `Enter`/`Esc` come from the raw `window` listener described in the next section rather than
   from `useKeyDownShortcut`. Everything else Photoshop binds for the crop is absent, and two of
   them are actively harmful to repeat. Detail in the next section.
@@ -1082,11 +1089,11 @@ were unbound, which is the table's absence being read as the app's.
 
 | Photoshop key        | What the app actually does                                                                                                                                                                                                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:59`), and the `c` registration passes no `shift` (`AppKeyboardShortcuts.tsx:362-367`), so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all.                             |
+| `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:66`), and the `c` registration passes no `shift` (`AppKeyboardShortcuts.tsx:383-388`), so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all.                             |
 | `Enter` / `Return`   | **Works, outside the table.** `CropToolArea.tsx:53` commits the pending rect and clears `rect`/`preRatioRect`; `PolygonClickToolArea.tsx:931` and `FeatherMagneticLassoToolArea.tsx:552` own the table registrations, for the lasso tools.                                                                         |
 | `Esc`                | **Works, outside the table.** `CropToolArea.tsx:54` drops the draft rect and restores the previous framing. `Escape` is also registered in the two lasso areas and in the font popup (`FontSelect.tsx:54`), and handled raw by the transform box (`Transform.tsx:37`), the two dialogs and the layer-rename field. |
-| `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:436-441` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn']` (the fallback at `:185`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.                                                    |
-| `Shift+O`            | Same handler with `shift: true` (`:443-449`), so it also leaves the crop — it toggles between Dodge and Burn.                                                                                                                                                                                                      |
+| `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:457-462` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn', 'sponge']` (`tonalGroup` at `:52`, the non-shift fallback at `:206`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.         |
+| `Shift+O`            | Same handler with `shift: true` (`:464-470`), so it also leaves the crop — it cycles the tonal group.                                                                                                                                                                                                              |
 | `X`                  | Unbound. There is no `x` registration anywhere in `src/`; `matchesShortcut` is case-insensitive (`useKeyboardEvents.tsx:29`), so this is not a capitalisation miss.                                                                                                                                                |
 | `Backspace`/`Delete` | Bound only in the two lasso tool areas (`PolygonClickToolArea.tsx:945,953`, `FeatherMagneticLassoToolArea.tsx:566,574`), and only to remove the last draft anchor.                                                                                                                                                 |
 | `Ctrl`/`⌘` + drag    | `useRect.ts:156` reads Ctrl and Command to **lock the current aspect ratio** — the behaviour the `Shift` modifier row already describes. It never reaches a Straighten tool; there is none.                                                                                                                        |
@@ -1168,9 +1175,12 @@ appears as an assertion in `type-crop.ts`.
      round number. `AUTO_LEADING`'s 120% and `CharacterStyle.tracking`'s -1000..1000 come from the
      same page family and the same pass, and `JustificationProperties.autoLeadingAmount` and the
      `Underline` constant enum were added to `sources` for the leading and underline claims.
-   - **Why the entry is deleted rather than rewritten:** an item under `## Unverified` is by
-     definition a claim this file cannot source, and this one is now sourced. Leaving a resolved
-     item in the list teaches the next reader that `sources` is not load-bearing.
+   - **Why the entry is kept and headed RESOLVED rather than left as it was:** an item under
+     `## Unverified` is by definition a claim this file cannot source, and this one is now
+     sourced. It is kept rather than deleted because it is the only place the corpus
+     disagreement (`1–1296` against Adobe's `0.01 .. 1296`) is recorded, and deleting it
+     would leave the next reader to re-derive that from two files that disagree. The heading is
+     what carries the status; nothing below it is asserted.
    - **One thing about the range that is still true and worth not re-deriving:** the bound is on
      the FIELD, not on rendering. Free Transform scales a type layer past it, so the app
      reproducing the field's range is not a claim that a 1296px type layer renders at 1296px in a

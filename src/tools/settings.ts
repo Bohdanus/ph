@@ -13,6 +13,7 @@ import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
+import type { SingleColumnMarqueeToolArgs, SingleRowMarqueeToolArgs } from './singleRowColumnMarquee.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
 import { ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
@@ -30,6 +31,7 @@ import type { SharpenToolArgs } from './sharpen.ts';
 import { PAINT_SMOOTHING_DEFAULT } from './brush.ts';
 import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
 import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
+import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
 import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
@@ -134,6 +136,13 @@ export const defaultSettings = {
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
+  // No settings at all, which is a statement about Photoshop and not a shortcut: the
+  // options bar for both of these carries no Style, no Width/Height and no Anti-alias,
+  // because Adobe scopes all three to the Rectangular and Elliptical Marquees by name.
+  'single-row-marquee': { toolName: 'single-row-marquee' } satisfies SingleRowMarqueeToolArgs,
+  'single-column-marquee': {
+    toolName: 'single-column-marquee',
+  } satisfies SingleColumnMarqueeToolArgs,
   brush: {
     alpha: 0.9,
     color: '#000000',
@@ -266,6 +275,20 @@ export const defaultSettings = {
     points: [],
     toolName: 'burn',
   } satisfies DodgeBurnToolArgs,
+  // Flow seeds at the midpoint and Vibrance at ON. Both are choices Adobe declines to
+  // document — its Mode and Flow pages are imperative throughout — so the reasoning and the
+  // search that failed to corroborate them live at `SPONGE_MODE_DEFAULT` in
+  // `src/tools/sponge.ts`, and the gap is recorded in `HANDOFF.md` rather than in
+  // `docs/OVERRIDES.md`, which no agent may write.
+  sponge: {
+    mode: SPONGE_MODE_DEFAULT,
+    flow: SPONGE_FLOW_DEFAULT,
+    vibrance: true,
+    size: 40,
+    hardness: 100,
+    points: [],
+    toolName: 'sponge',
+  } satisfies SpongeToolArgs,
   'clone-stamp': {
     size: 40,
     hardness: 100,
@@ -344,6 +367,7 @@ export type SavedSettings =
   // `saveLastSettings` on every persist.
   | SmudgeToolSettings
   | DodgeBurnToolSettings
+  | SpongeToolSettings
   | CloneStampToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

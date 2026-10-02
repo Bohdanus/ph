@@ -37,6 +37,7 @@ const vectorSource: DurableLayerSource = {
 
 const textSource: DurableLayerSource = {
   kind: 'text',
+  toolName: 'text',
   args: { text: 'hello' },
   size: { width: 8, height: 6 },
   sourcePos: { x: 0, y: 0, width: 8, height: 6 },
@@ -75,15 +76,6 @@ function createLayerEntry(
   enabled = true
 ): DurableHistoryEntry {
   return entry(id, { kind: 'create-layer', layer: layer(layerId, source) }, enabled);
-}
-
-function rasterizeLayerEntry(
-  id: string,
-  layerId: string,
-  source: DurableLayerSource,
-  enabled = true
-): DurableHistoryEntry {
-  return entry(id, { kind: 'rasterize-layer', layerId, result: layer(layerId, source) }, enabled);
 }
 
 function mergeDocumentEntry(
@@ -148,7 +140,6 @@ describe('collectDurableAssetIds', () => {
       [layer('layer-baseline', rasterSource('asset-baseline'))],
       [
         createLayerEntry('entry-create', 'layer-created', rasterSource('asset-created')),
-        rasterizeLayerEntry('entry-rasterize', 'layer-rasterized', rasterSource('asset-rasterized')),
         mergeDocumentEntry('entry-merge', 'layer-merged', rasterSource('asset-merged')),
       ]
     );
@@ -157,7 +148,7 @@ describe('collectDurableAssetIds', () => {
     // collected alongside them rather than instead of them.
     const ids = collectDurableAssetIds(document);
 
-    expect([...ids].sort()).toEqual(['asset-baseline', 'asset-created', 'asset-merged', 'asset-rasterized']);
+    expect([...ids].sort()).toEqual(['asset-baseline', 'asset-created', 'asset-merged']);
   });
 
   it('ignores operations that do not carry a raster layer snapshot', () => {
@@ -202,7 +193,7 @@ describe('collectDurableAssetIds', () => {
         }),
         // An asset-bearing operation kind contributes nothing when its result
         // is not a raster source.
-        rasterizeLayerEntry('entry-rasterize-vector', 'layer-vector-result', vectorSource),
+        mergeDocumentEntry('entry-merge-vector', 'layer-vector-result', vectorSource),
       ]
     );
 
@@ -215,7 +206,6 @@ describe('collectDurableAssetIds', () => {
     const baseline = [layer('layer-baseline', rasterSource('asset-baseline'))];
     const history = [
       createLayerEntry('entry-create', 'layer-created', rasterSource('asset-created')),
-      rasterizeLayerEntry('entry-rasterize', 'layer-rasterized', rasterSource('asset-rasterized')),
       mergeDocumentEntry('entry-merge', 'layer-merged', rasterSource('asset-merged')),
     ];
 
@@ -224,7 +214,7 @@ describe('collectDurableAssetIds', () => {
 
     // Cursor position is intentionally ignored: undo must keep the assets the
     // redo entries need, so an undone document reaches exactly the same ids.
-    expect([...undone].sort()).toEqual(['asset-baseline', 'asset-created', 'asset-merged', 'asset-rasterized']);
+    expect([...undone].sort()).toEqual(['asset-baseline', 'asset-created', 'asset-merged']);
     expect([...undone].sort()).toEqual([...fullyApplied].sort());
   });
 
@@ -245,7 +235,6 @@ describe('collectDurableAssetIds', () => {
       [
         createLayerEntry('entry-create-1', 'layer-a', rasterSource('asset-shared')),
         createLayerEntry('entry-create-2', 'layer-b', rasterSource('asset-shared')),
-        rasterizeLayerEntry('entry-rasterize', 'layer-c', rasterSource('asset-shared')),
         mergeDocumentEntry('entry-merge', 'layer-d', rasterSource('asset-shared')),
       ]
     );
@@ -262,13 +251,12 @@ describe('collectDurableAssetIds', () => {
       [],
       [
         createLayerEntry('entry-create', 'layer-created', rasterSource('asset-created'), false),
-        rasterizeLayerEntry('entry-rasterize', 'layer-rasterized', rasterSource('asset-rasterized'), false),
         mergeDocumentEntry('entry-merge', 'layer-merged', rasterSource('asset-merged'), false),
       ]
     );
 
     const ids = collectDurableAssetIds(document);
 
-    expect([...ids].sort()).toEqual(['asset-created', 'asset-merged', 'asset-rasterized']);
+    expect([...ids].sort()).toEqual(['asset-created', 'asset-merged']);
   });
 });

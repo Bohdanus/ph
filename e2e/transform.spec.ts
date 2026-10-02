@@ -9,7 +9,7 @@ import {
   type BoundingBox,
   type ClipOptions,
 } from './helpers/canvas-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 
 /**
  * Browser coverage for the transform tool, and specifically for the geometry the
@@ -83,16 +83,41 @@ function bands(box: BoundingBox): Bands {
   return { top: band(TOP_BAR_Y_RATIO), bottom: band(BOTTOM_BAR_Y_RATIO) };
 }
 
+/**
+ * Selects the transform tool through `Edit ▸ Free Transform`.
+ *
+ * Two clicks, and both are necessary: the `Edit` host is a button that opens a menu, and
+ * `Free Transform` is the only item inside it. `transform` has no rail tile and no
+ * `tools-menu-transform-button` — Photoshop has no such tool, and this app's Tools rail and
+ * Tools menu now agree with it — so the header menu is the only surface that selects it.
+ */
 async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
   await page.getByTestId('header-edit-menu-button').click();
-  await page.getByTestId('edit-menu-transform-button').click();
+  await page.getByTestId('edit-menu-free-transform-button').click();
   // The toolbox swaps in with the tool; its sliders are what the specs drive next.
   await expect(page.locator('#trapezoid-slider')).toBeVisible();
   await expect(page.locator('#rotate-slider')).toBeVisible();
 }
 
-async function applyTransform(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
-  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+/**
+ * Commits the pending transform preview by switching tools.
+ *
+ * The options bar carries no Commit/Apply button any more — it had four stacked rows in a
+ * fixed 50px strip, and the commit link was one of them — so the tool switch is the commit
+ * route these specs drive. It is the same call the button made, not a weaker one: `goToTool`
+ * runs `commitDirtyTool()` at `src/hooks/useApp.ts:167`, the identical function the deleted
+ * `onClick` called with the same unset argument, so it writes one history entry either way.
+ *
+ * The wait is for the tool swap, and it is not a guard against racing the commit — `goToTool`
+ * dispatches the commit and `SET_TOOL_NAME` (`useApp.ts:194`) synchronously inside the click
+ * handler, so the sliders cannot unmount before the commit has been dispatched. It is still
+ * worth waiting for, because the DOM unmount is React's and asynchronous, and a screenshot
+ * taken immediately after the click would race it.
+ */
+async function commitTransform(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
+  await clickToolButton(page, 'draw');
+  await expectToolSelected(page, 'draw');
+  await expect(page.locator('#trapezoid-slider')).toHaveCount(0);
 }
 
 test.describe('Transform tool', () => {
@@ -104,7 +129,7 @@ test.describe('Transform tool', () => {
   // ambiguity instead of leaving it to be rediscovered as a flaky failure.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
-  test('rotates a drawn layer 90 degrees and keeps the rotation after Apply', async ({ page }, testInfo) => {
+  test('rotates a drawn layer 90 degrees and keeps the rotation after the commit', async ({ page }, testInfo) => {
     await page.goto('/');
     const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
     expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
@@ -163,16 +188,103 @@ test.describe('Transform tool', () => {
       'a rotation must not move the layer vertically'
     ).toBeLessThan(0.03);
 
-    await applyTransform(page);
+    await commitTransform(page);
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
     const committed = await getDarkPixelBounds(
       await takeLineScreenshot(page, box, 'rotate-applied', testInfo, wholeCanvas)
     );
     expect(committed, 'the committed layer should still be dark').not.toBeNull();
-    expect(committed!.height / committed!.width, 'Apply must not drop the rotation').toBeGreaterThan(3);
+    expect(committed!.height / committed!.width, 'the commit must not drop the rotation').toBeGreaterThan(3);
   });
 
-  test('tapers a layer so the bottom narrows and the top does not, and keeps it after Apply', async ({
+  /**
+   * The history half, which the two geometry tests above deliberately never touched.
+   *
+   * `transform` declares `commit: 'affine-operation'` and `crop` declares
+   * `commit: 'document-operation'`, and they are the only two commit kinds in the registry that
+   * are not a raster. A raster commit is a whole-canvas operation whose undo is obvious; an
+   * affine commit rewrites the layer's transform, so its undo has to put the ORIGINAL transform
+   * back rather than merely drop a delta — and nothing in this file asserted that it did.
+   *
+   * The assertion is the bar's ASPECT, not its position, and that is the load-bearing choice. A
+   * 90 degree rotation is a whole-number change of orientation, so the same stroke reads as a
+   * horizontal bar before and after the undo and as a vertical bar in between. A replay that
+   * dropped the entry, replayed to the wrong index, or left the affine operation applied with a
+   * negated scale all of them show up as a bar that is not the shape it was, and a position-only
+   * assertion would pass on some of them.
+   */
+  test('a rotate is one history entry that one undo returns to the original pixels', async ({ page }, testInfo) => {
+    await page.goto('/');
+    const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
+    expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
+    const box = canvasBox!;
+    // Full canvas clip for every read, for the reason the first test gives: a 90 degree rotation
+    // moves the bar into a different band, so a fixed band would read a correct rotation as "the
+    // ink disappeared".
+    const wholeCanvas: Required<ClipOptions> = {
+      x: box.x,
+      y: box.y,
+      width: Math.floor(box.width),
+      height: Math.floor(box.height),
+    };
+
+    await clickToolButton(page, 'draw');
+    await page.locator('#size-slider').fill(String(BRUSH_SIZE));
+    await drawLine(page, box, BAR_START_X, Math.round(box.height * 0.5), BAR_END_X, Math.round(box.height * 0.5));
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const before = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'undo-rotate-before', testInfo, wholeCanvas)
+    );
+    expect(before, 'the drawn bar should be dark enough for the dark-pixel bounds').not.toBeNull();
+    expect(before!.width / before!.height, 'a horizontal bar is wider than it is tall').toBeGreaterThan(3);
+
+    await openTransformTool(page);
+    await page.getByTitle('Rotate 90° Right').click();
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+    await commitTransform(page);
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const committed = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'undo-rotate-applied', testInfo, wholeCanvas)
+    );
+    expect(committed, 'the committed layer should still be dark').not.toBeNull();
+    expect(
+      committed!.height / committed!.width,
+      'the committed layer is the rotated bar, so the rotation is on the timeline'
+    ).toBeGreaterThan(3);
+    await expect(
+      page.getByTestId('undo-button'),
+      'committing the transform left a history entry to undo'
+    ).toBeEnabled();
+
+    // ONE UNDO, and the bar is the horizontal one again — the original pixels, not merely
+    // something dark.
+    await page.getByTestId('undo-button').click();
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+    const afterUndo = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'undo-rotate-undone', testInfo, wholeCanvas)
+    );
+    expect(afterUndo, 'the undone layer should still be dark').not.toBeNull();
+    expect(
+      afterUndo!.width / afterUndo!.height,
+      'one undo must restore the original horizontal bar, so the affine operation is off the layer'
+    ).toBeGreaterThan(3);
+    // Dimension-for-dimension against the pre-transform bar, so "restored" means this stroke at
+    // this size rather than some other horizontal bar. A rotate-then-restore path that rebuilt
+    // the layer through a raster round trip loses a pixel row per hop and still passes the aspect
+    // ratio; a tolerance is what separates that from a replay.
+    expect(
+      Math.abs(afterUndo!.width - before!.width) / before!.width,
+      'the restored bar is the same length as the one that was drawn'
+    ).toBeLessThan(0.05);
+    expect(
+      Math.abs(afterUndo!.height - before!.height) / before!.height,
+      'the restored bar is the same thickness as the one that was drawn'
+    ).toBeLessThan(0.15);
+  });
+
+  test('tapers a layer so the bottom narrows and the top does not, and keeps it after the commit', async ({
     page,
   }, testInfo) => {
     await page.goto('/');
@@ -244,12 +356,12 @@ test.describe('Transform tool', () => {
     const imageWidth = bottomAfter!.imageWidth;
     expect(Math.abs(bottomCentre - imageWidth / 2) / imageWidth, 'the narrowed bar stays centred').toBeLessThan(0.1);
 
-    await applyTransform(page);
+    await commitTransform(page);
     await waitForCanvasRedraw(page, box, { clip: clip.bottom });
     const committedBottom = await getDarkPixelBounds(
       await takeLineScreenshot(page, box, 'taper-bottom-applied', testInfo, clip.bottom)
     );
     expect(committedBottom, 'the committed layer should still be dark').not.toBeNull();
-    expect(committedBottom!.width / bottomBefore!.width, 'Apply must not drop the taper').toBeLessThan(0.5);
+    expect(committedBottom!.width / bottomBefore!.width, 'the commit must not drop the taper').toBeLessThan(0.5);
   });
 });

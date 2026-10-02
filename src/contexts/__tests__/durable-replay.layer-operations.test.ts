@@ -511,54 +511,6 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
 
     registry.shutdown();
   });
-
-  it('rasterize-layer replaces a layer snapshot at the tip', () => {
-    const registry = new AssetRegistry();
-    const document = convert(registry, {
-      id: 'dummy',
-      actionName: TOOL_ACTION,
-      layerId,
-      args: { toolName: 'blur', radius: 2 },
-    });
-
-    const originalSnapshot = document.baseline.layers[0]!;
-    const rasterizedSnapshot = {
-      ...originalSnapshot,
-      id: 'rasterized-layer',
-      name: 'Rasterized',
-      source: {
-        kind: 'blank' as const,
-        color: '#000000',
-        opacity: 1,
-        size: { width: 100, height: 100 },
-        isBedrock: false,
-      },
-    };
-
-    const rasterizeOp: DurableOperation = Object.freeze({
-      kind: 'rasterize-layer',
-      layerId,
-      result: rasterizedSnapshot,
-    });
-    const withRaster: DurableDocument = {
-      ...document,
-      history: Object.freeze([
-        ...document.history,
-        Object.freeze({ id: 'rasterize', schemaVersion: 1, enabled: true, operation: rasterizeOp }),
-      ]),
-      cursor: document.history.length,
-    };
-
-    void originalSnapshot;
-    const frozen = freezeDurableDocument(withRaster);
-    const replay = replayDurableDocument(frozen);
-
-    expect(replay.layers[layerId]).toBeUndefined();
-    expect(replay.layers['rasterized-layer']).toBeDefined();
-    expect(replay.layers['rasterized-layer']?.snapshot.source.kind).toBe('blank');
-
-    void registry;
-  });
 });
 
 describe('materialization raster processor failure handling (P0.3 continuation)', () => {

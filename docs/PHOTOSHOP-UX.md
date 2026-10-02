@@ -30,52 +30,67 @@ violations on `main`.
 ## Open violations
 
 - **No invented tools.** `draw` ("Draw Tool") is the clearest case, and it is **one
-  of five** tool ids the app declares that Photoshop has no counterpart for:
-  `draw`, `color`, `levels`, `transform` and `shape`, which are the five bullets
-  that follow. Do not scope the work to `draw` and declare the requirement met.
+  of two** tool ids the app declares that Photoshop has no counterpart for:
+  `draw` and `shape`, which are the two bullets that follow. Do not scope the
+  work to `draw` and declare the requirement met.
   `draw` itself is a freehand-annotation layer tool; Photoshop's nearest is the
   Brush, and the app already has a Brush. **It is to be deleted**, not relabelled.
-- **Adjustments are not tools.** `color` (labelled "Colors"), `levels` ("Levels")
-  and `transform` ("Transform") are `Image ▸ Adjustments` and `Edit ▸ Transform`
-  commands, and Photoshop's Tools panel contains no such entries. Photoshop's name
-  for `color` is "Black and White", which is not a tool either. These three are to
-  leave the rail and become menu commands. They have **no replacement tool** —
-  Photoshop puts nothing there. **All three are live rail entries today**, in one
-  three-wide flyout at `toolbar-mapping.ts:62-64`. `toolbar-mapping.ts:164` exports
-  `extraTools = ['color', 'levels', 'transform']`, and **nothing in production reads
-  it**: the only reader in the repository is
-  `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`. The flag is
-  therefore not half-staged extraction, it is a declaration with no consumer —
-  removing the three rail entries is unimplemented work, not a flag flip.
-  `HANDOFF.md` §117 records exactly this and is open.
 
-  **The operator has decided: the three are deleted.** 2026-10-01, in their
-  words, "I decide to remove them." Not relabelled, not moved to a menu — removed
-  from the rail, and the rail slot closes. They have **no replacement tool**,
-  because Photoshop puts nothing there. `HANDOFF.md` §117 carries the decision and
-  what an implementation still has to settle, of which two are load-bearing: **this
-  app has no Image or Edit menu** for them to move to (`src/components/Menu/Menu.tsx`
-  renders only `DesktopHeader` and `ToolbarHorizontal`), and all three are **also**
-  live entries in the header's own tool menu
-  (`src/components/DesktopHeader/DesktopHeader.tsx:27-32`). Deleting the flyout
-  alone leaves that second surface contradicting Photoshop. The decision covers
-  these three ids only — `draw` above is a separate id and a separate decision.
-  - **They are ALSO live entries in a second place, and there is no menu to move them
-    to.** `src/components/Menu/Menu.tsx` renders only a `DesktopHeader` and a
-    `ToolbarHorizontal`, so the app has **no `Image` menu and no `Edit` menu at
-    all**, and `HANDOFF.md` §74's destination (`Image ▸`, `Edit ▸`) does not exist to
-    be routed into. Meanwhile `src/components/DesktopHeader/DesktopHeader.tsx:27-32`
-    carries a `TOOL_MENU_ITEMS` list whose `:29`, `:31` and `:32` are `color`,
-    `levels` and `transform` — so all three are **Tools-menu entries too**. The
-    extraction has to remove three ids from two surfaces and build the menu that
-    receives them.
-  - **`levels` is not Adobe's Levels.** `LevelsToolArgs` is `{ brightness, contrast }`
-    (`src/tools/levels.ts:4`) and the processor emits one `ctx.filter` from those two
-    (`src/tools/levels.ts:12`), so the app's "Levels" is **Brightness/Contrast under
-    Photoshop's wrong name** — Adobe's Levels is a three-control-point piecewise-linear
-    remap with a channel selector, a histogram, output levels and Auto. It is still an
-    `Image ▸ Adjustments` command either way, so the rail verdict does not change; the label
-    is the second defect.
+- **The operator has decided: the three come out of the rail.** 2026-10-01, in
+  their words, "I decide to remove them." The **rail entries** go — Photoshop's
+  Tools panel has no such entries, and they have **no replacement tool** because
+  Photoshop puts nothing in their place. The **processors are not deleted**; the
+  capability is to be restructured, not dropped. **DONE** — the flyout is gone from
+  `toolbar-mapping.ts`, the rail is fifteen groups, and `extraTools` is the list of
+  registered tool ids that carry no rail entry.
+  - **The destination already existed, mislabelled, and two surfaces had to change
+    together.** The app's menus were File, Tools, **Edit**, Window. `Edit` already
+    dispatched `color`, `blur`, `levels`, `transform`, `draw` and `text` through the
+    same `handleToolSelection` the rail calls, and `TOOL_MENU_ITEMS` carried all
+    three as well. A tool list is not one surface: "delete three rows from
+    `toolbarMap`" was never sufficient on its own, and a non-tool in the Tools menu
+    is the same defect one level up.
+  - **`levels` is not Adobe's Levels, and moving it unchanged would have been a new
+    falsehood.** `LevelsToolArgs` is `{ brightness, contrast }` and the processor
+    emits one `ctx.filter` from those two, so the app's "Levels" is
+    **Brightness/Contrast under Photoshop's wrong name** — Adobe's Levels is a
+    three-control-point piecewise-linear remap with a channel selector, a histogram,
+    output levels and Auto. Renaming it `Brightness/Contrast` is what makes the name
+    TRUE rather than false; it is not a dodge. It is still an `Image ▸ Adjustments`
+    command either way, so the rail verdict does not change; the label was the second
+    defect.
+  - **`color` has no honest Adobe name today, and this is the half that is still
+    open.** Its three controls are grayscale, sepia and saturation. `Photo Filter` is
+    the closest single Adobe command and it is a **partial match**: sepia IS its
+    Warming preset and saturation is nearest its Density slider, but grayscale is a
+    control Photo Filter does not have. `Black and White` is not an option at all —
+    it needs per-hue sextant weighting and there is no hue decomposition anywhere in
+    `src`. See `HANDOFF.md` §170, which is an open question with a recorded default.
+  - **The capability is coming back, as real commands, and the requirements do not
+    exist yet.** 2026-10-01, after the decision above: Levels, Colors and the other
+    `Image ▸ Adjustments` commands "will be implemented". This **does not reopen the
+    rail decision** — the three ids still leave the rail, because Adobe's Tools panel
+    has no such entries. What it changes is the `levels` bullet: if real Levels is
+    built, the honest item is `Levels` computing Levels. Adobe's pages are the
+    requirement; this sentence is not a spec, and an agent starting the work asks
+    for the requirements rather than deriving them from `src/tools/levels.ts`.
+    `docs/TOOLS-TOO-HARD.md`'s "nobody re-audits it, nobody estimates it" policy is
+    **suspended for the `Image ▸ Adjustments` family** — otherwise the next session
+    reads that file by its own stated policy and treats the gap as a closed decision.
+
+- **"No adjustment is a tool" is too strong, and a rail audit will catch it.** Adobe
+  ships a real Tools-panel entry whose output is an adjustment: the **Adjustment Brush
+  Tool**, beta in 25.9 (Feb 2024), GA in **25.11 (July 2024)**, in its own toolbar slot
+  in the Retouching & Painting Tools group, with no single-letter shortcut (the
+  widely-quoted `K` is the CS3-era Targeted Adjustment Tool, a different and removed
+  tool). Adobe: it is "non-destructive, as they generate a new adjustment layer with a
+  layer mask". The **Selection Brush Tool** is also real, GA in the same 25.11, in the
+  **Lasso group**, reached by cycling `L` then `Shift`+`L`.
+  **The narrow claim is the one that survives, and it is the one the rail rests on:** the
+  `Image ▸ Adjustments` commands are not Tools-panel entries **as commands**, and the two
+  whole-image ones have **no mask** — the Adjustment Brush can only apply an adjustment
+  where you paint, so it cannot do what `color` and `levels` do. What does not survive is
+  the general claim that no tool produces an adjustment.
 
 - **No pseudo-tool.** `shape` is a grouping container carrying a `figure`, and
   Adobe has no tool by that name. It is not uniquely undisplayed, which is the
@@ -84,15 +99,18 @@ violations on `main`.
   never displays" points at the wrong target. `shape` is the only id the flyout
   routes every figure through. Photoshop's shapes are Rectangle, Ellipse, Triangle,
   Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**;
-  the flyout has **six** today (`toolbar-mapping.ts:109-116`) and `Star` is the
+  the flyout has **six** today (`toolbar-mapping.ts:114-121`) and `Star` is the
   missing one.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
   for the Move tool is acceptable — but the **rendered label** is not and must end
-  in `" Tool"`. Scanning all **40** `label:` entries in `toolbarMap` (the five
+  in `" Tool"`. Scanning all **37** `label:` entries in `toolbarMap` (the five
   `shape` figures and the six Pen-family entries each carry their own label, so the
-  entry count is 40 and not the tile count): **exactly three lack the suffix**, and
-  they are the three this section already flags — `Colors`, `Levels`, `Transform`.
+  entry count is 37 and not the tile count): **none lack the suffix**. It used to be
+  exactly three — `Colors`, `Levels` and `Transform` — and those three left the rail
+  entirely, because they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands
+  rather than tools; `extraTools` is the list that now records them
+  (`toolbar-mapping.ts:172-189`).
   "Content-Aware Move tool" is hyphenated
   in Adobe's tables but **no such tool exists in the app yet**, so there is nothing
   to rename — when it lands, render it that way.
@@ -103,24 +121,24 @@ violations on `main`.
   bar is the debt.
   - **The placeholder roster is seven, not eight.** **Color Replacement is NOT on
     that list and must not be put back on it.** It left the roster:
-    `src/tools/toolsMap.ts:117-121` wires the real `ColorReplacement.tsx`,
+    `src/tools/toolsMap.ts:138-142` wires the real `ColorReplacement.tsx`,
     `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13-16` records the
-    removal, `src/tools/__tests__/tool-processors.test.ts:610-633` asserts the real
+    removal, `src/tools/__tests__/tool-processors.test.ts:619-642` asserts the real
     bar renders for every name that left the roster, and `:584-595` asserts the two
     lists stay disjoint. Re-derive the count with
     `grep -c "placeholderTool(" src/tools/toolsMap.ts` and the `placeholderNames`
     list at `:517-528` of the same test; both answer seven.
-  - **`draw` is a live tile, and it is the last deletion.** `toolbar-mapping.ts:97`
+  - **`draw` is a live tile, and it is the last deletion.** `toolbar-mapping.ts:102`
     gives it its own tile at the end of the painting band, badged with Photoshop's own
     `B`, so the invented tool is not hidden in a flyout — it is a visible,
     keyboard-reachable tile. It is also the suite's default way to make a mark, which is
-    why `HANDOFF.md` §74 sequences it last: `clickToolButton(page, 'draw')` occurs
-    **40 times across 23 e2e spec files** (`grep -rc "clickToolButton([^)]*'draw'"
-e2e --include="*.spec.ts"`, excluding the two non-spec files that also call it),
-    and `e2e/pen-types.spec.ts` exists specifically to test it and dies with the tool.
-    Re-derive that number rather than quoting one — `HANDOFF.md` §74's own figure for
-    this ("25 call sites across 14 e2e specs") does not reproduce against this counting
-    rule and should not be copied forward.
+    why `HANDOFF.md` §74 sequences it last: `clickToolButton(page, 'draw')` occurs in
+    every `e2e/*.spec.ts` that makes a mark — count them with
+    `grep -rc "clickToolButton([^)]*'draw'" e2e --include="*.spec.ts"`, which excludes
+    the non-spec files that also call it — and `e2e/pen-types.spec.ts` exists
+    specifically to test it and dies with the tool. Re-derive that number rather than
+    quoting one: `HANDOFF.md` §74's own figure for this ("25 call sites across 14 e2e
+    specs") does not reproduce against this counting rule and must not be copied forward.
 
 ## What is not a tool
 
@@ -140,7 +158,7 @@ colour, so losing it takes the capability away silently, in the one place nobody
 would think to look for it. A test pins the cluster, both swatches, both native
 `<input type="color">` elements and the swap, at the most collapsed state the fit
 can produce — the one-tile rail:
-`src/components/SidebarLeft/__tests__/SidebarLeft.overflow.test.tsx:519-547`
+`src/components/SidebarLeft/__tests__/SidebarLeft.overflow.test.tsx:525-553`
 collapses the fit to zero visible tools and asserts all six of those nodes are still
 in the document.
 
@@ -203,12 +221,12 @@ Adobe-side inconsistency. "Content-Aware Move tool" is hyphenated.
 Adding a tool means updating every hand-written registry list, including
 `dispatchTable`, `icons`, and `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`.
 The hand-copied lists in the tests are the expensive part.
-`src/components/SidebarLeft/__tests__/toolIcons.test.tsx:26-71` carries a **46-name**
+`src/components/SidebarLeft/__tests__/toolIcons.test.tsx:26-74` carries a **46-name**
 union by hand (46 = the 41 `ToolName`s plus 5 `shape-*` figure icons), byte-identical
 and in the same order to `ToolIconName` in
-`src/components/SidebarLeft/types.ts:4-49`; **keep it that way**.
+`src/components/SidebarLeft/types.ts:4-52`; **keep it that way**.
 
-**`HANDOFF.md` §74 (`HANDOFF.md:1745`) is the rail-clone target and the file-by-file blast
+**`HANDOFF.md` §74 (`HANDOFF.md:1259`) is the rail-clone target and the file-by-file blast
 radius** — it enumerates the hand-copied lists and the tests that pin tool names
 (`src/util/__tests__/constants.test.ts`, `toolIcons.test.tsx`, the four rosters in
 `src/tools/__tests__/tool-processors.test.ts`,

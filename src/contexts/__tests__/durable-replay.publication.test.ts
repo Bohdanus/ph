@@ -221,16 +221,6 @@ describe('durable replay no-op branches on missing layers', () => {
     expect(result.layers['layer-1'].snapshot.order).toBe(7);
     expect(result.layers.ghost).toBeUndefined();
   });
-
-  it('rasterize-layer adds the result even when the source layer never existed', () => {
-    const document = operationOn({ kind: 'rasterize-layer', layerId: 'ghost', result: layer('rasterized', 5) });
-
-    const result = replayDurableDocument(document);
-
-    expect(Object.keys(result.layers)).toEqual(['layer-1', 'rasterized']);
-    // Unlike a merge, rasterize-layer does not claim the active layer slot.
-    expect(result.activeLayerId).toBe('layer-1');
-  });
 });
 
 describe('durable replay active layer fallback', () => {

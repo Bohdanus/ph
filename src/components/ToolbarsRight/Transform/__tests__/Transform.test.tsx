@@ -18,15 +18,13 @@ const toolArgs = vi.hoisted(() => ({
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
-const mockCommitDirtyTool = vi.hoisted(() => vi.fn());
-/** `cancelLayerPreview` and `commitDirtyTool` are optional on the layer context (Transform.tsx:31,303). */
-const layerApi = vi.hoisted(() => ({ cancelLayerPreview: true, commitDirtyTool: true }));
+/** `cancelLayerPreview` is optional on the layer context (Transform.tsx:13). */
+const layerApi = vi.hoisted(() => ({ cancelLayerPreview: true }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: mockTempUpdateLayer,
     cancelLayerPreview: layerApi.cancelLayerPreview ? mockCancelLayerPreview : undefined,
-    commitDirtyTool: layerApi.commitDirtyTool ? mockCommitDirtyTool : undefined,
   }),
 }));
 
@@ -59,11 +57,9 @@ describe('Transform toolbar', () => {
   beforeEach(() => {
     resetToolArgs();
     layerApi.cancelLayerPreview = true;
-    layerApi.commitDirtyTool = true;
     mockTempUpdateLayer.mockClear();
     mockSetToolArgs.mockClear();
     mockCancelLayerPreview.mockClear();
-    mockCommitDirtyTool.mockClear();
   });
 
   it('renders rotate buttons and sliders', () => {
@@ -86,10 +82,15 @@ describe('Transform toolbar', () => {
     expect(screen.getByTitle('Mirror Vertical')).toBeInTheDocument();
   });
 
-  it('has Reset All button', () => {
+  it('has a single Cancel button and no Apply or Reset All', () => {
     render(<Transform />);
 
-    expect(screen.getByText('Reset All')).toBeInTheDocument();
+    // The bar's right-hand column is the mirror toggles plus Cancel, and nothing else.
+    // `queryByText` rather than `getByText`: the assertion is about ABSENCE, so a
+    // `getByText` would throw and say "not found" instead of "present, wrongly".
+    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.queryByText('Apply')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reset All')).not.toBeInTheDocument();
   });
 
   // These three used to live here as 'rotate buttons are clickable without error', 'mirror
@@ -100,7 +101,7 @@ describe('Transform toolbar', () => {
   // assertion on the value handed to the mocked tool-args writer, further down this file —
   // 'rotation wrap-around' and 'trapezoid exclusivity' for the three rotate buttons,
   // 'mirror toggles' for the two mirror toggles, and 'optional layer actions' plus
-  // 'keyboard navigation' for Reset All — so re-adding them would duplicate real coverage
+  // 'keyboard navigation' for Cancel — so re-adding them would duplicate real coverage
   // without adding any.
 
   describe('accessible names of the icon buttons', () => {
@@ -121,7 +122,7 @@ describe('Transform toolbar', () => {
       expect(screen.getByTitle('Mirror Vertical')).toHaveAccessibleName('↕');
     });
 
-    it.fails('names the rotate and mirror icon buttons after their action (Transform.tsx:159-178, 281-298)', () => {
+    it.fails('names the rotate and mirror icon buttons after their action (Transform.tsx:155-175, 277-294)', () => {
       render(<Transform />);
 
       expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocument();
@@ -315,11 +316,11 @@ describe('Transform toolbar', () => {
   });
 
   describe('optional layer actions', () => {
-    it('still resets the tool args when the layer context has no cancelLayerPreview (Transform.tsx:31)', () => {
+    it('still resets the tool args when the layer context has no cancelLayerPreview (Transform.tsx:13)', () => {
       layerApi.cancelLayerPreview = false;
       render(<Transform />);
 
-      fireEvent.click(screen.getByText('Reset All'));
+      fireEvent.click(screen.getByText('Cancel'));
 
       expect(mockCancelLayerPreview).not.toHaveBeenCalled();
       expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
@@ -333,14 +334,6 @@ describe('Transform toolbar', () => {
         resizeY: 100,
         toolName: 'transform',
       });
-    });
-
-    it('applies without a commitDirtyTool implementation (Transform.tsx:303)', () => {
-      layerApi.commitDirtyTool = false;
-      render(<Transform />);
-
-      expect(() => fireEvent.click(screen.getByText('Apply'))).not.toThrow();
-      expect(mockCommitDirtyTool).not.toHaveBeenCalled();
     });
 
     it('removes the escape listener on unmount (Transform.tsx:35-43)', () => {
@@ -400,8 +393,6 @@ describe('Transform toolbar', () => {
       const resizeYSlider = screen.getByRole('slider', { name: /Resize Y/ });
       const mirrorHButton = screen.getByTitle('Mirror Horizontal');
       const mirrorVButton = screen.getByTitle('Mirror Vertical');
-      const resetAllButton = screen.getByText('Reset All');
-      const applyButton = screen.getByText('Apply');
       const cancelButton = screen.getByText('Cancel');
 
       rotateLeftButton.focus();
@@ -438,16 +429,13 @@ describe('Transform toolbar', () => {
       expect(mirrorVButton).toHaveFocus();
 
       await user.tab();
-      expect(resetAllButton).toHaveFocus();
-
-      await user.tab();
-      expect(applyButton).toHaveFocus();
-
-      await user.tab();
       expect(cancelButton).toHaveFocus();
 
+      await user.tab();
+      expect(document.body).toHaveFocus();
+
       await user.tab({ shift: true });
-      expect(applyButton).toHaveFocus();
+      expect(cancelButton).toHaveFocus();
     });
 
     it('allows arrow key navigation on rotate slider', () => {
@@ -577,25 +565,19 @@ describe('Transform toolbar', () => {
       expect(mockTempUpdateLayer).toHaveBeenCalledTimes(2);
     });
 
-    it('allows enter/space to trigger reset all, apply, and cancel buttons', async () => {
+    it('allows enter/space to trigger the cancel button', async () => {
       const user = userEvent.setup();
       render(<Transform />);
-      const resetAllButton = screen.getByText('Reset All');
-      const applyButton = screen.getByText('Apply');
       const cancelButton = screen.getByText('Cancel');
-
-      resetAllButton.focus();
-      await user.keyboard('{Enter}');
-      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
-      expect(mockSetToolArgs).toHaveBeenLastCalledWith(resetArgs);
-
-      applyButton.focus();
-      await user.keyboard(' ');
-      expect(mockCommitDirtyTool).toHaveBeenCalledTimes(1);
-      expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
 
       cancelButton.focus();
       await user.keyboard('{Enter}');
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(resetArgs);
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
+
+      cancelButton.focus();
+      await user.keyboard(' ');
       expect(mockCancelLayerPreview).toHaveBeenCalledTimes(2);
       expect(mockSetToolArgs).toHaveBeenLastCalledWith(resetArgs);
       expect(mockSetToolArgs).toHaveBeenCalledTimes(2);

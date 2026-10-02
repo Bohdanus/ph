@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
+import { renderExportCanvas } from './export-canvas.ts';
 import type { PsdDocument } from './psd-utils.ts';
 import type { LayersRecord } from './layer-types.ts';
 import type { Size } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
-import type { BlankImageParams } from './tool-types.ts';
+import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
 
 export type ImageUploadResponse =
@@ -17,7 +18,6 @@ export type ImageUploadResponse =
     };
 
 export type ImageSaveInput = {
-  canvas: HTMLCanvasElement;
   fileName: string;
   format?: string;
   layers: LayersRecord;
@@ -32,7 +32,7 @@ export type ImageSaveResponse = {
 };
 
 export interface FileContextType {
-  openNewImageDialog: () => Promise<BlankImageParams | null>;
+  openNewImageDialog: () => Promise<NewDocumentBlankParams | null>;
   openLoadImageDialog: () => Promise<ImageUploadResponse | null>;
   openSaveImageDialog: (data: ImageSaveInput) => Promise<ImageSaveResponse | null>;
 }
@@ -51,7 +51,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   // Resolver refs allow promise-based API for consumers
   const uploadResolverRef = useRef<((data: ImageUploadResponse | null) => void) | null>(null);
-  const newResolverRef = useRef<((data: BlankImageParams | null) => void) | null>(null);
+  const newResolverRef = useRef<((data: NewDocumentBlankParams | null) => void) | null>(null);
   const saveResolverRef = useRef<((res: ImageSaveResponse | null) => void) | null>(null);
 
   useEffect(() => {
@@ -93,7 +93,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   const openNewImageDialog = () => {
     setShowNewDialog(true);
-    return new Promise<BlankImageParams | null>((resolve) => {
+    return new Promise<NewDocumentBlankParams | null>((resolve) => {
       newResolverRef.current = resolve;
     });
   };
@@ -116,13 +116,15 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
     try {
-      const { canvas, layers, size, documentFrame } = fileInput!;
+      const { layers, size, documentFrame } = fileInput!;
       if (format === 'psd') {
         const { savePsd } = await import('./psd-utils.ts');
         const buffer = documentFrame ? await savePsd(layers, size, documentFrame) : await savePsd(layers, size);
         downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), fileName, 'psd');
       } else {
-        await saveImageToDisk(canvas, fileName, format, quality);
+        // Rendered here rather than handed in, so the encoded pixels are the DOCUMENT at
+        // DOCUMENT resolution whatever the display canvas is doing. See export-canvas.ts.
+        await saveImageToDisk(renderExportCanvas(layers, size, documentFrame), fileName, format, quality);
       }
       saveResolverRef.current?.(quality === undefined ? { fileName, format } : { fileName, format, quality });
       saveResolverRef.current = null;
@@ -131,10 +133,10 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       // the dialog down on a failure exactly as it does on a success: the user lost the
       // chance to change format/quality and retry, and had to redo the whole export.
       // Leaving both calls here is also what makes a retry work at all — `fileInput` stays
-      // staged, so the second attempt encodes the same `{ canvas, layers, size,
-      // documentFrame }`, and the dialog's `key` is derived from `fileInput.fileName`, so
-      // an unchanged input means no remount and the user's own `fileName`/`format`/
-      // `jpegQuality` edits are still on screen.
+      // staged, so the second attempt encodes the same `{ layers, size, documentFrame }`,
+      // and the dialog's `key` is derived from `fileInput.fileName`, so an unchanged input
+      // means no remount and the user's own `fileName`/`format`/`jpegQuality` edits are
+      // still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
     } catch (e) {
@@ -150,7 +152,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     }
   }
 
-  const handleNewImageCreate = (data: BlankImageParams) => {
+  const handleNewImageCreate = (data: NewDocumentBlankParams) => {
     // Resolve the waiting promise (if any) with data or undefined
     newResolverRef.current?.(data);
     newResolverRef.current = null;

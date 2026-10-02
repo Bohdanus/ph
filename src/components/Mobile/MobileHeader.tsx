@@ -23,7 +23,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
   onOpenMenu,
   isMenuOpen = false,
 }) => {
-  const [{ canvasRef, fileName, hasImage, layers, totalSize, documentFrame }] = useStore();
+  const [{ fileName, hasImage, layers, totalSize, documentFrame }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { commitDirtyTool } = useLayers();
   const { openSaveImageDialog } = useFile();
@@ -64,13 +64,12 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
 
   const handleExport = async () => {
     try {
-      if (!hasImage || !canvasRef.current) return;
+      if (!hasImage) return;
       let exportLayers!: ReturnType<typeof commitDirtyTool>;
       flushSync(() => {
         exportLayers = commitDirtyTool();
       });
       const data = await openSaveImageDialog({
-        canvas: canvasRef.current,
         fileName,
         layers: exportLayers,
         size: totalSize,

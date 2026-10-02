@@ -10,7 +10,7 @@ import {
 } from '../buttonStyles.ts';
 
 const Transform: React.FC<{}> = () => {
-  const { tempUpdateLayer, cancelLayerPreview, commitDirtyTool } = useLayers();
+  const { tempUpdateLayer, cancelLayerPreview } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as TransformToolArgs;
@@ -146,10 +146,6 @@ const Transform: React.FC<{}> = () => {
 
   const handleResizeYChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     throttledOnChange({ ...args, resizeY: Number(event.target.value), trapezoid: 0 });
-  };
-
-  const resetAll = () => {
-    cancel();
   };
 
   return (
@@ -297,13 +293,7 @@ const Transform: React.FC<{}> = () => {
             ↕
           </button>
         </div>
-        <button className={`text-[10px] ${TEXT_LINK_BUTTON} mt-1`} onClick={resetAll}>
-          Reset All
-        </button>
-        <button className={`text-[10px] ${TEXT_LINK_BUTTON}`} onClick={() => commitDirtyTool?.()}>
-          Apply
-        </button>
-        <button className={`text-[10px] ${TEXT_LINK_BUTTON}`} onClick={cancel}>
+        <button className={`text-[10px] ${TEXT_LINK_BUTTON} mt-1`} onClick={cancel}>
           Cancel
         </button>
       </div>

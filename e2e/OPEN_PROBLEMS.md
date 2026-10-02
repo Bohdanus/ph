@@ -667,11 +667,13 @@ tile it asserts the tile's lit class instead — because `SidebarLeft.tsx:635` d
 over the WHOLE collapsed set (`:636`). So `expectToolSelected(page, 'eraser')` is answered by "is
 SOME collapsed tool selected", not by "is the eraser selected".
 
-**Measured at 1280x720, where it bites.** The only tiles on the rail are `reposition`,
-`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper` and `crop`. The default tool
-is `brush` (`src/tools/settings.ts:146`), and `brush` is itself in the collapsed set — so the
-three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
-collapsed tool therefore passes before anything is selected.
+**Measured at 1280x720, where it bites.** The tiles on the rail are `reposition`,
+`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper`, `crop` and `brush` — the
+first seven of the fifteen groups, the rail filling its slot with whole rows, and the fold
+beginning at `clone-stamp`. The tool the app opens with (`brush` in `src/tools/settings.ts`) is one
+of the seven, so the three-dots tile is not lit from page load; it is lit from the moment any member
+of the collapsed set is selected, and stays lit for every member. An assertion naming any collapsed
+tool therefore passes as soon as that tile is lit at all, with the wrong tool selected.
 
 **This is not a regression from the `aria-pressed` conversion, and that distinction is the whole
 point.** `:635` and `:636` are the same `group.some(...)` call on the same tile, so the removed
@@ -845,9 +847,12 @@ presentation.
 
 So a 2x project would raise the floor of what fails, but on its own it would not _pin_ backing
 store resolution; that needs its own assertion — a `canvas.width === box.width × dpr` check that
-exists nowhere today. The app side, including the blocker that has to be cleared first (the
-visible workspace canvas is the raster export source, so the display cannot be scaled until it is
-decoupled from export), is in `CANVAS-RESOLUTION-PLAN.md`.
+exists nowhere today. (It would also have to be the binding axis of the contain fit, not the
+width axis: the workspace canvas is `object-contain`, so at 1280x720 the fit is height-limited and
+the naive width form is red today.) The app side, and the app work that has to land first, is in
+`CANVAS-RESOLUTION-PLAN.md`. The display/export decoupling that used to gate raising the display
+resolution is done: export renders its own surface from `(layers, size, documentFrame)` in
+`src/contexts/export-canvas.ts` and no longer reads the visible canvas.
 
 ## P3 — re-verification: the tablet band's option-row floor is no longer the panel's measured width
 
@@ -898,27 +903,29 @@ can say which, so this entry stays open rather than being deleted on a green run
 `src/components/Mobile/MobileBottomBar.tsx`, `e2e/no-document-overflow.spec.ts`
 
 `nav[data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
-`mobileToolGroups` entry in one row — 18 focusable tiles, 16 groups plus Options and
-Layers, separated by 5 dividers. Measured, it overflows its own width by **615px** at a
-744×1133 viewport and by **969px** at 390×844, which is the reference phone size the rest
+`mobileToolGroups` entry in one row — 17 focusable tiles, 15 groups plus Options and
+Layers, separated by 4 dividers. Measured, it overflows its own width by **542px** at a
+744×1133 viewport and by **896px** at 390×844, which is the reference phone size the rest
 of the mobile suite already uses. It now carries `scrollbar-none`, so the only cue that
 most of those tiles are off-screen is gone. A user with a mouse and no trackpad has
 nothing left to drag: the bar is `position: fixed`, so the document behind it does not
 scroll either.
 
-This is the same trade the left tool rail makes, and the rail's version is deliberate and
+This is the same trade the left tool rail makes, and the rail's version was deliberate and
 pinned — the rail scrolls and stays reachable by wheel, arrows and touch. The difference
-is magnitude. The rail overflows by 71px at iPad 10.2" portrait (810×1080) and 5px at iPad
-mini landscape (1133×744); this bar overflows by 615px at the same width and by 969px on
-a phone. A 5px overflow hides a cue for something already within reach of a scroll; a
-969px one hides most of the tool list.
+is magnitude, and it is now starker than it was: **the rail no longer overflows at either
+size at all** — 0px at iPad 10.2" portrait (810×1080), whose slot is 834px against a 15-row
+grid of 765px, and 0px at iPad mini landscape (1133×744) — where it used to overflow by 71px
+and 5px respectively, before the fit stopped reserving a fifth of the slot it measures.
+This bar overflows by 542px at the same width and by 896px on a phone. A 5px overflow hides a
+cue for something already within reach of a scroll; a 896px one hides most of the tool list.
 
 **The CSS is pinned; the overflow is not.** `no-document-overflow.spec.ts` asserts this
 bar is a scroll container with `scrollbar-width: none`, which is a statement about the
 stylesheet and would still pass if the group list grew or shrank by a factor of ten. No
 test reads the bar's `scrollWidth` against its `clientWidth`.
 
-The open question is a product one, not a defect report: a tool bar with 969px of hidden
+The open question is a product one, not a defect report: a tool bar with 896px of hidden
 overflow needs either a visible scroll affordance or a different layout — the tool sheet
 already exists as `MobileToolSheet`, and wrapping is the other obvious answer. What keeps
 it undecided is coverage, recorded in the `P3 — no mobile or HiDPI project, and no touch
