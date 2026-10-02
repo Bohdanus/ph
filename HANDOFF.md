@@ -5118,3 +5118,17 @@ injecting an import into a module the old gate could not see turns it red naming
 unwired: either the forbidden set gains an explicit exemption for the compositor pair, or the
 compositor is removed until it can be wired. Until then the red gate stays off `main`, and
 `be730a59` is the standing proof that the one-file gate was blind rather than satisfied.
+
+## 178. `fix/rail-drop-draw` is parked on a premise OVR-2 voided
+
+**Problem.** The branch deletes the `draw` tool; OVR-2 in `docs/OVERRIDES.md` keeps the tile, so
+its premise is void. It is still a live ref at `603356ac` and carries a broken assertion —
+`e2e/history-panel.spec.ts:29-64` repoints the stroke filter to `/^brush/`, then still asserts
+`toContainText('draw')`.
+
+**Why it is parked.** Insurance only. OVR-2 marks Dashed Pen and Spray a temporary hold on controls
+the paint bar lacks, so `draw` may be deleted later and this is the work for that day.
+
+**What is needed.** Do not merge it; do not dispose of it. If `draw` is deleted, re-derive the
+removal from `main` — do not resurrect `603356ac`, which is 583 commits behind its base and carries
+the mutant above.
