@@ -9,7 +9,7 @@ import {
   type BoundingBox,
   type ClipOptions,
 } from './helpers/canvas-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 
 /**
  * Browser coverage for the transform tool, and specifically for the geometry the
@@ -102,18 +102,21 @@ async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): P
 /**
  * Commits the pending transform preview by switching tools.
  *
- * The options bar carries no Commit/Apply button any more — the two extra text buttons
- * were what made the horizontal bar overflow — so the tool switch is the commit route
- * these specs drive. It is a real route rather than a test-only one: `goToTool` calls
- * `commitDirtyTool()` on every tool change (`src/hooks/useApp.ts:167`), which bakes the
- * preview into the layer and writes the one history entry the tests below assert on.
+ * The options bar carries no Commit/Apply button any more — it had four stacked rows in a
+ * fixed 50px strip, and the commit link was one of them — so the tool switch is the commit
+ * route these specs drive. It is the same call the button made, not a weaker one: `goToTool`
+ * runs `commitDirtyTool()` at `src/hooks/useApp.ts:167`, the identical function the deleted
+ * `onClick` called with the same unset argument, so it writes one history entry either way.
  *
- * The wait on the transform sliders going away is what makes the commit observable rather
- * than assumed: the click resolves as soon as the button is dispatched, and every
- * screenshot taken straight afterwards would otherwise race the commit.
+ * The wait is for the tool swap, and it is not a guard against racing the commit — `goToTool`
+ * dispatches the commit and `SET_TOOL_NAME` (`useApp.ts:194`) synchronously inside the click
+ * handler, so the sliders cannot unmount before the commit has been dispatched. It is still
+ * worth waiting for, because the DOM unmount is React's and asynchronous, and a screenshot
+ * taken immediately after the click would race it.
  */
 async function commitTransform(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
   await clickToolButton(page, 'draw');
+  await expectToolSelected(page, 'draw');
   await expect(page.locator('#trapezoid-slider')).toHaveCount(0);
 }
 
@@ -250,7 +253,10 @@ test.describe('Transform tool', () => {
       committed!.height / committed!.width,
       'the committed layer is the rotated bar, so the rotation is on the timeline'
     ).toBeGreaterThan(3);
-    await expect(page.getByTestId('undo-button'), 'the tool switch committed a history entry').toBeEnabled();
+    await expect(
+      page.getByTestId('undo-button'),
+      'committing the transform left a history entry to undo'
+    ).toBeEnabled();
 
     // ONE UNDO, and the bar is the horizontal one again — the original pixels, not merely
     // something dark.

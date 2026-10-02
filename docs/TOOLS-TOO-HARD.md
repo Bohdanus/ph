@@ -279,8 +279,9 @@ commit on Enter. <https://helpx.adobe.com/photoshop/using/free-transformations-i
 **What this app does.** A fixed-parameter panel. The options bar publishes a preview through
 `tempUpdateLayer` and nothing is committed until the tool is switched away or the document is
 exported — `src/components/ToolbarsRight/Transform/Transform.tsx:48` is the `tempUpdateLayer` call
-inside the throttled change handler. The bar carries no commit control; the whole right-hand column
-is the two mirror toggles and the single Cancel button at
+inside the throttled change handler, and `src/hooks/useApp.ts:167` is the `commitDirtyTool()` every
+tool switch runs through. The bar carries no commit control; the whole right-hand column is the two
+mirror toggles and the single Cancel button at
 `src/components/ToolbarsRight/Transform/Transform.tsx:296`, which discards the preview.
 
 **Why it is too hard.** The bounding box is a gesture surface that owns the pointer for its duration

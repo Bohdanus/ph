@@ -640,26 +640,42 @@ version of this file said it was.** The `Escape` handler at
 button calls (`:30-33`), and `cancel` runs `cancelLayerPreview?.()` and resets the panel args. It
 dispatches nothing: it deletes the pending preview, so what survives is the last committed state.
 That is the discard route, and it is the exact counterpart of the commit route —
-`commitDirtyTool` (`src/contexts/useLayer.ts:348`) is what bakes the preview into a layer plus one
+`commitDirtyTool` (`src/contexts/useLayer.ts:443`) is what bakes the preview into a layer plus one
 history entry, and its callers are `goToTool`
 (`src/hooks/useApp.ts:167-169`, which is the tool-switch path every toolbar click and letter
-shortcut runs through) and the export handlers (`src/components/DesktopHeader/DesktopHeader.tsx:287`,
+shortcut runs through) and the export handlers (`src/components/DesktopHeader/DesktopHeader.tsx:448`,
 `src/components/Mobile/MobileHeader.tsx:70`, `src/components/Mobile/MobileMenuDrawer.tsx:71`).
-(`DesktopHeader.tsx:281`, which an earlier version cited, is inside the export menu's own JSX; the
-call is at `:249`.) Enter and the click-outside-the-box route are both absent, and so is Adobe's
+Enter and the click-outside-the-box route are both absent, and so is Adobe's
 in-transform `Edit > Undo`.
 
 **An earlier version of the app had three commit routes on the bar, and it now has none of them
 there.** The right-hand column used to be `Reset All`, `Apply` and `Cancel` stacked under the
-mirror toggles (`Transform.tsx:296-305` before the removal). All three were removed together
-because the options bar is a single horizontal row and three stacked text links were what made it
-overflow its grid area; `Cancel` and Escape stay because a discard route is worth keeping a control
-for, and a commit route is not — `goToTool` already commits, so the button was redundant work for
-the operator rather than a capability. `Reset All` was redundant in a second way: its handler was
-`cancel` verbatim (`Transform.tsx:151-153`), so it was a second name for the button below it. The
-`Commit` row above is `missing` for this reason, and the two `Transform.tsx` citations that used
-to point at the deleted buttons are gone rather than repointed, since there is nothing left to
-point at.
+mirror toggles (`Transform.tsx:300-308` before the removal). `Reset All` and `Apply` were removed
+together and `Cancel` stayed.
+
+**The reason was HEIGHT, and the first version of this entry said width, which is wrong in a way
+that sends the next session after a defect that does not exist.** The column is a `flex flex-col`
+under the mirror toggles, so those three controls were stacked rather than laid out across. Measured
+headlessly in Chromium at 1280x800 with `Edit > Free Transform` open: with all four children the
+column was **85px** inside the strip's fixed `h-[50px]`
+(`src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:5`), spilling ~35px above and below the bar
+— and `overflow-y` is `visible` from 1024px up, so the spill painted over the header and the
+workspace rather than scrolling. With two children it is 50px, exactly the bar. The bar's **width did
+not change by a pixel**: 548px before and after, and no horizontal overflow at any viewport width
+from 769 to 1440 on either tree. The column was always 68px wide because the mirror row's two `w-8`
+buttons and their `gap-1` set it and every text link stretched to that width rather than sizing
+itself by its glyphs. So the number of links was never a width lever; `w-24`, `w-10` and `gap-4`
+are.
+
+`Cancel` and Escape stay because a discard route is worth keeping a control for. `Reset All` was
+redundant in a second way: its handler was `cancel` verbatim (`Transform.tsx:151-153`), so it was a
+second name for the button below it. `Apply` was not redundant in the same way — it was the only
+control on the bar that committed without leaving the tool, and removing it leaves the app with no
+in-tool commit route at all (there is no Enter binding in
+`src/components/Common/AppKeyboardShortcuts.tsx`), which is a capability question for the operator
+rather than a layout one. The `Commit` row above is `missing` for exactly that reason, and the
+`Commit` citation is gone rather than repointed, since there is nothing left to point at; `Cancel`'s
+is repointed from `:306` to `:296`, which is where the surviving button now starts.
 
 **Implementation: partial.** The declared composite order is fixed — scale, then rotation, then
 skew, all about the untransformed layer center (`src/contexts/affine-transform.ts:212`, whose doc
