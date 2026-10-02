@@ -1,8 +1,8 @@
 import type { RefObject } from 'react';
-import { getTextWidth, type TextToolArgs } from '../tools/text.ts';
+import { getTextLineCount, getTextWidth, resolveTextKind, textWrapWidth, type TextToolArgs } from '../tools/text.ts';
 import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
-import type { Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
+import type { Ctx2D, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
   if (!canvasRef.current) return { width: 0, height: 0 };
@@ -151,36 +151,56 @@ export const calculateNewRect = (
       y2: rect.y1 + fontSize * lineHeight + 2 * TEXT_PADDING,
     };
 
-  let newRect = rect;
+  const isParagraph = resolveTextKind(newArgs) === 'paragraph';
+
+  // A paragraph box's width is the width the user dragged, so it is clamped BEFORE anything is
+  // measured rather than after. `useRect.drawMask` paints `trimRect(...)` while handing
+  // `onRepaint` the unclamped rect, so without this the preview wraps at the dragged width while
+  // the committed box is the clamped one and the two wrap differently — a divergence that moves
+  // ink today and changes where the lines break under wrapping.
+  const placed = isParagraph ? (trimRect2(rect, imageSize) ?? rect) : rect;
+
+  let newRect = placed;
 
   const ctx2d = canvasRef.current?.getContext('2d');
   if (ctx2d) {
-    const currentWidth = rect.x2 - rect.x1;
-    const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-    if (requiredWidth > currentWidth) {
-      switch (align) {
-        case 'left':
-          newRect = { ...rect, x2: rect.x1 + requiredWidth };
-          break;
-        case 'center':
-          newRect = {
-            ...rect,
-            x1: rect.x1 + (currentWidth - requiredWidth) / 2,
-            x2: rect.x1 + (currentWidth + requiredWidth) / 2,
-          };
-          break;
-        case 'right':
-          newRect = { ...rect, x1: rect.x2 - requiredWidth };
+    if (isParagraph) {
+      // Only the height is content-derived for a paragraph box. The width is not grown and not
+      // re-placed: "the lines of type wrap to fit the dimensions of the bounding box"
+      // (https://helpx.adobe.com/photoshop/using/creating-type.html), so the box's dimensions are
+      // what the text takes, not the other way round.
+      const lineCount = getTextLineCount(ctx2d as Ctx2D, { ...newArgs, rect: placed }, textWrapWidth(placed));
+      const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
+      if (requiredHeight > placed.y2 - placed.y1) {
+        newRect = { ...placed, y2: placed.y1 + requiredHeight };
+      }
+    } else {
+      const currentWidth = placed.x2 - placed.x1;
+      const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
+      if (requiredWidth > currentWidth) {
+        switch (align) {
+          case 'left':
+            newRect = { ...placed, x2: placed.x1 + requiredWidth };
+            break;
+          case 'center':
+            newRect = {
+              ...placed,
+              x1: placed.x1 + (currentWidth - requiredWidth) / 2,
+              x2: placed.x1 + (currentWidth + requiredWidth) / 2,
+            };
+            break;
+          case 'right':
+            newRect = { ...placed, x1: placed.x2 - requiredWidth };
+        }
       }
     }
   }
 
-  const lines = text.split('\n');
-  const lineCount = lines.length;
+  const lineCount = text.split('\n').length;
   const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
 
   const currentHeight = newRect.y2 - newRect.y1;
-  if (requiredHeight > currentHeight) {
+  if (!isParagraph && requiredHeight > currentHeight) {
     newRect = { ...newRect, y2: newRect.y1 + requiredHeight };
   }
 

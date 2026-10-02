@@ -7,10 +7,14 @@ import {
   TRACKING_MAX,
   TRACKING_MIN,
   fontShorthand,
+  getTextLineCount,
   getTextWidth,
+  layoutText,
   renderText,
+  resolveTextKind,
   resolveTextStyle,
   text,
+  textWrapWidth,
   trackingPx,
   type TextToolArgs,
 } from '../text.ts';
@@ -69,6 +73,25 @@ const makeTextCtx = ({
 const measured = (ctx: CanvasRenderingContext2D): string[] =>
   vi.mocked(ctx.measureText).mock.calls.map((call) => call[0]);
 
+/** One `fillText` argument triple: the line, and where its left ink edge was anchored. */
+type FilledCall = [string, number, number];
+
+/**
+ * Every line the renderer actually drew, with its anchor, in call order.
+ *
+ * Read from the call log rather than recomputed from the args, because the WRAPPED line count and
+ * the `\n` count are different numbers for a paragraph box — the log is the only place the two
+ * layouts are distinguishable.
+ */
+const filled = (ctx: CanvasRenderingContext2D): FilledCall[] =>
+  vi.mocked(ctx.fillText).mock.calls.map(([line, x, y]) => [line, x, y] as FilledCall);
+
+/**
+ * The right INK edge of each drawn line: the anchor plus the measured width, which this file's
+ * measurer makes a character count times `CH`.
+ */
+const inkRights = (calls: FilledCall[]): number[] => calls.map(([line, x]) => x + line.length * CH);
+
 const rect: RectXYSorted = { x1: 0, y1: 0, x2: 200, y2: 120 };
 
 /**
@@ -77,6 +100,22 @@ const rect: RectXYSorted = { x1: 0, y1: 0, x2: 200, y2: 120 };
  * NEGATIVE coordinate rather than a merely small one.
  */
 const narrowRect: RectXYSorted = { x1: 0, y1: 0, x2: 40, y2: 120 };
+
+/**
+ * A paragraph box whose padded interior is 100px wide — exactly ten characters at `CH` — and 120px
+ * tall, which holds four lines of the 20px/1.1 type below it (`4 * 22 + 10 = 98`).
+ */
+const paraRect: RectXYSorted = { x1: 0, y1: 0, x2: 110, y2: 120 };
+
+/** `paraRect` shortened to 60px, which the same four lines no longer fit: `98 > 60`. */
+const shortParaRect: RectXYSorted = { x1: 0, y1: 0, x2: 110, y2: 60 };
+
+/**
+ * Two paragraphs, each of whose hard-broken lines is 13 characters — 130px, wider than
+ * `paraRect`'s 100px of wrap width. So the same string is four drawn lines as paragraph type and
+ * two over-wide ones as point type, which is what makes the two kinds distinguishable here.
+ */
+const wrappedText = 'one two three\nfour five six';
 
 const baseArgs: TextToolArgs = {
   text: 'Photoshop',
@@ -269,6 +308,147 @@ describe('resolveTextStyle', () => {
     expect(Object.hasOwn(args, 'strikethrough')).toBe(false);
     expect(Object.hasOwn(args, 'tracking')).toBe(false);
     expect(Object.hasOwn(args, 'underline')).toBe(false);
+  });
+});
+
+describe('resolveTextKind', () => {
+  it('resolves a record with no kind to point, and an explicit kind to itself', () => {
+    // The default is a MIGRATION decision, not a design one: every text layer, history entry and
+    // settings record written before this field existed was laid out by a renderer that grew its
+    // box to the widest line and never wrapped — point type by Adobe's own words ("Text that does
+    // not wrap"). `saveLastSettings` persists the record verbatim, so the gap is real and
+    // permanent, and resolving it as `paragraph` would re-flow every existing document's text the
+    // moment it was loaded.
+    expect(Object.hasOwn(baseArgs, 'kind')).toBe(false);
+    expect(resolveTextKind(baseArgs)).toBe('point');
+    expect(resolveTextKind({ ...baseArgs, kind: 'point' })).toBe('point');
+    expect(resolveTextKind({ ...baseArgs, kind: 'paragraph' })).toBe('paragraph');
+  });
+});
+
+describe('textWrapWidth', () => {
+  it('offers the text the box less the padding on BOTH sides', () => {
+    // 110 - 10 - 10 = 90, and 200 - 100 - 10 = 90: the second case puts `x1` somewhere other
+    // than zero, so a width measured from the ORIGIN or a subtraction of one padding instead of
+    // two would pass the first and fail the second.
+    expect(textWrapWidth({ x1: 10, y1: 0, x2: 110, y2: 120 })).toBe(90);
+    expect(textWrapWidth({ x1: 100, y1: 0, x2: 200, y2: 120 })).toBe(90);
+    expect(textWrapWidth(narrowRect)).toBe(30);
+  });
+});
+
+describe('layoutText', () => {
+  it('lays out point type as hard breaks only, whatever the box would have been', () => {
+    // `wrapWidth` is `Infinity` for point type, which makes every line fit by construction — so
+    // `'a\nb'` is two lines and a line far wider than any box is still ONE line. Asserting the
+    // absence of measurements as well is what proves the breaker was skipped rather than fed an
+    // infinite width: the fit test it runs would measure every line once to prove it fits.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    const layout = layoutText(ctx, style, 'a\nb', Infinity);
+
+    expect(layout.lines).toEqual(['a', 'b']);
+    expect(layoutText(ctx, style, 'Photoshop is longer than any box', Infinity).lines).toEqual([
+      'Photoshop is longer than any box',
+    ]);
+    expect(measured(ctx)).toEqual([]);
+  });
+
+  it('wraps a paragraph into lines that each fit the width, losing no word', () => {
+    // Adobe's paragraph type is "Text that wraps within a bounding box", and `wrapWidth` is what
+    // the box offers it. 'a bb ccc d eee' is 140px at `CH`, so at 50px it cannot be one line, and
+    // 'ccc d' lands EXACTLY on the limit — which is what pins the comparison as `<=` rather
+    // than `<`.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+    const body = 'a bb ccc d eee';
+
+    const layout = layoutText(ctx, style, body, 5 * CH);
+
+    expect(layout.lines).toEqual(['a bb', 'ccc d', 'eee']);
+    expect(layout.lines.length).toBeGreaterThan(1);
+    for (const line of layout.lines) {
+      expect(line.length * CH).toBeLessThanOrEqual(50);
+    }
+    // Every word survives, in order. This is a REFLOW, not a truncation, and a breaker that
+    // dropped the overflowing word — or measured one twice and kept the stale copy — would keep
+    // the line count and lose this.
+    expect(layout.lines.join(' ')).toBe(body);
+  });
+
+  it('keeps a hard break a hard break, and never merges two paragraphs onto one line', () => {
+    // Canvas has no hard break of its own: measured on Chromium, `measureText('a\nb')` equals
+    // `measureText('a b')` and `fillText('a\nb')` inks the same pixels. So a line that kept its
+    // '\n' would be drawn as ONE line with a space where the break should be, which is the
+    // failure this asserts against — the joined `paragraph 1paragraph 2` a naive splitter produces.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    const layout = layoutText(ctx, style, 'a bb ccc\nd e f', 5 * CH);
+
+    expect(layout.lines).toEqual(['a bb', 'ccc', 'd e f']);
+    expect(layout.lines.some((line) => line.includes('\n'))).toBe(false);
+  });
+
+  it('never breaks or hyphenates a word too wide for the box', () => {
+    // Adobe's hyphenation is off by default — `ParagraphStyle.hyphenation` is "boolean … Default
+    // false" — so a word wider than the box overflows instead of being divided. A substring test
+    // cannot tell 'Photosh' + 'op' from the whole word, so the intact token is asserted as a
+    // line of its own.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    const layout = layoutText(ctx, style, 'hi Photoshop there', 3 * CH);
+
+    expect(layout.lines).toEqual(['hi', 'Photoshop', 'there']);
+    expect(layout.lines.filter((line) => line.includes('Photosh'))).toEqual(['Photoshop']);
+    expect(layout.lines.every((line) => !line.includes('-'))).toBe(true);
+  });
+
+  it('does not break early on a trailing space, which canvas measures and CSS does not', () => {
+    // CSS removes a collapsible space at the end of a line; canvas does not, and the measured
+    // difference is real (`measureText('ab ') - measureText('ab')` is 5.557px at 64px). Without the
+    // trim before the fit test this first paragraph breaks after 'ab' AND the trailing empty token
+    // opens a blank line — four lines where Photoshop has two.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    const layout = layoutText(ctx, style, 'ab cd \nef gh ', 5 * CH);
+
+    expect(layout.lines).toEqual(['ab cd ', 'ef gh ']);
+    expect(layout.lines).toHaveLength(2);
+  });
+
+  it('reports overflow only against a box height it was actually given', () => {
+    // Three wrapped lines at 20px/1.1 need `3 * 22 + 10 = 76`. The absent `boxHeight` is the
+    // CREATOR's case — the layer canvas IS the box, so every line fits it by construction — and it
+    // must not be read as zero, which the 0px case below distinguishes.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+    const body = 'a bb ccc d eee';
+    const required = 76;
+
+    expect(layoutText(ctx, style, body, 5 * CH).overflow).toBe(false);
+    expect(layoutText(ctx, style, body, 5 * CH, 0).overflow).toBe(true);
+    // The comparison is `>`, so a box exactly the required height is not an overflow…
+    expect(layoutText(ctx, style, body, 5 * CH, required).overflow).toBe(false);
+    // …and one pixel short of it is.
+    expect(layoutText(ctx, style, body, 5 * CH, required - 1).overflow).toBe(true);
+  });
+
+  it('measures the box against the WRAPPED line count, not the hard-break count', () => {
+    // The height of a paragraph box is a function of its WIDTH, so it cannot be read off
+    // `text.split('\n').length`: this string has no '\n' at all and is three lines once laid out,
+    // and 60px of box is plenty for the 32px a single line would need.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+    const body = 'a bb ccc d eee';
+
+    expect(body.split('\n')).toHaveLength(1);
+    expect(getTextLineCount(ctx, { ...baseArgs, text: body }, 5 * CH)).toBe(3);
+    expect(layoutText(ctx, style, body, 5 * CH, 60).lines).toHaveLength(3);
+    expect(layoutText(ctx, style, body, 5 * CH, 60).overflow).toBe(true);
   });
 });
 
@@ -501,6 +681,135 @@ describe('renderText', () => {
       renderText(ctx, { ...baseArgs, align: 'center', rect: narrowRect });
 
       expect(ctx.fillText).toHaveBeenCalledWith('Photoshop', -25, 21);
+    });
+  });
+
+  describe('the two kinds of type layer', () => {
+    it('draws one fillText per WRAPPED line, stepping the baselines by fontSize * lineHeight', () => {
+      // `paraRect` offers 100px of wrap width and `wrappedText`'s hard-broken lines are 130px, so
+      // 'one two three' becomes 'one two' (70px) and 'three' (50px), and 'four five six' becomes
+      // 'four five' (90px) and 'six' (30px) — four calls, on a 22px step off the 21px first
+      // baseline. A renderer that split only on '\n' would draw two lines and step nothing.
+      const ctx = makeTextCtx();
+
+      renderText(ctx, { ...baseArgs, text: wrappedText, rect: paraRect, kind: 'paragraph' });
+
+      expect(filled(ctx)).toEqual([
+        ['one two', TEXT_PADDING, 21],
+        ['three', TEXT_PADDING, 43],
+        ['four five', TEXT_PADDING, 65],
+        ['six', TEXT_PADDING, 87],
+      ]);
+    });
+
+    it('keeps every wrapped line inside the box it was laid out for', () => {
+      // Left-aligned, so each line's ink runs from the padded left edge to `x + measured width`,
+      // and `paraRect`'s padded right edge is 105. Every one of these is at or inside it; point type
+      // puts the same text 135px out. A wrap width taken from the box rather than its PADDED
+      // interior would put 'four five' 5px past the edge, which is the size of one padding and so
+      // the one error this arithmetic can hide.
+      const ctx = makeTextCtx();
+
+      renderText(ctx, { ...baseArgs, text: wrappedText, rect: paraRect, kind: 'paragraph' });
+
+      expect(inkRights(filled(ctx))).toEqual([75, 55, 95, 35]);
+      expect(inkRights(filled(ctx)).every((right) => right <= paraRect.x2 - TEXT_PADDING)).toBe(true);
+    });
+
+    it('draws point type one line per hard break, overflowing rather than wrapping', () => {
+      // "each line of type is independent — the line expands or shrinks as you edit it, but it
+      // doesn't wrap to the next line" (Adobe). Same text, same box as the two cases above: two
+      // calls instead of four, each 130px of ink in a 100px wrap width — which is the overflow the
+      // paragraph case does not have. The second context has NO `kind` at all, because that is
+      // every record written before the field existed and the migration has to be exact.
+      const args = { ...baseArgs, text: wrappedText, rect: paraRect };
+      const ctx = makeTextCtx();
+      const migrated = makeTextCtx();
+
+      renderText(ctx, { ...args, kind: 'point' });
+      renderText(migrated, args);
+
+      expect(filled(ctx)).toEqual([
+        ['one two three', TEXT_PADDING, 21],
+        ['four five six', TEXT_PADDING, 43],
+      ]);
+      expect(filled(migrated)).toEqual(filled(ctx));
+      expect(Math.max(...inkRights(filled(ctx)))).toBeGreaterThan(paraRect.x2 - TEXT_PADDING);
+    });
+  });
+
+  describe('the overflow icon', () => {
+    it('draws nothing when the text fits the box', () => {
+      // Four lines is `4 * 22 + 10 = 98` of a 120px box: the same text and the same width as the
+      // case below, differing ONLY in the height the box offers, so the icon is pinned to the fit
+      // and not to the presence of a paragraph.
+      const ctx = makeTextCtx();
+
+      renderText(
+        ctx,
+        { ...baseArgs, text: wrappedText, rect: paraRect, kind: 'paragraph' },
+        { overflowIndicator: true }
+      );
+
+      expect(ctx.fillText).toHaveBeenCalledTimes(4);
+      expect(ctx.strokeRect).not.toHaveBeenCalled();
+      expect(ctx.beginPath).not.toHaveBeenCalled();
+      expect(ctx.stroke).not.toHaveBeenCalled();
+    });
+
+    it('strokes a boxed plus in the bottom-right corner of the box the text outgrew', () => {
+      // Adobe: "If you enter more text that can fit within a paragraph boundary…, a small box or
+      // circle containing a plus symbol (+) appears in place of a handle in the corner of the
+      // boundary" (https://helpx.adobe.com/photoshop/using/creating-type.html). An 8px box whose
+      // top-left is (97.5, 47.5) — the padded bottom-right corner of a 110x60 box is (105, 55),
+      // less the icon's own 8px, snapped onto the half-pixel grid so a 1px rule is not smeared
+      // over two rows.
+      const ctx = makeTextCtx();
+      const order: string[] = [];
+      let styleAtStroke = '';
+      vi.mocked(ctx.save).mockImplementation(() => void order.push('save'));
+      vi.mocked(ctx.restore).mockImplementation(() => void order.push('restore'));
+      vi.mocked(ctx.stroke).mockImplementation(() => {
+        order.push('stroke');
+        styleAtStroke = String(ctx.strokeStyle);
+      });
+
+      renderText(
+        ctx,
+        { ...baseArgs, text: wrappedText, rect: shortParaRect, kind: 'paragraph' },
+        { overflowIndicator: true }
+      );
+
+      expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
+      expect(ctx.strokeRect).toHaveBeenCalledWith(97.5, 47.5, 8, 8);
+      // And the plus inside it: two arms through the centre of that box, 2px each way.
+      expect(vi.mocked(ctx.moveTo).mock.calls).toEqual([
+        [99, 51],
+        [101, 49],
+      ]);
+      expect(vi.mocked(ctx.lineTo).mock.calls).toEqual([
+        [103, 51],
+        [101, 53],
+      ]);
+      // The icon is chrome, not ink, so it is drawn in the TYPE colour and bracketed by
+      // save/restore — an unbracketed `strokeStyle` would leave the shared overlay wearing it for
+      // the next tool, and the order is what proves the bracket rather than a trailing restore.
+      expect(styleAtStroke).toBe('#ff0000');
+      expect(order).toEqual(['save', 'stroke', 'restore']);
+    });
+
+    it('draws no indicator on the default call, even for text that overflows', () => {
+      // The creator renders through this same default call, and a committed layer's canvas IS its
+      // own box: an icon baked into a layer would be painted into the image, where Photoshop has
+      // no such thing. The four `fillText` calls are asserted so this cannot pass by drawing
+      // nothing at all.
+      const ctx = makeTextCtx();
+
+      renderText(ctx, { ...baseArgs, text: wrappedText, rect: shortParaRect, kind: 'paragraph' });
+
+      expect(ctx.fillText).toHaveBeenCalledTimes(4);
+      expect(ctx.strokeRect).not.toHaveBeenCalled();
+      expect(ctx.stroke).not.toHaveBeenCalled();
     });
   });
 

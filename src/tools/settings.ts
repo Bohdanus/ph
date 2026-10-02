@@ -97,6 +97,7 @@ export const defaultSettings = {
     strikethrough: false,
     tracking: 0,
     underline: false,
+    kind: 'point',
 
     toolName: 'text',
   } satisfies TextToolArgs,

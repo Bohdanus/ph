@@ -60,6 +60,36 @@ const ASCENT_FALLBACK_EM = 0.8;
  */
 const X_HEIGHT_FALLBACK_EM = 0.5;
 
+/**
+ * How far the pointer may travel during a press and still count as a click, in CSS px.
+ *
+ * **A RECONSTRUCTION.** Adobe distinguishes the two gestures by intent — "Select anywhere in the
+ * document and start typing to add point text" versus "Drag anywhere in the document to add
+ * paragraph text" (https://helpx.adobe.com/photoshop/desktop/text-typography/get-started-with-text/add-text.html)
+ * — and documents **no threshold at all**: no distance, no time, no tie-break for a one-pixel drag.
+ * This value is therefore this app's own, and it is a named constant so it is one edit rather than
+ * a search. It is measured against BOTH axes, and the box it guards is what makes it matter: a
+ * one-pixel drag accepted as a paragraph gesture would hand the text a one-pixel-wide box, and
+ * every line would overflow it.
+ */
+export const POINT_TYPE_MAX_DRAG_PX = 3;
+
+/**
+ * Adobe's two kinds of type layer.
+ *
+ * `POINTTEXT` is "Text that does not wrap" and `PARAGRAPHTEXT` is "Text that wraps within a
+ * bounding box" — Adobe's own words for the ExtendScript `TextType` enum, which is the only
+ * reference that publishes the pair as an enum at all; the current UXP reference exposes it as two
+ * read-only booleans, `TextItem.isPointText` and `TextItem.isParagraphText`, and no enum
+ * (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem).
+ *
+ * The default is **`point`**, and that is a migration decision rather than a design one: every text
+ * layer in every document, history entry and settings record written before this field existed
+ * behaves as point type, because that is the only thing this app could draw. See
+ * {@link resolveTextKind}.
+ */
+export type TextKind = 'point' | 'paragraph';
+
 export type TextToolArgs = {
   align: 'left' | 'center' | 'right';
   bold: boolean;
@@ -83,6 +113,15 @@ export type TextToolArgs = {
   /** Looseness in 1/1000 em. Adobe's field is `-1000..1000`; see {@link TRACKING_MIN}. */
   tracking?: number;
   underline?: boolean;
+
+  /**
+   * Which of Adobe's two kinds of type layer this is. Optional for the same reason the five above
+   * are: `saveLastSettings` persists this record verbatim and a record written before the field
+   * existed has no key for it at all. It is OMITTED from persistence — see
+   * {@link TextToolSettings} — because it belongs to the gesture that placed the draft, not to the
+   * tool: a new draft is a point layer until a drag says otherwise.
+   */
+  kind?: TextKind;
 
   toolName: 'text';
 };
@@ -128,12 +167,30 @@ export function resolveTextStyle(args: TextToolArgs): ResolvedTextStyle {
 }
 
 /**
+ * The one place an absent `kind` becomes a value, for the same reason {@link resolveTextStyle}
+ * exists: a `??` missed at one of the call sites produced a `NaN` line coordinate rather than a
+ * visible default, and there are now three readers of this field.
+ *
+ * **`point` is the migration default, and it is the only defensible one.** A record with no `kind`
+ * came from a build whose renderer grew its box to the widest line and never wrapped — that is
+ * point type by Adobe's definition, so resolving it as `paragraph` would re-flow every existing
+ * document's text at the moment it is loaded.
+ */
+export function resolveTextKind(args: TextToolArgs): TextKind {
+  return args.kind === 'paragraph' ? 'paragraph' : 'point';
+}
+
+/**
  * `color` is a setting, not a derivation. It used to be omitted because the bar mirrored the store's
  * foreground into the args on every render, so the value was never the tool's to keep; it is the
  * tool's own swatch now, and `saveLastSettings` already persists it (`src/util/settings.ts` omits
- * only `text` and `rect`), so this type has to say the same thing.
+ * `text` and `rect` and, since this revision, `kind`), so this type has to say the same thing.
+ *
+ * `kind` is omitted rather than persisted for a different reason: it is decided by the gesture that
+ * placed the draft, so a remembered `paragraph` would make the next draft wrap inside the last
+ * layer's box before the user has dragged anything.
  */
-export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect'>;
+export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect' | 'kind'>;
 
 /**
  * The CSS font shorthand, with style and weight BEFORE the size.
@@ -289,8 +346,167 @@ function decorationThickness(fontSize: number): number {
   return Math.max(1, Math.round(fontSize / 16));
 }
 
-export function renderText(ctx: Ctx2D, args: TextToolArgs) {
+/**
+ * One laid-out line, and whether the text outgrew the box it was laid out into.
+ *
+ * `overflow` is the fact Adobe's overflow icon reports: "If you enter more text that can fit within
+ * a paragraph boundary…, a small box or circle containing a plus symbol (+) appears in place of a
+ * handle in the corner of the boundary"
+ * (https://helpx.adobe.com/photoshop/using/creating-type.html). It is carried here rather than
+ * recomputed by the caller because the caller would have to reproduce the whole layout to get it.
+ */
+export type TextLayout = {
+  lines: string[];
+  overflow: boolean;
+};
+
+/**
+ * What a caller wants that is not part of the ink.
+ *
+ * The overflow icon is the only member, and it is opt-in because it is chrome rather than type:
+ * the draft's overlay asks for it, the creator does not. See {@link drawOverflowIndicator}.
+ */
+export type RenderTextOptions = {
+  overflowIndicator?: boolean;
+};
+
+/** The width a paragraph box offers its text, which is the box less the padding on both sides. */
+export function textWrapWidth(rect: RectXYSorted): number {
+  return rect.x2 - rect.x1 - TEXT_PADDING * 2;
+}
+
+/**
+ * Splits one hard-broken line into the greedy set of lines that fit `wrapWidth`.
+ *
+ * **Every decision in here is forced by something Adobe says or something the platform measures.**
+ *
+ * - **Break at spaces only, and never inside a word.** Adobe's hyphenation is off by default —
+ *   `ParagraphStyle.hyphenation` is "boolean … Default false"
+ *   (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/paragraphstyle) — and a
+ *   word too wide for the box is therefore not broken and not hyphenated: it overflows. Photoshop
+ *   documents the same outcome from the other end, where converting paragraph type to point type
+ *   "all characters that overflow the bounding box are deleted".
+ * - **`\n` is a hard break handled by the caller**, because canvas does not implement one:
+ *   measured on Chromium 153, `measureText('a\nb')` equals `measureText('a b')` and the inked pixels
+ *   of `fillText('a\nb')` equal those of `fillText('a b')`. A renderer that passed a multi-line
+ *   string to `fillText` would draw one line with a space where the newline is.
+ * - **The trailing space is trimmed before the fit test.** CSS removes a collapsible space at the
+ *   end of a line, and canvas does not: measured, `measureText('ab ')` is 5.557px wider than
+ *   `measureText('ab')`. Without the trim, a line that ends in a space breaks one word early.
+ * - **A non-breaking space is not an opportunity.** NBSP measures identically to a space, so
+ *   metrics cannot tell the two apart and the distinction has to be a code-point check.
+ * - **Greedy first fit, not optimal.** Nothing in Adobe's documentation describes the composer;
+ *   Photoshop's Every-line and Single-line composers are paragraph-level and are not exposed in
+ *   Adobe's API at all. Measured cost of the naive breaker on this path is ~2µs per paragraph.
+ */
+function wrapLine(ctx: Ctx2D, line: string, wrapWidth: number, spacing: number): string[] {
+  const fits = (candidate: string) => inkWidth(ctx, candidate.trimEnd(), spacing) <= wrapWidth;
+  if (fits(line)) return [line];
+
+  // A single token that cannot fit is not broken. It is emitted alone and overflows, and the
+  // caller reports the overflow — this is Adobe's off-by-default hyphenation, not a failure.
+  const tokens = line.split(' ');
+  const wrapped: string[] = [];
+  let current = '';
+  for (const token of tokens) {
+    const candidate = current === '' ? token : `${current} ${token}`;
+    if (current !== '' && !fits(candidate)) {
+      wrapped.push(current);
+      current = token;
+    } else {
+      current = candidate;
+    }
+    // A no-break space inside `token` keeps the token whole, and `split(' ')` already does: the
+    // token is never subdivided, so no further check is needed for the token itself.
+  }
+  wrapped.push(current);
+  return wrapped;
+}
+
+/**
+ * Lays the draft out into the lines that will actually be drawn.
+ *
+ * **This is the single layout authority.** `renderText` draws what this returns and
+ * `calculateNewRect` sizes the box from it, which is the only way the box and the ink can agree —
+ * the durable materializer re-runs the creator from the retained args
+ * (`materialization.ts`), so a second implementation would be a second opinion about where the
+ * lines fall.
+ *
+ * `wrapWidth` is `Infinity` for point type, which makes every line fit by construction and reduces
+ * this to a split on hard breaks — byte-for-byte the behaviour point type has always had.
+ *
+ * `boxHeight` is the height available. Its absence (`undefined`) means "no box to overflow", which
+ * is the case for the creator: the layer canvas IS the box, so every line fits it by construction.
+ */
+export function layoutText(
+  ctx: Ctx2D,
+  style: ResolvedTextStyle,
+  text: string,
+  wrapWidth: number,
+  boxHeight?: number
+): TextLayout {
+  const spacing = trackingPx(style);
+  // An unbounded width makes every line fit by construction, so the breaker is not merely a no-op
+  // there — running it would measure each line twice, once to prove it fits and once to place it,
+  // and the measurement is the expensive half. Point type therefore skips it entirely and the
+  // caller's single measurement per line stands.
+  const hardBroken = text.split('\n');
+  const lines = Number.isFinite(wrapWidth)
+    ? hardBroken.flatMap((line) => wrapLine(ctx, line, wrapWidth, spacing))
+    : hardBroken;
+  const requiredHeight = lines.length * style.fontSize * style.lineHeight + TEXT_PADDING * 2;
+  return { lines, overflow: boxHeight !== undefined && requiredHeight > boxHeight };
+}
+
+/**
+ * The overflow icon's edge, in CSS px.
+ *
+ * **A RECONSTRUCTION.** Adobe documents the icon's existence and its appearance — "a small box or
+ * circle containing a plus symbol (+) appears in place of a handle in the corner of the boundary" —
+ * and neither the size nor the corner, so 8px in the bottom-right is this app's choice. It is a
+ * named constant so it is one edit rather than a search, and it is fixed rather than derived from
+ * the box: an icon that changed size with the box would not be the same object at two sizes.
+ */
+const OVERFLOW_INDICATOR_PX = 8;
+
+/**
+ * Adobe's overflow icon: a small box containing a plus, in the bottom-right corner of the boundary,
+ * in place of the handle that would be there.
+ *
+ * **It is box chrome, not ink**, so it is drawn only on the draft's overlay and never by the
+ * creator — a committed layer's canvas is its own box, and baking the icon into the layer would
+ * paint it into the image, where Photoshop has no such thing.
+ *
+ * Adobe does not state the corner, the size or the colour (§17 of
+ * `TEXT_TOOL_REQUIREMENTS.md` records the silence); bottom-right is the corner the overflow is
+ * read from in every other application, and both figures are named constants so they are one edit.
+ */
+export function drawOverflowIndicator(ctx: Ctx2D, rect: RectXYSorted, color: string): void {
+  const size = OVERFLOW_INDICATOR_PX;
+  const boxRight = rect.x2 - TEXT_PADDING;
+  const boxBottom = rect.y2 - TEXT_PADDING;
+  const x = boxRight - size;
+  const y = boxBottom - size;
+
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, size, size);
+  const arm = Math.max(1, Math.round(size / 4));
+  const midX = Math.round(x + size / 2);
+  const midY = Math.round(y + size / 2);
+  ctx.beginPath();
+  ctx.moveTo(midX - arm, midY);
+  ctx.lineTo(midX + arm, midY);
+  ctx.moveTo(midX, midY - arm);
+  ctx.lineTo(midX, midY + arm);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOptions = {}) {
   const style = resolveTextStyle(args);
+  const kind = resolveTextKind(args);
   const { text, rect } = args;
   if (!text || !rect) return;
 
@@ -309,7 +525,14 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs) {
   // else, and this runs on every keystroke of a draft.
   const ascent = baselineOffset(ctx, style.fontSize);
 
-  text.split('\n').forEach((line, index) => {
+  // Point type is the case where the box has no authority over the text — "each line of type is
+  // independent — the line expands or shrinks as you edit it, but it doesn't wrap to the next
+  // line" (https://helpx.adobe.com/photoshop/using/creating-type.html) — so it is laid out against
+  // an infinite width, which reduces the layout to the hard breaks it has always had.
+  const wrapWidth = kind === 'paragraph' ? textWrapWidth(rect) : Infinity;
+  const layout = layoutText(ctx, style, text, wrapWidth, rect.y2 - rect.y1);
+
+  layout.lines.forEach((line, index) => {
     const baseline = rect.y1 + TEXT_PADDING + ascent + index * lineStep;
     const width = inkWidth(ctx, line, spacing);
     // `'left'` is the fallthrough rather than `'right'` because an unrecognised value — a
@@ -331,10 +554,41 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs) {
       ctx.fillRect(x, Math.round(baseline - strikeAbove - thickness / 2), width, thickness);
     }
   });
+
+  if (options.overflowIndicator && layout.overflow) {
+    drawOverflowIndicator(ctx, rect, style.color);
+  }
+}
+
+/**
+ * How many lines the draft occupies once it is laid out, which is what sizes a paragraph box.
+ *
+ * The count is a function of the box's WIDTH, so it cannot be read off `text.split('\n').length`:
+ * that is the number of hard breaks, not of lines. Exported separately from {@link getTextWidth}
+ * because `calculateNewRect` needs the count and nothing else, and measuring the width as well
+ * would double the `measureText` calls on every keystroke.
+ */
+export function getTextLineCount(ctx: Ctx2D, args: TextToolArgs, wrapWidth: number): number {
+  const style = resolveTextStyle(args);
+  const text = args.text ?? '';
+  // Bracketed, and the bracket is load-bearing rather than defensive: `calculateNewRect` hands this
+  // the live tool overlay, whose context carries whatever the last tool left on it — measured in the
+  // browser, the overlay reports `10px sans-serif` and counts the test string at 162.9px against the
+  // renderer's 64px Arial. Measuring unstyled makes every candidate fit, so a paragraph box sized by
+  // this grew to one line and committed two wrapped lines of ink as a single band that overflowed it.
+  // An unbracketed version would additionally leave the Type tool's typography on the shared overlay.
+  ctx.save();
+  try {
+    applyTextStyle(ctx, style);
+    return layoutText(ctx, style, text, wrapWidth).lines.length;
+  } finally {
+    ctx.restore();
+  }
 }
 
 export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs): number {
   const style = resolveTextStyle(args);
+  const kind = resolveTextKind(args);
 
   // Bracketed, because this is a MEASUREMENT and `applyTextStyle` is not a measurement: it writes
   // `font`, `textBaseline`, `textAlign`, `letterSpacing` and `fontVariantCaps` onto the caller's
@@ -347,7 +601,11 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
     applyTextStyle(ctx as Ctx2D, style);
 
     const spacing = trackingPx(style);
-    const lines = (args.text ?? '').split('\n');
+    // The widest WRAPPED line for a paragraph box, and the widest explicit line for a point box —
+    // which is the same number as before this revision, because an infinite wrap width leaves the
+    // layout a plain split on hard breaks.
+    const wrapWidth = kind === 'paragraph' && args.rect ? textWrapWidth(args.rect) : Infinity;
+    const { lines } = layoutText(ctx as Ctx2D, style, args.text ?? '', wrapWidth);
 
     return lines.reduce((widest, line) => Math.max(widest, inkWidth(ctx as Ctx2D, line, spacing)), 0);
   } finally {

@@ -131,7 +131,7 @@ The type tool has a flyout: the four tools Photoshop 2024–2026 ships are Horiz
 Vertical Type, Horizontal Type Mask and Vertical Type Mask, with the mask variants creating
 a selection outline in the shape of the type instead of a type layer. `T` selects the tool
 and `Shift+T` cycles the group. **The app has one entry for that four-tool group**
-(`toolbar-mapping.ts:113`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
+(`toolbar-mapping.ts:127`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
 the record now says so in its `appNotes`, because an entry that names Adobe's exact string
 for one of four tools otherwise reads as a complete stand-in. Vertical Type sets type
 top-to-bottom, and the two mask variants are not a variant of the entry the app has at all —
@@ -325,8 +325,8 @@ the way a bound check cannot see: each landed on the _previous_ entry's closing 
 begins at `:157`; `toolProcessors.ts:160` was the `shape` processor, and the text entry
 begins at `:171`. Every other entry was opened and confirmed to be what its record claims —
 `crop.ts:26` the crop creator, `rect.ts:36` `trimRect`, `useRect.ts:223` the `hideBlend` guard
-in front of the 0.7 fill at `:226`, `layer-renderer.ts:49` the six-name `vectorToolNames` set,
-`toolbar-mapping.ts:66` the single crop entry, `toolbar-mapping.ts:113` the single type entry.
+in front of the 0.7 fill at `:226`, `layer-renderer.ts:54` the six-name `vectorToolNames` set,
+`toolbar-mapping.ts:66` the single crop entry, `toolbar-mapping.ts:127` the single type entry.
 
 **The numbers in the two paragraphs above are themselves history: they describe the pass
 before this one, and the lines have moved again.** Every `path:NNN` in both files was
@@ -335,7 +335,7 @@ census tables above and in `type-crop.ts`. Where they moved, and by how much:
 
 | Was                                                | Is                                         | What moved                                       |
 | -------------------------------------------------- | ------------------------------------------ | ------------------------------------------------ |
-| `toolbar-mapping.ts:107`                           | `toolbar-mapping.ts:113`                   | the text tile sits after a closing `],`          |
+| `toolbar-mapping.ts:107`                           | `toolbar-mapping.ts:127`                   | the text tile sits after a closing `],`          |
 | `Text.tsx:123` / `:136` / `:189` / `:175` / `:210` | `:112` / `:133` / `:154` / `:226` / `:321` | textarea, font, size, align and Apply, all again |
 | `useRect.ts:167`                                   | `useRect.ts:223` (fill at `:226`)          | `drawMask` grew; `:167` is now a handle hit-test |
 | `useLayer.ts:349`                                  | `useLayer.ts:447`                          | the `toolName === 'text'` branch                 |
@@ -371,12 +371,13 @@ Why each verdict:
   rather than only marking the field invalid, which is the same rule applied one layer down.
 - **Text color — `partial`, and this verdict reversed the one this file called the row's one
   false verdict.** The previous pass wrote that `Text.tsx` "renders **no colour control at
-  all**" and that it copied the store's foreground into the args one-way from
-  `Text.tsx:16-20`. That was true when it was written and is **false in this tree**:
+  all**" and that it copied the store's foreground into the args one-way, citing a line range
+  (`Text.tsx:16-20`) that is empty in this tree. That was true when it was written and is
+  **false here**:
   `Text.tsx:215` renders `<input id="text-color" type="color">`, `handleColorChange`
   (`Text.tsx:88-90`) writes it into the args, and `renderText` consumes it as `ctx.fillStyle`
-  (`src/tools/text.ts:300`). The foreground mirroring it described is gone, and both the
-  component comment (`Text.tsx:77-87`) and the args type comment (`src/tools/text.ts:130-135`)
+  (`src/tools/text.ts:517`). The foreground mirroring it described is gone, and both the
+  component comment (`Text.tsx:77-87`) and the args type comment (`src/tools/text.ts:184-192`)
   say so in as many words — the latter names the exact change: `color` "used to be omitted
   because the bar mirrored the store's foreground into the args on every render". So `missing`
   was the second kind of false verdict: a control that is on screen and wired, understated.
@@ -395,8 +396,11 @@ Why each verdict:
   values, the same default (left), and the same effect. The Justify variants are not on the
   bar in Photoshop either. Note that this pass changed _how_ it reaches the args, not what it
   does: alignment now goes through `publishStyle` rather than `onChange` directly, because
-  `calculateNewRect` has an alignment arm that re-places a box the text outgrew, so a box
-  moved by Left and then switched to Right is one the next measurement would move again.
+  `calculateNewRect` has an alignment arm that re-places a **point** box the text outgrew, so a
+  box moved by Left and then switched to Right is one the next measurement would move again.
+  **That arm is point-type only as of the text wave** (`src/util/rect.ts:166-179`): a paragraph
+  box is neither grown nor re-placed, because its width is the width the user dragged, so for
+  that kind the `publishStyle` route is now a no-op rather than a guard.
 - **Commit / Cancel — `partial`.** `Apply` (`Text.tsx:321`) and `Clear` (`:324`) do what the
   check mark and the cross do, and the draft is also committed implicitly when the tool
   changes (`goToTool` calls `commitDirtyTool`, `src/hooks/useApp.ts:167`, whose text branch is
@@ -405,17 +409,21 @@ Why each verdict:
   `text` or `rect` is empty.
 
 **There is no `inert` control in this family, and that was checked rather than assumed.**
-`TextToolSettings` is `Omit<TextToolArgs, 'text' | 'rect'>`
-(`src/tools/text.ts:136`), so the persisted surface is **thirteen** keys, counted off the type
+`TextToolSettings` is `Omit<TextToolArgs, 'text' | 'rect' | 'kind'>`
+(`src/tools/text.ts:193`), so the persisted surface is **thirteen** keys, counted off the type
 rather than off this prose: the eight the previous count named — `align`, `bold`, `color`,
 `fontFamily`, `fontSize`, `italic`, `lineHeight` and the tool name — plus the five that arrived
 with this pass, `allCaps`, `smallCaps`, `strikethrough`, `tracking` and `underline`. **Eight
 became thirteen, and the growth is exactly five.** (A brief for this pass said fourteen; the type
-says thirteen, and thirteen is what is written down.) Every one is rendered by `Text.tsx` and
-reaches `renderText` through `resolveTextStyle` (`src/tools/text.ts:113`), the single place a
-field missing from an older persisted record becomes a value. That seam is also why the five
-arrived **optional**: `saveLastSettings` persists the record verbatim
-(`src/util/settings.ts:31`, which strips only `text` and `rect`), so a settings object written
+says thirteen, and thirteen is what is written down.) `kind` was later added to the `Omit` list
+rather than to the count: it is a per-draft decision made by the gesture, so it is deliberately
+not remembered, and `saveLastSettings` strips it alongside `text` and `rect`
+(`src/util/settings.ts:31`). Every persisted key is rendered by `Text.tsx` and
+reaches `renderText` through `resolveTextStyle` (`src/tools/text.ts:152`), the single place a
+field missing from an older persisted record becomes a value; `kind` has the same seam one level
+up, `resolveTextKind` (`src/tools/text.ts:179`), for the same reason. That seam is also why the
+five arrived **optional**: `saveLastSettings` persists the record verbatim
+so a settings object written
 before a field existed has to keep loading, and a `??` missed at one of the call sites produces a
 `NaN` line coordinate rather than a visible default.
 
@@ -430,7 +438,7 @@ filing them there would describe a bar Adobe does not ship. The verdicts live in
 
 The `inert` trap this family is usually suspected of is real but sits one level down: all
 thirteen are perfectly good state that only ever reaches the screen through a raster produced
-once, by `text` (`src/tools/text.ts:358`), and is then scaled rather than re-rendered.
+once, by `text` (`src/tools/text.ts:617`), and is then scaled rather than re-rendered.
 
 ### Character and Paragraph panel controls
 
@@ -481,14 +489,14 @@ what Auto computes.
 range, the unit and the sign all match Adobe — `CharacterStyle.tracking` is −1000…1000 and
 "Tracking and kerning are both measured in 1/1000 em… 100 tracking units in a 10-point font are
 equivalent to 1 point" — and the readout on the bar is in Adobe's unit with no rescaling on the
-way out; `trackingPx` (`src/tools/text.ts:155`) is the one place that converts to px. The first
+way out; `trackingPx` (`src/tools/text.ts:212`) is the one place that converts to px. The first
 divergence is that Adobe's tracking is **cumulative with manual kerning**, and the app has no
 manual kerning to be cumulative with, so half the control is gone. The second is the fallback:
 where `ctx.letterSpacing` exists the whole line goes down in one `fillText` and the shaper
 handles it, and where it does not the app places each grapheme cluster itself — which drops
 kerning and any ligature the font would have formed across the boundary, measured at 11.875px
 wider than the kerned total on 'WAVE AV' at 64px. The fallback is feature-detected with
-`'letterSpacing' in ctx` (`src/tools/text.ts:165`) rather than by deleting the prototype
+`'letterSpacing' in ctx` (`src/tools/text.ts:223`) rather than by deleting the prototype
 property, which reports success on Chrome 154 and leaves it working.
 
 **Underline is `partial` and two of its numbers are this app's own.** Adobe's only rule is that
@@ -496,7 +504,7 @@ the line "is always the same color as the type color", and its `Underline` enum 
 weight, offset or colour of its own — the Underline Options dialog with an offset control is
 InDesign's and InCopy's, not Photoshop's. So where the rule sits is a **reconstruction**: 0.1em
 below the baseline (`UNDERLINE_BELOW_BASELINE_EM`, `src/tools/text.ts:47`), which no Adobe page
-states, and the thickness `max(1, round(fontSize / 16))` (`decorationThickness`, `:288`), which
+states, and the thickness `max(1, round(fontSize / 16))` (`decorationThickness`, `:345`), which
 Adobe does not document at all. The row records the control as `partial` because the drawn
 thing exists, is in the right colour, and is switchable — and neither figure is claimed as
 Adobe's. Strikethrough is `partial` on the same grounds without the offset problem: half the
@@ -504,7 +512,7 @@ measured x-height is where a strikethrough goes, and Adobe documents neither the
 the thickness there either.
 
 **Caps needed the font assigned first, which is the kind of thing that silently eats a control.**
-`ctx.fontVariantCaps` is assigned **after** `ctx.font` (`applyTextStyle`, `:191`) because
+`ctx.fontVariantCaps` is assigned **after** `ctx.font` (`applyTextStyle`, `:248`) because
 assigning the font resets `fontVariantCaps` to `'normal'` on Chrome 154 — `letterSpacing`,
 `wordSpacing` and `fontKerning` survive a font assignment and `fontVariantCaps` does not, so a
 caps toggle set before the font is lost on every redraw. The same ordering reason is why the
@@ -518,24 +526,26 @@ box measurement have to move together or the box is one metric out of date.
 because "the app's type layer is baked pixels" is otherwise only half true.** The chain,
 re-derived in this worktree:
 
-1. `src/tools/text.ts:292` — `renderText` splits the string on `\n` and calls
-   `ctx.fillText` per line onto a 2D context. There is no glyph outline, no font engine, and
-   no retained text object anywhere in the module.
-2. `src/tools/text.ts:358` — the `text` creator allocates an `OffscreenCanvas`, calls
+1. `src/tools/text.ts:508` — `renderText` calls `ctx.fillText` per laid-out line onto a 2D
+   context. There is no glyph outline, no font engine, and no retained text object anywhere in
+   the module; the line breaks come from `layoutText` (`:441`), which splits on `\n` and wraps a
+   paragraph box at spaces, and that is a string operation rather than a text engine.
+2. `src/tools/text.ts:617` — the `text` creator allocates an `OffscreenCanvas`, calls
    `renderText` onto it and returns `[canvas]`. A creator tool's return value is a raster.
 3. `src/tools/toolProcessors.ts:171` — the `text` processor is `commit: 'source'`,
    `creator: true`, so the layer source is that raster. (The block runs `:171-177`; a single
    line is a bad anchor here, because `:170` is the one-line `shape` processor and `:178` opens
    `'polygonal-lasso'`.)
-4. `src/contexts/layer-renderer.ts:49` — `vectorToolNames` is a `Set` of **six** tool names:
+4. `src/contexts/layer-renderer.ts:54` — `vectorToolNames` is a `Set` of **six** tool names:
    `shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`. `text` is not in it, so
    `isVectorSource` is false for a text layer and `getLayerBitmap` returns `layer.bitmap`
-   instead of re-running the creator (`layer-renderer.ts:57`).
-5. `src/contexts/presentation-evaluator.ts:168` — that bitmap is blitted with
+   instead of re-running the creator (`layer-renderer.ts:62`).
+5. `src/contexts/presentation-evaluator.ts:282` — that bitmap is blitted with
    `ctx.drawImage(bitmap, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height)`, so
    enlarging a text layer resamples it. `drawLayerSource` reaches it through
-   `drawEvaluatedPresentation` (`layer-renderer.ts:104`); the affine branch at `:181` is the one a
-   transformed layer takes instead, and it scales to the same `sourceSize`.
+   `drawEvaluatedPresentation` (`layer-renderer.ts:115`); the affine branch at
+   `presentation-evaluator.ts:286-295` is the one a transformed layer takes instead, and it
+   scales to the same `sourceSize`.
 6. `src/contexts/materialization.ts:136` — **the exception.** The durable materializer
    re-runs `processor.imageProcessor` from the retained args, so on that path the characters
    are re-derivable rather than only resampled. `AGENTS.md` is explicit that the legacy
@@ -562,12 +572,14 @@ keeps the previous font. Measured on this host, `64px bold Arial` and `64px ital
 pixel-identically to the serif fallback, so **the Bold and Italic buttons changed the typeface
 instead of weighting it** — the two most visible controls on the bar did the opposite of what
 they said. It is now `` `${italic} ${bold} ${size}px ${family}` `` — `italic bold 64px Arial`
-(`src/tools/text.ts:150`).
+(`src/tools/text.ts:207`).
 
 **Both renderers build it, not one, and the previous version of this file named only one.**
-`applyTextStyle` (`:191`) is reached from `renderText` (`:292`) **and** from `getTextWidth`
-(`:336`), so the shorthand is built on the drawing path and on the measurement path, and the
-options bar's `calculateNewRect` measures through the second one. A fix applied to `renderText`
+`applyTextStyle` (`:248`) is reached from `renderText` (`:508`) **and** from `getTextWidth`
+(`:590`), so the shorthand is built on the drawing path and on the measurement path, and the
+options bar's `calculateNewRect` measures through the second one — and since the text wave,
+through a third reader, `getTextLineCount` (`src/tools/text.ts:572`), which is what sizes a
+paragraph box and is reached on every keystroke. A fix applied to `renderText`
 alone would have left the box measured against a font the drawing never used — which is the
 one-metric-out-of-date failure `publishStyle` in `Text.tsx` exists to prevent.
 
@@ -578,7 +590,7 @@ families at exactly 0.75em. Every decoration this tool draws relative to a basel
 underline, the strikethrough — needs a baseline it can name, and `'top'` is not one. It is now
 `'alphabetic'` with the baseline placed at
 `rect.y1 + TEXT_PADDING + fontBoundingBoxAscent + index * fontSize * lineHeight`
-(`baselineOffset`, `:227`, with a 0.8em fallback for a context whose `measureText` reports no
+(`baselineOffset`, `:284`, with a 0.8em fallback for a context whose `measureText` reports no
 ascent — the test harnesses model `measureText` as `{ width }` alone, and a real `undefined`
 there puts every baseline at `NaN`). `textAlign` is `'start'` for the same reason: the anchor is
 computed from the measured **ink** width, so the box and the glyphs cannot disagree.
@@ -588,24 +600,79 @@ computed from the measured **ink** width, so the box and the glyphs cannot disag
 `measureText('H').width` at 10px of tracking is 10px wider than untracked Arial even though one
 glyph has no gap in front of it — the advance grows by `n * spacing` for n = 1…10 while the ink
 grows by `(n - 1) * spacing`. Every number that positions something relative to a line uses
-`inkWidth` (`:253`), and `getTextWidth` uses it too, or the box grows by a gap the text never
+`inkWidth` (`:310`), and `getTextWidth` uses it too, or the box grows by a gap the text never
 fills. At zero tracking `inkWidth` short-circuits to `ctx.measureText(line).width`, because the
 fallback measures a string one cluster at a time and there is no reason to throw away kerning
 when there is no spacing to place by hand.
 
-### Two more app divergences worth stating
+### Three more app divergences worth stating
 
-- **No text box, and therefore no wrapping.** `src/util/rect.ts:116`
-  (`calculateNewRect`) measures the widest line and _grows_ the rect to fit it — the width grows
-  at `:145-160` and the height at `:168-170`, and neither branch fires when the text is narrower
-  than the box already is — then trims the result to the document. A line longer than the canvas
-  is clipped at the canvas edge rather than wrapped. Photoshop's paragraph type does the
-  opposite: the box is fixed and the text reflows inside it, with an overflow icon when it no
-  longer fits.
+**The first of the three below was false in the version this section replaced.** It opened "No
+text box, and therefore no wrapping … `calculateNewRect` measures the widest line and _grows_ the
+rect to fit it … A line longer than the canvas is clipped at the canvas edge rather than wrapped",
+and a Text tool wave since made a paragraph box real. The bullets are rewritten against the tree
+rather than deleted, because the point half of the sentence is still exactly true.
 
-- **Content is typed in the panel.** The string comes from a `<textarea>` in the right-hand
-  panel, and a canvas drag only sizes the box (`TextToolArea.tsx:24-39`). There is no caret,
-  no insertion point, no selection and no per-character formatting.
+- **A paragraph box now constrains the layout; a point box still does not.**
+  `TextToolArgs` carries `kind?: 'point' | 'paragraph'` (`src/tools/text.ts:124`, the `TextKind`
+  alias at `:91`), resolved in
+  exactly one place, `resolveTextKind` (`src/tools/text.ts:179`), which makes `point` the default
+  for a record written before the field existed — the only defensible default, because a build
+  that grew its box to the widest line drew point type by Adobe's own definition and resolving
+  it as `paragraph` would re-flow every existing document at load. `calculateNewRect`
+  (`src/util/rect.ts:116`) then forks: for a paragraph box it clamps the dragged rect to the
+  document **before** anything is measured (`:146`, so the preview and the committed box wrap at
+  the same width), lays the text out against `textWrapWidth` and derives **only the height**
+  (`:157-161`), so the box grows downward and its width is never grown or re-placed; for a point
+  box it measures the widest line and grows or re-centres the width (`:162-181`) and the height
+  (`:188-190`), which is what that kind of box is for. The old line numbers in this section
+  (`:145-160`, `:168-170`) are the point-type arms and they moved with the fork.
+  `layoutText` (`src/tools/text.ts:441`) is the single layout authority, `wrapLine`
+  (`:402`) the breaker under it, and `renderText` draws what they return, so the box and the ink
+  cannot disagree — which is what lets the durable materializer re-run the creator and still land
+  the same lines.
+
+- **A click and a drag are distinguished, and the threshold is this app's.**
+  `TextToolArea.tsx:37` reads the rect `useRect` hands it: a press that travelled no more than
+  `POINT_TYPE_MAX_DRAG_PX` (3 px, `src/tools/text.ts:75`) on **either** axis is a click, collapses
+  the rect to the press point and places point type; anything further is a drag and places
+  paragraph type (`TextToolArea.tsx:38-39`). **The shared `useRect` hook still has no movement
+  threshold of its own and did not gain one** — the hook is also the crop's, the move's and every
+  selection tool's, so the threshold belongs to the tool that needs it, applied to the rect the
+  hook hands over. Adobe distinguishes the two gestures by intent and **documents no threshold,
+  no minimum box size and nothing about which way a box grows**, so the 3 px, the both-axis
+  measurement and the downward growth are all this app's decisions; see `Unverified` item 21.
+  `kind` is omitted from `TextToolSettings` (`src/tools/text.ts:193`) on purpose: it belongs to
+  the gesture, so a remembered paragraph would wrap the next draft inside the last layer's box
+  before the user has dragged anything.
+
+- **Content is typed in the panel.** The string still comes from a `<textarea>` in the
+  right-hand panel (`TextToolArea.tsx:24-49`), and a canvas drag now does more than size the box
+  — it decides which kind of layer the text becomes, which is what makes the wrap a wrap. There
+  is still no caret, no insertion point, no selection and no per-character formatting.
+
+**The overflow indicator is Adobe's; its size, its corner and its colour are not.** Adobe
+describes the whole thing in one clause — "a small box or circle containing a plus symbol (+)
+appears in place of a handle in the corner of the boundary"
+(`https://helpx.adobe.com/photoshop/using/creating-type.html`) — and states neither the size nor
+the corner, so `OVERFLOW_INDICATOR_PX = 8` in the bottom-right (`src/tools/text.ts:485`) is a
+reconstruction, as is the type colour it is stroked in. It is also **box chrome rather than ink**,
+which is why `renderText` takes it as an option (`src/tools/text.ts:508`) and only the draft
+overlay asks for it (`TextToolArea.tsx:68`): the creator's canvas _is_ the box, so every line
+fits it by construction and a baked icon would paint into the image, where Photoshop has no such
+thing.
+
+**Wrapping is greedy at spaces, and a word too wide for the box overflows rather than breaking.**
+That is Adobe's outcome for a family with hyphenation off, and the in-tree comment quotes Adobe
+for the same outcome from the other end — converting paragraph type to point type deletes "all
+characters that overflow the bounding box" (`src/tools/text.ts:387-388`) — but it names no page
+for that sentence, and the _reason_ on this side, `ParagraphStyle.hyphenation` defaulting to
+false, was not re-opened either. Both are filed as `Unverified` item 22 rather than asserted. What the tree does
+is fixed and measurable: `wrapLine` breaks only on `' '`, treats a no-break space as a
+non-opportunity by code point (metrics cannot tell them apart), trims a trailing space before the
+fit test, and emits an unfittable token alone; `layoutText` takes an **infinite** wrap width for
+point type, which reduces it to a split on hard breaks — byte-for-byte what point type always
+did. The composer is greedy first-fit and nothing in Adobe's documentation describes it.
 
 ### Which Photoshop type keys the app actually binds
 
@@ -623,7 +690,7 @@ Photoshop rows the previous pass carried were all unbound, and two of them contr
 sentence already in the same file:
 
 - `Shift+T` "cycle the type tools in the flyout group" — the type tile is a **single entry**
-  (`toolbar-mapping.ts:113`), and the `t` registration passes no `shift`
+  (`toolbar-mapping.ts:127`), and the `t` registration passes no `shift`
   (`AppKeyboardShortcuts.tsx:405-410`), so `Shift+T` simply re-selects the same tool. The
   file says so in its own comment at `:472-475`: "there is nothing to cycle, so a
   `shift: true` twin would select the same tool twice". The data file now carries that as a
@@ -631,10 +698,10 @@ sentence already in the same file:
 - `Ctrl+Enter` / `⌘+Return`, `Enter` and `Esc` — no registration anywhere. `Enter` inside the
   focused textarea takes the textarea's own newline, and the only `Escape` handler the type
   tool would have had is inside the commented-out `handleKeyDown`
-  (`TextToolArea.tsx:89-137`).
+  (`TextToolArea.tsx:97-145`).
 
 One nuance the data file now states and this pass verified: `T` itself is only live when the
-textarea does **not** hold focus. `TextToolArea.tsx:41-43` focuses it as soon as the tool is
+textarea does **not** hold focus. `TextToolArea.tsx:52` focuses it as soon as the tool is
 selected, and `useKeyboardEvents.tsx:136` refuses any registration that has not opted into
 inputs while a field is focused — so a `T` pressed mid-edit types a letter.
 
@@ -653,6 +720,20 @@ Adobe official help:
 - https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/add-text-along-paths-or-inside-shapes.html
 - https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/warp-and-unwarp-text.html
 - https://helpx.adobe.com/photoshop/using/layers.html
+- https://helpx.adobe.com/photoshop/desktop/text-typography/get-started-with-text/setup-paragraph-formatting.html —
+  added on this pass and reached through the live crawler: Adobe's own current sentence for the
+  point/paragraph distinction in paragraph settings, "You can align and justify only paragraph
+  text. To manage spacing for point text, convert it to paragraph text by selecting Type >
+  Convert to Paragraph Text", and its enumeration of the four justify icons (Justify last left,
+  centered, right and all). It is a locale address (`/ee/`) of the current desktop help tree,
+  which is how the crawler reached it.
+- https://helpx.adobe.com/ph_fil/photoshop/how-to/add-text-to-image.html — added on this pass,
+  Adobe help and reached through the live crawler: the click/drag distinction in Adobe's own
+  words, "Click on the canvas and enter a single line of text. You can also create a paragraph of
+  text by dragging out a text box and then typing inside the box." It is a locale address
+  (`/ph_fil/`) and a how-to page rather than the reference tree; the reference page for this
+  gesture, `…/get-started-with-text/add-text.html`, was cited by the in-tree comment at
+  `src/tools/text.ts:68` and **did not surface through the crawler**, so it is not in `sources`.
 - https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle — the size
   bound (`0.01 .. 1296`, "The font size in pixels for a 72ppi document") and the tracking bound
   (`-1000 .. 1000`)
@@ -1044,7 +1125,7 @@ unreachable.** The crop processor is registered as `commit: 'document-operation'
 | Refusal                               | What it refuses                                           |
 | ------------------------------------- | --------------------------------------------------------- |
 | `src/contexts/useLayer.ts:391`        | painting the tool onto a layer, before any history append |
-| `src/contexts/history-replay.ts:226`  | replaying the tool into a layer                           |
+| `src/contexts/history-replay.ts:271`  | replaying the tool into a layer                           |
 | `src/contexts/history-adapter.ts:555` | converting the tool into a durable layer                  |
 
 So `src/tools/crop.ts:26` — the `imageProcessor` that trims the bitmap — is declared and never
@@ -1408,3 +1489,35 @@ Reveal All` route back, and the file growth are third-party throughout; Adobe's 
       contrast, **is** verified: it is `creating-type.html`'s own sentence, "To determine whether
       a type tool is in edit mode, look in the options bar — if you see the Commit button and the
       Cancel button, the type tool is in edit mode."
+21. **Everything about the click/drag threshold, the minimum box size and the growth direction.
+    Three figures the app chose and Adobe does not publish.** The Text tool now places point type
+    on a press that travelled ≤ 3 px on either axis and paragraph type beyond it
+    (`POINT_TYPE_MAX_DRAG_PX`, `src/tools/text.ts:75`, read at `TextToolArea.tsx:37`), clamps a
+    paragraph box to the document before measuring it (`src/util/rect.ts:146`) and derives only
+    its height (`src/util/rect.ts:157-161`), which is a downward growth. **No Adobe page reached
+    states a threshold, a minimum box size or a growth direction** — Adobe documents the two
+    gestures by intent only ("Click on the canvas and enter a single line of text. You can also
+    create a paragraph of text by dragging out a text box and then typing inside the box",
+    `https://helpx.adobe.com/ph_fil/photoshop/how-to/add-text-to-image.html`), and the in-tree
+    comment at `src/tools/text.ts:63-74` says the same. So all three are recorded as this app's
+    decisions in the prose rather than as Photoshop's behaviour. One consequence worth knowing
+    rather than fixing blind: a press of 4 px places a paragraph box 4 px wide, and
+    `textWrapWidth` is that width less `TEXT_PADDING` on both sides (5 px each), so the wrap
+    width is negative, every token overflows it and the overflow indicator is the only thing that
+    reports it. The height side has no such edge: it is derived from the laid-out line count and
+    only ever grows, exactly as a Photoshop paragraph box does not shrink to its content.
+    Closest: https://helpx.adobe.com/ph_fil/photoshop/how-to/add-text-to-image.html
+22. **Why a word too wide for the box is not broken: Adobe's hyphenation default, not re-opened
+    here.** The app breaks greedily at spaces and lets a too-wide word overflow
+    (`wrapLine`, `src/tools/text.ts:402`). The justification is that Adobe's hyphenation is off
+    by default — `ParagraphStyle.hyphenation` is "boolean … Default false"
+    (`https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/paragraphstyle`, cited
+    by the in-tree comment at `src/tools/text.ts:383-388`) — and **that page was not opened on
+    this pass**, so the claim is carried in the prose as this app's reconstruction of an
+    off-by-default setting rather than as an Adobe sentence. The in-tree comment also quotes Adobe
+    for the same outcome from the other end — converting paragraph type to point type deletes "all
+    characters that overflow the bounding box" — at `src/tools/text.ts:387-388`, but **that
+    sentence carries no URL in the comment either**, so which page states it is unverified too.
+    Hyphenation remains `missing` as a control — the app cannot
+    switch hyphenation on, which is the actual gap, and it is unaffected by the breaker.
+    Closest: https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/paragraphstyle
