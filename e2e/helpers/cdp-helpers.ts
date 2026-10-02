@@ -68,6 +68,10 @@ export async function captureCanvasScreenshot(
     scroll
   );
 
+  // Held rather than returned from the `try`, so the detach below can be told whether the
+  // capture is already failing. `finally { await cdp.detach() }` could not, which is the
+  // whole of defect 3: a rejecting detach became the rejection the caller saw.
+  let capture: { readonly screenshot: Buffer } | { readonly error: unknown };
   try {
     const { data } = await cdp.send('Page.captureScreenshot', {
       format: 'png',
@@ -91,11 +95,74 @@ export async function captureCanvasScreenshot(
       // clip is inside the viewport by construction, so there is nothing beyond it to capture.
       captureBeyondViewport: false,
     });
-    const screenshot = Buffer.from(data, 'base64');
+    // ONE guard for the two ways a `Page.captureScreenshot` response can carry no image,
+    // because they arrive on the same two lines and a second guard there would only
+    // restate the first. The decode used to be a bare `Buffer.from(data, 'base64')` with
+    // no validation of any kind, and the two ways it went wrong point in opposite
+    // directions, which is why one condition is not enough and one message is not either:
+    //
+    //   - `data` absent, so the decode threw Node's `The first argument must be of type
+    //     string or an instance of Buffer, ...` — naming neither CDP, nor this helper, nor
+    //     the test, so the reader had to find the call site to learn what failed;
+    //   - `data` present and non-empty as a string but decoding to zero bytes, which was
+    //     written, attached and RETURNED as a successful capture. Nothing here noticed,
+    //     so the fault surfaced at the far end of the pipeline instead, in `loadImageData`
+    //     (`canvas-helpers.ts:541`), which raised a decode error about the FILE and named
+    //     the consumer rather than the capture that had produced nothing.
+    //
+    // The condition tests the DECODED length, not `typeof data`, because the second case
+    // is a present, correctly-typed response: `{ data: '' }` passes a typeof guard and
+    // still decodes to nothing. Decoding first (when the field is a string at all) is what
+    // makes one condition able to answer both questions.
+    const screenshot = typeof data === 'string' ? Buffer.from(data, 'base64') : null;
+    if (screenshot === null || screenshot.length === 0) {
+      throw new Error(
+        screenshot === null
+          ? `captureCanvasScreenshot: the Page.captureScreenshot response carried no base64 \`data\` to decode (received ${typeof data}), so no screenshot was written or attached`
+          : 'captureCanvasScreenshot: the Page.captureScreenshot response decoded to 0 bytes, so no screenshot was written or attached'
+      );
+    }
     await fs.writeFile(screenshotPath, screenshot);
     await testInfo.attach(name, { path: screenshotPath, contentType: 'image/png' });
-    return screenshot;
-  } finally {
-    await cdp.detach();
+    capture = { screenshot };
+  } catch (error) {
+    capture = { error };
   }
+
+  // The detach runs on both paths, and it is awaited on both, because a CDP session that
+  // outlives this call is the leak the helper exists to prevent.
+  //
+  // What it must not do is REPLACE an in-flight capture failure. The pairing that used to
+  // lose the cause is the likely one rather than a corner: a capture fails most often when
+  // the page or the target is already gone, which is exactly when the detach fails too, so
+  // the caller was told the session could not be closed and never learned the capture
+  // failed. So the capture's error is what is thrown, and the detach's is recorded as its
+  // `cause` — neither is lost, and the message still names the fault.
+  //
+  // With no capture failure there is nothing to preserve, so a rejecting detach is the
+  // rejection and is NOT swallowed: an unclosed session is the leak above.
+  let detachFailure: { readonly error: unknown } | undefined;
+  try {
+    await cdp.detach();
+  } catch (error) {
+    detachFailure = { error };
+  }
+
+  if ('error' in capture) {
+    if (detachFailure !== undefined && capture.error instanceof Error) {
+      // `cause` is a writable own property of `Error` (ES2022), so the capture error keeps
+      // its identity, its message and its stack and only gains the detach underneath. A
+      // thrown non-Error is rethrown untouched: nothing here throws one.
+      (capture.error as { cause?: unknown }).cause = detachFailure.error;
+    }
+    // The capture error, always — this is the line the defect lived on. A conditional here
+    // (`detachFailure === undefined ? capture.error : detachFailure.error`) reads like the
+    // symmetry it appears to be and reinstates the exact masking being fixed: the caller
+    // gets the detach's message and the capture's cause, now carrying a `cause` nobody
+    // ever sees, becomes unreachable. The `cause` above is what makes the detach's failure
+    // reachable WITHOUT giving it the rejection.
+    throw capture.error;
+  }
+  if (detachFailure !== undefined) throw detachFailure.error;
+  return capture.screenshot;
 }
