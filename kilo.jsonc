@@ -33,9 +33,42 @@
       "*": "allow",
 
       // Playwright flags that override `use.headless` after the config is read.
+      //
+      // `--ui` IS DENIED ON THE FLAG ALONE, and the pattern used to require `playwright`
+      // to appear before it. That was wrong in a way only a counter-example shows:
+      // `npm run test:e2e -- --ui` — the spelling a model reaches for, because the
+      // npm script is already in its head — contains neither `playwright` nor
+      // `test:e2e:ui`, and fell through to the catch-all. e2e/global-setup.ts cannot
+      // cover it either: `runUIMode` RETURNS at cli/testActions.js:77, and
+      // `globalSetup` is only ever constructed inside `runAllTestsWithConfig`
+      // (runner/index.js:6949-6954), so the guard runs after the window is already up.
+      // Matching the flag is the only shape that catches the command whatever carries it.
       "*--headed*": "deny",
-      "*playwright*--ui*": "deny",
+      "*--ui*": "deny",
       "*--debug*": "ask",
+
+      // The HTML report opens a browser window and then waits forever
+      // (runner/index.js:3581-3585), and `playwright.config.ts`'s `open: 'never'` does
+      // not survive either of these: `getHtmlReportOptionProcessEnv()` reads them
+      // FIRST and its result short-circuits the configured option (runner/index.js:3450,
+      // 3511). Both are undocumented. e2e/global-setup.ts refuses the same two names
+      // and is the load-bearing layer; these rules arrive first and say why.
+      //
+      // `--reporter`/`--add-reporter` DO get a rule, and `*--reporter*html*` covers
+      // both: `--add-reporter=html` contains `--reporter=html`, and the space-separated
+      // spellings match too. It is here because it is cheap and the friendliest refusal,
+      // not because the in-process one needed it. The argument for adding it at all is
+      // that `kilo.jsonc` is PROJECT-scoped, so it does not apply to a run started from
+      // another directory, whereas `globalSetup` loads for every invocation.
+      //
+      // `PW_TEST_REPORTER` is deliberately NOT listed: it has exactly one use in all of
+      // Playwright (runner/index.js:5221), nothing in this repository sets it, and
+      // `checkHtmlReporterSelection` already refuses it in-process before any reporter
+      // is constructed. A deny rule for an internal variable nothing can reach would be
+      // a line that reads like coverage.
+      "*PLAYWRIGHT_HTML_OPEN*": "deny",
+      "*PW_TEST_HTML_REPORT_OPEN*": "deny",
+      "*--reporter*html*": "deny",
 
       // Never loads playwright.config.ts, so the guard cannot see these. All open a
       // window, and the first two block until it is closed.

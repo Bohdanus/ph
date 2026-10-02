@@ -21,8 +21,27 @@ import {
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
 import { cssPointToImage } from './helpers/screenshot-scale';
-import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { waitForCanvasPixels } from './helpers/canvas-redraw';
+/*
+ * Every redraw wait in this file polls the DOCUMENT's own rect inside the canvas box, derived
+ * from the contain fit, rather than `CANVAS_REDRAW_CLIP`.
+ *
+ * `CANVAS_REDRAW_CLIP` is a fixed 300x100 box-relative rect, so whether it stays inside the
+ * document is a property of the current layout rather than of the helper: at the suite's
+ * 974x583 box it starts at box x 100 while the document's own left edge is at
+ * `offsetX = 98.33`, and `offsetX` reaches 100 at a box height of 580.5. A viewport three
+ * pixels shorter therefore puts the LETTERBOX inside it. In the light theme that is
+ * `#ffffff` and nothing false-passes; under DARK it is `#121212`, which is inside
+ * `hasDarkPixels` (all three channels under 60) with no stroke on the canvas at all — so a
+ * wait for the stroke would return on a frame containing nothing, and a wait for the stroke
+ * to LOSE its dark core could never settle and would time out instead.
+ *
+ * The fitted document rect is a subset of the box by construction, so a clip built from the
+ * fit cannot contain the letterbox. That is the spec-side statement; the containment itself
+ * is pinned in `__tests__/document-sampling.unit.test.ts`.
+ */
+import { documentClipInBox } from './helpers/document-sampling';
+import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 /** `#cc0000`, the colour every spec here strokes with. */
@@ -68,7 +87,7 @@ async function sampleCssPoint(
 }
 
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
-  await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
+  await waitForCanvasPixels(page, documentClipInBox(box), hasRedPixels, { description: 'red pixels' });
 }
 
 /**
@@ -189,27 +208,6 @@ async function remeasureCanvasBox(page: Page): Promise<BoundingBox> {
   return box!;
 }
 
-/**
- * Selects the Levels panel through `Image ▸ Adjustments ▸ Brightness/Contrast`.
- *
- * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
- * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
- * is clicked. `levels` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
- * and no `tools-menu-levels-button`, and the `[Colors, Levels, Transform]` flyout that used to
- * hold it is gone from `toolbarMap`.
- *
- * NOT `image-menu-adjustments-levels-button`. That button exists, it carries the label
- * `Levels`, and it is `disabled` — the real `Levels` adjustment is unbuilt, so the item
- * carrying that name selects nothing. `Brightness/Contrast` is the enabled item that mounts
- * the `levels` panel these specs drive, and the slug is `slugifyToolLabel('Brightness/Contrast')`
- * (`toolbar-mapping.ts`), i.e. the `/` collapsed to one `-`.
- */
-async function openLevelsTool(page: Page): Promise<void> {
-  await page.getByTestId('header-image-menu-button').click();
-  await page.getByTestId('image-menu-adjustments-button').click();
-  await page.getByTestId('image-menu-adjustments-brightness-contrast-button').click();
-}
-
 // The Levels sliders are labelled by a <label for> plus a live value suffix, so their
 // accessible names read "Brightness 0%" and "Contrast 0%" — `defaultSettings.levels`
 // is `{ brightness: 0, contrast: 0 }` and a fresh context starts there. Matching the
@@ -238,8 +236,9 @@ test.describe('Levels adjustment', () => {
     await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
     await waitForRedStroke(page, box!);
 
-    // Image ▸ Adjustments ▸ Brightness/Contrast is the item that selects the Levels panel.
-    await openLevelsTool(page);
+    // Open Colors flyout and select Levels
+    await openToolFlyout(page, 'color');
+    await selectFromFlyout(page, { toolName: 'levels', label: 'Levels' });
 
     const brightness = page.getByRole('slider', { name: /Brightness/ });
     await expect(brightness).toBeVisible();
@@ -288,6 +287,35 @@ test.describe('Levels adjustment', () => {
     expect(afterBrightness.red, 'brightness -20 is measured to produce this red').toBe(
       MEASURED_BRIGHTNESS_MINUS_20_RED
     );
+
+    // ...and the same red is a property of the COMMITTED document, not of the live preview.
+    // Switching tools is what runs `commitDirtyTool` (`src/hooks/useApp.ts:167-169`), which
+    // bakes the preview into a real layer plus a history entry; the layer then renders
+    // through a filter derivation that is independent of the one the preview used
+    // (`layer-renderer.ts` `filterForOperation` for the runtime replay,
+    // `materialization.ts` for the durable one). A wrong `?? 0`, a dropped clause in
+    // `buildLevelsFilter`, or an operation dropped from the layer altogether is invisible to
+    // a test that never leaves the preview, and `buildLevelsFilter` is one of the three
+    // filter-string derivations this suite reaches — with `buildColorsFilter` and the blur
+    // template covered the same way in `filter-tools.spec.ts`.
+    //
+    // The box is RE-measured: the draw tool's options bar is a different height from the
+    // Levels bar's, so the clip that located the line through the panel no longer does. The
+    // claim does not depend on that clip being the old one — it is an exact red, and the
+    // exact red is the same number the preview was pinned to.
+    await clickToolButton(page, 'draw');
+    const committedBox = await remeasureCanvasBox(page);
+    const afterCommit = await readRedLine(
+      page,
+      committedBox,
+      'levels-brightness-committed',
+      testInfo,
+      (observed) => observed.red === MEASURED_BRIGHTNESS_MINUS_20_RED,
+      `brightness -20 read ${MEASURED_BRIGHTNESS_MINUS_20_RED} as a live preview and must read it again on the committed layer, where the filter string is derived from the committed args: no reading ever came back on ${MEASURED_BRIGHTNESS_MINUS_20_RED}`
+    );
+    expect(afterCommit.red, 'the committed layer renders the red the preview did').toBe(
+      MEASURED_BRIGHTNESS_MINUS_20_RED
+    );
   });
 
   // changes red line via contrast
@@ -305,8 +333,9 @@ test.describe('Levels adjustment', () => {
     await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
     await waitForRedStroke(page, box!);
 
-    // Image ▸ Adjustments ▸ Brightness/Contrast is the item that selects the Levels panel.
-    await openLevelsTool(page);
+    // Open Colors flyout and select Levels
+    await openToolFlyout(page, 'color');
+    await selectFromFlyout(page, { toolName: 'levels', label: 'Levels' });
 
     const contrast = page.getByRole('slider', { name: /Contrast/ });
     await expect(contrast).toBeVisible();
@@ -371,7 +400,8 @@ test.describe('Levels adjustment', () => {
     // state waited for below cannot have existed before the slider moved.
     expect(await hasDarkPixels(original), 'The unadjusted stroke should have no dark pixel').toBe(false);
 
-    await openLevelsTool(page);
+    await openToolFlyout(page, 'color');
+    await selectFromFlyout(page, { toolName: 'levels', label: 'Levels' });
     const adjustedBox = await remeasureCanvasBox(page);
 
     const brightness = page.getByRole('slider', { name: /Brightness/ });
@@ -381,7 +411,7 @@ test.describe('Levels adjustment', () => {
 
     // A genuine wait for the repaint: the state being waited for did not exist before
     // the slider moved.
-    await waitForCanvasPixels(page, canvasRedrawClip(adjustedBox), hasDarkPixels, {
+    await waitForCanvasPixels(page, documentClipInBox(adjustedBox), hasDarkPixels, {
       description: 'the stroke darkened at brightness -100',
     });
 

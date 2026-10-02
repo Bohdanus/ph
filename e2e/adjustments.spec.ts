@@ -19,9 +19,28 @@ import {
   measureInk,
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
-import { canvasRedrawClip, type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
+/*
+ * Every redraw wait in this file polls the DOCUMENT's own rect inside the canvas box, derived
+ * from the contain fit, rather than `CANVAS_REDRAW_CLIP`.
+ *
+ * `CANVAS_REDRAW_CLIP` is a fixed 300x100 box-relative rect, so whether it stays inside the
+ * document is a property of the current layout rather than of the helper: at the suite's
+ * 974x583 box it starts at box x 100 while the document's own left edge is at
+ * `offsetX = 98.33`, and `offsetX` reaches 100 at a box height of 580.5. A viewport three
+ * pixels shorter therefore puts the LETTERBOX inside it. In the light theme that is
+ * `#ffffff` and nothing false-passes; under DARK it is `#121212`, which is inside
+ * `hasDarkPixels` (all three channels under 60) with no stroke on the canvas at all — so a
+ * wait for the stroke would return on a frame containing nothing, and a wait for the stroke
+ * to LOSE its dark core could never settle and would time out instead.
+ *
+ * The fitted document rect is a subset of the box by construction, so a clip built from the
+ * fit cannot contain the letterbox. That is the spec-side statement; the containment itself
+ * is pinned in `__tests__/document-sampling.unit.test.ts`.
+ */
+import { documentClipInBox } from './helpers/document-sampling';
 import { cssPointToImage } from './helpers/screenshot-scale';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 /**
@@ -154,7 +173,25 @@ const RED_STROKE = '#cc0000';
  */
 const BLACK_STROKE = '#000000';
 
-const WHITE = 255;
+/**
+ * How many rows an UNBLURRED stroke may occupy, in capture pixels.
+ *
+ * It replaces `expect(beforeBounds.height).toBeGreaterThan(0)`, which could not fail:
+ * `getDarkPixelBounds` returns `null` when nothing matches and otherwise reports
+ * `bottom - top + 1`, so every value the preceding `not.toBeNull()` admits is at least 1
+ * and the assertion was true for all of them. The claim it was standing in for — the
+ * unblurred stroke has a hard, finite edge — is a claim about how many rows the ink
+ * occupies, and `getStrokeAnalysis`'s `verticalSpread` is that measurement.
+ *
+ * 20, and derived rather than chosen: the draw tool's pen is `lineWidth: 10`
+ * (`src/tools/settings.ts`), which is 9.7 capture pixels at this fit, so a hard edge plus
+ * one anti-aliased transition on each side is about 12 — measured, exactly 12 here. Twenty
+ * is twice the stroke's own width and still under `STROKE_ANALYSIS`'s
+ * `SPRAY_VERTICAL_SPREAD_THRESHOLD` of 30, which is the line the analyser itself calls a
+ * spray. A blur at radius 10 measures 50, so the two are three times apart and the blurred
+ * assertion below cannot be satisfied by an unblurred reading.
+ */
+const UNBLURRED_VERTICAL_SPREAD_MAX = 20;
 
 async function visibleCanvasBox(page: Page): Promise<BoundingBox> {
   const canvas = getWorkspaceCanvas(page);
@@ -198,25 +235,6 @@ const isNot =
   async (png) =>
     !(await predicate(png));
 
-/**
- * Selects the Colors panel through `Image ▸ Adjustments ▸ Photo Filter`.
- *
- * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
- * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
- * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
- * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
- * hold it is gone from `toolbarMap`. `Photo Filter` is the enabled item that selects it, and
- * the slug is `slugifyToolLabel('Photo Filter')` (`toolbar-mapping.ts`).
- *
- * The other sixteen items in that submenu render `disabled`, so this is the one path in and a
- * spec cannot reach the panel any other way.
- */
-async function openColorsPanel(page: Page): Promise<void> {
-  await page.getByTestId('header-image-menu-button').click();
-  await page.getByTestId('image-menu-adjustments-button').click();
-  await page.getByTestId('image-menu-adjustments-photo-filter-button').click();
-}
-
 test.describe('Colors adjustment', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -228,7 +246,8 @@ test.describe('Colors adjustment', () => {
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
     const beforeBounds = await inkBounds(before);
 
-    await openColorsPanel(page);
+    await openToolFlyout(page, 'color');
+    await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
     const panelBox = await remeasureCanvasBox(page);
 
     // The panel's discard can only remove a live preview, so it is disabled until one
@@ -244,7 +263,7 @@ test.describe('Colors adjustment', () => {
 
     // The pre-state has red pixels and the post-state cannot, so this poll is a real
     // wait for the repaint rather than a sleep.
-    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasRedPixels), {
+    await waitForCanvasPixels(page, documentClipInBox(panelBox), isNot(hasRedPixels), {
       description: 'the stroke to stop being red',
     });
 
@@ -295,7 +314,7 @@ test.describe('Colors adjustment', () => {
     // Reset discards the uncommitted preview: the stroke comes back red and the button
     // goes back to disabled, because there is no preview left for it to remove.
     await reset.click();
-    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), hasRedPixels, {
+    await waitForCanvasPixels(page, documentClipInBox(panelBox), hasRedPixels, {
       description: 'the red stroke to come back after Reset',
     });
     await expect(reset, 'Reset has nothing left to discard once the preview is gone').toBeDisabled();
@@ -307,7 +326,8 @@ test.describe('Colors adjustment', () => {
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
     const beforeBounds = await inkBounds(before);
 
-    await openColorsPanel(page);
+    await openToolFlyout(page, 'color');
+    await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
     const panelBox = await remeasureCanvasBox(page);
 
     const saturation = page.getByRole('slider', { name: /Saturation/ });
@@ -315,7 +335,7 @@ test.describe('Colors adjustment', () => {
     await saturation.fill('-100');
     await expect(saturation).toHaveValue('-100');
 
-    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasRedPixels), {
+    await waitForCanvasPixels(page, documentClipInBox(panelBox), isNot(hasRedPixels), {
       description: 'the stroke to be desaturated',
     });
 
@@ -357,14 +377,24 @@ test.describe('Blur adjustment', () => {
     const before = await takeLineScreenshot(page, box, 'blur-before', testInfo);
     const beforeBounds = await getDarkPixelBounds(before);
     expect(beforeBounds, 'The black stroke should have a fully dark core before the adjustment').not.toBeNull();
-    expect(beforeBounds!.height, 'The unblurred stroke should have a hard, finite edge').toBeGreaterThan(0);
     const beforeAnalysis = await getStrokeAnalysis(before, LINE_CAPTURE_REGION);
     expect(beforeAnalysis, 'The stroke should be visible to stroke analysis').not.toBeNull();
     expect(beforeAnalysis!.type, 'The unblurred stroke should read as solid').toBe('solid');
-    const beforeMiddle = await sampleCssPoint(before, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, {
-      ignoreNearWhite: true,
-    });
-    expect(beforeMiddle, 'The stroke should be inked at its middle before the adjustment').not.toBeNull();
+    expect(
+      beforeAnalysis!.verticalSpread,
+      'The unblurred stroke should have a hard, finite edge: a handful of rows, not a spray'
+    ).toBeLessThanOrEqual(UNBLURRED_VERTICAL_SPREAD_MAX);
+    // All three samples, not just the middle: the loop below compares each blurred reading
+    // against the one taken here, and a sample that was never captured has nothing to
+    // compare against — which is how `expect(sampled.red).toBeLessThan(WHITE)` ended up
+    // carrying a claim no measurement supported.
+    const beforeSamples = new Map<string, number>();
+    for (const { name, x, y } of STROKE_SAMPLES) {
+      const sampled = await sampleCssPoint(before, x, y, 5, { ignoreNearWhite: true });
+      expect(sampled, `The stroke should be inked at its ${name} before the adjustment`).not.toBeNull();
+      beforeSamples.set(name, sampled!.red);
+    }
+    const beforeMiddle = beforeSamples.get(STROKE_MIDDLE.name)!;
 
     // `blur` is a singleton toolbar button, not a flyout group, so it is clicked
     // directly rather than reached through a long-press flyout.
@@ -382,7 +412,7 @@ test.describe('Blur adjustment', () => {
 
     // The pre-state has a fully dark core and the blurred state has none, so this poll
     // is a real wait for the repaint rather than a sleep.
-    await waitForCanvasPixels(page, canvasRedrawClip(panelBox), isNot(hasDarkPixels), {
+    await waitForCanvasPixels(page, documentClipInBox(panelBox), isNot(hasDarkPixels), {
       description: 'the stroke to lose its fully dark core',
     });
 
@@ -407,17 +437,34 @@ test.describe('Blur adjustment', () => {
     expect(afterAnalysis!.type, 'The spread soft edge is what the analyser classifies as spray').toBe('spray');
 
     // ...and the artwork survived: the ink is still there, just spread out and lighter.
-    // A blur cannot add ink, so the stroke's value rises towards - never above - the
-    // white of the document behind it.
+    //
+    // The claim is the same one as before — a blur cannot add ink, so the stroke's value
+    // RISES, towards the white of the document behind it and never above it — and it is now
+    // stated against a measurement. `expect(sampled.red).toBeLessThan(WHITE)` could not
+    // fail: `getColorAtPoint` skips every pixel whose three channels all exceed
+    // `NEAR_WHITE_THRESHOLD = 250`, so the mean it returns averages pixels each at most
+    // 250, and 250 < 255 given the non-null read above. It was satisfied by a solid black
+    // fill, by a mid-grey replacement, and by a stroke that never moved — and it was the
+    // only assertion in this test carrying the claim. Each blurred reading is now compared
+    // against the reading taken at the SAME point before the slider moved: measured 72, 56
+    // and 56 before, 200, 172 and 189 after.
     for (const { name, x, y } of STROKE_SAMPLES) {
       const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
       expect(sampled, `The blur erased the stroke at the ${name} of it`).not.toBeNull();
-      expect(sampled!.red, `A blur lifts the stroke's value towards the background, not above it`).toBeLessThan(WHITE);
+      expect(
+        sampled!.red,
+        `A blur lifts the stroke's value towards the background: the ${name} read ${beforeSamples.get(name)} before the blur`
+      ).toBeGreaterThan(beforeSamples.get(name)!);
+      // Direction alone admits a stroke that was replaced with a lighter colour, so the
+      // other two channels are held too: a blur scales luminance, and a replacement with a
+      // different HUE would move them independently.
+      expect(sampled!.green, `A blur does not tint the ${name} of the stroke`).toBe(sampled!.red);
+      expect(sampled!.blue, `A blur does not tint the ${name} of the stroke`).toBe(sampled!.red);
     }
     const afterMiddle = await sampleCssPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, { ignoreNearWhite: true });
     expect(
       afterMiddle!.red,
-      `The middle of the stroke read ${beforeMiddle!.red} before the blur, and a blur can only disperse its ink outwards`
-    ).toBeGreaterThan(beforeMiddle!.red);
+      `The middle of the stroke read ${beforeMiddle} before the blur, and a blur can only disperse its ink outwards`
+    ).toBeGreaterThan(beforeMiddle);
   });
 });

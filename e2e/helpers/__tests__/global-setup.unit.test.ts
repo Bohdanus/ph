@@ -2,6 +2,8 @@ import type { FullConfig } from '@playwright/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import globalSetup, {
+  checkHtmlOpenEnv,
+  checkHtmlReporterSelection,
   checkOwnServer,
   PER_ATTEMPT_TIMEOUT_MS,
   planWarmup,
@@ -574,12 +576,143 @@ describe('checkOwnServer', () => {
   });
 });
 
+describe('checkHtmlOpenEnv', () => {
+  // The whole reason this exists: `HtmlReporter._resolveOptions()` computes
+  // `open: getHtmlReportOptionProcessEnv() || this._options.open || "on-failure"`
+  // (playwright/lib/runner/index.js:3450), and `getHtmlReportOptionProcessEnv()` is
+  // `process.env.PLAYWRIGHT_HTML_OPEN || process.env.PW_TEST_HTML_REPORT_OPEN` (:3511).
+  // So either variable outranks the `open: 'never'` this repository configures, and the
+  // refused run ends in `showHTMLReport` → a browser window and
+  // `await new Promise(() => {})` (:3581-3585), which never resolves.
+  it.each(['PLAYWRIGHT_HTML_OPEN', 'PW_TEST_HTML_REPORT_OPEN'])('refuses %s set to always', (variable) => {
+    const hazard = checkHtmlOpenEnv({ [variable]: 'always' });
+
+    expect(hazard).not.toBeNull();
+    expect(hazard?.cause).toContain(variable);
+    // The message quotes the token, so the reader can see what the run actually typed.
+    expect(hazard?.cause).toContain('always');
+    expect(hazard?.why).toContain('playwright.config.ts');
+  });
+
+  it.each(['PLAYWRIGHT_HTML_OPEN', 'PW_TEST_HTML_REPORT_OPEN'])('refuses %s set to on-failure', (variable) => {
+    // This is the value a typo silently becomes: `getHtmlReportOptionProcessEnv()`
+    // prints a Configuration Error for an unknown value and returns undefined, leaving
+    // the `"on-failure"` fall-through in place (runner/index.js:3514-3517). So an
+    // invalid value is not a safe value.
+    expect(checkHtmlOpenEnv({ [variable]: 'on-failure' })).not.toBeNull();
+    expect(checkHtmlOpenEnv({ [variable]: 'yes' })).not.toBeNull();
+  });
+
+  it('permits "never", which is the one value that opens nothing', () => {
+    // `htmlReportOptions` is exactly ['always', 'never', 'on-failure'] (:3401), so
+    // refusing `never` would be refusing the honest spelling of the intent.
+    expect(checkHtmlOpenEnv({ PLAYWRIGHT_HTML_OPEN: 'never' })).toBeNull();
+    expect(checkHtmlOpenEnv({ PW_TEST_HTML_REPORT_OPEN: 'never' })).toBeNull();
+  });
+
+  it('permits an unset variable, and an empty one, which Playwright reads as unset', () => {
+    // `if (!htmlOpenEnv) return void 0` (runner/index.js:3513): an empty string is falsy
+    // and cannot open anything, so refusing it would be refusing nothing.
+    expect(checkHtmlOpenEnv({})).toBeNull();
+    expect(checkHtmlOpenEnv({ PLAYWRIGHT_HTML_OPEN: '' })).toBeNull();
+    expect(checkHtmlOpenEnv({ PLAYWRIGHT_HTML_OPEN: undefined })).toBeNull();
+  });
+
+  it('reports the documented variable first when both are set', () => {
+    const hazard = checkHtmlOpenEnv({
+      PLAYWRIGHT_HTML_OPEN: 'always',
+      PW_TEST_HTML_REPORT_OPEN: 'always',
+    });
+
+    expect(hazard?.cause).toContain('PLAYWRIGHT_HTML_OPEN');
+  });
+});
+
+describe('checkHtmlReporterSelection', () => {
+  const at = (name: string) => ({ argv: ['node', 'playwright', name], env: {} });
+
+  it('refuses `--reporter=html`, which discards the configured open: never', () => {
+    // `[...takeFirst(configCLIOverrides.reporter, resolveReporters(userConfig.reporter, …))]`
+    // at playwright/lib/common/index.js:522: `takeFirst` means the CLI value WINS
+    // OUTRIGHT. The replacement is `[['html']]`, which carries no options, so
+    // `_resolveOptions()` falls through to "on-failure".
+    expect(checkHtmlReporterSelection(at('--reporter=html'))).not.toBeNull();
+  });
+
+  it('refuses `--add-reporter=html`, which appends one with no open option', () => {
+    // Not the same mechanism — this one keeps the configured reporters and adds a second
+    // HtmlReporter — but it reaches the same constructor with an empty `_options.open`.
+    expect(checkHtmlReporterSelection(at('--add-reporter=html'))).not.toBeNull();
+  });
+
+  it('refuses the space-separated spelling, which is the same option', () => {
+    expect(checkHtmlReporterSelection({ argv: ['node', 'playwright', '--reporter', 'html'], env: {} })).not.toBeNull();
+    expect(
+      checkHtmlReporterSelection({ argv: ['node', 'playwright', '--add-reporter', 'html'], env: {} })
+    ).not.toBeNull();
+  });
+
+  it('refuses html anywhere in a comma-separated list', () => {
+    // `--reporter=html,line` names html and opens exactly like `--reporter=html`; a
+    // check that only matched the whole value would pass it.
+    expect(checkHtmlReporterSelection(at('--reporter=html,line'))).not.toBeNull();
+    expect(checkHtmlReporterSelection(at('--reporter=line,html'))).not.toBeNull();
+  });
+
+  it('permits a reporter list that does not name html', () => {
+    expect(checkHtmlReporterSelection(at('--reporter=list'))).toBeNull();
+    expect(checkHtmlReporterSelection(at('--reporter=dot,json'))).toBeNull();
+    expect(checkHtmlReporterSelection(at('--add-reporter=list'))).toBeNull();
+    expect(checkHtmlReporterSelection(at('--reporter=./helpers/my-reporter.ts'))).toBeNull();
+  });
+
+  it('permits the safe reporter flags this suite already passes', () => {
+    expect(checkHtmlReporterSelection({ argv: ['node', 'playwright', '--reporter=list'], env: {} })).toBeNull();
+    expect(checkHtmlReporterSelection({ argv: ['node', 'playwright', '--grep', 'html'], env: {} })).toBeNull();
+  });
+
+  it('ignores a `--reporter=html` that is really a positional filter after `--`', () => {
+    // commander stops parsing options at a bare `--` (program.js:51-52), so anything
+    // after it selects tests. Refusing a grep filter would be refusing a legitimate way
+    // to choose a subset of the suite.
+    expect(checkHtmlReporterSelection({ argv: ['node', 'playwright', '--', '--reporter=html'], env: {} })).toBeNull();
+  });
+
+  it('refuses PW_TEST_REPORTER naming html', () => {
+    // `runner/index.js:5221-5228` appends a reporter built from `reporterCommandOptions`
+    // and nothing else (:5250-5256), so `open` is absent and resolves to "on-failure".
+    const hazard = checkHtmlReporterSelection({ argv: [], env: { PW_TEST_REPORTER: 'html' } });
+
+    expect(hazard?.cause).toContain('PW_TEST_REPORTER');
+  });
+
+  it('permits PW_TEST_REPORTER naming anything else, or nothing', () => {
+    expect(checkHtmlReporterSelection({ argv: [], env: { PW_TEST_REPORTER: 'list' } })).toBeNull();
+    expect(checkHtmlReporterSelection({ argv: [], env: {} })).toBeNull();
+  });
+
+  it('does not confuse the two environment variables it reads', () => {
+    // The refusal exists to stop the HTML reporter opening, not to stop someone naming
+    // a reporter; a variable that has nothing to do with reporters must pass through.
+    expect(checkHtmlReporterSelection({ argv: [], env: { PLAYWRIGHT_HTML_OPEN: 'always' } })).toBeNull();
+    expect(checkHtmlReporterSelection({ argv: [], env: { PW_TEST_HTML_REPORT_OPEN: 'never' } })).toBeNull();
+  });
+
+  it('survives a trailing --reporter with no value at all', () => {
+    // commander would reject it, and this must not be the thing that throws.
+    expect(checkHtmlReporterSelection({ argv: ['node', 'playwright', '--reporter'], env: {} })).toBeNull();
+  });
+});
+
 describe('globalSetup', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env.PLAYWRIGHT_ALLOW_HEADED;
     delete process.env.PLAYWRIGHT_BASE_URL;
     delete process.env.E2E_ALLOW_REMOTE;
+    delete process.env.PLAYWRIGHT_HTML_OPEN;
+    delete process.env.PW_TEST_HTML_REPORT_OPEN;
+    delete process.env.PW_TEST_REPORTER;
   });
 
   const config = (overrides: Record<string, unknown> = {}) =>
@@ -612,6 +745,62 @@ describe('globalSetup', () => {
       projects: [{ name: 'Google Chrome', use: { baseURL: 'http://localhost:5173', headless: false } }],
     });
     await expect(globalSetup(headed)).rejects.toThrow(/headless: false/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses an HTML-report environment variable, also before the warm-up', async () => {
+    // The hazard is a WINDOW and a process that never exits, so the refusal has to
+    // arrive before Playwright's reporter `onEnd` — which is the only place
+    // `_resolveOptions()` would finally read the variable.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubEnv('PLAYWRIGHT_HTML_OPEN', 'always');
+
+    await expect(globalSetup(config())).rejects.toThrow(
+      /Refusing to start a run that would open the HTML report and then never exit/
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses PW_TEST_HTML_REPORT_OPEN as readily as the documented name', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubEnv('PW_TEST_HTML_REPORT_OPEN', 'always');
+
+    await expect(globalSetup(config())).rejects.toThrow(/PW_TEST_HTML_REPORT_OPEN=always/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a CLI --reporter naming html, also before the warm-up', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(globalSetup(config({ argv: ['--reporter=html'] }))).rejects.toThrow(/--reporter html/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('lets a non-html reporter through, so the refusal is not a blunt instrument', async () => {
+    const fetchSpy = vi.fn<typeof globalThis.fetch>(async () => {
+      return new Response('export {}', { status: 200, headers: { 'content-type': 'text/javascript' } });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await globalSetup(config({ argv: ['--reporter=list'] }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses the HTML report even when the run is authorised to be headed', async () => {
+    // `PLAYWRIGHT_ALLOW_HEADED=1` is the human's signature on the TESTS' browsers. It is
+    // deliberately not a switch for the report viewer: widening one variable to mean two
+    // things would make this guarantee depend on an `export`, which is the thing a model
+    // under pressure will type.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubEnv('PLAYWRIGHT_ALLOW_HEADED', '1');
+    vi.stubEnv('PLAYWRIGHT_HTML_OPEN', 'always');
+
+    await expect(globalSetup(config())).rejects.toThrow(/never exit/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

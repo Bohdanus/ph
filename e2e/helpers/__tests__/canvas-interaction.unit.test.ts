@@ -11,6 +11,7 @@ import {
   LINE_START_Y,
   canvasRedrawClip,
   drawLine,
+  getPageScroll,
   getWorkspaceCanvas,
   takeLineScreenshot,
   type BoundingBox,
@@ -22,6 +23,7 @@ import {
   createMouseMock,
   createPageMock,
   createScreenshotSpy,
+  createScrollModel,
   createTestInfoMock,
   createFakePage,
   makeOutputDir,
@@ -537,5 +539,50 @@ describe('drawLine', () => {
 
     await expect(drawLine(page, BOX, 0, 0, 10, 10)).rejects.toThrow('mouse lost');
     expect(input.up).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The one helper in this module that reads the page rather than deriving geometry from a box.
+ *
+ * The idiom matters more than the value. `createScrollModel` runs the helper's OWN page
+ * function against a stubbed window whose scroll is behind getters, so a `scrollTo` issued by
+ * one call is visible to the next; a double that just returned a canned object would pass the
+ * same assertions whether the callback read `window.scrollX` or returned a constant. The
+ * second case below is what distinguishes the two.
+ *
+ * Why it is read at the call site at all is the reason `clickToolButton` exists in the
+ * production path: it scrolls the window by 440px in this build, so an offset read once is wrong
+ * by a different amount before and after any tool click. `toolbar-helpers.ts:127`,
+ * `cdp-helpers.ts:60` and `flyout-longpress-race.spec.ts:342,347` are the callers.
+ */
+describe('getPageScroll', () => {
+  it('reports the window scroll its own page function reads', async () => {
+    const scroll = createScrollModel({ initialScrollX: 7, initialScrollY: 440 });
+    const page = createPageMock({ evaluate: scroll.evaluate });
+
+    expect(await getPageScroll(page)).toEqual({ x: 7, y: 440 });
+  });
+
+  it('sees a scrollTo issued between two calls, so a cached read would be caught', async () => {
+    const scroll = createScrollModel();
+    const page = createPageMock({ evaluate: scroll.evaluate });
+
+    expect(await getPageScroll(page)).toEqual({ x: 0, y: 0 });
+
+    // The tool-switch scroll: the case that makes caching wrong rather than merely stale.
+    await page.evaluate((y) => window.scrollTo(0, y), 440);
+
+    expect(await getPageScroll(page)).toEqual({ x: 0, y: 440 });
+  });
+
+  it('reports both axes, because only the y axis is what the tool switch moves', async () => {
+    // A one-axis result would satisfy the case above on a vertical scroll and hide a dropped
+    // `scrollX` entirely, which is the axis a horizontal scrollbar or a Shift-wheel drag moves.
+    const scroll = createScrollModel({ initialScrollX: 31 });
+    const page = createPageMock({ evaluate: scroll.evaluate });
+
+    expect(Object.keys(await getPageScroll(page)).sort()).toEqual(['x', 'y']);
+    expect(await getPageScroll(page)).toEqual({ x: 31, y: 0 });
   });
 });
