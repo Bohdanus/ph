@@ -1,4 +1,4 @@
-import type { Pos } from './general-types.ts';
+import type { Pos, Size } from './general-types.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
@@ -119,6 +119,41 @@ export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, documentF
   }
 }
 
+type SnapshotSurface = OffscreenCanvas | HTMLCanvasElement;
+
+function createSnapshotSurface(size: Size): SnapshotSurface {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(size.width, size.height);
+  const snapshot = document.createElement('canvas');
+  resizeCanvas(snapshot, size.width, size.height);
+  return snapshot;
+}
+
+function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size): SnapshotSurface | null {
+  try {
+    const snapshot = createSnapshotSurface(size);
+    const context = snapshot.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    if (!context) return null;
+    context.drawImage(canvas, 0, 0);
+    return snapshot;
+  } catch (error) {
+    console.error('Unable to snapshot the visible runtime layer presentation', error);
+    return null;
+  }
+}
+
+function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: SnapshotSurface | null): void {
+  if (canvas.width === size.width && canvas.height === size.height) return;
+  try {
+    resizeCanvas(canvas, size.width, size.height);
+    if (!snapshot) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.drawImage(snapshot, 0, 0);
+  } catch (error) {
+    console.error('Unable to restore runtime layer presentation', error);
+  }
+}
+
 /**
  * Keeps the last visible canvas intact when a source or processor fails while
  * composing a new runtime presentation. The target changes only after every
@@ -155,21 +190,21 @@ export function drawLayersToCanvas(
   }
 
   const previousSize = { width: canvas.width, height: canvas.height };
+  const resized = canvas.width !== size.width || canvas.height !== size.height;
+  let snapshot: SnapshotSurface | null = null;
   try {
     const context = canvas.getContext('2d');
     if (!context) return false;
+    if (resized) {
+      snapshot = snapshotVisibleCanvas(canvas, previousSize);
+      if (!snapshot) return false;
+    }
     resizeCanvas(canvas, size.width, size.height);
     context.clearRect(0, 0, size.width, size.height);
     context.drawImage(stagingCanvas, 0, 0);
     return true;
   } catch (error) {
-    if (canvas.width !== previousSize.width || canvas.height !== previousSize.height) {
-      try {
-        resizeCanvas(canvas, previousSize.width, previousSize.height);
-      } catch (restoreError) {
-        console.error('Unable to restore runtime layer presentation dimensions', restoreError);
-      }
-    }
+    if (resized) restoreVisibleCanvas(canvas, previousSize, snapshot);
     console.error('Unable to publish runtime layer presentation', error);
     return false;
   }
