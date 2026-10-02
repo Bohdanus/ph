@@ -1,11 +1,19 @@
 /**
- * PROBE ONLY — not a product test. Measures the workspace canvas backing store and the
- * Footer's `totalSize` readout across 10 real Rectangle commits in the real UI, then across
- * 10 undos and 10 redos, on the UNFIXED committed tree (4731c426).
+ * The canvas must not grow. An ordinary tool commit, an undo, a redo, a crop and an
+ * opened document each leave the workspace canvas backing store and the Footer's
+ * `totalSize` readout exactly where they were — measured through the real UI, so a
+ * re-allocation that only the runtime `Layer` objects would hide still fails here.
+ *
+ * Written as a reproduction first (`zzz-probe-`, logged, no assertions) and kept as a
+ * regression test once it had caught the defect it was built for. The measurements
+ * are the assertions now; the logs stay, because a trajectory is what a future
+ * failure needs to be read against.
  */
 import path from 'node:path';
 
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+
+import { test } from './fixtures/extended-test';
 
 import { type BoundingBox, documentToCanvasOffset, drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
@@ -47,7 +55,7 @@ async function dragInDocument(
   await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
 }
 
-test.describe('PROBE: document size across many tool commits', () => {
+test.describe('document size across many tool commits', () => {
   test('10 rectangle commits, then 10 undos and 10 redos, never move the document size', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
@@ -81,7 +89,9 @@ test.describe('PROBE: document size across many tool commits', () => {
       const size = await backingStore(page);
       const footer = await footerDimensions(page);
       rows.push({ step: `commit-${i + 1}`, backingStore: size, footer, layerRows: expectedRows });
-      console.log(`[PW-PROBE] commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${footer}" rows=${expectedRows}`);
+      console.log(
+        `[PW-PROBE] commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${footer}" rows=${expectedRows}`
+      );
       expect(size, `backing store moved after commit ${i + 1}`).toEqual(baseline);
       expect(footer, `footer totalSize moved after commit ${i + 1}`).toBe(baselineFooter);
     }
@@ -92,7 +102,9 @@ test.describe('PROBE: document size across many tool commits', () => {
       await expect(page.getByTestId('layer-row'), `undo ${k + 1} did not remove a layer`).toHaveCount(expectedRows);
       const size = await backingStore(page);
       const footer = await footerDimensions(page);
-      console.log(`[PW-PROBE] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${footer}" rows=${expectedRows}`);
+      console.log(
+        `[PW-PROBE] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${footer}" rows=${expectedRows}`
+      );
       expect(size, `backing store moved after undo ${k + 1}`).toEqual(baseline);
       expect(footer, `footer totalSize moved after undo ${k + 1}`).toBe(baselineFooter);
     }
@@ -103,7 +115,9 @@ test.describe('PROBE: document size across many tool commits', () => {
       await expect(page.getByTestId('layer-row'), `redo ${k + 1} did not restore a layer`).toHaveCount(expectedRows);
       const size = await backingStore(page);
       const footer = await footerDimensions(page);
-      console.log(`[PW-PROBE] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${footer}" rows=${expectedRows}`);
+      console.log(
+        `[PW-PROBE] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${footer}" rows=${expectedRows}`
+      );
       expect(size, `backing store moved after redo ${k + 1}`).toEqual(baseline);
       expect(footer, `footer totalSize moved after redo ${k + 1}`).toBe(baselineFooter);
     }
@@ -111,7 +125,7 @@ test.describe('PROBE: document size across many tool commits', () => {
     console.log(`[PW-PROBE-SUMMARY] ${JSON.stringify({ baseline, rows: rows.length })}`);
   });
 
-  test('PROBE: crop, then more shape commits, then undo/redo', async ({ page }) => {
+  test('a crop, then more shape commits, then undo/redo', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await page.goto('/');
@@ -145,7 +159,9 @@ test.describe('PROBE: document size across many tool commits', () => {
       await dragInDocument(page, from, to);
       await expect(page.getByTestId('layer-row'), `post-crop commit ${i + 1}`).toHaveCount(rowsBefore + 1 + i);
       const size = await backingStore(page);
-      console.log(`[PW-CROP] post-crop-commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`);
+      console.log(
+        `[PW-CROP] post-crop-commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
+      );
     }
 
     const afterCommits = await backingStore(page);
@@ -157,21 +173,24 @@ test.describe('PROBE: document size across many tool commits', () => {
       const expectedRows = rowsAfterCrop - 1 - k;
       await expect(page.getByTestId('layer-row'), `crop-flow undo ${k + 1}`).toHaveCount(expectedRows);
       const size = await backingStore(page);
-      console.log(`[PW-CROP] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`);
+      console.log(
+        `[PW-CROP] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
+      );
     }
     for (let k = 0; k < 3; k += 1) {
       await page.keyboard.press('ControlOrMeta+Shift+z');
       const expectedRows = rowsAfterCrop - 3 + 1 + k;
       await expect(page.getByTestId('layer-row'), `crop-flow redo ${k + 1}`).toHaveCount(expectedRows);
       const size = await backingStore(page);
-      console.log(`[PW-CROP] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`);
+      console.log(
+        `[PW-CROP] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
+      );
     }
   });
 });
 
-
-test.describe('PROBE: open an image, then commit tools, then undo/redo', () => {
-  test('PROBE: a 64x64 opened document survives shape commits and navigation', async ({ page }, testInfo) => {
+test.describe('an opened image, then committed tools, then undo/redo', () => {
+  test('a 64x64 opened document survives shape commits and navigation', async ({ page }, testInfo) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await page.goto('/');
@@ -209,7 +228,9 @@ test.describe('PROBE: open an image, then commit tools, then undo/redo', () => {
       await dragInDocument(page, from, to, baseline);
       await expect(page.getByTestId('layer-row'), `opened-doc commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
       const size = await backingStore(page);
-      console.log(`[PW-OPEN] commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`);
+      console.log(
+        `[PW-OPEN] commit-${i + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
+      );
       expect(size, `backing store moved after commit ${i + 1} on the opened document`).toEqual(baseline);
     }
 
@@ -217,7 +238,9 @@ test.describe('PROBE: open an image, then commit tools, then undo/redo', () => {
       await page.keyboard.press('ControlOrMeta+z');
       await expect(page.getByTestId('layer-row'), `opened-doc undo ${k + 1}`).toHaveCount(baselineRows + 4 - k);
       const size = await backingStore(page);
-      console.log(`[PW-OPEN] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`);
+      console.log(
+        `[PW-OPEN] undo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
+      );
       expect(size, `backing store moved after undo ${k + 1} on the opened document`).toEqual(baseline);
     }
 
@@ -225,7 +248,9 @@ test.describe('PROBE: open an image, then commit tools, then undo/redo', () => {
       await page.keyboard.press('ControlOrMeta+Shift+z');
       await expect(page.getByTestId('layer-row'), `opened-doc redo ${k + 1}`).toHaveCount(baselineRows + 1 + k);
       const size = await backingStore(page);
-      console.log(`[PW-OPEN] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`);
+      console.log(
+        `[PW-OPEN] redo-${k + 1} backingStore=${JSON.stringify(size)} footer="${await footerDimensions(page)}"`
+      );
       expect(size, `backing store moved after redo ${k + 1} on the opened document`).toEqual(baseline);
     }
   });
@@ -237,10 +262,10 @@ test.describe('PROBE: open an image, then commit tools, then undo/redo', () => {
  * with NO `replaceDocument`, which is exactly the history shape the replay bedrock branch
  * reacts to.
  */
-test.describe('PROBE: mobile blank-layer commit, then undo/redo', () => {
+test.describe('a mobile blank-layer commit, then undo/redo', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test('PROBE: adding blank layers mid-document never moves the document size', async ({ page }) => {
+  test('adding blank layers mid-document never moves the document size', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await page.goto('/');

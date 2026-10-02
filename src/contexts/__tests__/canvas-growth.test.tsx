@@ -1,7 +1,12 @@
 /**
- * PROBE ONLY — not a product test. Measures whether an ordinary tool commit moves
- * `totalSize` / `documentFrame` / the workspace canvas backing store, on the UNFIXED
- * committed tree (4731c426). Every row is logged so one run reports the trajectory.
+ * The canvas must not grow, at the store level. An ordinary tool commit, an undo, a
+ * redo and a crop each leave `totalSize`, `documentFrame` and the workspace canvas
+ * backing store exactly where they were — swept across every reachable cursor, so a
+ * re-allocation that only the last replay would hide still fails here.
+ *
+ * Written as a reproduction first (`probe-`, logged, no assertions) and kept as a
+ * regression test once it had caught the defect it was built for. `e2e/canvas-growth.spec.ts`
+ * is the same invariant measured through the real UI.
  */
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -98,7 +103,12 @@ type ReplayRow = {
   frame: { x: number; y: number; width: number; height: number };
 };
 
-function sweepReplay(history: HistoryItem[], totalSize: { width: number; height: number }, frame: DocumentFrame, label: string) {
+function sweepReplay(
+  history: HistoryItem[],
+  totalSize: { width: number; height: number },
+  frame: DocumentFrame,
+  label: string
+) {
   const rows: ReplayRow[] = [];
   for (let cursor = 0; cursor < history.length; cursor += 1) {
     const replay = replayHistory(history, cursor, totalSize, replayDeps(), frame);
@@ -125,7 +135,7 @@ function commitShapes(result: Harness, count: number, prefix: string, canvas: HT
   return rows;
 }
 
-describe('PROBE: canvas growth on ordinary tool commits (UNFIXED tree)', () => {
+describe('canvas growth on ordinary tool commits', () => {
   it('A. 25 shape commits at 800x600: commit path plus every replay cursor', () => {
     const canvas = document.createElement('canvas');
     const { result } = renderHook(useHarness, { wrapper: StoreProvider });
@@ -176,8 +186,12 @@ describe('PROBE: canvas growth on ordinary tool commits (UNFIXED tree)', () => {
     const rows = sweepReplay(store.history, store.totalSize, store.documentFrame, 'B-crop-then-shapes');
     // Cursor 0 is the PRE-CROP baseline and is legitimately 800x600; every cursor at or
     // past the crop entry must be 400x320, so the sweep must not oscillate.
-    const preCrop = rows.filter((row) => row.cursor === 0 && row.totalSize.width === 800 && row.totalSize.height === 600);
-    const cropped = rows.filter((row) => row.cursor >= 1 && row.totalSize.width === 400 && row.totalSize.height === 320);
+    const preCrop = rows.filter(
+      (row) => row.cursor === 0 && row.totalSize.width === 800 && row.totalSize.height === 600
+    );
+    const cropped = rows.filter(
+      (row) => row.cursor >= 1 && row.totalSize.width === 400 && row.totalSize.height === 320
+    );
     console.log(`[PROBE-B] pre-crop cursors=${preCrop.length} cropped cursors=${cropped.length} of ${rows.length}`);
     expect(preCrop).toHaveLength(1);
     expect(cropped).toHaveLength(rows.length - 1);
