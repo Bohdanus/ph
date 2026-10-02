@@ -99,7 +99,21 @@ export const toolbarMap = [
       // `burn` — only the tile's first entry carries the letter.
       { label: 'Sponge Tool', name: 'sponge' },
     ],
-    [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
+    // NO SHORTCUT, and the omission is the fix rather than an oversight. This entry
+    // previously declared `shortcut: 'B'`, which is the Brush's own shortcut and which
+    // `AppKeyboardShortcuts.tsx` binds to `selectBrushTool` on both `b` and `shift+b`. The
+    // Draw tool is bound to no key at all, so the rail rendered a `B` badge on the Draw flyout
+    // item (`SidebarLeft.tsx` draws `tool.shortcut` as a `<kbd>`, and passes it to
+    // `ToolTooltip`) and pressing `B` selected the Brush. `SidebarLeft` is the only place a
+    // declared shortcut reaches the user, so a declared shortcut the app does not implement is
+    // a falsehood, exactly like a tooltip that promises an Esc key the tool has no handler for.
+    //
+    // Photoshop binds the Draw tool to `Shift+W`, and that is not free here: `w` and `shift+w`
+    // both go to the Object Selection tool. Binding a key for fidelity is a product decision
+    // about which tool wins the chord, and it is not one this comment should make silently.
+    // `toolbar-mapping.test.ts` pins that no two entries may claim the same shortcut, so the
+    // fix cannot regress into a second collision.
+    [{ label: 'Draw Tool', name: 'draw' }],
   ],
   [
     [

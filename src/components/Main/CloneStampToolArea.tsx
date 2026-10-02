@@ -151,8 +151,8 @@ const drawCloneSourceMarker = (
  * `points` field then mean the same space, which is the only reason the offset arithmetic is
  * readable at all.
  *
- * `tempUpdateLayer` then calls the processor with `size: layer.pos` and the LAYER's own
- * bitmap (`src/contexts/useLayer.ts:544`), so the frame the processor addresses is
+ * The processor is then called with the LAYER's own bitmap in that layer's space
+ * (`src/contexts/useLayer.ts:730-734`), so the frame the processor addresses is
  * layer-local [0, pos.width) x [0, pos.height) and carries no document origin. Every point
  * is therefore translated by `-activeLayer.pos` on the way into the processor — the same
  * rebase `buildArgs` in `GradientToolArea.tsx` does and for the same reason, and both now

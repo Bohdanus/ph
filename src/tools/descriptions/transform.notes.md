@@ -513,19 +513,19 @@ menu path.
 
 | control                                      | what it is in Photoshop                                                                     | status  | appRef                                                     |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------- |
-| Width                                        | Numeric percent text box                                                                    | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:254` |
-| Height                                       | Numeric percent text box, linked to Width                                                   | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:269` |
+| Width                                        | Numeric percent text box                                                                    | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:289` |
+| Height                                       | Numeric percent text box, linked to Width                                                   | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:304` |
 | Maintain Aspect Ratio (Link)                 | Proportional-scaling toggle, on by default since 21.0; Shift is bound to the same state     | missing |                                                            |
 | Reference point location                     | 3×3 pivot grid, hidden by default; transforms start from the object center                  | missing |                                                            |
-| Rotation                                     | Numeric degrees text box; the same angle comes from dragging outside the box                | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:183` |
-| H                                            | Adobe's H (horizontal skew) degrees text box                                                | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:203` |
-| V                                            | Adobe's V (vertical skew) degrees text box                                                  | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:218` |
+| Rotation                                     | Numeric degrees text box; the same angle comes from dragging outside the box                | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:218` |
+| H                                            | Adobe's H (horizontal skew) degrees text box                                                | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:238` |
+| V                                            | Adobe's V (vertical skew) degrees text box                                                  | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:253` |
 | Switch Between Free Transform And Warp Modes | Button that swaps the box for a warp mesh, plus the Warp pop-up of predefined styles        | missing |                                                            |
 | X                                            | Numeric text box for the horizontal position of the transform reference point               | missing |                                                            |
 | Y                                            | Numeric text box for the vertical position of that same reference point                     | missing |                                                            |
 | Relative Positioning                         | Button that makes X and Y a displacement from the current position rather than a coordinate | missing |                                                            |
 | Commit                                       | The checkmark; Adobe also prints Enter, and the single-mode bar prints `Done`               | missing |                                                            |
-| Cancel                                       | The cancel button; also Esc                                                                 | present | `src/components/ToolbarsRight/Transform/Transform.tsx:296` |
+| Cancel                                       | The cancel button; also Esc                                                                 | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:31`  |
 
 **`Maintain Aspect Ratio` is now named by Peachpit as well as by the Adobe blog, and the "on by
 default since 21.0" reading survives.** Julieanne Kost's 2019 post is the source for the version —
@@ -574,8 +574,10 @@ text box, and the ranges are the app's own. Rotation is clamped to ±90° with 9
 only through three separate buttons, skew to ±45°, scale to 10–300%. Photoshop's fields accept
 any value in those units, and the Link icon that couples Width and Height has no counterpart at
 all, so the app can scale a layer non-proportionally by dragging one slider and cannot be
-coupled. `Cancel` is the single `present` in the family because the app binds both the button and
-Escape, which is exactly Photoshop's pair.
+coupled. `Cancel` is the only control in the family with a partial app verdict, and the partial is
+the button: the app binds Escape alone, so the discard route exists and is invisible. Adobe's bar
+pairs that Cancel with a Commit; the app's Commit row is `missing` for the separate reason recorded
+below — there is no commit control, because a finished gesture commits itself.
 
 The `Trapezoid` slider is the app's own addition and has no Photoshop options-bar counterpart.
 Its nearest Photoshop relative is Free Transform's Perspective mode, which is reached by
@@ -634,48 +636,58 @@ click the **Commit button** in the Options bar") and from the glyphs Photoshop a
 have been a checkmark and a cancel cross since 22.0. The `Commit` and `Cancel` row names are kept,
 and `Commit`'s detail now says which routes are Adobe's and which is not.
 
-**The commit routes are tool switch and export — Escape is not one of them, and an earlier
-version of this file said it was.** The `Escape` handler at
-`src/components/ToolbarsRight/Transform/Transform.tsx:35-43` calls the same `cancel` the Cancel
-button calls (`:30-33`), and `cancel` runs `cancelLayerPreview?.()` and resets the panel args. It
-dispatches nothing: it deletes the pending preview, so what survives is the last committed state.
-That is the discard route, and it is the exact counterpart of the commit route —
-`commitDirtyTool` (`src/contexts/useLayer.ts:443`) is what bakes the preview into a layer plus one
-history entry, and its callers are `goToTool`
-(`src/hooks/useApp.ts:167-169`, which is the tool-switch path every toolbar click and letter
-shortcut runs through) and the export handlers (`src/components/DesktopHeader/DesktopHeader.tsx:448`,
-`src/components/Mobile/MobileHeader.tsx:70`, `src/components/Mobile/MobileMenuDrawer.tsx:71`).
-Enter and the click-outside-the-box route are both absent, and so is Adobe's
-in-transform `Edit > Undo`.
+**The commit route is the end of a gesture, and the discard route is Escape.** A drag PREVIEWS
+while the pointer is down and commits as exactly one history entry when the pointer is released.
+The commit signal is the browser's native `change` event on the range input, bound as a plain
+listener on the bar (`src/components/ToolbarsRight/Transform/Transform.tsx:54-69`) — React's own
+`onChange` cannot be used for it, because React binds `onChange` to the native `input` event,
+which fires on every frame of a drag. That distinction is the whole feature: binding the commit to
+the input stream would write one history entry per frame. The five discrete controls — three
+rotate buttons, two mirror toggles — call the same commit from their `onClick` (`:71-73`), because
+a button press is a finished gesture too and a panel where a slider lands in history but a mirror
+flip does not is a panel whose history nobody can reason about.
 
-**An earlier version of the app had three commit routes on the bar, and it now has none of them
-there.** The right-hand column used to be `Reset All`, `Apply` and `Cancel` stacked under the
-mirror toggles (`Transform.tsx:300-308` before the removal). `Reset All` and `Apply` were removed
-together and `Cancel` stayed.
+`commitDirtyTool` (`src/contexts/useLayer.ts:443`) is what bakes the preview into a layer plus one
+history entry. It consumes the pending preview at `:488`, so it is a no-op when there is nothing
+pending, and `normalizeCommittedToolArgs` drops an identity transform at `:484`, so a release that
+moved nothing writes nothing. Those two lines are why a second release cannot double-write and why a
+click that lands where it started costs no history entry.
+
+The other commit routes still exist: `goToTool` (`src/hooks/useApp.ts:167-169`), which every
+toolbar click and letter shortcut runs through, and the export handlers
+(`src/components/DesktopHeader/DesktopHeader.tsx:448`, `src/components/Mobile/MobileHeader.tsx:70`,
+`src/components/Mobile/MobileMenuDrawer.tsx:71`). Escape is the only route that goes the other way,
+and it is the ONLY caller of `cancel` (`src/components/ToolbarsRight/Transform/Transform.tsx:26-29`),
+whose listener is at `:31-39`: it runs `cancelLayerPreview?.()` and resets the panel args, and
+dispatches nothing, so what survives is the last committed state.
+
+**An earlier version of the app had four controls stacked in that column, and it now has two
+buttons and nothing else.** The column used to be `Reset All`, `Apply` and `Cancel` under the mirror
+toggles (`Transform.tsx:300-308` before the first removal). All three were removed across two steps,
+`Cancel` last, which leaves the bar with no text control at all — no commit, no discard, no reset.
 
 **The reason was HEIGHT, and the first version of this entry said width, which is wrong in a way
 that sends the next session after a defect that does not exist.** The column is a `flex flex-col`
-under the mirror toggles, so those three controls were stacked rather than laid out across. Measured
+under the mirror toggles, so those controls were stacked rather than laid out across. Measured
 headlessly in Chromium at 1280x800 with `Edit > Free Transform` open: with all four children the
 column was **85px** inside the strip's fixed `h-[50px]`
 (`src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:5`), spilling ~35px above and below the bar
 — and `overflow-y` is `visible` from 1024px up, so the spill painted over the header and the
-workspace rather than scrolling. With two children it is 50px, exactly the bar. The bar's **width did
-not change by a pixel**: 548px before and after, and no horizontal overflow at any viewport width
-from 769 to 1440 on either tree. The column was always 68px wide because the mirror row's two `w-8`
-buttons and their `gap-1` set it and every text link stretched to that width rather than sizing
-itself by its glyphs. So the number of links was never a width lever; `w-24`, `w-10` and `gap-4`
-are.
+workspace rather than scrolling. The bar's **width never changed by a pixel** through any of it:
+548px before and after, and no horizontal overflow at any viewport width from 769 to 1440. The
+column was always 68px wide because the mirror row's two `w-8` buttons and their `gap-1` set it and
+every text link stretched to that width rather than sizing itself by its glyphs. So the number of
+links was never a width lever; `w-24`, `w-10` and `gap-4` are. With the last text control gone the
+column is `flex flex-1 items-center justify-center` (`:314`), so it absorbs the slack the removed
+links left behind and centers the two mirror toggles in it.
 
-`Cancel` and Escape stay because a discard route is worth keeping a control for. `Reset All` was
-redundant in a second way: its handler was `cancel` verbatim (`Transform.tsx:151-153`), so it was a
-second name for the button below it. `Apply` was not redundant in the same way — it was the only
-control on the bar that committed without leaving the tool, and removing it leaves the app with no
-in-tool commit route at all (there is no Enter binding in
-`src/components/Common/AppKeyboardShortcuts.tsx`), which is a capability question for the operator
-rather than a layout one. The `Commit` row above is `missing` for exactly that reason, and the
-`Commit` citation is gone rather than repointed, since there is nothing left to point at; `Cancel`'s
-is repointed from `:306` to `:296`, which is where the surviving button now starts.
+`Reset All` was redundant in a second way: its handler was `cancel` verbatim
+(`Transform.tsx:151-153` before the first removal), so it was a second name for the button below it.
+`Apply` was not redundant in the same way, which is why removing it without replacing it lost the
+only in-bar commit; that is what the gesture commit above restores, and it restores it where the
+value is edited rather than on a separate control. The `Commit` row above is `missing` because there
+is no checkmark on the bar, and its citation is gone rather than repointed, since there is nothing
+left to point at; `Cancel`'s is repointed to the Escape listener, which is now the whole of it.
 
 **Implementation: partial.** The declared composite order is fixed — scale, then rotation, then
 skew, all about the untransformed layer center (`src/contexts/affine-transform.ts:212`, whose doc

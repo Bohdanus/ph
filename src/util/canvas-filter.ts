@@ -46,3 +46,32 @@ export const requireCanvasFilter = (label: string): void => {
   if (canvasFilterSupported) return;
   throw new CanvasFilterUnsupportedError(label);
 };
+
+/**
+ * A filter operation whose argument will not coerce to a number, so no CSS filter string
+ * can be composed for it at all.
+ *
+ * It is a separate class from `CanvasFilterUnsupportedError` because the engine is not the
+ * problem: this host implements `ctx.filter` perfectly well and the string is still invalid.
+ * Both are refused BEFORE `ctx.filter` is assigned, because a browser discards an invalid
+ * assignment outright rather than applying its valid part — the layer would then be drawn
+ * unfiltered and nothing would say so. The render paths catch this per layer: a corrupt
+ * argument is a property of the operation that carries it, and the rest of the document
+ * composites exactly as `materialization.ts:322` already treats a failed layer.
+ */
+export class FilterArgumentUnrenderableError extends Error {
+  readonly toolName: string;
+  readonly field: string;
+
+  constructor(toolName: string, field: string, received: unknown) {
+    const printed = typeof received === 'string' ? JSON.stringify(received) : String(received);
+    super(
+      `Filter "${toolName}" has a non-numeric ${field} (${printed}). It was refused rather than ` +
+        'rendered, because a browser discards an unparseable ctx.filter assignment outright and ' +
+        'the layer would be drawn unfiltered with nothing to show for it.'
+    );
+    this.name = 'FilterArgumentUnrenderableError';
+    this.toolName = toolName;
+    this.field = field;
+  }
+}
