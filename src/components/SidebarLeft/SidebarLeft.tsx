@@ -1179,7 +1179,9 @@ const SidebarLeft = () => {
           // nothing while the element that can actually overflow paints a bar. The slot is
           // narrow — 56px — and the degenerate band is where it goes, so the window is small,
           // but "the last tile is unreachable" is not a trade worth a pixel-wide bar.
-          className="scrollbar-none flex min-h-0 w-full flex-1 justify-center overflow-y-auto"
+          // Keep one overflow tile reachable in a degenerate short desktop row without letting
+          // the full tool list become the grid's minimum height.
+          className="scrollbar-none flex min-h-0 min-h-11 w-full flex-1 justify-center overflow-y-auto"
           data-testid="left-toolbar-slot"
           ref={attachSlot}
         >
