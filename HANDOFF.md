@@ -5198,3 +5198,36 @@ table alignment that would trip the guard it introduces.
 
 **What is needed.** A sweep that compares blobs per test file, not just ancestry, before reporting a
 branch as landed. Recover `0a2f7f2b` or drop it deliberately. Do not recover `f3811b65`.
+
+## 182. A branch whose every commit is already on `main` is refused disposal, and a branch with nothing left in it is refused too
+
+**Problem.** `fix/vacuous-assertions` (4 commits) and `fix/blind-gates` (2 commits) are landed —
+every one of the six has a `git patch-id --stable` that matches a commit on `main`, and their content is
+on `main` as of `4c07778c`. `node scripts/dispose-worktree.mjs` refuses both anyway, with
+`The inventory says action: "at-risk", not "dispose"`. The generator counts commits with
+`git rev-list --count main..<branch>`, which is reachability, so a cherry-picked or rebased branch
+reads as "2 ahead of main" forever. This is the same under-reporting as §181 one layer down: there the
+lie was in a sweep's own logic, here it is in the field the whole disposal path gates on.
+
+`docs/ORCHESTRATION.md:390-394` says the only field in a curated entry that moves a verdict is
+`mustNotPrune`, and that it applies to "a branch git already calls disposable" — which these are not.
+`summary`, `note`, `issues` and `landed` are documentation. So there is no supported way to express
+"landed, but not by reachability", and `dispose-worktree.mjs` has no `--force` by design.
+
+**The harder half is `fix/unit-tests`.** Its two commits are genuinely not on `main`, and after the
+audit recorded in `4c07778c` there is nothing in them worth landing: the production fix is superseded
+by main's mark-and-sweep retirement, the still-valid test cases are now on `main`, and the rest is dead
+or vacuous. Its curated entry calls it "the only holder of the #16 and #17 fixes", which was true on
+2026-09-27 and is stale now — `HANDOFF.md` §16 and §17 both record their conversion halves fixed and
+verified, and name the tests on `main` that verify them. The one piece not on `main` is
+`history-append.ts` withholding `durableEntry` on an append-point violation, which is §17's _prescribed
+remaining work_ and is specified in more detail in §17 than the branch holds it. A branch that is
+provably superseded is therefore permanently `at-risk`, because "2 ahead" and "worth keeping" are the
+same signal to the generator.
+
+**What is needed.** Either the generator compares patch-ids rather than commit reachability, so a
+cherry-picked branch reads as landed; or a disposition an operator can state meaning "reviewed, keep
+nothing" that is not `mustNotPrune`, which is what all three branches need. Until one of those exists,
+`git branch -D` and `git worktree remove --force` are the only paths to them, both are gated in
+`kilo.jsonc`, and defeating that gate is not the answer — which leaves the operator as the only party
+who can retire them.
