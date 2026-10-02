@@ -3,13 +3,18 @@ import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
-import { CanvasFilterUnsupportedError, requireCanvasFilter } from '../util/canvas-filter.ts';
+import {
+  CanvasFilterUnsupportedError,
+  FilterArgumentUnrenderableError,
+  requireCanvasFilter,
+} from '../util/canvas-filter.ts';
 import { resizeCanvas } from '../util/canvas.ts';
 import {
   drawEvaluatedPresentation,
-  evaluatePresentation,
+  evaluatePresentationForDraw,
   getPresentationFilter,
   scaleVectorArgs,
+  type PresentationDrawTarget,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
 
@@ -91,17 +96,23 @@ export function drawLayerSource(
       });
     }
   }
-  const evaluation = evaluatePresentation({
-    position,
-    sourceSize: { width: position.width, height: position.height },
-    operations,
-    mode: 'layer-bounds',
-  });
+  const target: PresentationDrawTarget = { kind: 'document', frame: documentFrame };
+  const evaluation = evaluatePresentationForDraw(
+    {
+      position,
+      sourceSize: { width: position.width, height: position.height },
+      operations,
+      mode: 'layer-bounds',
+    },
+    // The `document` target is what makes the uncapped bounds safe here, and it is the same
+    // object the draw below uses, so the two cannot drift apart.
+    target
+  );
   if (evaluation.filter !== 'none') requireLayerFilterSupport(layer.operations);
 
   ctx.save();
   try {
-    drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'document', frame: documentFrame });
+    drawEvaluatedPresentation(ctx, bitmap, evaluation, target);
   } finally {
     ctx.restore();
   }
@@ -147,8 +158,15 @@ function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size): SnapshotS
   }
 }
 
+/**
+ * Puts the previous presentation back after a publish that had already written to the target.
+ *
+ * The resize alone is not the restore: assigning `width` or `height` RESETS a canvas to fully
+ * transparent, and the `clearRect` the publish issues empties one whatever its dimensions were.
+ * So this runs whenever the target was written at all, and blits the snapshot back even when
+ * the dimensions already matched — the wipe it reverses then is the clear, not a resize.
+ */
 function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: SnapshotSurface | null): void {
-  if (canvas.width === size.width && canvas.height === size.height) return;
   try {
     resizeCanvas(canvas, size.width, size.height);
     if (!snapshot) return;
@@ -163,7 +181,8 @@ function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: S
 /**
  * Keeps the last visible canvas intact when a source or processor fails while
  * composing a new runtime presentation. The target changes only after every
- * layer has drawn successfully to an isolated staging canvas.
+ * layer has drawn successfully to an isolated staging canvas, and the pixels it
+ * held are restored when that change fails partway through.
  */
 export function drawLayersToCanvas(
   canvas: HTMLCanvasElement,
@@ -180,12 +199,17 @@ export function drawLayersToCanvas(
   try {
     for (const layer of layers) {
       if (!layer.visible) continue;
-      // Per layer, not per composition: one layer carrying a filter this browser refuses must not
-      // cost the document the other layers. The staging canvas is discarded by the return below,
-      // so the visible canvas keeps the presentation it already had.
+      // Per layer, not per composition: one layer carrying a filter this browser refuses, or
+      // carrying a filter argument that cannot be rendered at all, must not cost the document
+      // the other layers. The staging canvas is discarded by the return below, so the visible
+      // canvas keeps the presentation it already had.
       try {
         if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
       } catch (error) {
+        if (error instanceof FilterArgumentUnrenderableError) {
+          console.error('skipped layer whose filter arguments cannot be rendered', layer.id, error);
+          continue;
+        }
         if (!(error instanceof CanvasFilterUnsupportedError)) throw error;
         console.error('skipped layer whose filter this browser cannot apply', layer.id, error);
       }
@@ -196,21 +220,28 @@ export function drawLayersToCanvas(
   }
 
   const previousSize = { width: canvas.width, height: canvas.height };
-  const resized = canvas.width !== size.width || canvas.height !== size.height;
+  // The publish WRITES the target, and it writes it in two steps: `resizeCanvas` resets a
+  // resized canvas to transparent, and the `clearRect` empties one whose dimensions already
+  // matched. A `drawImage` that threw between them left the document blank with nothing to put
+  // back, and the caller flattened whatever was left. So the previous pixels are held aside in
+  // EVERY case, not only when a resize has to be reversed — the snapshot is what makes the
+  // clear-then-blit sequence recoverable, and the alternative (a single `copy` composite, which
+  // is atomic and allocates nothing) is pinned to a different observable sequence by
+  // `useHistory.test.tsx:455` and belongs to whoever owns that file.
   let snapshot: SnapshotSurface | null = null;
+  let wrote = false;
   try {
     const context = canvas.getContext('2d');
     if (!context) return false;
-    if (resized) {
-      snapshot = snapshotVisibleCanvas(canvas, previousSize);
-      if (!snapshot) return false;
-    }
+    snapshot = snapshotVisibleCanvas(canvas, previousSize);
+    if (!snapshot) return false;
     resizeCanvas(canvas, size.width, size.height);
+    wrote = true;
     context.clearRect(0, 0, size.width, size.height);
     context.drawImage(stagingCanvas, 0, 0);
     return true;
   } catch (error) {
-    if (resized) restoreVisibleCanvas(canvas, previousSize, snapshot);
+    if (wrote) restoreVisibleCanvas(canvas, previousSize, snapshot);
     console.error('Unable to publish runtime layer presentation', error);
     return false;
   }
