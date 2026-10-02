@@ -653,6 +653,32 @@ describe('drawShape', () => {
       expect(ctx.fillRect, figure).not.toHaveBeenCalled();
     });
 
+    it('does not fill a corner-rounded rectangle marked filled that has no background colour', () => {
+      // The `it.each` above reaches the rectangle only through the axis-aligned fast path, where
+      // `cornerRadius` is absent and `radius` is 0, so it never enters the rounded branch. That
+      // branch gates its fill separately (`shape.ts`: `if (hasFill) ctx.fill();` after
+      // `roundedRectPath`), so the `hasFill` guard there is a second, independently removable line
+      // that nothing else in this file exercises: every other cornerRadius case draws an unfilled
+      // rectangle, and an unfilled one cannot tell a suppressed fill from a fill it never wanted.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'rectangle',
+        cornerRadius: 8,
+        hasFill: true,
+        backgroundColor: null,
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 10 },
+      });
+
+      expect(ctx.fill).not.toHaveBeenCalled();
+      expect(ctx.fillRect).not.toHaveBeenCalled();
+      // The outline is still drawn, and only through the path primitive: `strokeRect` here would be
+      // the fast path, which a positive radius must never take.
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+      expect(ctx.strokeRect).not.toHaveBeenCalled();
+    });
+
     it.each(firableFigures)('still fills a %s marked filled that has a background colour', (figure) => {
       // A radius-0 rectangle fills through `fillRect` and the rest through `fill`, so the method
       // is named per figure rather than asserted as a set -- a rectangle passing on `fill` alone
@@ -676,7 +702,9 @@ describe('drawShape', () => {
       // it takes the axis-aligned fast path at `shape.ts` and strokes with `strokeRect`, so an
       // assertion on `ctx.stroke` here would pass for the wrong reason on three figures and fail
       // on the fourth. A guard that removed the whole figure would be caught by this, not by the
-      // two above.
+      // two above. Asserting the named primitive alone is one-sided, though: a mutation that made
+      // a figure outline BOTH primitives, or stroke twice, would still pass, so each case pins the
+      // count on its own primitive and the absence of the other.
       const cases = [
         { figure: 'rectangle', cornerRadius: 0, strokeMethod: 'strokeRect' },
         { figure: 'rectangle', cornerRadius: 4, strokeMethod: 'stroke' },
@@ -697,7 +725,14 @@ describe('drawShape', () => {
           end: { x: 10, y: 10 },
         });
 
-        expect(ctx[strokeMethod], `${figure} r=${cornerRadius}`).toHaveBeenCalled();
+        // The one primitive this case does not outline. Naming the unused half of the pair rather
+        // than leaving it to the reader is what makes the absence an assertion instead of an
+        // inference from which method happened to be listed.
+        const otherStrokeMethod = strokeMethod === 'strokeRect' ? 'stroke' : 'strokeRect';
+        const label = `${figure} r=${cornerRadius}`;
+
+        expect(ctx[strokeMethod], label).toHaveBeenCalledTimes(1);
+        expect(ctx[otherStrokeMethod], label).not.toHaveBeenCalled();
       }
     });
   });
