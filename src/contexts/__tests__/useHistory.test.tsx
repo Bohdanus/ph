@@ -116,6 +116,10 @@ vi.mock('../history-replay.ts', async (importOriginal) => {
 });
 
 const canvasContexts: CanvasRenderingContext2D[] = [];
+// Every 2D context the file's `OffscreenCanvas` mock hands out, so a test can read back the
+// draw a replay made into its own staging surface rather than only what the processor was
+// afterwards handed.
+const offscreenContexts: CanvasRenderingContext2D[] = [];
 
 // vi.restoreAllMocks() in beforeEach also drops the global canvas context stub
 // installed by src/test/setup.ts, so every test re-installs it before rendering.
@@ -267,11 +271,13 @@ describe('useHistory undo replay', () => {
       }
 
       getContext() {
-        return {
-          fillStyle: '#ffffff',
-          globalAlpha: 1,
-          fillRect: vi.fn(),
-        };
+        // The full mock context rather than the three drawing fields this used to expose:
+        // replaying a layer that carries a retained affine rasterizes it through
+        // `drawEvaluatedPresentation` in `replayProcessorInput`, which needs `save`,
+        // `transform` and `drawImage` to exist at all.
+        const context = createMockCanvasContext(this) as unknown as CanvasRenderingContext2D;
+        offscreenContexts.push(context);
+        return context;
       }
     }
 
@@ -299,6 +305,7 @@ describe('useHistory undo replay', () => {
     replayControl.replayCount = 0;
     replayControl.calls = [];
     installCanvasContextStub();
+    offscreenContexts.length = 0;
   });
 
   it('undoes history when NEW_LAYER source is stored in layerSource', () => {
@@ -500,6 +507,57 @@ describe('useHistory undo replay', () => {
     expect(createImageBitmap).not.toHaveBeenCalled();
     expect(state.layers.image.tmpCanvas).toBe(canvas);
     expect(state.layers.image.pos.x).toBe(12);
+  });
+
+  it('replays a tool entry for a layer carrying an affine at its evaluated extent, not at layer.pos', () => {
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(80, 40);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 40, height: 20 },
+        operations: [
+          {
+            id: 'op-scale',
+            kind: 'affine-transform',
+            enabled: true,
+            transform: { a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 },
+          },
+        ],
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    // The evaluator's own bounds, which is what the live pointer move hands this same
+    // processor (`useLayer.ts:730`): the affine's own offset added to the layer origin, and
+    // twice the extent. `layer.pos` — 40x20 at (10, 5) — is what replay used to pass, so a
+    // raster processor read the wrong buffer at the wrong size while the screen, which goes
+    // through the evaluator, showed the evaluated one.
+    expect(processor).toHaveBeenCalledWith({
+      bitmap: expect.objectContaining({ width: 80, height: 40 }),
+      size: { x: 15, y: 8, width: 80, height: 40 },
+    });
+    // The buffer handed over is the evaluated presentation rather than the layer's own
+    // raster, so the affine has to have reached the draw call and not just the arithmetic.
+    // The surface is found by its extent rather than by position, because the publication
+    // also snapshots the visible canvas (`layer-renderer.ts:205`) and allocates its own.
+    const surfaces = offscreenContexts.filter((context) => context.canvas.width === 80 && context.canvas.height === 40);
+    expect(surfaces).toHaveLength(1);
+    const [surface] = surfaces;
+    expect(vi.mocked(surface.drawImage).mock.calls[0]).toEqual([bitmap, 0, 0, 40, 20]);
+    expect(surface.transform).toHaveBeenCalledWith(2, 0, 0, 2, 5, 3);
+    expect(state.layers.top.tmpCanvas).toBe(processed);
   });
 
   it('leaves the store completely untouched when toggleDisabled names an entry the timeline does not hold', () => {
