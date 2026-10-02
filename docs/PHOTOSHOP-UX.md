@@ -65,7 +65,7 @@ violations on `main`.
     Warming preset and saturation is nearest its Density slider, but grayscale is a
     control Photo Filter does not have. `Black and White` is not an option at all —
     it needs per-hue sextant weighting and there is no hue decomposition anywhere in
-    `src`. See `HANDOFF.md` §153, which is an open question with a recorded default.
+    `src`. See `HANDOFF.md` §170, which is an open question with a recorded default.
   - **The capability is coming back, as real commands, and the requirements do not
     exist yet.** 2026-10-01, after the decision above: Levels, Colors and the other
     `Image ▸ Adjustments` commands "will be implemented". This **does not reopen the

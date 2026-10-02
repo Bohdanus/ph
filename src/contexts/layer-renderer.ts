@@ -1,24 +1,17 @@
-import type { Pos } from './general-types.ts';
+import type { Pos, Size } from './general-types.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
-import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { CanvasFilterUnsupportedError, requireCanvasFilter } from '../util/canvas-filter.ts';
-import { getLayerAffineTransform, isIdentityAffineTransform } from './affine-transform.ts';
 import { resizeCanvas } from '../util/canvas.ts';
-
-function filterForOperation(operation: Extract<LayerOperation, { args: unknown }>): string {
-  const { args } = operation;
-  switch (args.toolName) {
-    case 'blur':
-      return `blur(${args.radius}px)`;
-    case 'color':
-      return buildColorsFilter(args);
-    case 'levels':
-      return buildLevelsFilter(args);
-  }
-}
+import {
+  drawEvaluatedPresentation,
+  evaluatePresentation,
+  getPresentationFilter,
+  scaleVectorArgs,
+  type PresentationOperation,
+} from './presentation-evaluator.ts';
 
 function enabledFilterOperations(
   operations: readonly LayerOperation[]
@@ -30,8 +23,13 @@ function enabledFilterOperations(
 }
 
 export function getLayerFilter(operations: readonly LayerOperation[]): string {
-  const filters = enabledFilterOperations(operations).map(filterForOperation);
-  return filters.length ? filters.join(' ') : 'none';
+  return getPresentationFilter(
+    enabledFilterOperations(operations).map((operation) => ({
+      kind: 'filter',
+      toolName: operation.args.toolName,
+      args: operation.args as unknown as Readonly<Record<string, unknown>>,
+    }))
+  );
 }
 
 /**
@@ -54,24 +52,13 @@ function isVectorSource(source: Layer['source']): source is ToolLayerSource {
   return !!source && source.kind === 'tool' && vectorToolNames.has(source.args.toolName);
 }
 
-function scaleVectorArgs(args: ToolArgs, source: ToolLayerSource, position: Pos): ToolArgs {
-  if (!('pos' in source) || !('start' in args) || !args.start || !args.end) return args;
-  const scaleX = position.width / source.pos.width;
-  const scaleY = position.height / source.pos.height;
-  const lineWidth = 'lineWidth' in args ? args.lineWidth * Math.sqrt(Math.abs(scaleX * scaleY)) : undefined;
-  return {
-    ...args,
-    start: { x: args.start.x * scaleX, y: args.start.y * scaleY },
-    end: { x: args.end.x * scaleX, y: args.end.y * scaleY },
-    ...(lineWidth === undefined ? {} : { lineWidth }),
-  } as ToolArgs;
-}
-
 function getLayerBitmap(layer: Layer, position: Pos) {
   if (layer.tmpCanvas) return layer.tmpCanvas;
   if (!isVectorSource(layer.source)) return layer.bitmap;
 
-  const args = scaleVectorArgs(layer.source.args, layer.source, position);
+  const args = ('pos' in layer.source
+    ? scaleVectorArgs(layer.source.args as unknown as Record<string, unknown>, layer.source.pos, position)
+    : layer.source.args) as unknown as ToolArgs;
   const processor = findToolProcessor(args.toolName);
   // A vector source is only ever created by a creator tool, and a tool with no processor
   // (`PIXEL_FREE_TOOLS`) is never one, so this is unreachable — and falls back to the layer's own
@@ -88,28 +75,33 @@ export function drawLayerSource(
   documentFrame?: DocumentFrame
 ): boolean {
   const bitmap = getLayerBitmap(layer, position);
-  if (!bitmap || bitmap.width === 0 || bitmap.height === 0) return false;
+  if (!bitmap || bitmap.width === 0 || bitmap.height === 0 || position.width === 0 || position.height === 0)
+    return false;
 
-  const filter = getLayerFilter(layer.operations);
-  if (filter !== 'none') requireLayerFilterSupport(layer.operations);
+  const operations: PresentationOperation[] = [];
+  for (const operation of layer.operations) {
+    if (!operation.enabled) continue;
+    if (operation.kind === 'affine-transform') {
+      operations.push({ kind: 'affine-transform', transform: operation.transform });
+    } else {
+      operations.push({
+        kind: 'filter',
+        toolName: operation.args.toolName,
+        args: operation.args as unknown as Readonly<Record<string, unknown>>,
+      });
+    }
+  }
+  const evaluation = evaluatePresentation({
+    position,
+    sourceSize: { width: position.width, height: position.height },
+    operations,
+    mode: 'layer-bounds',
+  });
+  if (evaluation.filter !== 'none') requireLayerFilterSupport(layer.operations);
 
   ctx.save();
   try {
-    const affine = getLayerAffineTransform(layer);
-    ctx.filter = filter;
-    const x = position.x - (documentFrame?.x ?? 0);
-    const y = position.y - (documentFrame?.y ?? 0);
-    if (isIdentityAffineTransform(affine)) {
-      ctx.drawImage(bitmap, x, y, position.width, position.height);
-    } else {
-      // Product ordering is deliberate: retained affine operations compose in
-      // source order, then the filter stack is applied to that transformed
-      // presentation. Arbitrary affine/filter interleaving is not represented
-      // by the current canvas filter API.
-      ctx.translate(x, y);
-      ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
-      ctx.drawImage(bitmap, 0, 0, position.width, position.height);
-    }
+    drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'document', frame: documentFrame });
   } finally {
     ctx.restore();
   }
@@ -124,6 +116,47 @@ export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, documentF
     return drawLayerSource(ctx, layer, layer.pos, documentFrame);
   } finally {
     ctx.restore();
+  }
+}
+
+type SnapshotSurface = OffscreenCanvas | HTMLCanvasElement;
+
+function createSnapshotSurface(size: Size): SnapshotSurface {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(size.width, size.height);
+  const snapshot = document.createElement('canvas');
+  resizeCanvas(snapshot, size.width, size.height);
+  return snapshot;
+}
+
+function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size): SnapshotSurface | null {
+  try {
+    let snapshot = createSnapshotSurface(size);
+    let context = snapshot.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    if (!context || typeof context.drawImage !== 'function') {
+      const fallback = document.createElement('canvas');
+      resizeCanvas(fallback, size.width, size.height);
+      snapshot = fallback;
+      context = fallback.getContext('2d') as CanvasRenderingContext2D | null;
+    }
+    if (!context) return null;
+    context.drawImage(canvas, 0, 0);
+    return snapshot;
+  } catch (error) {
+    console.error('Unable to snapshot the visible runtime layer presentation', error);
+    return null;
+  }
+}
+
+function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: SnapshotSurface | null): void {
+  if (canvas.width === size.width && canvas.height === size.height) return;
+  try {
+    resizeCanvas(canvas, size.width, size.height);
+    if (!snapshot) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.drawImage(snapshot, 0, 0);
+  } catch (error) {
+    console.error('Unable to restore runtime layer presentation', error);
   }
 }
 
@@ -162,14 +195,22 @@ export function drawLayersToCanvas(
     return false;
   }
 
+  const previousSize = { width: canvas.width, height: canvas.height };
+  const resized = canvas.width !== size.width || canvas.height !== size.height;
+  let snapshot: SnapshotSurface | null = null;
   try {
-    resizeCanvas(canvas, size.width, size.height);
     const context = canvas.getContext('2d');
     if (!context) return false;
+    if (resized) {
+      snapshot = snapshotVisibleCanvas(canvas, previousSize);
+      if (!snapshot) return false;
+    }
+    resizeCanvas(canvas, size.width, size.height);
     context.clearRect(0, 0, size.width, size.height);
     context.drawImage(stagingCanvas, 0, 0);
     return true;
   } catch (error) {
+    if (resized) restoreVisibleCanvas(canvas, previousSize, snapshot);
     console.error('Unable to publish runtime layer presentation', error);
     return false;
   }

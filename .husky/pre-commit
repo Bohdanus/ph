@@ -12,4 +12,22 @@ set -e
 # files with lint-staged before the commit was ever called illegitimate.
 node scripts/main-worktree-guard.mjs
 
+# A merge being completed must not silently delete the other side's committed work.
+#
+# This is here, and not only in `pre-merge-commit`, because the two fire on different
+# merges and the dangerous one is THIS one. Measured with raw git:
+#   - merge conflicts, you resolve, you `git commit`  -> pre-commit fires, MERGE_HEAD set
+#   - merge is clean, `git merge` commits it itself   -> pre-merge-commit fires, MERGE_HEAD EMPTY
+# A conflicted merge resolved with `checkout --theirs <file>` is Case A, so a guard wired
+# only into `pre-merge-commit` would never have seen it. And this is exactly the shape that
+# reaches a worktree: the main-worktree guard above refuses merge commits in `main`, but
+# ALLOWS one in a feature worktree, which is where `git merge main` is supposed to happen.
+#
+# `merge-takeover-guard.mjs` no-ops in about a `rev-parse` unless MERGE_HEAD exists, so an
+# ordinary commit pays nothing for this line. Here MERGE_HEAD is readable, so the guard gets
+# the incoming ref from git rather than from GIT_REFLOG_ACTION.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  node scripts/merge-takeover-guard.mjs
+fi
+
 npm run gate:commit

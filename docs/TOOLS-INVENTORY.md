@@ -106,14 +106,12 @@ someone who trusts the source material.
 
 ## Selection
 
-| Adobe tool                | Group                                                | Shortcut                                                                                                                | Headline options                                                                                                         | Source                                                                                                                                                                                                                                                                               |
-| ------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Star**                  | Drawing — shapes flyout, seventh entry               | none of its own; reached by cycling the shapes group                                                                    | Point count, plus inner and outer radii — `TOOLS.md` §Polygon Tool records that Sides is _Polygon_’s control, not Star’s | Adobe's drawing-tools overview lists Star; `docs/TOOLS.md` and `src/tools/descriptions/shape.notes.md` §Star carry the two sources (the overview plus the Adobe page "Select the Star tool from the shapes tool group in the Tools panel")                                           |
-| **Object Selection**      | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched                                                                                                           | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                   |
-| **Single Row Marquee**    | Selection — marquee flyout, fourth entry             | the marquee letter, cycled — **the specific key is not researched**                                                     | not researched                                                                                                           | Adobe's selection-tools overview tabulates it                                                                                                                                                                                                                                        |
-| **Single Column Marquee** | Selection — marquee flyout, fifth entry              | the marquee letter, cycled — **the specific key is not researched**                                                     | not researched                                                                                                           | Adobe's selection-tools overview tabulates it                                                                                                                                                                                                                                        |
-| **Selection Brush**       | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched                                                                                                           | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                     |
-| **Content-Aware Move**    | Selection                                            | not researched                                                                                                          | not researched                                                                                                           | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md:1325` names it as a large tool needing a generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
+| Adobe tool             | Group                                                | Shortcut                                                                                                                | Headline options                                                                                                         | Source                                                                                                                                                                                                                                                                               |
+| ---------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Star**               | Drawing — shapes flyout, seventh entry               | none of its own; reached by cycling the shapes group                                                                    | Point count, plus inner and outer radii — `TOOLS.md` §Polygon Tool records that Sides is _Polygon_’s control, not Star’s | Adobe's drawing-tools overview lists Star; `docs/TOOLS.md` and `src/tools/descriptions/shape.notes.md` §Star carry the two sources (the overview plus the Adobe page "Select the Star tool from the shapes tool group in the Tools panel")                                           |
+| **Object Selection**   | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched                                                                                                           | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                   |
+| **Selection Brush**    | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched                                                                                                           | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                     |
+| **Content-Aware Move** | Selection                                            | not researched                                                                                                          | not researched                                                                                                           | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md:1807` names it as a large tool needing a generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
 
 **Star is the notable one**, because it is a missing _entry_ rather than a missing tool. The
 shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
@@ -122,9 +120,13 @@ same custom-shape work is filed as too hard in [`TOOLS-TOO-HARD.md`](TOOLS-TOO-H
 hardcoded star is exactly what this repository's policy refuses.
 
 **The rest follow from what this app already lacks.** Object Selection needs an
-edge-following segmentation comparable to what the Quick Selection entry records as too hard;
-Single Row and Single Column are the two cheapest real additions in `HANDOFF.md` §74 — two
-lines of geometry reusing the rectangular-selection path.
+edge-following segmentation comparable to what the Quick Selection entry records as too hard.
+
+**Single Row and Single Column Marquee were listed here until 2026-10-01 and are now
+implemented**, so they have been deleted from that table rather than left in it: this file's
+one job is the tools the rail does NOT have, and it became false for both of them. They live
+in `src/tools/singleRowColumnMarquee.ts`, share the rectangular-selection commit path, and
+are covered by `e2e/single-row-column-marquee.spec.ts`.
 
 ## Retouch
 
@@ -326,7 +328,6 @@ this file; the "not researched" cells in the tables above are the same fact at r
 **Not researched at all — no options bar, no source opened**
 
 - **Object Selection** options
-- **Single Row Marquee** and **Single Column Marquee** options, and their cycling keys
 - **Selection Brush** options
 - **Remove** options, and its shortcut
 - **Background Eraser** options
@@ -337,8 +338,21 @@ this file; the "not researched" cells in the tables above are the same fact at r
 - **Note** options
 - **Frame**, **Slice**, **Slice Select**, **Perspective Crop**, **Artboard** options
 - **Content-Aware Tracing** options and shortcut
-- **Object Selection**, **Single Row**, **Single Column**, **Frame**, **Artboard** placements
-  in the rail
+- **Object Selection**, **Frame**, **Artboard** placements in the rail
+
+**Settled since — researched, and no longer "not researched"**
+
+- **Single Row Marquee** and **Single Column Marquee** options. Adobe scopes `Anti-alias` to
+  the Elliptical Marquee and `Style`, `Fixed Ratio` and `Fixed Size` to the Rectangular and
+  Elliptical Marquees **by name**
+  (`helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`), so neither 1-pixel tool has
+  any of them. What is left on **Adobe's** bar for each is the four selection modes, `Feather`
+  and `Select and Mask` — and **this app renders none of those three either**, which is why they
+  are `missing` in `docs/TOOLS.md` rather than absent from this file: the tools exist, so their
+  gaps belong to the description system, not here. The scripting API is the sharper evidence on
+  the first two, since `selectRow`/`selectColumn` take neither a `feather` nor an `antiAlias`
+  parameter where `selectRectangle` takes both. Their cycling key is still unverified — see the
+  `M` group section of `src/tools/descriptions/selection.notes.md`.
 
 **Third-party only — membership may be confirmed, the shortcut is not**
 

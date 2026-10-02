@@ -1,5 +1,29 @@
 Photoshop clone production-grade photo editor
 
+## Worktree FIRST — no tracked edit happens outside one
+
+**100% of work that changes a tracked file happens in its own worktree, on its own
+branch. `main` is for reading and merging.** The exceptions are enumerated, none of
+them a judgement call, in
+[`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
+
+```bash
+git rev-parse --show-toplevel                        # FIRST. Every time. Non-negotiable.
+# `git worktree list` puts the MAIN checkout first, and $MAIN is absolute: the new
+# worktree lands under the main checkout and never nests inside the one you are in.
+MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
+git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
+```
+
+- **A commit from `main` is refused**, not warned about: `scripts/main-worktree-guard.mjs`
+  runs first in `.husky/pre-commit`, and the refusal names this recipe. It is the floor
+  under the rule rather than the rule: it runs after the edit, so a session that writes
+  into `main` and never commits is not stopped by it. What stops the write is the process
+  above.
+
+The three traps that follow from having a worktree are in **Worktrees and dev servers**
+below.
+
 ## Subagents INSTRUCTION
 
 LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.
@@ -41,6 +65,7 @@ task({
 - **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.**. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
+- **A post that will not fit is a path, not a shorter post.** `board_post` rejects a body over 4096 characters and the rejection ABORTS THE TURN — a finished review, its mutations and all its evidence, gone, ending on a tool error. Write the finding to a handoff document and post the path. `docs/ORCHESTRATION.md` has the cap and the rest of the swarm text rules.
 
 ## NEVER OPEN A BROWSER WINDOW
 
@@ -90,11 +115,22 @@ npm run probe:console   # playwright, HEADLESS - one page load, reports console 
 
 ## Worktrees and dev servers
 
-One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
+**A merge may not silently delete the other side's work.** `scripts/merge-takeover-guard.mjs`
+runs from `pre-commit` (a conflicted merge being committed) and `pre-merge-commit` (a clean
+merge that commits itself), and **refuses** the merge. It catches the shape `tsc` and `build`
+cannot: a path the merge resolved by copying one whole side's content, which is a perfectly
+good file and compiles. One merge here shipped 17 such reverts and 1,835 lines, none of them
+a conflict. `docs/ORCHESTRATION.md` is the one home. Two limits: a **fast-forward fires no
+hook at all** (safe by construction — the branch tip contains main as an ancestor), and
+`--no-verify` bypasses it, as it bypasses every gate here.
+
+The three traps that follow from having one, each a consequence of a second checkout of
+the same repository:
 
 - **`node_modules` is missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **A run starts its own dev server, on a port of its own.** `scripts/e2e-run.mjs` picks a free port, so `test:e2e` never tests a checkout it did not start. Never set `PLAYWRIGHT_REUSE_EXISTING_SERVER`: `playwright.config.ts` hard-codes `reuseExistingServer: false` and the runner refuses that variable on TRUTHINESS, so even `=false` exits with an error. A bare `npx playwright test` skips the port picker and collides with whatever holds :5173 — use `npm run test:e2e`, or pass `PLAYWRIGHT_PORT=<free>`.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
+- **Never remove a worktree by hand.** `npm run dispose -- <name>` is the only path: it checks the inventory's `action`, the board's claims and locks, and the session database, then anchors the branch before it deletes. `git worktree remove --force` and `git branch -D` are denied or gated in `kilo.jsonc`, and there is no reason to defeat them. A refusal names the signal that produced it — an in-flight task is `in-use`, and only the operator may stop a writing chat.
 
 ## Test traps
 
@@ -102,7 +138,7 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
-- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds one `auto` fixture, `ConsolePolice`, which fails a test on any unaccepted console error or page error. It is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds two `auto` fixtures: `consolePolice`, which fails a test on any unaccepted console error or page error, and `pinnedTheme`, which seeds `localStorage.theme` so the suite's pixel oracles keep the light backdrop they are calibrated for under the app's dark default. `auto` is the load-bearing part — it is opt-out, not opt-in. `consolePolice` is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
 - Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates
@@ -174,4 +210,4 @@ On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by de
 
 The legacy `HistoryItem[]` path is the **PRODUCTION REPLAY AUTHORITY**: it writes history, replays through `history-replay.ts`, renders runtime `Layer` objects and exports from the runtime canvas and layers. The durable document is still a shadow projection, NOT the authority for rendering. Treat that as the state to read, not a fact to assume — the history work is in flight. Re-read the code and the plans before designing across the legacy/durable boundary.
 
-The single-writer cutover's old blocker is GONE, not merely moved: it was gated on a canvas-promotion helper that no longer exists (`HANDOFF.md` §127 records the deletion), and the hazard it named is closed — presentation caches are published through the reducer by a typed action, so a cache cannot be promoted outside reducer publication. Do not re-derive that gate from this sentence's predecessor; check the current reducer.
+The single-writer cutover's old blocker is GONE, not merely moved. It was gated on a canvas-promotion helper that no longer exists — there is no `HANDOFF.md` entry for that gate, live or retired, so this sentence carries no citation and invents none. What the reducer does establish, and all it establishes: a presentation cache reaches a layer only through the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm, which re-checks `isSamePresentationCanvas` and then replaces the affected layer records wholesale. The guard that proves a publication moves no durable layer state is `layersDifferOnlyByPresentation`, and it is applied on the `PUBLISH_RUNTIME_PRESENTATION` path, NOT on the promotion path — so "a cache cannot be promoted outside reducer publication" was stronger than the code. Check the current reducer rather than re-deriving this from its predecessor.

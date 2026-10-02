@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch } from 'react';
+import { useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type { BitmapSource } from './general-types.ts';
@@ -47,6 +47,11 @@ import { createHistoryItem } from './history-utils.ts';
 import { planHistoryAppend } from './history-append.ts';
 import { derivedLayerPropertyPatch, isSetLayerPropertiesAction } from './history-adapter.ts';
 import type { LayerPresentationRequest } from './layer-presentation.ts';
+import {
+  drawEvaluatedPresentation,
+  evaluatePresentation,
+  type PresentationOperation,
+} from './presentation-evaluator.ts';
 import {
   canvasRectToDocumentFrame,
   canvasToDocumentPos,
@@ -116,26 +121,54 @@ function canvasFilterRefusal(candidateToolName: ToolName): Error | null {
  */
 const isLayerLocked = (layer: Layer): boolean => layer.locked === true;
 
-/**
- * The action that hands a raster the store has adopted to the presentation scope.
- *
- * `DocumentPresentationScope` is "the owner of every presentation bitmap the store
- * materializes", and its completeness guarantee only holds if every published
- * bitmap is registered with `trackPublished`. Three sites produce one with a bare
- * `createImageBitmap` — `immutableRaster` below, `useApp`'s PSD-import
- * `immutableRaster`, and `mergeAllLayers` — and each publishes it as `layer.bitmap`
- * without the scope ever learning about it, so nothing closes it deterministically.
- *
- * The action is a pure no-op on state; the registration happens in the store's
- * dispatcher, which is the only place the owning `documentId` exists.
- */
-export const ADOPT_LAYER_BITMAPS = 'ADOPT_LAYER_BITMAPS';
+/** Map retained layer operations to the shared presentation evaluator's input. */
+function presentationOperations(layer: Layer): PresentationOperation[] {
+  return layer.operations
+    .filter((operation) => operation.enabled)
+    .map((operation) =>
+      operation.kind === 'affine-transform'
+        ? { kind: 'affine-transform', transform: operation.transform }
+        : {
+            kind: 'filter',
+            toolName: operation.args.toolName,
+            args: operation.args as unknown as Readonly<Record<string, unknown>>,
+          }
+    );
+}
 
-/** The typed payload. `bitmaps` is deduplicated by the caller: the scope keys on a `Set`. */
-export type AdoptLayerBitmapsAction = Readonly<{
-  type: typeof ADOPT_LAYER_BITMAPS;
-  payload: Readonly<{ bitmaps: readonly BitmapSource[] }>;
-}>;
+/** Rasterizes retained presentation operations before a pixel processor reads the layer. */
+function transformedProcessorInput(layer: Layer, bitmap: BitmapSource): { bitmap: BitmapSource; size: Layer['pos'] } {
+  const operations = presentationOperations(layer);
+  if (operations.length === 0) return { bitmap, size: layer.pos };
+
+  const evaluation = evaluatePresentation({
+    position: layer.pos,
+    sourceSize: { width: layer.pos.width, height: layer.pos.height },
+    operations,
+    mode: 'layer-bounds',
+  });
+  const width = Math.max(1, Math.ceil(evaluation.localBounds.width));
+  const height = Math.max(1, Math.ceil(evaluation.localBounds.height));
+  const surface =
+    typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(width, height)
+      : (() => {
+          if (typeof document === 'undefined') throw new Error('No canvas implementation is available');
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          return canvas;
+        })();
+  const context = surface.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  if (!context) throw new Error('A 2D canvas context is required for transformed tool input');
+  context.save();
+  try {
+    drawEvaluatedPresentation(context, bitmap, evaluation, { kind: 'bounds' });
+  } finally {
+    context.restore();
+  }
+  return { bitmap: surface as BitmapSource, size: evaluation.bounds };
+}
 
 export const useLayers = () => {
   const [
@@ -154,13 +187,11 @@ export const useLayers = () => {
       currentArgs: currentArgsRef,
       previewLayers: previewLayersRef,
       promoteLayerPresentation,
+      publishRuntimePresentation,
+      adoptLayerBitmaps: storeAdoptLayerBitmaps,
     },
-    baseDispatch,
+    dispatch,
   ] = useStore();
-  // `ADOPT_LAYER_BITMAPS` is declared here and wired into the store's action union
-  // in the same change; the intersection types the registration at its call site
-  // rather than hiding it behind a cast.
-  const dispatch = baseDispatch as typeof baseDispatch & Dispatch<AdoptLayerBitmapsAction>;
 
   const setToolArgs = useSetToolArgs();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
@@ -174,7 +205,7 @@ export const useLayers = () => {
   const adoptLayerBitmaps = (bitmaps: readonly BitmapSource[]) => {
     const distinct = [...new Set(bitmaps)];
     if (!distinct.length) return;
-    dispatch({ type: ADOPT_LAYER_BITMAPS, payload: { bitmaps: distinct } });
+    storeAdoptLayerBitmaps(distinct);
   };
 
   /**
@@ -255,7 +286,12 @@ export const useLayers = () => {
         actionName: NEW_LAYER_ACTION,
         layerSource: source,
       },
-      replaceDocument ? { size: params.size, hasUnsavedChanges: true } : undefined,
+      replaceDocument
+        ? {
+            size: 'size' in params ? params.size : { width: params.pos.width, height: params.pos.height },
+            hasUnsavedChanges: true,
+          }
+        : undefined,
       currentLayers
     );
   };
@@ -303,23 +339,27 @@ export const useLayers = () => {
       if (!('rect' in args) || !args.rect) {
         throw new Error('Missing rect in args');
       }
-      const localPos = sortedRectToPos(args.rect);
+      const rect = sortRect(args.rect);
+      const localPos = sortedRectToPos(rect);
       const newPos = canvasToDocumentPos(localPos, documentFrame);
       const worldRect = {
-        x1: args.rect.x1 + documentFrame.x,
-        y1: args.rect.y1 + documentFrame.y,
-        x2: args.rect.x2 + documentFrame.x,
-        y2: args.rect.y2 + documentFrame.y,
+        x1: rect.x1 + documentFrame.x,
+        y1: rect.y1 + documentFrame.y,
+        x2: rect.x2 + documentFrame.x,
+        y2: rect.y2 + documentFrame.y,
       };
       const newRect = reduceRect(worldRect, newPos);
 
       source = { kind: 'tool', ...sourceArgs, args: { ...args, rect: newRect }, pos: newPos };
     } else {
+      // Shape and draw callers derive `pos` from document-space points. The
+      // no-pos branch above is the only path that converts canvas geometry;
+      // subtracting the frame here would move a cropped layer twice.
       source = {
         kind: 'tool',
         ...sourceArgs,
         args: { ...args },
-        pos: canvasToDocumentPos(pos, documentFrame),
+        pos: { ...pos },
       } as ToolLayerSource; // clone args anyway
     }
 
@@ -373,15 +413,28 @@ export const useLayers = () => {
     const committedLayers = commitDirtyTool(true);
     const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
     if (!committedArgs) return;
+    const item = { layerId: id, actionName: TOOL_ACTION, args: committedArgs } as const;
+    let planned: ReturnType<typeof planHistoryAppend> | undefined;
+    try {
+      planned = planHistoryAppend({
+        item,
+        timeline: { entries: history, cursor: historyIndex, branchRevision },
+        currentFrame: documentFrame,
+        // The closure's layer can be stale after a pointer move. The committed
+        // record is the one the store is about to publish and the one affine
+        // validation must grade.
+        currentLayer: committedLayers[id],
+      });
+    } catch (error) {
+      console.error('Unable to plan durable history for a tool commit', error);
+    }
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
         updates: { layers: committedLayers },
-        historyItem: createHistoryItem({
-          layerId: id!,
-          actionName: TOOL_ACTION,
-          args: committedArgs,
-        }),
+        historyItem: planned?.entry ?? createHistoryItem(item),
+        durableEntry: planned?.durableEntry,
+        ...(planned ? { durableDiagnostics: planned.diagnostics } : {}),
       },
     });
   };
@@ -449,18 +502,32 @@ export const useLayers = () => {
       if (!pendingToolEdits.length) {
         // No logical change to record: publish the already-known layer records so
         // their promoted cache can land through the presentation boundary.
-        dispatch({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers: committedLayers } });
+        publishRuntimePresentation(committedLayers);
       } else {
         for (const [index, pendingEdit] of pendingToolEdits.entries()) {
+          const item = {
+            layerId: pendingEdit.layerId,
+            actionName: TOOL_ACTION,
+            args: pendingEdit.args,
+          } as const;
+          let planned: ReturnType<typeof planHistoryAppend> | undefined;
+          try {
+            planned = planHistoryAppend({
+              item,
+              timeline: { entries: history, cursor: historyIndex, branchRevision },
+              currentFrame: documentFrame,
+              currentLayer: committedLayers[pendingEdit.layerId],
+            });
+          } catch (error) {
+            console.error('Unable to plan durable history for a tool commit', error);
+          }
           dispatch({
             type: 'COMMIT_DOCUMENT_EDIT',
             payload: {
               ...(index === 0 ? { updates: { layers: committedLayers } } : {}),
-              historyItem: createHistoryItem({
-                layerId: pendingEdit.layerId,
-                actionName: TOOL_ACTION,
-                args: pendingEdit.args,
-              }),
+              historyItem: planned?.entry ?? createHistoryItem(item),
+              durableEntry: planned?.durableEntry,
+              ...(planned ? { durableDiagnostics: planned.diagnostics } : {}),
             },
           });
         }
@@ -493,19 +560,26 @@ export const useLayers = () => {
     const item = { layerId: id, actionName: REMOVE_ACTION, args: {} } as const;
 
     try {
-      const { entry, durableEntry } = planHistoryAppend({
+      const { entry, durableEntry, diagnostics } = planHistoryAppend({
         item,
         timeline: { entries: history, cursor: historyIndex, branchRevision },
         currentFrame: documentFrame,
       });
-      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
-    } catch {
+      dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: { updates, historyItem: entry, durableEntry, durableDiagnostics: diagnostics },
+      });
+    } catch (error) {
       // The plan is a projection, so a failure in it must not reject a valid
       // removal. Re-dispatch the same edit with no durable plan, exactly as the
       // selection writers do; the store rebuilds durable state from the legacy
       // timeline instead. Nothing has been appended and no layer has left the
       // record yet, so this is the whole edit rather than a repair of it.
-      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item) } });
+      console.error('Unable to plan durable history for a layer removal', error);
+      dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: { updates, historyItem: createHistoryItem(item), durableEntry: undefined },
+      });
     }
 
     clearOverlay();
@@ -536,6 +610,7 @@ export const useLayers = () => {
         updates: { layers: newLayers },
         historyItem: planned?.entry ?? createHistoryItem(item),
         ...(planned ? { durableEntry: planned.durableEntry } : {}),
+        ...(planned ? { durableDiagnostics: planned.diagnostics } : {}),
       },
     });
     drawAllLayers();
@@ -652,9 +727,12 @@ export const useLayers = () => {
     // guard the throw escapes `tempUpdateLayer` into a React event handler.
     let result: ToolResult;
     try {
-      result = processor.imageProcessor({ bitmap, size: layer.pos } as CreatorToolParams | ProcessorToolParams)(
-        toolArgs
-      );
+      const input = bitmap ? transformedProcessorInput(layer, bitmap) : null;
+      result = processor.imageProcessor(
+        input
+          ? ({ bitmap: input.bitmap, size: input.size } as ProcessorToolParams)
+          : ({ size: layer.pos } as CreatorToolParams)
+      )(toolArgs);
     } catch (error) {
       console.error(error);
       return false;
@@ -691,7 +769,15 @@ export const useLayers = () => {
         } as LayersRecord)
       : layers;
     const sorted = getSortedLayersArray(renderLayers);
-    drawLayersToCanvas(canvasRef.current, sorted, documentFrame);
+    try {
+      if (!drawLayersToCanvas(canvasRef.current, sorted, documentFrame)) {
+        console.error('Unable to publish runtime layer presentation');
+      }
+    } catch (error) {
+      // Pointer-move callers must not receive renderer failures through React's
+      // event boundary. The renderer already preserves the last good canvas.
+      console.error('Unable to publish runtime layer presentation', error);
+    }
   }, [canvasRef, documentFrame, layers, previewLayersRef]);
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
@@ -704,7 +790,7 @@ export const useLayers = () => {
     // The append boundary derives the same durable entry as the adapter. The
     // store publishes it only when its preconditions prove the durable shadow
     // still describes this legacy append; otherwise it rebuilds the shadow.
-    const { entry, durableEntry } = planHistoryAppend({
+    const { entry, durableEntry, diagnostics } = planHistoryAppend({
       item: {
         layerId: 'document',
         actionName: SET_DOCUMENT_FRAME_ACTION,
@@ -719,6 +805,7 @@ export const useLayers = () => {
         updates: { documentFrame: nextFrame, totalSize: documentFrameSize(nextFrame) },
         historyItem: entry,
         durableEntry,
+        durableDiagnostics: diagnostics,
       },
     });
     return true;

@@ -56,8 +56,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     implementation: 'partial',
   },
   'quick-selection': {
-    summary:
-      'Brush over an object and the selection grows along the image edges you cross; brush again to add, Alt-drag to subtract.',
+    summary: 'Brush over an object and the selection grows along the image edges you cross; brush again to add.',
     implementation: 'partial',
   },
   brush: {

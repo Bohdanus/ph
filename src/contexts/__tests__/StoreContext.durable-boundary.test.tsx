@@ -438,11 +438,7 @@ describe('StoreContext frame update ordering', () => {
     expect(after.durableDocument?.documentId).toBe('doc-new');
   });
 
-  it.fails('retains the previous frame when replacing a document without specifying totalSize or documentFrame', () => {
-    // BUG: REPLACE_DOCUMENT falls back to currentState.documentFrame when
-    // updates does not include documentFrame or totalSize. A document
-    // replacement should reset the frame to the new document's baseline
-    // rather than retaining the previous document's crop.
+  it('uses the replacement document baseline when updates omit totalSize and documentFrame', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     const croppedFrame = { x: 10, y: 20, width: 200, height: 150 };
@@ -477,7 +473,7 @@ describe('StoreContext frame update ordering', () => {
     });
 
     const after = getProbe().store;
-    // The frame should be reset to the new baseline (default), not retained.
+    // The frame resets to the new baseline (default), not the previous crop.
     expect(after.documentFrame).toEqual(defaultFrame);
     expect(after.documentFrame).not.toEqual({ x: 0, y: 0, width: 200, height: 150 });
   });
@@ -634,6 +630,28 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     expect(diagnostic?.severity).toBe('error');
     expect(diagnostic?.code).toBe('conversion-failed');
     expect(diagnostic?.message).toBe(`boom-${status}`);
+  });
+
+  it('clears the durable document whenever SET_DURABLE_STATUS is non-current', () => {
+    const { getProbe, dispatch } = renderWithProbe();
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-status', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    expect(getProbe().store.durableDocument).not.toBeNull();
+
+    act(() => {
+      dispatch()({
+        type: 'SET_DURABLE_STATUS',
+        payload: { status: 'stale', diagnostics: [] },
+      });
+    });
+
+    expect(getProbe().store.durableDocument).toBeNull();
+    expect(getProbe().store.durableStatus).toBe('stale');
   });
 
   it('marks a converted durable sidecar stale instead of unavailable for runtime-only edits', () => {

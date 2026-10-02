@@ -209,7 +209,7 @@ const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
 ];
 
 const DesktopHeader = () => {
-  const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
+  const [{ currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
@@ -382,13 +382,12 @@ const DesktopHeader = () => {
                   type="button"
                   onClick={async () => {
                     try {
-                      if (!hasImage || !canvasRef.current) return;
+                      if (!hasImage) return;
                       let exportLayers!: ReturnType<typeof commitDirtyTool>;
                       flushSync(() => {
                         exportLayers = commitDirtyTool();
                       });
                       const data = await openSaveImageDialog({
-                        canvas: canvasRef.current,
                         fileName,
                         layers: exportLayers,
                         size: totalSize,
@@ -516,7 +515,7 @@ const DesktopHeader = () => {
               Only `Free Transform` ships. The rest of Adobe's submenu — `Scale`, `Rotate`,
               `Skew`, `Distort`, `Perspective`, `Warp`, `Rotate 180°`, `Rotate 90° Clockwise`,
               `Rotate 90° Counter Clockwise`, `Flip Horizontal`, `Flip Vertical` — needs each
-              item to preset that tool's args AND repaint, and `HANDOFF.md` §150 records why
+              item to preset that tool's args AND repaint, and `HANDOFF.md` §167 records why
               that is not a one-liner. Nine items that all select the same tool and repaint
               nothing is the falsehood this host exists to prevent. */}
           {openMenu === 'edit' && (

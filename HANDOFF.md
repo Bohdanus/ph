@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141 — deleted
+### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2845,7 +2845,7 @@ not add a shortcut here without asking.** What remains is a record, not a defect
      carried forward: the rail half is in `docs/PHOTOSHOP-UX.md`'s open-violations bullet, the
      operator's later "will be implemented" signal and the unanswered adjustment-layer question
      are in `docs/TOOLS-TOO-HARD.md` and `docs/PHOTOSHOP-UX.md`, the unanswered
-     adjustment-layer question is §155, and the open label question is §153. -->
+     adjustment-layer question is §172, and the open label question is §170. -->
 
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
@@ -3000,10 +3000,17 @@ git remote get-url origin                                       # .../drguz69/li
 1. Record that `layers` is the upstream reference and is not a merge candidate, so the next sweep
    reads it before `git cherry` misleads it. **There is no longer a branch-state section in this
    file to put it in** — the one this entry used to name opened with a 136-line block of branch
-   bookkeeping whose own pointers had rotted, and deleting it is correct. The durable home for a
-   statement about the repository's remotes is `docs/ORCHESTRATION.md`, which already carries the
-   upstream-rewrite rule this entry restates (`a branch rewrote the whole history of the app … is
-a remote-tracking ref, not a local branch`).
+   bookkeeping whose own pointers had rotted, and deleting it is correct. `docs/ORCHESTRATION.md`
+   is where a statement about the repository's remotes belongs, but it does **not** carry the
+   upstream-rewrite rule this entry restates. An earlier version of this entry claimed it did, and
+   quoted one — "a branch rewrote the whole history of the app … is a remote-tracking ref, not a
+   local branch" — that exists in no tracked document:
+   `grep -nE "remote-tracking|rewrote the whole history|refs/remotes" docs/ORCHESTRATION.md` returns
+   nothing, and `git log -S'rewrote the whole history' --all` names only `4833e740`, the commit
+   that introduced the citation. So the rule needs writing into `docs/ORCHESTRATION.md` as part of
+   this fix; the closest real content there is the landing rule at `:100-105` ("a branch merges into
+   `main` only after `main` has already been merged or rebased into the branch"), which is about
+   merge discipline and not about identifying an upstream reference.
 2. Teach the inventory to enumerate branch-only refs. `git for-each-ref refs/heads` alongside
    `git worktree list` is the whole change; a branch with no worktree should surface as an explicit
    category rather than as silence. The 39 fully-merged branch-only refs
@@ -3013,7 +3020,7 @@ a remote-tracking ref, not a local branch`).
    warned about.
 
 **Files.** `scripts/lib/worktree-inventory/git.mjs:69`, `scripts/worktree-inventory.mjs`,
-`docs/ORCHESTRATION.md` (the upstream-rewrite rule)
+`docs/ORCHESTRATION.md` (where the upstream-rewrite rule has to be written)
 
 ## 122. No pixel tool honours an active selection — the eraser, the magic eraser, the paint bucket and the clone stamp all ignore it
 
@@ -3090,44 +3097,90 @@ has never been run to a verdict. Four production entry points, all of them live 
 4. the **mobile shell** — `MobileLayersDrawer.tsx:172` calls
    `createBlankLayer({ …, size: totalSize, isBedrock: true })` with NO `replaceDocument`
 
-**Entry point 4 has been closed since this entry was written, and it was the one with a live
-consequence.** `MobileLayersDrawer.tsx` no longer calls `createBlankLayer` at all; the shell's blank
-layer now goes through `applyRasterReplacement` (`MobileLayersDrawer.tsx:205-216`), which
-`useApp.ts:140-154` routes through `setBlankImage` and therefore **replaces the document**. The
-history shape a replay bedrock branch reacts to is gone from that path, so scenario D's premise no
-longer describes production. Keep the scenario — it still measures `totalSize` across commits, and
-the harness is the only thing that does — but its mobile half no longer reproduces the
-document-moves trigger, and a fix for the mobile shell is not what this entry now needs.
+**Entry point 4 is STILL OPEN, and a previous version of this entry said otherwise. That claim was
+false in three verifiable ways, and it is corrected here because it sent two sessions away from the
+one production path that still has the defect.**
 
-The other three entry points are unmeasured. **`applyRasterReplacement` is now a second place that
-decides document replacement by convention** (the first is the `REPLACE_DOCUMENT` fast path in
-§103), and neither it nor the mobile caller carries a comment saying the omission is deliberate —
-which is exactly the shape §142 describes for the main worktree.
+The deleted paragraph claimed that `MobileLayersDrawer.tsx` "no longer calls `createBlankLayer` at
+all", that the shell's blank layer "now goes through `applyRasterReplacement`
+(`MobileLayersDrawer.tsx:205-216`)", and that `src/hooks/useApp.ts:140-154` routes it through
+`setBlankImage`. Against the tree as it stands:
+
+1. `MobileLayersDrawer.tsx:174` **still** calls
+   `createBlankLayer({ color: '#ffffff', opacity: 1, size: totalSize, isBedrock: true })` — with **no**
+   `replaceDocument`, exactly the history shape this entry was written about. It is the only
+   production writer of a mid-timeline bedrock entry, and the sole reason `replayHistory` needs a
+   bedrock branch at all.
+2. **`applyRasterReplacement` does not exist.** `grep -rn applyRasterReplacement src e2e` returns
+   **zero** hits; the identifier appears only in this file and in the copies of this file inside
+   worktrees. `MobileLayersDrawer.tsx:205-216` is an `<li>` carrying a comment about `role="button"`.
+3. `src/hooks/useApp.ts:140-154` is the `REPLACE_DOCUMENT` payload of the **PSD** import branch plus
+   an `ADOPT_LAYER_BITMAPS` dispatch. `setBlankImage` is at `src/hooks/useApp.ts:77-80` and is
+   reached from `src/App.tsx:37` (the boot seed) and the New-document path — neither from the mobile
+   drawer.
+
+The premise was not merely stale; it was a wrong answer delivered with a `file:line`, and it is
+recorded here as the standing example of why a stale line number is worse than none.
+
+**What is left, stated as the tree actually is.** The mobile drawer commits a bedrock blank layer
+mid-history. `createLayerSource` forces `pos = { x: 0, y: 0, ...source.size }` for any bedrock
+source (`src/contexts/layer-utils.ts:171-173`), so after a crop to a frame whose origin is not
+`{0,0}` the new layer lands **off-canvas**: measured at `(-100, -80)` relative to the visible
+document for a crop to `{x:100,y:80,w:400,h:320}`. The `index === 0` gate in `history-replay.ts`
+stops the FRAME from moving on undo; it does nothing about the layer's position, which is why that
+gate was described as masking this defect rather than fixing it. **The fix is to commit a non-bedrock
+layer from the drawer** — it is a normal empty layer above the current one, not a document.
 
 **Reproduce.** The harness is committed on `salvage/probe-canvas-growth` (it was untracked in a
-detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it):
+detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it).
+**Run it from a worktree under `.kilo/` and never merge it** — see the landing shape below:
 
 ```bash
-git worktree add .kilo/worktrees/probe-checkout salvage/probe-canvas-growth
+git worktree add .kilo/worktrees/probe-checkout -b probe/display-growth
 cd .kilo/worktrees/probe-checkout
+ln -s /Users/bkalynovskyi/ph/node_modules node_modules   # Vite does not walk up; tsc and vitest do
+git show salvage/probe-canvas-growth:src/contexts/__tests__/probe-canvas-growth.test.tsx > src/contexts/__tests__/
+git show salvage/probe-canvas-growth:e2e/zzz-probe-canvas-growth.spec.ts > e2e/
 npx vitest run src/contexts/__tests__/probe-canvas-growth.test.tsx   # the per-cursor sweep
 npm run test:e2e -- e2e/zzz-probe-canvas-growth.spec.ts              # the four entry points
 ```
 
-**Not verified.** Whether the defect still reproduces at current `main` is UNKNOWN — the probes have
-never been run to a verdict, and 31+ commits have landed since they were written. Run them before
-acting on anything here. Scenarios D and E in the jsdom probe are deliberately assertion-light and
-only log a summary: they are diagnostic, not verdicts.
+**Landing shape, corrected.** The previous text warned that `probe-canvas-growth.test.tsx` is named
+`*.test.tsx` and is therefore collected by `npm run test`. **That warning was also false**:
+`vitest.config.ts:20` sets `exclude: [...configDefaults.exclude, '**/.kilo/**', 'e2e/**']`, and
+`.gitignore:49` ignores `.kilo`. A probe under `.kilo/worktrees/` is therefore invisible to both
+suites, which is exactly what the worktree is for. The `ln -s … node_modules` in the commands above is
+required for Vite (it does not walk up to a parent checkout) but makes three cases in
+`scripts/__tests__/tsc-guard.test.mjs` measure the root checkout instead — §135 — so those three
+failures are the symlink and not your work.
 
-**Careful with the landing shape.** `probe-canvas-growth.test.tsx` is named `*.test.tsx` and is
-therefore collected by `npm run test`, so it must not be merged as-is without deciding where the
-probes live — an `expected-fail` pin or a prose reproduction in this file. A probe that FAILS is a
-tripwire, and per the repo's own rule it is removed in the same change that fixes the defect; a probe
-that PASSES means the defect is gone and the file should be deleted, not kept as a passing test.
+**Verified 2026-10-01 against `main` `c8c27619`: the store-level half of this entry does NOT
+reproduce, and the numbers are in the plan.** Both probes are green, and that is structural rather
+than lucky: `totalSize` is recomputed only from `updates.documentFrame`
+(`src/contexts/StoreContext.tsx:353,357`), and of the eight `COMMIT_DOCUMENT_EDIT` dispatches in
+`src/contexts/useLayer.ts` exactly one carries a frame — `applyDocumentCrop` at `:719`, which cannot
+grow the document because `trimRect` clamps every edge into `[0, totalSize]`
+(`src/util/rect.ts:36-50`).
 
-**Files.** `src/components/Mobile/MobileLayersDrawer.tsx:172,205-216`,
-`src/contexts/useApp.ts:140-154`, `src/contexts/history-replay.ts`,
-the harness on `salvage/probe-canvas-growth`
+**What the green run does NOT cover, which is most of this entry.** Scenarios D and E are
+deliberately assertion-light: they assert only `expect(rows.length).toBeGreaterThan(0)`, a tautology,
+and `console.log` the rest. So they are diagnostic, not verdicts, and the run above must not be read
+as "the mobile path is fixed". Specifically, **the blank-layer flow holds the pre-crop size at every
+cursor only when no crop has been committed.** After a crop, scenario D logs
+`800×600` at cursor 0 and the **cropped** size at every cursor after it — which is correct for a crop,
+and is exactly why D asserts nothing. The off-canvas layer position above is measured directly and
+does not depend on that scenario.
+
+**So the remaining question is not the store — it is the DISPLAY, and it is unmeasured.** The
+workspace canvas is `h-full w-full object-contain` (`src/components/Main/Main.tsx:290-294`), so its
+CSS box is the `1fr` grid cell and the document raster is letterboxed inside it at
+`containFit(outer, image).scale` (`src/util/contain-fit.ts:33-50`). The element box and the on-screen
+document rect are two quantities neither probe reads, and **no test in the suite asserts that either
+is invariant across a commit.** The existing coverage reads the canvas box only across a dock toggle
+(`e2e/responsive-shell.spec.ts:449-461`) and the document size only across dialogs
+(`e2e/document-dialogs.spec.ts:341-346`). Measure those, per tool, before building anything on this
+entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
+tool list and the four independent quantities.
 
 ## 126. The five figure tools never see the foreground colour, because of one guard in the swatch
 
@@ -3406,93 +3459,6 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
 form of the same trap: they not only work, they work on the wrong files.
 
 **Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
-
-## 136. A sweep removed a live write chat's worktree and branch on the strength of a branch _name_ read out of a 14-hour-old merge subject
-
-**Problem.** `git worktree remove` followed by `git branch -D` is irreversible for a branch that is
-ahead of `main`, and nothing in the repository stops a second chat from running it against a worktree
-a live chat is still using. On 2026-10-01 this destroyed the only ref to a verified commit.
-
-**Observed.** Chat `ses_f0bdf3519ffep22jd3HjNdIF0t` created `.kilo/worktrees/stale-citations` on branch
-`fix/stale-citations` at 00:14:31 and committed `201e985b` at 00:15:18. At 00:44:32 chat
-`ses_f0bc046c9ffegfsk7DmCuzltkq` ("Overnight stale worktree cleanup") ran a **hard-coded nine-item
-list** that included `["stale-citations","fix/stale-citations",false]`, and for each entry executed
-`git worktree remove` then `git branch -D`. The victim chat ran `npm run test` **in that worktree six
-seconds later** (00:44:38) and found the directory emptied of `src` and `.skills`.
-
-**Why it believed the worktree was disposable.** `c983b8e7` (2026-09-30 10:57) is a merge on `main`
-whose subject is `merge(fix/stale-citations): two TEST-FLAKES citations no longer point at what they
-claim`, merging a long-dead branch. The live branch was created 14 hours later and is unrelated. At
-00:20:58 the sweep read that subject — "main shows a `merge(fix/stale-citations)` commit, so a live
-session may have made the same fix" — and at 00:21:17 concluded "No duplication — my fix is on main
-and unique". It inferred _already-landed_ from a **subject string**, never from ancestry. The live
-tip was not on `main`: at 00:45:57 the victim measured its own markers against `main` and got `0`.
-
-**Every signal that said `in-use` was present and unread.** The generator's own answer is `in-use`:
-`scripts/lib/worktree-inventory/classify.mjs:119` `hasLiveSession` (30-minute window; the victim's
-session was seconds old), `live → RECOMMENDATION.IN_USE`, and `docs/ORCHESTRATION.md:270` maps
-`in-use` to "leave it alone". The board held two unreleased locks naming the worktree and branch
-(timestamps UTC; this machine is UTC+2):
-
-```
-sqlite3 .git/agent-board/board.db \
-  "SELECT path,agent_id,worktree,acquired_at,released_at FROM file_locks WHERE worktree LIKE '%stale-citations%'"
-# .skills/hard-merge.md              fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
-# .skills/photoshop-tool-creation.md fix/stale-citations .kilo/worktrees/stale-citations 22:14:34Z 22:47:15Z
-```
-
-The sweep's 00:44:25 pre-flight _did_ name `stale-citations` — but probed it with
-`git status --porcelain | wc -l`. That is a cleanliness check, and a clean tree reads identically for
-an abandoned worktree and a busy one. The signal it wanted was one column over.
-
-**Fix / convention.**
-
-1. **Never hand-write a disposal list.** Drive removal from
-   `node scripts/worktree-inventory.mjs` and refuse any entry whose `action` is not `dispose`
-   (`docs/ORCHESTRATION.md:269`). That single rule would have saved this worktree.
-2. **Use `git branch -d`, never `-D`.** `-d` refuses an unmerged branch, and that refusal is the
-   entire guard. Where `-D` is genuinely required, the precondition is
-   `git merge-base --is-ancestor <tip> main` — never a `git log --grep=<branch name>` match, which
-   matches any merge that ever mentioned the name.
-3. **A branch name that appears in any `main` merge subject must not be reused.** Put the chat id in
-   the branch name; a name is not an identity once a merge subject can outlive the branch.
-
-**Files.** `docs/ORCHESTRATION.md:269-287`, `scripts/lib/worktree-inventory/classify.mjs:119`,
-`scripts/lib/worktree-inventory/chats.mjs`, `.git/agent-board/board.db` (`file_locks`)
-
-## 137. `git worktree remove --force` is the reflex after git already refuses, and the refusal names exactly what is lost
-
-**Problem.** When `git worktree remove` refuses a dirty worktree it prints the modified and untracked
-paths and tells you to use `--force`. Re-running the same command with `--force` discards that work
-with no further prompt, and the output that named it has already scrolled past.
-
-**Observed.** 2026-10-01 00:14:05, in `.kilo/worktrees/reclaim-skill`:
-
-```
-fatal: '.kilo/worktrees/reclaim-skill' contains modified or untracked files, use --force to delete it
-```
-
-Six seconds later the same chat ran the identical command with `--force`. Git printed the inventory
-one last time —
-
-```
-M .skills/hard-merge.md  M .skills/photoshop-tool-creation.md
-```
-
-— and deleted the worktree. Two files of verified, gate-passing, never-committed edits were gone; the
-chat had to re-derive them from its own transcript. In the same incident, and in a _different_
-worktree, a concurrent sweep got the same decision right only because that tree happened to be clean.
-
-**Fix / convention.** Treat the refusal as a finding, not an obstacle: it is the cheapest inventory
-of uncommitted work in the repository, and it arrives before the only irreversible step. Before any
-`--force` removal, `git -C <worktree> status --short` and either commit, stash-free-copy
-(`git -C <worktree> diff > /tmp/<name>.patch`), or stop. If the answer is "the work is already
-landed", prove it with `git -C <worktree> diff main --stat` being empty for those paths — the
-modified-path list is a list of things that are **not** on `main` by definition. See §136 for the
-other half: a clean tree is not evidence that a worktree is abandoned.
-
-**Files.** `scripts/lib/worktree-inventory/git.mjs:126`, `AGENTS.md` (worktree rules)
-
 ---
 
 ## 138. Two tool options bars justify their clamping with a `localStorage` round trip that no code performs
@@ -3570,9 +3536,9 @@ references alone. Verify by grepping for each old path afterwards, and by runnin
 would catch a stale key.
 
 **Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
-`docs/README.md:91`, `TEST_ISSUES.md:3-8`, `CANVAS-RESOLUTION-PLAN.md:1-4`,
-`docs/next-target-useLayer.md:3-8`, `docs/save-settings-inconsistency.md:3-11`,
-`e2e/OPEN_PROBLEMS.md`
+`docs/README.md:78-94` ("Not maintained here"), `TEST_ISSUES.md:3-8`,
+`CANVAS-RESOLUTION-PLAN.md:1-4`, `docs/next-target-useLayer.md:3-8`,
+`docs/save-settings-inconsistency.md:3-11`, `e2e/OPEN_PROBLEMS.md`
 ---
 
 ## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
@@ -3754,8 +3720,8 @@ predicate at `:307` reads. A join that misses returns `undefined` and throws; on
 _different_ worktree with the same display name returns a clean shape and reads `landed`, which is
 the failure above.
 
-**Why it matters beyond the red.** This is the guard `HANDOFF.md` §136 and §137 lean on: §137 is
-`git worktree remove --force` after git has already refused, and §136 is that a clean tree is not
+**Why it matters beyond the red.** This is the property `scripts/dispose-worktree.mjs` leans on: it is
+`git worktree remove --force` after git has already refused, and it is that a clean tree is not
 evidence a worktree is abandoned. The guard exists so uncommitted work is never classified as
 safe. A miss on the main checkout is the one place uncommitted work is guaranteed to exist,
 because that is where agents work.
@@ -3974,9 +3940,704 @@ version bump would re-open the same class of problem as the one the throttle clo
 
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx:156,211,383-391,1227,1236`,
 `src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
+`e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).
+
+## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
+
+**Problem.** `SingleRowColumnMarqueeToolArea.tsx` wires both `onPointerLeave` and
+`onPointerCancel` to `abortDrag` (`:436`-`:437`), so a drag that leaves the tool element ends as
+a cancelled gesture that commits nothing. The geometry module documents the opposite behaviour
+three files away: `singleRowColumnMarquee.ts:65-73` advertises that an out-of-document pointer
+clamps to the first or last row, and cites Adobe's scripting API as the reason. Both statements
+cannot stand. Only the PRESS clamps. A drag past the canvas edge is discarded.
+
+`EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, so this is house convention
+rather than something these two tools introduced — but `RectangularSelectionToolArea.tsx:176`
+wires `pointercancel` ALONE, so the rectangular marquee keeps tracking a drag off the edge. Three
+selection tools, two behaviours, and one of the two is undocumented.
+
+**Why it is reachable and not theoretical.** The tool element is the canvas area, so the abort
+fires as soon as the pointer crosses it. At zoom 1 with letterboxing that is the document edge;
+zoomed in past the fit, the document edge _is_ the container edge, so dragging toward a document
+boundary — which is exactly how a user aims at the last row — is dragging toward the abort.
+
+**What Photoshop does.** It keeps tracking. There is no published Adobe page for the GUI case,
+which is why this is filed as a defect in this repository's own consistency rather than as a
+deviation from Adobe: `docs/FEATURES.md` should record that the app drops the gesture.
+
+**What would close it.** Narrow the abort to `onPointerCancel` in
+`SingleRowColumnMarqueeToolArea.tsx` and `EllipticalSelectionToolArea.tsx`, so a leave ends the
+gesture only if the pointer capture has already been lost. That is one wiring change in each
+file, and it is deliberately NOT done here: `usePointerPosition`'s capture is what keeps `pointermove`
+delivered outside the element, so the abort is currently the only thing stopping an unbounded
+stream of moves from a pointer the user has visually left the tool. Decide it for the selection
+family at once, and add the case that pins whichever way it goes — press, move outside the
+element, move back, release — asserting the band lands where the release was.
+
+**Do not fix it by clearing the drag on `pointerleave` without also releasing the capture.**
+That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export): a surviving
+`activePointerId` refuses every later press, so the tool stops responding until it unmounts.
+`abortDrag` calls `releasePointer()` for that reason and must keep doing so.
+
+**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:393-410,436-437`,
+`src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
+`src/components/Main/RectangularSelectionToolArea.tsx:176`,
+`src/tools/singleRowColumnMarquee.ts:65-82`.
+
+---
+
+## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
+
+**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
+the root cause anywhere in the tree. `toolbar-mapping.ts` (repo root) has no `hand`, `zoom` or
+`rotate` entry. The store's view state is entirely commented out:
+
+- `src/contexts/StoreContext.tsx:142-143` — the context's `zoomDataRef` / `setZoomData` members,
+  commented out, with only the type left live.
+- `src/contexts/StoreContext.tsx:1171-1177` — the whole zoom block, `// const zoomDataRef =
+useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest.
+- `src/contexts/general-types.ts:14` — `export type ZoomData = { dx, dy, zoom }` is still a live
+  export with **zero** live consumers. A type with no consumer is the residue of the removal.
+
+**The `'zoom'` default is a trap, and it is the half nobody has written down.**
+`src/components/Main/Main.tsx:70` initialises `let interactionMode = 'zoom'` and the string `'zoom'`
+is assigned by **no branch** in the file — the chain runs `:72-273` and terminates
+`else EventHandler = DummyToolArea` at `:274`. So `'zoom'` is not a mode anything enters; it is the
+value every tool without its own arm falls through to, and it lands on a `display: none` div with no
+handlers. `Main.tsx:286` still carries the matching `// transform: translate(${dx}px, ${dy}px)
+scale(${zoom})`, and `src/components/Main/Main.scss:1-9`'s `.zoom-container` sets
+`transform-origin` with no `transform` to anchor.
+
+**A second, smaller finding in the same cause.** `src/components/SidebarLeft/SidebarLeft.tsx`
+has exactly one `<hr>` (`:1250`), and the comment at `:1243-1249` justifies it by describing a
+commented-out Zoom control: "The second `<hr>` this replaces stood between the colour cluster and
+NOTHING — the commented-out Zoom control that followed it was deleted with it". The control it
+reasons about is not in the file.
+
+**Why it is not a wiring bug.** There is no view transform to wire. `usePointerPosition` maps
+client coordinates to image pixels through a `scale` supplied by the host rather than owning a
+transform of its own.
+
+**Fix — start with the scope, not the Hand tool.** Three separate features each want one, and they
+want the same one: pan/zoom, the space-drag temporary-pan every tool inherits, and tool cursors that
+track the view (a brush tip circle is a screen-space circle). A `DocumentViewScope` owning
+`{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image conversion reading from it,
+is the shape the commented-out code was reaching for. Do not begin with a Hand tool; begin with the
+scope and the three tools fall out of it.
+
+Two smaller fixes that can land independently, and are cheap:
+
+1. Replace the `'zoom'` default with something honest — `DummyToolArea` itself, or an explicitly
+   named `UNHANDLED` — so the fallthrough is a decision rather than an accident that reads as a
+   feature. As written, a reader must diff the whole chain to learn that `'zoom'` is never assigned.
+2. Delete or reword the `<hr>` comment at `SidebarLeft.tsx:1243-1249`; the control it cites is
+   gone.
+
+**Why this is being refiled.** `4833e740` deleted the entry that carried it on the grounds that it
+was "already carried by a tracked document". It is not. `docs/TOOLS-INVENTORY.md:210-212` has
+catalogue rows for the three names and `:222` notes "The app has a zoom interaction mode on the
+canvas and no Zoom tool" — a description, not a filed defect. `docs/TOOLS-TOO-HARD.md:694-696`
+repeats that one sentence. `docs/PHOTOSHOP-UX.md:201` lists the three only as "not
+Adobe-table-confirmed". The one surviving mention of the root cause is `HANDOFF.md:1326-1329` in
+§74, framed as a roadmap step ("belongs on its own branch"), which never names the `'zoom'`
+fallthrough or the stale comment. Verified against `main@cf41f642`.
+
+**Files.** `toolbar-mapping.ts` (repo root), `src/contexts/StoreContext.tsx:142-143,1171-1177`,
+`src/contexts/general-types.ts:14`, `src/components/Main/Main.tsx:70,274,286`,
+`src/components/Main/Main.scss:1-9`, `src/components/SidebarLeft/SidebarLeft.tsx:1243-1250`,
+`src/hooks/usePointerPosition.ts`
+
+---
+
+## 152. A touch device at 768px and above cannot reorder layers, and no document records it
+
+**Problem.** Layer reordering is HTML5 drag-and-drop, and HTML5 drag does not fire on touch. At
+768px and above the only layer list the app renders is the desktop one, so on an iPad in landscape
+the rows cannot be reordered at all.
+
+- `src/components/SidebarRight/LayersTab.tsx:142` sets `draggable={editingLayerId !== layer.id}`,
+  with `onDragStart` at `:143` (reading `e.dataTransfer`), `onDragOver` at `:163` and `onDrop` at
+  `:171`. There is no pointer-events reorder path anywhere in the file.
+- The breakpoint is `src/hooks/useMediaQuery.ts:13` — `MOBILE_MEDIA_QUERY = '(width < 768px)'` —
+  and `src/components/SidebarRight/SidebarRight.tsx:321` hides the desktop aside below it. So the
+  residual window is exactly `width >= 768px`, which includes the 768-1024px tablet band this
+  suite already exercises (`e2e/OPEN_PROBLEMS.md:913-915` runs at 1133x744).
+
+**The phone case is not part of this and must not be claimed.** Below 768px the app ships explicit
+reorder controls: `src/components/Mobile/MobileLayersDrawer.tsx:299-311` and `:313-327` render ▲ and
+▼ buttons with `aria-label={`Move ${layer.name} up`}` / `down`, `disabled` at the ends of the list,
+on `min-h-11 min-w-11` (44px) targets, calling `moveLayerAfter`. An earlier version of this entry
+said layer rows "cannot be reordered on a phone", which that refutes. The tablet-width case is the
+one that is live, and it is the one an earlier version did not name.
+
+**Two companions, both still true.**
+
+1. **No stylus discrimination.** `pointerType` appears in production code in exactly two places,
+   both in a test fixture: `src/__tests__/fixtures/pointer.ts:10,41`. `usePointerPosition` reads
+   `button`, `pointerId` and `clientX/Y` and nothing else, and no tool reads `pressure`. So there is
+   no stylus-versus-palm rejection and no pinch-zoom.
+2. **Slider hit areas.** There is no `src/components/Common/TouchSlider.tsx`, and the options-bar
+   sliders are 4-6px tall — `h-1.5` in `Draw.tsx:151,157`, `Levels.tsx:111,116` and `Smudge.tsx:25`,
+   `h-1` in `Transform.tsx:184,189` and `:204,209`. The mobile tool sheet renders those same bars.
+
+**Why it is not a wiring bug.** Touch reordering needs a pointer-events drag with a gesture
+threshold, and the layers list has an existing HTML5 path with its own keyboard affordances to keep
+in step. Slider sizing is a component decision that applies to every bar at once, not one control.
+
+**Fix.** Three independent items, and the third is the only one with a worked answer.
+
+1. Add a pointer-events reorder path to `LayersTab.tsx` beside the HTML5 one — pointerdown on the
+   row's drag affordance, a movement threshold before it is a drag rather than a click, then the
+   same `moveLayerAfter` the mobile drawer calls. Reuse the threshold `SidebarLeft.tsx:499` already
+   uses for its own press-versus-drag decision rather than inventing a second number.
+2. Read `event.pointerType` in `usePointerPosition` and skip a pen/touch gesture that the tool
+   cannot use, so a palm resting on the canvas does not paint. This is the first consumer of
+   `pointerType` the app would have, which is why the fixture has it and nothing else does.
+3. Slider targets: a `TouchSlider` with a 44px touch box around the existing 6px track, applied to
+   the shared bar rather than to one control. A discarded `docs/responsive-design-plan` branch had
+   a 70-line candidate; **do not land that document** — its audit section is false, it asserts no
+   mobile drawer or hamburger exists, that all chrome is `max-md:hidden` leaving a blank canvas, and
+   that `BottomToolbar.tsx` is an unintegrated stub, while `main` has `MobileMenuDrawer.tsx`,
+   `MobileShell.tsx` and `e2e/mobile-shell.spec.ts`. Take the component, re-derive the document.
+
+**Why this is being refiled.** `4833e740` deleted the entry and named no reason for it. It is not
+routed anywhere: `e2e/OPEN_PROBLEMS.md:803-851` is a Playwright-configuration coverage entry (one
+project, zero `hasTouch`/`isMobile`/`touchscreen`) and never names `draggable`, layer reordering,
+`pointerType` or slider hit size. `docs/FEATURES.md:346-349` records the mobile gap as "No
+pinch-zoom and no two-finger pan" and asserts drawing works on touch, which is a different claim.
+Verified against `main@cf41f642`.
+
+**Files.** `src/components/SidebarRight/LayersTab.tsx:142,143,163,171`,
+`src/components/SidebarRight/SidebarRight.tsx:321`, `src/hooks/useMediaQuery.ts:13`,
+`src/components/Mobile/MobileLayersDrawer.tsx:299-327`, `src/hooks/usePointerPosition.ts`,
+`src/components/ToolbarsRight/Draw/Draw.tsx:151`, `src/components/ToolbarsRight/Levels/Levels.tsx:111`
+
+---
+
+## 153. The main-worktree guard runs after the edit, so a subagent fan-out rooted in main is still unstopped
+
+**Problem.** `docs/ORCHESTRATION.md:9-15` states the rule — tracked-file changes happen in a
+worktree, main is for reading and merging — and the commit path is now a program. The write path is
+not, and that asymmetry is the defect.
+
+`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit:17` and refuses a commit made
+from the main worktree (override `ALLOW_MAIN_COMMIT=1`, honoured only on an exact `1` at `:151`),
+pinned by `scripts/__tests__/main-worktree-guard.test.mjs` whose last describe asserts the guard is
+actually installed. The guard states its own limit at `:26-36`, headed "WHAT IT DOES NOT DO, because
+the limit is load-bearing":
+
+> It runs AFTER the edit, not before it. A session that writes into the main worktree and never
+> commits is not stopped here; its files are still uncommitted, and they are still in a checkout
+> every other session is reading. … Closing the write side is a process fix, not a program.
+
+`docs/ORCHESTRATION.md:78-82` says the same thing: "What it does **not** do is stop the write … the
+write side is the process rule above, and the guard is the floor under it."
+
+**Nothing fills the gap.** A `task` subagent inherits the calling session's working directory, and
+`AGENTS.md`'s headline instruction is "LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS" — so a fan-out
+rooted in a main-rooted chat is mechanically a write into `main`, and `main` is where most root
+chats sit. Two root-level defaults would close it, and neither exists:
+
+1. Nothing creates the worktree before the first edit. `task` cannot create one for itself, so this
+   has to happen at the root — and `kilo.jsonc` cannot express it, because tool permissions match a
+   path glob and have no term for the working directory. There is no pre-tool-use hook in
+   `kilo.jsonc` or in any tracked agent definition, and no script under `scripts/` runs
+   `git worktree add` (`scripts/worktree-inventory.mjs:126` runs only `git worktree list --porcelain`).
+2. Nothing stops `agent_manager` `mode: 'local'` from putting an editing session in the root
+   checkout. That mode exists by construction to start sessions in the caller's directory.
+
+Note the audit gap: `.kilo/` is gitignored (`.gitignore:49`), so an agent-definition or
+Agent Manager surface cannot be verified from a worktree. What is verifiable from the tracked tree
+is that `kilo.jsonc`'s `permission` block contains only the Playwright window-opening `deny` rules
+(`:31-69`) and no working-directory term.
+
+**Why this is being refiled, in this form.** `4833e740` deleted the entry and classified it under
+"fixed on main". Part one is fixed and demonstrably intact. Part two was the entry's own point —
+it said so in its own text ("Fix, part two — still open, and it is the larger half") — and it is
+still open. An entry that is half fixed is not an entry that is fixed.
+
+**Fix.** Both halves are defaults in a tool rather than rules in a document, which is the whole
+difficulty: (1) a root-level hook or launcher that provisions the task's worktree before any edit
+tool is available, and (2) a refusal, or at minimum a warning, for `agent_manager` `mode: 'local'`
+at a root checkout. Until those exist the guard is worth exactly what it says it is: a floor under a
+process rule, converting "rogue commits nobody can attribute" into "a dirty tree the next
+`git status` names".
+
+**Files.** `scripts/main-worktree-guard.mjs:26-36,151`, `.husky/pre-commit:17`,
+`scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
+`kilo.jsonc:31-69`, `AGENTS.md` (delegation section)
+
+## 156. `fix/overnight-test-red` must not be merged: it restores an attribute a written prohibition forbids, and its one remaining change is a decision the operator has already refused
+
+The branch is 12 commits that fixed a genuinely red suite, and merging it is still wrong.
+Two of its changes block that, for different reasons, and one of those reasons has since
+stopped applying — which is the part worth re-deriving rather than trusting.
+
+**The blocker: it reverses `1dcc25cb`.** `renderToolGroup` in `SidebarLeft.tsx` changes
+
+```
+-  aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
++  aria-pressed={isGroupActive}
+```
+
+`identity` present _is_ the three-dots tile — the code's own comment says the tile is the
+one caller that passes an `identity` — so the branch adds `aria-pressed` to the overflow
+tile. `e2e/OPEN_PROBLEMS.md:699-701` forbids this in bold: restoring `aria-pressed` there
+"would announce a pressed toggle for whichever hidden tool happens to be selected, on a
+control whose only job is to open a menu — the exact defect `1dcc25cb` corrected." The same
+file, at `:695-697`, calls it a product change to be decided deliberately, with no
+`docs/OVERRIDES.md` entry. Per `AGENTS.md` the prohibition outranks the branch, an agent may
+not add an override to settle it, and the operator has now refused it explicitly.
+
+**The second reason is stale, and merging on it would be regressive.** The branch replaces
+the assertion `gives every non-primary worktree a curated entry, so none is undocumented`
+with `requires a curated entry for the worktree this suite runs from, if it holds work`,
+narrowing a machine-wide invariant to one directory. That rule **no longer exists on
+`main`**: it was removed on purpose, and
+`scripts/__tests__/worktree-inventory.test.mjs:2038-2062` carries a header explaining why —
+it demanded a curated entry for every live in-repo worktree, which is what an in-flight task
+looks like for its whole life, so it was red from the first minute of every task in every
+OTHER checkout too, and it compared a COMMITTED file against LIVE machine state that nothing
+can make agree. The replacement asserts the RISK instead, over the real repository with the
+curated entry REMOVED, pinning that no curated field except `mustNotPrune` can move a verdict.
+Merging the branch would therefore not narrow that rule; it would **reintroduce a weaker
+version of a rule `main` deliberately deleted.**
+
+**Fix.** Do not merge this branch, for either reason. Its landable parts were worth taking
+and were taken as fresh commits against `main` rather than as a merge: the GTM/font removal
+in `index.html`, the `runRecordPath` option in `scripts/e2e-run.mjs`, the `toolbar-fit`
+1→8 split. The rest is either already superseded by `main` in a stronger form
+(`e2e/text-tool.spec.ts`'s colour helper, the `type-crop` and Text-tool descriptions, which
+`8bf2cc7e` and `92d6a2f9` replaced with a fuller audit, and the `TEST-FLAKES.md` renumber) or
+refused. Two further changes are excluded and should stay excluded: the branch's `AGENTS.md`
+hunk rewrites the local-gate table to an OLDER shape than main's, dropping `test:e2e:unit`
+from `gate:verify` and removing `test:staged` from the commit hook; and its
+`e2e/sidebar-flyout.spec.ts` hunk relaxes a `beforeEach` from `page.goto('/')` to
+`waitUntil: 'domcontentloaded'`, a readiness reduction nothing has reviewed. If the product
+does want `aria-pressed` on the three-dots tile, it goes into `docs/OVERRIDES.md` in the
+operator's hand — an agent records the finding and stops, which is what this entry is.
+
+**Files.** `fix/overnight-test-red:src/components/SidebarLeft/SidebarLeft.tsx` (`renderToolGroup`),
+`fix/overnight-test-red:scripts/__tests__/worktree-inventory.test.mjs:76,1877`,
+`scripts/__tests__/worktree-inventory.test.mjs:2038-2062`,
+`e2e/OPEN_PROBLEMS.md:695-701`, `AGENTS.md` (model policy, overrides)
+
+## 157. A worktree directory git no longer tracks is unreachable by the disposal path, because disposal only accepts registered worktrees
+
+`.kilo/worktrees/stale-citations` was a 28K directory holding no source, no `.git` and no
+branch: `node_modules/.vite/vitest` (empty scratch) and `.kilo/e2e-last-run.json`, a run
+record naming `runId 2026-09-30T22-44-59-212Z-70299`, pid 70299, port 53969 — a dev server
+that died about a day before it was found. The directory's birth time was 2026-10-01T00:44,
+matching the run record, so it was a real worktree that was pruned out of
+`git worktree list` while the directory itself stayed.
+
+`npm run dispose -- stale-citations` answers `no worktree "stale-citations"`, because it
+resolves its argument against the registered set. So the one class of leftover the sweep
+exists to remove is the one class it cannot name: the tool refused the only directory it
+could not prove was junk, and the directory stayed forever holding a port number from a dead
+server. This is now the WHOLE of the defect — the instance was removed by hand after both
+its files were checked against `isRegenerableIgnored()` and returned `REGENERABLE` for both
+(`.vite` and `.kilo` are both on the list), but **the path that let it accumulate is
+unfixed and will produce another one.**
+
+**Fix.** Give disposal a second resolution path: when the argument is not a registered
+worktree, fall back to `lstat` on the literal path and refuse only if it is missing, is not
+a directory, or is not under `.kilo/worktrees/`. Report what it found before removing it —
+a directory with tracked-looking content and no `.git` is a finding, not an obstacle, and
+the refusal message should say which of the three conditions matched. `protectedContentOnDisk`
+and `isRegenerableIgnored` are already exported from the module and answer the
+"is there anything here worth keeping" half of the question, so the fallback can reuse them
+rather than re-deriving the judgement. The `e2e-last-run.json` writer is
+`scripts/e2e-run.mjs:708`, keyed on `REPO_ROOT`, which is why a pruned worktree leaves one
+behind: nothing in the e2e runner cleans its own record.
+
+**Files.** `scripts/dispose-worktree.mjs` (argument resolution, `locateInventory`),
+`scripts/dispose-worktree.mjs` (`isRegenerableIgnored`, `protectedContentOnDisk`),
+`scripts/e2e-run.mjs:708`
+
+## 158. The worktree-inventory suite reads the shared main checkout, so its verdict depends on whether main happens to be clean
+
+**Problem.** `worktree-inventory.test.mjs` calls `liveWorktreeFacts()`, which reads every
+worktree git reports — including the MAIN checkout, located by `listWorktrees(cwd)[0].path`
+precisely so the answer does not depend on which worktree the suite was invoked from. Two
+consequences, and the second is the defect.
+
+`classify.mjs:210` marks the primary worktree `STATUS.LANDED` **unconditionally**, before any
+look at its working tree: `isPrimary` short-circuits ahead of the `uncommitted && ahead === 0`
+arm that would otherwise report `UNCOMMITTED_ONLY`. So the main checkout holding uncommitted
+work is still classified `landed`.
+
+The test `protects that shape in a worktree NOBODY has written anything down about`
+(`worktree-inventory.test.mjs:2268`) filters to `r.inRepo` and asserts nothing there is
+unreported. The main checkout is in that set. Its own comment claims "creating a worktree,
+and this agent's own worktree, change nothing here" — true of worktrees this agent creates,
+and false of the one worktree every agent shares.
+
+Measured on 2026-10-01: with two untracked files in the main checkout, the suite failed with
+`ph (curated: NONE): ahead=0 onMain=true dirty=0 untracked=2 -> status=landed ... expected [Array(1)]
+to deeply equal []`. Move those two files aside and it passes, with no code change. The suite
+is green or red depending on whether a concurrent session left a file in `main`.
+
+This is not a regression and it is not caused by any branch in flight; it reproduces on
+pristine `main` whenever main is dirty. It is reported here because the next session to hit
+it will read it as its own.
+
+**Fix.** Two separable decisions, and the second is a judgement call rather than a repair.
+
+1. Make the test hermetic. Either exclude the primary worktree from the derived set with a
+   stated reason — it is never a disposal candidate, and `dispose-worktree.mjs` refuses
+   `main-worktree` outright — or give the test its own fixture repository, which
+   `makeRepo()` in this same file already provides for the `git.mjs` cases.
+2. Decide whether `isPrimary` should short-circuit ahead of the working-tree facts. If the
+   main checkout is genuinely never a candidate, the current order is right and only the test
+   needs changing. If it should still report uncommitted work, the `isPrimary` arm has to
+   move below the `uncommitted` arm, which changes the inventory's output for every run and
+   belongs to whoever owns `WORKTREES.json`'s meaning.
+
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs:2268`,
+`scripts/lib/worktree-inventory/classify.mjs:209-212`
+---
+
+## 159. A paint stroke committed after a crop renders at the old frame coordinates
+
+**Problem.** `usePaintStroke` records brush points in document coordinates, while the runtime
+compositor renders a cropped document with `layerCoordinate - documentFrame.origin`
+(`src/contexts/presentation-evaluator.ts`, in `drawEvaluatedPresentation`:
+`x = evaluation.position.x - (target.frame?.x ?? 0)`). After a crop the stroke is therefore offset by
+the frame origin.
+
+**CONFIRMED by measurement, 2026-10-02.** A bar drawn entirely **after** a crop renders in the wrong
+band. Cropping to document `(80,270)-(720,570)` — a `640x300` document with a non-`{0,0}` origin —
+then drawing a bar across the middle of the cropped document:
+
+|                                                                  | read bands                                |
+| ---------------------------------------------------------------- | ----------------------------------------- |
+| **control**: a bar on the UNCROPPED document, at 50% height      | `[false, true, false]` — strip 1, correct |
+| **after the crop**: a bar on the CROPPED document, at 50% height | `[true, false, false]` — strip 0          |
+
+The ink exists and is committed; it is drawn **one band too high**, which is the frame origin's
+signature. The control is what makes this a finding rather than a band-reading failure — the same
+helper reads the un-cropped bar in the strip the current fit names.
+
+**`e2e/crop-history.spec.ts` does not cover this**, and its case named "crop, then a bar" reads as
+though it did. That test draws its first bar BEFORE the crop and its second AFTER it, so it asserts
+history bookkeeping across the boundary, not where the post-crop bar lands.
+
+**The neighbouring repair is NOT this defect.** `src/util/layer-space.ts` rebases document points onto
+the **layer** origin for six stroke tool areas (`documentPointsToLayerLocal`, 9 callers). That is a
+different axis: it fixes a stroke landing off a layer whose `pos` is not `{0,0}`, and does not touch
+the frame origin.
+
+**What would close it.** Convert the committed stroke points out of document space into the frame's
+coordinate space before the history item is written — the layer-local rebase in `layer-space.ts` is
+the shape to copy, applied against `documentFrame` rather than `layer.pos`. Then add the
+crop-followed-by-stroke band assertion to `e2e/crop-history.spec.ts`, carrying the un-cropped control
+above, so a fix cannot pass by making the band read uniformly empty. Do not weaken the existing crop
+history assertions or add an accepted console error.
+
+**Files.** `src/hooks/usePaintStroke.ts` (`:166-167` — the path is under `hooks/`, not `tools/`, which
+is how an earlier version of this entry sent a reader to a file that does not exist),
+`src/contexts/presentation-evaluator.ts` (the frame subtraction), `src/util/layer-space.ts` (the
+layer-space rebase, a different axis), `e2e/crop-history.spec.ts` (`:403`, the case that does not
+cover this).
+**Problem.** `usePaintStroke.ts` records brush points in document coordinates, while the runtime
+compositor renders a cropped document with `layerCoordinate - documentFrame.origin`. After a crop,
+the stroke is therefore offset by the frame origin and can render outside the visible document.
+The defect reproduces in the crop/transform headless gate: a bar drawn after a crop is committed,
+but the visible canvas remains unchanged. Sweeping frame heights and raw canvas heights reproduced
+the same bounds before and after the stroke.
+
+**What would close it.** Convert the committed stroke points into the current layer/frame coordinate
+space before `usePaintStroke.ts` writes the history item, then add a crop-followed-by-stroke pixel
+assertion to `e2e/crop-history.spec.ts`. Do not weaken the existing crop history assertions or add
+an accepted console error; the issue is a coordinate transform defect in the paint writer.
+
+**Files.** `src/tools/usePaintStroke.ts`, `src/contexts/useLayer.ts`, `src/contexts/layer-renderer.ts`,
+`e2e/crop-history.spec.ts`.
+
+---
+
+## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
+
+`src/contexts/ThemeContext.tsx:20` hard-codes `DEFAULT_THEME = 'dark'` and the
+`prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e
+suite pins itself to **light** (`e2e/fixtures/extended-test.ts`'s `pinnedTheme` auto fixture),
+because its pixel oracle — `hasDarkPixels`, `getStrokeAnalysis`, `measureInk` — reads "there is
+nothing here" out of a near-white pixel and is calibrated against the light workspace checkerboard.
+That pin is correct and its header says why. This entry is its cost, and the cost is not the pin.
+
+**The gap.** The one test that runs with the pin released
+(`e2e/document-dialogs.spec.ts:1132`, "with nothing stored the document starts dark") asserts the
+`dark` class on `<html>` and the string in `localStorage`. It reads **no pixel**, so it would stay
+green if every `dark:` Tailwind variant in the app stopped applying. No other spec exercises a
+single `dark:` class. **Nothing measures how dark renders.**
+
+**The defect that gap hides, measured.** The dock's collapse glyph is a single `«`/`»` character
+at `text-sm`, `src/components/SidebarRight/SidebarRight.tsx:359`:
+
+- light: `text-gray-500` (#6b7280) on `bg-gray-200` (#e5e7eb) = **3.90:1**
+- dark: `dark:text-gray-400` (#9ca3af) on `dark:bg-gray-700` (#374151) = **4.06:1**
+
+WCAG AA for normal text is **4.5:1**, so this fails in both themes. axe cannot judge it: it returns
+`incomplete` on both with "Element content is too short to determine if it is actual text
+content", and `e2e/accessibility.spec.ts:98` records that **`incomplete` is never asserted** —
+`:268`, "attached but NOT asserted". So this is a live AA failure that the only accessibility gate
+in the repository structurally cannot see, and it is not a dark-only problem: dark being the
+default raises its visibility, it does not create it.
+
+**Fix.** Either raise the glyph's contrast above 4.5:1 in both themes (`dark:text-gray-300` on
+`gray-700` is 7.00:1, and it is the value `PanelGroup.tsx:42` already uses for the same surface), or
+give the button a real accessible name with a visible label and stop rendering the glyph alone as
+the only text. Then either assert the `incomplete` bucket in the axe helper or assert that a
+specific node is absent from it — a gate that logs a bucket it never checks reports "0 violations"
+about a page whose failing control it printed.
+
+### Also live, and found while measuring the above
+
+Both reproduced in **light and dark**; neither is dark-specific.
+
+- **`region`, moderate**, on the flyout/tooltip portal wrapper, with the flyout open
+  (`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`). A real violation at 1115 audited
+  nodes, in a region the file's header lists as unscanned.
+- **`aria-allowed-role`, minor** and **`region`, moderate**, on
+  `<nav role="toolbar" data-testid="mobile-bottom-bar">` (`src/components/Mobile/MobileBottomBar.tsx:25-33`).
+  `role="toolbar"` is not permitted on `nav`. Visible at 500x800, 309 nodes audited.
+
+### `e2e/accessibility.spec.ts`'s header is stale in five places, and reading it costs the next session an hour
+
+Every one of these was fixed in the **same commit that added the file** (`6982cd35`), and the
+header describes the state that commit fixed:
+
+- `:75-83` says dark reports two extra `color-contrast` violations on the panel tab labels, citing
+  `dark:text-gray-400` at `PanelGroup.tsx:42`. That class is now `dark:text-gray-300`
+  (**7.00:1**), and a dark scan of the shell reports **0** violations. Measured: light and dark are
+  both clean in all three scanned regions — shell, New Image dialog, Draw options bar.
+- `:122-128` "**THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE**", and the four-violation
+  attribution block at `:429-480`, describe a red suite. `npm run test:e2e -- accessibility` is
+  **3 passed, 0 violation(s)**.
+- The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
+  File (New/Open/Save) and Tools menus only.
+- `:94` says the Save dialog is unscanned. It was measured here: 0 violations, 45 nodes, both
+  themes. (Not added to the gate, so the header is still right about the gate and wrong about the
+  state.)
+- Dark is **cleaner** than light by one node: `.text-lg > span` (the same `«`) is `incomplete` in
+  light and passes in dark.
+
+**Fix.** Rewrite the header to describe the current state and keep it a measurement rather than a
+narrative: state the three scanned regions, their node counts, that both themes report 0, and that
+`incomplete` is not asserted — which is what let the glyph through.
+
+**Files.** `src/components/SidebarRight/SidebarRight.tsx:359`, `:418`, `:433`,
+`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`,
+`src/components/Mobile/MobileBottomBar.tsx:25-33`,
+`e2e/accessibility.spec.ts:75-83`, `:94`, `:98`, `:122-128`, `:268`, `:429-480`,
+`e2e/fixtures/extended-test.ts` (`pinnedTheme`), `e2e/document-dialogs.spec.ts:1132`
+
+---
+
+## 161. The crop cannot extend the canvas, and Photoshop's crop can — the `Fill` control is unimplemented and unoverridden
+
+**Problem.** Photoshop's crop grows the canvas: drag the crop box past the image edge and the document
+extends, with the `Fill` control deciding what goes in the new area. Adobe's own page says it —
+
+> "Just click and drag beyond the borders of an image with the Crop tool, and then fill the extended
+> canvas with new content that blends with the existing image."
+
+— and `src/tools/descriptions/type-crop.ts:230` quotes exactly that sentence while declaring the `Fill`
+control itself `status: 'missing'` at `:231`. The app cannot do this: `trimRect` clamps every crop
+edge into `[0, totalSize]` (`src/util/rect.ts:36-50`), so extending a crop is impossible by
+construction, which `:302` states in the tool's own `appNotes`.
+
+**Why this is filed rather than fixed.** `docs/OVERRIDES.md` is empty and is written by the operator
+by hand; per `AGENTS.md`, where the code and Adobe disagree with no entry, **the code is the defect**
+and the decision is not an agent's. Implementing the extension, and the `Fill` control's behaviour,
+would be implementing an unoverridden Photoshop deviation. That finding is the agent's job; the
+override is the operator's.
+
+**Reproduce.** Drag the Crop tool's box past any document edge and release. The document shrinks to
+the clamped intersection instead of growing.
+
+**Fix.** Two separable parts, and only the second is a judgement call. The mechanical half is to let
+the crop rect carry an out-of-bounds region instead of clamping it, so a frame can grow; the product
+half is what fills the added area, which is what `Fill` is for and which has no answer without the
+operator. Do not pin the current clamp with a test — the clamp is the absence of the feature, and a
+pin on it fires red the moment someone implements `Fill` or `Image > Canvas Size`. The clamp is
+already covered as behaviour of `trimRect` at `src/util/__tests__/rect.test.ts:41-65`, and crop-to-frame
+at `src/contexts/__tests__/useLayer.lifecycle.test.tsx:702-730`.
+
+**Files.** `src/tools/descriptions/type-crop.ts:230-231,302`, `src/util/rect.ts:36-50`,
+`src/contexts/useLayer.ts:719`, `docs/OVERRIDES.md`
+---
+
+## 162. A failed export tells the user nothing, and `SaveDialog` has nowhere to tell them
+
+`src/components/SaveDialog/SaveDialog.tsx:14-17`
+
+`renderExportCanvas` throws when the compositor reports failure, which `useFile.handleImageSave`
+catches at `src/contexts/useFile.tsx:142-152`: it logs and resolves `null`. The dialog is
+deliberately left open so a retry is possible — that teardown placement is itself a documented
+fix at `useFile.tsx:131-139` — but `SaveDialog` holds exactly three pieces of state
+(`fileName`, `format`, `jpegQuality`) plus `saving`, has no error state, and no render slot
+for one. Its only visual signal is `saving ? 'Saving…' : 'Save'` at `:141`. Its own `catch` at
+`:23-24` is unreachable from this path, because `handleImageSave` catches internally and always
+resolves.
+
+So a broken layer bitmap — a transferred or detached `ImageBitmap` raises `InvalidStateError`
+inside `drawImage`, which `layer-renderer.ts:152-155` catches into a `false` return — produces a
+click with no visible consequence at all. Before the export decouple, the same broken layer left
+the display canvas holding the last good composite (`layer-renderer.ts:122-126` states that
+preservation as its contract) and the export encoded a stale-but-real file.
+
+**Fix.** Add an error state to `SaveDialog` and render it in the panel body between `:122` and
+`:124`. This requires a signature change: `onSave` is `(data) => Promise<void>` (`:9`) and must
+become in-band, since today the only signal is the in-band `null` every caller already guards
+with. Decide the copy and whether the message is dismissible; that is a product judgement, not
+a mechanical edit.
+
+**Files.** `src/components/SaveDialog/SaveDialog.tsx:14-17,23-24,141`,
+`src/contexts/useFile.tsx:142-152`
+
+---
+
+## 163. Every paint stroke is bilinearly resampled, at DPR 1, because the layer box is fractional
+
+`src/util/draw.ts:22-25`, `src/tools/draw.ts:102`
+
+`pointsBoundingPos` returns `width: maxX - minX + 2 * lineWidth` with no rounding of any kind,
+and its inputs are pointer coordinates divided by the contain fit, so `pos.width` is generally
+fractional. `draw.ts:102` then does `new OffscreenCanvas(size.width, size.height)`, whose
+constructor **truncates** — the mechanism `src/tools/shape.ts:131-137` already documents. The
+composite draws at the _untruncated_ size (`src/contexts/presentation-evaluator.ts:168`,
+`ctx.drawImage(bitmap, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height)`) with
+`imageSmoothingEnabled` at its default `true`, because nothing in the composite path sets it.
+
+So every brush, pencil and `penType: 'pen'` stroke is stretched by
+`pos.width / trunc(pos.width)` onto a fractional destination x. For a 200px pencil drag that is
+a 0.12% horizontal stretch — an order of magnitude weaker than the retina blur, and it bites
+hardest on exactly the 1–3px strokes, where the fixed sub-pixel destination offset is largest
+relative to the stroke.
+
+**This is in `CANVAS-RESOLUTION-PLAN.md:184`'s "Paint algorithms — CLEAR — do not touch" row, and
+that row is wrong for this file.** The correct pattern is four lines away in concept and already
+in the tree: `shapeGeometryBounds` (`src/tools/shape.ts:149-162`) floors the origin and ceils the
+far edge, producing four integers.
+
+**Fix.** Round `pointsBoundingPos` outward the way `shapeGeometryBounds` does. Verify against
+`e2e/paint-tool-pixels.spec.ts:250-251`, whose `edge.height < 30` is a **capture-pixel**
+measurement with no scale correction and is recorded in DPR-1 numbers — a 0.12% resample moves
+it, and it sits closest to its limit of anything in the suite.
+
+**Files.** `src/util/draw.ts:6-27`, `src/tools/draw.ts:99-103`,
+`src/contexts/presentation-evaluator.ts:168`, `CANVAS-RESOLUTION-PLAN.md:184`,
+`e2e/paint-tool-pixels.spec.ts:250-251`
+
+---
+
+## 164. No stroke geometry is aligned to the pixel grid, so a 1px line is two half-grey rows
+
+`src/tools/shape.ts:171-175`, `src/tools/draw.ts:76-97`, `src/util/draw.ts:151-154`
+
+Neither context setup contains a half-pixel offset, a coordinate snap, or any `Math.round` on a
+point. `setShapeCtx` (`shape.ts:164-175`) sets `strokeStyle`, `fillStyle`, `lineWidth`,
+`lineCap`, `globalAlpha` and `setLineDash` and nothing else; `setupDrawCtx` (`draw.ts:76-97`)
+adds `globalCompositeOperation`, `lineJoin` and `lineCap`. A `lineWidth: 1` horizontal stroke at
+an integer y therefore covers `y ∈ [y-0.5, y+0.5]` — row `y-1` at 50% and row `y` at 50% — a
+2px band of grey where the user asked for a 1px line. Visible at DPR 1, and orthogonal to the
+retina upscale: it is about where geometry lands within a pixel, not how many pixels the surface
+has.
+
+**Re-derive Adobe's rule from Adobe before implementing anything here.** There is no entry in
+`docs/OVERRIDES.md`, and per `AGENTS.md`'s ladder the product's own behaviour is the source of
+truth for what Photoshop does. Two facts make a naive fix wrong: the thickness slider reaches
+half-integers (`src/components/ToolbarsRight/Figures/Shape.tsx:165`, `step="0.5"`), so "crisp" is
+undefined for a 1.5px stroke and any snap rule is a policy choice; and only axis-aligned strokes
+can be snapped this way, so a 45° line would stay soft — a half-measure that looks fixed in a
+demo.
+
+**This is the one candidate that collides with a gate.** Alignment changes _document_ pixels, so
+it moves the committed raster, therefore the exported file, therefore the baselines in
+`e2e/export/visual-regression.spec.ts`, which `AGENTS.md` forbids re-recording to accommodate a
+change. Raising the display resolution (D2c) does not.
+
+**Files.** `src/tools/shape.ts:164-175`, `src/tools/draw.ts:76-97`, `src/util/draw.ts:151-154`,
+`src/components/ToolbarsRight/Figures/Shape.tsx:160-167`, `e2e/export/visual-regression.spec.ts`
+
+---
+
+## 165. Nothing in the suite can detect a change to a canvas backing store
+
+`e2e/check-dpr.spec.ts:8`, `e2e/helpers/screenshot-scale.ts:177-185`
+
+`imageBoundsToCss` derives its scale from the decoded capture's extent over the measured box's
+extent, so it is invariant under capture scaling: `check-dpr.spec.ts` passes identically whether
+the store is 1×, 2× or 8×. Its tolerance is 25 CSS px (`CSS_POSITION_TOLERANCE`, declared at `:8`,
+asserted at `:66-68`), roughly 50× the measured pointer-mapping error, so it distinguishes
+"mapping is DPR-invariant" from "mapping is grossly broken" and nothing finer. It is the only
+`page.goto('/')` in the suite under an emulated `deviceScaleFactor: 2`; every other 2× test uses
+`page.setContent` on synthetic HTML. Two further sites divide by a canvas's own extent
+(`e2e/selection-marching-ants.spec.ts:130-132`, `e2e/selection-gestures.spec.ts:254-256`), so
+doubling the store halves the derived scale and leaves the CSS position unchanged — equally blind.
+
+The three overlay stores (`tool-overlay-canvas`, `rect-overlay-canvas`, `selection-ants-canvas`,
+`src/components/Main/Main.tsx:260,300,313`) are compared against nothing, not even each other, so
+a change that raised one and not the others is undetectable.
+
+**The relation to pin is `store / data-fit-document-* === 1`, in BOTH a dpr-1 and a dpr-2
+context** — the dpr-2 copy is load-bearing, not redundant, since a dpr-conditional raise passes
+at dpr 1. The right-hand side comes from the app's own `data-fit-document-*`
+(`src/hooks/usePointerPosition.ts:107-108`, from the store's `totalSize`), which is a different
+subsystem from `resizeCanvas`.
+
+**Do not write `canvas.width === box.width * devicePixelRatio`.** It is false today twice over:
+`src/util/canvas.ts:3-6` assigns the width in JS, so no device property is in the causal chain;
+and the element is `h-full w-full object-contain` (`Main.tsx:255`), so the store is a _document_
+quantity and the box enters only through the contain fit, on the **binding axis** alone. At
+1280×720 the fit is height-limited (583/600 = 0.9717), so the width-axis form is red today
+(777.3 vs 974). `e2e/text-tool.spec.ts:481` already rejects the DPR form in writing, for captures.
+
+**Files.** `e2e/check-dpr.spec.ts`, `e2e/helpers/screenshot-scale.ts:5-7,177-185`,
+`e2e/selection-marching-ants.spec.ts:130-132`, `e2e/selection-gestures.spec.ts:254-256`,
+`src/components/Main/Main.tsx:260,300,313`, `src/hooks/usePointerPosition.ts:107-108`,
+`playwright.config.ts` (no `deviceScaleFactor`; `devices['Desktop Chrome HiDPI']` exists with the
+same 1280×720 viewport, and nothing in `e2e/` reads `window.screen`, so a second project would not
+move any layout arithmetic — but it would put the six known 2× failures in
+`e2e/OPEN_PROBLEMS.md:822-829` into the default run)
+
+---
+
+## 166. The raster and PSD export branches size from different fields, and nothing reconciles them
+
+`src/contexts/export-canvas.ts:61-66`, `src/contexts/psd-utils.ts:243`
+
+`renderExportCanvas` derives its extent from `documentFrame` and ignores its `size` argument
+whenever the frame is valid. `savePsd` does the opposite: it sizes the composite from `size`
+(`canvas2d(size.width, size.height)`) and uses the frame only for layer offsets. A second
+asymmetry in the same path: `src/contexts/useFile.tsx:122` gates the PSD frame on truthiness
+alone, so an invalid-but-truthy frame reaches `savePsd` unvalidated, while the raster branch
+validates it with `isValidDocumentFrame`.
+
+**Unreachable today, and that is the whole risk.** Every store writer that sets a frame re-derives
+`totalSize` from it (`src/contexts/StoreContext.tsx:419,455-456,1197-1198,1243-1244,1288`), and
+the one reducer arm that could set `size` alone — `SET_SIZE` at `StoreContext.tsx:588-600` — has
+no dispatcher anywhere; the only non-test reference is commented out at `:1379-1384`. A future
+dispatcher is what turns a comment defect into a silent one-document-two-sizes bug.
+
+**Fix.** Reconcile them at the boundary rather than documenting the gap: have the raster branch
+size from `size` and take only the origin from the frame, or make both branches read one field.
+Whatever is chosen, the `isValidDocumentFrame` check should move to the shared boundary so the
+two branches cannot disagree about what a valid frame is. Both halves are now
+pinned: the extent at `src/contexts/__tests__/export-canvas.test.ts`, and the origin — through
+the call site, which is where a frame can be dropped — at `src/contexts/__tests__/useFile.test.tsx`
+("renders the export surface from the staged documentFrame, not from size alone"), which gives
+the frame a non-zero origin and an extent that disagrees with `size`.
+
+**Files.** `src/contexts/export-canvas.ts:44,61-66`, `src/contexts/psd-utils.ts:209-213,243`,
+`src/contexts/useFile.tsx:122`,
+`src/contexts/StoreContext.tsx:419,455-456,588-600,1197-1198,1243-1244,1288,1379-1384`
+
 `e2e/toolbar-fit.spec.ts:254-261` (the 1037/1036 edge).
 
-## 150. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
+## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
 
 **Problem.** `Edit` carries exactly one item, `Free Transform`
 (`src/components/DesktopHeader/DesktopHeader.tsx:523-532`), because that is where Adobe puts it at
@@ -4050,7 +4711,7 @@ not a computation one: reconcile the slider's range with the `±90` button pair 
 `src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:168`, `:183-190`,
 `src/contexts/useCurrentTool.tsx:56-81`, `src/contexts/useLayer.ts:565`
 
-## 151. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
+## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
 
 **Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
 (`DesktopHeader.tsx:194`), and selecting it shows the `color` command's options bar, which renders
@@ -4097,7 +4758,7 @@ thing this repo's policy refuses, and doing it in a menu is worse than doing it 
 `src/components/ToolbarsRight/Colors/Color.tsx:121-180`, `src/tools/functions.ts:60-63`,
 `src/tools/colors.ts`
 
-## 152. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
+## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
 
 **Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
 (`DesktopHeader.tsx:322`, `:423`, `:452`, `:525`, `:559`). Adobe's is eleven: File, Edit, Image, Layer,
@@ -4131,7 +4792,7 @@ at all, and should be decided rather than deferred.
 `src/util/selection.ts`, `src/contexts/psd-utils.ts:88-106`,
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
 
-## 153. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
+## 170. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
 
 **Problem.** `ADJUSTMENTS_ITEMS` enables exactly two items
 (`src/components/DesktopHeader/DesktopHeader.tsx:186-209`), and both name a capability the app does
@@ -4140,7 +4801,7 @@ not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args 
 label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
 selects the `color` stand-in and is **a partial match**: sepia IS Photo Filter's Warming preset and
 saturation is nearest its Density slider, but the third control is a `grayscale` slider, and Photo
-Filter performs no luminance conversion. §151 records the narrower version of that.
+Filter performs no luminance conversion. §168 records the narrower version of that.
 
 **This is a question, not a defect, and it is here because two branches implemented opposite answers
 to it.** A branch carried the extraction and enabled both items on the reasoning that a bounded,
@@ -4178,7 +4839,7 @@ app-invented ones. The alternative this entry was written to choose between is t
 
 What the answer does **not** settle, and what the merge is carrying: `Photo Filter` remains a partial
 match (two of three controls fit; `grayscale` is not one of them), and the real `Black and White` and
-real `Levels` remain unbuilt and disabled. Those are the §151 capability question, not this naming
+real `Levels` remain unbuilt and disabled. Those are the §168 capability question, not this naming
 question, and building the real commands is what dissolves them.
 
 **What the naming rule now binds.** A future adjustment command takes Adobe's name, and takes it only if
@@ -4202,7 +4863,7 @@ unreachable until real Black and White is built, which is a larger loss than a d
 `src/tools/functions.ts:60-63`, `docs/TOOLS-TOO-HARD.md` (the enabled-items entry and Black and
 White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
 
-## 154. `color`'s and `levels`'s `imageProcessor` may be unreachable, and the claim that they are is UNPROVEN in both directions
+## 171. `color`'s and `levels`'s `imageProcessor` may be unreachable, and the claim that they are is UNPROVEN in both directions
 
 **Problem.** `src/tools/colors.ts` and `src/tools/levels.ts` export only an `imageProcessor`; the
 tool definitions declare `commit: 'layer-operation'` (`src/tools/toolProcessors.ts:137`, `:143`). For
@@ -4233,7 +4894,7 @@ the mistake that produced the current disagreement.
 `src/contexts/useLayer.ts:620`, `:655`, `src/contexts/materialization.ts:288`,
 `src/contexts/useHistory.ts:96`, `docs/TOOLS-TOO-HARD.md`
 
-## 155. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers is unanswered, and it changes the durable schema
+## 172. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers is unanswered, and it changes the durable schema
 
 **Problem.** The operator signalled on 2026-10-01 that Levels, Colors and the other
 `Image ▸ Adjustments` commands "will be implemented", and named this as the load-bearing question
@@ -4278,7 +4939,7 @@ entry open.
 `src/contexts/layer-renderer.ts:32`, `src/contexts/history-model.ts`, `AGENTS.md` §Architecture
 status, `docs/TOOLS-TOO-HARD.md` (the adjustment-layers entry), `docs/FEATURES.md`
 
-## 156. `color`, `levels` and `transform` are unreachable below 768px, because the rail is not the only thing `toolbarMap` drives
+## 173. `color`, `levels` and `transform` are unreachable below 768px, because the rail is not the only thing `toolbarMap` drives
 
 **Problem.** The rail removal deleted one three-wide group from `toolbarMap`, and `toolbarMap` is also
 the source for the **mobile** tool bar and tool sheet: `src/components/Mobile/mobile-tools.ts` derives

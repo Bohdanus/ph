@@ -391,7 +391,7 @@ a black or a white point, cannot address one channel, cannot show the histogram 
 the Black-and-White entry above applies to this one too: the "why it is too hard" describes the
 CSS-filter mechanism being replaced, not a constraint on the replacement. The load-bearing question is
 still unanswered and is not this file's to answer — whether `Image ▸ Adjustments` bakes pixels or
-creates adjustment layers changes the durable schema, not the UI. `HANDOFF.md` §155 carries it.
+creates adjustment layers changes the durable schema, not the UI. `HANDOFF.md` §172 carries it.
 
 ### Curves — a spline over the tonal range
 
@@ -447,7 +447,7 @@ Non-destructive editing section is where that distinction is already drawn.
 
 **Not a handoff item.** The gap is real but it is recorded here as a capability decision, and per
 this file's own policy nobody treats its absence as a defect. The rail entries for the two ids are
-`HANDOFF.md` §153's, which is a separate decision.
+`HANDOFF.md` §170's, which is a separate decision.
 
 ### Dodge, Burn, Sponge and Smudge build-up while the button is held
 
@@ -666,7 +666,7 @@ the kind of colour Adobe's presets pick and `saturation` is the trim Preserve Lu
 **`grayscale` is a conversion to luminance that Photo Filter never performs**. The alternative name is
 worse: the app's `color` is not Adobe's Black and White either (that entry, below), so the honest
 options were a bounded partial match or a wrong name. The open question is whether to drop the
-`grayscale` control or move it to `Desaturate`, which is the operator's to make — `HANDOFF.md` §151.
+`grayscale` control or move it to `Desaturate`, which is the operator's to make — `HANDOFF.md` §168.
 
 **The rest of `Image ▸ Adjustments` is disabled, and that is the accurate state of this app.** The app
 has no adjustment-layer machinery at all: `src/contexts/psd-utils.ts:88-106` warns that `adjustment`,
@@ -687,7 +687,7 @@ reason.
 
 **One thing this file does not decide, because it is not a capability question.** Whether
 `Image ▸ Adjustments` bakes pixels or creates adjustment layers changes the durable schema, not the
-UI, and it is unanswered. `HANDOFF.md` §155 carries it, and `docs/PHOTOSHOP-UX.md`'s "No adjustment is
+UI, and it is unanswered. `HANDOFF.md` §172 carries it, and `docs/PHOTOSHOP-UX.md`'s "No adjustment is
 a tool is too strong" bullet carries the separate fact that Adobe's Adjustment Brush is a real
 Tools-panel entry — which is why the rail decision and the general statement about adjustments are
 different claims.

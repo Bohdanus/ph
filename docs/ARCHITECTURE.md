@@ -11,7 +11,7 @@ This page is about how.
 **`store.durableDocument` is a complete, correctly-typed, fully-populated
 document that is not the truth.**
 
-It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
+It has eleven operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
 rebuilt on every commit and every navigation. It is read at exactly one place.
 Four separate files say so in comments, and a newcomer who reads
@@ -191,15 +191,15 @@ counter, not a branch (`src/contexts/history-timeline.ts:28-32`).
 
 ### The durable document — the shadow
 
-Typed in `src/contexts/history-model.ts`: twelve operation kinds
+Typed in `src/contexts/history-model.ts`: eleven operation kinds
 (`create-layer`, `remove-layer`, `set-layer-properties`, `reposition-layer`,
 `reorder-layers`, `apply-filter`, `apply-affine-transform`,
-`apply-raster-processor`, `rasterize-layer`, `set-document-frame`,
-`merge-document`, `set-selection`), wrapped in a versioned entry, deep-frozen on
-every write (`freezeDurableDocument` `:305`, `cloneOperation` `:247`).
+`apply-raster-processor`, `set-document-frame`, `merge-document`,
+`set-selection`), wrapped in a versioned entry, deep-frozen on
+every write (`freezeDurableDocument` `:306`, `cloneOperation` `:254`).
 
 The boundary is `history-adapter.ts`: `legacyHistoryToDurable` (`:568`) in,
-`DurableDocument` (`history-model.ts:133-141`) out, with a whitelist —
+`DurableDocument` (`history-model.ts:138-146`) out, with a whitelist —
 `LAYER_PROPERTY_BY_ACTION` (`:376`), `deriveSetSelectionEntry` (`:342`),
 `operationForTool` (`:473-551`). An unsupported tool throws
 `UnsupportedHistoryFeatureError` (`:550`) rather than fabricating a no-op, and one

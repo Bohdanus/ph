@@ -138,8 +138,9 @@ file claim expresses that.
 worktree whose root checkout is dirty: the root is a different checkout of a different `HEAD`, so
 `-A` commits a deliberate reverting of whatever `main` has since done to those files, with **no
 conflict marker** — this repository shipped 17 such reverts and not one of them was a conflict. Run
-the `comm -13` set difference in `docs/ORCHESTRATION.md` **before** the review, because a reviewer
-only catches the files its brief happened to mention. And a red `tsc` in the main worktree may be
+`scripts/merge-takeover-guard.mjs` **before** the review, because a reviewer only catches the files
+its brief happened to mention; it refuses a merge that resolved any path by copying one whole
+side's content, and `docs/ORCHESTRATION.md` is its one home. And a red `tsc` in the main worktree may be
 another session's half-written change rather than a broken `main`; check the _committed_ state in a
 throwaway worktree before you touch a path you have not touched.
 
