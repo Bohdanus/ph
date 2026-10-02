@@ -5058,32 +5058,40 @@ As written they are contradictory: the only way to satisfy G13 is for the durabl
 exist and be wired, and the compositor's own import of `materialization.ts`
 (`src/contexts/durable-compositor.ts:4`) is exactly what G0 forbids. No state satisfies both.
 
-**Proof, and the gate that finds it.** The G0 assertion
-(`src/contexts/__tests__/StoreContext.boundary-gates.test.ts:111`) read ONE file —
-`../StoreContext.tsx` — so it could not see `durable-compositor.ts` at all, and passed. Widened to
-every production module under `src/` (excluding `__tests__`, `*.test.*`, `*.stories.*` and ambient
-`*.d.ts`, the convention already established for this question at
-`src/contexts/__tests__/history-writer-census.test.ts:214-234`), it is RED by exactly one hit:
+**Proof, and the gate that finds it.** The G0 assertion read ONE file — `../StoreContext.tsx`
+— so it could not see `durable-compositor.ts` at all, and passed. Widened to every tracked
+production module (excluding `__tests__`, `test`, `*.test.*`, `*.spec.*`, `*.stories.*` and
+ambient `*.d.ts`, the convention already established for this question at
+`src/contexts/__tests__/history-writer-census.test.ts:214-234`), it is RED by exactly one hit.
+The walk's roots are `src/` **and** `toolbar-mapping.ts`: `tsconfig.app.json:43` puts that file
+in the app's `include` beside `src` and four components import it, so a walk rooted only at
+`src/` reported a subset while implying the repository. The violation is:
 
 ```
-{ "file": "contexts/durable-compositor.ts", "line": 4, "specifier": "./materialization.ts" }
+{ "file": "src/contexts/durable-compositor.ts", "line": 4, "specifier": "./materialization.ts" }
 ```
 
 The forbidden set is unchanged and correct — `replay-coordinator`, `materialization`,
 `replay-checkpoints` — and must stay that way: `presentation-evaluator.ts` is imported by production
 on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`, `materialization.ts:14`), and `durable-replay.ts`
 is read as a value at `StoreContext.tsx:41`, so adding either would make the gate red on correct code.
+A specifier is matched on its BASENAME, not by substring, so a helper named
+`materialization-utils.ts` is not a violation of a gate about `materialization.ts`.
 
-**The work is committed and deliberately not landed**, on branch `fix/blind-gates` as `be730a59`,
-because landing it turns `main` red and this is a plan contradiction, not a code defect to fix
-quietly. The detector is proven both ways: narrowing the walk back to one file leaves the property
-leg GREEN while `durable-compositor.ts` violates it, which reproduces the original blind gate; and
-injecting an import into a module the old gate could not see turns it red naming both files.
+**The gate is LANDED, as a tripwire rather than a red run.** The property leg is `it.fails`
+(`src/contexts/__tests__/StoreContext.boundary-gates.test.ts`), so `main` is green while the
+contradiction stands and the leg goes RED the moment `durable-compositor.ts` stops importing
+`materialization.ts` — which is the moment G0 and G13 stop disagreeing and the leg must become a
+plain `it`. `it.fails` can only say "at least one violation exists", so a companion plain assertion
+beside it, `has no forbidden production import beyond the one §177 tracks`, turns red if a SECOND
+violation appears anywhere — including in `toolbar-mapping.ts`, which no earlier version of the gate
+could read.
 
 **What is needed.** An operator ruling on which of G0/G13 governs while the durable path is
 unwired: either the forbidden set gains an explicit exemption for the compositor pair, or the
-compositor is removed until it can be wired. Until then the red gate stays off `main`, and
-`be730a59` is the standing proof that the one-file gate was blind rather than satisfied.
+compositor is removed until it can be wired. That ruling is not the test's to make, and no entry in
+`docs/OVERRIDES.md` records one. When it comes, the property leg is deleted in the same change —
+it is a pin, and a pin that outlives its defect is a gate that stops meaning anything.
 
 ## 178. `fix/rail-drop-draw` is parked on a premise OVR-2 voided
 
@@ -5098,3 +5106,95 @@ the paint bar lacks, so `draw` may be deleted later and this is the work for tha
 **What is needed.** Do not merge it; do not dispose of it. If `draw` is deleted, re-derive the
 removal from `main` — do not resurrect `603356ac`, which is 583 commits behind its base and carries
 the mutant above.
+
+## 179. `fix/migration-review-sweep` cannot merge, and one of its hunks reopens a blank-canvas defect
+
+**Problem.** `5d388e02` is 1 commit ahead and 135 behind, and 15 of its 24 files are dirty on both
+sides. It cannot be merged as a commit, and it must never be cherry-picked whole: one hunk narrows
+`drawLayersToCanvas`'s previous-pixel snapshot to resize-only, which is exactly the change `d5d8db65`
+made in the other direction. `main:src/contexts/layer-renderer.ts:231-246` snapshots in EVERY case and
+says why — `resizeCanvas` resets a resized canvas to transparent and `clearRect` empties one whose
+dimensions already matched, so a `drawImage` throwing between them left the document blank. The branch
+reinstates that window and pins the reinstatement in `layer-renderer.drawLayersToCanvas.test.ts:530`.
+
+Three of its production fixes also landed on `main` under different names, so a merge produces two
+taxonomies or a silent winner: `presentation-evaluator.ts`'s `PresentationFilterRefusal` against
+`main`'s `FilterArgumentUnrenderableError` (`src/util/canvas-filter.ts`) and `evaluatePresentationForDraw`;
+`history-append.ts`'s `hasAsset` against `main`'s `registryResolvesAsset` (4f8bdcbb); and
+`layer-renderer.filters.test.ts`, which re-points a `getLayerFilter` that `main:layer-renderer.ts:30`
+still exports, so merging it deletes a symbol main's own tests use.
+
+**What survives, and is worth re-applying.** `presentation-evaluator.parity.test.ts` (+783) —
+cross-checks `materializeLayer` against `drawLayerSource` on filter string, matrix, bounds and call
+order, two independent implementations against literal fixtures; the best test in the branch.
+`durable-compositor.refusal.test.ts`'s negative cases, `history-append.merge.test.ts`'s key-order
+reversal, and the `history-append.create.test.ts` cases that fix an `if (…) return;` that made a
+reader-throwing case vacuous. One case in the refusal file does not test what it claims:
+`durable-compositor.refusal.test.ts:418` builds its abort with `new AbortController().abort()`, which
+in jsdom is a real `DOMException`, so it stays green on the defect `isAbortError` exists to catch.
+
+**Three decisions this branch takes and cannot.** `.kilo/plans/history-migration-finalisation.md` §8
+`SD-8` records "per-layer refusal vs whole-document rejection in materialization" as
+_"taken in code, recorded nowhere… the ruling is still the operator's"_; this branch narrows the
+refusal and then hard-codes the narrowed taxonomy into ~10 test cases, which settles SD-8 by test
+rather than by ruling, and `docs/OVERRIDES.md` has no entry. Second, `presentation-evaluator.ts`'s
+`validateBounds: false` opt-out is guarded only by convention where `main` makes it a
+compiler-enforced rule. Third, grading `opacity` against the live record decides part of §92, whose
+own text says the decision comes before the edit.
+
+## 180. `docs/no-line-numbers` states enforcement it does not have, and its assertion is a to-do list
+
+**Problem.** `9b220f4b` rewrites the no-line-numbers rule and ships an assertion it describes as
+expected to fail for as long as documents are unmigrated. At that commit 27 maintained documents
+carry 2,830 citations and `HANDOFF.md` alone has 895. That is a migration plan wearing an
+assertion's clothes: it fails while the defect lives, which is the inverse of this repository's pin
+convention, and it blocks every commit and the `gate:push` suite.
+
+Three claims in the documents the commit rewrites are false about the code shipped beside them.
+`AGENTS.md` says the check "reads every tracked markdown document… so a document you add is covered
+the day it lands", against a `LINE_NUMBER_GATED` set of three paths. `docs/DOCUMENTATION.md` says
+"Everything else is migrated" over those 2,830 citations, and says the check reads "every tracked
+markdown document" for the call-form and `§N` legs, which read `AGENTS.md` alone. The fence
+exemption's justification — that §99, §106–§109 are entries whose subject is a drifted citation — is
+also wrong: those entries have zero in-fence citations, and the 8 that are fenced in `HANDOFF.md` sit
+in unrelated sections.
+
+**What is salvageable.** `816c5894` and `4dffad98` — the saveLayerCanvas citation corrections and the
+retired-symbol guard widened past `AGENTS.md` — are honest, falsifiable and can land as they are.
+`aac0094d`, `9b220f4b` and the 610-line `scripts/lib/citations/resolve.mjs` cannot: the resolver has
+two dead exports and a wholly untested `git ls-files` branch (the tell is the `fatal: not a git
+repository` it prints on stderr in every test), it imports a devDependency at module top level, its
+`LINE_NUMBER_CITATION` is case-sensitive, and the migration is a multi-session campaign.
+
+**What is needed.** Land `816c5894` + `4dffad98`. For the rest: turn the red assertion into a
+`HANDOFF.md` migration plan, correct the three claims above to what the code does, re-derive or drop
+the fence, and run the migration. Branch `docs/citation-anchors` and `fix/saveLayerCanvas-citations`
+are the same two commits at the same tree and are superseded by this one; they are still unmerged and
+nothing records that.
+
+## 181. A branch sweep under-reports unmerged work, and five hardening branches are unmerged because of it
+
+**Problem.** Ancestry alone is not a completeness test. `test/infra-suite-hardening` is not an ancestor
+of `main`, yet `git diff --stat main...test/infra-suite-hardening` is empty — it landed by cherry-pick
+roughly a hundred commits ago, and `git rev-list --count main..` still reports 2 ahead. A sweep that
+asks only "is this branch an ancestor of main" reports live work as pending.
+
+Running the per-file blob comparison instead found five branches whose unit-test work is genuinely
+absent from `main`: `docs/no-line-numbers` (5 ahead — carries a new `scripts/lib/citations/resolve.mjs`
+and its 220-line test, neither in `main`), `fix/migration-review-sweep` (see §179),
+`docs/luna-psd-currency` (+809 lines to the citation guard), and `docs/citation-anchors` +
+`fix/saveLayerCanvas-citations` (the same two commits, unmerged, superseded by `docs/no-line-numbers` —
+see §180). None has an entry in `.kilo/agent-manager.json` at all, which is why §121's structural
+blindness went unnoticed rather than being the only cause of it.
+
+**Also unaccounted for.** Eight `agent-manager.json` worktree entries point at directories that no
+longer exist and branches that exist in no ref, in no reflog entry and in no dangling commit:
+`fix-usehistory-tests`, `wip/fix-replay-coordinator-tests`, `wip/fix-history-adapter-safety-tests`,
+`wip/fix-useapp-psd-tests`, `wip/fix-userect-tests`, `wip/fix-layerstab-tests`, `audit-scripts-tests`,
+`audit-docs-claims`. Those sessions committed nothing and nothing is recoverable. And two commits sit
+on no branch at all: `0a2f7f2b` (board refusals get tests) and `f3811b65`, a `git stash` commit of
+`docs/no-line-numbers` whose content is already covered and which additionally carries placeholder
+table alignment that would trip the guard it introduces.
+
+**What is needed.** A sweep that compares blobs per test file, not just ancestry, before reporting a
+branch as landed. Recover `0a2f7f2b` or drop it deliberately. Do not recover `f3811b65`.
