@@ -17,6 +17,7 @@ import { test } from './fixtures/extended-test';
 
 import { type BoundingBox, documentToCanvasOffset, drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 type Size = { width: number; height: number };
@@ -232,11 +233,14 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
     await expect(getWorkspaceCanvas(page)).toBeVisible();
 
     const chooser = page.waitForEvent('filechooser');
-    page.once('dialog', (dialog) => {
-      void dialog.accept();
-    });
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-open-button').click();
+    // The app seeds a document on boot, so File > Open is gated behind the app's own
+    // discard prompt, and the answer has to land before the picker opens: the menu item
+    // reaches `openLoadImageDialog` only once the guard resolves. This test's baseline is
+    // the OPENED 64x64 document, so a declined guard would leave the poll below measuring
+    // the seeded 800x600 — which is why the prompt is waited for rather than tolerated.
+    await acceptDiscardPrompt(page);
     const fileChooser = await chooser;
     await fileChooser.setFiles(path.join(testInfo.config.rootDir, 'fixtures/split-half-red-blue.png'));
 

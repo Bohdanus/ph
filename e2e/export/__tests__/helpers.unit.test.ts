@@ -351,14 +351,24 @@ interface DialogSurface {
   dismiss: Mock<() => Promise<void>>;
 }
 
-interface PageSurface {
+/**
+ * `page.on` and `page.once` are on the surface because a helper that installed either one
+ * would auto-answer dialogs, and the ICO path's pin is that it installs NEITHER: an
+ * unhandled native prompt is auto-dismissed, which the app reads as "declined", so a
+ * surprise one surfaces by stopping the flow instead of being accepted away.
+ */
+interface DialogHandlerSurface {
+  on: Mock<(event: string, handler: (dialog: DialogSurface) => void) => void>;
+  once: Mock<(event: string, handler: (dialog: DialogSurface) => void) => void>;
+}
+
+interface PageSurface extends DialogHandlerSurface {
   goto: Mock<(url: string, options?: { waitUntil?: string; timeout?: number }) => Promise<null>>;
   getByTestId: Mock<(testId: string) => LocatorSurface>;
   getByRole: Mock<(role: string, options?: { name?: string | RegExp }) => LocatorSurface>;
   getByText: Mock<(text: string | RegExp, options?: { exact?: boolean }) => LocatorSurface>;
   locator: Mock<(selector: string) => LocatorSurface>;
   waitForEvent: Mock<(event: string, options?: { timeout?: number }) => Promise<DownloadSurface>>;
-  once: Mock<(event: string, handler: (dialog: DialogSurface) => void) => void>;
   /**
    * `pageFunction` is typed `(...args: never[]) => unknown` and the argument `never`,
    * because a page function is serialised and evaluated in the browser: one that closes
@@ -480,6 +490,7 @@ function createPageMock(overrides: Partial<PageSurface> = {}): {
     locator: byKey({}, fallback),
     waitForEvent: vi.fn().mockRejectedValue(new Error('waitForEvent was not configured for this test')),
     once: vi.fn().mockReturnValue(undefined),
+    on: vi.fn().mockReturnValue(undefined),
     waitForFunction: vi.fn().mockResolvedValue(true),
     // A page that does not scroll, which is the truth: the rail declares
     // `min-h-0 overflow-y-auto`, so the page fits a 720px viewport. `maxScrollY: 0` is what
@@ -1237,6 +1248,7 @@ describe('Export Helpers', () => {
       surface: PageSurface;
       page: Page;
       newImage: Record<string, LocatorSurface>;
+      prompt: Record<string, LocatorSurface>;
       canvas: LocatorSurface;
     } {
       const fileMenuButton = createLocatorMock();
@@ -1245,12 +1257,22 @@ describe('Export Helpers', () => {
       const heightInput = createLocatorMock();
       const newImageSubmit = createLocatorMock();
       const drawTool = createLocatorMock();
+      // The unsaved-changes prompt the app shows instead of a native `confirm()`.
+      // `count: 0` is the truth on the page `acceptDiscardPrompt` leaves behind — the same
+      // convention `createSaveDialogPage` uses for `save-dialog` — and it is what makes the
+      // helper's closing "the prompt is gone" check pass rather than silently skip.
+      const confirmDialog = createLocatorMock({ count: vi.fn().mockResolvedValue(0) });
+      const discardButton = createLocatorMock();
+      const cancelButton = createLocatorMock();
       const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
       const { surface, page } = createPageMock({
         getByTestId: byKey(
           {
             'header-file-menu-button': fileMenuButton,
             'header-file-new-button': newImageButton,
+            'confirm-dialog': confirmDialog,
+            'confirm-dialog-confirm-button': discardButton,
+            'confirm-dialog-cancel-button': cancelButton,
             'new-image-width-input': widthInput,
             'new-image-height-input': heightInput,
             'new-image-dialog-submit-button': newImageSubmit,
@@ -1265,6 +1287,7 @@ describe('Export Helpers', () => {
         surface,
         page,
         newImage: { fileMenuButton, newImageButton, widthInput, heightInput, newImageSubmit },
+        prompt: { confirmDialog, discardButton, cancelButton },
         canvas,
       };
     }
@@ -1298,33 +1321,53 @@ describe('Export Helpers', () => {
       expect(result).toBe(SOURCE_DATA_URL);
     });
 
-    it('accepts the unsaved-changes confirm before clicking File > New', async () => {
+    it('answers the in-app unsaved-changes prompt with Discard, between File > New and the first field', async () => {
       const box: Box = { x: 24, y: 36, width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE };
-      const { surface, page, newImage } = createIcoPage(box);
+      const { surface, page, newImage, prompt } = createIcoPage(box);
 
       await setupIcoTest(page);
 
-      // `File > New` in DesktopHeader.tsx asks `confirm()` whenever the document has
-      // unsaved changes, and `src/App.tsx` seeds a blank image on boot, so the prompt
-      // is shown on the first click of a fresh page. Playwright auto-dismisses a dialog
-      // with no handler, the guard reads that as "declined", and the New Image dialog
-      // never opens. Registered with `once`, so only that one prompt is accepted and an
-      // unexpected dialog later in the run still surfaces.
-      expect(surface.once).toHaveBeenCalledTimes(1);
-      const [event, handler] = surface.once.mock.calls[0];
-      expect(event).toBe('dialog');
-      expect(surface.once.mock.invocationCallOrder[0]).toBeLessThan(
+      // `File > New` asks before discarding a document that has unsaved changes, and
+      // `src/App.tsx` seeds a blank image on boot, so the prompt is shown on the first
+      // click of a fresh page. It used to be a native `confirm()` answered by a
+      // `page.once('dialog', …)` handler; it is now the app's own modal
+      // (`src/components/ConfirmDialog`), so the answer is a click on `Discard`.
+      expect(mocks.mockExpect, 'the prompt is WAITED FOR, not clicked on sight').toHaveBeenCalledWith(
+        prompt.confirmDialog,
+        expect.any(String)
+      );
+      expect(prompt.discardButton.click).toHaveBeenCalledTimes(1);
+      // The decline path is a different button and it must not be the one taken — the same
+      // half of the old pin that `expect(dialog.dismiss).not.toHaveBeenCalled()` made.
+      expect(prompt.cancelButton.click, 'the prompt is answered Discard, not Cancel').not.toHaveBeenCalled();
+
+      // The ORDER is the pin, and it is two-sided. Discard cannot be clicked before the
+      // menu item has asked, and the first field cannot be filled before the New Image
+      // dialog has replaced the prompt — so neither of these two inversions can pass.
+      expect(prompt.discardButton.click.mock.invocationCallOrder[0]).toBeGreaterThan(
         newImage.newImageButton.click.mock.invocationCallOrder[0]
       );
-      const dialog: DialogSurface = {
-        accept: vi.fn().mockResolvedValue(undefined),
-        dismiss: vi.fn().mockResolvedValue(undefined),
-      };
+      expect(prompt.discardButton.click.mock.invocationCallOrder[0]).toBeLessThan(
+        newImage.widthInput.fill.mock.invocationCallOrder[0]
+      );
 
-      handler(dialog);
+      // …and the helper then waits for the prompt to LEAVE, which is the assertion the
+      // auto-dismissed native dialog could not make: a count of 0 on the prompt itself,
+      // read after the answer rather than before it.
+      expect(mocks.matchers.toHaveCount).toHaveBeenCalledWith(0);
+      expect(mocks.matchers.toHaveCount.mock.invocationCallOrder[0]).toBeGreaterThan(
+        prompt.discardButton.click.mock.invocationCallOrder[0]
+      );
 
-      expect(dialog.accept).toHaveBeenCalled();
-      expect(dialog.dismiss).not.toHaveBeenCalled();
+      // No native dialog handler is installed any more, and that is the assertion now
+      // standing where the registration used to be asserted. `once` was scoped rather
+      // than global precisely so an UNEXPECTED `confirm`/`prompt` would surface instead of
+      // being swallowed; Playwright auto-dismisses an unhandled one, which the app reads as
+      // "declined", so a surprise prompt cannot be accepted away by anything and stops
+      // this helper at the very next step. A blanket handler is what would swallow it, and
+      // pinning its ABSENCE is what keeps that from being reintroduced.
+      expect(surface.once, 'no native dialog handler may be installed').not.toHaveBeenCalled();
+      expect(surface.on, 'no native dialog handler may be installed').not.toHaveBeenCalled();
     });
 
     it('strokes at the icon stroke offsets rather than the canvas box centre', async () => {
