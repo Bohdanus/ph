@@ -83,10 +83,13 @@ vi.mock('../../../hooks/useRect.ts', () => ({
   useRect: (props: UseRectProps) => {
     h.useRectProps.current = props;
     return {
-      redraw: h.redraw,
-      onPointerDown: h.pointerDown,
-      onPointerMove: h.pointerMove,
-      onPointerUp: h.pointerUp,
+      pointerHandlers: {
+        onPointerDown: h.pointerDown,
+        onPointerMove: h.pointerMove,
+        onPointerUp: h.pointerUp,
+      },
+      rectHandles: { redraw: h.redraw, clearSelection: vi.fn() },
+      pointerState: {},
     };
   },
 }));
@@ -195,9 +198,9 @@ describe('TextToolArea', () => {
   });
 
   describe('onChangeEnd', () => {
-    it('commits the recalculated rect together with the current store color', () => {
+    it('commits the recalculated rect and leaves the tool its own colour', () => {
       h.color = '#ff0000';
-      toolArgs = makeTextArgs({ text: 'hi', rect: { x1: 0, y1: 0, x2: 40, y2: 20 } });
+      toolArgs = makeTextArgs({ text: 'hi', rect: { x1: 0, y1: 0, x2: 40, y2: 20 }, color: '#0000ff' });
       const newRect = { x1: 0, y1: 0, x2: 55, y2: 20 };
       vi.mocked(calculateNewRect).mockReturnValue(newRect);
 
@@ -209,7 +212,24 @@ describe('TextToolArea', () => {
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
-      expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, color: '#ff0000', rect: newRect });
+      // The type colour belongs to the tool and is edited on the options bar. The store's
+      // foreground used to be written over it here, which is what made the swatch unwritable: a
+      // drag republished the foreground, not the colour the user had chosen.
+      expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, color: '#0000ff', rect: newRect });
+    });
+
+    it('does not republish the args when only the store foreground changed', () => {
+      h.color = '#ff0000';
+      toolArgs = makeTextArgs({ text: 'hi', rect: { x1: 0, y1: 0, x2: 40, y2: 20 }, color: '#0000ff' });
+      vi.mocked(calculateNewRect).mockReturnValue({ x1: 0, y1: 0, x2: 55, y2: 20 });
+      const { rerender } = renderArea();
+
+      h.color = '#00ff00';
+      act(() => {
+        rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
+      });
+
+      expect(h.setToolArgs).not.toHaveBeenCalled();
     });
 
     it('focuses the textarea after a successful change end', () => {
@@ -258,17 +278,19 @@ describe('TextToolArea', () => {
       expect(h.redraw).not.toHaveBeenCalled();
     });
 
-    it('renders the text onto the overlay context on repaint', () => {
+    it('renders the text onto the overlay context in the tool colour', () => {
       const ctx = document.createElement('canvas').getContext('2d');
       h.color = '#00ff00';
-      toolArgs = makeTextArgs({ text: 'hello', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } });
+      toolArgs = makeTextArgs({ text: 'hello', rect: { x1: 5, y1: 6, x2: 50, y2: 30 }, color: '#0000ff' });
 
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!({ x1: 5, y1: 6, x2: 50, y2: 30 }));
 
+      // The preview the user reads on the canvas is the colour the bar will commit, not the
+      // foreground: the two used to disagree the moment the bar's own choice was made.
       expect(renderText).toHaveBeenCalledWith(
         ctx,
-        expect.objectContaining({ text: 'hello', color: '#00ff00', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } })
+        expect.objectContaining({ text: 'hello', color: '#0000ff', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } })
       );
     });
 

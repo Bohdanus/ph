@@ -4,7 +4,7 @@ import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { AssetRegistry } from '../asset-registry.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
-import type { DocumentFrame } from '../document-frame.ts';
+import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
 import type { AssetId, DurableLayerSnapshot, DurableLayerSource, DurableOperation } from '../history-model.ts';
 import { createMaterializationKey, materializeDocument, materializeLayer } from '../materialization.ts';
 import type { MaterializationRequest } from '../materialization.ts';
@@ -122,6 +122,7 @@ function makeReplay(layers: Record<string, DurableReplayLayer>): DurableReplayRe
     durableRevision: 0,
     cursor: 0,
     frame: { ...defaultFrame },
+    totalSize: documentFrameSize(defaultFrame),
     layers: Object.freeze({ ...layers }),
     selections: Object.freeze({ selections: Object.freeze([]), activeSelectionId: null }),
     activeLayerId: Object.keys(layers)[0] ?? null,
@@ -502,6 +503,7 @@ describe('materialization source kinds', () => {
       'layer-1',
       Object.freeze({
         kind: 'text' as const,
+        toolName: 'text',
         args: Object.freeze({ toolName: 'text', text: 'hi' }),
         size: { width: 32, height: 16 },
         sourcePos: Object.freeze({ x: 0, y: 0, width: 32, height: 16 }),
@@ -774,6 +776,52 @@ describe('materialization ownership of borrowed rasters', () => {
   });
 });
 
+describe('materialization affine composition', () => {
+  // `operationAffine` (`src/contexts/materialization.ts:109-116`) folds every retained
+  // affine into ONE matrix with `multiplyAffineTransforms(operation.transform, transform)`
+  // — the newest premultiplied onto the accumulated one. This is the only test in the tree
+  // that composes two affines, and the order is the whole point: it is the difference
+  // between folding newest-first (translate, then scale → e=20, f=40) and folding
+  // oldest-first (scale, then translate → e=10, f=20). A `toEqual` on the transform alone
+  // would separate them; a count of transform calls would not, because both orders emit
+  // exactly one `ctx.transform` call.
+  //
+  // The numbers below are derived from `multiplyAffineTransforms` (`affine-transform.ts:59-68`):
+  //   step 1: op = T(1,0,0,1,e=10,f=20) * I            = (1,0,0,1,e=10,f=20)
+  //   step 2: op = S(2,0,0,2,e=0,f=0)  * T             = (2,0,0,2, e=2·10+0·20+0 = 20, f=0·10+2·20+0 = 40)
+  // and from `getAffineBounds` (`affine-transform.ts:101-123`) over a 10x10 size, whose four
+  // transformed corners are (20,40) (40,40) (40,60) (20,60) → x 20..40, y 40..60.
+  it('composes two retained affine operations newest-premultiplied into a single transform', async () => {
+    const registry = new AssetRegistry();
+    const affine = (transform: { a: number; b: number; c: number; d: number; e: number; f: number }) =>
+      ({
+        kind: 'apply-affine-transform',
+        layerId: 'layer-1',
+        transform: Object.freeze(transform),
+      }) as DurableOperation;
+
+    const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [
+      // translate(10, 20)
+      affine({ a: 1, b: 0, c: 0, d: 1, e: 10, f: 20 }),
+      // scale(2, 2)
+      affine({ a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 }),
+    ]);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+
+    // One composed matrix, and it is the newest-premultiplied one. The oldest-first
+    // ordering (A·B) would read [2, 0, 0, 2, 10, 20] here.
+    const transformCalls = recordedContexts.flatMap((ctx) => vi.mocked(ctx.transform).mock.calls);
+    expect(transformCalls).toEqual([[2, 0, 0, 2, 20, 40]]);
+
+    // The presentation bounds follow the composed matrix, offset from the layer origin.
+    expect(result.bounds).toEqual({ x: 20, y: 40, width: 20, height: 20 });
+
+    result.lease.release();
+    registry.shutdown();
+  });
+});
+
 describe('materialization document frame presentation', () => {
   it('frames the presentation into the requested document frame bounds', async () => {
     const registry = new AssetRegistry();
@@ -827,8 +875,18 @@ describe('materialization document frame presentation', () => {
 });
 
 describe('staging before publication', () => {
-  it('does not publish a partially materialized document when a later layer fails', async () => {
+  // SD-8: a refused layer does not refuse the document. This used to assert
+  // `rejects.toThrow(/Unknown or disposed asset/)`, and its trailing block then went on
+  // to measure whether the whole-document rollback had dropped the good layer's cache
+  // entry to `retainCount` 0. Both of those described a behaviour that no longer exists:
+  // `materializeDocument` catches a per-layer failure, reports it, and continues, so
+  // there is no rejection to await and no rollback to measure. The property that took
+  // its place is strictly sharper — the document resolves, the refused layer is ABSENT
+  // from the composed set, the refusal is reported rather than silent, and the surviving
+  // layer keeps its lease until the published document releases it.
+  it('omits only the refused layer, reports it, and still publishes the rest', async () => {
     const registry = new AssetRegistry();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const good = makeLayer('layer-good', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 });
     const bad = makeLayer('layer-bad', rasterSource('missing' as AssetId, 20, 20), {
       x: 0,
@@ -837,22 +895,53 @@ describe('staging before publication', () => {
       height: 20,
     });
     const replay = makeReplay({ 'layer-good': good, 'layer-bad': bad });
+    const request = makeRequest(registry);
 
-    await expect(materializeDocument(replay, makeRequest(registry))).rejects.toThrow(/Unknown or disposed asset/);
-
-    // Nothing is left leased, so a retry of the good layer re-runs its producer
-    // instead of being served a cache entry from the failed attempt.
-    const producerRuns = vi.fn();
+    const releaseSpy = vi.fn();
+    const releasedKeys: string[] = [];
     const originalMaterialize = registry.materialize.bind(registry);
     vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
-      producerRuns();
-      return originalMaterialize(input);
+      const lease = await originalMaterialize(input);
+      const originalRelease = lease.release;
+      return {
+        ...lease,
+        release: () => {
+          releaseSpy();
+          releasedKeys.push(input.key);
+          originalRelease();
+        },
+      };
     });
-    const retry = await materializeLayer(good, makeRequest(registry));
 
-    expect(producerRuns).toHaveBeenCalled();
-    expect(retry.layerId).toBe('layer-good');
-    retry.lease.release();
+    const result = await materializeDocument(replay, request);
+
+    // The refused layer is omitted rather than published empty, and the layer before
+    // it still composed — the omission is local, not a truncated document.
+    expect(Object.keys(result.layers)).toEqual(['layer-good']);
+    expect(result.layers['layer-bad']).toBeUndefined();
+    expect(result.layers['layer-good'].layerId).toBe('layer-good');
+    expect(result.layers['layer-good'].bitmap).toBeDefined();
+    expect(Object.isFrozen(result.layers)).toBe(true);
+
+    // The refusal is reported, not swallowed: one line naming the skipped layer,
+    // carrying the underlying error as the second argument so the cause survives.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [message, reported] = consoleError.mock.calls[0] as [string, Error];
+    expect(message).toBe('Unable to materialize durable layer layer-bad; skipping layer');
+    expect(reported.message).toMatch(/Unknown or disposed asset/);
+
+    // Nothing is rolled back and nothing is released early. The surviving layer holds
+    // its lease until the published document releases it; the refused layer never took
+    // one, so its key is absent from the released set below by construction.
+    expect(releaseSpy).not.toHaveBeenCalled();
+
+    result.release();
+    expect(releasedKeys).toEqual([createMaterializationKey(good, request)]);
+
+    // Double-release stays a no-op.
+    result.release();
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+
     registry.shutdown();
   });
 

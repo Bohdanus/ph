@@ -1,21 +1,30 @@
 import { act, render } from '@testing-library/react';
 import { useEffect } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { type StoreData, type StoreDispatch, StoreProvider, useStore } from '../StoreContext.tsx';
-import { deriveSetDocumentFrameEntry, deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
+import {
+  deriveRemoveLayerEntry,
+  deriveSetDocumentFrameEntry,
+  deriveSetLayerPropertiesEntry,
+  type MigrationDiagnostic,
+} from '../history-adapter.ts';
+import { getAssetRegistry } from '../asset-registry.ts';
 import { decideDurableAppend } from '../history-append.ts';
 import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayersRecord } from '../layer-types.ts';
+import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import {
   HIDE_LAYER_ACTION,
+  NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
+  REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
 } from '../../util/constants.ts';
+import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 
 const layerId = 'layer-1';
@@ -97,7 +106,12 @@ function openDocument(documentId = 'doc-1') {
   return { store, dispatch };
 }
 
-function commitCrop(dispatch: StoreDispatch, entry: HistoryItem, planned?: DurableHistoryEntry | null) {
+function commitCrop(
+  dispatch: StoreDispatch,
+  entry: HistoryItem,
+  planned?: DurableHistoryEntry | null,
+  diagnostics?: readonly MigrationDiagnostic[]
+) {
   act(() => {
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
@@ -105,6 +119,7 @@ function commitCrop(dispatch: StoreDispatch, entry: HistoryItem, planned?: Durab
         updates: { documentFrame: croppedFrame, totalSize: { width: 200, height: 150 } },
         historyItem: entry,
         ...(planned === undefined ? {} : { durableEntry: planned }),
+        ...(diagnostics === undefined ? {} : { durableDiagnostics: diagnostics }),
       },
     });
   });
@@ -141,6 +156,205 @@ function commitProperty(
     });
   });
 }
+
+/**
+ * A layer removal, in the shape `useLayer.removeLayer` produces it: the layer
+ * leaves the record, a bitmapless copy is retained for the presentation
+ * boundary, and the append carries the boundary's plan.
+ */
+function removalItem(id: string, target: string = layerId, overrides: Partial<HistoryItem> = {}): HistoryItem {
+  return { id, actionName: REMOVE_ACTION, layerId: target, args: {}, ...overrides };
+}
+
+function commitRemoval(
+  dispatch: StoreDispatch,
+  entry: HistoryItem,
+  planned?: DurableHistoryEntry | null,
+  target: string = layerId
+) {
+  act(() => {
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: {
+          layers: {},
+          deletedLayers: { [target]: layer() },
+          activeLayerId: null,
+        },
+        historyItem: entry,
+        ...(planned === undefined ? {} : { durableEntry: planned }),
+      },
+    });
+  });
+}
+
+describe('COMMIT_DOCUMENT_EDIT publishes a planned durable removal', () => {
+  it('appends the planned removal and advances the durable cursor by exactly one', () => {
+    const { store, dispatch } = openDocument();
+    const before = store().durableDocument!;
+    expect(before.history).toHaveLength(0);
+    expect(before.cursor).toBe(-1);
+
+    const entry = removalItem('remove-1');
+    commitRemoval(dispatch(), entry, deriveRemoveLayerEntry(entry));
+
+    const after = store();
+    expect(after.layers[layerId]).toBeUndefined();
+    expect(after.deletedLayers[layerId]).toBeDefined();
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDiagnostics).toEqual([]);
+    expect(after.durableDocument!.history).toHaveLength(1);
+    expect(after.durableDocument!.history[0]).toMatchObject({
+      id: entry.id,
+      enabled: true,
+      operation: { kind: 'remove-layer', layerId },
+    });
+    // One append mints one id, so the two models name the same entry.
+    expect(after.history).toHaveLength(2);
+    expect(after.history[1]).toBe(entry);
+    expect(after.durableDocument!.history[0]!.id).toBe(after.history[1]!.id);
+    // Exactly one step, and never ahead of the legacy cursor.
+    expect(after.durableDocument!.cursor).toBe(0);
+    expect(after.durableDocument!.cursor).toBeLessThanOrEqual(after.historyIndex);
+    expect(after.durableDocument!.durableRevision).toBe(before.durableRevision + 1);
+  });
+
+  it('produces the same document as the full conversion', () => {
+    // The single invariant the append boundary exists to hold. A translation that
+    // is self-consistent but wrong — a retargeted id, a lost key, a dropped
+    // enabled gate — passes every other test in this file and fails here.
+    const entry = removalItem('remove-1');
+
+    const { store, dispatch } = openDocument();
+    commitRemoval(dispatch(), entry, deriveRemoveLayerEntry(entry));
+    const published = store().durableDocument;
+
+    const { store: controlStore, dispatch: controlDispatch } = openDocument();
+    commitRemoval(controlDispatch(), removalItem('remove-1'));
+    const converted = controlStore().durableDocument;
+
+    // Guard against the comparison passing on two empty documents.
+    expect(published!.history).toHaveLength(1);
+    expect(converted!.history).toHaveLength(1);
+    expect(published).toEqual(converted);
+  });
+
+  it('falls back to the conversion and reports a mismatch when a publisher retargets the removal', () => {
+    const { store, dispatch } = openDocument();
+    const entry = removalItem('remove-1');
+    const retargeted = {
+      ...(deriveRemoveLayerEntry(entry) as DurableHistoryEntry),
+      operation: { kind: 'remove-layer', layerId: 'layer-2' },
+    } as DurableHistoryEntry;
+
+    commitRemoval(dispatch(), entry, retargeted);
+
+    const after = store();
+    // The edit is published and the rebuilt shadow stays exact, so the sidecar is
+    // still current; what the refusal produces is the reported diagnostic.
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDocument!.history[0]).toMatchObject({
+      id: entry.id,
+      operation: { kind: 'remove-layer', layerId },
+    });
+    // A diagnostic CODE, not a message string: the wording is the store's to
+    // change, the fact that it refused to publish is the contract.
+    expect(after.durableDiagnostics).toHaveLength(1);
+    expect(after.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+    expect(after.durableDiagnostics[0]).toMatchObject({ severity: 'error', historyId: entry.id });
+  });
+
+  it('carries a disabled removal into the published document as disabled', () => {
+    const { store, dispatch } = openDocument();
+    const entry = removalItem('remove-disabled', layerId, { disabled: true });
+    const planned = deriveRemoveLayerEntry(entry);
+    expect(planned!.enabled).toBe(false);
+
+    commitRemoval(dispatch(), entry, planned);
+
+    const after = store();
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDiagnostics).toEqual([]);
+    expect(after.durableDocument!.history[0]).toMatchObject({
+      id: entry.id,
+      enabled: false,
+      operation: { kind: 'remove-layer', layerId },
+    });
+    expect(after.durableDocument!.cursor).toBe(0);
+  });
+
+  it('reports a mismatch when a publisher would re-enable a disabled removal', () => {
+    const { store, dispatch } = openDocument();
+    const entry = removalItem('remove-disabled', layerId, { disabled: true });
+    const reenabled = {
+      ...(deriveRemoveLayerEntry(entry) as DurableHistoryEntry),
+      enabled: true,
+    } as DurableHistoryEntry;
+
+    commitRemoval(dispatch(), entry, reenabled);
+
+    const after = store();
+    expect(after.durableDocument!.history[0]).toMatchObject({ id: entry.id, enabled: false });
+    expect(after.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+  });
+
+  it('opens, commits, and reconciles the asset transaction on publication', () => {
+    const registry = getAssetRegistry();
+    const { store, dispatch } = openDocument();
+    // The baseline replacement converts, so the spies go on after it.
+    const begin = vi.spyOn(registry, 'beginDocumentAssetTransaction');
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+    try {
+      const published = removalItem('remove-1');
+      commitRemoval(dispatch(), published, deriveRemoveLayerEntry(published));
+
+      expect(store().durableStatus).toBe('current');
+      // Publication still reconciles the complete durable reachability set. The
+      // set is empty for this removal, but the transaction boundary is required
+      // for source-backed appends and keeps all append paths atomic.
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+
+      // Control: a refused publication still falls back to conversion, which
+      // opens and reconciles its own transaction after the failed planned path.
+      const retargeted = removalItem('remove-2');
+      commitRemoval(dispatch(), retargeted, {
+        ...(deriveRemoveLayerEntry(retargeted) as DurableHistoryEntry),
+        operation: { kind: 'remove-layer', layerId: 'layer-2' },
+      } as DurableHistoryEntry);
+
+      expect(begin.mock.calls.length).toBeGreaterThan(1);
+      expect(reconcile.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      begin.mockRestore();
+      reconcile.mockRestore();
+    }
+  });
+
+  it('publishes before committing and reconciles only after commit', () => {
+    const registry = getAssetRegistry();
+    const { dispatch } = openDocument();
+    const events: string[] = [];
+    const begin = vi.spyOn(registry, 'beginDocumentAssetTransaction').mockImplementation(() => {
+      events.push('begin');
+      return {
+        commit: () => events.push('commit'),
+        rollback: () => events.push('rollback'),
+      };
+    });
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets').mockImplementation(() => {
+      events.push('reconcile');
+    });
+    try {
+      commitCrop(dispatch(), crop(), plannedFor(crop()));
+
+      expect(events).toEqual(['begin', 'commit', 'reconcile']);
+    } finally {
+      begin.mockRestore();
+      reconcile.mockRestore();
+    }
+  });
+});
 
 describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
   it('appends the planned entry and advances the durable cursor by exactly one', () => {
@@ -260,6 +474,36 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
     expect(store().durableStatus).toBe('current');
     expect(store().durableDiagnostics).toEqual([]);
     expect(store().durableDocument!.history).toHaveLength(1);
+  });
+
+  it('keeps a boundary warning without voiding an otherwise current projection', () => {
+    const { store, dispatch } = openDocument();
+    const warning: MigrationDiagnostic = {
+      severity: 'warning',
+      code: 'invalid-history-entry',
+      message: 'The boundary could not read an optional field.',
+    };
+
+    commitCrop(dispatch(), crop(), null, [warning]);
+
+    expect(store().durableStatus).toBe('current');
+    expect(store().durableDocument).not.toBeNull();
+    expect(store().durableDiagnostics).toEqual([warning]);
+  });
+
+  it('voids the durable projection when the boundary reports an error', () => {
+    const { store, dispatch } = openDocument();
+    const error: MigrationDiagnostic = {
+      severity: 'error',
+      code: 'invalid-history-entry',
+      message: 'The append id is already present in the timeline.',
+    };
+
+    commitCrop(dispatch(), crop(), null, [error]);
+
+    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableDocument).toBeNull();
+    expect(store().durableDiagnostics).toContainEqual(error);
   });
 });
 
@@ -505,5 +749,56 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
     expect(after.history).toHaveLength(2);
     expect(after.history[1]).toBe(entry);
     expect(after.historyIndex).toBe(1);
+  });
+
+  it('derives an image create in the store transaction and publishes its asset reachability', () => {
+    const { store, dispatch } = openDocument();
+    const registry = getAssetRegistry();
+    const bitmap = createMockImageBitmap(40, 30);
+    const source: ImageLayerSource = {
+      kind: 'image',
+      bitmap,
+      name: 'Photo',
+      isBedrock: false,
+      pos: { x: 12, y: 18, width: 40, height: 30 },
+    };
+    const layerId2 = 'layer-2';
+    const addedLayer: Layer = {
+      ...createMockLayer({ id: layerId2, pos: source.pos }),
+      source,
+      bitmap,
+    };
+    const entry: HistoryItem = {
+      id: 'create-layer-2',
+      actionName: NEW_LAYER_ACTION,
+      layerId: layerId2,
+      layerSource: source,
+    };
+    const begin = vi.spyOn(registry, 'beginDocumentAssetTransaction');
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+    try {
+      act(() => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: { layers: { ...store().layers, [layerId2]: addedLayer }, activeLayerId: layerId2 },
+            historyItem: entry,
+          },
+        });
+      });
+
+      const durableEntry = store().durableDocument!.history[0];
+      expect(durableEntry?.operation.kind).toBe('create-layer');
+      if (durableEntry?.operation.kind !== 'create-layer' || durableEntry.operation.layer.source.kind !== 'raster') {
+        return;
+      }
+      expect(registry.getRecord(durableEntry.operation.layer.source.assetId)).toBeDefined();
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+    } finally {
+      begin.mockRestore();
+      reconcile.mockRestore();
+      registry.disposeDocument(store().documentId);
+    }
   });
 });

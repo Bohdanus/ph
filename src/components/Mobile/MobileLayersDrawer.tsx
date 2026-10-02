@@ -4,6 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
+import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
@@ -16,7 +17,7 @@ export interface MobileLayersDrawerProps {
 }
 
 export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, onClose }) => {
-  const [{ layers, activeLayerId, history, historyIndex, totalSize }] = useStore();
+  const [{ layers, activeLayerId, history, historyIndex, totalSize, documentFrame }] = useStore();
   const { createBlankLayer, toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer } = useLayers();
   const { resetHistoryTo, toggleDisabled } = useHistory();
 
@@ -70,6 +71,43 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
     const targetLayer = sortedLayers[index + 2];
     if (!targetLayer) return;
     moveLayerAfter(sortedLayers[index].id, targetLayer.id);
+  };
+
+  // The history tab's three entry points — a tap on a step, Enter or Space on that
+  // step's own control, and the step's eye toggle — all reach `APPLY_HISTORY_REPLAY`
+  // through `useHistory`, which is the dispatch the keyboard refuses while a pointer
+  // gesture owns the document (`useKeyboardEvents.tsx:134`) and the Undo/Redo
+  // buttons now refuse for the same reason (`HistoryControls.tsx`,
+  // `MobileHeader.tsx`). The drawer's own tab had no gate on any of them.
+  //
+  // Inside a gesture's window the replay is destructive. `resetHistoryTo`
+  // replays `selections` from the SAME `history` array, so `history.length` never
+  // moves and the pending commit's `entries.slice(0, cursor + 1)` truncates the
+  // redo tail with no other symptom. `toggleDisabled` is worse in the same window
+  // rather than equal: it writes the disabled flag onto entries the pending commit
+  // is about to append past.
+  //
+  // On a touch screen this drawer is the most exposed place in the app: a second
+  // finger tapping a history row, or the eye, mid-drag is a two-line repro, and the
+  // drawer is reachable with a second finger because it is not pointer-captured.
+  //
+  // The refusal is at the input layer, not in the writer: no dispatch, so nothing
+  // appends, so nothing truncates. `disabled` is not a substitute here either — it
+  // is read at render time and the gesture slot raises no re-render, so it cannot
+  // see a claim made after the last render, and a row disabled by a mid-gesture
+  // render would stay disabled after the release.
+  const handleRewind = (index: number) => {
+    if (isDocumentGestureOpen()) return;
+    resetHistoryTo(index);
+  };
+
+  // `stopPropagation` runs first and unconditionally, so a refused eye click reaches
+  // nothing else in the row: the title is a sibling control rather than an ancestor, and
+  // the gate cases assert that a refused toggle neither enables nor rewinds.
+  const handleToggleDisabled = (event: React.MouseEvent, itemId: string) => {
+    event.stopPropagation();
+    if (isDocumentGestureOpen()) return;
+    toggleDisabled(itemId);
   };
 
   return (
@@ -133,7 +171,13 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
             <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-800">
               <button
                 type="button"
-                onClick={() => createBlankLayer({ color: '#ffffff', opacity: 1, size: totalSize, isBedrock: true })}
+                onClick={() =>
+                  createBlankLayer({
+                    color: '#ffffff',
+                    opacity: 1,
+                    pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
+                  })
+                }
                 data-testid="mobile-add-layer-button"
                 className="flex min-h-11 min-w-11 items-center gap-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm"
               >
@@ -304,16 +348,28 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
 
               return (
                 <li key={item.id}>
+                  {/* A plain `div`, NOT `role="button"` — the same call as the layer row
+                      above (`MobileLayersDrawer.tsx:224`).
+
+                      This row's two controls are the rewind and the eye, and a
+                      `role="button"` container makes its descendants presentational:
+                      assistive technology announces "button" and then drops the eye
+                      toggle inside it, leaving enable/disable unreachable. Nesting
+                      interactive content in a button is invalid ARIA.
+
+                      So the title is the rewind control: a real `<button>`, sibling of
+                      the eye rather than a child of a fake button, and therefore
+                      reachable by Tab and activatable by Enter and Space with no
+                      hand-rolled key handling. That retires the row's `onKeyDown` along
+                      with the `preventDefault` it carried — a native button suppresses
+                      Space's page scroll itself, as a property of the control instead of
+                      of the key — and retires the row's own `onClick` with it, so the
+                      title is the only rewind target. The gesture gate stays inside the
+                      dispatch, which is now the single path both the pointer and the
+                      keyboard take, and the eye's `stopPropagation` stops a refused toggle
+                      at the button that carries it. */}
                   <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => resetHistoryTo(originalIndex)}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      event.preventDefault();
-                      resetHistoryTo(originalIndex);
-                    }}
-                    className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
+                    className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
                       isCurrent
                         ? 'bg-blue-50 dark:bg-blue-900/40 border-blue-500 font-semibold text-blue-900 dark:text-blue-200'
                         : isPast
@@ -324,16 +380,24 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                     <div className="flex min-w-0 items-center gap-3">
                       <button
                         type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleDisabled(item.id);
-                        }}
+                        onClick={(event) => handleToggleDisabled(event, item.id)}
                         className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-gray-500"
                         aria-label={item.disabled ? 'Enable history step' : 'Disable history step'}
                       >
                         <EyeIcon open={!item.disabled} />
                       </button>
-                      <span className="truncate text-sm capitalize">{title}</span>
+                      {/* `getHistoryItemTitle` returns `undefined` for a `TOOL_ACTION`
+                          entry, whose args carry no `toolName`. As a bare span that was
+                          an empty row; as a focusable control it would be an unnamed
+                          button, so the nameless case is named. */}
+                      <button
+                        type="button"
+                        onClick={() => handleRewind(originalIndex)}
+                        aria-label={title ? undefined : 'Untitled history step'}
+                        className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center truncate rounded px-1 text-left"
+                      >
+                        <span className="truncate text-sm capitalize">{title}</span>
+                      </button>
                     </div>
 
                     {isCurrent && (

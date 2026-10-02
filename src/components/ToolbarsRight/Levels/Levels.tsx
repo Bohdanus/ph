@@ -24,16 +24,17 @@ const Levels: React.FC<{}> = () => {
     };
   }, []);
 
-  const throttledOnChange = (newArgs: LevelsToolArgs) => {
-    pendingUpdateRef.current = newArgs;
+  const throttledOnChange = (newArgs: Partial<LevelsToolArgs>) => {
+    pendingUpdateRef.current = { ...(pendingUpdateRef.current ?? args), ...newArgs };
 
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
-        if (pendingUpdateRef.current !== null) {
-          tempUpdateLayer({ id: activeLayerId!, toolArgs: pendingUpdateRef.current });
-          setToolArgs(pendingUpdateRef.current);
-          pendingUpdateRef.current = null;
+        const pending = pendingUpdateRef.current;
+        if (pending !== null && activeLayerId !== null) {
+          tempUpdateLayer({ id: activeLayerId, toolArgs: pending });
+          setToolArgs(pending);
         }
+        pendingUpdateRef.current = null;
         rafIdRef.current = null;
       });
     }
@@ -41,12 +42,12 @@ const Levels: React.FC<{}> = () => {
 
   const handleBrightnessChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const brightness = Number(event.target.value);
-    throttledOnChange({ ...args, brightness });
+    throttledOnChange({ brightness });
   };
 
   const handleContrastChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const contrast = Number(event.target.value);
-    throttledOnChange({ ...args, contrast });
+    throttledOnChange({ contrast });
   };
 
   /**
@@ -69,11 +70,11 @@ const Levels: React.FC<{}> = () => {
    * nothing dispatches `SET_TOOL_DIRTY` with `true` — so every click replayed the
    * timeline one entry back and silently reverted the user's last committed edit.
    *
-   * The baseline is `defaultSettings.levels`, not `resetToLastSavedArgs()`: the
-   * slider write goes through `setToolArgs`, which calls `saveLastSettings` on the
-   * same tick and overwrites `lastSavedSettings.levels` with the value the user just
-   * dragged to. A reset cloned from there restores the unapplied value and the
-   * control goes on lying about it.
+   * The baseline is `defaultSettings.levels`, never the last-saved copy of the
+   * levels settings: the slider write goes through `setToolArgs`, which calls
+   * `saveLastSettings` on the same tick, so `lastSavedSettings.levels` already holds
+   * the value the user just dragged to. Cloning it back would restore the
+   * unapplied value and the control would go on lying about it.
    *
    * `commitDirtyTool` bakes the preview into a real layer plus a `TOOL_ACTION`
    * entry — on tool switch, on export and in `mergeAllLayers` — and by then there

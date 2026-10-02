@@ -1,8 +1,9 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileHeader } from '../MobileHeader.tsx';
+import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const undoMock = vi.hoisted(() => vi.fn());
 const redoMock = vi.hoisted(() => vi.fn());
@@ -11,7 +12,6 @@ const canRedoMock = vi.hoisted(() => vi.fn(() => true));
 const openSaveImageDialogMock = vi.hoisted(() => vi.fn());
 const handleImageSaveMock = vi.hoisted(() => vi.fn());
 const commitDirtyToolMock = vi.hoisted(() => vi.fn(() => ({})));
-const resetToLastSavedArgsMock = vi.hoisted(() => vi.fn());
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const storeStateMock = vi.hoisted(() => ({
@@ -48,7 +48,6 @@ vi.mock('../../../contexts/useHistory.ts', () => ({
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     isToolDirty: currentToolMock.isToolDirty,
-    resetToLastSavedArgs: resetToLastSavedArgsMock,
   }),
 }));
 
@@ -77,6 +76,15 @@ describe('MobileHeader', () => {
     storeStateMock.fileName = 'test-photo.jpg';
     storeStateMock.hasImage = true;
     storeStateMock.canvasRef.current = document.createElement('canvas');
+    // The gesture slot is module-level and outlives every mount, so a leaked
+    // claim would refuse every later click in this file. Cleared on the way in
+    // AND on the way out.
+    resetDocumentGestures();
+  });
+
+  afterEach(() => {
+    resetDocumentGestures();
+    vi.restoreAllMocks();
   });
 
   it('shows the document name and the quick actions', () => {
@@ -102,7 +110,6 @@ describe('MobileHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
 
     expect(undoMock).toHaveBeenCalledTimes(1);
-    expect(resetToLastSavedArgsMock).not.toHaveBeenCalled();
   });
 
   // Two tests deleted, not rewritten. They set `isToolDirty` true and asserted that
@@ -190,6 +197,33 @@ describe('MobileHeader', () => {
     expect(openSaveImageDialogMock).not.toHaveBeenCalled();
   });
 
+  it('logs the rejection with the encoder detail and saves nothing', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    openSaveImageDialogMock.mockRejectedValue(new Error('encoder died'));
+    renderHeader();
+
+    await user.click(screen.getByRole('button', { name: 'Export image' }));
+
+    // The Error is the second argument, not an interpolation, so the stack reaches the console.
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image:', expect.any(Error));
+    expect(handleImageSaveMock).not.toHaveBeenCalled();
+  });
+
+  it('passes a non-Error rejection through to the console unchanged', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    openSaveImageDialogMock.mockRejectedValue('disk offline');
+    renderHeader();
+
+    await user.click(screen.getByRole('button', { name: 'Export image' }));
+
+    // Stringified, a reason object arrived as `Failed to save image: [object Object]` and the
+    // reason was gone. The exact raw value is asserted here, so it fails against that.
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to save image:', 'disk offline');
+    expect(handleImageSaveMock).not.toHaveBeenCalled();
+  });
+
   it('keeps every control at least 44px on both axes', () => {
     renderHeader();
 
@@ -199,5 +233,54 @@ describe('MobileHeader', () => {
     for (const name of ['Open navigation menu', 'Undo', 'Redo', 'Toggle layers panel']) {
       expect(screen.getByRole('button', { name }).className).toMatch(/min-w-11/);
     }
+  });
+
+  /**
+   * The mobile header's Undo and Redo are the desktop `HistoryControls` buttons
+   * in a different shell, and they were uncovered by the keyboard's
+   * document-gesture gate for the same reason. Inside a gesture's window the
+   * replay is destructive: `undo`/`redo` replays `selections` from the SAME
+   * `history` array, so `history.length` never moves and the pending commit's
+   * `entries.slice(0, cursor + 1)` truncates the redo tail with no other
+   * symptom. On a touch screen a second finger tapping Undo mid-drag is a
+   * two-line repro, so this shell is the more exposed of the two.
+   */
+  describe('document gesture gate', () => {
+    it('refuses undo while a document gesture is open, because the release-time commit would truncate the redo tail', () => {
+      renderHeader();
+      claimDocumentGesture('layer-transform', 1);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+      // Enabled, so the refusal is the handler's and not the `disabled`
+      // attribute's — the attribute is read at render time, and the claim
+      // above is made after it.
+      expect(screen.getByRole('button', { name: 'Undo' })).not.toBeDisabled();
+      expect(undoMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses redo while a document gesture is open, for the same reason', () => {
+      renderHeader();
+      claimDocumentGesture('rectangular-selection', 2);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+
+      expect(screen.getByRole('button', { name: 'Redo' })).not.toBeDisabled();
+      expect(redoMock).not.toHaveBeenCalled();
+    });
+
+    it('undoes again once resetDocumentGestures drops the claim, so the gate is a window and not a latch', () => {
+      renderHeader();
+
+      claimDocumentGesture('brush-stroke', 3);
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+      expect(undoMock).not.toHaveBeenCalled();
+
+      resetDocumentGestures();
+      expect(isDocumentGestureOpen()).toBe(false);
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+      expect(undoMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

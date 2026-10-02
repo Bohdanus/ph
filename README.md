@@ -122,8 +122,8 @@ The project uses GitHub Actions for continuous integration:
 - **E2E Job**: Playwright specs in Chrome. A **blocking** gate. It was
   `continue-on-error` on the stated grounds that five specs failed; those failures
   were fixed, so the comment justifying it stopped describing the suite and the job
-  went on reporting a state the suite no longer had. The browser download is cached,
-  so the job is mostly the suite itself. See
+  went on reporting a state the suite no longer had. Chrome is installed through the
+  OS package manager, so there is nothing here to cache. See
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
 - **Dependency licences**: the allow/deny list and the high-severity advisory
   threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing
@@ -149,28 +149,29 @@ e2e/                  # Playwright end-to-end specs + their helper unit tests
 
 ## Scripts
 
-| Script                      | Description                                           |
-| --------------------------- | ----------------------------------------------------- |
-| `dev`                       | Start development server                              |
-| `build`                     | Build for production                                  |
-| `preview`                   | Preview production build                              |
-| `test`                      | Run unit tests                                        |
-| `test:integration`          | Run integration tests                                 |
-| `test:e2e`                  | Run Playwright end-to-end specs                       |
-| `test:e2e:unit`             | Run e2e helper unit tests                             |
-| `test:e2e:unit:coverage`    | e2e helper unit tests + coverage                      |
-| `test:e2e:ui`               | Playwright UI mode (opens a window)                   |
-| `test:e2e:debug`            | Playwright inspector (opens a window)                 |
-| `test:e2e:headed`           | Opt in to a visible window (warns; do not touch it)   |
-| `test:e2e:install`          | Install the Chrome browser Playwright uses            |
-| `test:e2e:update-baselines` | Rewrite visual-regression baselines                   |
-| `test:e2e:report`           | Open the last Playwright HTML report (opens a window) |
-| `test:e2e:clean`            | Remove generated run output                           |
-| `tsc`                       | TypeScript type checking                              |
-| `lint`                      | Lint with ESLint                                      |
-| `lint:check`                | Lint + format check                                   |
-| `lint:fix`                  | Auto-fix lint issues                                  |
-| `format`                    | Format with Prettier                                  |
+| Script                      | Description                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------ |
+| `dev`                       | Start development server                                                       |
+| `build`                     | Build for production                                                           |
+| `preview`                   | Preview production build                                                       |
+| `test`                      | Run unit tests                                                                 |
+| `test:integration`          | Run integration tests                                                          |
+| `test:e2e`                  | Run Playwright specs (a wrapper: starts its own dev server on a port it picks) |
+| `test:e2e:raw`              | The bare `playwright test`, with no wrapper                                    |
+| `test:e2e:unit`             | Run e2e helper unit tests                                                      |
+| `test:e2e:unit:coverage`    | e2e helper unit tests + coverage                                               |
+| `test:e2e:ui`               | Playwright UI mode (opens a window)                                            |
+| `test:e2e:debug`            | Playwright inspector (opens a window)                                          |
+| `test:e2e:headed`           | Opt in to a visible window (warns; do not touch it)                            |
+| `test:e2e:install`          | Install the Chrome browser Playwright uses                                     |
+| `test:e2e:update-baselines` | Rewrite visual-regression baselines                                            |
+| `test:e2e:report`           | Open the last Playwright HTML report (opens a window)                          |
+| `test:e2e:clean`            | Remove generated run output                                                    |
+| `tsc`                       | TypeScript type checking                                                       |
+| `lint`                      | Lint with ESLint                                                               |
+| `lint:check`                | Lint + format check                                                            |
+| `lint:fix`                  | Auto-fix lint issues                                                           |
+| `format`                    | Format with Prettier                                                           |
 
 ## License
 

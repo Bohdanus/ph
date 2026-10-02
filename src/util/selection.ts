@@ -17,6 +17,13 @@ import { documentToCanvasPoint } from '../contexts/document-frame.ts';
 export const SELECTION_ANCHOR_RADIUS = 5;
 export const SELECTION_ANCHOR_HIT_RADIUS = 8;
 
+// Outline chrome, in CSS px. The tool overlay is sized to the DOCUMENT and displayed with
+// `object-contain`, so a context draws in document px while these are CSS px; both painters below
+// divide them by the contain fit before they reach a context. See `drawSelectionOutline`.
+const OUTLINE_LINE_WIDTH = 2;
+const OUTLINE_DASH_LENGTH = 6;
+const OUTLINE_DASH_GAP = 4;
+
 export function normalizeSelectionPoints(points: Point[]): Pick<Selection, 'points' | 'pos'> | null {
   if (points.length < 3) return null;
 
@@ -134,18 +141,47 @@ export function drawClosedSelectionPath(ctx: CanvasRenderingContext2D, points: P
   for (let i = 1; i < points.length; i++) {
     ctx.lineTo(points[i].x, points[i].y);
   }
-
   ctx.closePath();
   ctx.stroke();
 }
 
-export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: Selection, frame?: DocumentFrame): void {
+/**
+ * The full static border plus handles, for the polygon-selection tools that do NOT get
+ * the animated outline.
+ *
+ * `Main.tsx`'s `POLYGON_SELECTION_MODES` covers the lasso, the feather magnetic lasso and
+ * the magic wand, and the other two polygon tools — elliptical and quick selection — are
+ * deliberately absent from it, so they have no ants canvas to defer to and this is the
+ * only thing that draws their border. `drawSelectionAnchors` cannot serve them: both of
+ * those tools commit with `sourceTool: 'magic-wand'`
+ * (`ELLIPTICAL_SELECTION_SOURCE_TOOL` at `ellipticalSelection.ts:48`,
+ * `QUICK_SELECTION_SOURCE_TOOL` at `quickSelection.ts:43`), and the anchors skip that
+ * source, so asking for anchors alone leaves them with no border at all.
+ *
+ * `scale` is CSS px per document px — the contain fit — and it is what makes the chrome the same
+ * thickness on screen at any zoom. It defaults to 1, the identity divisor, so a caller that does
+ * not measure it reproduces exactly what this drew before the divisor existed. It is a parameter
+ * rather than a measurement taken here because this is a pure function and `getBoundingClientRect()`
+ * in a paint path is a forced layout; callers get it from `useContainScale`, which is the same
+ * number `getLocalCoords` divides the pointer by.
+ */
+export function drawSelectionOutline(
+  ctx: CanvasRenderingContext2D,
+  selection: Selection,
+  frame?: DocumentFrame,
+  scale = 1
+): void {
   if (!selection.isActive) return;
 
   const points = getSelectionAbsolutePoints(selection).map((point) =>
     frame ? documentToCanvasPoint(point, frame) : point
   );
   if (points.length < 3) return;
+
+  const lineWidth = OUTLINE_LINE_WIDTH / scale;
+  const dash = OUTLINE_DASH_LENGTH / scale;
+  const gap = OUTLINE_DASH_GAP / scale;
+  const anchorRadius = SELECTION_ANCHOR_RADIUS / scale;
 
   ctx.save();
   // The tool overlay is one 2D context for the whole session and every tool area is handed the
@@ -155,8 +191,8 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
   // one tool at a time and were missing the magic wand's.
   resetOverlayAlpha(ctx);
   ctx.strokeStyle = 'rgba(0,123,255,0.95)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = lineWidth;
+  ctx.setLineDash([dash, gap]);
   drawClosedSelectionPath(ctx, points);
 
   if (selection.sourceTool !== 'freehand-lasso' && selection.sourceTool !== 'magic-wand') {
@@ -165,12 +201,67 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
       ctx.beginPath();
       ctx.fillStyle = 'white';
       ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
-      ctx.lineWidth = 2;
-      ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      ctx.lineWidth = lineWidth;
+      ctx.arc(point.x, point.y, anchorRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     });
   }
+
+  ctx.restore();
+}
+
+/**
+ * The draggable vertices of a committed selection, drawn on the tool overlay.
+ *
+ * Only the anchors. The border itself is the animated marching-ants outline owned
+ * by `useSelectionMarchingAnts` on its own canvas, so painting a second static
+ * stroke here would show both.
+ *
+ * `scale` is CSS px per document px, the same divisor `drawSelectionOutline` takes and the same one
+ * the marching ants take: the dot has to be the same size on screen as the dashes it belongs to,
+ * and below a scale of 1 an undivided radius puts a sub-pixel dot inside a hit target that does not
+ * move with it.
+ */
+export function drawSelectionAnchors(
+  ctx: CanvasRenderingContext2D,
+  selection: Selection,
+  frame?: DocumentFrame,
+  scale = 1
+): void {
+  if (!selection.isActive) return;
+  // A traced boundary can carry hundreds of sampled points, so freehand and the
+  // magic wand get a border and no handles.
+  if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return;
+
+  const points = getSelectionAbsolutePoints(selection).map((point) =>
+    frame ? documentToCanvasPoint(point, frame) : point
+  );
+  if (points.length < 3) return;
+
+  const lineWidth = OUTLINE_LINE_WIDTH / scale;
+  const anchorRadius = SELECTION_ANCHOR_RADIUS / scale;
+
+  ctx.save();
+  // The tool overlay is one 2D context for the whole session and every tool area is handed the
+  // same object, so an anchor drawn with no `globalAlpha` of its own renders at whatever the last
+  // painting tool left behind. Resetting HERE rather than at the call sites is what makes the
+  // anchors correct for every tool that draws one; the per-caller resets this retires were added
+  // one tool at a time and were missing the magic wand's. The anchors inherited this from
+  // `drawSelectionOutline`, which carried the same reset when it drew the border and the handles
+  // together; splitting the border out to the ants canvas must not lose it.
+  resetOverlayAlpha(ctx);
+  ctx.setLineDash([]);
+
+  points.forEach((point, index) => {
+    ctx.beginPath();
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
+    ctx.lineWidth = lineWidth;
+    ctx.arc(point.x, point.y, anchorRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
 
   ctx.restore();
 }
@@ -181,11 +272,21 @@ export function distanceBetweenPoints(a: Point, b: Point): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-export function findSelectionAnchorAtPoint(selection: Selection, point: Point): number | null {
+/**
+ * The anchor whose point falls within the grab radius, or null.
+ *
+ * `scale` is CSS px per document px, the same divisor `drawSelectionAnchors` uses. It is a parameter
+ * rather than a measurement because this function and that one receive a document-space point from
+ * the same caller, and a hit target that is not the same size on screen as the dot it is meant to
+ * grab is a worse defect than the one the divisor fixes: making the dot constant on screen while
+ * leaving the radius in document px shrinks the target below the visible dot at every zoom below 1.
+ */
+export function findSelectionAnchorAtPoint(selection: Selection, point: Point, scale = 1): number | null {
   if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return null;
 
+  const hitRadius = SELECTION_ANCHOR_HIT_RADIUS / scale;
   const points = getSelectionAbsolutePoints(selection);
-  const anchorIndex = points.findIndex((anchor) => distanceBetweenPoints(anchor, point) <= SELECTION_ANCHOR_HIT_RADIUS);
+  const anchorIndex = points.findIndex((anchor) => distanceBetweenPoints(anchor, point) <= hitRadius);
 
   return anchorIndex === -1 ? null : anchorIndex;
 }
@@ -375,12 +476,18 @@ function requireSelectionCanvasContext(canvas: ClipboardCanvas, operation: strin
  *
  * The bitmap-only wrappers `copyPolygonToCanvas` / `copyFeatheredPolygonToCanvas` cannot
  * use it. Their return value is committed as a layer's `tmpCanvas` with no null check
- * anywhere on the way, so they throw. Nor can the outermost callers be counted on to
- * report a failure afterwards: only `Lasso.tsx` reads `copyActiveSelection`'s boolean,
- * while `FreehandLasso.tsx`, `FeatherMagneticLasso.tsx`, `MagicWand.tsx`,
- * `RectangularSelection.tsx` and `AppKeyboardShortcuts.tsx` all discard it, and the
- * keyboard shortcut discards it outside any `try`. A `null` there would delete those
- * call sites' user-visible `alert` with nothing in its place.
+ * anywhere on the way, so they throw. The throw is what carries the named error out of the
+ * tool processor: the only caller of `copyPolygonToCanvas` is the polygon processor
+ * (`src/tools/selection.ts:18`), reached solely from `tempUpdateLayer`, whose `catch`
+ * (`src/contexts/useLayer.ts:606-608`) logs it and returns. Nothing else observes it, which
+ * is exactly why a stand-in canvas cannot be substituted here: a `null` would leave the
+ * error with no in-band consumer at all. The outermost UI callers are a separate channel
+ * and never reach these wrappers — they go through `copyActiveSelection`, whose `false`
+ * return every caller now reads and reports: `Lasso.tsx`, `FreehandLasso.tsx`,
+ * `FeatherMagneticLasso.tsx`, `MagicWand.tsx`, `QuickSelection.tsx`,
+ * `EllipticalSelection.tsx`, `RectangularSelection.tsx` and the `AppKeyboardShortcuts.tsx`
+ * copy shortcut each log it. That channel is therefore not silent, but it is not this one
+ * either: it reports the missing snapshot, and says nothing about the context failure below.
  */
 function unavailableSelectionCanvasContext(operation: string, canvas: ClipboardCanvas): null {
   console.error(new SelectionCanvasContextError(operation, canvas.width, canvas.height));

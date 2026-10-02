@@ -179,7 +179,25 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Two failures in roughly fifteen full runs.**
+**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision).
+Five recorded full-run failures across four checkouts, never once in isolation.
+Not fixed. Not a known-failing test; it is intermittent.**
+
+**The skip is a gate decision, not a fix, and it is not a waiver.**
+`src/contexts/__tests__/useFile.test.tsx` carries an `it.skip` on the one test,
+with the reason in the comment above it. It was skipped on §12's grounds, which
+are the same grounds and are not restated here: a default run is contracted to
+zero failures, a test red roughly one run in five makes unrelated merges look
+broken, and that trains the response of ignoring the gate — which costs more
+than this one test buys. A flaky assertion is also worse than no assertion: a
+green result from it carries no information, so it cannot justify a change
+either. **Nothing about the defect is waived; the hunt below is un-done and
+filed, and the skip is one line to remove.**
+
+**Do not "fix" this by loosening anything.** There is no bound here to widen, and
+that is what the capture below establishes: the save resolves, the details are
+correct, and the only thing that failed is a dialog that should not have been
+open. Relaxing the assertion would delete the only statement this test makes.
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -195,10 +213,42 @@ Observed 2026-09-28, in a full `npm run test` on branch
 `fix/handoff-2026-09-28`. It has **not** reproduced on demand: the same file
 passes in isolation, and six further consecutive full runs were green (198/198
 files, 4513 passed, 34 expected fail). It then **recurred** during the rebase
-onto the responsive tranche, so the honest tally is **two** failures in roughly
-fifteen full runs, not one in seven. The assertion text was not captured on
-either occasion — only the test name — so the difference from section 1 is the
-name and a second data point, not a diagnosis.
+onto the responsive tranche, so the honest tally was **two** failures in roughly
+fifteen full runs, not one in seven. A **third** appeared on 2026-09-28 on
+`integration/e2e-campaign-final`, again only in a full run and again passing
+2/2 in isolation immediately afterwards. The assertion text was not captured on
+any occasion — only the test name — so the difference from section 1 is the
+name and a third data point, not a diagnosis.
+
+**What the three occurrences have in common, now that there are three.** Every
+one was a full `npm run test` with several agents running Playwright elsewhere
+on the machine, and every one passed in isolation within seconds. That is
+consistent with the `vmThreads` pool reading timing-sensitive state under CPU
+contention rather than with anything in the change, which is why section 6's
+"not the pool" caveat and this entry have to be read together: the pool is a
+real mechanism, and so is a genuinely unresolved save pipeline, and three
+occurrences do not separate them. What would: capturing the assertion text.
+Capture it next time and this becomes diagnosable in one run.
+
+**The two accounts of the third report may be one event reported twice.** The campaign branch and
+`docs/review-findings-2026-09-28` are not ancestors of one another (merge base `3e52b4e`), which is
+why the tally cannot be pinned from the branches alone: nothing in either branch's history
+distinguishes the runs, and neither run's log was kept. Until one of them produces a captured
+assertion, **four and three are both consistent with what is recorded**, and the difference does not
+change the hunt. What does change the hunt is the fourth report, because it is the one that lands on
+the lead below.
+
+**The report that matters, because it lands on the lead below.** It
+**The third occurrence is the one that matters, and it lands on the lead below.** It
+recurred on `docs/review-findings-2026-09-28` in the run immediately after that branch
+extracted the dialog focus-ownership block out of `SaveDialog.tsx` into
+`src/hooks/useDialogFocusContainment.ts` — the one file in this test's import graph
+that either branch has changed. Before that extraction the tally was two; after it,
+three. **That is a correlation across two branches, not a cause**, and it is the
+cheapest thing to test next: revert the extraction's mount effect alone, run the full
+suite in a loop, and see whether the third occurrence goes away. Do not run a scoped
+loop and conclude anything from it — section 6 forbids inferring from a scoped green
+for a failure observed in a full run.
 
 **Do not close it as "the pool".** Two things make this one worth keeping
 open, and neither is the pool:
@@ -220,8 +270,9 @@ open, and neither is the pool:
 3. **What the branch actually changed under this test is `SaveDialog.tsx`, and
    it changed focus.** `git diff 80eb207 --stat` on `useFile.test.tsx`,
    `useFile.tsx` and `image-load-save-utils.ts` is **empty** — the test and the
-   whole save path beneath it are untouched. The only file inside this test's
-   import graph that changed is the component itself. Its new mount effect calls
+   whole save path beneath it are untouched. The only files inside this test's
+   import graph that either branch has changed are the component itself and, since
+   `a30c318`, the hook its focus block moved into. That hook's mount effect calls
    `.focus()` synchronously and its cleanup calls `previouslyFocused?.focus?.()`,
    and both dispatch `focusin`/`focusout` — the events React 19 backs
    `onFocus`/`onBlur` with — from inside a promise continuation. **That is a lead,
@@ -242,7 +293,544 @@ green. **Capture the assertion, not just the test name**, and record whether it
 was a timeout or a value mismatch: a timeout points at the focus/async
 interaction in 3, a value mismatch points at ordering.
 
-## 8. Files
+**The assertion is now captured, and it is a value mismatch, not a timeout.**
+Fifth occurrence, 2026-09-29, on `feat/history-remove-append` in a full
+`npx vitest --run src/contexts` (81 files, 1960 tests) — the run right after a
+code review on that branch, so the machine was busy:
+
+```
+FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
+    > passes JPEG quality through to raster encoding and resolves the save details
+AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
+ ❯ src/contexts/__tests__/useFile.test.tsx:157:51
+ Test Files  1 failed | 80 passed (81)
+      Tests  1 failed | 1956 passed | 3 expected fail (1960)
+```
+
+The `expect(screen.queryByText('Save File As...')).toBeNull()` in `useFile.test.tsx` is
+the `toBeNull()` half of a test whose first assertion has already passed —
+`expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
+— so the save **did** resolve and the pipeline **did** hand back its
+details. What failed is that a **Save File As dialog was open when it should not
+be**. (The failure quoted above says `:157`, which is what the reporter printed;
+the file has since grown — the `it.skip` above it, and 19 more lines — so the
+assertion is the `toBeNull()` above, and its passing sibling is the
+`toHaveBeenCalledWith` directly above that. Read the line
+number in the quote as history and the assertion text as the current tree.)
+
+Read against this entry's own findings that is a real narrowing: the
+encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
+so `saveImageToDisk` is a bare `vi.fn()` and `encodeAvif` never runs), so the
+failure is not an encoding refusal and not `retireUnreferenced` — **it is
+whatever decides whether the confirmation dialog opens at all**, which is a
+dialog-state question, not a pixel one. That is a different subsystem from the
+three candidates this entry had, and it is now the only one the evidence
+supports.
+
+**What this occurrence does not establish.** One failure in five full runs of
+the same tree — the four subsequent runs were `1957 passed | 3 expected fail`
+each — and the file passes alone, so **nothing here shows the branch causes it.**
+The one suggestive datum cuts the other way: a run of the same tree with
+`history-append.remove.test.ts` excluded was green (80 files, 1927 tests), and
+the two-file run was green. That is a coincidence of worker partitioning, not a
+mechanism, because the same file set then ran green four times over. Treat the
+exclusion result as a lead for the next reproduction and nothing more — the same
+standard section 6 applies to a green run.
+
+## 8. A third, NAMED observation — the paint-bucket contiguous test, once, in a full headless run
+
+**Status: OPEN. Named, not reproduced. One failure in three reproduction attempts.**
+
+```
+  1 failed
+    e2e/erase-fill-eyedropper.spec.ts:438
+      > Eraser, fill tools and eyedropper
+      > the paint bucket fills a contiguous region and not its neighbour
+  Error: Canvas did not render the #cc0000 line within 10000ms
+    at helpers/canvas-helpers.ts:536
+    at waitForCanvasPixels (e2e/helpers/canvas-helpers.ts:536)
+    at drawSlab (e2e/erase-fill-eyedropper.spec.ts:233)
+    at e2e/erase-fill-eyedropper.spec.ts:441
+```
+
+Observed 2026-09-28 on `main` at `cc7b647`, in a full headless `npx playwright test`
+reporting `182 passed, 1 failed, 2 skipped` (185 total). The line numbers in that
+quote are `cc7b647`'s; on the branch that hardened the failure path the same
+anchors are the test declaration at `:487`, `drawSlab` at `:245` and the pixel
+wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work — though it has
+since moved: the quote's `:536` frame is now the blank line before
+`waitForCanvasPixels` (`:558`), whose timeout throw is at `:579`. So "unchanged by
+that work" was true of the commit range and is no longer true of the file.
+
+**That run was not a clean run, and that is the single most useful thing known
+about it.** It was produced by the e2e orchestrator with six other agents running
+Playwright concurrently on the same host (board post `main`, "Status of the
+takeover"), which also recorded the prediction that this flake and the flyout
+long-press one "both surface under CPU contention" and that a failure reported by
+a subagent is "very likely contention, not a regression". Every reproduction
+attempt below was made with nothing else running, and every one was green. **The
+difference between the two experiments is the contention, not the code.** A full
+suite under deliberate CPU load is the one experiment that would settle it.
+
+**That experiment has now been run, and the flake recurred — at a DIFFERENT
+assertion than the one this section records.** On 2026-09-28, a serial full-suite
+run on `integration/e2e-campaign-final` at `210ace6`, on a host with other agents
+running Playwright, reported 291 passed, 2 skipped and this test failed. The
+recovered `playwright-report/data/` artifact for the failure names the wait that
+gave up:
+
+```
+Error: the blank base layer to be composed
+Timeout 5000ms exceeded while waiting on the predicate
+  at e2e/erase-fill-eyedropper.spec.ts:146-148   (inside openWorkspace)
+```
+
+So the failure is in the test's FIRST act, before `drawSlab` is ever called, and
+it is the seed's composition poll running out of its default 5s budget — not the
+`Canvas did not render the #cc0000 line within 10000ms` at `drawSlab` that the
+observation above records. The refused-commit mechanism below cannot be what
+happened, and on this tree it cannot be produced at all: `drawSlab` now asserts
+the commit first (`erase-fill-eyedropper.spec.ts:277-280`), so a refused commit
+names itself as a `toBeEnabled()` failure on the undo button instead of
+surfacing later as a bare pixel timeout. The page snapshot at failure showed the
+document WAS published (a `Blank 1` Layers row, a `new layer` History row, undo
+and redo disabled) while the pixel poll never returned — which is the
+readiness-budget class of section 9, not a paint-bucket defect.
+
+**It still does not reproduce.** Attempts after that run, all headless on the
+same tree with the port pinned and server reuse off:
+
+| attempt                                                 | result                       |
+| ------------------------------------------------------- | ---------------------------- |
+| the test alone, `--repeat-each=5`                       | `5 passed` (24.4s)           |
+| the whole `erase-fill-eyedropper.spec.ts`               | `10 passed` (23.6s)          |
+| the test alone, `--repeat-each=20` under 10 CPU burners | `20 passed` (3.6m), 3.3-8.1s |
+| the test alone, 3 cold-Vite runs under 10 CPU burners   | `3 passed`                   |
+
+So the entry stays OPEN and its class is unchanged — intermittent, load-sensitive,
+never reproduced on demand — but **both the mechanism and the error signature
+recorded here are stale for this tree**, and the next hunter should start at
+`openWorkspace`'s 5s composition poll rather than at the Draw commit. Nothing
+here is closed: the specific 5s-budget exhaustion is still unexplained, and
+`readPixel` returning null a hundred times in a row on a document the snapshot
+shows as published is not something the reproduction attempts above can answer.
+
+**It did not reproduce again.** Attempts, all on `cc7b647` in a dedicated worktree
+with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
+
+| attempt                                                 | result                                                         |
+| ------------------------------------------------------- | -------------------------------------------------------------- |
+| full suite (`npx playwright test`)                      | `183 passed, 2 skipped`                                        |
+| `e2e/erase-fill-eyedropper.spec.ts --repeat-each=5`     | `50 passed`                                                    |
+| the failing test body, instrumented, `--repeat-each=60` | 0 failures in the 20 that completed before the run was stopped |
+
+**Two properties of the observation that the hunt must not assume away.**
+
+1. **It is not a cross-test state leak, and the "7 tests in one worker" shape is
+   the wrong frame.** The file declares **10** tests, not 7, and the failing one is
+   the 6th. Every test gets a fresh `BrowserContext`, the app persists nothing but
+   the theme (`src/contexts/ThemeContext.tsx:14,28` is the only `localStorage`
+   write in `src/`), and the document starts `uninitialized` on every load
+   (`src/contexts/StoreContext.tsx:297,307,315,317`). **A leaked marquee, layer,
+   zoom or tool is impossible across tests here**, and the failing test's first act
+   is `openWorkspace`, before any of its own state exists.
+2. **It is not the 440px scroll that `preservingScroll` exists to undo.** Measured
+   on this tree at 1280x720: `document.documentElement.scrollHeight` is **720**,
+   equal to `innerHeight`, and `window.scrollY` was **0** at every step of the
+   failing test's setup. The overflow that made the page 1177px tall was fixed by
+   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:909`);
+   the canvas box is a constant `108,100 922x583` from tool click to capture. The
+   1177px/440px figures in `e2e/helpers/screenshot-scale.ts:108-116`,
+   `e2e/helpers/cdp-helpers.ts:53-54`, `e2e/helpers/toolbar-helpers.ts:102-108` and
+   four unit-test comments now describe a layout this build does not produce.
+   **They are stale, not load-bearing, and correcting them is its own change.**
+
+**What the failure therefore is, and is not.** `hasRedPixels`
+(`e2e/helpers/canvas-helpers.ts:464-468,232-234`) wants `red > 180, green < 100,
+blue < 100` anywhere in a 360x140 capture that certainly contains the line. The
+line is composited over an opaque white base, so its red channel is **204 at full
+opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
+cannot push it under the threshold, and `drawSlab` pins that slider to 1 anyway.
+**The threshold is not defeatable and is not the cause.** The capture also lands
+wholly inside the viewport at `x 228..588, y 230..370` against a 1280x720 window,
+and no entry in `e2e/OPEN_PROBLEMS.md` records a viewport-edge truncation —
+the capture is simply inside the window, so the hazard does not apply. What is left is the only remaining reading: **the stroke never reached the
+composite**, and every action in `drawSlab` reported success while it did not.
+
+**The two candidate mechanisms, neither demonstrated.**
+
+- A **refused commit**. The Draw tool commits from `handlePointerUp` and nowhere
+  else (`src/components/Main/DrawToolArea.tsx:110-143`), and it is reached only
+  when `isPointerUpValid` agrees, which refuses a non-primary button or a foreign
+  pointer id (`src/hooks/usePointerPosition.ts:221,223`) and refuses a second
+  press while one is live (`:198`). A refusal produces no layer, no history entry
+  and no log. See `HANDOFF.md` §66 — that silence is recorded there as a
+  document-state defect in its own right, independently of this flake.
+- A **commit the seed overwrote**. The store has no document until the seeding
+  `REPLACE_DOCUMENT` lands (`src/hooks/useApp.ts:77-80` ->
+  `src/contexts/useLayer.ts:214-230` -> `:174-199`), and a tool layer is appended
+  with `COMMIT_DOCUMENT_EDIT` against the `layers` its render closure captured
+  (`src/contexts/useLayer.ts:174,201-207`). **Weakened, not eliminated:** an
+  instrumented copy of the real `openWorkspace` measured its own pixel poll
+  satisfied on its **first** attempt on 20 of 20 runs, 42-154 ms after `goto`
+  resolved, so the old gate did return before it had established that a document
+  existed. That gate is now fixed and proved by a committed assertion — see below —
+  but no run of the fixed tree has yet failed either, so it is **not** evidence
+  that this was the cause.
+
+**The fixed half, and the tripwire that replaces the ambiguity.** `openWorkspace`
+waited on `readPixel(...) not.toBeNull()` and claimed to wait for the seeded base
+layer. It did not: `readPixel` calls `getColorAtPoint(image, x, y, 0)` with no
+`ignoreNearWhite`, and that returns `null` only for an out-of-capture point or a
+fully transparent one (`e2e/helpers/canvas-helpers.ts:728-730,743,757`) — **a white pixel
+satisfied it**, so the poll only asserted that a screenshot was non-empty. It now
+additionally waits for the seeded `Blank 1` row to be in the Layers panel, read by
+name, which is a fact about the document rather than about a capture. And `drawSlab`
+now asserts the stroke **committed** — `undo` is disabled on a seeded document and
+enabled after the append — _before_ it polls for pixels, so a refused commit names
+itself in the default expect timeout instead of surfacing ten seconds later as a
+bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:579`.
+
+**To hunt it, capture the artifact, not the name.** The single most valuable
+change to a future report of this is the state at the moment the wait gives up:
+`window.scrollY`, the canvas `boundingBox()`, `elementFromPoint` at the press
+coordinate, whether `undo-button` is enabled, and a full-canvas red-pixel count.
+`drawSlab` now fails on the commit assertion before that state is needed, so the
+artifact to attach is the Playwright trace: run with `--retries=1` so
+`trace: 'on-first-retry'` yields one, and read `test-results/`. Do **not** close
+this by re-running the suite and getting green — that is the rule this file
+already sets for section 1, and it applies here unchanged. A second observation,
+with the assertion text and whether it was a timeout or a value mismatch, is
+worth more than twenty green runs.
+
+## 9. A fourth, NAMED observation — the first Playwright page loads in a cold checkout time out
+
+This one is not a flake at all. It is deterministic, it reproduces on the first
+run in a fresh checkout, and it is regularly misdiagnosed as a product defect in
+whichever spec happened to run first.
+
+`npm run test:e2e` starts Vite, and Vite transforms `src/` on first request. A
+spec's `beforeEach` that does `await page.goto('/')` and then
+`expect(canvas).toBeVisible()` is racing that transform against Playwright's
+default 5s assertion budget. On a cold server the first several page loads lose.
+
+Measured on clean main, `npx playwright test e2e/sidebar-flyout.spec.ts`:
+
+| run               | result                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| first, cold Vite  | 5 failed, 13 passed — every failure in the same `beforeEach` |
+| second, warm Vite | 0 failed, 18 passed                                          |
+
+Every one of the five failures was the identical assertion, on the identical
+line, and none of them was a flyout assertion:
+
+```
+Error: expect(locator).toBeVisible() failed
+Locator: getByTestId('workspace-canvas')
+Error: element(s) not found          # 5s budget, e2e/sidebar-flyout.spec.ts:125
+```
+
+The diagnostic detail is the shape of it: the failures were **tests 1-6** — the
+first page loads — while tests 7-19 ran the _same_ `beforeEach` and all passed.
+On the warm re-run the same tests dropped from 8.9s to 2.0-3.2s. A defect in the
+spec under test cannot select the first five tests and spare the next fourteen.
+
+**This is why the flyout looked broken to several agents at once.** The clipping
+fix had already landed in `dd92374`/`5c7cb73`, and the suite was green, but a cold
+run put five red lines on the screen inside `sidebar-flyout.spec.ts`, and the
+natural reading is that the flyout regressed. Two other worktrees
+(`fix-flyout-hit`, `fix-flyout-longpress`) were started against that reading, and
+both turned out to be re-deriving work main had already merged. The cost was
+four branches and two unmerged patches for a defect that was never there.
+
+Two things follow, and they are different:
+
+1. **Warm the dev server before the first test.** A single request to the base URL
+   in `e2e/global-setup.ts`, retried until it answers, pays Vite's transform cost
+   once instead of once per early test. This belongs in the global setup rather
+   than in any spec, because the failure is a property of the server, not of the
+   spec that noticed it.
+2. **Do not diagnose a Playwright failure from the spec it appeared in.** Read the
+   failing line. A `beforeEach` failure is the harness, not the subject; and if the
+   red tests are the first N in file order, suspect the server before the
+   application.
+
+Implemented, but not as (1) was written — see below. It was left alone for a while
+so it would not ride in on a toolbar fix that did not need it.
+
+**Implemented, against a different request than (1) describes.** `e2e/global-setup.ts`
+now fetches the **module entry** (`index.html`'s `type="module"` `src`, read from the
+file), not the base URL. A `GET /` would have been a no-op twice over: Playwright's
+own `webServer` plugin has already made that request before `globalSetup` runs, and
+Vite's transform middleware declines it anyway, so it walks none of the module graph.
+It uses Node `fetch` rather than a browser — this file exists to stop an agent opening
+a window, and a launch here would be invisible to the guard above — never throws, and
+logs one line saying whether the warm-up happened.
+
+**A wrong entry does not 404, and that shaped the whole implementation.** Verified
+against a live Vite 8.3.0: a path no module lives at gets the SPA fallback, which
+answers `200` with `content-type: text/html`, not a 404. So a success check on
+`response.ok` alone reports "warmed the dev server" having transformed nothing, and
+the log line is the misleading part. Success therefore requires an ok status **and** a
+non-HTML content type, and the fallback answer ends the loop rather than being
+retried into the same response. `404` and `410` are terminal on the same logic.
+
+**The retry budget is a failure budget, not a work budget.** The server has already
+answered `webServer.url` — that is what `playwright.config.ts`'s `webServer.timeout`
+is for — so everything that reaches the loop is permanent: a wrong entry, a wrong
+origin, or a connection that is not being made. At 250ms, a 5000ms budget is about
+twenty attempts, enough to outlast a dependency pre-bundle, and a permanently wrong
+entry cannot cost a minute of every run. The per-attempt abort is capped strictly
+below that budget for the same reason: `AbortSignal.timeout(remaining)` hands attempt
+1 the whole remainder, and a server that accepts the connection and then hangs
+spends all of it there, after which the loop's own deadline check ends it without
+ever retrying.
+
+**It skips the documented remote workflow entirely.** `e2e/README.md` documents
+`PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e`, which moves the
+project `use.baseURL` and leaves `webServer.url` on localhost. A warm-up aimed at
+the base URL would ask staging for `/src/main.tsx`, which it does not serve. It
+skips when the two origins differ rather than retargeting the web server, because in
+a remote run the dev server is started and then ignored by every test, so retargeting
+would pay a full cold transform to warm a server nothing requests.
+
+**The failure the second half of this section warns about has a tripwire of its
+own.** A module entry that resolved outside the base path — a sub-path `baseURL`, or
+a `base` on the Vite config, of which there is none today — is a skip with a reason
+rather than a request to the wrong origin, and an `index.html` whose `src` is not a
+URL is a skip rather than a throw, because the one component whose contract is that
+it never fails a run is not the place a malformed HTML file gets to fail one.
+
+**How this composes with sections 10 and 11.** Every run starts a fresh server, which is
+exactly the cold server this section is about: `npm run test:e2e` allocates a free port per run
+and reuse is **unreachable**, so a warm server is now something you have to write yourself. Sections
+9, 10 and 11 are one family and three defects, not one defect three times: 9 is a server that is
+right and slow, 10 is the wrong server, 11 is the right server serving code you did not write.
+
+## 10. An e2e mutation campaign run against someone else's dev server reported every mutation as green
+
+**The trap, and it is now closed structurally.** `playwright.config.ts` used to set
+`reuseExistingServer: false` only when `CI` or `PLAYWRIGHT_PORT` was set, so a bare
+`npx playwright test` from a worktree under `.kilo/worktrees/` fell back to :5173 with reuse ON
+and attached to whichever dev server got there first — which is another checkout. For an ordinary
+green/red run that is the trap `docs/ORCHESTRATION.md` records under "Worktrees and dev servers":
+"my change did nothing" is this, not a cache.
+
+**Attaching to a server this run did not start is now impossible, not merely discouraged.**
+`reuseExistingServer` in `playwright.config.ts` is a literal `false` with no environment variable,
+no argument and no field that can turn it on; the dev server is started with `--strictPort`, so a
+port taken after the run picked one is a startup FAILURE rather than Vite's silent hop; and
+`scripts/e2e-run.mjs` — which every script that RUNS a suite goes through — allocates a port,
+verifies it is still bindable immediately before starting, and records it to
+`.kilo/e2e-last-run.json` so a run that fails later is diagnosable. It also **refuses**
+`PLAYWRIGHT_REUSE_EXISTING_SERVER` outright and refuses `PLAYWRIGHT_BASE_URL` unless the run says
+`E2E_ALLOW_REMOTE=1`, which it logs. The outcome is binary: a run gets a server it started, or it
+is red. There is no third state in which the suite quietly tests a neighbour.
+
+**The lock is not what fixed it, and that is the part worth remembering.** The wrapper also takes
+a swarm lock (`e2e/.swarm-e2e-runner`) so two agents rarely run e2e at once, and that lock is
+**advisory**: it is held as `e2e-run/<branch>/<pid>` because board identity is the branch and its
+conflict test is `lock.agent_id !== who`, it is renewed by hand because the board never renews a
+file lock, and a run that cannot get it — queue full, board unreachable, lease malformed — says so
+and starts anyway. It costs scheduling and nothing else, because the guarantee is the port. An
+earlier version made the lock load-bearing and exited 4 when it could not be had, which turned an
+unenforceable mechanism into a hard block on a merge gate: it looked like a guarantee and was not
+one. **Do not reintroduce that**: if a future change makes an e2e run refuse to start because of
+the lock, the guarantee has been moved somewhere it cannot be kept.
+
+**Why it is much worse for a mutation campaign.** A mutation campaign exists to answer "does this
+assertion actually assert anything?", and the answer it produces is a green run. A run that never
+executed the mutated code is indistinguishable from a test that cannot fail. Measured on
+`e2e/undo-redo.spec.ts`: seven consecutive product mutations all "passed", and the cause was that
+the driver ran without a port and had attached to a different worktree's dev server. Re-running with
+`PLAYWRIGHT_PORT` set and the port pinned turned the same seven into seven real reds.
+
+**The rule.** Run mutation campaigns through `npm run test:e2e`, and before trusting a green result
+MUST confirm the served module actually contains the mutation — `curl` the mutated module off the
+dev server and look for the change, rather than assuming the local worktree is what is being tested.
+The port now guarantees you were served _this_ checkout; only this step guarantees it was served
+_your edit_. A mutation campaign that reports "all green" has most likely measured nothing. Section
+11 is the half of that check the port cannot buy you.
+
+## 11. A mutation campaign that does not verify the SERVED module reports false verdicts
+
+Section 10 is the coarse failure: a run attached to another checkout makes every mutation look
+green. This is the fine one, and it survives that fix completely.
+
+A dev server serves a TRANSFORMED module, not the file on disk. So a mutation that is
+correct on disk can be absent from what the browser ran, and the test then reports the
+pre-mutation behaviour. Measured on `e2e/document-dialogs.spec.ts`: of thirteen mutations,
+**four verdicts were false** until the served module was fetched and inspected first. The
+fix is cheap and the check is one request — read the module off the dev server and confirm
+the mutation is in it before believing a green result.
+
+**Two transforms that will silently defeat a marker.** Both bite only if the marker is
+written in a form the transform removes, which is exactly what a hand-written mutation is:
+
+- **Vite strips type annotations.** A marker planted as a type-level change never reaches
+  the browser. Mutate a value.
+- **esbuild rewrites numeric literals.** `0.5` is served as `.5`. A marker written as
+  `=== 0.5` will not be found by a search for the original text, and a mutation asserting
+  on the served text can miss its own marker.
+
+A green mutation result is therefore evidence about the TEST only once it is evidence about
+the CODE THAT RAN. That is the same discipline as section 10, one level down, and the two
+compose: pinning the port stops the run testing the wrong tree, and verifying the served
+module stops it testing the wrong code in the right tree.
+
+## 12. `viewport-drawing.spec.ts` fails roughly one run in four, and not because of anything it asserts
+
+**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision). Reproduced more than once, and the failing window moves between `wide` and `narrow` between runs. Not fixed. Not a known-failing test; it is intermittent.**
+
+**No rate is stated here, on purpose.** The captured runs have not been reconciled into a
+per-case distribution — one test over three windows reports a single failure carrying three
+messages, so "the failing window moves" is read off a message rather than off separate results.
+A rate that cannot be reproduced is worse than an admission that the raw observations are
+unreconciled, and a wrong one here would be quoted as fact by whoever next picks this up. **What
+is established:** the test fails intermittently, and the window that fails moves between cases.
+**What is not:** how often.
+
+**The skip is a gate decision, not a fix, and it is not a waiver.** `e2e/viewport-drawing.spec.ts`
+carries a `test.skip(true, …)` with the reason in it. It was skipped because the suite's contract is
+that a default headless run has **zero** failures, and a test that is red one run in four makes
+roughly a quarter of all unrelated merges look broken — which trains the response of ignoring the
+gate, and costs more than this one test buys. A flaky assertion is also worse than no assertion: a
+green result from it carries no information, so it cannot justify a change either. **Nothing about
+the defect is waived; the work below is un-done and filed, and the skip is one line to remove.**
+
+**Do not "fix" this by loosening anything.** Widening `ANTIALIASED_FLANGE_CSS_PX`, raising the
+derived bound, raising the drift guard, or adding retries all treat a symptom whose second cause
+is still unknown, and each of them removes the only thing this test is currently good for — saying
+something true about the viewport mapping when it passes. Raising the drift guard is the worst of
+them: it deletes the one assertion that names the known cause, so the next red run becomes
+unreadable instead of self-describing.
+
+`e2e/viewport-drawing.spec.ts:18-22` holds a `{ name, width, height }` list (`normal`
+1280×720, `wide` 1600×900, `narrow` 900×700) and runs **one** test over all three windows,
+asserting per window with `expect.soft(...).toBeLessThanOrEqual(toleranceFor(box))` at
+`e2e/viewport-drawing.spec.ts:357-364`. **Per-case attribution is a weaker signal than it
+looks**: one test over three windows reports at most one failure carrying three soft-assert
+messages, so "the failing window moves" is read off the message, not off separate test results.
+Before `ffb51607` this file ran three tests in a `for` loop and attribution was direct; anything
+recorded against the pre-`ffb51607` shape describes a file that no longer exists.
+
+What is established, and is the useful part: one cause is **measured**, not hypothesised, and
+lives 40 lines above the assertions in that file. `captureCanvasScreenshot` intermittently
+returns a page 87 CSS px SHORTER than the one that was measured, which re-projects the contain
+fit and makes a correctly committed stroke look like it missed the cursor by ~31px. The
+`expect` before the stroke assertion is a hard guard for exactly that, it is a filed defect
+(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+A red run _without_ that message is therefore evidence of a **second** cause, and the three
+remaining candidates are `waitForCanvasRedraw` (polls a CDP screenshot for ink),
+`getDarkPixelBounds` (thresholds that screenshot), and the derived `toleranceFor(box)` — 6.7-8.4px
+across the three windows, **not** the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
+derived bound is asserted against and never applied.
+
+**Do not instrument the 25px bound.** An earlier version of this entry and of the skip's comment
+named it as a candidate failure point, which sent a reader to a constant that is not on the
+assertion path at all.
+
+**It is not caused by the scrollbar change that was in the tree at the time, and that is
+measured rather than argued.** Removing `scrollbar-none` from the rail's `<aside>` and
+re-reading its geometry at 900×700 produced byte-identical values — `offsetWidth` 56,
+`clientWidth` 55, `offsetHeight` 563, `clientHeight` 563, the same `getBoundingClientRect()`
+for both the rail and `[data-testid="workspace-canvas"]` — with the computed `scrollbarWidth`
+the only field that changed, `auto` against `none`. On a browser with zero-width overlay
+scrollbars `scrollbar-width` has no layout effect, so nothing downstream of the rail can
+move. `mobile-bottom-bar` and `mobile-tool-options` are `md:hidden` at all three of this
+file's viewports.
+
+So the mechanism is inside the test's own measurement chain, and the chain has three
+places a run can lose: `waitForCanvasRedraw` polling `captureCanvasScreenshot` for ink,
+`getDarkPixelBounds` thresholding that screenshot, and the 25px tolerance being applied to
+a soft assertion. Nothing in it records which one gave. That is the same defect sections 1
+and 8 describe for the unit suite — an uncaptured intermittent failure is a hunting ground,
+not something to close by re-running until green.
+
+**Exact remaining verification:** capture the failing run. `--retries=1` yields a trace
+(`trace: 'on-first-retry'`, inert at the local `retries: 0`), and the trace plus
+`test-results/` is the only artefact that can say whether the ink was absent, mis-thresholded
+or mislocated. Until a failing run is captured, a fix here would be a guess.
+
+## 13. A spec that loads the page many times loses on Playwright's 30s default, not on its own assertions
+
+Section 9 is the cold-Vite one: the FIRST page loads of a run lose to a transform
+the warm-up has not paid for yet. This is the other half and it looks exactly the
+same in the report, which is the trap. Observed twice, in two different runs, on a
+branch whose only e2e change was a header comment and a viewport ladder:
+
+- `e2e/sidebar-flyout.spec.ts` — `Test timeout of 30000ms exceeded while
+running "beforeEach" hook`, `page.goto` never returning, from the file's single
+  `test.beforeEach` (`await page.goto('/')`).
+- `e2e/toolbar-fit.spec.ts:188` — the same signature, inside
+  `open(page, height)`.
+
+Each failed only inside a full run and passed alone every time, in the same tree, with
+no code change in between and far inside that budget. Both runs had another agent's e2e run
+holding the queue, so the dev server was warm and the bulk of the rest of the suite had
+already passed when the first one failed — which is what rules section 9's mechanism out,
+since nothing cold was left to lose to.
+
+The part that is named rather than observed: `e2e/toolbar-fit.spec.ts:188` makes
+EIGHT `open()` calls, one per height per layout, and it never calls
+`test.setTimeout`. Its sibling at `:142` does, for the same file. So a test whose
+whole job is a sweep pays Playwright's 30s default for the whole sweep, and under
+CPU contention from a concurrent run that default is what it runs out of — the
+assertions inside never execute, which is why the report names a navigation and
+not a tool. Whether the other specs in the failing run would have held their own
+budgets is not something the two runs show, and is not claimed here.
+
+Whether the fix is the timeout or a fresh page per height is a call for whoever
+owns the spec. What is not a call: the failure is a budget, and diagnosing it as
+a layout or a product defect wastes a run.
+
+## 14. The lock and queue suites ran inside a budget smaller than their own work
+
+Observed four times across two branches, and the standing guess about it was
+wrong. The entry used to say these tests fail inside a full-suite run because
+they depend on another agent's state rather than on a fixture, and it named the
+board database and the queue lock file as the shared reads that lose. Neither is
+involved: these suites already isolate the board by pointing `AGENT_BOARD_DIR` at
+a fresh temp directory, and the queue lock lives in that same directory.
+
+What they are is not unit tests. Each one builds its state by spawning the real
+board CLI, so its cost is process spawns and not computation — a single cold board
+call costs a large fraction of the per-test budget, and the slowest test in
+`e2e-run.test.mjs` spends eight of them. Vitest's 5s default is therefore not a
+budget those files can live inside. Measured over three isolated runs, the slowest
+span in each of the three files sat at or near that default: one exceeded it
+outright, the other two came in under it by a margin no host guarantees — which is
+why `npm run test` reported five of them as `Test timed out in 5000ms` with no code
+change anywhere. The spans are not quoted here: a figure of that shape is
+re-measured on every slow host and then read as a threshold rather than as an
+observation.
+
+The tempting explanation is a contention factor, and it is false here. A full-suite
+run was measured against the same tests and came out FASTER per test than the
+three-file run, at the median and at the worst case alike. So "a full run is N times
+more loaded" is not a claim this suite can support, and a number of that shape
+would be a guess wearing a measurement's clothes. Do not reinstate one.
+
+Each suite now declares its own budget next to its imports, sized from its own
+measured worst case, and `scripts/__tests__/suite-budgets.test.mjs` is the
+tripwire: it fails if a budget is reverted to the default, lowered below three
+times it, declared twice, or matched by a reader that no longer recognises the
+call it is looking for. It reads the suites' SOURCE, because the budget is a
+`vi.setConfig` side effect that nothing exports and an import can only see the
+default it is guarding. Two properties were checked rather than assumed and are
+worth keeping: the budget is scoped to the file that declares it (a body several
+times the default in an undeclared sibling still died at the 5s default in the same
+run), and a per-test `it(name, fn, timeout)` argument still wins over the file
+budget, which is how the two tests that read git in every worktree keep their
+declared `60_000`.
+
+**Remaining verification:** the code review this change was merged without. Every
+review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
+was not an available substitute, and it was merged on the operator's decision with
+the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
+fixed two false claims in the new comments, but that is not the review.
+
+## 15. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -251,3 +839,56 @@ interaction in 3, a value mismatch points at ordering.
 - `src/contexts/avif-utils.ts` — the encoder whose budget check changed nearby
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs
+- `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
+- `e2e/helpers/canvas-helpers.ts:464-468,568-582,706-712` — the predicate, the poll loop and the
+  sampler
+- `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
+- `scripts/e2e-run.mjs` — the wrapper the scripts that RUN a suite route through
+  (`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`). Two independent things,
+  and the distinction is the design: the **own-server guarantee** (pick a port, verify
+  it bindable, refuse `PLAYWRIGHT_BASE_URL` and `PLAYWRIGHT_REUSE_EXISTING_SERVER`) and
+  the **advisory queue** (`e2e/.swarm-e2e-runner`, held as `e2e-run/<branch>/<pid>`,
+  waited on but never fatal — a run that cannot have the queue runs anyway). Sections 10
+  and 11 depend on the first and not at all on the second.
+- `playwright.config.ts` — the `webServer` block, where `reuseExistingServer: false` is
+  now unconditional and why, and the `--strictPort` that turns a lost port race into a
+  startup failure instead of Vite's silent hop
+- `e2e/viewport-drawing.spec.ts` — the spec behind section 12, and the `test.skip` that
+  records the operator decision with its reason inline
+- `scripts/__tests__/e2e-run.test.mjs` — the only coverage of the lock, including a
+  test that reads the board as another agent while a suite is "running"
+- `scripts/__tests__/suite-budgets.test.mjs` — the tripwire behind section 14, which
+  reads the three spawn-heavy suites' SOURCE for their declared `testTimeout` and
+  fails if one is reverted, lowered, or matched by a reader that no longer
+  recognises the call it is looking for
+- `playwright.config.ts` — the `webServer` block, the now opt-in
+  `reuseExistingServer` condition behind section 10, and why an explicit `PLAYWRIGHT_PORT`
+  disables server reuse
+- `e2e/document-dialogs.spec.ts` — the spec whose mutation method section 11 validates
+- `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 10 invalidated
+- `e2e/global-setup.ts` — where the warm-up in section 9 belongs; the budget and the
+  per-attempt cap, the terminal statuses and the content-type gate, and the refusal
+  that has to run before any of it
+- `e2e/helpers/__tests__/global-setup.unit.test.ts` — the warm-up's only coverage. It
+  sits under `e2e/helpers/` testing a module that is not a helper, because
+  `vitest.e2e.config.ts` collects `e2e/**/__tests__/**/*.unit.test.ts` and this is
+  where the project's other unit files already are; an earlier version of that file's
+  own note justified the location by a coverage-report claim that was a
+  non-sequitur, and it is recorded there as wrong rather than quietly replaced
+- `e2e/sidebar-flyout.spec.ts` — the `beforeEach` that loses the race
+- `e2e/flyout-longpress-race.spec.ts` — the committed tripwire for the long-press flyout race section 8 names as a CPU-contention flake, and for the misdiagnosis section 9 recounts
+- `e2e/helpers/screenshot-scale.ts:108-116`, `e2e/helpers/cdp-helpers.ts:53-54` — the stale
+  1177px/440px figures section 8 records as stale
+- `src/hooks/useDialogFocusContainment.ts` — where the focus block section 7's lead 3 names now lives
+- `e2e/viewport-drawing.spec.ts:156,334-338` — the CDP capture, and the
+  `toBeLessThan(25)` CEILING guard section 12 measures. It is a hard assertion on the derived
+  tolerance, not one of the soft stroke assertions, which are at `:357-364`
+- `e2e/viewport-drawing.spec.ts:18-22` — the `{ name, width, height }` list whose cases
+  section 12 observed moving between runs
+- `e2e/toolbar-fit.spec.ts:188` — the eight-`open()` sweep that never raises its own
+  budget, which is what section 13 observed losing
+- `e2e/toolbar-fit.spec.ts:142` — the same file's other test, which does set one
+- `scripts/__tests__/e2e-run.test.mjs`, `scripts/__tests__/agent-board.test.mjs` — the two
+  suites section 14 saw fail only inside a full run, and pass alone
+- `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees
+  whose shape has to be re-derived when they commit or land

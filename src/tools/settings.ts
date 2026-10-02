@@ -12,11 +12,26 @@ import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
+import type { SingleColumnMarqueeToolArgs, SingleRowMarqueeToolArgs } from './singleRowColumnMarquee.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
-import type { EraserToolArgs } from './eraser.ts';
+import { ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
 import type { FillToolArgs } from './fill.ts';
+import {
+  COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
+  COLOR_REPLACEMENT_TOLERANCE_DEFAULT,
+  type ColorReplacementToolArgs,
+} from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
+import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
+import type { QuickSelectionToolArgs } from './quickSelection.ts';
+import type { GradientToolArgs } from './gradient.ts';
+import type { SharpenToolArgs } from './sharpen.ts';
+import { PAINT_SMOOTHING_DEFAULT } from './brush.ts';
+import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
+import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
+import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
+import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -111,15 +126,32 @@ export const defaultSettings = {
   'magic-wand': {
     tolerance: 28,
     smoothing: 1.5,
+    contiguous: true,
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
+  // No settings at all, which is a statement about Photoshop and not a shortcut: the
+  // options bar for both of these carries no Style, no Width/Height and no Anti-alias,
+  // because Adobe scopes all three to the Rectangular and Elliptical Marquees by name.
+  'single-row-marquee': { toolName: 'single-row-marquee' } satisfies SingleRowMarqueeToolArgs,
+  'single-column-marquee': {
+    toolName: 'single-column-marquee',
+  } satisfies SingleColumnMarqueeToolArgs,
   brush: {
     alpha: 0.9,
     color: '#000000',
     penType: 'pen',
     lineWidth: 10,
     points: [],
+    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. `Mode`
+    // defaults to Normal, so it composites exactly as the `draw`-backed brush did before the
+    // panel existed. `smoothing` does NOT: it defaults to 10, Photoshop's own default, so a
+    // brush stroke is now smoothed by 10% where it used to be unsmoothed. That is the
+    // intended behaviour, not an identity — `smoothStrokePoints` returns the same array
+    // instance at 0, which is what keeps the legacy `draw` tool's recorded baselines exact,
+    // and `draw` has no `smoothing` key at all so it reads `?? 0` and is untouched.
+    smoothing: PAINT_SMOOTHING_DEFAULT,
+    blendMode: 'source-over',
     toolName: 'brush',
   } satisfies PaintToolArgs,
   pencil: {
@@ -128,20 +160,45 @@ export const defaultSettings = {
     penType: 'pen',
     lineWidth: 3,
     points: [],
+    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. `Mode`
+    // defaults to Normal, so it composites exactly as the `draw`-backed brush did before the
+    // panel existed. `smoothing` does NOT: it defaults to 10, Photoshop's own default, so a
+    // brush stroke is now smoothed by 10% where it used to be unsmoothed. That is the
+    // intended behaviour, not an identity — `smoothStrokePoints` returns the same array
+    // instance at 0, which is what keeps the legacy `draw` tool's recorded baselines exact,
+    // and `draw` has no `smoothing` key at all so it reads `?? 0` and is untouched.
+    smoothing: PAINT_SMOOTHING_DEFAULT,
+    blendMode: 'source-over',
     toolName: 'pencil',
   } satisfies PaintToolArgs,
   'color-replacement': {
-    alpha: 0.55,
-    color: '#000000',
-    penType: 'spray',
+    alpha: 1,
     lineWidth: 18,
+    color: '#000000',
+    tolerance: COLOR_REPLACEMENT_TOLERANCE_DEFAULT,
+    limits: 'contiguous',
+    sampling: 'current-layer',
+    smoothness: COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
+    sampleColor: null,
     points: [],
+    // No `smoothing` and no `blendMode` here, and their absence is the narrowing rather than an
+    // omission. The paint panel owns both, and this tool has left that panel: its `smoothness`
+    // above is a different control (the softening of the brush's coverage rim), it never
+    // rasterizes through `drawPen`, and it substitutes pixels inside the ACTIVE layer rather than
+    // compositing a new one, so there is nothing for a per-stroke blend mode to composite. Both
+    // keys arrived here by merge from the paint tranche, which still listed this tool as a paint.
     toolName: 'color-replacement',
-  } satisfies PaintToolArgs,
+  } satisfies ColorReplacementToolArgs,
   eraser: {
-    mode: 'pencil',
+    // `brush`, not `pencil`: Photoshop's eraser opens on a soft tip, and this one used to open on
+    // a hard edge because `brush` was rendered `disabled` in the options bar. The two tip fields
+    // below are what that mode reads, so they are seeded here rather than defaulted at the call
+    // site — a settings object that arrives without them is a settings object the bar cannot show.
+    mode: 'brush',
     lineWidth: 40,
     alpha: 1,
+    hardness: ERASER_HARDNESS_DEFAULT,
+    spacing: ERASER_SPACING_PERCENT,
     color: '#000000',
     points: [],
     toolName: 'eraser',
@@ -169,6 +226,72 @@ export const defaultSettings = {
     sampleAllLayers: false,
     toolName: 'eyedropper',
   } satisfies EyedropperToolArgs,
+  'elliptical-selection': {
+    style: 'normal',
+    fixedRatio: 1,
+    fixedWidth: 100,
+    fixedHeight: 100,
+    toolName: 'elliptical-selection',
+  } satisfies EllipticalSelectionToolArgs,
+  'quick-selection': {
+    size: 40,
+    tolerance: 30,
+    mode: 'add',
+    alpha: 1,
+    toolName: 'quick-selection',
+  } satisfies QuickSelectionToolArgs,
+  gradient: {
+    type: 'linear',
+    // A zero-length drag is a gradient with no extent, which is the honest seed: the
+    // options bar sets the endpoints before the first commit.
+    from: { x: 0, y: 0 },
+    to: { x: 0, y: 0 },
+    colorA: '#000000',
+    colorB: '#FFFFFF',
+    alpha: 1,
+    toolName: 'gradient',
+  } satisfies GradientToolArgs,
+  sharpen: { amount: 50, radius: 1, toolName: 'sharpen' } satisfies SharpenToolArgs,
+  smudge: { size: 40, hardness: 100, strength: 50, points: [], toolName: 'smudge' } satisfies SmudgeToolArgs,
+  dodge: {
+    exposure: 50,
+    range: 'midtones',
+    size: 40,
+    hardness: 100,
+    points: [],
+    toolName: 'dodge',
+  } satisfies DodgeBurnToolArgs,
+  burn: {
+    exposure: 50,
+    range: 'midtones',
+    size: 40,
+    hardness: 100,
+    points: [],
+    toolName: 'burn',
+  } satisfies DodgeBurnToolArgs,
+  // Flow seeds at the midpoint and Vibrance at ON. Both are choices Adobe declines to
+  // document — its Mode and Flow pages are imperative throughout — so the reasoning and the
+  // search that failed to corroborate them live at `SPONGE_MODE_DEFAULT` in
+  // `src/tools/sponge.ts`, and the gap is recorded in `HANDOFF.md` rather than in
+  // `docs/OVERRIDES.md`, which no agent may write.
+  sponge: {
+    mode: SPONGE_MODE_DEFAULT,
+    flow: SPONGE_FLOW_DEFAULT,
+    vibrance: true,
+    size: 40,
+    hardness: 100,
+    points: [],
+    toolName: 'sponge',
+  } satisfies SpongeToolArgs,
+  'clone-stamp': {
+    size: 40,
+    hardness: 100,
+    alpha: 1,
+    source: null,
+    aligned: true,
+    points: [],
+    toolName: 'clone-stamp',
+  } satisfies CloneStampToolArgs,
   pen: { toolName: 'pen' },
   'freeform-pen': { toolName: 'freeform-pen' },
   'curvature-pen': { toolName: 'curvature-pen' },
@@ -228,6 +351,17 @@ export type SavedSettings =
   | RectangularSelectionToolArgs
   | MagicWandToolSettings
   | FeatherMagneticLassoToolSettings
-  | PolygonSelectionToolSettings;
+  | PolygonSelectionToolSettings
+  | EllipticalSelectionToolArgs
+  | QuickSelectionToolArgs
+  | GradientToolArgs
+  | SharpenToolArgs
+  // The three stroke tools below persist as a settings type, not as their args type: their
+  // `points` array is stroke geometry rather than a setting, and it is emptied again by
+  // `saveLastSettings` on every persist.
+  | SmudgeToolSettings
+  | DodgeBurnToolSettings
+  | SpongeToolSettings
+  | CloneStampToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

@@ -3,11 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
-import type { Point, Selection } from '../../contexts/general-types.ts';
+import type { Point } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { MagicWandToolArgs } from '../../tools/magicWand.ts';
 import { createMagicWandSelectionFromCanvas } from '../../util/magicWand.ts';
-import { createCommittedPolygonSelection, drawSelectionOutline } from '../../util/selection.ts';
+import { createCommittedPolygonSelection, drawSelectionAnchors } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type MagicWandToolAreaProps = {
@@ -26,16 +27,18 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     ref: containerRef,
     imageSize: totalSize,
   });
+  const containScale = useContainScale(containerRef, totalSize);
 
-  function redrawOverlay(extraSelection?: Selection) {
+  // The tool overlay carries no border of its own: a committed polygon's marching
+  // ants are painted on their own canvas, so this only has to keep the anchors of
+  // any interactive selection — a lasso committed before the wand was picked — up to
+  // date. A wand selection itself has no anchors, so committing one is a clear.
+  function redrawOverlay() {
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
-    if (extraSelection) {
-      drawSelectionOutline(ctx, extraSelection, documentFrame);
-    }
+    selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, containScale.current));
   }
 
   function isPointInsideImage(point: Point): boolean {
@@ -55,6 +58,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     const result = createMagicWandSelectionFromCanvas(canvasRef.current, seed, {
       smoothing: args.smoothing,
       tolerance: args.tolerance,
+      contiguous: args.contiguous,
     });
 
     if (!result) {
@@ -91,7 +95,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     // Routed through the single-writer hook so the drawn selection becomes one
     // undoable document edit instead of living only on a later clear entry.
     commitSelection(selection, 'create');
-    redrawOverlay(selection);
+    redrawOverlay();
   };
 
   useEffect(() => {
@@ -99,8 +103,8 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     if (!ctx) return;
 
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
-  }, [documentFrame, overlayCtxRef, selections]);
+    selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, containScale.current));
+  }, [documentFrame, overlayCtxRef, selections, containScale]);
 
   useEffect(() => {
     const ctx = overlayCtxRef.current;

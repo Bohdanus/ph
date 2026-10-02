@@ -612,34 +612,32 @@ describe('useLayers layer mutation commands', () => {
     expect(result.current.store.history).toEqual([]);
   });
 
-  it('commits the removal and then throws when the overlay has no 2d context (PROD DEFECT, not fixed)', () => {
-    // PROD DEFECT, not fixed: `src/contexts/useLayer.ts:378` uses
-    // `toolOverlayRef.current!.getContext('2d')!` with no null guard, while the
-    // sibling `clearOverlay` at `src/contexts/useLayer.ts:100` guards both with
-    // `toolOverlayRef.current?.getContext('2d')` and an early return. When the
-    // overlay is unmounted or its context is unavailable, `removeLayer` throws a
-    // raw TypeError AFTER the dispatch has already committed the layer removal.
-    // HANDOFF §23. Delete or invert this test in the same change that adds the
-    // null guard; it would fail the moment `removeLayer` stopped throwing.
+  it('commits the removal without throwing when the overlay has no 2d context', () => {
+    // The `COMMIT_DOCUMENT_EDIT` dispatch runs before the overlay clear, so a throwing
+    // overlay clear escapes a function that has already done its job. `removeLayer`
+    // therefore shares the sibling `clearOverlay` guard in `src/contexts/useLayer.ts`,
+    // which tolerates both a missing overlay canvas and an unavailable 2d context,
+    // rather than asserting both hops on its own.
     const { result } = setup({ layers: { only: makeLayer('only', 0) }, activeLayerId: 'only' });
     const overlay = result.current.store.toolOverlayRef.current;
     if (!overlay) throw new Error('expected an overlay canvas');
-    vi.spyOn(overlay, 'getContext').mockReturnValue(null);
+    const getContext = vi.spyOn(overlay, 'getContext').mockReturnValue(null);
 
-    // The context really is unavailable, which is exactly what the sibling
-    // `clearOverlay` guard tolerates.
+    // The context really is unavailable, which is exactly what the guard tolerates.
     expect(overlay.getContext('2d')).toBeNull();
 
     expect(() => {
       act(() => {
         result.current.layers.removeLayer('only');
       });
-    }).toThrow(TypeError);
+    }).not.toThrow();
 
-    // The dispatch at `useLayer.ts:362-375` already ran before the unguarded
-    // overlay clear, so the removal is not rolled back by the throw.
     act(() => undefined);
+    // The overlay is still cleared through the shared path, and the removal the
+    // dispatch already committed is not rolled back.
+    expect(getContext).toHaveBeenCalledWith('2d');
     expect(Object.keys(result.current.store.layers)).toEqual([]);
+    expect(result.current.store.history.at(-1)).toMatchObject({ actionName: REMOVE_ACTION, layerId: 'only' });
   });
 
   it('toggles visibility with the matching history action in both directions', () => {
@@ -727,8 +725,10 @@ describe('useLayers applyDocumentCrop', () => {
         nextFrame: { x: 100, y: 50, width: 700, height: 550 },
       },
     });
-    // The store converts the appended timeline, so the legacy edit is published.
-    expect(store.durableStatus).toBe('current');
+    // This harness intentionally starts with no legacy timeline. The append is
+    // still published through the legacy authority, while the durable shadow
+    // reports the undefined cursor mapping instead of claiming parity.
+    expect(store.durableStatus).toBe('unavailable');
   });
 
   it('refuses a crop that trims to nothing and records no history', () => {

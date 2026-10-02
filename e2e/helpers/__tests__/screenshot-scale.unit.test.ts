@@ -1,8 +1,39 @@
 import { describe, it, expect } from 'vitest';
-import { cssPointToImage, imageBoundsToCss, imagePointToCss, type CssBox, type ImageSize } from '../screenshot-scale';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import {
+  cssPointToImage,
+  imageBoundsToCss,
+  imagePointToCss,
+  viewportRectToPageRect,
+  type CssBox,
+  type ImageSize,
+} from '../screenshot-scale';
 
 /** Workspace canvas box as reported by Playwright in the e2e specs. */
 const BOX: CssBox = { x: 100, y: 50, width: 400, height: 300 };
+
+const SCALE_SOURCE = readFileSync(new URL('../screenshot-scale.ts', import.meta.url), 'utf8');
+
+/**
+ * The `/** ... *\/` block immediately preceding `marker`, as source text.
+ *
+ * The inclusive-index convention on `imageBoundsToCss` is prose, so the pin for it has to
+ * read prose. Going through the source keeps the test from having to re-declare the rule
+ * somewhere a future edit can forget to update.
+ */
+function blockCommentBefore(marker: string): string {
+  const markerAt = SCALE_SOURCE.indexOf(marker);
+  if (markerAt === -1) throw new Error(`marker not found in screenshot-scale.ts: ${marker}`);
+  const head = SCALE_SOURCE.slice(0, markerAt);
+  const start = head.lastIndexOf('/*');
+  if (start === -1) throw new Error(`no block comment precedes: ${marker}`);
+  const block = head.slice(start);
+  const end = block.indexOf('*/');
+  if (end === -1) throw new Error(`unterminated block comment before: ${marker}`);
+  return block.slice(0, end + 2);
+}
 
 describe('imagePointToCss', () => {
   const CASES: {
@@ -148,6 +179,80 @@ describe('imageBoundsToCss', () => {
       bottom: imagePointToCss(image, BOX, { x: bounds.right, y: bounds.bottom }).y,
     });
   });
+
+  it('reports the covered width one image pixel short, because inclusive indices land on pixel centres', () => {
+    // FINDING, pinned: `left`/`right` are INCLUSIVE image pixel indices and both corners
+    // go through the point rule, so `right` is the CENTRE of the last covered pixel and
+    // the span measures centre-to-centre. Nothing is broken today — both consumers want a
+    // point or a tolerant comparison — but a caller doing drag-delta or area math would be
+    // short by exactly one image pixel, and before this test nothing in the module said so.
+    const image: ImageSize = { width: 400, height: 300 }; // 1:1 with BOX
+    const bounds = { left: 10, top: 20, right: 14, bottom: 24 };
+
+    // Image pixels 10..14 inclusive: five of them, so five CSS pixels at 1:1.
+    expect(bounds.right - bounds.left + 1).toBe(5);
+
+    const css = imageBoundsToCss(image, BOX, bounds);
+    expect(css).toEqual({ left: 110, top: 70, right: 114, bottom: 74 });
+    // The reported span, which is the number area math would use.
+    expect(css.right - css.left).toBe(4);
+    expect(css.bottom - css.top).toBe(4);
+  });
+
+  it('carries the same one-pixel shortfall onto a 2x capture, where it is half a CSS pixel', () => {
+    // A 2x capture does not repair it. The span is still one image pixel short; scaled,
+    // that is half a CSS pixel, which is asserted in CSS units because that is the number
+    // a caller would do the arithmetic on.
+    const image: ImageSize = { width: 800, height: 600 };
+    const bounds = { left: 20, top: 40, right: 28, bottom: 48 }; // nine image pixels
+
+    const css = imageBoundsToCss(image, BOX, bounds);
+    // Nine image pixels at 2x cover 4.5 CSS pixels; the span reports 4.
+    expect(css).toEqual({ left: 110, top: 70, right: 114, bottom: 74 });
+    expect(css.right - css.left).toBe(4);
+    // The amount a caller has to add back: one image pixel, in CSS units.
+    expect(css.right - css.left + BOX.width / image.width).toBe(4.5);
+  });
+
+  /**
+   * The two arithmetic tests above pin the convention; these pin that it is WRITTEN DOWN.
+   *
+   * `imageBoundsToCss` had no JSDoc at all and the module docstring did not mention it, so
+   * the inclusive-index/pixel-centre rule survived only as the expected values in this
+   * file. A caller reading only the module would have had to guess, and a "fix" to the
+   * arithmetic would have looked like an obvious correction rather than a change of
+   * contract. Asserting the wording keeps the documentation from being deleted as an
+   * apparent duplicate of the arithmetic.
+   */
+  describe('the convention is documented on the function', () => {
+    const JSDOC = blockCommentBefore('export function imageBoundsToCss');
+
+    it('says the bounds are inclusive image pixel indices', () => {
+      expect(JSDOC).toMatch(/inclusive/i);
+    });
+
+    it('says right and bottom land on the centre of the last covered pixel', () => {
+      expect(JSDOC).toMatch(/cent(re|er)/i);
+      expect(JSDOC).toMatch(/last covered pixel/i);
+    });
+
+    it('states the arithmetic consequence, so "inclusive" is not read as "right is exclusive"', () => {
+      expect(JSDOC).toMatch(/under-reports|short by/i);
+    });
+  });
+
+  describe('the convention is documented in the module docstring', () => {
+    const MODULE_DOC = blockCommentBefore('export interface Point');
+
+    it('mentions imageBoundsToCss and the inclusive-index convention', () => {
+      expect(MODULE_DOC).toMatch(/imageBoundsToCss/);
+      expect(MODULE_DOC).toMatch(/inclusive/i);
+    });
+
+    it('mentions the pixel-centre mapping that causes the off-by-one', () => {
+      expect(MODULE_DOC).toMatch(/cent(re|er)/i);
+    });
+  });
 });
 
 describe('cssPointToImage', () => {
@@ -287,5 +392,225 @@ describe('imagePointToCss and cssPointToImage are inverses', () => {
     const bottomRight = cssPointToImage(image, BOX, { x: BOX.x + BOX.width, y: BOX.y + BOX.height });
     expect(topLeft).toEqual({ x: 0, y: 0 });
     expect(bottomRight).toEqual({ x: 800, y: 600 });
+  });
+});
+
+/**
+ * The translation `captureCanvasScreenshot` needs, in the app's own numbers: the page is
+ * 1177px tall in a 720px window, `clickToolButton` scrolls it 440px, and the workspace
+ * canvas goes from `y: 100` to `y: -340`. Raw, that clip reaches a capture 440px away from
+ * the region the caller measured — a wrong answer, not an error.
+ */
+describe('viewportRectToPageRect', () => {
+  const RECT: CssBox = { x: 56, y: -340, width: 320, height: 120 };
+
+  it('returns the rect unchanged when the window is not scrolled', () => {
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 0 })).toEqual(RECT);
+  });
+
+  it('adds a vertical scroll to the origin and leaves the extent alone', () => {
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 440 })).toEqual({ x: 56, y: 100, width: 320, height: 120 });
+  });
+
+  it('adds both offsets for a window scrolled on both axes', () => {
+    expect(viewportRectToPageRect(RECT, { x: 30, y: 440 })).toEqual({ x: 86, y: 100, width: 320, height: 120 });
+  });
+
+  it('translates a negative origin into a positive one when the window has scrolled back', () => {
+    // The measured `clickToolButton` pair: same document position, opposite window.
+    expect(viewportRectToPageRect({ ...RECT, y: 100 }, { x: 0, y: 440 })).toEqual({
+      x: 56,
+      y: 540,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('adds a fractional scroll exactly rather than rounding it to a device pixel', () => {
+    // 0.5px of scroll is real: it comes from a zoomed or fractional-DPR window, and a
+    // clip rounded here is a clip that no longer lines up with the pixels it addresses.
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 440.5 })).toEqual({ x: 56, y: 100.5, width: 320, height: 120 });
+    expect(viewportRectToPageRect(RECT, { x: 12.25, y: 0.5 })).toEqual({
+      x: 68.25,
+      y: -339.5,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('translates a zero-size rect, which is a position and not an area', () => {
+    expect(viewportRectToPageRect({ x: 56, y: -340, width: 0, height: 0 }, { x: 0, y: 440 })).toEqual({
+      x: 56,
+      y: 100,
+      width: 0,
+      height: 0,
+    });
+  });
+
+  it('keeps a zero scroll a value rather than treating it as absent', () => {
+    // A `||` here would substitute the box for a zero and capture the whole canvas.
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 0 }).x).toBe(RECT.x);
+  });
+
+  it('does not mutate the rect it was given', () => {
+    const rect: CssBox = { ...RECT };
+    viewportRectToPageRect(rect, { x: 30, y: 440 });
+    expect(rect).toEqual(RECT);
+  });
+
+  it('is a pure function of its two arguments', () => {
+    const scroll = { x: 30, y: 440 };
+    expect(viewportRectToPageRect(RECT, scroll)).toEqual(viewportRectToPageRect(RECT, scroll));
+  });
+});
+
+describe('the coordinate shapes have exactly one declaration', () => {
+  /**
+   * `BoundingBox`, `CssBox`, `CssBounds` and `ClipOptions` were each declared more than
+   * once across `canvas-helpers.ts`, `cdp-helpers.ts` and this file, and the copies were
+   * byte-identical, so structural typing made them interchangeable and the compiler
+   * reported no drift when they stopped being identical. `canvas-helpers.ts` still
+   * re-exports `CssBox` as `BoundingBox` because that is the name the specs import -- a
+   * re-export is not a second declaration, which is what these assertions check.
+   */
+  const HELPER_DIR = fileURLToPath(new URL('../', import.meta.url));
+  const OWNER = 'screenshot-scale.ts';
+
+  /**
+   * Every module in `e2e/helpers/`, read from the directory rather than from a literal
+   * list. A hand-written list is a list that rots: it is correct the day it is written
+   * and silently stops covering each module added afterwards, which is exactly the
+   * "a field added to one copy did not reach the others" drift this guard exists to
+   * prevent -- the new copy is in a file the list does not mention.
+   */
+  const HELPER_SOURCES = readdirSync(HELPER_DIR)
+    .filter((entry) => entry.endsWith('.ts'))
+    .sort();
+
+  /**
+   * Declared type names, from BOTH declaration forms. `interface` alone is not enough:
+   * a copy written as `type CaptureRect = { x, y, width, height }` is the same drift
+   * under a different keyword and a different name, and it matches an interface-only
+   * pattern not at all.
+   */
+  function declarationsIn(file: string): string[] {
+    const source = readFileSync(join(HELPER_DIR, file), 'utf8');
+    return [
+      ...[...source.matchAll(/^\s*(?:export\s+)?(?:declare\s+)?interface\s+(\w+)/gm)].map((match) => match[1]),
+      ...[...source.matchAll(/^\s*(?:export\s+)?type\s+(\w+)\s*=/gm)].map((match) => match[1]),
+    ];
+  }
+
+  function ownersOf(name: string): string[] {
+    return HELPER_SOURCES.filter((file) => declarationsIn(file).includes(name));
+  }
+
+  /**
+   * A declaration's field list, normalised for comparison, or `null` when the
+   * declaration is not an object shape (a union, a function, a type over another type).
+   *
+   * Comparison is on the FIELD SET, which is the property that makes a second copy
+   * interchangeable: two declarations with the same fields are the same type to the
+   * compiler, so a field added to one and not the other is exactly the silent drift.
+   * Normalisation strips the `?` optional marker and whitespace, so `ClipOptions`'s
+   * `x?: number` and a copy's `x: number` compare equal — that is deliberate, because
+   * optionality is not what makes two types interchangeable in the direction that
+   * hurts (a required field where the original had an optional one is the strict
+   * direction and fails at compile time; the reverse is caught here).
+   */
+  function shapeOf(file: string, name: string): string[] | null {
+    const source = readFileSync(join(HELPER_DIR, file), 'utf8');
+    // Both declaration forms, and both body layouts: a declaration written across lines
+    // (closed by `}` at the start of a line) and one written on a single line. Only
+    // handling the first is how a real copy slips past: `type CaptureRect = { x: number;
+    // y: number; width: number; height: number }` is exactly the line a hurried author
+    // writes, and a multi-line-only parser reads it as "not a shape" and reports nothing.
+    const multiLine = new RegExp(
+      String.raw`^[ \t]*(?:export\s+)?(?:declare\s+)?(?:interface\s+${name}\s*\{|type\s+${name}\s*=\s*\{)` +
+        String.raw`([\s\S]*?)^\}`,
+      'm'
+    );
+    const singleLine = new RegExp(
+      String.raw`(?:export\s+)?(?:declare\s+)?(?:interface\s+${name}\s*\{|type\s+${name}\s*=\s*\{)([^}]*)\}`
+    );
+    const body = multiLine.exec(source)?.[1] ?? singleLine.exec(source)?.[1];
+    if (body === undefined) return null;
+    // A field is a name and a colon, at the start of the body, after a `;`, or after a
+    // newline — the three positions a field can sit at in either layout.
+    const fields = [...body.matchAll(/(?:^|[;\n{])\s*(\w+)\??\s*:/g)].map((match) => match[1]);
+    // A body with no field syntax at all is a union or a function, not a shape.
+    return fields.length > 0 ? [...new Set(fields)].sort() : null;
+  }
+
+  /** Every object-shaped type declaration in a module, by name. */
+  function shapeNamesIn(file: string): string[] {
+    return declarationsIn(file).filter((name) => shapeOf(file, name) !== null);
+  }
+
+  function sameShape(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((field, index) => field === b[index]);
+  }
+
+  it.each(['CssBox', 'CssBounds', 'ClipOptions'])('declares %s only here', (name) => {
+    expect(ownersOf(name)).toEqual([OWNER]);
+  });
+
+  it('leaves no helper module with a private BoundingBox of its own', () => {
+    // The name specs import stays a re-export of `CssBox`; a declaration anywhere else
+    // is the drift this replaces, whatever the file calls it.
+    const local = HELPER_SOURCES.filter((file) => file !== OWNER && declarationsIn(file).includes('BoundingBox'));
+    expect(local).toEqual([]);
+  });
+
+  it('scans every helper module, not a list of the three that existed when it was written', () => {
+    // The guard above is only as good as its input. A guard that reads a hardcoded
+    // three-file list passes while the copy it exists to catch sits in a fourth file,
+    // and the failure mode is silent: the suite is green and the drift is back. This
+    // fails when the directory and the scanned set disagree, and it names what is
+    // missing, because "the guard is stale" is otherwise indistinguishable from "there
+    // is nothing to find".
+    const onDisk = readdirSync(HELPER_DIR)
+      .filter((entry) => entry.endsWith('.ts') && !entry.endsWith('.spec.ts'))
+      .sort();
+    expect(HELPER_SOURCES.filter((file) => !file.endsWith('.spec.ts'))).toEqual(onDisk);
+    expect(HELPER_SOURCES).toContain('toolbar-helpers.ts');
+  });
+
+  it('leaves no module declaring a SECOND copy of a coordinate shape under a different name', () => {
+    // Name matching alone is not the invariant, and this is the case that proves it: a
+    // copy written as `type CaptureRect = { x; y; width; height }` in `toolbar-helpers.ts`
+    // is byte-for-byte the drift this guard exists for — structural typing makes it
+    // interchangeable with `CssBox`, so a field added to one copy silently does not
+    // reach the other — and it matches neither `CssBox` nor `BoundingBox` by name. A
+    // guard that only greps for the four known names passes while the problem is
+    // completely present.
+    //
+    // So this compares SHAPES. Every object-shaped type declaration in the directory is
+    // normalised to its sorted field list, and any field set equal to one of the owned
+    // shapes must be declared exactly once, in the owner. The four names are still
+    // checked separately above; this is the half that a rename defeats.
+    const ownedShapes = ['CssBox', 'CssBounds', 'ClipOptions']
+      .map((name) => shapeOf(OWNER, name))
+      .filter((shape): shape is string[] => shape !== null);
+
+    const duplicates = HELPER_SOURCES.filter((file) => file !== OWNER).flatMap((file) =>
+      shapeNamesIn(file)
+        .filter((name) => {
+          const shape = shapeOf(file, name);
+          return shape !== null && ownedShapes.some((owned) => sameShape(owned, shape));
+        })
+        .map((name) => `${file}: ${name}`)
+    );
+
+    expect(duplicates, 'a coordinate shape is declared outside screenshot-scale.ts').toEqual([]);
+  });
+
+  it('wires canvas-helpers to the shared declaration instead of shadowing it', () => {
+    // A re-export is invisible to a declaration count, so the alias is what proves the
+    // specs' `import type { BoundingBox } from './helpers/canvas-helpers'` resolves to
+    // this file's `CssBox` rather than to a local shape that merely looks like it.
+    const source = readFileSync(new URL('../canvas-helpers.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/type\s+CssBox\s+as\s+BoundingBox/);
+    expect(source).toMatch(/export type \{[^}]*\bBoundingBox\b/);
   });
 });

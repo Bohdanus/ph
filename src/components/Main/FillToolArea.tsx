@@ -100,6 +100,12 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     const layer = activeLayerId ? layers[activeLayerId] : undefined;
     if (!layer) return;
 
+    // A raster edit to the BEDROCK layer is wrong: it is the document's own backing image and the
+    // floor every other layer composites over, and there is nothing beneath it to fill from or
+    // restore. `MoveToolArea.tsx:35` refuses the same operation on the same flag, as do the other
+    // tools that commit a raster (`SmudgeToolArea`, `DodgeToolArea`, `CloneStampToolArea`).
+    if (layer.isBedrock) return;
+
     const bitmap = layer.tmpCanvas ?? layer.bitmap;
     if (!bitmap) {
       console.error(FILL_TOOL_NO_LAYER_PIXELS, `the active layer ${layer.id} has no bitmap to fill`);

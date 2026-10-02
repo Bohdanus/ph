@@ -175,6 +175,17 @@ describe('hexToRgb', () => {
   it('handles mixed-case hex digits', () => {
     expect(hexToRgb('#FfFfFf')).toBe('255, 255, 255');
   });
+
+  it('expands 3-digit hex instead of parsing a short string as channels', () => {
+    expect(hexToRgb('#fff')).toBe('255, 255, 255');
+    expect(hexToRgb('#000')).toBe('0, 0, 0');
+    expect(hexToRgb('#abc')).toBe('170, 187, 204');
+  });
+
+  it('parses 3-digit hex identically to its 6-digit equivalent', () => {
+    expect(hexToRgb('#f00')).toBe(hexToRgb('#ff0000'));
+    expect(hexToRgb('fff')).toBe('255, 255, 255');
+  });
 });
 
 describe('calculateNewRect', () => {
@@ -280,5 +291,43 @@ describe('calculateNewRect', () => {
       imageSize
     );
     expect(result!.y2).toBe(3 * 16 * 1.2 + 2 * 5);
+  });
+
+  it('returns null when there is no rect, instead of growing one at the document origin', () => {
+    const canvasRef = makeCanvasRef(50);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hi',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: null,
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result).toBeNull();
+  });
+
+  it('returns null for an empty draft with no rect too, so the guard precedes the !text branch', () => {
+    // The `!text` branch turns a zero-area drag into a non-degenerate rect so the overlay
+    // mask is visible pre-typing. That is load-bearing for `TextToolArea`, which always
+    // has a rect. Without a rect there is no drag to keep visible, and the old
+    // substitution produced a 2px box at (0,0) for a user who had placed nothing.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: null,
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result).toBeNull();
   });
 });

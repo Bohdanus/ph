@@ -1,12 +1,17 @@
 import React from 'react';
 
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
+import Brush from '../components/ToolbarsRight/Brush/Brush.tsx';
+import CloneStamp from '../components/ToolbarsRight/CloneStamp/CloneStamp.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
+import ColorReplacement from '../components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
+import EllipticalSelection from '../components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx';
 import Eraser from '../components/ToolbarsRight/Eraser/Eraser.tsx';
 import Eyedropper from '../components/ToolbarsRight/Eyedropper/Eyedropper.tsx';
 import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
+import Gradient from '../components/ToolbarsRight/Gradient/Gradient.tsx';
 import FeatherMagneticLasso from '../components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
@@ -15,8 +20,15 @@ import MagicEraser from '../components/ToolbarsRight/MagicEraser/MagicEraser.tsx
 import PaintBucket from '../components/ToolbarsRight/MagicEraser/PaintBucket.tsx';
 import MagicWand from '../components/ToolbarsRight/MagicWand/MagicWand.tsx';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
+import Pencil from '../components/ToolbarsRight/Pencil/Pencil.tsx';
+import QuickSelection from '../components/ToolbarsRight/QuickSelection/QuickSelection.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
+import Sharpen from '../components/ToolbarsRight/Sharpen/Sharpen.tsx';
+import SingleRowColumnMarquee from '../components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx';
+import Smudge from '../components/ToolbarsRight/Smudge/Smudge.tsx';
+import Sponge from '../components/ToolbarsRight/Sponge/Sponge.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
+import Tonal from '../components/ToolbarsRight/Tonal/Tonal.tsx';
 import { PlaceholderTool } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
 import { placeholderToolGroups } from '../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import Transform from '../components/ToolbarsRight/Transform/Transform.tsx';
@@ -73,20 +85,60 @@ export const toolsMap: ToolsMap = {
     icon: 'rectangular-selection',
     toolboxComponent: RectangularSelection,
   },
+  'elliptical-selection': {
+    ...toolProcessors['elliptical-selection'],
+    icon: 'elliptical-selection',
+    toolboxComponent: EllipticalSelection,
+  },
+  // One panel for both, like `dodge`/`burn` on `Tonal` below: same three buttons, same
+  // sentence with one word changed, and `SingleRowColumnMarquee.tsx` reads `toolName` to
+  // pick that word.
+  'single-row-marquee': {
+    ...toolProcessors['single-row-marquee'],
+    icon: 'single-row-marquee',
+    toolboxComponent: SingleRowColumnMarquee,
+  },
+  'single-column-marquee': {
+    ...toolProcessors['single-column-marquee'],
+    icon: 'single-column-marquee',
+    toolboxComponent: SingleRowColumnMarquee,
+  },
+  'quick-selection': {
+    ...toolProcessors['quick-selection'],
+    icon: 'quick-selection',
+    toolboxComponent: QuickSelection,
+  },
+  'clone-stamp': { ...toolProcessors['clone-stamp'], icon: 'clone-stamp', toolboxComponent: CloneStamp },
+  gradient: { ...toolProcessors.gradient, icon: 'gradient', toolboxComponent: Gradient },
+  sharpen: { ...toolProcessors.sharpen, icon: 'sharpen', toolboxComponent: Sharpen },
+  smudge: { ...toolProcessors.smudge, icon: 'smudge', toolboxComponent: Smudge },
+  // `dodge` and `burn` share ONE panel deliberately: they are the same control set
+  // (Preset / Mode / Range / Exposure / Protect Skin Tone) over the same
+  // `DodgeBurnToolArgs`, and Photoshop draws them as one flyout tile pair anyway.
+  // `Tonal.tsx` reads `useStore().toolName` to decide which it is, so mounting it
+  // twice would show the same bar with a hardcoded name.
+  dodge: { ...toolProcessors.dodge, icon: 'dodge', toolboxComponent: Tonal },
+  burn: { ...toolProcessors.burn, icon: 'burn', toolboxComponent: Tonal },
+  // The Sponge does NOT share `Tonal`, despite sharing the flyout tile: its bar is Mode /
+  // Flow / Vibrance / Size / Hardness where the pair's is Range / Exposure / Size /
+  // Hardness. `Tonal` renders both of its controls unconditionally and its test pins that
+  // count, so sharing would mean the Sponge shipped a Range and an Exposure it does not
+  // have — two dead controls, which is worse than two absent ones.
+  sponge: { ...toolProcessors.sponge, icon: 'sponge', toolboxComponent: Sponge },
   brush: {
     ...toolProcessors.brush,
     icon: 'brush',
-    toolboxComponent: placeholderTool('Brush Tool', 'brush', false),
+    toolboxComponent: Brush,
   },
   pencil: {
     ...toolProcessors.pencil,
     icon: 'pencil',
-    toolboxComponent: placeholderTool('Pencil Tool', 'pencil', false),
+    toolboxComponent: Pencil,
   },
   'color-replacement': {
     ...toolProcessors['color-replacement'],
     icon: 'color-replacement',
-    toolboxComponent: placeholderTool('Color Replacement Tool', 'color-replacement'),
+    toolboxComponent: ColorReplacement,
   },
   eraser: { ...toolProcessors.eraser, icon: 'eraser', toolboxComponent: Eraser },
   'magic-eraser': { ...toolProcessors['magic-eraser'], icon: 'magic-eraser', toolboxComponent: MagicEraser },

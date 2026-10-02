@@ -3,7 +3,6 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { EyedropperSampleSize, EyedropperToolArgs } from '../../tools/eyedropper.ts';
-import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type EyedropperToolAreaProps = {
   className?: string;
@@ -18,10 +17,12 @@ type EyedropperToolAreaProps = {
 export const EYEDROPPER_READBACK_UNAVAILABLE = 'eyedropper-readback-unavailable';
 
 /**
- * `Sample All Layers` renders `disabled` in the options bar because it needs a composite read of
- * every visible layer, and the single workspace canvas is not that. It is a no-op input, not a
- * silently-ignored one: a `true` here reports why nothing happened instead of sampling the active
- * layer's pixels and presenting them as the whole document's.
+ * `Sample All Layers` has NO control on the options bar: it needs a composite read of every visible
+ * layer, and the single workspace canvas is not that, so a permanently `disabled` box was a
+ * promise the app could not keep and has been removed. The value survives in the args because
+ * `settings.ts` still seeds it, so this stays the loud refusal rather than a silent no-op: a `true`
+ * arriving from any other writer reports why nothing happened instead of sampling the composited
+ * canvas and presenting it as the whole document's.
  */
 export const EYEDROPPER_ALL_LAYERS_UNSUPPORTED = 'eyedropper-sample-all-layers-unsupported';
 
@@ -45,8 +46,7 @@ const toHexColor = (red: number, green: number, blue: number): string =>
  * canvas pixel.
  */
 export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
-  const [{ canvasRef, containerRef, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
-  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
+  const [{ canvasRef, containerRef, totalSize }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as EyedropperToolArgs;
@@ -76,14 +76,21 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
       return;
     }
 
-    const documentSeed = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
-    const centerX = Math.floor(documentSeed.x);
-    const centerY = Math.floor(documentSeed.y);
+    // The composited canvas is drawn in FRAME space: it is sized by `documentFrameSize` and each
+    // layer is stamped at `position.x - documentFrame.x` (`src/contexts/layer-renderer.ts:78-79,119`).
+    // So the canvas's own pixel (0,0) is the frame origin, and `getLocalCoords` is already the
+    // index `getImageData` wants. Running it through `canvasToDocumentPoint` first would ADD the
+    // frame origin a second time: after a crop that trims 100px off the left, a click on canvas
+    // x=100 read canvas x=200, and a click past 600 read entirely outside the bitmap and silently
+    // dispatched nothing, which reads as a dead tool.
+    const canvasSeed = getLocalCoords(event);
+    const centerX = Math.floor(canvasSeed.x);
+    const centerY = Math.floor(canvasSeed.y);
 
-    // Sample Size is the side of the square averaged around the click, and all three values are
-    // odd, so the block is centred. The block is then CLIPPED to the canvas rather than shifted
-    // inward: a click on the border averages the pixels that exist instead of reading out of
-    // bounds or quietly sliding the sample off the edge the user clicked.
+    // Sample Size is the side of the square averaged around the click, and all seven values Adobe
+    // offers are odd, so the block is centred. The block is then CLIPPED to the canvas rather than
+    // shifted inward: a click on the border averages the pixels that exist instead of reading out
+    // of bounds or quietly sliding the sample off the edge the user clicked.
     const sampleSize: EyedropperSampleSize = args.sampleSize;
     const half = Math.floor(sampleSize / 2);
     const left = Math.max(0, centerX - half);
@@ -96,6 +103,12 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     const sampleCount = Math.floor(data.length / 4);
     if (sampleCount === 0) return;
 
+    // A fully transparent pixel has no colour to report. The app's foreground is a CSS colour on
+    // an `<input type="color">`, which cannot express transparency, so averaging one in would
+    // silently set the foreground to black. Photoshop shows a crossed-out swatch and changes
+    // nothing, so nothing is dispatched here either.
+    if (data[(centerY - top) * (right - left) * 4 + (centerX - left) * 4 + 3] === 0) return;
+
     let red = 0;
     let green = 0;
     let blue = 0;
@@ -107,14 +120,17 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
 
     // Alpha is dropped: the store's foreground is a CSS colour consumed by an `<input type="color">`,
     // which cannot express it, and the composited canvas has already resolved it.
-    dispatch({
-      type: 'SET_COLOR',
-      payload: toHexColor(
-        Math.round(red / sampleCount),
-        Math.round(green / sampleCount),
-        Math.round(blue / sampleCount)
-      ),
-    });
+    //
+    // Alt-click writes the BACKGROUND swatch instead, which is Adobe's own rule: "Alt-click
+    // (Windows) / Command-Option-click (Mac) to sample to the background color"
+    // (https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html). The modifier
+    // is `altKey` on both platforms, so there is no platform branch here.
+    const sampledColor = toHexColor(
+      Math.round(red / sampleCount),
+      Math.round(green / sampleCount),
+      Math.round(blue / sampleCount)
+    );
+    dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR', payload: sampledColor });
   };
 
   return (

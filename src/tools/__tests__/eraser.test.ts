@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildEraseArgs, eraser, type EraserToolArgs } from '../eraser.ts';
 import { setupDrawCtx } from '../draw.ts';
 import { defaultSettings } from '../settings.ts';
+import { toolProcessors } from '../toolProcessors.ts';
 import { drawLine } from '../../util/draw.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
@@ -89,7 +90,10 @@ describe('buildEraseArgs', () => {
 
 describe('eraser processor', () => {
   it('subtracts alpha on the committed canvas, through the shared stroke painter', () => {
-    const ctx = renderCommit(eraserArgs({ lineWidth: 7 }));
+    // `mode` is named rather than inherited: the seeded default is `brush`, which does not reach
+    // the shared painter at all. These are the two hard modes' contract, so they say which one
+    // they are about.
+    const ctx = renderCommit(eraserArgs({ mode: 'pencil', lineWidth: 7 }));
 
     expect(ctx.globalCompositeOperation).toBe('destination-out');
     expect(ctx.lineWidth).toBe(7);
@@ -97,8 +101,8 @@ describe('eraser processor', () => {
   });
 
   it('subtracts alpha on the live preview overlay too, so the preview matches the commit', () => {
-    const committed = renderCommit(eraserArgs({ lineWidth: 7 }));
-    const preview = renderPreview(eraserArgs({ lineWidth: 7 }));
+    const committed = renderCommit(eraserArgs({ mode: 'pencil', lineWidth: 7 }));
+    const preview = renderPreview(eraserArgs({ mode: 'pencil', lineWidth: 7 }));
 
     // The whole reason the flag lives on `DrawToolArgs` and is read by `setupDrawCtx`: the overlay
     // and the commit are configured by that one function, so neither can drift from the other.
@@ -160,3 +164,65 @@ describe('eraser processor', () => {
 function recordCommitCtx(): MockCtx {
   return RecordingOffscreenCanvas.instances.at(-1)!.ctx;
 }
+
+/**
+ * The registry's own delegation, observed through it.
+ *
+ * The `eraser` entry is an inline `(params) => (args) => eraser(params)(args)` adapter rather
+ * than a reference to the module export, so it is absent from the direct-processor-source list
+ * in `tool-processors.test.ts`, and the shared-processor-identity test cannot see it either:
+ * `eraser`, `magic-eraser` and `paint-bucket` are three distinct closures, so a swap between
+ * any two of them satisfies every identity assertion in the suite. `this` file calls the
+ * module directly, so without going through the registry nothing here observes the wiring.
+ */
+describe('eraser registry delegation', () => {
+  it('routes the eraser to the alpha-subtracting stroke, through the registry', () => {
+    RecordingOffscreenCanvas.instances = [];
+
+    // `mode` is named rather than inherited, for the reason the two tests above already give:
+    // the seeded default is `brush`, which does not reach the shared painter at all. This is one
+    // of the two hard modes' contract, so it says which one it is about.
+    toolProcessors.eraser.imageProcessor({ size: { width: 24, height: 18 } })(
+      eraserArgs({ mode: 'pencil', lineWidth: 7 })
+    );
+
+    const ctx = recordCommitCtx();
+
+    // The two halves of the difference, and they are the whole difference. An eraser asks
+    // the canvas for `destination-out` and never reads or writes a pixel buffer; the magic
+    // eraser does exactly the opposite — it reads the layer, zeroes alpha in the buffer and
+    // `putImageData`s it back — and sets no composite operation at all. A misrouted magic
+    // eraser therefore fails both of these, and a misrouted eraser under a fill's name fails
+    // `fill.test.ts`'s registry pair.
+    expect(ctx.globalCompositeOperation).toBe('destination-out');
+    expect(ctx.putImageData).not.toHaveBeenCalled();
+  });
+
+  it('routes the eraser to the stamped tip in brush mode, through the registry', () => {
+    // The same wiring, in the mode that cannot use the pair above. The Brush tip has no path to
+    // stroke and no composite operator to ask for: it reads the layer, zeroes alpha per dab and
+    // writes the buffer back, because `destination-out` is defined as `da' = da * (1 - sa)` and
+    // a per-dab falloff has no way to express itself as one constant. So the two assertions that
+    // discriminate the eraser here are the INVERSE of the hard modes', and they discriminate it
+    // just as well: no path call is issued, and the buffer is round-tripped.
+    //
+    // What the soft edge actually looks like is not re-asserted here and does not need to be:
+    // `eraser.brush.test.ts` reads the committed alpha for every claim about the tip — the
+    // ramp, the Hardness extremes, the single-dab click and the whole stroke — and it is the
+    // only place in the suite that can see a colour, which a call-count pin cannot.
+    RecordingOffscreenCanvas.instances = [];
+
+    toolProcessors.eraser.imageProcessor({ size: { width: 24, height: 18 } })(
+      eraserArgs({ mode: 'brush', lineWidth: 7 })
+    );
+
+    const ctx = recordCommitCtx();
+
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.strokeRect).not.toHaveBeenCalled();
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.getImageData).toHaveBeenCalled();
+    expect(ctx.putImageData).toHaveBeenCalled();
+  });
+});

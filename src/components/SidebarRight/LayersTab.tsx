@@ -4,6 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
+import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
@@ -32,17 +33,30 @@ export default function LayersTab() {
   const dragImageRef = useRef<HTMLDivElement>(null);
   const dragImageNameRef = useRef<HTMLSpanElement>(null);
 
+  // The shared drag lock, not a direct write to `document.body`. A layer drag that ended while a
+  // dock gesture was still running used to remove the grabbing cursor and the selection lock
+  // from under it, because this wrote the class itself and knew nothing about the other writer.
+  // `lockedRef` makes the effect idempotent: a re-render with the same `draggedLayerId` must not
+  // take a second lock it will never release.
+  const lockedRef = useRef(false);
   useEffect(() => {
-    if (draggedLayerId) {
-      document.body.classList.add('cursor-grabbing');
-    } else {
-      document.body.classList.remove('cursor-grabbing');
+    if (draggedLayerId && !lockedRef.current) {
+      lockedRef.current = true;
+      lockDragCursor();
+    } else if (!draggedLayerId && lockedRef.current) {
+      lockedRef.current = false;
+      unlockDragCursor();
     }
   }, [draggedLayerId]);
 
   useEffect(() => {
     return () => {
-      document.body.classList.remove('cursor-grabbing');
+      // Unmounting mid-drag happens whenever the dock crosses the label threshold under a live
+      // column resize, which unmounts this whole tab.
+      if (lockedRef.current) {
+        lockedRef.current = false;
+        unlockDragCursor();
+      }
     };
   }, []);
   /////
@@ -73,11 +87,19 @@ export default function LayersTab() {
     removeLayer(layerId);
   }
 
-  function handleNameChange(layerId: LayerId, newName: string) {
+  function handleNameChange(layerId: LayerId, newName: string, labelNode: HTMLElement) {
     const trimmed = newName.trim();
-    if (trimmed && trimmed !== layers[layerId]?.name) {
+    const committed = Boolean(trimmed && trimmed !== layers[layerId]?.name);
+    if (committed) {
       updateLayer(layerId, { name: trimmed }, RENAME_LAYER_ACTION);
+    } else {
+      // A refused rename leaves the stored name untouched, so React re-renders with the very
+      // same text child and writes nothing — the blank text node the browser left behind would
+      // survive and the row would show a nameless layer. Writing the stored name back, the way
+      // the Escape branch does, has to happen before edit mode ends.
+      labelNode.textContent = layers[layerId]?.name ?? '';
     }
+    // Ending edit mode re-renders with the same text child, so the write-back must land first.
     setEditingLayerId(null);
   }
 
@@ -86,7 +108,7 @@ export default function LayersTab() {
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
-        <ul className="flex flex-col list-none p-0 pt-1 gap-1 overflow-y-auto min-h-0">
+        <ul data-testid="layers-list" className="flex flex-col list-none p-0 pt-1 gap-1 overflow-y-auto min-h-0">
           {sortedLayers.map((layer, index) => {
             const isActive = activeLayerId === layer.id;
             const isPickedLayer = draggedLayerId === layer.id;
@@ -99,6 +121,7 @@ export default function LayersTab() {
             return (
               <li
                 key={layer.id}
+                data-testid="layer-row"
                 ref={(el) => {
                   listItemRefs.current[layer.id] = el;
                 }}
@@ -185,6 +208,7 @@ export default function LayersTab() {
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span
+                      data-testid="layer-name"
                       contentEditable={isEditable}
                       suppressContentEditableWarning
                       onMouseDown={(e: React.MouseEvent<HTMLDivElement>) => {
@@ -197,7 +221,7 @@ export default function LayersTab() {
                         e.stopPropagation();
                       }}
                       onBlur={(e) => {
-                        handleNameChange(layer.id, e.currentTarget.textContent || '');
+                        handleNameChange(layer.id, e.currentTarget.textContent || '', e.currentTarget);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {

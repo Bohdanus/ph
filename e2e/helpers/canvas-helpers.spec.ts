@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '../fixtures/extended-test';
 import { getSelectionBounds, getColorAtPoint, getDarkPixelBounds, loadImageData } from './canvas-helpers';
 
 interface DrawingShape {
@@ -93,12 +93,29 @@ test.describe('Canvas Helpers', () => {
       shapes: [{ type: 'strokeRect', x: 10, y: 10, w: 80, h: 80 }],
     });
 
+    // The paint is a 3px band centred on the rect's path, so it spans 8.5..91.5. A pixel
+    // counts as selection cyan only at red <= 80, which needs roughly 69% of the band over
+    // it, so the half-covered pixels at 8 and at 91 are rejected and the detected edges are
+    // 9 and 90. One pixel of tolerance covers the only thing that can move them - which side
+    // of a 0.5 boundary the rasterizer assigns the half-covered pixel - and cannot cover a
+    // shifted or partial detection, which is two pixels wide or more.
+    const strokeOrigin = 10;
+    const strokeSize = 80;
+    const lineWidth = 3;
+    const tolerance = 1;
+    const firstCoveredPixel = Math.ceil(strokeOrigin - lineWidth / 2);
+    const lastCoveredPixel = Math.floor(strokeOrigin + strokeSize + lineWidth / 2) - 1;
+
     const bounds = await getSelectionBounds(screenshot, { redMax: 80, greenMin: 80, blueMin: 180 });
     expect(bounds).toBeTruthy();
-    expect(bounds!.left).toBeLessThanOrEqual(13);
-    expect(bounds!.top).toBeLessThanOrEqual(13);
-    expect(bounds!.right).toBeGreaterThanOrEqual(87);
-    expect(bounds!.bottom).toBeGreaterThanOrEqual(87);
+    expect(bounds!.left).toBeGreaterThanOrEqual(firstCoveredPixel - tolerance);
+    expect(bounds!.left).toBeLessThanOrEqual(firstCoveredPixel + tolerance);
+    expect(bounds!.top).toBeGreaterThanOrEqual(firstCoveredPixel - tolerance);
+    expect(bounds!.top).toBeLessThanOrEqual(firstCoveredPixel + tolerance);
+    expect(bounds!.right).toBeGreaterThanOrEqual(lastCoveredPixel - tolerance);
+    expect(bounds!.right).toBeLessThanOrEqual(lastCoveredPixel + tolerance);
+    expect(bounds!.bottom).toBeGreaterThanOrEqual(lastCoveredPixel - tolerance);
+    expect(bounds!.bottom).toBeLessThanOrEqual(lastCoveredPixel + tolerance);
   });
 
   test('getSelectionBounds returns null when color not found', async ({ page }) => {
@@ -242,11 +259,13 @@ test.describe('Canvas Helpers', () => {
     await expect(loadImageData(corruptBuffer)).rejects.toThrow();
   });
 
-  test('loadImageData rejects quickly on invalid input (no hang)', async () => {
+  test('loadImageData rejects invalid image bytes, without a wall-clock bound', async () => {
+    // This used to be a second, weaker copy of the corrupt-base64 case above, with a
+    // `Date.now()` delta asserted under 5000 ms. The delta made the suite's result
+    // depend on how fast the machine is, and the rejection it asserted was the one the
+    // previous test already asserts — so a hang would have been caught as a failure
+    // either way, and a slow machine produced a red that no code change could fix.
     const invalidBuffer = Buffer.from('invalid-not-an-image', 'utf-8');
-    const startTime = Date.now();
     await expect(loadImageData(invalidBuffer)).rejects.toThrow();
-    const elapsed = Date.now() - startTime;
-    expect(elapsed).toBeLessThan(5000);
   });
 });

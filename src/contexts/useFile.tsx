@@ -6,7 +6,7 @@ import type { Size } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
-import type { BlankImageParams } from './tool-types.ts';
+import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
 
 export type ImageUploadResponse =
@@ -32,7 +32,7 @@ export type ImageSaveResponse = {
 };
 
 export interface FileContextType {
-  openNewImageDialog: () => Promise<BlankImageParams | null>;
+  openNewImageDialog: () => Promise<NewDocumentBlankParams | null>;
   openLoadImageDialog: () => Promise<ImageUploadResponse | null>;
   openSaveImageDialog: (data: ImageSaveInput) => Promise<ImageSaveResponse | null>;
 }
@@ -51,7 +51,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   // Resolver refs allow promise-based API for consumers
   const uploadResolverRef = useRef<((data: ImageUploadResponse | null) => void) | null>(null);
-  const newResolverRef = useRef<((data: BlankImageParams | null) => void) | null>(null);
+  const newResolverRef = useRef<((data: NewDocumentBlankParams | null) => void) | null>(null);
   const saveResolverRef = useRef<((res: ImageSaveResponse | null) => void) | null>(null);
 
   useEffect(() => {
@@ -81,7 +81,6 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       uploadResolverRef.current = null;
     } catch (error) {
       console.error('Failed to load image:', error);
-      window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
       uploadResolverRef.current?.(null);
       uploadResolverRef.current = null;
     }
@@ -94,7 +93,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   const openNewImageDialog = () => {
     setShowNewDialog(true);
-    return new Promise<BlankImageParams | null>((resolve) => {
+    return new Promise<NewDocumentBlankParams | null>((resolve) => {
       newResolverRef.current = resolve;
     });
   };
@@ -127,18 +126,31 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       }
       saveResolverRef.current?.(quality === undefined ? { fileName, format } : { fileName, format, quality });
       saveResolverRef.current = null;
-    } catch (e) {
-      console.error('Failed to save image:', e);
-      window.alert(`Failed to save file: ${e instanceof Error ? e.message : String(e)}`);
-      saveResolverRef.current?.(null);
-      saveResolverRef.current = null;
-    } finally {
+      // The teardown belongs to the success branch, NOT to `finally`. A `finally` runs on
+      // every exit, so it conflated "the attempt finished" with "the save worked" and tore
+      // the dialog down on a failure exactly as it does on a success: the user lost the
+      // chance to change format/quality and retry, and had to redo the whole export.
+      // Leaving both calls here is also what makes a retry work at all — `fileInput` stays
+      // staged, so the second attempt encodes the same `{ canvas, layers, size,
+      // documentFrame }`, and the dialog's `key` is derived from `fileInput.fileName`, so
+      // an unchanged input means no remount and the user's own `fileName`/`format`/
+      // `jpegQuality` edits are still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
+    } catch (e) {
+      console.error('Failed to save image:', e);
+      // `null` is the in-band failure signal every caller already guards with
+      // `if (data)`, so it still resolves, and it still resolves the promise exactly once
+      // because it is the first and only caller of a resolver that is nulled immediately
+      // after. The dialog, the staged input and the dialog's own controls all stay put, so
+      // the retry re-enters this `try` with `fileInput` intact and the now-nulled
+      // `saveResolverRef` makes the second resolution a no-op rather than a stale resolve.
+      saveResolverRef.current?.(null);
+      saveResolverRef.current = null;
     }
   }
 
-  const handleNewImageCreate = (data: BlankImageParams) => {
+  const handleNewImageCreate = (data: NewDocumentBlankParams) => {
     // Resolve the waiting promise (if any) with data or undefined
     newResolverRef.current?.(data);
     newResolverRef.current = null;
@@ -163,6 +175,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       {children}
       <input
         type="file"
+        data-testid="file-open-input"
         ref={fileInputRef}
         onChange={handleFileInputChange}
         accept="image/*,.psd,.tif,.tiff,.bmp,.gif,.avif,.ico,.svg"

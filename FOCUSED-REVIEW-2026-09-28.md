@@ -288,7 +288,7 @@ entry whose DIB declares 512×512 must reject.
 | PSD                            | 67,108,864      | `psd-utils.ts:36`                           |
 | AVIF                           | 80,000,000      | `avif-utils.ts:13` (your decision, item 45) |
 | TIFF                           | 200,000,000     | `tiff-utils.ts:12-23`                       |
-| **largest creatable document** | **100,000,000** | `NewImageDialog.tsx:208-209`                |
+| **largest creatable document** | **100,000,000** | `NewImageDialog.tsx:96-97` and `:129-130`   |
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. Consequence: a 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as

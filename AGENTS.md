@@ -1,50 +1,51 @@
-# AGENTS.md
+Photoshop clone production-grade photo editor
 
-Photoshop-inspired, production-grade photo editor. Instructions for coding agents.
+## Subagents INSTRUCTION
 
-## Subagents: THE DEFAULT, NOT THE FALLBACK
-
-**LAUNCH AS MANY SUBAGENTS AS THE TASK WARRANTS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.** 40 sequential tool calls in one context = 8 parallel subagents + a 6-call synthesis. Sequential tool calls are the defect, not the token count.
+LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.
 
 Delegate **first**, not after you get stuck. Fan-out signals: every caller of X, per-file audits, "does this test still pin the old behaviour", one sweep per subsystem.
 
 ### Model policy
 
-**ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE. THAT IS THE WHOLE RULE.**
+ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE
 
-1. **A FREE SESSION MUST NEVER LAUNCH A PAID SUBAGENT. NO EXCEPTION.** Cost is monotone downwards: a subagent may be weaker than its parent, never more expensive. A `model` that resolves to a GPT model is a bug in your call, not a judgement call. If no free model fits, use the best free one and say in the report that the task deserved a stronger model.
-2. **A PAID SESSION MAY LAUNCH PAID SUBAGENTS** on the model the turn is already on — already authorised. Escaping to a _different_ paid model still needs the user to name it in that request. Rule 1 is the other direction.
-3. **ALWAYS PASS `provider` TOGETHER WITH `model`.** A bare name is matched leniently (case, punctuation, word order ignored) and can resolve to a different provider's model; with no `provider` it falls back to the **Kilo Gateway**, which returns a GPT model under a `~`-prefixed id — `~openai/gpt-luna-latest` is a gateway substitution, not the `openai` model of that name. **A `~` id is a GPT model, so it is paid.**
-4. `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the default for nearly every subagent. Other free models are useless; do not spend a turn sampling them.
-5. Cost roughly doubles past ~260k of context. Keep the main turn lean; push fan-out into fresh contexts.
-6. `agent_manager` too: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
+1. A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION
+2. A GPT SESSION MAY LAUNCH GPT SUBAGENTS
+3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is CORRECT provider for GPT models, "kilo", is CORRECT provider for SpaceBunny.
+4. `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless. The `kilo` provider also lists it as plain `Space Bunny Alpha`; the dated spelling is the one that resolves on this gateway.
+5. Cost doubles past 200k of context FOR GPT Luna, and doubles above 270k of context for GPT Terra and Sol. Space Bunny does not have such restriction. IMPORTANT THAT GPT MODELS stay below threshold!
+6. `agent_manager`: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
+7. THE GATEWAY PRICES IN THE NAME, AND A CATALOG ENTRY IS NOT A FREE ENTRY. `(free)` is free; a bare name may be paid.
+8. **NEVER OMIT `model` AND `provider`!**
 
 ```ts
 task({
   subagent_type: 'explore', // or 'general'
-  model: 'Space Bunny Alpha (new)',
+  model: 'Space Bunny Alpha (retires Oct 5)',
   provider: 'kilo',
   variant: 'max',
   prompt: '...',
 });
 ```
 
-- Omitting those three fields inherits the current turn's model. Passing them explicitly is what keeps a subagent free when the main turn is not.
-- **DO NOT ESCALATE TO A PAID MODEL ON YOUR OWN** for "hard" or "risky" work. Override only when the user named a GPT model in that request, and say so when you do.
 - `agent_manager` (visible sessions, git worktrees) is a different tool: only when the user wants visible sessions or worktrees. `task` for everything else — it creates no sessions.
-- Audit before spawning a fleet, not after: `sqlite3 ~/.local/share/kilo/kilo.db "SELECT json_extract(model,'\$.id') m, json_extract(model,'\$.providerID') p, count(*) FROM session GROUP BY 1,2 ORDER BY 3 DESC"` — `session.model` is a TEXT column holding JSON; there is no `data` column on `session`. On 2026-09-28 a free orchestrator (`ses_f1b1bccb…`) sent two subagents with a bare model name, the resolver fell through to the Kilo Gateway onto `~openai/gpt-luna-latest`, and both died in under a second on `APIError: Add credits to continue, or switch to a free model` at zero tokens — rule 1 breached by an agent that was itself free.
 
 ### Rules of delegation
 
+- **NEVER MORE THAN 15 SUBAGENTS RUNNING AT ONCE, IN ANY COMBINATION** — `task` subagents plus Agent Manager sessions plus background processes you have running. Fan-out is good; a fan-out that saturates the host is not, and 16 is past that point on this machine. Queue the remainder and launch as results land, or split the concern further. The cap is on **simultaneously running**, not on total: a hundred subagents in waves of fifteen is fine.
+- **A `task` subagent INHERITS YOUR WORKING DIRECTORY.** NEVER WORK on `main` worktree, unless allowed by operator. Create the worktree BEFORE the first fan-out, and put its absolute path in every brief: a subagent's cwd only affects relative `bash`, so the brief is what moves the work.
 - **NEVER TWO SUBAGENTS ON THE SAME FILE.** Split by concern, not by convenience.
 - **Self-contained briefs.** A subagent has a fresh context: give it the goal, your constraints, whether it may edit code, and exactly what its final message must contain. "Return file:line for every match" beats "investigate the caching layer".
 - **Ask for evidence.** A claim without `file:line` or command output is not verified. Have subagents report candidate results _and_ how they got them, then check the load-bearing ones yourself.
+- **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.**. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
+- **A post that will not fit is a path, not a shorter post.** `board_post` rejects a body over 4096 characters and the rejection ABORTS THE TURN — a finished review, its mutations and all its evidence, gone, ending on a tool error. Write the finding to a handoff document and post the path. `docs/ORCHESTRATION.md` has the cap and the rest of the swarm text rules.
 
 ## NEVER OPEN A BROWSER WINDOW
 
-The e2e suite is headless by default and must stay that way. A headed browser puts a live, clickable window on the operator's screen for the whole run; their clicks, keystrokes, mouse movement and focus changes reach the page as real input, indistinguishable from the suite's own `page.mouse` / `page.keyboard` calls, so the run fails for reasons that are not in the code and look exactly like real races.
+The e2e suite is headless by default and must stay that way.
 
 | Blocked                         | Why                                                        |
 | ------------------------------- | ---------------------------------------------------------- |
@@ -57,7 +58,19 @@ The e2e suite is headless by default and must stay that way. A headed browser pu
 | `PLAYWRIGHT_ALLOW_HEADED=1`     | the human's opt-in, not yours                              |
 | `test.use({ headless: false })` | a live window                                              |
 
-`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. If something only reproduces visually, that is the operator's call; ask them to run `npm run test:e2e:headed` themselves.
+`kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set.
+
+### Looking at a live page is allowed, and does not need a window
+
+ALWAYS use headless browser. `npm run probe:console` loads a page
+headlessly and reports every console error, page error and failed request, deduplicated with
+counts — which is how the nine invalid props on a `<div>` in `useRect` were found, on a suite
+of 339 tests that could not see them. `--url`, `--viewport`, `--dsf` and `--allow` are its only
+options; `headless` is hardcoded in the script and is not read from the environment.
+
+Do not add a browser MCP server to get this. `permission.bash` globs match shell commands and
+`global-setup.ts` only runs inside a Playwright process, so an `mcp_*_navigate_page` call is
+neither and would reopen the window these two layers exist to close.
 
 ## Commands
 
@@ -68,30 +81,22 @@ npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
+npm run probe:console   # playwright, HEADLESS - one page load, reports console + page errors
 ```
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
 - **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` resolves the app tsconfig alone, which excludes tests: it exits 0 while the tests do not compile.
-- **The bare `npx tsc` type-checks ZERO files and always exits 0.** The root `tsconfig.json` is a solution stub — `"files": []`, no `include`, three `references` — so `npx tsc --showConfig -p tsconfig.json` prints `{"compilerOptions": {}}` and the references. It is indistinguishable from a pass, and `.claude/settings.local.json` in the operator's ROOT checkout carries a `"allow": ["Bash(npx tsc:*)"]` wildcard that auto-approves exactly that command. That file is untracked and globally gitignored (`~/.config/git/ignore` has `**/.claude/settings.local.json`), so no worktree, `git status` or `git ls-files` can see it — its absence from your worktree is not its absence from the machine. Only `npm run tsc` (`tsc -b`) type-checks anything.
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive test that only fails in a full run is usually the pool, not the code.
-- `npm run test:e2e` starts Vite on :5173 itself. Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local `retries: 0`.
+- `npm run test:e2e` starts Vite itself, on a port it picks. Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local `retries: 0`.
 
 ## Worktrees and dev servers
 
-**HARD RULE: 99% OF WORK IS DONE IN ITS OWN WORKTREE UNDER `.kilo/worktrees/`, ON ITS OWN BRANCH. THE MAIN WORKTREE IS FOR READING AND MERGING ONLY.**
+One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
 
-- One task is one worktree and one branch, lowercase prefix (`fix/…`, `feat/…`, `e2e/…`, `cleanup/…`, `audit/…`). A second worktree for the same task is a fork you reconcile by hand.
-- **Already compliant if the session you are running in IS a worktree** — an Agent Manager worktree session, or any checkout under `.kilo/worktrees/`. `git rev-parse --show-toplevel` before you assume you are on main; never nest a second worktree inside one.
-- The 1%: a read-only investigation, an operator-requested one-line doc fix, a hotfix the operator asked for on main. None of those is a feature.
-- **Never commit feature work in the main worktree**, and stage only your own paths everywhere. Do not edit in main and move the change to a worktree afterwards: that leaves an unreviewed diff in a shared checkout and a worktree that does not build.
-
-Five traps that cost real debugging time:
-
-- **A worktree used to run no commit gate at all, silently.** `core.hooksPath` was `.husky/_` — a directory husky generates during `npm install` and keeps untracked — and git resolves a relative `core.hooksPath` against the root of the worktree it is running in. Every worktree made by `git worktree add` had no `.husky/_`, so git found no hook, ran nothing, and exited 0. The commit landed with no warning and nothing in its output to notice. 89 of 118 worktrees were in that state while 96 had a populated `node_modules`, so "just run npm install" was never the fix. `core.hooksPath` now points at `<common git dir>/hooks-gate`, which every worktree shares, and the tracked `.husky/pre-commit` is what runs. **If a hook ever stops firing, run `git config core.hooksPath` first and assume nothing.** Re-install with `npm install` (the `prepare` script).
-- **A worktree on an older commit blocks with a specific message, not a mystery one.** Its `.husky/pre-commit` still sources husky's generated preamble, which only an install in _that_ worktree ever created. The dispatcher names the cause; bring the worktree up to date, or `git config --unset core.hooksPath`. It blocks rather than skipping on purpose: a gate that cannot run must not let a commit through.
-- **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
-- **Every worktree's dev server wants :5173.** Locally `reuseExistingServer` is on, so `test:e2e` can attach to a server another worktree started and then test _that_ checkout. Use `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. "My change did nothing" in e2e is this, not a cache.
+- **`node_modules` is missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
+- **A run starts its own dev server, on a port of its own.** `scripts/e2e-run.mjs` picks a free port, so `test:e2e` never tests a checkout it did not start. Never set `PLAYWRIGHT_REUSE_EXISTING_SERVER`: `playwright.config.ts` hard-codes `reuseExistingServer: false` and the runner refuses that variable on TRUTHINESS, so even `=false` exits with an error. A bare `npx playwright test` skips the port picker and collides with whatever holds :5173 — use `npm run test:e2e`, or pass `PLAYWRIGHT_PORT=<free>`.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
+- **Never remove a worktree by hand.** `npm run dispose -- <name>` is the only path: it checks the inventory's `action`, the board's claims and locks, and the session database, then anchors the branch before it deletes. `git worktree remove --force` and `git branch -D` are denied or gated in `kilo.jsonc`, and there is no reason to defeat them. A refusal names the signal that produced it — an in-flight task is `in-use`, and only the operator may stop a writing chat.
 
 ## Test traps
 
@@ -99,84 +104,76 @@ Five traps that cost real debugging time:
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
+- **A spec imports `test` from `./fixtures/extended-test`, never from `@playwright/test`.** That module re-exports everything Playwright does and adds one `auto` fixture, `ConsolePolice`, which fails a test on any unaccepted console error or page error. It is not suppressible per test: a legitimately-expected message becomes an `ACCEPTED_CONSOLE_ERRORS` entry in `e2e/helpers/console-police.ts` carrying the reason it is expected. Adding a rule, a skip or a threshold to make that check pass is the same move as raising a gate threshold, and it is not done here.
+- Spreading a hook's whole return onto a DOM element is how nine invalid props reached a `<div>` in this app for months. `useRect` now returns `pointerHandlers` / `rectHandles` / `pointerState` so that mistake is a type error.
 
 ## Gates
 
 ### Local
 
-Two hooks, each a one-line wrapper over a `package.json` script, so the hook and the command a developer or CI can run by hand cannot drift:
+Two husky hooks, both delegating to a script in `package.json`, so the gated sequence is a command anyone can run by hand:
 
-| hook                | script        | runs                                                                                                 |
-| ------------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
-| `.husky/pre-commit` | `gate:commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build` -> `test:e2e:unit`) |
-| `.husky/pre-push`   | `gate:push`   | `npm run test` — the full app suite                                                                  |
+| Command               | Runs from           | Contents                                                       |
+| --------------------- | ------------------- | -------------------------------------------------------------- |
+| `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
+| `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
+| `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
+| `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
 
-Both are reached through a shared entry point in the common git dir, not through husky; see "Worktrees and dev servers". `HUSKY=0 git commit` is the escape hatch.
+The commit hook is two gates because they answer different questions. `gate:verify` asks "does the tree still build and typecheck". `test:staged` asks "did this commit break a test covering the files in it" — and only that. Both `tsc` and `build` PASS a flipped numeric threshold, a renamed branch or a dropped case, so without the second gate such a change commits cleanly and dies in CI: the same class of fix that has repeatedly needed its own worktree ("Fix 12 failing useHistory tests", "Fix 3 failing replay-coordinator tests", "Fix failing useApp.psd tests", "Fix failing useRect tests").
 
-- **The commit gate and these docs carry NO wall-clock numbers.** Every cost figure written into a hook comment or a doc in this repo has gone stale, and one of them — "the app suite is likely minutes" — was never measured at all and was the stated reason for a design decision that then shipped. Measure before you design; do not leave a number behind.
-- `test:e2e:unit` is **not** an e2e run: `vitest --config vitest.e2e.config.ts`, node environment, no browser. It is the **only** commit-path coverage of the e2e helper functions, because `vitest.config.ts` excludes `e2e/**`. Deleting it silently loses that coverage.
-- **The commit gate runs no app unit test, and that is deliberate.** `npm run test` is the whole-tree check: run it on demand, and `gate:push` runs it for you. The scoped fan-out that used to sit in the gate is a command now — see below. Accepted cost: a test that was already failing before the commit started is caught at push, in CI, or when someone runs `npm run test` — and this repo's worktrees are full of commits that needed exactly that catch.
-- `*.{ts,tsx}` uses ESLint + Prettier; `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` uses Prettier only. **Do not add ESLint for the latter group**: no config covers it, and doing so breaks Markdown/SCSS commits. `scripts/*.js` is in that second group.
-- **`lint:check` lints `git ls-files`, not `.`.** `scripts/lint-tracked.js` is the only place the two extension lists live, and they are the same rule on both sides: `lint:check` covers every tracked file of those types, `.husky/pre-commit` covers the staged subset. A filesystem-scoped command took `.kilo/`'s 121 worktrees, `dist/`, and generated e2e output as input, and needed a hand-maintained `.prettierignore` to stop `npm run format` rewriting them — that file is gone because nothing it listed is tracked. The tracked images, `src/components/SidebarLeft/snippet.txt`, `index.html` and the dotfiles are **not** linted, deliberately; the globs in the script are where that decision is written down. **Legacy files being outside the linted set is not a problem to solve.**
-- `--fail-on-changes --no-stash` leaves formatter fixes unstaged and blocks the commit; never allow hooks to rewrite the index. `--no-stash` is not optional: without it lint-staged keeps its backup stash every time it declines to revert, so each blocked commit leaves a `WIP on <branch>` entry behind.
-- `build` is not redundant with `tsc`: `vite build` strips types without checking them, and it alone catches Sass, wasm, PostCSS, and import resolution. **No `lint:check` in any local gate**: locally, `lint-staged` covers the staged subset and nothing more, so a file already committed unformatted, a rule-changing branch switch, or a bad rebase surface in `ci` rather than at commit time.
-- No coverage and no Playwright, at any local gate.
+- `test:staged` is a 2.8s scoped run where the full suite is 7-14s, and it is unconditionally safe in Vitest 5: no matching staged path reports `No test files found` and exits 0, and a staged path outside `src/` (`.md`, an `e2e/**` helper, a binary asset) also exits 0 without running the whole suite. It therefore needs no `--passWithNoTests` and no guard. What it does **not** give you is completeness: a file with no test importing it passes, which is why the full suite still runs at push.
+- A **merge commit** is index-vs-`HEAD`, so `git diff --cached` reports every file the merge brings in rather than what was staged: 120 merged `src` paths measure 9.8s and 81 test files, making the hook ~19s instead of ~12s. Slower, never a false pass. The selection derives from Vite's module graph, so it is not stable across environments (a staged `package.json` selects all 180 test files in a warm checkout, none in a fresh install). Do not rely on a staged non-`src` file dragging in its dependents.
+- The staged list is read with `-z` and passed through `xargs -0` **ON PURPOSE**. An unquoted `$(git diff --cached --name-only)` word-splits and glob-expands, and the failure is SILENT: a path expanding to nothing makes vitest report `No test files found` and exit 0, so the gate appears to pass while testing nothing. The shell form works today only by accident of the current tree (no tracked name contains a space or glob metacharacter); `src/components/[id]/`-style paths are the plausible next break. Empty input is a true no-op — BSD `xargs` does not invoke the command at all — so a docs-only commit costs 0.04s.
+- `lint-staged` formats two groups. `*.{ts,tsx}` gets `eslint --fix` and `prettier --write`; `*.{js,scss,jsonc,yml,yaml,md,json}` gets `prettier --write` only, because no ESLint config covers those. The second group deliberately includes `.js`, `.scss` and `.jsonc`: `prettier --check .` matches all of them, and anything it matches but lint-staged does not is formatted by nobody at commit time and fails in CI instead.
+- `--fail-on-changes` is why the hook is trustworthy: by default lint-staged re-adds whatever `--fix`/`--write` changed, so the commit ends up containing code that was never staged and never read. With the flag the fix stays in the working tree, the index is untouched, and the commit is blocked. `--no-stash` makes that clean — without it a blocked commit leaves a `WIP on <branch>` stash behind. Together: no index rewrite, no residue. Cost is one extra round trip per commit that touched an unformatted file; `npm run format` removes it. One residue does survive: `.git/lint-staged_unstaged.patch` after any blocked commit, and nothing removes it.
+- `build` is in the commit hook because it is not redundant with `tsc`: `vite build` runs Babel and esbuild, which strip types without checking them, so it catches Sass, wasm resolution, PostCSS and import resolution that `tsc` cannot, while `tsc` catches types the bundle never sees. `gate:verify`'s name predates its contents — it runs no lint and no app test, which is why it is a distinct row.
+- **NOTHING LOCAL RUNS `lint:check` ANY MORE** (`gate:push` used to). Whole-repo `eslint . --cache` and `prettier --check .` are CI-only, so an already-committed unformatted file, a branch switch that changes lint rules, and a bad rebase are all caught by the `ci` job rather than locally. lint-staged covers the staged files, which is what the `.scss` gap needed.
+- `gate:push` does **not** repeat `gate:commit`. It used to, reasoning that a push can follow `--no-verify`, a rebase or a cherry-pick — sound for `tsc`, but it re-ran 9s of deterministic checks to protect 7s of suite time and ran `test:e2e:unit` twice per push. A rebase that broke the build is caught by `ci` in about a minute.
+- Measured, for judging a future change to this table: `build` 1.7s, `test:e2e:unit` 1.1s, `test:staged` 2.8s, `tsc -b` 5s, `gate:commit` end to end ~9s, `test:staged` adding ~3s, `test` 7-14s.
 
-### `test:staged` is a command, not a gate
+### CI (Node 24 from `.nvmrc`, which is also what `engines` requires)
 
-`npm run test:staged` runs the tests that transitively import the staged paths. It is **deliberately not in the commit gate**, and `npm run test` is the whole-tree check: run it on demand, and `gate:push` runs it for you.
+**One workflow, three gating jobs.** `.github/workflows/ci.yml` is the only workflow file, and all three jobs run on every push and PR to `main` plus `workflow_dispatch`. None of them declares `needs:`, so they are three independent gates and a red one does not skip the others.
 
-It was in the gate and was taken out, because its cost is a function of a file's fan-in across the test suite rather than of the change. Measured, the selection was about 5% of the suite for a hook, a util or a component; 44% for `src/contexts/StoreContext.tsx`; 64% for `src/util/draw.ts`; and 100% for `src/test/setup.ts` or `vitest.config.ts`, at which point it costs about as much as the full suite and can cost more, because the module-graph build is a second whole-tree pass. Proportions are the stable fact and absolute counts go stale every time a test file lands, which is why only those are recorded here.
+- `ci` — `lint:check` -> `npm audit --audit-level=high` -> `tsc` -> an assertion that every tracked `.ts`/`.tsx` is inside some project's `include` -> `test --coverage` -> `build`. Uploads `coverage/`. `lint:check` is its FIRST step, so an unformatted committed file fails the job before `tsc`, the suite and the build ever run.
+- `e2e-unit` — `test:e2e:unit` -> `test:e2e:unit:coverage`, uploads `coverage-e2e/`. A separate job rather than a step in `ci`, so a break in the app pipeline cannot skip the only gate on the e2e helpers.
+- `e2e` — the Playwright specs, headless. It used to be `continue-on-error`, justified by five failing specs that are now fixed, so it is a gate.
 
-It is worth knowing for what it is good: cost tracks blast radius, and so does risk, so the expensive case is the one that genuinely needs the widest net. What it cannot do is see a test that was **already** failing before the commit started, which is exactly the state this repository's history is full of, and what it cannot do is find a coverage gap. Two limits to hold in mind when you run it: a staged path that no test imports selects 0 files and exits 0 (usually correct — nothing covers it, so nothing can fail), and the pipeline must stay NUL-safe, `git diff --cached --name-only -z | xargs -0`, because an unquoted `$(...)` word-splits and globs into a silent pass.
+**One thing CI does NOT gate: dependency licences.** The `dependency-review` job and `.github/dependency-review-config.yml` are both gone. `npm audit --audit-level=high` in `ci` is the vulnerability half and it is real; the licence half is written down in `DEPENDENCIES.md` and nothing enforces it.
 
-### CI
+**DO NOT WEAKEN A GATE TO GET GREEN: no skips, no raised thresholds, no deleted assertions, no re-recorded visual baselines.** Each is either a real defect with a named fix, or a recording decision that belongs to the operator.
 
-- `ci`: lint, high-severity audit, typecheck, TS-project coverage assertion, coverage tests, build.
-- `e2e-unit`: e2e helper tests and coverage.
-- `e2e`: headless Playwright.
-- **Dependency licences are not a gate.** The allow/deny list and the high-severity threshold are in `DEPENDENCIES.md`, enforced by nothing; `npm audit --audit-level=high` in `ci` is the vulnerability half and it does run.
+## Known failures and how to read one
 
-**DO NOT WEAKEN A GATE TO GET GREEN: no skips, raised thresholds, deleted assertions, or re-recorded baselines.** Fix the defect or leave the recording decision to the operator.
+On the default headless run **no e2e test fails**: 347 pass, 3 are skipped by declaration (`e2e/sidebar-flyout.spec.ts` right-click on single-tool groups, `e2e/viewport-drawing.spec.ts` line-under-cursor after resize, `e2e/export/photopea.spec.ts` the Photopea round trip). Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
 
-## Definition of Done
+- The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
+- A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `expected-fail` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.
+- **DO NOT widen a threshold, add a skip, or re-record a visual baseline to make a test green.**
+- Baselines are now genuinely compared: `visual-regression.spec.ts` re-records only under an explicit `--update-snapshots`, so a green run means the pixels matched.
+- Read a failure from disk, never from a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record (in CI it also writes `test-results/results.json`). A `trace.zip` needs the trace viewer, which is a window — ask the operator.
 
-**A TASK IS NOT DONE UNTIL THE WORK IS MERGED INTO `main` AFTER A THOROUGH CODE REVIEW. NOT "IMPLEMENTED", "COMMITTED", "PUSHED", "PR OPEN", OR "THE TESTS PASS".**
+## Documentation
 
-1. **Isolated**, in its own worktree on its own branch.
-2. **Green locally**: `lint:check`, `tsc`, `build`, `test`; `test:e2e` when the change is user-visible, `test:e2e:unit` when it touches an e2e helper. "It was already failing" is a fact to report, not a reason to stop.
-3. **Covered** by a test that fails without the change. A fix that cannot be pinned by a test is a fix that comes back.
-4. **Documented**: handoff docs updated, and any new gate, test trap, or architecture boundary written down where the next agent looks.
-5. **Reviewed by someone else**, thoroughly: the diff, the surrounding code, the tests, and its own load-bearing claim re-run. Not the author. A finding sends the task back.
-6. **Merged into `main`**: conflicts resolved in the worktree, pushed, `main` green afterwards.
-7. **Reported as done**: what changed, what validation ran, what the review said.
+`docs/README.md` is the index — every tracked document, the one job it has, and which one wins. `docs/DOCUMENTATION.md` is the rule. Read it before adding a document or treating one as correct.
 
-- **A green gate is the floor, not the review.** `gate:commit` and `gate:push` are mechanical, and a review that was not performed is not a review that found nothing.
-- **Never weaken a gate to reach "done"** — no skipped tests, raised thresholds, deleted assertions, or re-recorded baselines.
-- **A blocked merge is not done.** Operator decision pending, a defect the operator wants kept, a conflict that needs judgement: say so and name what is outstanding. Reporting "done" with an unmerged branch is the failure mode this section exists to prevent.
-- Only step 6 writes to `main` (plus a hotfix the operator asked for on main).
+**The ladder: operator -> Adobe -> this repository -> judgement. Stop at the first that speaks.**
 
-## E2E failures
+- **Anything about what Photoshop does** — an option, a modifier, a default, a menu, a shortcut — **Adobe's documentation is the source of truth.** Where this repo disagrees with Adobe, Adobe is right and this repo is wrong. Re-derive from Adobe, not from a document here.
+- **Anything about this code** — reviewing, refactoring, improving — **the in-app documents are the source of truth.** The code is the last word on what it currently does; the docs are the word on what it must do. Where they disagree that is a finding, not a licence to reconcile it whichever way is cheaper.
+- **If something cannot be done in a browser, say so in the docs** — in `docs/FEATURES.md`, against the capability, with the reason. Three different claims get called "impossible": a platform limit, a decision (`docs/TOOLS-TOO-HARD.md`), and a backlog item dressed up as one. Keep them distinct; only the first is true.
 
-- Read `e2e/OPEN_PROBLEMS.md` first. A new failure is a new defect.
-- A pin/`expected-fail` is a tripwire for broken behavior; remove it in the same change that fixes the defect.
-- Visual baselines re-record only with `--update-snapshots`; green means pixels matched.
-- Read failures from `test-results/`; `trace.zip` needs a window, so ask the operator.
+**OVERRIDES.** `docs/OVERRIDES.md` is written by the operator, by hand. An agent must not add, edit, reorder or delete an entry there, and must not ask for one — record the finding in `HANDOFF.md` and stop, without implementing the other behaviour meanwhile. An agent that believes an override is warranted has found something real; the finding is the agent's job, the decision is not. **An agent must not implement a Photoshop deviation that is not in `OVERRIDES.md`.** If the code and Adobe disagree and there is no entry, the code is the defect.
+
+**One fact, one home.** Link, do not restate. A duplicate is a defect — report it. Never edit `docs/TOOLS.md`: it is generated by `npm run docs:tools` and a test fails on drift.
 
 ## Handoff documents
 
-`HANDOFF.md`, `TEST-FLAKES.md`, and `e2e/OPEN_PROBLEMS.md`: validated, actionable problems only. **NO changelog, completion notes, or status summaries.** Verify against the tree.
-
-- **Route by scope.** `HANDOFF.md` is for history/replay and document-state defects. `TEST-FLAKES.md` is for test-infrastructure defects — flakiness, the pool, the runner, the gates themselves. `e2e/OPEN_PROBLEMS.md` is for Playwright. Do not file a gate or pool defect in `HANDOFF.md`; it is scoped, and a cross-scope entry is the one nobody reads.
-- **Nothing durable goes in `.kilo/`.** It is gitignored (`.gitignore:34`), so a finding recorded there dies with the machine and with the worktree. `HANDOFF.md` used to name `.kilo/plans/` as a handoff location; that was wrong, and it is why `TEST-FLAKES.md` exists.
-
-**WRITE OR UPDATE THE HANDOFF WITHOUT ASKING** for every validated issue, strong recommendation, or durable finding. Ship it with the work.
-
-### Lifecycle: entries die, they never get reworded
-
-- **Verified fix: DELETE the entry.** Verification is another agent, review, or test, not the fixer's claim.
-- **Never rewrite an open problem as closed.** Keep unverified work as the exact remaining verification; keep only test tripwires after a fix.
+`HANDOFF.md`, `.kilo/plans/` and `e2e/OPEN_PROBLEMS.md` are strictly problem-focused and todo-oriented: **NO changelog, NO "work completed", NO status summaries.** Each entry is a validated issue with a problem statement, the affected files, and an actionable fix. Verify every claim against the working tree first — stale line numbers send the next session after a bug that does not exist. The lifecycle rule is in `docs/DOCUMENTATION.md`; it is one line: **fixed and verified deletes the entry.**
 
 ## Architecture status
 
-`HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**: history, `history-replay.ts`, runtime `Layer`s, and export. The durable document is shadow-only. Re-read code and plans before crossing the boundary. **DO NOT start single-writer cutover while `saveLayerCanvas()` promotes cached canvases outside reducer publication.**
+The legacy `HistoryItem[]` path is the **PRODUCTION REPLAY AUTHORITY**: it writes history, replays through `history-replay.ts`, renders runtime `Layer` objects and exports from the runtime canvas and layers. The durable document is still a shadow projection, NOT the authority for rendering. Treat that as the state to read, not a fact to assume — the history work is in flight. Re-read the code and the plans before designing across the legacy/durable boundary.
+
+The single-writer cutover's old blocker is GONE, not merely moved. It was gated on a canvas-promotion helper that no longer exists — there is no `HANDOFF.md` entry for that gate, live or retired, so this sentence carries no citation and invents none. What the reducer does establish, and all it establishes: a presentation cache reaches a layer only through the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm, which re-checks `isSamePresentationCanvas` and then replaces the affected layer records wholesale. The guard that proves a publication moves no durable layer state is `layersDifferOnlyByPresentation`, and it is applied on the `PUBLISH_RUNTIME_PRESENTATION` path, NOT on the promotion path — so "a cache cannot be promoted outside reducer publication" was stronger than the code. Check the current reducer rather than re-deriving this from its predecessor.

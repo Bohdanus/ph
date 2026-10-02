@@ -7,7 +7,6 @@ import { savedArgsPerFigure } from '../../../tools/settings.ts';
 
 const goToToolMock = vi.hoisted(() => vi.fn());
 const patchToolArgsMock = vi.hoisted(() => vi.fn());
-const resetToLastSavedArgsMock = vi.hoisted(() => vi.fn());
 const shortcutHandlers = vi.hoisted(() => [] as { key: string; shift: boolean; handler: () => void }[]);
 
 const storeState = vi.hoisted(
@@ -41,7 +40,6 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs: toolState.toolArgs,
     patchToolArgs: patchToolArgsMock,
-    resetToLastSavedArgs: resetToLastSavedArgsMock,
   }),
 }));
 
@@ -149,7 +147,6 @@ describe('AppKeyboardShortcuts shape selection', () => {
     shortcutHandlers.length = 0;
     goToToolMock.mockClear();
     patchToolArgsMock.mockClear();
-    resetToLastSavedArgsMock.mockClear();
     storeState.toolName = 'brush';
     toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
   });
@@ -158,7 +155,6 @@ describe('AppKeyboardShortcuts shape selection', () => {
     shortcutHandlers.length = 0;
     goToToolMock.mockClear();
     patchToolArgsMock.mockClear();
-    resetToLastSavedArgsMock.mockClear();
   });
 
   it('registers a plain and a shift variant of the U shortcut', () => {

@@ -9,7 +9,7 @@ const dispatchMock = vi.hoisted(() => vi.fn());
 const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 
-const toolArgs = vi.hoisted(() => ({ smoothing: 1.5, tolerance: 28, toolName: 'magic-wand' }));
+const toolArgs = vi.hoisted(() => ({ contiguous: true, smoothing: 1.5, tolerance: 28, toolName: 'magic-wand' }));
 
 /** `getToolArgs` returns `null` when the tool is not the active one (MagicWand.tsx:16-17). */
 const toolArgsAvailable = vi.hoisted(() => ({ current: true }));
@@ -100,6 +100,7 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
 }
 
 function resetToolArgs() {
+  toolArgs.contiguous = true;
   toolArgs.smoothing = 1.5;
   toolArgs.tolerance = 28;
   toolArgs.toolName = 'magic-wand';
@@ -164,6 +165,10 @@ describe('MagicWand toolbar', () => {
     dispatchMock.mockClear();
     patchToolArgsMock.mockClear();
     copyActiveSelectionMock.mockClear();
+    // The real hook returns `true` on success (`useSelectionClipboard.ts:61`) and the component
+    // READS it, so the `undefined` a bare `vi.fn()` returns would read as a refused copy in
+    // every test that clicks Copy without picking a return value for itself.
+    copyActiveSelectionMock.mockReturnValue(true);
     pasteSelectionClipboardMock.mockClear();
   });
 
@@ -175,6 +180,37 @@ describe('MagicWand toolbar', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { tolerance: 44 });
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { smoothing: 3 });
+  });
+
+  /**
+   * Adobe: "Uncheck Contiguous if you want to select nonadjacent areas of similar color."
+   *
+   * The control was absent while the branch behind it already existed, so `Contiguous` was
+   * permanently on and unreachable. `MagicWandToolArea.test.tsx` pins what the flag reaches.
+   */
+  describe('contiguous', () => {
+    it('is on by default, as Adobe ships it', () => {
+      render(<MagicWand />);
+
+      expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toBeChecked();
+    });
+
+    it('unchecking it patches the setting the tool area reads', () => {
+      render(<MagicWand />);
+
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Contiguous' }));
+
+      expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { contiguous: false });
+    });
+
+    it('re-checking it patches the setting back', () => {
+      toolArgs.contiguous = false;
+      render(<MagicWand />);
+
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Contiguous' }));
+
+      expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { contiguous: true });
+    });
   });
 
   it('renders when activeSelectionId is set', () => {
@@ -277,7 +313,7 @@ describe('MagicWand toolbar', () => {
       expect(screen.getByRole('button', { name: 'Paste' })).toBeEnabled();
     });
 
-    it('copies the active polygon selection and never alerts on success', async () => {
+    it('copies the active polygon selection', async () => {
       withActivePolygonSelection();
       render(<MagicWand />);
 
@@ -288,15 +324,36 @@ describe('MagicWand toolbar', () => {
       });
     });
 
-    it('logs and alerts when copying throws, then restores the button', async () => {
-      const failure = new Error('clipboard exploded');
-      // `mockImplementationOnce` so the throwing behaviour cannot leak into later tests:
-      // `beforeEach` only calls `mockClear()`, which does not reset implementations.
-      copyActiveSelectionMock.mockImplementationOnce(() => {
-        throw failure;
-      });
+    it('reports a copy that returns false, which is not the throwing path', async () => {
+      copyActiveSelectionMock.mockReturnValueOnce(false);
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+      withActivePolygonSelection();
+
+      try {
+        render(<MagicWand />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        // A refusal reaches no `catch`: `copySelection` returns `false` rather than throwing, so
+        // the click above produced no output at all before the component read the boolean.
+        await waitFor(() => {
+          expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to copy magic wand selection');
+        });
+        // The throwing path prefixes the error it caught, so the two diagnostics stay separate.
+        expect(consoleErrorSpy).not.toHaveBeenCalledWith('Error copying magic wand selection:', expect.anything());
+        // `finally` releases the transient state on a refusal exactly as it does on a throw.
+        const copyButton = screen.getByRole('button', { name: 'Copy' });
+        expect(copyButton).toHaveTextContent('Copy');
+        expect(copyButton).toBeEnabled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it('logs nothing when the copy succeeds', async () => {
+      // The other half of the contract, and the one an unconditional `console.error` would
+      // pass while breaking every copy: a successful copy is not a failure.
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       withActivePolygonSelection();
 
       try {
@@ -305,18 +362,40 @@ describe('MagicWand toolbar', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
         await waitFor(() => {
-          expect(alertSpy).toHaveBeenCalledWith('Failed to copy magic wand selection');
+          expect(copyActiveSelectionMock).toHaveBeenCalledWith(POLYGON_SELECTION);
         });
-        expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying magic wand selection:', failure);
+        expect(consoleErrorSpy).not.toHaveBeenCalled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
 
-        // `finally { setIsCopying(false) }` (MagicWand.tsx:39-41) is the only thing keeping the
+    it('logs when copying throws, then restores the button', async () => {
+      const failure = new Error('clipboard exploded');
+      // `mockImplementationOnce` so the throwing behaviour cannot leak into later tests:
+      // `beforeEach` only calls `mockClear()`, which does not reset implementations.
+      copyActiveSelectionMock.mockImplementationOnce(() => {
+        throw failure;
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      withActivePolygonSelection();
+
+      try {
+        render(<MagicWand />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        await waitFor(() => {
+          expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying magic wand selection:', failure);
+        });
+
+        // `finally { setIsCopying(false) }` (MagicWand.tsx:42-44) is the only thing keeping the
         // label from being stranded on 'Copying...'.
         const copyButton = screen.getByRole('button', { name: 'Copy' });
         expect(copyButton).toHaveTextContent('Copy');
         expect(copyButton).toBeEnabled();
       } finally {
         consoleErrorSpy.mockRestore();
-        alertSpy.mockRestore();
       }
     });
 
@@ -373,6 +452,7 @@ describe('MagicWand toolbar', () => {
       render(<MagicWand />);
 
       const toleranceSlider = screen.getByLabelText(/Tolerance/);
+      const contiguousCheckbox = screen.getByRole('checkbox', { name: 'Contiguous' });
       const smoothingSlider = screen.getByLabelText(/Smooth/);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
@@ -384,6 +464,9 @@ describe('MagicWand toolbar', () => {
 
       toleranceSlider.focus();
       expect(toleranceSlider).toHaveFocus();
+
+      await user.tab();
+      expect(contiguousCheckbox).toHaveFocus();
 
       await user.tab();
       expect(smoothingSlider).toHaveFocus();
@@ -430,6 +513,9 @@ describe('MagicWand toolbar', () => {
 
       toleranceSlider.focus();
       expect(toleranceSlider).toHaveFocus();
+
+      await user.tab();
+      expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toHaveFocus();
 
       await user.tab();
       expect(smoothingSlider).toHaveFocus();

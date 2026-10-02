@@ -12,16 +12,24 @@ import {
 import { toolsMap } from '../toolsMap.ts';
 import { defaultSettings } from '../settings.ts';
 import { blur } from '../blur.ts';
+import { cloneStamp } from '../cloneStamp.ts';
 import { colors } from '../colors.ts';
 import { crop } from '../crop.ts';
+import { burn, dodge } from '../dodgeBurn.ts';
 import { draw } from '../draw.ts';
+import { ellipticalSelection } from '../ellipticalSelection.ts';
 import { featherMagneticLasso } from '../featherMagneticLasso.ts';
+import { gradient } from '../gradient.ts';
 import { levels } from '../levels.ts';
 import { magicWand } from '../magicWand.ts';
+import { quickSelection } from '../quickSelection.ts';
 import { rectangularSelection } from '../rectangularSelection.ts';
 import { reposition } from '../reposition.ts';
 import { selection } from '../selection.ts';
 import { shape } from '../shape.ts';
+import { sharpen } from '../sharpen.ts';
+import { smudge } from '../smudge.ts';
+import { sponge } from '../sponge.ts';
 import { text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -64,6 +72,70 @@ class RecordingOffscreenCanvas {
 }
 
 const asRecord = toolProcessors as unknown as Record<string, ToolProcessorDefinition | undefined>;
+
+/**
+ * The `toolsMap wiring` suite renders `toolsMap[*].toolboxComponent` directly, which is the
+ * point: it walks the registry rather than a hand-picked subset. Eleven of those components
+ * are now real options bars that read the store, the tool args, the layer preview writer and
+ * the selection hooks, so the walk needs the same context treatment every `ToolbarsRight`
+ * suite uses.
+ *
+ * `vi.mock` on the hooks, NOT a `StoreProvider` wrapper. The provider pulls in the durable
+ * replay/materialization path, which does not survive jsdom, and mocking the hooks is what
+ * `ToolbarsRight/Draw/__tests__/Draw.test.tsx` and `ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx`
+ * do for the same reason. Nothing under `src/tools/` or `src/util/` imports any of these
+ * modules, so mocking them cannot perturb the processor behaviour asserted above.
+ *
+ * Every shared mutable is `vi.hoisted` because a `vi.mock` factory is hoisted above the
+ * imports, and a factory argument evaluated at hoist time would be a TDZ read.
+ */
+const optionsBarStore = vi.hoisted(() => ({ color: '#000000', toolName: 'brush' as string }));
+const optionsBarSetToolArgs = vi.hoisted(() => vi.fn());
+const optionsBarPatchToolArgs = vi.hoisted(() => vi.fn());
+const optionsBarTempUpdateLayer = vi.hoisted(() => vi.fn());
+const optionsBarDispatch = vi.hoisted(() => vi.fn());
+const optionsBarCopySelection = vi.hoisted(() => vi.fn());
+const optionsBarPasteSelection = vi.hoisted(() => vi.fn());
+const optionsBarClearSelections = vi.hoisted(() => vi.fn());
+
+vi.mock('../../contexts/StoreContext.tsx', () => ({
+  useStore: () => [optionsBarStore, optionsBarDispatch],
+}));
+
+vi.mock('../../contexts/useCurrentTool.tsx', async () => {
+  // `await import` rather than a top-level binding: `toolsMap` is imported before
+  // `../settings.ts` in this file, so the factory — which runs while that import graph is
+  // still being evaluated — would read `defaultSettings` in its temporal dead zone.
+  const { defaultSettings: seeded } = await import('../settings.ts');
+  return {
+    useCurrentTool: () => ({
+      toolArgs: seeded.brush,
+      isToolDirty: false,
+      setToolArgs: optionsBarSetToolArgs,
+      // The seeded defaults are real args for every one of the eleven, so a bar that
+      // renders at all is a bar that mounted on a well-formed args object.
+      getToolArgs: (toolName: string) => seeded[toolName as keyof typeof seeded],
+      patchToolArgs: optionsBarPatchToolArgs,
+    }),
+  };
+});
+
+vi.mock('../../contexts/useLayer.ts', () => ({
+  useLayers: () => ({ tempUpdateLayer: optionsBarTempUpdateLayer }),
+}));
+
+vi.mock('../../contexts/useSelectionClipboard.ts', () => ({
+  useSelectionClipboard: () => ({
+    activeSelection: null,
+    copyActiveSelection: optionsBarCopySelection,
+    hasSelectionClipboard: false,
+    pasteSelectionClipboard: optionsBarPasteSelection,
+  }),
+}));
+
+vi.mock('../../contexts/useSelectionHistory.ts', () => ({
+  useSelectionHistory: () => ({ clearSelections: optionsBarClearSelections }),
+}));
 
 describe('toolProcessors registry', () => {
   it('covers every ToolName with either exactly one processor or a pixel-free declaration', () => {
@@ -116,13 +188,20 @@ describe('toolProcessors registry', () => {
     expect(requiresRaster.sort()).toEqual(
       [
         'brush',
+        'burn',
+        'clone-stamp',
         'color-replacement',
+        'dodge',
         'eraser',
         'feather-magnetic-lasso',
+        'gradient',
         'magic-eraser',
         'magic-wand',
         'paint-bucket',
         'pencil',
+        'sharpen',
+        'smudge',
+        'sponge',
       ].sort()
     );
   });
@@ -162,7 +241,21 @@ describe('toolProcessors registry', () => {
     const rasterCommitted = processorNames.filter((toolName) => findToolProcessor(toolName)!.commit === 'raster');
 
     expect(rasterCommitted.sort()).toEqual(
-      ['brush', 'color-replacement', 'eraser', 'magic-eraser', 'paint-bucket', 'pencil'].sort()
+      [
+        'brush',
+        'burn',
+        'clone-stamp',
+        'color-replacement',
+        'dodge',
+        'eraser',
+        'gradient',
+        'magic-eraser',
+        'paint-bucket',
+        'pencil',
+        'sharpen',
+        'smudge',
+        'sponge',
+      ].sort()
     );
     for (const toolName of rasterCommitted) {
       expect(findToolProcessor(toolName)!.replay.kind).toBe('raster-processor');
@@ -176,13 +269,17 @@ describe('toolProcessors registry', () => {
       [
         'draw',
         'ellipse',
+        'elliptical-selection',
         'freehand-lasso',
         'line',
         'polygon',
         'polygonal-lasso',
+        'quick-selection',
         'rectangle',
         'rectangular-selection',
         'shape',
+        'single-column-marquee',
+        'single-row-marquee',
         'text',
         'triangle',
       ].sort()
@@ -195,7 +292,7 @@ describe('toolProcessors registry', () => {
   it('flags every tool routed to the shape processor as a deterministic creator', () => {
     // The figure family is derived from the processor identity rather than a
     // hand-written name list, so a new shape variant cannot be registered
-    // without the `creator` flag `materialization.ts:161` reads.
+    // without the `creator` flag `sourceBitmap` reads in src/contexts/materialization.ts.
     const shapeFamily = processorNames.filter((toolName) => findToolProcessor(toolName)!.imageProcessor === shape);
 
     expect(shapeFamily.sort()).toEqual(['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle']);
@@ -227,12 +324,23 @@ describe('toolProcessors registry', () => {
       'feather-magnetic-lasso': 'selection',
       'magic-wand': 'selection',
       'rectangular-selection': 'selection',
+      'elliptical-selection': 'selection',
+      'quick-selection': 'selection',
+      'single-row-marquee': 'selection',
+      'single-column-marquee': 'selection',
       brush: 'raster',
       pencil: 'raster',
       'color-replacement': 'raster',
       eraser: 'raster',
       'magic-eraser': 'raster',
       'paint-bucket': 'raster',
+      gradient: 'raster',
+      sharpen: 'raster',
+      smudge: 'raster',
+      dodge: 'raster',
+      burn: 'raster',
+      sponge: 'raster',
+      'clone-stamp': 'raster',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
       'curvature-pen': 'unimplemented',
@@ -253,6 +361,8 @@ describe('toolProcessors registry', () => {
     const featherSource = toolProcessors['feather-magnetic-lasso'].imageProcessor;
     const magicWandSource = toolProcessors['magic-wand'].imageProcessor;
     const rectSelectionSource = toolProcessors['rectangular-selection'].imageProcessor;
+    const ellipseSelectionSource = toolProcessors['elliptical-selection'].imageProcessor;
+    const quickSelectionSource = toolProcessors['quick-selection'].imageProcessor;
     const shapeSource = toolProcessors.shape.imageProcessor;
 
     expect(toolProcessors['freehand-lasso'].imageProcessor).toBe(lassoSource);
@@ -262,6 +372,13 @@ describe('toolProcessors registry', () => {
     expect(featherSource).not.toBe(lassoSource);
     expect(magicWandSource).not.toBe(lassoSource);
     expect(rectSelectionSource).not.toBe(lassoSource);
+    // The two newer selection tools are `creator: true` like the rectangular marquee,
+    // but they are not the same module: reusing `selection` for either would hand an
+    // elliptical or region-growing tool the polygon's mask.
+    expect(ellipseSelectionSource).not.toBe(lassoSource);
+    expect(ellipseSelectionSource).not.toBe(rectSelectionSource);
+    expect(quickSelectionSource).not.toBe(lassoSource);
+    expect(quickSelectionSource).not.toBe(rectSelectionSource);
   });
 
   it('returns a null bitmap from every unimplemented processor instead of throwing', () => {
@@ -353,7 +470,7 @@ describe('paint tool raster processors', () => {
   ])('falls a non-finite pencil line width (%s) back to the 3 default', (_label, lineWidth) => {
     // `??` guards only `undefined`/`null`, so any of these produced NaN and
     // `Math.max(1, NaN)` wrote NaN to `ctx.lineWidth`, where the canvas silently
-    // substituted its own width (src/tools/toolProcessors.ts:175-181).
+    // substituted its own width: the `pencil` adapter in src/tools/toolProcessors.ts.
     const recorded = run('pencil', { lineWidth: lineWidth as number, points: stroke });
 
     expect(recorded.lineWidth).toBe(3);
@@ -369,19 +486,6 @@ describe('paint tool raster processors', () => {
     }
   });
 
-  it('color replacement always rasterizes with the spray pen and its own alpha ramp', () => {
-    const recorded = run('color-replacement', { penType: 'pen', lineWidth: 6, points: stroke.slice(0, 1) });
-
-    // The penType argument is forced to `spray`, so `setupDrawCtx` bails out and the
-    // pen-only lineWidth/globalAlpha assignments never happen.
-    expect(recorded.stroke).not.toHaveBeenCalled();
-    expect(recorded.lineWidth).toBe(1);
-    const gradientCall = (recorded.createRadialGradient.mock.calls as unknown as number[][])[0];
-    expect(gradientCall[5]).toBe(6);
-    expect(gradientCall[0]).toBe(stroke[0].x);
-    expect(recorded.arc).toHaveBeenCalledTimes(1);
-  });
-
   it('honours the global alpha from paint defaults', () => {
     const recorded = run('brush', { alpha: 0.25, points: stroke });
 
@@ -394,6 +498,43 @@ describe('paint tool raster processors', () => {
     expect(recorded.lineWidth).toBe(5);
   });
 });
+
+/**
+ * Every tool that has left the placeholder roster and now mounts a real options bar.
+ *
+ * Asserted disjoint from `placeholderNames` below, and each name is mounted by the
+ * `renders a real options bar` test, so a wiring entry reverted to `placeholderTool(...)`
+ * fails rather than quietly going untested.
+ */
+const realBarNames = [
+  'eyedropper',
+  'elliptical-selection',
+  'quick-selection',
+  'eraser',
+  'clone-stamp',
+  'paint-bucket',
+  'gradient',
+  'sharpen',
+  'smudge',
+  'dodge',
+  'burn',
+  'sponge',
+  'color-replacement',
+] as const satisfies readonly ToolName[];
+
+/** The tools whose toolbox component is still `placeholderTool(...)` in `toolsMap.ts`. */
+const placeholderNames = [
+  // `color-replacement` was here and is gone: it has a real options bar now
+  // (`src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx`), not a TODO card, and
+  // listing it here would keep a placeholder contract alive for a tool that has left the roster.
+  'pen',
+  'freeform-pen',
+  'curvature-pen',
+  'add-anchor-point',
+  'delete-anchor-point',
+  'convert-point',
+  'custom-shape',
+] as const satisfies readonly ToolName[];
 
 describe('toolsMap wiring', () => {
   it('mirrors every processor entry and adds an icon plus a toolbox component', () => {
@@ -424,27 +565,48 @@ describe('toolsMap wiring', () => {
     }
   });
 
-  it('uses distinct icons per tool', () => {
-    const icons = toolNames.map((toolName) => toolsMap[toolName].icon);
+  it('gives every tool a non-empty icon, and shares exactly the lasso icon', () => {
+    // "Distinct" was never the contract: the three lasso tools legitimately share one icon,
+    // so a distinctness assertion is a threshold with a fudge factor — `greaterThan(half)`
+    // passed at 21 distinct out of 41, leaving twenty tools free to share an icon. The
+    // property worth pinning is the exact shared set, derived here and compared by name, so
+    // a tool that starts sharing a second icon fails by name rather than by arithmetic.
+    // The per-tool icon values themselves are pinned exhaustively further down this file.
+    const byIcon = new Map<string, ToolName[]>();
 
-    expect(new Set(icons).size).toBeGreaterThan(icons.length / 2);
-    expect(new Set(icons)).not.toContain('');
+    for (const toolName of toolNames) {
+      const { icon } = toolsMap[toolName];
+
+      expect(typeof icon, toolName).toBe('string');
+      expect(icon.length, toolName).toBeGreaterThan(0);
+      byIcon.set(icon, [...(byIcon.get(icon) ?? []), toolName]);
+    }
+
+    const shared = [...byIcon.entries()]
+      .filter(([, names]) => names.length > 1)
+      .map(([icon, names]) => ({ icon, names: names.sort() }))
+      .sort((a, b) => a.icon.localeCompare(b.icon));
+
+    expect(shared).toEqual([{ icon: 'lasso', names: ['feather-magnetic-lasso', 'freehand-lasso', 'polygonal-lasso'] }]);
+  });
+
+  it('claims no tool for both the placeholder roster and the real options bars', () => {
+    // Both lists are hand-written, so this is what stops either of them rotting into a
+    // contradictory picture. The roster is wider than their union — the brush, the levels
+    // and the lasso family were never placeholders — so the claim is disjointness plus
+    // membership, not coverage: a name in both lists would have the placeholder test below
+    // asserting a TODO badge for a bar that has none.
+    const claimed = [...placeholderNames, ...realBarNames];
+    const unknown = claimed.filter((toolName) => !toolNames.includes(toolName as ToolName));
+
+    expect(unknown).toEqual([]);
+    expect(new Set(claimed).size, 'a tool is claimed by both lists').toBe(claimed.length);
   });
 
   it('renders the placeholder toolbox components with their configured options', () => {
-    const placeholderNames = [
-      'brush',
-      'pencil',
-      'color-replacement',
-      'pen',
-      'freeform-pen',
-      'curvature-pen',
-      'add-anchor-point',
-      'delete-anchor-point',
-      'convert-point',
-      'custom-shape',
-    ] as const;
-
+    // `PlaceholderTool` reads no context, so a true placeholder mounts bare. Every name
+    // below is wired to one in `toolsMap.ts`, and `/TODO|Tool/i` is the placeholder's own
+    // contract — its title ends in `Tool` and it carries a `TODO` badge.
     for (const toolName of placeholderNames) {
       const Component = toolsMap[toolName].toolboxComponent;
       const { unmount } = render(React.createElement(Component));
@@ -454,18 +616,53 @@ describe('toolsMap wiring', () => {
     }
   });
 
-  it('shows a TODO badge on real placeholders and hides it where the tool is functional', () => {
-    const Placeholder = toolsMap['custom-shape'].toolboxComponent;
-    const NoBadge = toolsMap.brush.toolboxComponent;
+  it('renders a real options bar for every tool that left the placeholder roster', () => {
+    // The inverse of the assertion above, and the reason the real bars are mounted through
+    // the hoisted context mocks at the top of this file rather than through `StoreProvider`:
+    // the provider pulls in the durable replay/materialization path, which does not survive
+    // jsdom, so rendering these bare would throw `useStore must be used within
+    // StoreProvider` before reaching a single assertion.
+    for (const toolName of realBarNames) {
+      // `Tonal` decides which of its two tools it is from `useStore().toolName`, and the
+      // other ten read their args by name, so the store has to agree with the tool under test.
+      optionsBarStore.toolName = toolName;
+      const Component = toolsMap[toolName].toolboxComponent;
+      const { container, unmount } = render(React.createElement(Component));
 
-    const withBadge = render(React.createElement(Placeholder));
-    expect(screen.getByText('Custom Shape Tool')).toBeInTheDocument();
-    expect(screen.getAllByText('TODO').length).toBeGreaterThan(0);
-    withBadge.unmount();
+      // A `PlaceholderTool` is recognisable by exactly what it renders: a TODO badge, the
+      // "not implemented yet" description, and no other content. None of the three can be
+      // present once the bar is real, and this fails loudly the moment a wiring entry is
+      // pointed back at `placeholderTool(...)`.
+      expect(container.textContent, toolName).not.toBe('');
+      expect(screen.queryByText('TODO'), toolName).toBeNull();
+      expect(screen.queryByText('TODO: tool behavior not implemented yet.'), toolName).toBeNull();
+      unmount();
+    }
+    optionsBarStore.toolName = 'brush';
+  });
 
-    render(React.createElement(NoBadge));
-    expect(screen.queryByText('TODO')).not.toBeInTheDocument();
-    expect(screen.getByText('Brush Tool')).toBeInTheDocument();
+  it('shows a TODO badge on the placeholder toolbox components', () => {
+    // The brush and pencil used to be the only `showTodoBadge: false` entries here,
+    // the placeholder for a tool whose canvas behaviour was already real. Both now
+    // render the Photoshop paint bar instead (the `brush` and `pencil` entries in
+    // src/tools/toolsMap.ts), so
+    // every remaining placeholder is an unimplemented tool and every one of them
+    // carries the badge. Their bars are asserted in
+    // `src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx`.
+    //
+    // `color-replacement` was on this list and is not any more: it is a built tool now,
+    // with its own `ColorReplacementToolArea` and its own `ColorReplacement.tsx` options
+    // bar, so there is no placeholder left to carry a badge. It left for the same reason,
+    // one tranche later on main. It is not merely deleted from this list — it is in
+    // `realBarNames`, so the test above now asserts the OPPOSITE of this one for it, which
+    // is the stronger half: one assertion that a tool is not a stub is worth more than the
+    // stub assertion it replaces.
+    for (const toolName of ['pen', 'custom-shape'] as const) {
+      const { unmount } = render(React.createElement(toolsMap[toolName].toolboxComponent));
+
+      expect(screen.getAllByText('TODO').length, toolName).toBeGreaterThan(0);
+      unmount();
+    }
   });
 });
 
@@ -489,6 +686,15 @@ const directProcessorSources: readonly [ToolName, unknown][] = [
   ['feather-magnetic-lasso', featherMagneticLasso],
   ['magic-wand', magicWand],
   ['rectangular-selection', rectangularSelection],
+  ['elliptical-selection', ellipticalSelection],
+  ['quick-selection', quickSelection],
+  ['gradient', gradient],
+  ['sharpen', sharpen],
+  ['smudge', smudge],
+  ['dodge', dodge],
+  ['burn', burn],
+  ['sponge', sponge],
+  ['clone-stamp', cloneStamp],
   ['rectangle', shape],
   ['ellipse', shape],
   ['triangle', shape],
@@ -506,7 +712,7 @@ const unimplementedTools: readonly ToolName[] = [
   'custom-shape',
 ];
 
-const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil'];
 
 describe('toolProcessors processor identity', () => {
   it.each(directProcessorSources)('routes %s to its own module-level processor', (toolName, source) => {
@@ -538,19 +744,28 @@ describe('toolProcessors processor identity', () => {
       seen.set(imageProcessor, [...(seen.get(imageProcessor) ?? []), toolName]);
     }
 
-    // The only legitimate sharing is the lasso pair and the shape/figure family,
-    // which are the same module export wired to several tool names on purpose.
+    // The only legitimate sharing is the lasso pair, the shape/figure family, and the
+    // marquee trio, which are the same module export wired to several tool names on purpose.
+    // `rectangularSelection` joins that list because a selection is geometry in the store and
+    // no pixels at all: the processor is a pass-through that hands the document bitmap back
+    // untouched (`rectangularSelection.ts:9`-`:13`), so the Rectangular Marquee and the two
+    // 1-pixel marquees have nothing to differ on. A processor that DID differ per tool would
+    // fail this assertion, which is the point of it.
     const shared = [...seen.entries()]
       .filter(([, names]) => names.length > 1)
       .map(([processor, names]) => ({
         names: names.sort(),
-        isIntentional: processor === selection || processor === shape,
+        isIntentional: processor === selection || processor === shape || processor === rectangularSelection,
       }))
       .sort((a, b) => a.names[0].localeCompare(b.names[0]));
 
     expect(shared).toEqual([
       { names: ['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle'], isIntentional: true },
       { names: ['freehand-lasso', 'polygonal-lasso'], isIntentional: true },
+      {
+        names: ['rectangular-selection', 'single-column-marquee', 'single-row-marquee'],
+        isIntentional: true,
+      },
     ]);
   });
 });
@@ -581,21 +796,42 @@ describe('toolProcessors declared inner-processor arity', () => {
     );
 
     expect(zeroArity.sort()).toEqual(
-      [...unimplementedTools, 'feather-magnetic-lasso', 'magic-wand', 'rectangular-selection'].sort()
+      [
+        ...unimplementedTools,
+        'feather-magnetic-lasso',
+        'magic-wand',
+        'rectangular-selection',
+        'elliptical-selection',
+        'quick-selection',
+        'single-row-marquee',
+        'single-column-marquee',
+      ].sort()
     );
   });
 
   it('makes the zero-arity non-unimplemented processors the exact set needing a registry cast', () => {
-    // These three are the entries the registry has to silence with @ts-expect-error
-    // (src/tools/toolProcessors.ts:146, :152, :159) because their published args type
-    // is not reachable from the generic `(args: ToolArgs) => ToolResult` signature.
+    // These are the entries the registry has to silence with @ts-expect-error
+    // (src/tools/toolProcessors.ts) because their published args type is not reachable
+    // from the generic `(args: ToolArgs) => ToolResult` signature. The raster tools that
+    // used to sit here now declare their args parameter, so they join the casted set's
+    // complement and are asserted by the arity test above instead.
     const casted = processorNames.filter(
       (toolName) =>
         findToolProcessor(toolName)!.commit !== 'unimplemented' &&
         findToolProcessor(toolName)!.imageProcessor(params).length === 0
     );
 
-    expect(casted.sort()).toEqual(['feather-magnetic-lasso', 'magic-wand', 'rectangular-selection']);
+    expect(casted.sort()).toEqual(
+      [
+        'feather-magnetic-lasso',
+        'magic-wand',
+        'rectangular-selection',
+        'elliptical-selection',
+        'quick-selection',
+        'single-row-marquee',
+        'single-column-marquee',
+      ].sort()
+    );
   });
 });
 
@@ -633,12 +869,34 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['feather-magnetic-lasso', 'source-bitmap', 0, 0],
     ['magic-wand', 'source-bitmap', 0, 0],
     ['rectangular-selection', 'source-bitmap', 0, 0],
+    ['elliptical-selection', 'source-bitmap', 0, 0],
+    ['quick-selection', 'source-bitmap', 0, 0],
+    // The 1-pixel marquees share `rectangularSelection`, which is the pass-through that hands
+    // the document bitmap back untouched, so they resolve to the same outcome as the row above.
+    ['single-row-marquee', 'source-bitmap', 0, 0],
+    ['single-column-marquee', 'source-bitmap', 0, 0],
     ['brush', 'canvas', 40, 24],
     ['pencil', 'canvas', 40, 24],
     ['color-replacement', 'canvas', 40, 24],
+    // The raster tools below own real processors, and every one of them allocates a
+    // FRESH full-`size` canvas rather than handing the source bitmap back. That is the whole
+    // reason they are `commit: 'raster'`: `tempUpdateLayer` assigns the result straight to
+    // `layer.tmpCanvas`, so returning `[bitmap]` would leave the layer holding the very object
+    // it already had and the edit would render as nothing at all. `transform` is the one other
+    // `canvas` row that allocates twice, which is why the assertion below checks `toContain`
+    // rather than the identity of the last instance.
     ['eraser', 'canvas', 40, 24],
     ['magic-eraser', 'canvas', 40, 24],
     ['paint-bucket', 'canvas', 40, 24],
+    ['gradient', 'canvas', 40, 24],
+    ['sharpen', 'canvas', 40, 24],
+    ['smudge', 'canvas', 40, 24],
+    ['dodge', 'canvas', 40, 24],
+    ['burn', 'canvas', 40, 24],
+    ['sponge', 'canvas', 40, 24],
+    ['clone-stamp', 'canvas', 40, 24],
+    // The eyedropper rasterizes nothing, so it is absent from the registry entirely
+    // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
@@ -730,7 +988,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     }
   });
 
-  it('cannot consume the seeded crop defaults at all (src/tools/crop.ts:17)', () => {
+  it('cannot consume the seeded crop defaults at all (the crop processor in src/tools/crop.ts)', () => {
     // Every other tool runs straight off its defaults; crop destructures `rect!` and the
     // seeded rect is null, so the document-operation commit needs a real rect first.
     expect(defaultSettings.crop.rect).toBeNull();
@@ -752,8 +1010,9 @@ describe('toolProcessors dispatch for every tool name', () => {
     }
   });
 
-  it('hands a creator-param lasso call no source bitmap, because selection consumes one (src/tools/toolProcessors.ts:131,138)', () => {
-    // `materialization.ts:164` calls every `creator: true` processor with `{ size }` only.
+  it('hands a creator-param lasso call no source bitmap, because selection consumes one (the lasso entries in toolProcessors.ts)', () => {
+    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true`
+    // processor with `{ size }` only.
     // Both lasso tools are flagged creators, yet `selection` reads `bitmap` from
     // `ProcessorToolParams`, so the polygon copy is handed `undefined` on that path.
     // The behaviour is pinned here so the registry/param-type mismatch stays visible.
@@ -839,12 +1098,23 @@ describe('toolsMap exhaustiveness', () => {
     ['feather-magnetic-lasso', 'lasso'],
     ['magic-wand', 'magic-wand'],
     ['rectangular-selection', 'rectangular-selection'],
+    ['elliptical-selection', 'elliptical-selection'],
+    ['quick-selection', 'quick-selection'],
+    ['single-row-marquee', 'single-row-marquee'],
+    ['single-column-marquee', 'single-column-marquee'],
     ['brush', 'brush'],
     ['pencil', 'pencil'],
     ['color-replacement', 'color-replacement'],
     ['eraser', 'eraser'],
+    ['clone-stamp', 'clone-stamp'],
     ['magic-eraser', 'magic-eraser'],
     ['paint-bucket', 'paint-bucket'],
+    ['gradient', 'gradient'],
+    ['sharpen', 'sharpen'],
+    ['smudge', 'smudge'],
+    ['dodge', 'dodge'],
+    ['burn', 'burn'],
+    ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],
@@ -891,8 +1161,10 @@ describe('toolsMap exhaustiveness', () => {
     expect(new Set(components).size).toBe(3);
   });
 
-  it('builds a distinct placeholder component per unimplemented and paint-stub tool', () => {
-    const placeholderTools: readonly ToolName[] = ['brush', 'pencil', 'color-replacement', ...unimplementedTools];
+  it('builds a distinct placeholder component per unimplemented tool', () => {
+    // `color-replacement` was the one other name here and has left the roster: it has a real
+    // options bar now, and the brush and the pencil already had `Paint.tsx` before it did.
+    const placeholderTools: readonly ToolName[] = [...unimplementedTools];
     const components = placeholderTools.map((toolName) => toolsMap[toolName].toolboxComponent);
 
     // Six of them share the `pen` placeholder group, but each `placeholderTool(...)` call
@@ -901,6 +1173,16 @@ describe('toolsMap exhaustiveness', () => {
     for (const toolName of placeholderTools) {
       expect(toolsMap[toolName].toolboxComponent, toolName).not.toBe(toolsMap.shape.toolboxComponent);
     }
+  });
+
+  it('builds a distinct paint bar for the brush and the pencil', () => {
+    // `createPaintToolbar` mints a closure per tool for the same reason
+    // `placeholderTool` does: `ToolbarHorizontal` remounts the bar on
+    // `key={toolName}`, and a shared identity would make the two tools'
+    // components indistinguishable to that contract.
+    expect(toolsMap.brush.toolboxComponent).not.toBe(toolsMap.pencil.toolboxComponent);
+    expect(toolsMap.brush.toolboxComponent).not.toBe(toolsMap.shape.toolboxComponent);
+    expect(toolsMap.pencil.toolboxComponent).not.toBe(toolsMap.shape.toolboxComponent);
   });
 
   it.each(['polygon-selection', 'lasso', 'Pen', 'colorpicker', 'polygonal-lasso '])(

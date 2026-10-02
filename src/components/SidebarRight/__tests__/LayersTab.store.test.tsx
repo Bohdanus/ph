@@ -358,11 +358,19 @@ describe('LayersTab against a live layer store', () => {
       fireEvent.blur(span);
     });
 
+    // The store keeps the old name and no rename is published, so nothing here depends on the
+    // store being asked to repair the row.
+    expect((liveStore.snapshot.layers as LayersRecord)['layer-3'].name).toBe('Top Layer');
     expect(layerActions.updateLayer).not.toHaveBeenCalled();
-    // the store still holds the old name, so a later store-driven render restores it
-    // (the blank label surviving until then is documented in LayersTab.test.tsx)
     expect(row).toBeInTheDocument();
     expect(container.querySelectorAll('span.truncate')).toHaveLength(3);
+    // The row's own label is asserted here, and it is the only place the refused path can be
+    // pinned: holding the old name in the store does NOT restore the label, because React
+    // re-renders with the identical text child and bails out of writing it. The blank text node
+    // the browser typed survives until something else rewrites it, so `handleNameChange`
+    // (LayersTab.tsx:90-104) writes the stored name back on the refused path itself, the way the
+    // Escape branch does. Without it this line reads the blank the test just typed.
+    expect(getNameSpan(row).textContent).toBe('Top Layer');
   });
 
   it('leaves the stacking order untouched when a drop is refused', () => {

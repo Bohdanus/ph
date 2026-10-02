@@ -9,6 +9,7 @@ import type { BlurToolArgs } from '../tools/blur.ts';
 import type { ColorsToolArgs } from '../tools/colors.ts';
 import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { FillToolArgs } from '../tools/fill.ts';
+import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
 
 /**
  * Tool args may arrive from an older build that still had dedicated Circle and
@@ -36,7 +37,6 @@ export function saveLastSettings(args: ToolArgs) {
     // gap from a different document, and the next `Free`/`Original` would restore a framing the user
     // never drew on this one. Both are presentation state.
     lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect', 'preRatioRect'));
-    // deliberately not storing for those three because they have a different philosophy, unfortunately
   } else if (toolName === 'transform') {
     lastSavedSettings.transform = cloneDeep(args);
   } else if (toolName === 'reposition') {
@@ -60,20 +60,54 @@ export function saveLastSettings(args: ToolArgs) {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
       omit(args as unknown as FillToolArgs, 'pos', 'size')
     ) as ToolArgs;
+  } else if (toolName === 'color-replacement') {
+    // A typed arm, NOT the bare-`{ toolName }` group below. That group discarded every setting
+    // this tool has, which is why the seeded Tolerance and Limits were the only configuration a
+    // user could ever reach: the sliders existed nowhere and `defaultSettings` was the whole of
+    // the tool's state.
+    //
+    // `points` and `sampleColor` are dropped for the reason `draw` drops `points` and the fill arm
+    // drops `pos`/`size`: they describe one gesture, not a setting. Restoring the last drag's path
+    // would paint where the user last let go, and restoring the last click's colour would arm the
+    // tool with a sample the user never chose for this session — Photoshop returns the tool to
+    // asking when you switch away and back, and so does this.
+    //
+    // The `color` that REMAINS is not the foreground: it is the foreground as of the last
+    // committed stroke, and the tool area overwrites it from the live store at every gesture
+    // (`ColorReplacementToolArea.tsx`, the `FillToolArea.tsx:132-148` precedent), so persisting it
+    // cannot pin a colour.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
+      omit(args as unknown as ColorReplacementToolArgs, 'points', 'sampleColor')
+    ) as ToolArgs;
   } else if (toolName === 'eyedropper') {
     // Typed rather than bare even though nothing here is geometric: Sample Size is a real user
     // choice, and the bare group exists for tools whose only setting is that they exist.
     lastSavedSettings.eyedropper = cloneDeep({ ...args });
-  } else if (toolName === 'rectangular-selection') {
-    lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
+  } else if (
+    toolName === 'rectangular-selection' ||
+    toolName === 'single-row-marquee' ||
+    toolName === 'single-column-marquee'
+  ) {
+    // Typed rather than falling through to the bare group below, because a tool with NO
+    // settings still has to persist its identity: an unmatched `toolName` never reaches
+    // `lastSavedSettings` at all, and `cloneSavedToolArgs` then seeds the bar from
+    // `defaultSettings` on every switch. Harmless for these three today, and the reason
+    // this arm exists rather than a note is that it stops being harmless the day one of
+    // them grows a control.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ toolName });
   } else if (toolName === 'triangle' || toolName === 'polygon') {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
       withNormalizedFigure(omit(args as unknown as ShapeToolArgs, 'start', 'end'))
     ) as ToolArgs;
+  } else if (toolName === 'brush' || toolName === 'pencil') {
+    // The Photoshop paint bar writes Size, Opacity, Smoothing and Mode through
+    // `setToolArgs`, which lands here on every change. Persisting only the tool name
+    // — as the arm below still does for the pen and shape families — throws those
+    // four away on the same tick, so the next tool switch re-seeds the bar from
+    // `{ toolName }` and every control silently resets. `points` is stroke geometry,
+    // not a setting, so it is emptied the way `draw` empties it above.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else if (
-    toolName === 'brush' ||
-    toolName === 'pencil' ||
-    toolName === 'color-replacement' ||
     toolName === 'pen' ||
     toolName === 'freeform-pen' ||
     toolName === 'curvature-pen' ||
@@ -94,6 +128,36 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings.color = cloneDeep(args as ColorsToolArgs);
   } else if (toolName === 'levels') {
     lastSavedSettings.levels = cloneDeep(args as LevelsToolArgs);
+  } else if (
+    toolName === 'elliptical-selection' ||
+    toolName === 'quick-selection' ||
+    toolName === 'gradient' ||
+    toolName === 'sharpen'
+  ) {
+    // None of these carry stroke geometry, so the whole args object is the
+    // settings — the same treatment the magic wand gets above.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(args);
+  } else if (
+    toolName === 'smudge' ||
+    toolName === 'dodge' ||
+    toolName === 'burn' ||
+    toolName === 'sponge' ||
+    toolName === 'clone-stamp'
+  ) {
+    // These five are brushes, so `points` is the stroke that was just committed and not
+    // a setting: reseeding it would hand the next drag the previous one. Emptied the
+    // way `draw` and `feather-magnetic-lasso` empty theirs. Note that
+    // `clone-stamp.source` survives — a source point is a setting, and losing it is the
+    // difference between "stamp where you last cloned" and "stamp nothing".
+    //
+    // The eraser is NOT in this group, and must not be added to it. It erases along a
+    // stroke too, so the same reasoning applies to it — but it also has settings of its
+    // own (Mode, Size, Opacity, the foreground), which is why it has its own typed arm
+    // earlier in this chain that already empties `points`. It used to be listed here as
+    // well, which made this arm unreachable for it and left a comment justifying a
+    // placement that had been dead for as long as the typed arm existed: an `else if`
+    // chain takes its first match, so the later duplicate could never run.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else {
     // Every `ToolName` is persisted above by design. Without this trap a tool added to
     // `ToolArgsByName` falls off the end of the chain, its settings are dropped, and its sliders

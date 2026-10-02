@@ -1,18 +1,27 @@
 import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { blur } from './blur.ts';
+import { cloneStamp } from './cloneStamp.ts';
 import { colors } from './colors.ts';
+import { colorReplacement } from './colorReplacement.ts';
 import { crop } from './crop.ts';
+import { burn, dodge } from './dodgeBurn.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
+import { ellipticalSelection } from './ellipticalSelection.ts';
 import { eraser } from './eraser.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
+import { gradient } from './gradient.ts';
 import { levels } from './levels.ts';
 import { magicEraser, paintBucket } from './fill.ts';
 import { magicWand } from './magicWand.ts';
+import { quickSelection } from './quickSelection.ts';
 import { rectangularSelection } from './rectangularSelection.ts';
 import { reposition } from './reposition.ts';
 import { selection } from './selection.ts';
 import { shape } from './shape.ts';
+import { sharpen } from './sharpen.ts';
+import { smudge } from './smudge.ts';
+import { sponge } from './sponge.ts';
 import { text } from './text.ts';
 import { transform } from './transform.ts';
 
@@ -49,6 +58,13 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
+  /**
+   * The tool's pixels or its retained presentation depend on `CanvasRenderingContext2D.filter`,
+   * which is not Baseline: caniuse records Safari 3.1 - 17.6 as unsupported (WebKit bug 198416,
+   * since resolved) and MDN states the feature is not Baseline. Set this on every such tool so the
+   * refusal in `src/util/canvas-filter.ts` has one place to read the answer from.
+   */
+  requiresCanvasFilter?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;
@@ -109,18 +125,21 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     imageProcessor: reposition,
   },
   blur: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: blur,
   },
   color: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: colors,
   },
   levels: {
+    requiresCanvasFilter: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
@@ -189,6 +208,94 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
+  // The Photoshop focus family below, plus the tonal tools, are all `commit: 'raster'`
+  // and therefore all get durable shadow support with no durable code of their own:
+  // `history-adapter.ts:416-424` converts ANY `commit: 'raster'` tool into an
+  // `apply-raster-processor` operation keyed on `args.toolName`, with no allowlist to
+  // extend. A new raster tool is replayable in the shadow document the day it is
+  // registered here.
+  'elliptical-selection': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: ellipticalSelection,
+  },
+  // The 1-pixel marquees are the Rectangular Marquee's processor verbatim: it is a
+  // pass-through that returns the document bitmap untouched, because a selection is
+  // geometry in the store and no pixels at all (`rectangularSelection.ts:9`-`:13`).
+  // Two separate `replay(...)` calls rather than one shared result, because
+  // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
+  'single-row-marquee': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: rectangularSelection,
+  },
+  'single-column-marquee': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: rectangularSelection,
+  },
+  'quick-selection': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: quickSelection,
+  },
+  gradient: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: gradient,
+  },
+  sharpen: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: sharpen,
+  },
+  smudge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: smudge,
+  },
+  dodge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: dodge,
+  },
+  burn: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: burn,
+  },
+  // The Sponge rides the same generic durable arm as the Dodge and the Burn:
+  // `src/contexts/history-adapter.ts` maps any `commit: 'raster'` processor to an
+  // `apply-raster-processor` operation with `processorId: args.toolName` and no allowlist,
+  // so registering the tool here is the whole of what undoability costs. Its own function
+  // reference is required, not optional — the identity test in
+  // `src/tools/__tests__/tool-processors.test.ts` allows a shared processor only where two
+  // names are one operation (`selection`, `shape`).
+  sponge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: sponge,
+  },
+  'clone-stamp': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: cloneStamp,
+  },
   brush: {
     commit: 'raster',
     replay: replay('raster-processor', true),
@@ -213,10 +320,10 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   'color-replacement': {
     commit: 'raster',
     replay: replay('raster-processor', true),
-    imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'spray'));
-      return [canvas];
-    },
+    // No `@ts-expect-error` here, unlike the entries above it: `colorReplacement` narrows its
+    // params to the registry's own union and its args to the registry's own `ToolArgs`, so the
+    // signature already matches without a cast. That is what a real processor looks like.
+    imageProcessor: colorReplacement,
   },
   eraser: {
     commit: 'raster',

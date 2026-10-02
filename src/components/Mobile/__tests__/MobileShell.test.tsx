@@ -1,9 +1,13 @@
 import { useState } from 'react';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileShell } from '../MobileShell.tsx';
+import { setViewportWidth } from '../../../test/setup.ts';
+
+/** A width inside the mobile band, where every surface in this suite is meant to live. */
+const MOBILE_WIDTH = 500;
 
 const goToToolMock = vi.hoisted(() => vi.fn());
 const setActiveLayerMock = vi.hoisted(() => vi.fn());
@@ -14,7 +18,6 @@ const updateLayerMock = vi.hoisted(() => vi.fn());
 const moveLayerAfterMock = vi.hoisted(() => vi.fn());
 const resetHistoryToMock = vi.hoisted(() => vi.fn());
 const toggleDisabledMock = vi.hoisted(() => vi.fn());
-const resetToLastSavedArgsMock = vi.hoisted(() => vi.fn());
 const commitDirtyToolMock = vi.hoisted(() => vi.fn(() => ({})));
 const openNewImageDialogMock = vi.hoisted(() => vi.fn());
 const openLoadImageDialogMock = vi.hoisted(() => vi.fn());
@@ -94,7 +97,6 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
     isToolDirty: currentToolMock.isToolDirty,
     toolArgs: currentToolMock.toolArgs,
     patchToolArgs: vi.fn(),
-    resetToLastSavedArgs: resetToLastSavedArgsMock,
   }),
 }));
 
@@ -136,20 +138,20 @@ vi.mock('../../../tools/toolsMap.ts', () => ({
 }));
 
 /** The layers drawer is controlled by props, so the shell needs a stateful wrapper. */
-const Harness = ({
-  layersOpen = false,
-  toolSheetOpen = false,
-  onToggleToolSheet,
-}: {
-  layersOpen?: boolean;
-  toolSheetOpen?: boolean;
-  onToggleToolSheet?: () => void;
-}) => {
+/**
+ * Mirrors how `App.tsx` owns the two surface flags: as state, with the toggles flipping it.
+ *
+ * The props are INITIAL values, not the live ones. Holding `isToolSheetOpen` fixed and
+ * passing a no-op toggle — which this harness used to do — makes every assertion about the
+ * sheet vacuous, because nothing the shell does can change what it renders.
+ */
+const Harness = ({ layersOpen = false, toolSheetOpen = false }: { layersOpen?: boolean; toolSheetOpen?: boolean }) => {
   const [isLayersOpen, setIsLayersOpen] = useState(layersOpen);
+  const [isToolSheetOpen, setIsToolSheetOpen] = useState(toolSheetOpen);
   return (
     <MobileShell
-      isToolSheetOpen={toolSheetOpen}
-      onToggleToolSheet={() => onToggleToolSheet?.()}
+      isToolSheetOpen={isToolSheetOpen}
+      onToggleToolSheet={() => setIsToolSheetOpen((open) => !open)}
       isLayersOpen={isLayersOpen}
       onToggleLayers={() => setIsLayersOpen((open) => !open)}
     />
@@ -162,10 +164,45 @@ const regionClasses = (container: HTMLElement) =>
 describe('MobileShell', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The shell closes every surface outside the mobile band, and jsdom's default
+    // `innerWidth` is 1024 — a desktop width. Without this the suite would be asserting the
+    // desktop behaviour while named for the mobile one.
+    setViewportWidth(MOBILE_WIDTH);
     storeStateMock.canvasRef.current = document.createElement('canvas');
     storeStateMock.hasImage = true;
     storeStateMock.toolName = 'draw';
     currentToolMock.isToolDirty = false;
+  });
+
+  afterEach(() => setViewportWidth(1280));
+
+  it('closes the navigation menu when the viewport leaves the mobile band', async () => {
+    // The shell is mounted at every width and hidden with `md:hidden`, and `display: none`
+    // hides without unmounting — so a surface left open on a phone stays RENDERED on desktop.
+    // The two flags the shell does not own are reset by `AppContainer`, which is where that
+    // behaviour is tested; this covers the one it does own.
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole('button', { name: 'Open navigation menu' }));
+    expect(screen.getByRole('dialog', { name: 'Mobile Navigation Menu' })).toBeInTheDocument();
+
+    act(() => {
+      setViewportWidth(1280);
+    });
+
+    expect(screen.queryByRole('dialog', { name: 'Mobile Navigation Menu' })).toBeNull();
+  });
+
+  it('keeps the surfaces open inside the mobile band', () => {
+    render(<Harness layersOpen toolSheetOpen />);
+
+    act(() => {
+      setViewportWidth(700);
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Layers & History Drawer' })).toBeInTheDocument();
+    expect(document.getElementById('mobile-tool-options')).not.toBeNull();
   });
 
   it('places the header, tool sheet, bar and layers drawer in order while the menu is shut', () => {
@@ -233,14 +270,21 @@ describe('MobileShell', () => {
     expect(screen.getByRole('button', { name: 'Toggle layers panel' })).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('drives the tool sheet from the bar toggle through the one prop it owns', async () => {
+  it('drives the tool sheet from the bar toggle', async () => {
     const user = userEvent.setup();
-    const onToggleToolSheet = vi.fn();
-    render(<Harness onToggleToolSheet={onToggleToolSheet} />);
+    render(<Harness />);
 
-    await user.click(screen.getByRole('button', { name: 'Tool options' }));
+    const toggle = screen.getByRole('button', { name: 'Tool options' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(document.getElementById('mobile-tool-options')).toBeNull();
 
-    expect(onToggleToolSheet).toHaveBeenCalledTimes(1);
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(document.getElementById('mobile-tool-options')).not.toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(document.getElementById('mobile-tool-options')).toBeNull();
   });
 
   it('selects tools through the bar, proving the header and the bar are live', async () => {

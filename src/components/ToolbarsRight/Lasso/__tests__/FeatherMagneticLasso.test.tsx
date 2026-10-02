@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import type { Selection } from '../../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../../util/constants.ts';
-import FeatherMagneticLasso from '../FeatherMagneticLasso.tsx';
+import FeatherMagneticLasso, { INFO_TOOLTIP_CLOSE_DELAY_MS } from '../FeatherMagneticLasso.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const patchToolArgsMock = vi.hoisted(() => vi.fn());
@@ -74,8 +74,21 @@ vi.mock('../../../../contexts/useSelectionClipboard.ts', () => ({
 
 const INFO_BUTTON_NAME = 'Feather Magnetic Lasso settings information';
 const SETTING_LABELS = ['Feather', 'Width', 'Contrast', 'Frequency', 'Snap', 'Smooth', 'Anti-alias', 'Preview feather'];
-// The toolbar keeps the info tooltip mounted for 120ms after focus/hover leaves the button.
-const TOOLTIP_CLOSE_DELAY_MS = 200;
+// The real delay, imported rather than retyped. This file used to hold its own copy,
+// and the two disagreed: production closed the tooltip after 120ms and the comment above
+// this constant said 120 while the constant said 200. Nothing tied either number to
+// production, so a change to the delay in `hideInfoTooltipSoon` was invisible here —
+// and a `grep` could not tell which of the two was the real one.
+//
+// `TOOLTIP_CLOSE_DELAY_MS` is still larger than the production delay, and deliberately:
+// `waitOutTooltipCloseDelay` waits in REAL wall-clock time, so an assertion that has to
+// land exactly when the timer fires would sit on the boundary and fail on a machine
+// where it has not quite. That makes it an UPPER BOUND and nothing more — it pins "the
+// tooltip is gone by twice the grace period" and cannot notice a delay that shrank or
+// disappeared. What pins the delay itself is the fake-timer transition test below, which
+// asserts the value as a literal and then the transition around it; this helper is for
+// the tests that only care about the settled state.
+const TOOLTIP_CLOSE_DELAY_MS = INFO_TOOLTIP_CLOSE_DELAY_MS * 2;
 
 const setClipboardState = (
   state: { activeSelection?: { id: string; geometry: string } | null; hasClipboard?: boolean } = {}
@@ -165,6 +178,10 @@ describe('FeatherMagneticLasso toolbar', () => {
     patchToolArgsMock.mockClear();
     toolArgsAvailable.current = true;
     clipboardMock.copyActiveSelection.mockClear();
+    // The real hook returns `true` on success (`useSelectionClipboard.ts:61`) and the component
+    // READS it, so a bare `vi.fn()`'s `undefined` would be indistinguishable from a refused copy
+    // in every test that copies without choosing a return value for itself.
+    clipboardMock.copyActiveSelection.mockReturnValue(true);
     clipboardMock.layerViaCopy.mockClear();
     clipboardMock.pasteSelectionClipboard.mockClear();
     setClipboardState();
@@ -192,6 +209,36 @@ describe('FeatherMagneticLasso toolbar', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('tooltip').textContent).toContain('copy output uses a feathered alpha mask');
+    });
+  });
+
+  /**
+   * Adobe: "the rate at which the lasso sets fastening points … between 0 and 100. A higher
+   * value anchors the selection border in place more quickly."
+   *
+   * The control was a maximum path LENGTH in pixels, so a lower value added more anchors —
+   * the opposite of the documented sense — and the `px` suffix said so on screen. The sense
+   * itself is pinned at the call site in `FeatherMagneticLassoToolArea.test.tsx`.
+   */
+  describe('frequency', () => {
+    it('is the 0-100 control Adobe documents, not a path length in pixels', () => {
+      render(<FeatherMagneticLasso />);
+
+      const frequency = getSlider(/^Frequency/);
+      expect(frequency).toHaveAttribute('min', '0');
+      expect(frequency).toHaveAttribute('max', '100');
+      expect(frequency).toHaveAttribute('step', '1');
+      // The readout is the setting itself, so it carries no unit the setting does not have.
+      expect(frequency.closest('label')?.textContent).toBe('Frequency 40');
+    });
+
+    it('explains the direction the control actually moves in', async () => {
+      render(<FeatherMagneticLasso />);
+
+      fireEvent.click(getInfoButton());
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(tooltip.textContent).toContain('Higher values anchor the selection border in place more quickly');
     });
   });
 
@@ -259,6 +306,67 @@ describe('FeatherMagneticLasso toolbar', () => {
       // are skipped, so focus leaves the toolbar entirely.
       await user.tab();
       expect(document.body).toHaveFocus();
+    });
+
+    it('holds the info tooltip open for exactly the production grace period after hover leaves', async () => {
+      // THE ONLY TEST THAT PINS THE DELAY. Every other test here settles the tooltip
+      // through `waitOutTooltipCloseDelay`, which waits LONGER than production and can
+      // therefore only observe an upper bound: with the delay removed it still passed,
+      // because the tooltip was already gone. This one asserts the transition — still
+      // open one millisecond before the timer fires, gone on the millisecond it does —
+      // and it does that on fake timers, so there is no wall-clock boundary to sit on
+      // and no flake available in principle.
+      //
+      // `hover leaves` rather than focus leaving, because focus leaving while the info
+      // button is PINNED keeps the tooltip mounted indefinitely by a different rule
+      // (`isInfoOpen = isInfoHovered || isInfoPinned`), which is the behaviour the
+      // pin-survival test above covers.
+      //
+      // The clock is faked AFTER the tooltip is open, not before. An async query like
+      // `findByRole` under fake timers waits for something that will not happen until
+      // time is advanced, and deadlocks into a 5s timeout that looks like a slow
+      // machine. Opening on the real clock and faking only the close keeps every wait
+      // here synchronous.
+      render(<FeatherMagneticLasso />);
+      const infoButton = getInfoButton();
+      fireEvent.mouseEnter(infoButton);
+      expect(await screen.findByRole('tooltip')).toBeInTheDocument();
+
+      // The value the design calls for, asserted as a LITERAL even though the constant
+      // is imported — deliberately, and the reason is the trap this test was nearly
+      // built into. Everything below advances by the imported constant so that there is
+      // no boundary to sit on. If the EXPECTATION also used the constant, the test
+      // would advance by whatever it was given and would pass against any delay at all:
+      // injected as 400ms it stayed green, because 400-1ms still found the tooltip open
+      // and 400ms still found it gone. The test would have been asserting that a grace
+      // period exists and not what it is. Changing the grace period is a design change,
+      // and it should have to touch this line to land.
+      expect(INFO_TOOLTIP_CLOSE_DELAY_MS).toBe(120);
+
+      vi.useFakeTimers();
+      try {
+        fireEvent.mouseLeave(infoButton);
+
+        // One short of the grace period: still mounted. If the delay were longer than
+        // the production value, this is where it shows.
+        await act(async () => {
+          vi.advanceTimersByTime(INFO_TOOLTIP_CLOSE_DELAY_MS - 1);
+        });
+        expect(screen.getByRole('tooltip')).toBeInTheDocument();
+
+        // And on the grace period itself: gone. If the delay were shorter — or removed
+        // outright — this is where it shows.
+        await act(async () => {
+          vi.advanceTimersByTime(1);
+        });
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+      } finally {
+        // The restore belongs to `src/test/setup.ts:8`; doing it here as well would be
+        // belt-and-braces, but this test is the only one in the file that installs fake
+        // timers, so it is also the only one that could be blamed for the next test's
+        // clock. Cheap to be explicit about.
+        vi.useRealTimers();
+      }
     });
 
     it('keeps focus on each slider and patches the matching setting for arrow key changes', async () => {
@@ -458,15 +566,39 @@ describe('FeatherMagneticLasso toolbar', () => {
   });
 
   describe('copy failure', () => {
-    it('logs and alerts when the copy throws, then restores the button', async () => {
-      const failure = new Error('clipboard exploded');
-      // `mockImplementationOnce` so the throwing behaviour cannot leak: the shared `beforeEach`
-      // only calls `mockClear()`, which does not reset implementations.
-      clipboardMock.copyActiveSelection.mockImplementationOnce(() => {
-        throw failure;
-      });
+    it('reports a copy that returns false, which is not the throwing path', async () => {
+      clipboardMock.copyActiveSelection.mockReturnValueOnce(false);
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+      setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
+
+      try {
+        render(<FeatherMagneticLasso />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        // A refusal reaches no `catch`: `copySelection` returns `false` rather than throwing, so
+        // the click above produced no output at all before the component read the boolean.
+        await waitFor(() => {
+          expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to copy feathered magnetic selection');
+        });
+        // The throwing path prefixes the error it caught, so the two diagnostics stay separate.
+        expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+          'Error copying feathered magnetic selection:',
+          expect.anything()
+        );
+        // `finally` releases the transient state on a refusal exactly as it does on a throw.
+        const copyButton = screen.getByRole('button', { name: 'Copy' });
+        expect(copyButton).toHaveTextContent('Copy');
+        expect(copyButton).toBeEnabled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it('logs nothing when the copy succeeds', async () => {
+      // The other half of the contract, and the one an unconditional `console.error` would
+      // pass while breaking every copy: a successful copy is not a failure.
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
 
       try {
@@ -475,18 +607,40 @@ describe('FeatherMagneticLasso toolbar', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
         await waitFor(() => {
-          expect(alertSpy).toHaveBeenCalledWith('Failed to copy feathered selection');
+          expect(clipboardMock.copyActiveSelection).toHaveBeenCalledTimes(1);
         });
-        expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying feathered magnetic selection:', failure);
+        expect(consoleErrorSpy).not.toHaveBeenCalled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
 
-        // `finally { setIsCopying(false) }` (FeatherMagneticLasso.tsx:174-176) is the only thing
+    it('logs when the copy throws, then restores the button', async () => {
+      const failure = new Error('clipboard exploded');
+      // `mockImplementationOnce` so the throwing behaviour cannot leak: the shared `beforeEach`
+      // only calls `mockClear()`, which does not reset implementations.
+      clipboardMock.copyActiveSelection.mockImplementationOnce(() => {
+        throw failure;
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
+
+      try {
+        render(<FeatherMagneticLasso />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        await waitFor(() => {
+          expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying feathered magnetic selection:', failure);
+        });
+
+        // `finally { setIsCopying(false) }` (FeatherMagneticLasso.tsx:191-193) is the only thing
         // keeping the label from being stranded on 'Copying...'.
         const copyButton = screen.getByRole('button', { name: 'Copy' });
         expect(copyButton).toHaveTextContent('Copy');
         expect(copyButton).toBeEnabled();
       } finally {
         consoleErrorSpy.mockRestore();
-        alertSpy.mockRestore();
       }
     });
   });

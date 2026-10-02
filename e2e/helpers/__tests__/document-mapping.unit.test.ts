@@ -25,11 +25,14 @@ import {
 describe('documentToCanvasOffset', () => {
   it('reproduces the committed export baseline geometry exactly', () => {
     // The layout the baselines were recorded against: the overflowing 1fr row, in which the
-    // document fitted horizontally at scale 1.2175 with a 79.75px vertical letterbox.
-    const box = { x: 56, y: 100, width: 974, height: 890 };
+    // document fitted horizontally at scale 1.2175 with a 54.75px vertical letterbox. The
+    // height is 840 because that is the geometry that puts the stroke on the committed
+    // baseline's row 78; see the derivation in `e2e/export/helpers.ts`, which shows what the
+    // wrong 890 costs — 3824 differing pixels on every one of the seven formats.
+    const box = { x: 56, y: 100, width: 974, height: 840 };
 
-    const start = documentToCanvasOffset(box, 123.203285, 57.700205);
-    const end = documentToCanvasOffset(box, 287.474333, 57.700205);
+    const start = documentToCanvasOffset(box, 123.203285, 78.234086);
+    const end = documentToCanvasOffset(box, 287.474333, 78.234086);
 
     // The canvas-relative offsets the spec used before the line was specified in document
     // space. If this drifts, the export no longer matches its committed baseline and the
@@ -43,14 +46,14 @@ describe('documentToCanvasOffset', () => {
   it('inverts to the same document point from either mapping', () => {
     // A wide box and a tall box, so both contain-fit branches are covered.
     for (const box of [
-      { x: 0, y: 0, width: 974, height: 890 },
+      { x: 0, y: 0, width: 974, height: 840 },
       { x: 56, y: 100, width: 974, height: 583 },
       { x: 0, y: 0, width: 1200, height: 400 },
       { x: 0, y: 0, width: 500, height: 500 },
     ]) {
       for (const point of [
         { x: 0, y: 0 },
-        { x: 123.203285, y: 57.700205 },
+        { x: 123.203285, y: 78.234086 },
         { x: DEFAULT_DOCUMENT_WIDTH, y: DEFAULT_DOCUMENT_HEIGHT },
         { x: 400, y: 300 },
       ]) {
@@ -74,8 +77,8 @@ describe('documentToCanvasOffset', () => {
     const tall = { x: 0, y: 0, width: 974, height: 890 };
     const short = { x: 0, y: 0, width: 974, height: 583 };
 
-    const inTall = documentToCanvasOffset(tall, 123.203285, 57.700205);
-    const inShort = documentToCanvasOffset(short, 123.203285, 57.700205);
+    const inTall = documentToCanvasOffset(tall, 123.203285, 78.234086);
+    const inShort = documentToCanvasOffset(short, 123.203285, 78.234086);
 
     expect(inTall).not.toEqual(inShort);
     expect(canvasOffsetToDocument(tall, inTall.x, inTall.y).x).toBeCloseTo(123.203285, 4);

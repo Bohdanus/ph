@@ -1,6 +1,7 @@
 import { cloneDeep } from 'lodash-es';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import settingsSource from '../settings.ts?raw';
 import { saveLastSettings } from '../settings.ts';
 import { defaultSettings, lastSavedSettings } from '../../tools/settings.ts';
 import type { ToolArgs, ToolArgsFor, ToolName } from '../../contexts/tool-types.ts';
@@ -58,6 +59,41 @@ describe('saveLastSettings for the four new tools', () => {
   beforeEach(resetLastSavedSettings);
   afterEach(resetLastSavedSettings);
 
+  /**
+   * `saveLastSettings` is one `else if` chain, so a tool named in two arms is served by whichever
+   * comes first and the later one is DEAD CODE — while still reading as the arm that governs the
+   * tool. The eraser carried exactly that: a typed arm, and then a second listing in the brush
+   * group whose comment explained at length why the eraser belonged there rather than in the arm
+   * above. Nothing failed, because the two arms happened to persist the same fields.
+   *
+   * This reads the chain as text on purpose. Every other assertion in this file goes through the
+   * public function and can only observe the arm that WINS, which is precisely why the dead one
+   * was invisible: a behaviour test cannot distinguish "this arm exists and runs" from "this arm
+   * exists and never runs".
+   */
+  it('names each tool in exactly one arm of the persistence chain', () => {
+    const anchor = settingsSource.indexOf('export function saveLastSettings');
+    // `indexOf` returning -1 would make `slice` return a one-character string and the assertion
+    // below would pass on an empty match — a green test that checked nothing. Fail loudly instead.
+    expect(anchor, 'saveLastSettings is not where this test looks for it').toBeGreaterThan(-1);
+    const chain = settingsSource.slice(anchor);
+
+    // Tool names as they are compared in the chain: `toolName === 'brush'`, or an element of an
+    // `||` list, which this file also spells that way. Each must be the FIRST match for that tool,
+    // so a second occurrence is a duplicate arm that can never run.
+    const seen = new Map<string, number>();
+    for (const [, name] of chain.matchAll(/toolName === '([a-z-]+)'/g)) {
+      seen.set(name, (seen.get(name) ?? 0) + 1);
+    }
+
+    // A chain that named no tool at all would satisfy the duplicate check for the same reason, so
+    // require that it names a plausible number of them before concluding any of it is a duplicate.
+    expect(seen.size).toBeGreaterThan(20);
+
+    const duplicated = [...seen].filter(([, count]) => count > 1).map(([name]) => name);
+    expect(duplicated).toEqual([]);
+  });
+
   it('keeps every Eraser setting the user chose', () => {
     saveLastSettings(eraserArgs());
 
@@ -66,6 +102,10 @@ describe('saveLastSettings for the four new tools', () => {
       mode: 'block',
       lineWidth: 220,
       alpha: 0.35,
+      // The Brush tip's two fields. Persisting them is the point of the arm: a session that
+      // reopens in Brush mode with the seeded hardness and spacing, whatever the user set.
+      hardness: defaultSettings.eraser.hardness,
+      spacing: defaultSettings.eraser.spacing,
       color: '#12ab34',
       points: [],
     });

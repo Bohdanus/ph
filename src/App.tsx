@@ -14,7 +14,9 @@ import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
 import { AppKeyboardShortcuts } from './components/Common/AppKeyboardShortcuts.tsx';
 import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
 import { useApp } from './hooks/useApp.ts';
+import { useIsMobileViewport } from './hooks/useMediaQuery.ts';
 import { RightPanelVisibilityProvider } from './contexts/RightPanelVisibility.tsx';
+import { PanelLayoutProvider } from './contexts/PanelLayout.tsx';
 
 const DEFAULT_BLANK_IMAGE = {
   color: '#ffffff',
@@ -42,8 +44,43 @@ function AppContainer() {
   const [isLayersDrawerOpen, setIsLayersDrawerOpen] = useState(false);
   const [isToolSheetOpen, setIsToolSheetOpen] = useState(false);
 
+  // Close both mobile surfaces on leaving the mobile band.
+  //
+  // The mobile shell is mounted at every width and hidden with `md:hidden`, and
+  // `display: none` hides without unmounting — so a surface left open on a phone stays
+  // rendered on desktop, and `MobileToolSheet` holds a second live instance of the active
+  // tool's options panel next to the one `ToolbarHorizontal` owns: duplicate
+  // `id="text-input"`, duplicate `id="font-family-select"`, duplicate window Escape
+  // listeners. Resetting the flags here, where they live, is the fix; unmounting the shell
+  // is not, because the always-mounted design is what keeps the canvas alive across a
+  // crossing.
+  //
+  // Adjusted during render rather than in an effect — React's documented pattern for
+  // resetting state on an external change, and it avoids the extra render pass a setState
+  // in an effect body costs.
+  const isMobile = useIsMobileViewport();
+  const [wasMobile, setWasMobile] = useState(isMobile);
+  if (wasMobile !== isMobile) {
+    setWasMobile(isMobile);
+    if (!isMobile) {
+      setIsToolSheetOpen(false);
+      setIsLayersDrawerOpen(false);
+    }
+  }
+
   return (
-    <div className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_250px] max-lg:grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900">
+    // The two side tracks are `auto`, not a fixed `250px`, because the dock's width is now the
+    // user's to choose and the tablet collapse still has to work. `SidebarRight` collapses by
+    // rendering `display: none`, and a `display: none` item contributes nothing to an `auto`
+    // track but 250px of nothing to a fixed one — so the width has to live on the element
+    // (`SidebarRight.tsx`) and the track has to stay content-sized. The `max-lg:` override that
+    // used to give the tablet band the same width is gone for that reason: the element now
+    // carries the width at every width.
+    //
+    // The `left` and `right` area NAMES are unchanged, and so is the DOM order of the children.
+    // Re-docking swaps which component claims which area, which is a grid placement and not a
+    // reorder, so the focus order the shell has always had is intact.
+    <div className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900">
       <AppKeyboardShortcuts />
       <BlankImageStarter />
       <Menu />
@@ -95,9 +132,13 @@ function App() {
         <StoreProvider>
           <KeyboardEventsProvider>
             <CurrentToolProvider>
-              <RightPanelVisibilityProvider>
-                <AppContainer />
-              </RightPanelVisibilityProvider>
+              {/* Above `RightPanelVisibilityProvider` and beside it: both are shell state, and
+                  neither reads the store. Order between them does not matter. */}
+              <PanelLayoutProvider>
+                <RightPanelVisibilityProvider>
+                  <AppContainer />
+                </RightPanelVisibilityProvider>
+              </PanelLayoutProvider>
             </CurrentToolProvider>
           </KeyboardEventsProvider>
         </StoreProvider>

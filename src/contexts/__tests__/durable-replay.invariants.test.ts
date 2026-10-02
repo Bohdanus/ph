@@ -194,6 +194,20 @@ describe('replayDurableDocument invariants (P1.7)', () => {
   });
 
   it('replayDurableAtCursor clones the document before replay', () => {
+    // This test used to call `replayDurableDocument` — the entry point that does
+    // NOT clone — and discard the result, so the name described a guarantee the
+    // body never exercised and `cloneDurableDocument` inside `replayDurableAtCursor`
+    // (`durable-replay.ts:170`) was invisible to the suite.
+    //
+    // Assertions (b) and (c) are both load-bearing for the clone, and (c) is the
+    // one that regresses if `replayDurableAtCursor` ever becomes a bare
+    // delegation. The reducer pushes `entry.operation` BY REFERENCE
+    // (`durable-replay.ts:119`), so a direct `replayDurableDocument` hands back
+    // the source document's own operation object. `replayDurableAtCursor` only
+    // returns a different object because it cloned first, and the
+    // `directOperation` identity assertion in (c) makes that premise explicit:
+    // it proves the two replays differ because of the clone, and not because the
+    // reducer copies.
     const { document } = convert({
       id: 'op1',
       actionName: TOOL_ACTION,
@@ -202,11 +216,27 @@ describe('replayDurableDocument invariants (P1.7)', () => {
     });
 
     const beforeReplay = JSON.stringify(document);
-    const replay = replayDurableDocument(document, 0);
+    const sourceOperation = document.history[0]?.operation;
 
-    // The replay result should not be the same frozen document object.
-    void replay;
+    const atCursor = replayDurableAtCursor(document, 0);
+    const atCursorOperation = atCursor.layers[layerId]?.operations[0];
+    const directOperation = replayDurableDocument(document, 0).layers[layerId]?.operations[0];
+
+    // (a) The source document is untouched by the clone-and-replay path.
     expect(JSON.stringify(document)).toBe(beforeReplay);
+
+    // (b) The operation the cursor replay carries is not the source's object.
+    expect(atCursorOperation).toBeDefined();
+    expect(sourceOperation).toBeDefined();
+    expect(atCursorOperation).not.toBe(sourceOperation);
+
+    // (c) Nor is it the object a non-cloning replay hands back — the one that
+    // regresses if `replayDurableAtCursor` ever becomes a bare delegation.
+    expect(directOperation).toBe(sourceOperation);
+    expect(atCursorOperation).not.toBe(directOperation);
+
+    // The clone is faithful: equal in value, different in identity.
+    expect(atCursor).toEqual(replayDurableDocument(document, 0));
   });
 });
 
@@ -639,8 +669,13 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
     expect(replay.activeLayerId).toBe(layerId);
   });
 
-  it('rasterize-layer on non-existent layer is a no-op', () => {
-    const { document } = legacyHistoryToDurable(
+  // This used to be titled `rasterize-layer on non-existent layer is a no-op`, and it
+  // was vacuous: the tool action named an absent layer, so the converter threw at
+  // `history-adapter.ts:787` and never produced an operation at all. The `rasterized`
+  // assertion named a layer id the fixture never contained, so it could not fail. The
+  // subject is the converter's refusal to invent a layer, which is what it does.
+  it('drops a tool action on an absent layer and keeps the baseline intact', () => {
+    const converted = legacyHistoryToDurable(
       [
         {
           id: 'baseline',
@@ -653,18 +688,29 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
           },
         },
         {
-          id: 'rasterize-missing',
+          id: 'tool-missing-layer',
           actionName: TOOL_ACTION,
           layerId: 'non-existent',
-          args: { toolName: 'rasterize' },
+          args: { toolName: 'blur', radius: 2 },
         },
       ],
       { documentId: 'edge-case-test' }
     );
 
-    const replay = replayDurableDocument(document);
-    expect(replay.layers[layerId]).toBeDefined();
-    expect(replay.layers['rasterized']).toBeUndefined();
+    expect(converted.diagnostics).toEqual([
+      {
+        historyId: 'tool-missing-layer',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'unsupported-history-feature',
+        message: 'Layer non-existent is unavailable',
+      },
+    ]);
+    // No operation was produced, so there is nothing for replay to apply.
+    expect(converted.document.history).toHaveLength(0);
+
+    const replay = replayDurableDocument(converted.document);
+    expect(Object.keys(replay.layers)).toEqual([layerId]);
   });
 
   it('set-document-frame updates frame without affecting layers', () => {

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setViewportWidth } from '../../test/setup.ts';
 import { RightPanelVisibilityProvider, useRightPanelVisibility } from '../RightPanelVisibility.tsx';
@@ -37,6 +37,21 @@ describe('RightPanelVisibility', () => {
     expect(probe()).toBe('false/true');
     // No toggle is offered on desktop, so the panel cannot be taken away there.
     expect(screen.queryByTestId('toggle')).toBeNull();
+  });
+
+  it('defaults to a permanently-open, non-collapsible panel for a consumer rendered outside the provider', () => {
+    // `createContext`'s default is a real contract, not a placeholder: a subtree that misses the
+    // provider must still render, and must not be able to collapse a panel it does not own.
+    const { result } = renderHook(() => useRightPanelVisibility());
+
+    expect(result.current.isCollapsible).toBe(false);
+    expect(result.current.isOpen).toBe(true);
+
+    act(() => {
+      result.current.toggle();
+    });
+
+    expect(result.current.isOpen).toBe(true);
   });
 
   it('starts collapsed in the tablet band, so the canvas gets the 250px back', () => {

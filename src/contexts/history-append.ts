@@ -1,11 +1,27 @@
-import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION } from '../util/constants.ts';
-import type { DocumentFrame } from './document-frame.ts';
 import {
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  REMOVE_ACTION,
+  REORDER_ACTION,
+  SELECTION_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SHOW_LAYER_ACTION,
+  TOOL_ACTION,
+} from '../util/constants.ts';
+import type { DocumentFrame } from './document-frame.ts';
+import type { AssetRegistry } from './asset-registry.ts';
+import {
+  deriveRemoveLayerEntry,
   deriveSetDocumentFrameEntry,
   deriveSetLayerPropertiesEntry,
   deriveSetSelectionEntry,
   isSetLayerPropertiesAction,
   isEntryEnabled,
+  layerPropertyKeyFor,
+  operationForTool,
+  sourceToRuntimeLayer,
+  convertLayer,
+  UnsupportedHistoryFeatureError,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
 import {
@@ -13,11 +29,16 @@ import {
   freezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
+  type DurableLayerSnapshot,
+  type DurableOperation,
   type SelectionSnapshot,
 } from './history-model.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
+import type { Layer, LayerId, LayerSource } from './layer-types.ts';
+import { findToolProcessor } from '../tools/toolProcessors.ts';
+import type { ToolName } from './tool-types.ts';
 
 const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.freeze([]), activeSelectionId: null });
 
@@ -66,6 +87,11 @@ export type AppendBoundaryInput = Readonly<{
    * defaulted empty `before` is a wrong baseline, not a harmless one.
    */
   currentSelections?: SelectionSnapshot;
+  /**
+   * The live layer record at the append point. Tool derivation needs its current
+   * position for affine validation; a writer closure is not authoritative here.
+   */
+  currentLayer?: Layer;
   id?: string;
 }>;
 
@@ -90,6 +116,96 @@ function unavailable(entry: HistoryItem, message: string, code: MigrationDiagnos
       },
     ],
   };
+}
+
+function durableEntryForOperation(entry: HistoryItem, operation: DurableOperation): DurableHistoryEntry {
+  return Object.freeze({
+    id: entry.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled: isEntryEnabled(entry),
+    operation,
+  });
+}
+
+function unavailableFromError(entry: HistoryItem, error: unknown): AppendBoundaryResult {
+  return unavailable(
+    entry,
+    error instanceof Error ? error.message : String(error),
+    error instanceof UnsupportedHistoryFeatureError ? 'unsupported-history-feature' : 'invalid-history-entry'
+  );
+}
+
+function sourceFromEntry(entry: HistoryItem): LayerSource | undefined {
+  const candidate = entry.layerSource ?? entry.args;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+  const kind = (candidate as { kind?: unknown }).kind;
+  return kind === 'blank' || kind === 'image' || kind === 'tool' ? (candidate as LayerSource) : undefined;
+}
+
+function compareRuntimeLayerToSnapshot(runtime: Layer, snapshot: DurableLayerSnapshot): string | null {
+  if (runtime.id !== snapshot.id) return 'the durable layer id does not match the legacy entry';
+  if (runtime.name !== snapshot.name) return 'the durable layer name does not match the legacy source';
+  if (runtime.isBedrock !== snapshot.isBedrock) return 'the durable bedrock flag does not match the legacy source';
+  if (runtime.visible !== snapshot.visible) return 'the durable layer visibility does not match the legacy source';
+  if (runtime.opacity !== snapshot.opacity) return 'the durable layer opacity does not match the legacy source';
+  if (runtime.locked !== snapshot.locked) return 'the durable layer lock state does not match the legacy source';
+  if (runtime.blendMode !== snapshot.blendMode) return 'the durable layer blend mode does not match the legacy source';
+  if (!sameJsonValue(runtime.pos, snapshot.pos)) return 'the durable layer position does not match the legacy source';
+  return null;
+}
+
+function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayerSnapshot): string | null {
+  const durableSource = durable.source;
+  if (source.kind === 'blank') {
+    if (durableSource.kind !== 'blank') return 'the durable layer source kind does not match the legacy source';
+    if (
+      durableSource.color !== source.color ||
+      durableSource.opacity !== source.opacity ||
+      durableSource.isBedrock !== !!source.isBedrock
+    ) {
+      return 'the durable blank layer source does not match the legacy source';
+    }
+    const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
+    return sameJsonValue(durableSource.size, size)
+      ? null
+      : 'the durable blank layer size does not match the legacy source';
+  }
+
+  if (source.kind === 'image') {
+    if (durableSource.kind !== 'raster') return 'the durable layer source kind does not match the legacy source';
+    if (
+      durableSource.width !== source.bitmap.width ||
+      durableSource.height !== source.bitmap.height ||
+      (durableSource.name ?? undefined) !== (source.name || undefined) ||
+      durableSource.isBedrock !== !!source.isBedrock
+    ) {
+      return 'the durable raster layer source does not match the legacy source';
+    }
+    return typeof durableSource.assetId === 'string' && durableSource.assetId.length > 0
+      ? null
+      : 'the durable raster layer source has no registered asset';
+  }
+
+  if (durableSource.kind === 'legacy-tool') {
+    return `The tool ${source.args.toolName} has no durable source representation`;
+  }
+  if (durableSource.kind !== 'text' && durableSource.kind !== 'vector') {
+    return 'the durable layer source kind does not match the legacy source';
+  }
+  if (
+    durableSource.toolName !== source.args.toolName ||
+    durableSource.isBedrock !== !!source.isBedrock ||
+    !sameJsonValue(durableSource.args, source.args)
+  ) {
+    return 'the durable tool layer source does not match the legacy source';
+  }
+  const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
+  if (!sameJsonValue(durableSource.size, size)) return 'the durable tool layer size does not match the legacy source';
+  const sourcePos = source.isBedrock ? { x: 0, y: 0, ...source.size } : source.pos;
+  if (!sameJsonValue(durableSource.sourcePos, sourcePos)) {
+    return 'the durable tool layer position does not match the legacy source';
+  }
+  return null;
 }
 
 /**
@@ -118,7 +234,8 @@ function unavailable(entry: HistoryItem, message: string, code: MigrationDiagnos
 function translate(
   entry: HistoryItem,
   currentFrame: DocumentFrame,
-  currentSelections: SelectionSnapshot
+  currentSelections: SelectionSnapshot,
+  currentLayer: Layer | undefined
 ): AppendBoundaryResult {
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
     if (entry.documentSource) {
@@ -163,11 +280,247 @@ function translate(
     return { entry, durableEntry, diagnostics: [] };
   }
 
+  if (entry.actionName === REMOVE_ACTION) {
+    // Layer presence is deliberately not a precondition here or in validation:
+    // conversion and both replay models retain unknown removals as no-ops, and
+    // `replayHistory` filters the id out of the layer record rather than
+    // refusing the entry (`history-replay.ts:158`). The derivation is the parity
+    // path, so it has no refusal to make for a layer the document never held.
+    // This guard is therefore a narrowing guard, not a check: the derivation
+    // returns null only for an action that is not a removal, which this arm has
+    // already excluded, so the branch below cannot be reached today.
+    const durableEntry = deriveRemoveLayerEntry(entry);
+    if (!durableEntry) {
+      return unavailable(
+        entry,
+        'The removal could not be described as a durable operation, so the legacy entry remains authoritative.',
+        'invalid-history-entry'
+      );
+    }
+    return { entry, durableEntry, diagnostics: [] };
+  }
+
+  if (entry.actionName === TOOL_ACTION) {
+    if (!currentLayer) {
+      return unavailable(
+        entry,
+        `The append boundary does not translate "${entry.actionName}" without the live layer ${entry.layerId}.`,
+        'unsupported-history-feature'
+      );
+    }
+    try {
+      // `operationForTool` only needs the durable layer's position today. The
+      // append boundary deliberately passes the store's live record instead of
+      // converting it through a registry, which keeps retained operations
+      // asset-free and validates affine bounds against current geometry.
+      const operation = operationForTool(entry, currentLayer as unknown as DurableLayerSnapshot);
+      if (!operation) {
+        return unavailable(
+          entry,
+          'The tool action has no retained durable operation; the legacy entry remains authoritative.',
+          'unsupported-history-feature'
+        );
+      }
+      if (operation.kind === 'reposition-layer' && !operation.move && !operation.resize) {
+        return unavailable(
+          entry,
+          'A layer reposition without movement or resizing has no durable operation.',
+          'unsupported-history-feature'
+        );
+      }
+      if (operation.kind === 'apply-raster-processor') {
+        const processor = findToolProcessor(operation.processorId as ToolName);
+        if (!processor || processor.commit === 'raster') {
+          return unavailable(
+            entry,
+            `Tool ${operation.processorId} commits raster pixels and has no retained append translation.`,
+            'unsupported-history-feature'
+          );
+        }
+        // `transform` with a trapezoid is the one raster-shaped durable
+        // operation whose processor is declared affine-operation. Keep it on
+        // the boundary; only commit:'raster' is refused here.
+      } else if (
+        operation.kind !== 'apply-filter' &&
+        operation.kind !== 'apply-affine-transform' &&
+        operation.kind !== 'reposition-layer'
+      ) {
+        return unavailable(
+          entry,
+          `The tool action produced unsupported durable operation "${operation.kind}".`,
+          'unsupported-history-feature'
+        );
+      }
+      return { entry, durableEntry: durableEntryForOperation(entry, operation), diagnostics: [] };
+    } catch (error) {
+      return unavailableFromError(entry, error);
+    }
+  }
+
   return unavailable(
     entry,
     `The append boundary does not translate "${entry.actionName}" yet; the legacy entry remains authoritative.`,
     'unsupported-history-feature'
   );
+}
+
+/**
+ * The durable order a legacy reorder must produce, recomputed here rather than
+ * read out of `legacyHistoryToDurable`.
+ *
+ * A reorder is the one translated action whose durable operation cannot be a
+ * function of the history item: `orderByLayerId` names the resulting position of
+ * *every* layer, and the item carries only the intent. So the answer has to come
+ * from the pre-append layer order, and the only trustworthy copy of that is the
+ * store's live record — a hook closure is 200 ms stale by the time a drag
+ * dispatches.
+ *
+ * This is deliberately a second implementation of the rule rather than a call
+ * into the converter's. Reusing the converter's copy would make a bug in it
+ * reproduce itself here, which is the opposite of a check. Two copies can drift,
+ * so `history-append.reorder.test.ts` pins them against each other over a
+ * matrix of orders and intents, and the store test pins the published document
+ * against a full conversion.
+ *
+ * `preOrder` is the layer sequence bottom first — index 0 is the bottom of the
+ * stack — which is the same sequence `reorderLayers` and `replayHistory` operate
+ * on, and the same one the converter normalizes its own layer snapshots into.
+ *
+ * A `null` result is the one answer this function refuses: the mover is not in
+ * the document, a named anchor is not, or the anchor is the mover itself. All
+ * three of the first two are already agreed no-ops rather than placements
+ * (`replayHistory` skips, `reorderLayers` refuses, the converter records
+ * nothing), so a refusal must not become a fabricated map. Returning `null`
+ * routes the append to conversion, which is where that no-op belongs.
+ *
+ * A self-anchored move is refused for a different reason, and the reason is a
+ * known disagreement rather than a settled rule. `reorderLayers` anchors on the
+ * layer's own order, shifts everything above it, and then re-assigns the layer —
+ * so the resulting *sequence* is unchanged and only the sparse order values
+ * move. The converter drops the mover from the list first, so its `indexOf` is
+ * -1 and it records a move to the bottom. Executed, not assumed: on a stack
+ * ordered bottom-first as `a, b, c`, a self-anchored move of `c` leaves the
+ * document reading `a, b, c` and the converter recording `c, a, b`. (The two
+ * agree when the mover is already the bottom layer, so the disagreement is a
+ * function of the stack, not a blanket one.)
+ *
+ * This boundary is written to agree with the converter rather than to become a
+ * third opinion, and the two implementations of the durable rule are pinned
+ * against each other, so returning the sequence-preserving map here would break
+ * that pin. It is recorded in `HANDOFF.md` as a conversion defect; fixing it
+ * means changing the converter and this function together.
+ *
+ * Note what the refusal does and does not buy. It stops THIS append from
+ * publishing, and the reconversion it falls back to leaves the shadow ordered
+ * the converter's way while the document keeps the sequence it had — so the two
+ * models now disagree. That disagreement is caught by the `durableLayerOrder`
+ * precondition on the NEXT append, not by this refusal. The refusal is the
+ * first line; the order comparison is what actually keeps a publication and a
+ * reconversion interchangeable.
+ */
+export function reorderOrderAfterIntent(
+  preOrder: readonly LayerId[],
+  intent: { layerToMoveId: LayerId; afterWhichLayerId?: LayerId | null }
+): Readonly<Record<LayerId, number>> | null {
+  if (!intent.layerToMoveId) return null;
+  if (!preOrder.includes(intent.layerToMoveId)) return null;
+  if (intent.afterWhichLayerId && !preOrder.includes(intent.afterWhichLayerId)) return null;
+  // The anchor is the mover. See the doc block: the document keeps the sequence
+  // and the converter does not, and this function does not get to pick.
+  if (intent.afterWhichLayerId === intent.layerToMoveId) return null;
+
+  const remaining = preOrder.filter((id) => id !== intent.layerToMoveId);
+  // A falsy anchor means the bottom, which is index 0 here. A named anchor is
+  // known to be present, so `indexOf` cannot be -1 and the `+ 1` is its slot.
+  const targetIndex = intent.afterWhichLayerId ? remaining.indexOf(intent.afterWhichLayerId) + 1 : 0;
+  remaining.splice(targetIndex, 0, intent.layerToMoveId);
+  return Object.freeze(Object.fromEntries(remaining.map((id, index) => [id, index])));
+}
+
+/**
+ * The durable entry for a legacy reorder, or `null` when the append is not a
+ * reorder or the intent does not apply to the store's layer order.
+ *
+ * `preOrder` is `null`/absent at every caller that cannot see the live record —
+ * including `planHistoryAppend`, which is why reorder is absent from
+ * `translate` and planned at the store boundary instead.
+ */
+export function deriveReorderLayersEntry(
+  item: HistoryItem,
+  preOrder: readonly LayerId[] | null | undefined
+): DurableHistoryEntry | null {
+  if (item.actionName !== REORDER_ACTION) return null;
+  if (!preOrder) return null;
+  const args = item.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
+  const layerToMoveId = args?.layerToMoveId;
+  if (!layerToMoveId) return null;
+  const orderByLayerId = reorderOrderAfterIntent(preOrder, {
+    layerToMoveId,
+    afterWhichLayerId: args?.afterWhichLayerId,
+  });
+  if (!orderByLayerId) return null;
+  return Object.freeze({
+    id: item.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled: isEntryEnabled(item),
+    operation: Object.freeze({ kind: 'reorder-layers' as const, orderByLayerId }),
+  });
+}
+
+/**
+ * Inputs needed by the store-boundary source-backed planners. The registry and
+ * document id are intentionally absent from `AppendBoundaryInput`: a source
+ * backed entry may register a raster, so only the store can own this step.
+ */
+export type SourceBackedEntryContext = Readonly<{
+  documentId: string;
+  registry: AssetRegistry;
+  preLayers: ReadonlyMap<LayerId, DurableLayerSnapshot>;
+  /** Runtime layer record used for merge removal ids; durable snapshots remain the order oracle. */
+  liveLayers?: Readonly<Record<LayerId, Layer>>;
+}>;
+
+function durableLayerForSource(item: HistoryItem, context: SourceBackedEntryContext): DurableLayerSnapshot | null {
+  const source = sourceFromEntry(item);
+  if (!source) return null;
+  const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, new Map(context.preLayers));
+  const layer = convertLayer(runtimeLayer, context.documentId, context.registry);
+  if (layer.source.kind === 'legacy-tool') {
+    throw new UnsupportedHistoryFeatureError(
+      `Tool ${layer.source.toolName} has no durable source representation`,
+      item.id
+    );
+  }
+  return layer;
+}
+
+/** Store-boundary planner for a source-backed `NEW_LAYER` append. */
+export function deriveCreateLayerEntry(
+  item: HistoryItem,
+  context: SourceBackedEntryContext
+): DurableHistoryEntry | null {
+  if (
+    item.actionName !== NEW_LAYER_ACTION &&
+    !(item.actionName === TOOL_ACTION && sourceFromEntry(item)?.kind === 'tool')
+  ) {
+    return null;
+  }
+  const layer = durableLayerForSource(item, context);
+  if (!layer) return null;
+  return durableEntryForOperation(item, Object.freeze({ kind: 'create-layer', layer }));
+}
+
+/** Store-boundary planner for an atomic `MERGE_ACTION` append. */
+export function deriveMergeDocumentEntry(
+  item: HistoryItem,
+  context: SourceBackedEntryContext
+): DurableHistoryEntry | null {
+  if (item.actionName !== MERGE_ACTION) return null;
+  const result = durableLayerForSource(item, context);
+  if (!result) return null;
+  const layerIds = context.liveLayers ? Object.keys(context.liveLayers) : [...context.preLayers.keys()];
+  const removedLayerIds = Object.freeze(layerIds.filter((id) => id !== result.id));
+  return durableEntryForOperation(item, Object.freeze({ kind: 'merge-document', result, removedLayerIds }));
 }
 
 function validateTimeline(entry: HistoryItem, timeline: HistoryTimeline): MigrationDiagnostic | null {
@@ -197,10 +550,11 @@ export function planHistoryAppend({
   timeline,
   currentFrame,
   currentSelections = EMPTY_SELECTIONS,
+  currentLayer,
   id,
 }: AppendBoundaryInput): AppendBoundaryResult {
   const entry = createHistoryItem(item, id);
-  const result = translate(entry, currentFrame, currentSelections);
+  const result = translate(entry, currentFrame, currentSelections, currentLayer);
   const timelineDiagnostic = validateTimeline(entry, timeline);
   if (!timelineDiagnostic) return result;
   return {
@@ -237,6 +591,38 @@ export type DurableAppendInput = Readonly<{
   /** The entry the boundary planned for it, if any. */
   planned?: DurableHistoryEntry | null;
   documentRevision: number;
+  /**
+   * The store's authoritative pre-append layer order, bottom first.
+   *
+   * A reorder is the only published action that needs it, because its operation
+   * names the resulting order of every layer rather than a change to one of
+   * them. It is supplied by the store from the live record, never by a writer.
+   */
+  preLayerOrder?: readonly LayerId[] | null;
+  /**
+   * The layer ids the durable document itself holds at its cursor, in the order
+   * its own snapshots sort into.
+   *
+   * A reorder map is keyed on the whole layer set, and durable replay silently
+   * skips ids it does not know (`durable-replay.ts`), so a map derived from a
+   * layer set the shadow does not share would renumber the layers the two models
+   * do agree on and leave the shadow ordered differently from the document. The
+   * store supplies the comparison so this module never has to replay anything.
+   *
+   * The ORDER is compared, not just the membership, and the difference is the
+   * whole point. A published map is a fresh normalisation of the order, so it
+   * overwrites whatever order the shadow had; publishing it while the two models
+   * already disagree about the order launders that disagreement into a document
+   * no reconversion will reproduce. Sequence equality is what makes a publication
+   * and a reconversion interchangeable.
+   */
+  durableLayerOrder?: readonly LayerId[] | null;
+  /**
+   * The durable pre-append layer snapshots used to grade source-backed create
+   * and merge plans. A missing map still permits canonical-shape validation,
+   * but cannot prove a merge's complete removal set.
+   */
+  preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null;
 }>;
 
 function sameFrame(left: unknown, right: unknown): boolean {
@@ -303,7 +689,7 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * the two deep-copied it is.
  *
  * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory` (`history-replay.ts:107`) read a key-absent id as `null`.
+ * and `replayHistory` (`history-replay.ts:122`) read a key-absent id as `null`.
  * A strict `!==` would report a mismatch between a legacy arg that omits the key
  * and the normalized planned entry, degrading a correct append to reconversion.
  */
@@ -320,12 +706,35 @@ function sameSelectionSnapshot(left: unknown, right: unknown): boolean {
   return leftSelections.every((selection, index) => sameSelection(selection, rightSelections[index]));
 }
 
+function sameOrderMap(left: Readonly<Record<LayerId, number>>, right: Readonly<Record<LayerId, number>>): boolean {
+  const leftIds = Object.keys(left);
+  if (leftIds.length !== Object.keys(right).length) return false;
+  return leftIds.every((id) => left[id] === right[id]);
+}
+
+/** Two layer sequences are equal when they name the same ids in the same order. */
+function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
 /**
  * Proves the planned entry is the entry this legacy item must produce. A
  * disagreement is a defect in the writer, not a reason to reject the edit, so
  * the caller still falls back to the conversion and reports it.
+ *
+ * `preLayerOrder` is the reorder branch's independent source. Note what that
+ * does and does not buy: it catches a `durableEntry` that was built or supplied
+ * somewhere other than the store boundary, which is the case that can actually
+ * occur, because it is fed the store's record rather than the plan's own output.
+ * It does not make `reorderOrderAfterIntent` self-proving — the parity test
+ * against the converter, and the store test against a full conversion, are.
  */
-export function validatePlannedDurableEntry(entry: HistoryItem, planned: DurableHistoryEntry): string | null {
+export function validatePlannedDurableEntry(
+  entry: HistoryItem,
+  planned: DurableHistoryEntry,
+  preLayerOrder?: readonly LayerId[] | null,
+  preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null
+): string | null {
   if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
   if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
   if (planned.enabled !== isEntryEnabled(entry)) return 'the durable enabled state does not match the legacy entry';
@@ -365,11 +774,131 @@ export function validatePlannedDurableEntry(entry: HistoryItem, planned: Durable
     return null;
   }
 
+  if (entry.actionName === REORDER_ACTION) {
+    if (planned.operation.kind !== 'reorder-layers') {
+      return `a layer reorder produced a "${planned.operation.kind}" operation`;
+    }
+    const args = entry.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
+    const layerToMoveId = args?.layerToMoveId;
+    if (!layerToMoveId) return 'a layer reorder has no moving layer id';
+    if (!preLayerOrder) return 'a layer reorder was checked without the store layer order it was planned against';
+    const expected = reorderOrderAfterIntent(preLayerOrder, {
+      layerToMoveId,
+      afterWhichLayerId: args?.afterWhichLayerId,
+    });
+    // The refusal cases never reach here: `decideDurableAppend` sends a reorder
+    // whose intent does not apply down the `preconditions` path before it calls
+    // this. Grading one as a mismatch would report a writer defect for an append
+    // that is behaving exactly as legacy replay does.
+    if (!expected) return 'the layer reorder names a layer the document does not hold';
+    return sameOrderMap(planned.operation.orderByLayerId, expected)
+      ? null
+      : 'the durable layer order does not match the store order';
+  }
+
   if (isSetLayerPropertiesAction(entry.actionName)) {
-    const expected = deriveSetLayerPropertiesEntry(entry);
-    if (!expected) return 'the layer-property value is invalid';
-    if (!sameJsonValue(planned.operation, expected.operation)) {
+    if (planned.operation.kind !== 'set-layer-properties') {
+      return `a layer-property change produced a "${planned.operation.kind}" operation`;
+    }
+    const { layerId, patch } = planned.operation;
+    if (layerId !== entry.layerId) return 'the durable layer id does not match the legacy entry';
+    // Checked against the legacy entry, not against a second call to the
+    // derivation that produced this plan: re-deriving would compare a value
+    // with itself and could only ever catch a hand-supplied entry, never a
+    // defect in the derivation. Exactly one key, and that key's value read
+    // from the action and the legacy args.
+    if (Object.keys(patch).length !== 1) {
       return 'the durable layer-property operation does not match the legacy entry';
+    }
+    // Exhaustive on the owned key rather than `name` versus "everything else":
+    // an action that owned some other property would otherwise be graded
+    // against `visible` and reported as a mismatch for a correct entry.
+    switch (layerPropertyKeyFor(entry.actionName)) {
+      case 'name': {
+        const name = (entry.args as { name?: unknown } | undefined)?.name;
+        if (typeof name !== 'string') return 'the layer-property value is invalid';
+        if (patch.name !== name) return 'the durable layer name does not match the legacy entry';
+        return null;
+      }
+      case 'visible':
+        return patch.visible === (entry.actionName === SHOW_LAYER_ACTION)
+          ? null
+          : 'the durable layer visibility does not match the legacy entry';
+      default:
+        return 'the action does not own a durable layer property';
+    }
+  }
+
+  if (entry.actionName === REMOVE_ACTION) {
+    if (planned.operation.kind !== 'remove-layer') {
+      return `a layer removal produced a "${planned.operation.kind}" operation`;
+    }
+    const operationKeys = Object.keys(planned.operation);
+    if (operationKeys.length !== 2 || !operationKeys.includes('kind') || !operationKeys.includes('layerId')) {
+      return 'the durable remove-layer operation does not have the canonical shape';
+    }
+    return planned.operation.layerId === entry.layerId ? null : 'the durable layer id does not match the legacy entry';
+  }
+
+  const sourceBackedCreate =
+    entry.actionName === NEW_LAYER_ACTION ||
+    (entry.actionName === TOOL_ACTION && sourceFromEntry(entry)?.kind === 'tool');
+  if (sourceBackedCreate || entry.actionName === MERGE_ACTION) {
+    const source = sourceFromEntry(entry);
+    if (!source) return 'a source-backed layer action has no usable layer source';
+
+    const operation = planned.operation;
+    const isCreate = sourceBackedCreate;
+    if (isCreate && operation.kind !== 'create-layer') {
+      return `a new layer action produced a "${operation.kind}" operation`;
+    }
+    if (!isCreate && operation.kind !== 'merge-document') {
+      return `a merge action produced a "${operation.kind}" operation`;
+    }
+
+    const snapshot =
+      operation.kind === 'create-layer'
+        ? operation.layer
+        : operation.kind === 'merge-document'
+          ? operation.result
+          : null;
+    if (!snapshot) return 'the durable source-backed operation has no result layer';
+    const operationKeys = Object.keys(operation);
+    const expectedKeys = isCreate ? ['kind', 'layer'] : ['kind', 'result', 'removedLayerIds'];
+    if (operationKeys.length !== expectedKeys.length || expectedKeys.some((key) => !operationKeys.includes(key))) {
+      return isCreate
+        ? 'the durable create-layer operation does not have the canonical shape'
+        : 'the durable merge-document operation does not have the canonical shape';
+    }
+    if (snapshot.id !== entry.layerId) return 'the durable result layer id does not match the legacy entry';
+
+    // `sourceToRuntimeLayer` is the adapter's source-to-runtime rule. Grade the
+    // fields that rule owns, but not `order`: the store's pre-append layer set
+    // determines that number and is supplied only by the source-backed planner.
+    let runtime: Layer;
+    try {
+      runtime = sourceToRuntimeLayer(entry.layerId, source, new Map(preLayers ?? []));
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    const runtimeProblem = compareRuntimeLayerToSnapshot(runtime, snapshot);
+    if (runtimeProblem) return runtimeProblem;
+    const sourceProblem = compareDurableSourceToLegacy(source, snapshot);
+    if (sourceProblem) return sourceProblem;
+
+    if (operation.kind === 'merge-document') {
+      const removedLayerIds = operation.removedLayerIds;
+      if (new Set(removedLayerIds).size !== removedLayerIds.length) {
+        return 'the durable merge-document removal set contains duplicate layer ids';
+      }
+      if (removedLayerIds.includes(snapshot.id))
+        return 'the durable merge-document removal set removes its result layer';
+      if (preLayers) {
+        const expectedRemoved = [...preLayers.keys()].filter((id) => id !== snapshot.id);
+        if (!sameJsonValue(removedLayerIds, expectedRemoved)) {
+          return 'the durable merge-document removal set does not match the pre-append layer set';
+        }
+      }
     }
     return null;
   }
@@ -385,6 +914,9 @@ export function decideDurableAppend({
   entry,
   planned,
   documentRevision,
+  preLayerOrder,
+  durableLayerOrder,
+  preLayers,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
   if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
@@ -408,7 +940,36 @@ export function decideDurableAppend({
     return { outcome: 'preconditions', reason: 'the appended entry is not the one that was planned' };
   }
 
-  const problem = validatePlannedDurableEntry(entry, planned);
+  // A reorder is the only publication whose correctness depends on the whole
+  // layer order, so it is the only one that has to prove it. The refusal is a
+  // precondition rather than a mismatch: it describes a store that cannot answer
+  // the question, not a writer that answered it wrongly, and the conversion that
+  // replaces it already handles the no-op correctly.
+  //
+  // Of the three, only the sequence comparison is reachable from the store: it
+  // supplies an array for the store order by construction, and the base it reads
+  // the durable order from was already required non-null above. The other two are
+  // the module's API contract — a caller that cannot see the live record has no
+  // way to publish a reorder, and must be told that rather than be trusted.
+  if (entry.actionName === REORDER_ACTION) {
+    if (!preLayerOrder) {
+      return { outcome: 'preconditions', reason: 'a layer reorder needs the store layer order it was planned against' };
+    }
+    if (!durableLayerOrder) {
+      return {
+        outcome: 'preconditions',
+        reason: 'a layer reorder needs the durable layer order to compare the store order against',
+      };
+    }
+    if (!sameLayerSequence(durableLayerOrder, preLayerOrder)) {
+      return {
+        outcome: 'preconditions',
+        reason: 'the durable document and the store record disagree about the layer order',
+      };
+    }
+  }
+
+  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder, preLayers);
   if (problem) return { outcome: 'mismatch', reason: problem };
 
   const cursor = base.history.length;

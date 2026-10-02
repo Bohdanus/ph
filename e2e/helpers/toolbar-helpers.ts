@@ -1,5 +1,6 @@
 import type { Page, Locator } from '@playwright/test';
 import { expect } from '@playwright/test';
+import { getPageScroll } from './canvas-helpers';
 
 /**
  * The left toolbar has drifted between legacy role-based labels and the newer
@@ -95,12 +96,123 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Runs a toolbar interaction and puts the window back where it was afterwards.
+ *
+ * This was written for a rail that did NOT fit: the toolbar was 1177px tall inside
+ * Playwright's 720px window, so every click on a tool near the bottom of it dragged the
+ * page 440px down. That scroll is invisible to the caller and fatal to the specs — a
+ * canvas box measured after the click reported `y: -340` where it reported `y: 100`, so
+ * the stroke was drawn and read 440px away from where the geometry says, and 19 specs
+ * that passed on the parent commit failed for that one reason.
+ *
+ * The rail no longer outgrows the viewport: the column is `h-full` and the tiles
+ * COLLAPSE into the three-dots tile instead of pushing the page taller, so a tool click
+ * is now expected to scroll nothing. 440 is therefore a GUARD, not a derivation — it is
+ * the size of the mistake this undoes, measured against the 1177px rail that no longer
+ * exists, and nothing recomputes it. Do not re-derive it from the current layout, and do
+ * not delete this function because the scroll stopped happening: the rail keeps
+ * `overflow-y-auto` as a backstop on purpose, and any future layout that does grow the
+ * page reintroduces the failure above silently and across the whole suite, which is the
+ * worst way for it to come back.
+ *
+ * It is deliberately not "scroll to the top": a caller that has scrolled for its own
+ * reasons must get its own position back, not a hardcoded one. The restore is
+ * unconditional, so it also undoes a scroll the APP caused by selecting the tool — not
+ * only the one Playwright caused to reach the button — and `window.scrollTo` to the
+ * position the window is already at fires no scroll event, so the expected
+ * no-scroll case costs one read and one no-op write.
+ */
+async function preservingScroll(page: Page, action: () => Promise<void>): Promise<void> {
+  const before = await getPageScroll(page);
+  await action();
+  await page.evaluate(({ x, y }) => window.scrollTo(x, y), before);
+}
+
+/**
+ * The three-dots tile's test id, which is deliberately NOT `tool-button-<name>`.
+ *
+ * A tool tile's id names the tool, so minting one for a tile that stands for no tool would
+ * make `getByTestId('tool-button-…')` match a control that selects something else. That
+ * decision is also what makes the collapse below cheap to detect: "this tool has no tile"
+ * and "the three-dots tile is not on the rail" are two separate questions, and both have
+ * to be asked. A tall viewport has no three-dots tile and therefore no collapsed tool, so
+ * asking about the tile first is what keeps a genuinely missing tool a fast, accurate
+ * failure instead of a timeout on a flyout that was never going to open.
+ */
+const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
+
+/**
+ * Opens a flyout from a tile by right-click, and waits for that flyout to be on screen.
+ *
+ * Right-click rather than the long press `openToolFlyout` uses, because it needs no timer:
+ * `onContextMenu` calls the same `openFlyout(groupIndex)` the long press reaches, and a
+ * right-click cannot be cancelled by a `pointerup` arriving before the long-press timer fires —
+ * which is the whole defect `openToolFlyout` documents. The three-dots tile is rendered by
+ * the same `renderToolGroup` as every other tile, so it answers to the same gesture.
+ */
+async function openFlyoutFromTile(page: Page, tileTestId: string): Promise<void> {
+  const tile = page.getByTestId(tileTestId);
+  await expect(tile).toBeVisible();
+  await preservingScroll(page, () => tile.click({ button: 'right' }));
+  await waitForFlyout(page);
+}
+
+/**
+ * A collapsed tool's entry in an OPEN three-dots flyout, addressed by test id PREFIX.
+ *
+ * The app mints `tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`, so the
+ * obvious selector is that whole string, and this deliberately does not mint it. The slug
+ * half needs the APP's display label, and the only label data this file holds is not the
+ * app's: `TOOL_DISPLAY_LABEL_MAP['reposition']` is `Select & Move`, a legacy accessible
+ * name, while the app labels that tool `Move Tool` (`toolbar-mapping.ts`). Minting from
+ * local data would address `tool-flyout-item-reposition-select-move`, an id that exists
+ * nowhere, and the selector would miss silently. `generateSlug` above is the one label rule
+ * this file is allowed to copy, because a label can be handed to it; here there is no label
+ * to hand it.
+ *
+ * The prefix is safe because the trailing `-` is the app's own name/slug delimiter, so it
+ * cannot match a name that merely starts with the same letters — `tool-flyout-item-pencil-…`
+ * is not a `pen` item, nor `item-rectangle-` a `rectangular-selection` one. What it CAN match
+ * is a longer name that begins `name-`, and the map holds exactly one such pair, `color` and
+ * `color-replacement`; the map order puts `color` first, and `.first()` is that order, so the
+ * pair resolves correctly. The one name with several ids in a single menu is `shape` — its
+ * five figures share it — and `.first()` is the correct answer there too rather than an
+ * approximation: the app's rule is that a tile's click selects the FIRST entry of its group,
+ * `overflowTools` pushes `...group` in map order, and collapse is per group, so the figure a
+ * shape tile would have selected is the first `shape` item in the overflow menu.
+ */
+function overflowFlyoutItem(page: Page, toolName: string): Locator {
+  return page.getByTestId(new RegExp(`^tool-flyout-item-${escapeRegExp(toolName)}-`));
+}
+
 export async function clickToolButton(page: Page, toolName: string): Promise<void> {
   const normalizedName = resolveToolName(toolName);
 
   const testIdTool = page.getByTestId(`tool-button-${normalizedName}`);
   if (await testIdTool.count()) {
-    await testIdTool.first().click();
+    await preservingScroll(page, () => testIdTool.first().click());
+    return;
+  }
+
+  // No tile, so the tool is either collapsed into the three-dots flyout or the rail is an
+  // older build with no such affordance. The collapse is tried first because it is the exact
+  // mechanism — the tile and its items are both addressed by test id — while the role fallback
+  // below is a regex over accessible names kept only for backwards compatibility. Preferring
+  // the current mechanism over the legacy one is the same order this file has always stated.
+  const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
+  if (await overflowTile.count()) {
+    await openFlyoutFromTile(page, OVERFLOW_TILE_TESTID);
+    const collapsedItem = overflowFlyoutItem(page, normalizedName).first();
+    // Not a `try` with a fall-through: a tool that is neither on the rail nor in an open
+    // three-dots menu does not exist, and searching roles for it afterwards could only
+    // produce a more confusing answer than the timeout already names.
+    await expect(collapsedItem).toBeVisible();
+    // The item hangs off a tile at the truncation point, so it is a click that can scroll
+    // exactly as a tool button click can; same reason, same treatment as `selectFromFlyout`.
+    // The app closes the flyout on the pick, so this returns with the tool active and the
+    // menu on its way out — the same contract the tile path above returns under.
+    await preservingScroll(page, () => collapsedItem.click());
     return;
   }
 
@@ -116,14 +228,26 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
     fallbackNames.push(normalizedName);
   }
 
+  // `&` is spelled both ways in the wild, so a candidate that carries one is searched as
+  // it was written FIRST and only then expanded to "and". Expanding in place deleted the
+  // first of the two: for `Select & Move` the caller's own label was only ever searched as
+  // `Select and Move`, which cannot match a button whose accessible name is `Select & Move`
+  // — one of the three attempts was dead for the case that motivated it. The expansion is
+  // part of the data, so both patterns escape it.
+  const patternsFor = (name: string): RegExp[] => {
+    const asWritten = new RegExp(escapeRegExp(name), 'i');
+    if (!name.includes('&')) return [asWritten];
+    return [asWritten, new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i')];
+  };
+
   const attempted: string[] = [];
   for (const name of fallbackNames) {
-    // `&` expands to "and" because the legacy labels spell the word out while the
-    // map keys do not; the expansion is part of the data, so it is escaped too.
-    const roleTool = page.getByRole('button', { name: new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i') });
-    if (await roleTool.count()) {
-      await roleTool.first().click();
-      return;
+    for (const pattern of patternsFor(name)) {
+      const roleTool = page.getByRole('button', { name: pattern });
+      if (await roleTool.count()) {
+        await preservingScroll(page, () => roleTool.first().click());
+        return;
+      }
     }
     attempted.push(name);
   }
@@ -136,32 +260,130 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
 }
 
 /**
- * Opens a tool flyout via long-press (300ms) for grouped tools.
+ * The app's long-press threshold, in milliseconds.
+ *
+ * Mirrored from `scheduleFlyoutOpen` in `src/components/SidebarLeft/SidebarLeft.tsx`, which
+ * opens a group's flyout from a `setTimeout(...)` on `FLYOUT_LONG_PRESS_MS`.
+ *
+ * A literal, and it is the LAST one: the app exports the constant now, and the suites import
+ * it, but the `e2e` TypeScript project does not compile `src/` — so this is the single place
+ * the value is written down twice. The defensive waits below are expressed against this
+ * constant, never against a second literal, so raising the app's threshold cannot quietly
+ * leave a wait behind it.
+ */
+export const LONG_PRESS_DELAY_MS = 250;
+
+/**
+ * Slack for the settle wait in {@link verifyHoverDoesNotOpenFlyout}, whose assertion is
+ * NEGATIVE. Hover dispatches no `pointerdown`, so nothing ever schedules a flyout and the
+ * wait can only be defensive; it is still expressed against the app's delay rather than as a
+ * bare number, because that is what makes the number's provenance readable.
+ */
+const HOVER_SETTLE_BUFFER_MS = 100;
+
+/**
+ * How long to wait for a flyout to be open.
+ *
+ * This is a budget for a CONDITION wait, not a deadline the app has to beat: the
+ * long-press timer in `SidebarLeft` fires `LONG_PRESS_DELAY_MS` after pointerdown, and the rest of
+ * this budget absorbs scheduler jitter on a loaded machine. It is deliberately much
+ * larger than the threshold it is waiting on — the old helper instead raced a hard 350ms
+ * sleep against the then-300ms timer, leaving 50ms of margin, which is the defect
+ * `openToolFlyout` documents.
+ *
+ * Exported so the unit test pins this number instead of restating it: two literals
+ * for one timeout is how `LONG_PRESS_DELAY_MS` came to sit beside a 350 that was only ever
+ * compatible because `300 + 50 === 350`.
+ */
+export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
+
+/**
+ * Opens a tool flyout via long-press for grouped tools.
  * Use this instead of clickToolButton when you need to select a non-primary
  * tool from a flyout group (e.g., Lasso, Colors, Brush, Pen, Shape).
+ *
+ * A tool that has collapsed into the three-dots tile is the one case where this is not a
+ * long press, and the branch says why in place rather than up here.
+ *
+ * The gesture is press, wait for the menu, lift — in that order, because that is what
+ * the app's own handler requires. `SidebarLeft` arms a `LONG_PRESS_DELAY_MS` timer on pointerdown and
+ * opens the flyout when it fires, while its pointerup handler calls
+ * `clearLongPressFlyout()` unconditionally. So a pointerup that arrives before the timer
+ * fires CANCELS the pending open: the menu is not merely late, it never appears, and no
+ * amount of waiting afterwards can recover it.
+ *
+ * The previous version therefore had to win a race — sleep a fixed 350ms, then lift, so
+ * that the then-300ms timer had 50ms of margin — and it lost whenever the renderer's main
+ * thread was busy enough to deliver that timer late. Because the losing path destroys the
+ * state the following assertion was waiting for, the failure surfaced as an unexplained
+ * `toBeVisible()` timeout rather than as a missed press. Waiting for the menu instead of
+ * sleeping removes the margin entirely: the timer may fire early, late, or on time.
+ *
+ * Lifting afterwards is faithful to the gesture and safe: `onPointerUp` only touches refs
+ * (`suppressLongPressRef`, `longPressOpenedRef`, `ignoreNextClickRef`) and never clears
+ * `openGroup`, so it cannot close a flyout that is already open. The one ref it does set,
+ * `ignoreNextClickRef`, is cleared again by the next pointerdown on that button, so a
+ * later `clickToolButton` on the same tile is not swallowed.
  */
 export async function openToolFlyout(page: Page, toolName: string): Promise<void> {
   const normalizedName = resolveToolName(toolName);
 
   const button = page.getByTestId(`tool-button-${normalizedName}`);
+  if (!(await button.count())) {
+    // Absent, not merely hidden: the tool collapsed, and the gesture below is a long press
+    // ON the tile, so there is nothing to dispatch it at. The three-dots tile opens the same
+    // `openFlyout` from a right-click and its menu carries the tool, which leaves the caller's
+    // own `selectFromFlyout` to pick out of it exactly as it did for a tile's own flyout.
+    // Guarded on the tile existing so the "there is no such tool" case below still fails on
+    // the button it is about, and not on a three-dots tile that was never going to appear.
+    const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
+    if (await overflowTile.count()) {
+      await openFlyoutFromTile(page, OVERFLOW_TILE_TESTID);
+      return;
+    }
+  }
   await expect(button).toBeVisible();
 
-  // Long-press: dispatch pointerdown on the button element, wait 350ms, then pointerup
-  // This matches SidebarLeft.tsx's onPointerDown/onPointerUp handlers (lines 222-241)
+  // Press.
   await button.dispatchEvent('pointerdown', { button: 0 });
-  await page.waitForTimeout(350); // 300ms long-press delay + buffer
+
+  // Wait for THIS tile's flyout to be open before lifting.
+  //
+  // `aria-expanded` is set from `openGroup === groupIndex` on the pressed tile, so it
+  // is true only once this group is the open one. Waiting on a bare `role="menu"` — what
+  // `waitForFlyout` does — is NOT interchangeable here: callers legitimately long-press a
+  // second tile while the first flyout is still open (see the "switches flyout" spec), and
+  // a generic menu assertion would be satisfied instantly by the still-open first menu.
+  // The helper would then lift while that timer was still pending, cancelling the second
+  // open, and return with the wrong flyout on screen. Sharing one helper between the two
+  // would reintroduce exactly that.
+  await expect(button).toHaveAttribute('aria-expanded', 'true', { timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+
+  // Lift. The flyout stays open; see the note on `onPointerUp` above.
   await button.dispatchEvent('pointerup', { button: 0 });
 
-  // Wait for flyout to appear (all flyouts have role="menu")
-  await expect(page.getByRole('menu')).toBeVisible({ timeout: 2000 });
+  // `aria-expanded` and the portal are not set in the same commit: the overlay is gated on the
+  // ref callback having published the anchor, so the attribute is true one commit before the
+  // menu exists. Asserting the menu is still what makes "returned" mean "usable", and it costs
+  // nothing on the path that just opened it.
+  await expect(page.getByRole('menu')).toBeVisible({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
 }
 
 /**
  * Waits for a flyout menu to become visible after long-press, right-click, or keyboard.
- * All flyouts have role="menu" (SidebarLeft.tsx line 285).
+ * All flyouts have role="menu" — the `<ul>` inside `renderToolGroup` in
+ * `src/components/SidebarLeft/SidebarLeft.tsx`. The function name is the anchor rather than a
+ * line number, because every bare number in this comment has already rotted: the base said 285,
+ * the campaign branch said 335, and in the merged tree the attribute is at `SidebarLeft.tsx:400`
+ * with `renderToolGroup` at `:229`. Re-derive with
+ * `grep -n 'role="menu"' src/components/SidebarLeft/SidebarLeft.tsx`.
+ *
+ * Unlike `openToolFlyout` this accepts ANY open flyout, which is correct for its callers:
+ * they open exactly one flyout by right-click or keyboard, so there is never an earlier
+ * one for the assertion to latch onto.
  */
 export async function waitForFlyout(page: Page): Promise<void> {
-  await expect(page.getByRole('menu')).toBeVisible({ timeout: 2000 });
+  await expect(page.getByRole('menu')).toBeVisible({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
 }
 
 export interface FlyoutItem {
@@ -178,7 +400,9 @@ export async function selectFromFlyout(page: Page, item: FlyoutItem): Promise<vo
   const slug = generateSlug(item.label);
   const flyoutItem = page.getByTestId(`tool-flyout-item-${item.toolName}-${slug}`);
   await expect(flyoutItem).toBeVisible();
-  await flyoutItem.click();
+  // The flyout hangs off a toolbar button near the bottom of a window-height-taller
+  // page, so clicking one scrolls just as a tool button click does.
+  await preservingScroll(page, () => flyoutItem.click());
 
   // Wait for flyout to close
   await expect(page.getByRole('menu')).toBeHidden({ timeout: 1000 });
@@ -186,10 +410,123 @@ export async function selectFromFlyout(page: Page, item: FlyoutItem): Promise<vo
 
 /**
  * Gets the tool button locator by testid.
+ *
+ * This is the tool's OWN tile and nothing else, which is the right answer when a test is
+ * asking a question about that tile specifically — "does hovering this tile open a flyout",
+ * "what does this tile's label read". It is the WRONG answer for a test asking a question
+ * about the TOOL, because a tool the rail could not fit has no tile of its own: it lives in
+ * the three-dots flyout, and `getByTestId` reports zero elements rather than failing, so the
+ * failure arrives at the next assertion as "element(s) not found" against a test id that is
+ * correct and simply absent. Use {@link resolveToolTile} for that question.
  */
 export function getToolButton(page: Page, toolName: string): Locator {
   const normalizedName = resolveToolName(toolName);
   return page.getByTestId(`tool-button-${normalizedName}`);
+}
+
+/**
+ * Whether the rail still shows this tool on a tile of its own.
+ *
+ * The two questions are separate on purpose, and conflating them is how a spec ends up
+ * asserting against a tile the rail legitimately folded away. "Is there a tile for it" is a
+ * layout claim that changes with the window; "which tile represents it" is the reachability
+ * claim, and it has an answer at every window.
+ */
+export async function hasOwnToolTile(page: Page, toolName: string): Promise<boolean> {
+  return (await getToolButton(page, toolName).count()) > 0;
+}
+
+/**
+ * The tile that currently REPRESENTS a tool: its own if the rail still shows it, and the
+ * three-dots tile if the rail folded it away.
+ *
+ * This is the LOCATOR for any question about a tile rather than about a tool — "does this tile
+ * have focus", "is this tile visible". Its `aria-label` is the standing tile's own rather than a
+ * tool's, so it cannot answer a question about selection.
+ *
+ * IT IS NOT THE SELECTION ASSERTION, and used to be read as one. This comment previously claimed
+ * that "the three-dots tile's `aria-pressed` is true when ANY tool of the collapsed set is the
+ * current one … so a caller reading `aria-pressed` off the resolved tile reads the truth either
+ * way". That stopped being true at 1dcc25cb, which deliberately renders NO `aria-pressed` on the
+ * three-dots tile (SidebarLeft.tsx:635 — a control that opens a menu must not also claim to be a
+ * pressed toggle for a tool the user cannot see), and the 17 tests that read it went red on a tile
+ * that was correctly lit. A question about SELECTION now goes to {@link expectToolSelected}, which
+ * picks the channel each kind of tile actually renders. `resolveToolTile` keeps its job: naming
+ * the element.
+ *
+ * Async because the question is: a locator has to exist before anything is known about it, and
+ * a tool's tile may or may not be on the rail depending on the window. Returning a Locator
+ * synchronously would mean an OR of two selectors, where the absent half silently contributes
+ * nothing and the caller cannot tell which tile it got — and "which tile it got" is the whole
+ * point. Callers that need to know ask {@link hasOwnToolTile}.
+ */
+export async function resolveToolTile(page: Page, toolName: string): Promise<Locator> {
+  const ownTile = getToolButton(page, toolName);
+  if (await ownTile.count()) return ownTile.first();
+  const overflow = page.getByTestId(OVERFLOW_TILE_TESTID);
+  if (await overflow.count()) return overflow;
+  // Neither. Returning the tool's own id is the useful failure: the caller's assertion then
+  // names a test id that exists nowhere, which says which tool was being looked for.
+  return ownTile;
+}
+
+/**
+ * Asserts that `toolName` is, or is not, the tool the rail currently has selected.
+ *
+ * This is the assertion for a question about a TOOL. It replaces reading `aria-pressed` off
+ * whatever tile {@link resolveToolTile} hands back, which was correct once and is now wrong
+ * for every collapsed tool: the three-dots tile deliberately renders NO `aria-pressed`
+ * (SidebarLeft.tsx:635 — a control that opens a menu must not also claim to be a pressed
+ * toggle for a tool the user cannot see), so that read reports `Received: ""` on a tile that
+ * is in fact correctly lit.
+ *
+ * The two branches assert DIFFERENT surfaces because the two tiles are different kinds of
+ * control, and collapsing them into one selector is what made the old form misleading:
+ *
+ * - A tool with a tile of its own is a toggle button, and `aria-pressed` is exactly the right
+ *   question to ask it. Unchanged from before.
+ * - A collapsed tool is represented by the three-dots tile, which paints its lit state as
+ *   `TOOL_BUTTON_ACTIVE_CLASS` off the same `group.some(tool => tool.name === toolName)`
+ *   predicate the attribute used to expose (SidebarLeft.tsx:636). So the class is read
+ *   instead — the same predicate, on the same tile, through the channel the component still
+ *   renders. This is a re-reading of the identical claim, not a weaker one: it still fails if
+ *   the group stops lighting for a selected member, and it still passes when it should.
+ *
+ * A caller needing to know WHICH of the two it got asks {@link hasOwnToolTile}; this function
+ * makes the same choice internally so no caller has to.
+ *
+ * IT IS GROUP-LEVEL FOR A COLLAPSED TOOL, and a caller that needs to name the tool cannot rely on
+ * it alone. The class is `group.some(...)` over the whole collapsed set (SidebarLeft.tsx:636), so
+ * `expectToolSelected(page, 'eraser')` is answered by "is SOME collapsed tool selected". At 1280x720
+ * that is true from page load, because the tool the app opens with is itself folded at that height
+ * — the rail keeps its first seven groups there, and the tool it opens with is not one of them. The
+ * `aria-pressed` this replaced was the same predicate on the same tile, so this is not a weakening —
+ * but a test that must prove a SPECIFIC tool is up needs a second, per-tool assertion: that tool's
+ * own options-bar control (`keyboard-shortcuts.spec.ts:173`) or an effect only that tool produces.
+ * See the P2 entry in e2e/OPEN_PROBLEMS.md.
+ */
+export async function expectToolSelected(page: Page, toolName: string, selected = true): Promise<void> {
+  const ownTile = getToolButton(page, toolName);
+  if (await ownTile.count()) {
+    await expect(
+      ownTile.first(),
+      `${toolName} ${selected ? 'must be' : 'must not be'} the selected tool`
+    ).toHaveAttribute('aria-pressed', selected ? 'true' : 'false');
+    return;
+  }
+  // Collapsed. The lit class is the only per-selection state the three-dots tile renders, and
+  // it is read off the tile itself rather than off a menu, so this does not open a flyout and
+  // does not perturb the rail the caller is about to measure.
+  const overflow = page.getByTestId(OVERFLOW_TILE_TESTID);
+  await expect(overflow, `the three-dots tile representing ${toolName} is not on the rail`).toHaveCount(1);
+  // `\b` anchors: an unanchored `/bg-blue-100/` is a substring match that can be satisfied by a
+  // neighbouring utility, and the whole point of reading a class is to read THIS one.
+  const lit = selected
+    ? expect(overflow, `${toolName} is selected but the tile standing for it is not lit`).toHaveClass(/\bbg-blue-100\b/)
+    : expect(overflow, `${toolName} is not selected yet the tile standing for it is lit`).not.toHaveClass(
+        /\bbg-blue-100\b/
+      );
+  await lit;
 }
 
 /**
@@ -198,30 +535,50 @@ export function getToolButton(page: Page, toolName: string): Locator {
 export async function toggleToolbarLayout(page: Page): Promise<void> {
   const toggle = page.getByTestId('toolbar-layout-toggle');
   await expect(toggle).toBeVisible();
-  await toggle.click();
+  await preservingScroll(page, () => toggle.click());
 }
 
 /**
- * Verifies the primary tool shown on a grouped button matches the expected label.
+ * Verifies the tile standing for a tool presents that tool's label.
+ *
+ * Asserts the ACCESSIBLE NAME, not the text content, and that is not a stylistic preference.
+ * A tool tile's label is an `aria-label` — the tile draws an icon, so there is no text in it to
+ * match — and the three-dots tile is the same shape: its label lives in `aria-label="More
+ * Tools"` and the element contains only an SVG. A `toContainText` against either can never
+ * pass, and against the three-dots tile it fails with `Received string: ""`, which reads as an
+ * empty button rather than as "this tool has no tile of its own".
+ *
+ * So a tool the rail folded away is reported as what it is. The two questions are separate and
+ * the caller usually wants the second: `resolveToolTile` answers "which tile represents the
+ * tool" and this one answers "is that tile the tool".
  */
 export async function verifyPrimaryTool(page: Page, toolName: string, expectedLabel: string): Promise<void> {
-  const button = getToolButton(page, toolName);
-  await expect(button).toContainText(expectedLabel);
+  const ownTile = getToolButton(page, toolName);
+  if ((await ownTile.count()) === 0) {
+    // Naming the cause beats asserting on a tile that will never carry the label. A caller
+    // whose subject is a TOOL wants a reachability assertion instead; one whose subject is the
+    // tile wants the window grown, and this message says which.
+    const standing = await resolveToolTile(page, toolName);
+    throw new Error(
+      `verifyPrimaryTool: "${toolName}" has no tile of its own at this window — the rail folded it into ` +
+        `the three-dots tile, whose label is "More Tools" and never "${expectedLabel}". ` +
+        `Assert on ${toolName}'s own options-bar control for reachability, or grow the window to test the tile. ` +
+        `Currently represented by: ${standing.toString().slice(0, 120)}`
+    );
+  }
+  await expect(ownTile).toHaveAccessibleName(expectedLabel);
 }
 
 /**
  * Opens a tool flyout via right-click (context menu) for grouped tools.
+ *
+ * Unlike `clickToolButton` and `openToolFlyout` this has no collapse fallback, on purpose:
+ * it asks for ONE NAMED TILE'S flyout, and the three-dots menu is not that tile's menu. A
+ * caller that means "whatever flyout has this tool in it" wants the two functions above.
  */
 export async function openToolFlyoutViaRightClick(page: Page, toolName: string): Promise<void> {
-  const normalizedName = resolveToolName(toolName);
-
-  const button = page.getByTestId(`tool-button-${normalizedName}`);
-  await expect(button).toBeVisible();
-
-  await button.click({ button: 'right' });
-  await waitForFlyout(page);
+  await openFlyoutFromTile(page, `tool-button-${resolveToolName(toolName)}`);
 }
-
 /**
  * Verifies that hover does NOT open a flyout (Photoshop-style behavior).
  * Hover the grouped tool button and confirm no flyout appears.
@@ -233,7 +590,7 @@ export async function verifyHoverDoesNotOpenFlyout(page: Page, toolName: string)
   await expect(button).toBeVisible();
 
   await button.hover();
-  await page.waitForTimeout(400); // Longer than long-press delay
+  await page.waitForTimeout(LONG_PRESS_DELAY_MS + HOVER_SETTLE_BUFFER_MS);
 
   // Flyout should not be visible
   await expect(page.getByRole('menu')).toBeHidden();

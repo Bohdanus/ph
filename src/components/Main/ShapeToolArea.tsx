@@ -1,5 +1,10 @@
-import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import CreateShapeDialog, {
+  type CreateShapeFigure,
+  type CreateShapeParams,
+} from '../CreateShapeDialog/CreateShapeDialog.tsx';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import {
   drawShape,
@@ -41,6 +46,17 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
    * claim it is releasing.
    */
   const claimedPointerIdRef = useRef<number | null>(null);
+
+  /**
+   * The bare click awaiting a size, and the two facts about it that are latched rather than
+   * read: the clicked point in DOCUMENT space (the dialog can outlive a document resize, so
+   * it keeps the point it was given rather than re-deriving it from a frame that may have
+   * moved) and whether Alt/Option was held at the press.
+   *
+   * `null` is the closed state, and it is what makes the dialog's mount conditional in the
+   * render below rather than a hidden panel that still owns the keyboard.
+   */
+  const [pendingShape, setPendingShape] = useState<{ anchor: Point; fromCenter: boolean } | null>(null);
 
   function releaseDocumentClaim() {
     releaseDocumentGesture('shape-draw', claimedPointerIdRef.current);
@@ -176,28 +192,64 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
 
     const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
     const end = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
-    // A click creates a precise shape, matching Photoshop's single-click workflow.
+
+    // A click with no drag has no size, and Adobe answers that with the `Create <Figure>`
+    // dialog rather than a drag or a refusal: "Click on the canvas to bring up the Create
+    // Rectangle dialog" (https://helpx.adobe.com/photoshop/using/modify-shapes.html). The
+    // dialog owns the geometry from here, so this path commits nothing itself.
+    //
+    // The Line tool is the exception and is excluded by contract, not by judgement: Adobe
+    // documents drag-and-release only for it and never names a Create Line dialog
+    // (https://helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html), so a click
+    // with the Line tool still refuses rather than inventing a dialog Adobe has not got.
     if (start.x === end.x && start.y === end.y) {
-      const width = Number(window.prompt('Width (px)', '100'));
-      const height = Number(window.prompt('Height (px)', '100'));
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-      end.x += width;
-      end.y += height;
+      if (args.figure !== 'line') setPendingShape({ anchor: start, fromCenter: fromCenterRef.current });
+      else console.error('The Line tool needs a drag: a click with no movement has no length to draw');
+      return;
     }
 
+    commitShape(start, end);
+  };
+
+  /**
+   * The one commit path, shared by the drag and by the dialog's OK.
+   *
+   * Both routes produce a document-space `start`/`end` and nothing else, so the padding, the
+   * rebase into layer space and the commit cannot drift between them. `cornerRadius` is
+   * applied to the ARGS the layer is created from, not to the tool's own settings: the
+   * dialog's radius describes the shape it is about to create, and committing it into
+   * `args` would silently rewrite the bar's Radius slider behind the user's back.
+   */
+  const commitShape = (start: Point, end: Point, cornerRadius?: number) => {
     const pos = shapeGeometryBounds({ start, end }, args.lineWidth);
 
     start.x -= pos.x;
     start.y -= pos.y;
     end.x -= pos.x;
     end.y -= pos.y;
-    const newArgs = { ...args, start, end };
+    const newArgs = { ...args, ...(cornerRadius === undefined ? {} : { cornerRadius }), start, end };
 
     const fullArgs: FullArgs = {
       args: newArgs,
       pos: pos,
     };
     createLayerFromTool(fullArgs);
+  };
+
+  const handleDialogCreate = ({ width, height, fromCenter, cornerRadius }: CreateShapeParams) => {
+    if (!pendingShape) return;
+    const { anchor } = pendingShape;
+
+    // Adobe's From Center is the drag's Alt/Option, applied to a size the dialog supplied.
+    // The anchor is the midpoint in that mode and the corner otherwise — the same two
+    // geometries `normalizeShapeGeometry` produces for `altKey` true and false, written out
+    // here because the dialog's size is not a pointer position to normalize against.
+    const start = fromCenter ? { x: anchor.x - width / 2, y: anchor.y - height / 2 } : { ...anchor };
+    const end = fromCenter
+      ? { x: anchor.x + width / 2, y: anchor.y + height / 2 }
+      : { x: anchor.x + width, y: anchor.y + height };
+
+    commitShape(start, end, cornerRadius);
   };
 
   const handlePointerCancel = () => {
@@ -207,21 +259,89 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   };
 
   useEffect(() => {
-    // An unmount between claim and commit is an abort like any other — switching tools mid-drag is
-    // exactly how it happens. Paired with the provider-level `resetDocumentGestures`, this is what
-    // bounds a leaked claim to the mount that leaked it.
+    // Captured in the BODY, not read in the cleanup: React detaches refs in the mutation phase,
+    // before passive destroys run, so `overlayCtxRef.current` is already null by the time this
+    // returns.
+    const ctx = overlayCtxRef.current;
+
     return () => {
+      // An unmount between claim and commit is an abort like any other — switching tools mid-drag is
+      // exactly how it happens. Paired with the provider-level `resetDocumentGestures`, this is what
+      // bounds a leaked claim to the mount that leaked it.
       releaseDocumentClaim();
+
+      // Cancel FIRST, then clear. A frame still queued for the batched `flushDrawingFrame` would
+      // otherwise repaint after the clear below and resurrect the preview.
+      if (frameRequested.current !== null) {
+        cancelAnimationFrame(frameRequested.current);
+        frameRequested.current = null;
+      }
+
+      // This area never clears the overlay on pointer up at all: `handlePointerUp`'s last
+      // `flushDrawingFrame` REDRAWS the shape and the commit at :200 leaves it there, so the
+      // teardown below is the only thing that ever removes it. The overlay canvas is shared,
+      // long-lived and only ever `display`-toggled (`Main.tsx:239-284`), which never touches a
+      // backing store, so without it the preview stays painted over the next tool's document — and
+      // over this one, for as long as the shape tool stays selected. Safe for the reason it is safe
+      // in `useRect` and `DrawToolArea`: exactly one tool area is mounted at a time, and React runs
+      // passive destroys before passive creates, so an outgoing area's cleanup cannot wipe the
+      // incoming area's mount paint. The size is read off `ctx.canvas` at call time rather than off
+      // `totalSize` for the same reason as in `useRect`: a render-scope size frozen into this
+      // cleanup under-clears after a document resize.
+      if (ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      }
     };
-  }, []);
+  }, [overlayCtxRef]);
+
+  /**
+   * The figure the dialog may open for, and `null` for the Line.
+   *
+   * Typed rather than inferred from the boolean, so the render below cannot widen it back to
+   * `FigureType`: a separate `openDialog` flag would leave `args.figure` un-narrowed at the
+   * prop, which is exactly the hole a `figure !== 'line'` test elsewhere in the file could
+   * fall through.
+   */
+  const dialogFigure: CreateShapeFigure | null = args.figure === 'line' ? null : args.figure;
 
   return (
-    <div
-      className={`${className} cursor-draw`}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
-    ></div>
+    <>
+      <div
+        className={`${className} cursor-draw`}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+      ></div>
+      {/* PORTALLED to `document.body`, and that is load-bearing rather than stylistic. The
+      div above carries the pointer handlers, so a `fixed inset-0` panel rendered inside it
+      would make every click in the dialog — the backdrop and the OK button included — hit
+`handlePointerDown` and `handlePointerUp` on the way up, claiming the document gesture and
+      committing a shape per click. `useDialogFocusContainment` stops KEY propagation and
+      nothing else. The precedent for escaping a component's own DOM is the same
+      `createPortal(..., document.body)` that `FeatherMagneticLasso.tsx:213` and
+      `FontSelect.tsx:181` use.
+
+      The fragment keeps the tool area's own root a single childless div, which is the shape
+      every other tool area in `src/components/Main/` has and what
+      `ShapeToolArea.test.tsx:224` reads `firstElementChild.className` off.
+
+      `args.figure !== 'line'` is repeated here as well as at the call site, because this is
+the render and the figure can change under an open dialog: the dialog's own prop type
+      excludes Line, and a stale `pendingShape` must not render a dialog for a figure Adobe
+      has no click dialog for. */}
+      {pendingShape !== null &&
+        dialogFigure !== null &&
+        createPortal(
+          <CreateShapeDialog
+            figure={dialogFigure}
+            cornerRadius={args.cornerRadius}
+            initialFromCenter={pendingShape.fromCenter}
+            onClose={() => setPendingShape(null)}
+            onCreate={handleDialogCreate}
+          />,
+          document.body
+        )}
+    </>
   );
 };

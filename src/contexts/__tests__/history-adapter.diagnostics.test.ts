@@ -1,16 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import { replayDurableDocument } from '../durable-replay.ts';
+import type { DocumentFrame } from '../document-frame.ts';
 import {
   UnsupportedHistoryFeatureError,
   convertLegacyHistorySafely,
   legacyHistoryToDurable,
   toggleDurableEntry,
 } from '../history-adapter.ts';
-import { collectDurableAssetIds, type AssetId, type DurableDocument } from '../history-model.ts';
+import {
+  collectDurableAssetIds,
+  freezeDurableDocument,
+  type AssetId,
+  type DurableDocument,
+  type DurableOperation,
+} from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
+import { updateHistoryTimeline } from '../history-timeline.ts';
 import type { LayerSource } from '../layer-types.ts';
-import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
+  RENAME_LAYER_ACTION,
+  REORDER_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const documentId = 'diagnostics-doc';
@@ -489,5 +505,406 @@ describe('UnsupportedHistoryFeatureError identity', () => {
     expect(error.code).toBe('unsupported-history-feature');
     expect(error.historyId).toBe('entry-9');
     expect(convertSafely([blurItem()], registry).status).toBe('current');
+  });
+});
+
+describe('durable entry id uniqueness', () => {
+  /** A rename carrying no readable `name` derives no patch and is dropped silently. */
+  function droppedRenameItem(id: string): HistoryItem {
+    return { id, actionName: RENAME_LAYER_ACTION, layerId, args: {} };
+  }
+
+  function frameItem(id: string, nextFrame: DocumentFrame): HistoryItem {
+    return { id, actionName: SET_DOCUMENT_FRAME_ACTION, layerId, args: { nextFrame } };
+  }
+
+  function newBlankLayerItem(id: string, newLayerId: string): HistoryItem {
+    return {
+      id,
+      actionName: NEW_LAYER_ACTION,
+      layerId: newLayerId,
+      layerSource: {
+        kind: 'blank',
+        color: '#ffffff',
+        opacity: 1,
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 100, height: 80 },
+      },
+    };
+  }
+
+  function reorderItem(id: string, layerToMoveId: string, afterWhichLayerId: string | null): HistoryItem {
+    return { id, actionName: REORDER_ACTION, layerId: layerToMoveId, args: { layerToMoveId, afterWhichLayerId } };
+  }
+
+  function filterToolNames(operations: readonly DurableOperation[]): (string | undefined)[] {
+    return operations.map((operation) => (operation.kind === 'apply-filter' ? operation.filter.toolName : undefined));
+  }
+
+  it('publishes one durable entry for a repeated legacy id and reports the repeat as a warning naming the id', () => {
+    const registry = new AssetRegistry();
+    const result = convert([blurItem('shared-id'), colorItem('shared-id')], registry);
+
+    // The exact ids are the point: the repeat produced no second entry, so no
+    // id-keyed lookup over the shadow can resolve to the wrong edit.
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['shared-id']);
+    expect(result.document.cursor).toBe(0);
+    expect(result.document.durableRevision).toBe(1);
+    // The surviving entry is the FIRST occurrence — the one already in the
+    // document before the repeat arrived, and the one a toggle of that id reaches.
+    expect(result.document.history[0]?.operation).toMatchObject({
+      kind: 'apply-filter',
+      layerId,
+      filter: { toolName: 'blur' },
+    });
+    // The repeat maps to the durable cursor preceding it, so a legacy cursor of 2
+    // never resolves to the tip it did not create.
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 0]);
+
+    expect(result.diagnostics).toEqual([
+      {
+        historyId: 'shared-id',
+        actionName: TOOL_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: expect.stringContaining('shared-id'),
+      },
+    ]);
+    expect(result.diagnostics[0]?.message).not.toContain('undefined');
+  });
+
+  it('keeps the conversion status current for a timeline that repeats an id, so the whole shadow is not withheld', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely([blurItem('shared-id'), colorItem('shared-id'), colorItem('after')], registry);
+
+    // A warning, never an error. `convertLegacyHistorySafely` rolls the asset
+    // transaction back and returns no document on the first `error`, so an error
+    // here would withhold the shadow for EVERY entry in the timeline — including
+    // the ones the legacy timeline handles without complaint.
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    // Spelled out, not `every(...)`: a predicate over an empty array is true, so
+    // it would have passed with no diagnostic at all — the one thing this test
+    // exists to prevent. The exact array also pins the severity to `warning`,
+    // which is the claim under the test, and the length to the single repeat.
+    expect(result.diagnostics).toEqual([
+      {
+        historyId: 'shared-id',
+        actionName: TOOL_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: expect.stringContaining('shared-id'),
+      },
+    ]);
+    expect(result.document!.history.map((entry) => entry.id)).toEqual(['shared-id', 'after']);
+  });
+
+  it('keeps converting the entries after a repeat, so the report is scoped to the duplicate', () => {
+    const registry = new AssetRegistry();
+    const result = convert([blurItem('shared-id'), colorItem('shared-id'), blurItem('later')], registry);
+
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['shared-id', 'later']);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.historyId).toBe('shared-id');
+  });
+
+  it('leaves an all-unique timeline untouched, with no duplicate diagnostic', () => {
+    const registry = new AssetRegistry();
+    const result = convert([blurItem(), colorItem()], registry);
+
+    // The regression guard against an over-breadth filter: the same two entries
+    // under unique ids still produce two durable entries, in order, and an empty
+    // diagnostic list. Written as the whole document so any added, dropped or
+    // reordered entry — and any field the filter could disturb — fails here.
+    expect(result.diagnostics).toEqual([]);
+    expect(result.document).toEqual({
+      documentId,
+      documentRevision: 0,
+      branchRevision: 0,
+      durableRevision: 2,
+      baseline: {
+        frame: baselineFrame,
+        layers: [
+          {
+            id: layerId,
+            name: 'Layer',
+            isBedrock: false,
+            visible: true,
+            opacity: 1,
+            locked: false,
+            blendMode: 'source-over',
+            order: 0,
+            pos: { x: 0, y: 0, width: 100, height: 80 },
+            source: {
+              kind: 'blank',
+              color: '#ffffff',
+              opacity: 1,
+              isBedrock: false,
+              size: { width: 100, height: 80 },
+            },
+          },
+        ],
+        selections: { selections: [], activeSelectionId: null },
+        activeLayerId: layerId,
+      },
+      history: [
+        {
+          id: 'blur-edit',
+          schemaVersion: 1,
+          enabled: true,
+          operation: {
+            kind: 'apply-filter',
+            layerId,
+            filter: { toolName: 'blur', version: 1, args: { toolName: 'blur', radius: 4 } },
+          },
+        },
+        {
+          id: 'color-edit',
+          schemaVersion: 1,
+          enabled: true,
+          operation: {
+            kind: 'apply-filter',
+            layerId,
+            filter: { toolName: 'color', version: 1, args: { toolName: 'color', grayscale: 0.5 } },
+          },
+        },
+      ],
+      cursor: 1,
+    });
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 1]);
+  });
+
+  it('does not consume the id of a dropped rename, so a later entry may still claim it', () => {
+    const registry = new AssetRegistry();
+    // The dropped rename publishes nothing and reports nothing, so its id was
+    // never handed out: the later `shared` is a first occurrence, not a repeat.
+    const result = convert([blurItem('first'), droppedRenameItem('shared'), colorItem('shared')], registry);
+
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['first', 'shared']);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 0, 1]);
+  });
+
+  it('does not consume the id of a tool entry that derives no durable operation', () => {
+    const registry = new AssetRegistry();
+    // A selection tool records no durable operation at all: it is neither
+    // published nor reported, so it cannot shadow a later entry's id either.
+    const result = convert(
+      [
+        blurItem('first'),
+        { id: 'shared', actionName: TOOL_ACTION, layerId, args: { toolName: 'rectangular-selection' } },
+        colorItem('shared'),
+      ],
+      registry
+    );
+
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['first', 'shared']);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('maps a skipped repeat to the same durable cursor a dropped entry maps to, never the tip', () => {
+    const registry = new AssetRegistry();
+    // Both timelines publish three durable entries before the skipped legacy
+    // entry, so both map it to index 2.
+    const repeated = convert(
+      [blurItem('first'), blurItem('second'), colorItem('shared'), colorItem('shared'), blurItem('third')],
+      registry
+    );
+    const dropped = convert(
+      [blurItem('first'), blurItem('second'), blurItem('third'), droppedRenameItem('dropped'), blurItem('fifth')],
+      registry
+    );
+
+    expect(repeated.document.history).toHaveLength(4);
+    expect(dropped.document.history).toHaveLength(4);
+    expect(repeated.legacyCursorToDurableCursor[4]).toBe(2);
+    expect(dropped.legacyCursorToDurableCursor[4]).toBe(2);
+    // The tip is index 3 in both. Reaching it would show the user the edit that
+    // came AFTER the skipped legacy entry, as though the repeat had undone it.
+    expect(repeated.legacyCursorToDurableCursor[4]).not.toBe(repeated.document.history.length - 1);
+  });
+
+  it('records exactly one durable cursor per legacy entry, so a later undo cannot fall through to -1', () => {
+    const registry = new AssetRegistry();
+    const history = [...baselineHistory(), blurItem('shared-id'), colorItem('shared-id'), blurItem('last')];
+
+    const result = legacyHistoryToDurable(history, { documentId, registry });
+
+    // `StoreContext` resolves `legacyCursorToDurableCursor[historyCursor] ?? -1`,
+    // so one cursor per legacy entry is load-bearing: a short map makes the NEXT
+    // entry after the repeat resolve to -1, which replays the document back to
+    // its untouched baseline — every undo after the duplicate losing its history.
+    // The exact `toEqual` already pins the length, so no separate length
+    // assertion is needed here.
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 0, 1]);
+  });
+
+  it('leaves the frame fold advanced, so the next derived frame starts where the skipped repeat ended', () => {
+    const registry = new AssetRegistry();
+    const first = { x: 0, y: 0, width: 200, height: 150 };
+    const second = { x: 0, y: 0, width: 300, height: 250 };
+    const third = { x: 10, y: 20, width: 320, height: 260 };
+
+    const result = convert(
+      [frameItem('shared-id', first), frameItem('shared-id', second), frameItem('after', third)],
+      registry
+    );
+
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['shared-id', 'after']);
+    // `after` carries no `previousFrame`, so its `previous` is the fold's frame.
+    // Rolling the fold back would record `first` here instead, and the append
+    // boundary compares this value against the legacy `previousFrame`
+    // (`history-append.ts:744-747`) — so a stale fold refuses the user's next crop.
+    const after = result.document.history[1]?.operation;
+    expect(after?.kind).toBe('set-document-frame');
+    expect(after?.kind === 'set-document-frame' && after.previous).toEqual(second);
+    expect(after?.kind === 'set-document-frame' && after.next).toEqual(third);
+  });
+
+  it('leaves the layer fold advanced, so a reorder after a skipped repeat is not derived from stale order', () => {
+    const registry = new AssetRegistry();
+    const result = convert(
+      [
+        newBlankLayerItem('add-a', 'layer-a'),
+        newBlankLayerItem('add-b', 'layer-b'),
+        reorderItem('shared-id', 'layer-b', null),
+        reorderItem('shared-id', 'layer-a', 'layer-b'),
+        reorderItem('last', 'layer-b', layerId),
+      ],
+      registry
+    );
+
+    // The second `shared-id` reorder is withheld, but its fold still ran, so the
+    // layer order the LAST reorder derives from is the order the legacy timeline
+    // had. Rolling that fold back would rebuild the order from `layer-b, layer-1,
+    // layer-a` instead of `layer-b, layer-a, layer-1`, and the shadow's layer
+    // order would silently diverge from the order on the canvas.
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['add-a', 'add-b', 'shared-id', 'last']);
+    const last = result.document.history[3]?.operation;
+    expect(last?.kind).toBe('reorder-layers');
+    expect(last?.kind === 'reorder-layers' && last.orderByLayerId).toEqual({
+      'layer-a': 0,
+      [layerId]: 1,
+      'layer-b': 2,
+    });
+    // The user-visible half: replaying the shadow stacks the layers that way.
+    const replayed = replayDurableDocument(result.document);
+    expect(
+      Object.fromEntries(Object.entries(replayed.layers).map(([id, layer]) => [id, layer.snapshot.order]))
+    ).toEqual({ 'layer-a': 0, [layerId]: 1, 'layer-b': 2 });
+  });
+
+  it('leaves the id-keyed entry lookup resolving exactly one entry, so toggling the id cannot disable another edit', () => {
+    const registry = new AssetRegistry();
+    const result = convert([blurItem('shared-id'), colorItem('shared-id'), colorItem('later')], registry);
+    const document = result.document;
+
+    expect(new Set(document.history.map((entry) => entry.id)).size).toBe(document.history.length);
+    // `toggleDisabled` resolves the id the History panel holds against the legacy
+    // timeline, and the shadow resolves it by the same key. With one entry per id,
+    // disabling `shared-id` disables that edit and nothing else.
+    const toggled = toggleDurableEntry(document, 'shared-id');
+    expect(toggled.history.map((entry) => [entry.id, entry.enabled])).toEqual([
+      ['shared-id', false],
+      ['later', true],
+    ]);
+  });
+
+  it('freezes a duplicate id handed straight to the document, so the id guard has to live in conversion', () => {
+    // NOT a converter test. It exercises only `freezeDurableDocument` and
+    // `toggleDurableEntry` — the document is hand-built from a converted one so
+    // that a genuine duplicate id can be handed to the freezer on purpose — and it
+    // asserts nothing `legacyHistoryToDurable` decides. It lives in this file
+    // because it is the evidence for the guarantee this suite pins: the duplicate
+    // `freezeDurableDocument` maps 1:1 over `history` and copies each `id`
+    // verbatim, so it is neither the source of a duplicate nor a place that could
+    // remove one. That is why the guarantee has to be enforced upstream.
+    const registry = new AssetRegistry();
+    const converted = legacyHistoryToDurable([...baselineHistory(), blurItem('dup')], { documentId, registry });
+    const first = converted.document.history[0]!;
+    const withDuplicate: DurableDocument = {
+      ...converted.document,
+      history: [
+        first,
+        {
+          ...first,
+          operation: {
+            kind: 'set-selection',
+            before: { selections: [], activeSelectionId: null },
+            after: { selections: [], activeSelectionId: 'x' },
+          },
+        },
+      ],
+      cursor: 1,
+    };
+
+    const frozen = freezeDurableDocument(withDuplicate);
+
+    expect(frozen.history).toHaveLength(2);
+    expect(frozen.history.map((entry) => entry.id)).toEqual(['dup', 'dup']);
+    expect(Object.isFrozen(frozen.history)).toBe(true);
+    expect(frozen.history[0]).not.toBe(frozen.history[1]);
+    // So an id-keyed lookup on a frozen document really is ambiguous: toggling the
+    // id flips the first entry and cannot reach the second. That is the hazard the
+    // conversion prevents, not something freeze repairs downstream.
+    const toggled = toggleDurableEntry(frozen, 'dup');
+    expect(toggled.history.map((entry) => [entry.operation.kind, entry.enabled])).toEqual([
+      ['apply-filter', false],
+      ['set-selection', true],
+    ]);
+  });
+
+  it('replays the shadow at the cursor a skipped repeat maps to, so undo stops before the lost edit', () => {
+    const registry = new AssetRegistry();
+    const result = convert([blurItem('shared-id'), colorItem('shared-id'), colorItem('last')], registry);
+    const document = result.document;
+
+    // Undo to the repeat's own legacy cursor maps to the blur alone. Landing on
+    // the tip instead would show a colour edit the user never made at that point.
+    const atRepeat = replayDurableDocument(document, result.legacyCursorToDurableCursor[2]!);
+    expect(atRepeat.cursor).toBe(0);
+    expect(filterToolNames(atRepeat.layers[layerId]?.operations ?? [])).toEqual(['blur']);
+    // And the entry after the repeat is still reachable, so the timeline continues.
+    const atTip = replayDurableDocument(document, result.legacyCursorToDurableCursor[3]!);
+    expect(atTip.cursor).toBe(1);
+    expect(filterToolNames(atTip.layers[layerId]?.operations ?? [])).toEqual(['blur', 'color']);
+  });
+
+  it('reports a later entry that reuses the baseline open-document id', () => {
+    // The baseline document-source id is meaningful to the legacy first-match
+    // resolver even though the source is not itself a durable history entry.
+    // Conversion seeds that id in the duplicate set, so a later edit cannot
+    // publish under the same key and make the two resolvers disagree silently.
+    const registry = new AssetRegistry();
+    const sharedId = 'baseline-id-collision';
+    const history = [...baselineHistory(sharedId), blurItem(sharedId)];
+
+    const result = legacyHistoryToDurable(history, { documentId, registry });
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: sharedId,
+        actionName: TOOL_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: expect.stringContaining('baseline document-source entry'),
+      }),
+    ]);
+    expect(result.document.history).toEqual([]);
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, -1]);
+
+    // The LEGACY resolver takes that id to the baseline open-document entry...
+    const legacy = updateHistoryTimeline(
+      { entries: history, cursor: 1, branchRevision: 0 },
+      { type: 'toggle-disabled', entryId: sharedId }
+    );
+    expect(legacy.entries[0]?.actionName).toBe(OPEN_DOCUMENT_ACTION);
+    expect(legacy.entries[0]?.disabled).toBe(true);
+    expect(legacy.entries[1]?.disabled).toBeUndefined();
+
+    // The durable resolver has no entry under the colliding id, so the warning
+    // does not leave a second edit for the wrong first-match lookup to toggle.
+    const durable = toggleDurableEntry(result.document, sharedId);
+    expect(durable).toBe(result.document);
   });
 });

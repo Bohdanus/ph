@@ -2,7 +2,8 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoreProvider, useStore } from '../StoreContext.tsx';
-import { deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
+import { getAssetRegistry } from '../asset-registry.ts';
+import { deriveRemoveLayerEntry, deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
 import { useLayers } from '../useLayer.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { DurableHistoryEntry } from '../history-model.ts';
@@ -210,7 +211,7 @@ describe('useLayers retained history commits', () => {
     expect(store.previewLayers.current).toEqual({});
   });
 
-  it('records a reorder as its own history entry against a detached copy of the record', () => {
+  it('records a reorder as its own history entry through the store-owned action', () => {
     const result = setup({ bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) });
     const before = result.current.store.layers;
 
@@ -275,6 +276,127 @@ describe('useLayers retained history commits', () => {
       y2: 20,
     });
     processor.mockRestore();
+  });
+});
+
+describe('useLayers removeLayer', () => {
+  it('routes a removal through the append boundary exactly once, against the live timeline', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    expect(planHistoryAppend).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.layers.removeLayer(id);
+    });
+
+    // The removal's durable operation is a function of the history item alone, so
+    // the hook boundary can derive it without the store's live layer record — which
+    // is why this writer asks here at all, unlike a reorder.
+    expect(planHistoryAppend).toHaveBeenCalledTimes(1);
+    expect(planHistoryAppend.mock.calls[0]![0]).toMatchObject({
+      item: { layerId: id, actionName: REMOVE_ACTION, args: {} },
+      timeline: { cursor: 0, branchRevision: 0 },
+    });
+  });
+
+  it('publishes the removal the boundary derived, under the legacy entry id', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.removeLayer(id);
+    });
+
+    const store = result.current.store;
+    expect(store.layers[id]).toBeUndefined();
+    expect(store.deletedLayers[id]).toMatchObject({ id, bitmap: null, tmpCanvas: null });
+    expect(store.history).toHaveLength(2);
+    const entry = store.history[1]!;
+    expect(entry).toMatchObject({ actionName: REMOVE_ACTION, layerId: id, args: {} });
+
+    // A publication, not a reconversion: the shadow grew by exactly the one entry
+    // the boundary derived from the same legacy entry, under the same id.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDiagnostics).toEqual([]);
+    expect(store.durableDocument!.history).toHaveLength(1);
+    expect(store.durableDocument!.history[0]).toEqual(deriveRemoveLayerEntry(entry));
+    expect(store.durableDocument!.history[0]!.id).toBe(entry.id);
+    expect(store.durableDocument!.cursor).toBe(0);
+  });
+
+  it('hands the store the entry it planned, so the store publishes instead of reconverting', () => {
+    // A clean removal's published document and its reconverted document are
+    // byte-identical by design — that identity is the invariant the append
+    // boundary exists to hold. So no assertion on the resulting document can tell
+    // the two paths apart, and a writer that planned the entry and then dropped it
+    // on the floor would leave the whole feature inert with every other assertion
+    // still green.
+    //
+    // The discriminator is the registry: publication opens exactly one append
+    // transaction, while reconversion opens its own conversion transaction. This
+    // test is the one that fails if the writer stops passing `durableEntry`.
+    const beginTransaction = vi.spyOn(getAssetRegistry(), 'beginDocumentAssetTransaction');
+    try {
+      const result = setupWithDocument();
+      // `setupWithDocument` replaces the document, which itself reconverts; only the
+      // removal is under test here.
+      beginTransaction.mockClear();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      act(() => {
+        result.current.layers.removeLayer(id);
+      });
+
+      expect(beginTransaction).toHaveBeenCalledTimes(1);
+      expect(result.current.store.durableStatus).toBe('current');
+    } finally {
+      beginTransaction.mockRestore();
+    }
+  });
+
+  it('still removes the layer when the boundary itself throws', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // A shadow projection that throws must not reject a valid removal, exactly as
+    // the selection writers' `catch` re-dispatch says. Nothing has been appended
+    // and no layer has left the record when the plan runs, so the catch path is
+    // the whole edit rather than a repair of it.
+    planHistoryAppend.mockImplementationOnce(() => {
+      throw new Error('the durable projection failed');
+    });
+
+    act(() => {
+      result.current.layers.removeLayer(id);
+    });
+
+    const store = result.current.store;
+    expect(store.layers[id]).toBeUndefined();
+    expect(store.deletedLayers[id]).toMatchObject({ id });
+    expect(store.history).toHaveLength(2);
+    expect(store.history[1]).toMatchObject({ actionName: REMOVE_ACTION, layerId: id, args: {} });
+    // The fallback carries no plan, so the store reconverts and the removal is
+    // still in the shadow — the legacy timeline is the authority either way.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument!.history.map((entry) => entry.operation.kind)).toEqual(['remove-layer']);
+    expect(consoleError).toHaveBeenCalledWith(
+      'Unable to plan durable history for a layer removal',
+      expect.objectContaining({ message: 'the durable projection failed' })
+    );
+  });
+
+  it('removes a layer the record does not hold without asking the boundary at all', () => {
+    const result = setupWithDocument();
+    // The baseline entry `setupWithDocument` seeds, captured rather than counted:
+    // this asserts the removal added nothing, not that history is empty.
+    const before = result.current.store.history;
+
+    act(() => {
+      result.current.layers.removeLayer('ghost');
+    });
+
+    expect(planHistoryAppend).not.toHaveBeenCalled();
+    expect(result.current.store.history).toBe(before);
   });
 });
 
@@ -450,16 +572,16 @@ describe('useLayers layer-property writers', () => {
     expect(store.durableDocument!.cursor).toBe(1);
   });
 
-  it('reconciles a reorder by conversion rather than publishing a planned entry', () => {
+  it('publishes a reorder through the store and carries the diagnostics a publication carries', () => {
     const bottom = documentLayer('bottom', 0);
     const top = documentLayer('top', 1);
     const result = setupWithDocument({ bottom, top });
     expect(planHistoryAppend).not.toHaveBeenCalled();
 
     // A commit whose plan disagrees with its own legacy entry reports a
-    // mismatch, and a publication would carry that diagnostic into the next
-    // commit. A reconversion replaces the list instead, so the diagnostic's
-    // survival is a direct read of which path the next commit took.
+    // mismatch, and a publication carries that diagnostic into the next append.
+    // Whether the next append publishes or reconverts is therefore readable off
+    // the list: a publication preserves it, a reconversion replaces it.
     const rename: HistoryItem = {
       id: 'rename-1',
       actionName: RENAME_LAYER_ACTION,
@@ -487,8 +609,9 @@ describe('useLayers layer-property writers', () => {
       result.current.layers.moveLayerAfter('bottom', 'top');
     });
 
-    // The reorder writer asks the boundary for nothing, so the store cannot
-    // publish a single planned entry for it and rebuilds the shadow instead.
+    // The writer still asks the hook boundary for nothing, because a reorder's
+    // durable operation names the order of every layer and only the store can see
+    // the record it must describe. The store plans it from that record instead.
     expect(planHistoryAppend).not.toHaveBeenCalled();
     const store = result.current.store;
     expect(store.history.at(-1)).toMatchObject({
@@ -496,7 +619,10 @@ describe('useLayers layer-property writers', () => {
       layerId: 'bottom',
       args: { layerToMoveId: 'bottom', afterWhichLayerId: 'top' },
     });
-    expect(store.durableDiagnostics).toEqual([]);
+    // The carried diagnostic is the proof the append published rather than
+    // reconverting: a reconversion would have replaced the list with its own.
+    expect(store.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+    expect(store.durableStatus).toBe('current');
     expect(store.durableDocument!.history.map((entry) => entry.operation.kind)).toEqual([
       'set-layer-properties',
       'reorder-layers',

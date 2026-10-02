@@ -1,7 +1,12 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
-import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import {
+  claimDocumentGesture,
+  isDocumentGestureOpen,
+  readDocumentGesture,
+  resetDocumentGestures,
+} from '../../../hooks/document-gesture.ts';
 import { MoveToolArea } from '../MoveToolArea.tsx';
 
 type LayerId = 'layer-1' | 'layer-2' | 'bedrock-1';
@@ -96,13 +101,17 @@ vi.mock('../../../hooks/useRect.ts', () => ({
     if (props.initialRect) props.onRepaint?.(props.initialRect);
 
     return {
-      getLocalCoords: h.getLocalCoords,
-      isMouseDown: h.isMouseDownRef,
-      pointerIdRef: h.pointerIdRef,
-      onPointerDown: h.useRectPointerDown,
-      onPointerMove: h.useRectPointerMove,
-      onPointerUp: h.useRectPointerUp,
-      clearSelection: h.clearSelection,
+      pointerHandlers: {
+        onPointerDown: h.useRectPointerDown,
+        onPointerMove: h.useRectPointerMove,
+        onPointerUp: h.useRectPointerUp,
+      },
+      rectHandles: { redraw: vi.fn(), clearSelection: h.clearSelection },
+      pointerState: {
+        getLocalCoords: h.getLocalCoords,
+        isMouseDown: h.isMouseDownRef,
+        pointerIdRef: h.pointerIdRef,
+      },
     };
   },
 }));
@@ -592,6 +601,85 @@ describe('MoveToolArea', () => {
       fireEvent.pointerUp(toolArea, { button: 0, pointerId: 99 });
 
       expect(isDocumentGestureOpen()).toBe(true);
+    });
+
+    it('delivers a non-primary button code to the pointer-up path', () => {
+      // Everything below is only meaningful if `button` survives `fireEvent`.
+      // jsdom builds a real `PointerEvent` from the init, so the release reaches
+      // the handler as `button: 2` — but a harness that silently dropped it would
+      // make every one of these cases pass as a primary release.
+      const toolArea = pressOn('layer-1');
+      const seen: number[] = [];
+      toolArea.addEventListener('pointerup', (event) => seen.push((event as PointerEvent).button));
+
+      fireEvent.pointerUp(toolArea, { button: 2, pointerId: 1 });
+
+      expect(seen).toEqual([2]);
+    });
+
+    it('keeps the claim open for a release from a second button on the owning pointer', () => {
+      const toolArea = pressOn('layer-1');
+      expect(readDocumentGesture()).toEqual({ kind: 'layer-transform', pointerId: 1 });
+
+      // A mouse is ONE pointer whose id is constant across buttons, so a
+      // right-button release arriving mid-drag shares the left pointer's id and a
+      // release matched on the id alone is indistinguishable from this gesture's
+      // own. It is not one: the left button is still down, and the claim exists to
+      // cover exactly the window before the commit that truncates the redo tail.
+      fireEvent.pointerUp(toolArea, { button: 2, pointerId: 1 });
+
+      expect(isDocumentGestureOpen()).toBe(true);
+    });
+
+    it('keeps the drag armed and grabbing after a release from a second button', () => {
+      const toolArea = pressOn('layer-1');
+      expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(true);
+
+      fireEvent.pointerUp(toolArea, { button: 2, pointerId: 1 });
+
+      // The teardown belongs to the release that ends the gesture, so a
+      // right-button release must not disarm a drag whose button is still held.
+      act(() => {
+        h.useRectProps.current!.onRepaint!({ x1: 15, y1: 25, x2: 45, y2: 65 });
+      });
+
+      expect(h.tempUpdateLayer).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: { move: { x: 15, y: 25 }, toolName: 'reposition' },
+      });
+      expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(true);
+    });
+
+    it('releases the claim on the primary release that follows a second button release', () => {
+      const toolArea = pressOn('layer-1');
+
+      fireEvent.pointerUp(toolArea, { button: 2, pointerId: 1 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // The refusal of the right-button release leaves the gesture armed, so the
+      // primary release still arrives and is the one that gives the document back.
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+      expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(false);
+    });
+
+    it('does not throw or hand back another surface claim for a second button release', () => {
+      // A press over no layer starts no interaction, so the only claim in the slot
+      // belongs to another surface — and it names this component's own pointer,
+      // which is exactly what the id-only match used to hand back.
+      claimDocumentGesture('brush-stroke', 1);
+      h.getLayerIdByPoint.mockReturnValue(null);
+      h.getLocalCoords.mockReturnValue({ x: 500, y: 500 });
+      const { container: el } = renderArea();
+      const toolArea = toolAreaOf(el);
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1 });
+
+      expect(() => fireEvent.pointerUp(toolArea, { button: 2, pointerId: 1 })).not.toThrow();
+
+      expect(readDocumentGesture()).toEqual({ kind: 'brush-stroke', pointerId: 1 });
+      // Nothing ended here, so the grab cursor this very press added must survive.
+      expect(storeState.containerRef.current.classList.contains('cursor-grabbing')).toBe(true);
     });
 
     it('claims nothing for a press with a non-primary button', () => {

@@ -2,6 +2,11 @@ import React, { type ChangeEvent, useCallback, useEffect, useRef, useState } fro
 import { createPortal } from 'react-dom';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../../tools/featherMagneticLasso.ts';
+import {
+  MAGNETIC_LASSO_FREQUENCY_MAX,
+  MAGNETIC_LASSO_FREQUENCY_MIN,
+  MAGNETIC_LASSO_FREQUENCY_STEP,
+} from '../../../tools/featherMagneticLasso.ts';
 import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
 import { useSelectionHistory } from '../../../contexts/useSelectionHistory.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
@@ -9,6 +14,19 @@ import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 const SLIDER_CLASS = 'h-1.5 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700';
 const INFO_TOOLTIP_ID = 'feather-magnetic-lasso-settings-tooltip';
 const INFO_TOOLTIP_WIDTH = 384;
+
+/**
+ * How long the info tooltip stays mounted after focus or hover leaves, so a pointer
+ * can cross the gap between the button and the menu without losing it.
+ *
+ * Exported because the delay is behaviour with a value, and the test that covers it
+ * used to hard-code its own copy of that value. It was 200 in the test against 120
+ * here, and a `grep` could not tell which was the real one: a stale constant in a
+ * test is invisible until production changes. `eslint.config.js` sets
+ * `allowConstantExport: true` for exactly this, so a constant exported beside its
+ * component costs nothing.
+ */
+export const INFO_TOOLTIP_CLOSE_DELAY_MS = 120;
 
 const SETTING_HELP = [
   {
@@ -29,7 +47,7 @@ const SETTING_HELP = [
   {
     label: 'Frequency',
     description:
-      'Distance between automatic fastening points while moving. Lower values add more anchors and track detailed edges more tightly.',
+      'The rate at which the lasso sets fastening points while you move, between 0 and 100. Higher values anchor the selection border in place more quickly, and lower values let it follow a detailed edge further before fixing a point.',
   },
   {
     label: 'Snap',
@@ -83,7 +101,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
     closeInfoTooltipTimerRef.current = window.setTimeout(() => {
       setIsInfoHovered(false);
       closeInfoTooltipTimerRef.current = null;
-    }, 120);
+    }, INFO_TOOLTIP_CLOSE_DELAY_MS);
   }, [clearInfoCloseTimer]);
 
   const updateInfoTooltipPosition = useCallback(() => {
@@ -167,10 +185,11 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
 
     try {
       setIsCopying(true);
-      copyActiveSelection(activeSelection);
+      if (!copyActiveSelection(activeSelection)) {
+        console.error('Failed to copy feathered magnetic selection');
+      }
     } catch (error) {
       console.error('Error copying feathered magnetic selection:', error);
-      alert('Failed to copy feathered selection');
     } finally {
       setIsCopying(false);
     }
@@ -289,12 +308,12 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
         </label>
 
         <label className="flex min-w-28 flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300">
-          Frequency <span className="font-bold text-gray-900 dark:text-gray-200">{args.frequency}px</span>
+          Frequency <span className="font-bold text-gray-900 dark:text-gray-200">{args.frequency}</span>
           <input
             className={SLIDER_CLASS}
-            max="120"
-            min="8"
-            step="1"
+            max={MAGNETIC_LASSO_FREQUENCY_MAX}
+            min={MAGNETIC_LASSO_FREQUENCY_MIN}
+            step={MAGNETIC_LASSO_FREQUENCY_STEP}
             type="range"
             value={args.frequency}
             onChange={handleFrequencyChange}

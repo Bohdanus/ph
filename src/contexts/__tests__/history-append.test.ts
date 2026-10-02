@@ -8,6 +8,7 @@ import {
 import { AssetRegistry } from '../asset-registry.ts';
 import {
   decideDurableAppend,
+  deriveReorderLayersEntry,
   durableAppendDiagnostic,
   planHistoryAppend,
   type AppendBoundaryResult,
@@ -29,14 +30,17 @@ import {
   HIDE_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
+  REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
   type ActionType,
 } from '../../util/constants.ts';
-import type { DocumentFrame } from '../document-frame.ts';
+import { replayDurableDocument } from '../durable-replay.ts';
+import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
 import type { Selection } from '../general-types.ts';
+import type { LayerId } from '../layer-types.ts';
 import type { HistoryTimeline } from '../history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from '../history-types.ts';
 
@@ -607,16 +611,29 @@ describe('decideDurableAppend', () => {
   });
 
   it.each([
-    ['a foreign id', { ...cropEntry, id: 'elsewhere' }],
-    ['a different schema version', { ...planned, schemaVersion: 99 }],
-    ['a flipped enabled state', { ...planned, enabled: false }],
-    ['a different operation kind', { ...planned, operation: { kind: 'set-selection' } as never }],
+    [
+      'a foreign id',
+      { ...planned, id: 'elsewhere' },
+      'durable entry id elsewhere does not match the legacy entry id crop-1',
+    ],
+    ['a different schema version', { ...planned, schemaVersion: 99 }, 'durable schema version 99'],
+    [
+      'a flipped enabled state',
+      { ...planned, enabled: false },
+      'the durable enabled state does not match the legacy entry',
+    ],
+    [
+      'a different operation kind',
+      { ...planned, operation: { kind: 'set-selection' } as never },
+      'a document frame change produced a "set-selection" operation',
+    ],
     [
       'a rewritten next frame',
       {
         ...planned,
         operation: { kind: 'set-document-frame', previous: baselineFrame, next: { ...croppedFrame, width: 1 } },
       },
+      'the durable next frame does not match the legacy entry',
     ],
     [
       'a rewritten previous frame',
@@ -624,12 +641,15 @@ describe('decideDurableAppend', () => {
         ...planned,
         operation: { kind: 'set-document-frame', previous: { ...baselineFrame, x: 7 }, next: croppedFrame },
       },
+      'the durable previous frame does not match the legacy entry',
     ],
-  ])('reports a mismatch for %s', (_label, candidate) => {
+  ] as const)('reports a mismatch for %s', (_label, candidate, reason) => {
     const decision = decide({ planned: candidate as DurableHistoryEntry });
 
     expect(decision.outcome).toBe('mismatch');
-    if (decision.outcome === 'mismatch') expect(decision.reason).toBeTruthy();
+    // The reason is the reported contract, so each drift keeps its own string: a
+    // converter that answered all six alike would be reporting nothing.
+    if (decision.outcome === 'mismatch') expect(decision.reason).toBe(reason);
   });
 
   it('reports a mismatch for an action with no published translation', () => {
@@ -875,28 +895,39 @@ describe('decideDurableAppend: layer-property entries', () => {
   });
 
   it.each([
-    ['a rewritten name', { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Other' } } }],
+    [
+      'a rewritten name',
+      { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Other' } } },
+      'the durable layer name does not match the legacy entry',
+    ],
     [
       'a second property in a rename patch',
       {
         operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed', visible: false } },
       },
+      'the durable layer-property operation does not match the legacy entry',
     ],
     [
       'a retargeted layer',
       { operation: { kind: 'set-layer-properties', layerId: 'other', patch: { name: 'Renamed' } } },
+      'the durable layer id does not match the legacy entry',
     ],
     [
       'a document frame operation',
       { operation: { kind: 'set-document-frame', previous: baselineFrame, next: croppedFrame } },
+      'a layer-property change produced a "set-document-frame" operation',
     ],
-    ['a no-op patch', { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: {} } }],
-  ] as const)('reports a mismatch for a planned rename carrying %s', (_label, replacement) => {
+    [
+      'a no-op patch',
+      { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: {} } },
+      'the durable layer-property operation does not match the legacy entry',
+    ],
+  ] as const)('reports a mismatch for a planned rename carrying %s', (_label, replacement, reason) => {
     const decision = decidePlan(renamePlan, replacement);
 
     expect(decision.outcome).toBe('mismatch');
     if (decision.outcome === 'mismatch') {
-      expect(decision.reason).toBe('the durable layer-property operation does not match the legacy entry');
+      expect(decision.reason).toBe(reason);
     }
   });
 
@@ -929,5 +960,397 @@ describe('decideDurableAppend: layer-property entries', () => {
     });
 
     expect(decidePlan(plan).outcome).toBe('preconditions');
+  });
+});
+
+/**
+ * The reorder decisions. A reorder is the only published action whose
+ * correctness depends on the whole layer set rather than on one property of one
+ * layer, so it is also the only one the decision has to prove something extra
+ * about before it publishes. The store-level behaviour is covered in
+ * `StoreContext.reorder.test.tsx`; what is pinned here is that each refusal is
+ * reachable, and is a `preconditions` outcome rather than a reported error.
+ */
+describe('decideDurableAppend: reorder entries', () => {
+  const preOrder: LayerId[] = ['bottom', 'middle', 'top'];
+  const priorEntries = [createMockHistoryItem({ id: 'baseline' })];
+  const base = {
+    documentId: 'doc-1',
+    documentRevision: 4,
+    branchRevision: 0,
+    durableRevision: 7,
+    baseline: {
+      frame: baselineFrame,
+      layers: [],
+      selections: { selections: [], activeSelectionId: null },
+      activeLayerId: null,
+    },
+    history: [createFrameEntry('baseline')],
+    cursor: 0,
+  } as unknown as DurableDocument;
+
+  const reorderEntry = (overrides: { id?: string; afterWhichLayerId?: LayerId | null } = {}) => {
+    const args: { layerToMoveId: LayerId; afterWhichLayerId?: LayerId | null } =
+      'afterWhichLayerId' in overrides
+        ? { layerToMoveId: 'bottom', afterWhichLayerId: overrides.afterWhichLayerId }
+        : { layerToMoveId: 'bottom', afterWhichLayerId: 'top' };
+    return createMockHistoryItem({
+      id: overrides.id ?? 'reorder-1',
+      actionName: REORDER_ACTION,
+      layerId: 'bottom',
+      args,
+    });
+  };
+
+  const decide = (entry: ReturnType<typeof reorderEntry>, overrides: Partial<DurableAppendInput> = {}) => {
+    const next = { entries: [...priorEntries, entry], cursor: 1, branchRevision: 0 };
+    return decideDurableAppend({
+      documentId: 'doc-1',
+      base,
+      prior: { entries: priorEntries, cursor: 0, branchRevision: 0 },
+      next,
+      entry,
+      planned: deriveReorderLayersEntry(entry, preOrder),
+      documentRevision: 4,
+      preLayerOrder: preOrder,
+      durableLayerOrder: [...preOrder],
+      ...overrides,
+    });
+  };
+
+  it('publishes a reorder planned from the store order', () => {
+    const entry = reorderEntry();
+    const decision = decide(entry);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history).toHaveLength(2);
+    expect(decision.document.history[1]!.operation).toEqual({
+      kind: 'reorder-layers',
+      orderByLayerId: { middle: 0, top: 1, bottom: 2 },
+    });
+    expect(decision.document.history[1]!.id).toBe(entry.id);
+    expect(decision.document.durableRevision).toBe(8);
+  });
+
+  it.each([
+    ['no store order at all', { preLayerOrder: null }],
+    ['a durable order that is not supplied', { durableLayerOrder: null }],
+    ['a durable order of the wrong length', { durableLayerOrder: ['bottom', 'middle'] }],
+    ['a durable order with a layer the store does not hold', { durableLayerOrder: [...preOrder, 'ghost'] }],
+    ['a durable order missing a layer the store holds', { durableLayerOrder: ['bottom', 'top'] }],
+    // Same length, same members, different sequence. This is the case a
+    // membership check cannot see, and it is the one that matters: a published
+    // map is a fresh normalisation of the order, so publishing while the models
+    // disagree about the order launders the disagreement into a document no
+    // reconversion will reproduce.
+    [
+      'a durable order that is the same set in a different sequence',
+      { durableLayerOrder: ['top', 'middle', 'bottom'] },
+    ],
+  ] as const)('refuses to publish for %s', (_label, overrides) => {
+    const decision = decide(reorderEntry(), overrides as Partial<DurableAppendInput>);
+
+    expect(decision.outcome).toBe('preconditions');
+  });
+
+  it('refuses a plan whose map disagrees with the store order', () => {
+    const entry = reorderEntry();
+
+    // A map that is a valid reorder, of a different reorder. Only the store's
+    // own order can tell them apart, which is the whole reason it is supplied.
+    const decision = decide(entry, {
+      planned: {
+        id: entry.id,
+        schemaVersion: DURABLE_SCHEMA_VERSION,
+        enabled: true,
+        operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, middle: 1, top: 2 } },
+      } as DurableHistoryEntry,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') expect(decision.reason).toContain('order');
+  });
+
+  it.each([
+    ['no anchor', undefined, { bottom: 0, middle: 1, top: 2 }],
+    ['an explicit null anchor', null, { bottom: 0, middle: 1, top: 2 }],
+  ] as const)('plans a move to the bottom for %s', (_label, afterWhichLayerId, expected) => {
+    const entry = reorderEntry({ afterWhichLayerId });
+    const decision = decide(entry);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history[1]!.operation).toEqual({ kind: 'reorder-layers', orderByLayerId: expected });
+  });
+});
+
+/**
+ * Three known gaps in the publication preconditions, pinned exactly as the
+ * boundary behaves today.
+ *
+ * Each test asserts what the code DOES and names, in its own comment, the
+ * precondition it does not have. They are tripwires, not endorsements: a fix
+ * adds the named precondition, and the pin is deleted rather than relaxed. A
+ * green run here is not evidence the boundary is safe — it is evidence the
+ * defect has not been fixed yet.
+ */
+describe('decideDurableAppend: known gaps in the publication preconditions', () => {
+  const undoneFrame: DocumentFrame = { x: 0, y: 0, width: 640, height: 480 };
+  const appendedFrame: DocumentFrame = { x: 0, y: 0, width: 200, height: 150 };
+  const zeroFrame: DocumentFrame = { x: 0, y: 0, width: 0, height: 0 };
+
+  const frameEntryAt = (id: string, previous: DocumentFrame, next: DocumentFrame): DurableHistoryEntry => ({
+    id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled: true,
+    operation: { kind: 'set-document-frame', previous, next },
+  });
+
+  // Typed by the return annotation rather than cast, so a new REQUIRED field on
+  // `DurableDocument` is a compile error here instead of a fixture that silently
+  // omits it. Nothing in the boundary mutates its base, so the literal needs no
+  // freeze to be honest.
+  const durableBase = (history: readonly DurableHistoryEntry[], cursor: number): DurableDocument => ({
+    documentId: 'doc-1',
+    documentRevision: 4,
+    branchRevision: 0,
+    durableRevision: 7,
+    baseline: {
+      frame: baselineFrame,
+      layers: [],
+      selections: { selections: [], activeSelectionId: null },
+      activeLayerId: null,
+    },
+    history,
+    cursor,
+  });
+
+  const gapPriorEntries = [createMockHistoryItem({ id: 'legacy-0' }), createMockHistoryItem({ id: 'legacy-1' })];
+  const gapPrior: HistoryTimeline = {
+    entries: gapPriorEntries,
+    cursor: gapPriorEntries.length - 1,
+    branchRevision: 0,
+  };
+
+  const cropEntryWith = (id: string, nextFrame: DocumentFrame) =>
+    createMockHistoryItem({
+      id,
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      layerId: 'document',
+      args: { previousFrame: baselineFrame, nextFrame },
+    });
+
+  const decideCrop = (base: DurableDocument, entry: HistoryItem, planned: DurableHistoryEntry | null) =>
+    decideDurableAppend({
+      documentId: 'doc-1',
+      base,
+      prior: gapPrior,
+      next: { entries: [...gapPriorEntries, entry], cursor: gapPriorEntries.length, branchRevision: 0 },
+      entry,
+      planned,
+      documentRevision: 4,
+    });
+
+  /** The route the boundary falls back to, run over the same legacy items. */
+  const convertedBy = (items: readonly HistoryItem[]) => {
+    const registry = new AssetRegistry();
+    try {
+      return legacyHistoryToDurable(items, { documentId: 'parity-doc', registry, initialFrame: baselineFrame });
+    } finally {
+      registry.shutdown();
+    }
+  };
+
+  // KNOWN GAP 1 — missing precondition: the base's own cursor. The guard list
+  // (`history-append.ts:590-610`) proves `documentId`, both revisions, the legacy
+  // tip, the length delta, the legacy cursor and the entry identity; it never
+  // proves that `base.cursor === base.history.length - 1`. The only cursor guard
+  // runs the wrong way for it — `cursor > next.cursor` (`history-append.ts:647`)
+  // catches a base that has too MANY entries, and a base that has too few slips
+  // through, because the published cursor is `base.history.length`
+  // (`history-append.ts:644`), not `base.cursor + 1`.
+  //
+  // User-visible failure: an entry the durable document had not reached (its own
+  // cursor sat below it — an undone edit) is inside the published cursor, so the
+  // published shadow replays an edit the user undid, and the redo-only state the
+  // base described is gone. Latent in the store today, because a mid-timeline
+  // base is only produced by a rebuild that maps the legacy cursor
+  // (`StoreContext.tsx:659-696`) and therefore arrives with a legacy prior that
+  // is not at its tip, which `history-append.ts:599` refuses first. Nothing in
+  // the boundary enforces the invariant; only that accident does.
+  it('publishes onto a base that is not at its own tip, turning a redo-only entry into an applied one', () => {
+    const entry = cropEntryWith('crop-1', appendedFrame);
+    const base = durableBase(
+      [
+        frameEntryAt('baseline-0', baselineFrame, baselineFrame),
+        frameEntryAt('undone-crop', baselineFrame, undoneFrame),
+      ],
+      0
+    );
+
+    // Precondition for the pin: for this base, the crop at index 1 is redo-only.
+    expect(base.cursor).toBe(0);
+    expect(replayDurableDocument(base).frame).toEqual(baselineFrame);
+
+    const decision = decideCrop(base, entry, deriveSetDocumentFrameEntry(entry, baselineFrame));
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history.map((candidate) => candidate.id)).toEqual(['baseline-0', 'undone-crop', 'crop-1']);
+    // The cursor advanced by TWO, from a base that was one behind its own history,
+    // and the entry the base had not reached is now below that cursor.
+    expect(decision.document.cursor).toBe(2);
+    expect(replayDurableDocument(decision.document, 1).frame).toEqual(undoneFrame);
+  });
+
+  // KNOWN GAP 2 — missing precondition: `isValidDocumentFrame` on the planned
+  // `next`. The frame branch of `validatePlannedDurableEntry`
+  // (`history-append.ts:486-498`) proves only that `planned.operation.next` equals
+  // `args.nextFrame` structurally (`sameFrame`, `history-append.ts:492`); it never
+  // asks whether either is a document frame. Every derivation that BUILDS such an
+  // entry refuses one (`history-adapter.ts:260`, which the plan calls at
+  // `history-append.ts:133`), so only a supplied entry reaches the gap.
+  //
+  // User-visible failure: durable replay applies `next` unvalidated
+  // (`durable-replay.ts:129-131`) and `documentFrameSize` clamps to a 1x1 minimum
+  // (`document-frame.ts:9-14`), so a published 0x0 crop makes the shadow describe
+  // a 1x1 document. The conversion route for the same item publishes nothing and
+  // reports the loss as a warning (`history-adapter.ts:662`), so the two routes
+  // now disagree about one legacy item and only one of them says so.
+  it('publishes a planned frame whose next frame is not a document frame, and the shadow replays it anyway', () => {
+    const entry = cropEntryWith('crop-zero', zeroFrame);
+    const planned: DurableHistoryEntry = {
+      id: entry.id,
+      schemaVersion: DURABLE_SCHEMA_VERSION,
+      enabled: true,
+      operation: { kind: 'set-document-frame', previous: baselineFrame, next: zeroFrame },
+    };
+    const base = durableBase([frameEntryAt('baseline-0', baselineFrame, baselineFrame)], 0);
+
+    const decision = decideCrop(base, entry, planned);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(replayDurableDocument(decision.document).frame).toEqual(zeroFrame);
+    // Every size the application reads off that frame is clamped, so the loss is
+    // not visible as a zero — it is visible as a document one pixel square.
+    expect(documentFrameSize(replayDurableDocument(decision.document).frame)).toEqual({ width: 1, height: 1 });
+
+    // The same item on the other two routes, which is what makes this a divergence.
+    expect(deriveSetDocumentFrameEntry(entry, baselineFrame)).toBeNull();
+    const plan = planHistoryAppend({
+      item: {
+        layerId: 'document',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        args: { previousFrame: baselineFrame, nextFrame: zeroFrame },
+      },
+      timeline: gapPrior,
+      currentFrame: baselineFrame,
+    });
+    expect(plan.durableEntry).toBeNull();
+    const conversion = convertedBy([entry]);
+    expect(conversion.document.history.filter((candidate) => candidate.id === entry.id)).toHaveLength(0);
+    expect(conversion.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ historyId: entry.id, severity: 'warning' })])
+    );
+  });
+
+  // KNOWN GAP 3 — missing precondition: entry-id uniqueness against the DURABLE
+  // document. The boundary's one uniqueness check lives in `validateTimeline`
+  // (`history-append.ts:278-287`) and reads the LEGACY timeline, which the
+  // durable base is invisible to; `decideDurableAppend` has no equivalent of its
+  // own. The conversion route reports a repeated id and publishes the repeat once
+  // (`history-adapter.ts:734-751`).
+  //
+  // User-visible failure: the published shadow holds two entries under one id, so
+  // an incremental publication and a reconversion of the same legacy timeline
+  // produce different documents — the two are no longer interchangeable, which is
+  // the property every other precondition on this decision exists to protect — and
+  // nothing reports it. Durable replay still replays correctly (it addresses
+  // history by index, `durable-replay.ts:64-65`), so the document is not visibly
+  // broken, which is why the pin asserts the disagreement rather than a crash.
+  //
+  // Latent in the store today, because the collision needs a repeated id and
+  // every production plan mints a fresh one: `useLayer.ts:478` and
+  // `useLayer.ts:648` pass no `id`, so `createHistoryItem` mints a `uuidv4()`
+  // (`history-utils.ts:81`), and the two `planHistoryAppend` calls in
+  // `useSelectionHistory.ts:133` and `useSelectionHistory.ts:289` pass the
+  // `uuidv4()` of `useSelectionHistory.ts:124` and `useSelectionHistory.ts:277`.
+  // The base's own ids are those same minted ids, carried in by the rebuild
+  // (`StoreContext.tsx:666-673`, which converts the legacy timeline), so a
+  // collision requires a uuid that repeats. Nothing in the boundary checks it;
+  // only that accident does.
+  //
+  // TRIPWIRE. The fix `HANDOFF.md` §17 prescribes — return `durableEntry: null`
+  // when `validateTimeline` produces an `error` diagnostic
+  // (`history-append.ts:309-315`) — does NOT change anything the two blocks above
+  // assert: `decideDurableAppend` never calls `validateTimeline`, and the plan
+  // there is against a legacy prior that holds no entry under this id, so it
+  // takes no diagnostic branch at all. On its own this pin would stay green
+  // through that fix. The LAST block below is therefore the part that fires on
+  // it, and it is what makes this a tripwire rather than a description: it pins
+  // the branch the fix edits, an `error` diagnostic published beside a non-null
+  // `durableEntry`. It is close to a deliberate near-duplicate of the
+  // `reports a duplicate entry id without changing the entry` case in the
+  // append-point-validation block above, and it is duplicated ON PURPOSE: that one
+  // is a statement about the plan, this one is the alarm the fix has to trip.
+  // Delete or re-point the last block, and the `durableEntry` assertion in that
+  // other test, in the SAME change that applies the fix — never relax either.
+  it('publishes an entry id the durable document already holds, and the shadow keeps both', () => {
+    const entry = cropEntryWith('crop-1', appendedFrame);
+    const base = durableBase(
+      [frameEntryAt('baseline-0', baselineFrame, baselineFrame), frameEntryAt('crop-1', baselineFrame, croppedFrame)],
+      1
+    );
+
+    const decision = decideCrop(base, entry, deriveSetDocumentFrameEntry(entry, baselineFrame));
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history.filter((candidate) => candidate.id === 'crop-1')).toHaveLength(2);
+
+    // The conversion of the same legacy timeline publishes the id once and says so.
+    const conversion = convertedBy([entry, entry]);
+    expect(conversion.document.history.filter((candidate) => candidate.id === 'crop-1')).toHaveLength(1);
+    expect(conversion.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ historyId: 'crop-1', severity: 'warning' })])
+    );
+
+    // And the plan cannot see the collision either: its check reads the legacy
+    // timeline, which holds no entry under this id.
+    const plan = planHistoryAppend({
+      item: {
+        layerId: 'document',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        args: { previousFrame: baselineFrame, nextFrame: appendedFrame },
+      },
+      timeline: gapPrior,
+      currentFrame: baselineFrame,
+      id: 'crop-1',
+    });
+    expect(plan.diagnostics).toEqual([]);
+    expect(plan.durableEntry).not.toBeNull();
+
+    // The branch the prescribed fix edits, pinned here so the pin goes RED when
+    // that fix lands. It is the same blindness one route up: `validateTimeline`
+    // can only see the LEGACY timeline, and this is the one place that side can
+    // name the duplicate at all. Today the two statements coexist — an `error`
+    // diagnostic AND a durable entry the store would publish — and the fix makes
+    // them exclusive, so this assertion fails the moment `durableEntry` goes null.
+    const collidingPlan = planHistoryAppend({
+      item: {
+        layerId: 'document',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        args: { previousFrame: baselineFrame, nextFrame: appendedFrame },
+      },
+      timeline: { entries: [...gapPriorEntries, entry], cursor: gapPriorEntries.length, branchRevision: 0 },
+      currentFrame: baselineFrame,
+      id: 'crop-1',
+    });
+    expect(collidingPlan.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ historyId: 'crop-1', severity: 'error' })])
+    );
+    expect(collidingPlan.durableEntry).not.toBeNull();
   });
 });

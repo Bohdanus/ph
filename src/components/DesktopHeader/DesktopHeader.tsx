@@ -10,8 +10,37 @@ import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
+import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { FigureType } from '../../tools/shape.ts';
+
+/**
+ * A second, non-exhaustive surface over the same tool set. `Array` rather than an
+ * exhaustive type, so nothing forces it to stay in step with `toolbarMap` — which is
+ * exactly why it is written out here: a tool missing from the Tools menu is a visible
+ * inconsistency the user has to notice and work around.
+ *
+ * The eleven entries added with the tool expansion carry the same labels
+ * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
+ * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
+ *
+ * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly three
+ * tools.** Add Anchor Point, Delete Anchor Point and Convert Point are absent because they
+ * are absent from Photoshop's own Tools panel too — they modify a path rather than paint, and
+ * Photoshop reaches them from the Pen's context menu and the path-modification commands, not
+ * from the Tools panel or the Tools menu. They are in `availableTools` because they are
+ * selectable tools; they are not in this menu because they are not menu items.
+ *
+ * Every OTHER `availableTools` name must produce a row. That was not true until the test
+ * below was derived from the registry: the assertion was a hand-written list of 24 names that
+ * never mentioned the Dodge, the Burn, the Smudge, the Sharpen or the Magic Eraser, so the
+ * Sponge shipped with no Tools-menu entry and the test stayed green.
+ */
+/**
+ * The registered tools this menu deliberately does not list. See the note on
+ * `TOOL_MENU_ITEMS` above: these three are not Tools-panel entries in Photoshop either.
+ */
+export const MENUS_EXCLUDE: readonly ToolName[] = ['add-anchor-point', 'delete-anchor-point', 'convert-point'];
 
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
@@ -27,10 +56,25 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'freehand-lasso', label: 'Freehand Lasso' },
   { toolName: 'feather-magnetic-lasso', label: 'Feather Magnetic Lasso' },
   { toolName: 'magic-wand', label: 'Magic Wand' },
+  { toolName: 'quick-selection', label: 'Quick Selection Tool' },
   { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
+  { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
+  { toolName: 'single-row-marquee', label: 'Single Row Marquee Tool' },
+  { toolName: 'single-column-marquee', label: 'Single Column Marquee Tool' },
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
+  { toolName: 'eraser', label: 'Eraser Tool' },
+  { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
+  { toolName: 'sharpen', label: 'Sharpen Tool' },
+  { toolName: 'smudge', label: 'Smudge Tool' },
+  { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
+  { toolName: 'magic-eraser', label: 'Magic Eraser Tool' },
+  { toolName: 'gradient', label: 'Gradient Tool' },
+  { toolName: 'dodge', label: 'Dodge Tool' },
+  { toolName: 'burn', label: 'Burn Tool' },
+  { toolName: 'sponge', label: 'Sponge Tool' },
+  { toolName: 'eyedropper', label: 'Eyedropper Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
   { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
@@ -76,13 +120,14 @@ const DesktopHeader = () => {
   const fileMenuRef = useRef<HTMLLIElement>(null);
   const toolsMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
+  const windowMenuRef = useRef<HTMLLIElement>(null);
 
   const handleToolSelection = (toolName: ToolName) => {
     const figure = FIGURE_TOOLS[toolName];
     // Select first, then patch — deliberately *not* the order
     // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
     // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the
-    // live `currentArgsRef` (`useCurrentTool.tsx:70`). Patching first would leave the
+    // live `currentArgsRef` (`useCurrentTool.tsx:61`). Patching first would leave the
     // text branch at `useLayer.ts:329` reading shape args — no `.text`, no `.rect` —
     // so it early-returns and an unapplied text layer is dropped with nothing to undo.
     // Selecting first lets that commit read the text args it is meant to read.
@@ -107,6 +152,11 @@ const DesktopHeader = () => {
 
   const handleText = () => handleToolSelection('text');
 
+  const handleResetWorkspace = () => {
+    resetWorkspace();
+    setOpenMenu(null);
+  };
+
   const handleClickOutside = useCallback(
     (event: MouseEvent) => {
       if (openMenu === 'file' && fileMenuRef.current && !fileMenuRef.current.contains(event.target as Node)) {
@@ -116,6 +166,9 @@ const DesktopHeader = () => {
         setOpenMenu(null);
       }
       if (openMenu === 'edit' && editMenuRef.current && !editMenuRef.current.contains(event.target as Node)) {
+        setOpenMenu(null);
+      }
+      if (openMenu === 'window' && windowMenuRef.current && !windowMenuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
       }
     },
@@ -128,6 +181,8 @@ const DesktopHeader = () => {
     toggle: toggleRightPanel,
   } = useRightPanelVisibility();
 
+  const { resetWorkspace } = usePanelLayout();
+
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
@@ -137,6 +192,12 @@ const DesktopHeader = () => {
 
   return (
     <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950">
+      {/* The document's top-level heading, so a screen-reader user has something to
+          navigate by and axe's `page-has-heading-one` has something to find. It sits
+          INSIDE the header landmark: a bare grid child would fail axe's `region` rule
+          instead, which is the rule that caught it here. `sr-only` keeps it out of the
+          visual design. `MobileHeader` carries the same heading for the mobile shell. */}
+      <h1 className="sr-only">Photo App</h1>
       <ul className="mr-auto flex list-none items-center p-0">
         <li className="relative" ref={fileMenuRef}>
           <button
@@ -155,6 +216,14 @@ const DesktopHeader = () => {
                   type="button"
                   onClick={async () => {
                     try {
+                      // Dismissing the menu is what activating an item means, so it happens
+                      // FIRST and unconditionally. It used to sit after the action, which
+                      // made the decline path — the one branch that returns early — leave the
+                      // dropdown hanging over the top-left of the canvas, and left it hanging
+                      // on the `catch` path too. `handleClickOutside` cannot rescue either:
+                      // the mousedown that opened this state already fired inside
+                      // `fileMenuRef`, so `!contains(target)` is false and it does not close.
+                      setOpenMenu(null);
                       if (
                         (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
                         !confirm('Discard unsaved changes and start a new image?')
@@ -162,12 +231,8 @@ const DesktopHeader = () => {
                         return;
                       const data = await openNewImageDialog();
                       if (data) setBlankImage(data);
-                      setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to create document', error);
-                      window.alert(
-                        `Failed to create document: ${error instanceof Error ? error.message : String(error)}`
-                      );
                     }
                   }}
                   data-testid="header-file-new-button"
@@ -181,6 +246,9 @@ const DesktopHeader = () => {
                   type="button"
                   onClick={async () => {
                     try {
+                      // Same ordering rule as New above, and for the same reason: the decline
+                      // path returns before the close used to run.
+                      setOpenMenu(null);
                       if (
                         (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
                         !confirm('Discard unsaved changes and open another file?')
@@ -188,12 +256,8 @@ const DesktopHeader = () => {
                         return;
                       const data = await openLoadImageDialog();
                       if (data) await setImageFromUpload(data);
-                      setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to open document', error);
-                      window.alert(
-                        `Failed to open document: ${error instanceof Error ? error.message : String(error)}`
-                      );
                     }
                   }}
                   data-testid="header-file-open-button"
@@ -223,9 +287,6 @@ const DesktopHeader = () => {
                       setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to prepare document export', error);
-                      window.alert(
-                        `Failed to prepare export: ${error instanceof Error ? error.message : String(error)}`
-                      );
                     }
                   }}
                   data-testid="header-file-save-button"
@@ -331,6 +392,37 @@ const DesktopHeader = () => {
                   data-testid="edit-menu-text-button"
                 >
                   Text
+                </button>
+              </li>
+            </ul>
+          )}
+        </li>
+        {/* `Window`, because that is where Photoshop keeps the panel commands: "Select Window
+            from the menu bar. Select the panel name to remove it from the workspace" and
+            "Window > Workspace > Reset > Essentials (Default)". Only the reset is here, and
+            only because a draggable layout that persists needs the documented way back —
+            "Select Window > Workspace > Reset to restore the last arrangement you had before
+            a panel went missing."
+            (https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/move-panels.html) */}
+        <li className="relative" ref={windowMenuRef}>
+          <button
+            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'window' ? null : 'window')}
+            data-testid="header-window-menu-button"
+          >
+            Window
+          </button>
+          {openMenu === 'window' && (
+            <ul className="absolute left-0 top-full z-10 min-w-[180px] list-none rounded border border-gray-600 bg-[#2b2f33] p-1 shadow-lg">
+              <li>
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleResetWorkspace}
+                  data-testid="window-menu-reset-workspace-button"
+                >
+                  Reset Workspace
                 </button>
               </li>
             </ul>

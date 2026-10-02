@@ -58,15 +58,37 @@ export type ShapeGeometry = {
   end: Point;
 };
 
+const LINE_ANGLE_STEP = Math.PI / 4;
+
+const snapLineGeometry = (anchor: Point, pointer: Point, altKey: boolean, shiftKey: boolean): ShapeGeometry => {
+  if (!shiftKey) {
+    return {
+      start: altKey ? { x: anchor.x * 2 - pointer.x, y: anchor.y * 2 - pointer.y } : { x: anchor.x, y: anchor.y },
+      end: { x: pointer.x, y: pointer.y },
+    };
+  }
+
+  const end = altKey ? { x: anchor.x * 2 - pointer.x, y: anchor.y * 2 - pointer.y } : pointer;
+  const dx = end.x - anchor.x;
+  const dy = end.y - anchor.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return { start: { x: anchor.x, y: anchor.y }, end };
+
+  const angle = Math.round(Math.atan2(dy, dx) / LINE_ANGLE_STEP) * LINE_ANGLE_STEP;
+  return {
+    start: { x: anchor.x, y: anchor.y },
+    end: { x: anchor.x + Math.cos(angle) * length, y: anchor.y + Math.sin(angle) * length },
+  };
+};
+
 /**
  * Single source of truth for shape drag geometry.
  *
- * Shift mirrors Photoshop's aspect-ratio constraint: Rectangle and Ellipse
- * snap to the larger absolute drag dimension while keeping the drag quadrant.
- * Line keeps its free angle, because constraining it would forbid shallow
- * angles. Alt/Option draws from the center, so `anchor` becomes the midpoint
- * of the resulting box; combined with Shift this yields a centered square or
- * circle with equal half-extents.
+ * Shift mirrors Photoshop's constraints: Rectangle and Ellipse snap to the
+ * larger absolute drag dimension while keeping the drag quadrant, and Line
+ * quantizes its angle to 45-degree multiples. Alt/Option draws from the
+ * center, so `anchor` becomes the midpoint of the resulting box; combined with
+ * Shift this yields a centered square or circle with equal half-extents.
  */
 export const normalizeShapeGeometry = (
   anchor: Point,
@@ -76,7 +98,9 @@ export const normalizeShapeGeometry = (
 ): ShapeGeometry => {
   const { shiftKey, altKey } = constraints;
 
-  if (shiftKey && figure !== 'line') {
+  if (figure === 'line') return snapLineGeometry(anchor, pointer, altKey, shiftKey);
+
+  if (shiftKey) {
     // Measure half-extents from the anchor, which is the shape center when
     // Alt/Option is held. Snapping the larger axis keeps the drag quadrant and
     // keeps the anchor exactly centered for Alt+Shift.
@@ -169,7 +193,12 @@ const roundedRectPath = (ctx: Ctx2D, x: number, y: number, width: number, height
 
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { figure, start, end } = args;
-  const hasFill = args.toolMode !== 'path' && args.hasFill;
+  // `backgroundColor` is half the condition, not a detail: `setShapeCtx` only assigns `fillStyle`
+  // when it is set, so filling on `hasFill` alone would paint with whatever the context already
+  // carried — the canvas default on a fresh surface, and the previous tool's colour on the shared
+  // tool overlay, which paints many times per one `setShapeCtx`. Path mode suppresses the fill
+  // outright, as a path carries no rasterized fill.
+  const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor;
 
   if (!start || !end) return;
 

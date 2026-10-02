@@ -438,11 +438,7 @@ describe('StoreContext frame update ordering', () => {
     expect(after.durableDocument?.documentId).toBe('doc-new');
   });
 
-  it.fails('retains the previous frame when replacing a document without specifying totalSize or documentFrame', () => {
-    // BUG: REPLACE_DOCUMENT falls back to currentState.documentFrame when
-    // updates does not include documentFrame or totalSize. A document
-    // replacement should reset the frame to the new document's baseline
-    // rather than retaining the previous document's crop.
+  it('uses the replacement document baseline when updates omit totalSize and documentFrame', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     const croppedFrame = { x: 10, y: 20, width: 200, height: 150 };
@@ -477,7 +473,7 @@ describe('StoreContext frame update ordering', () => {
     });
 
     const after = getProbe().store;
-    // The frame should be reset to the new baseline (default), not retained.
+    // The frame resets to the new baseline (default), not the previous crop.
     expect(after.documentFrame).toEqual(defaultFrame);
     expect(after.documentFrame).not.toEqual({ x: 0, y: 0, width: 200, height: 150 });
   });
@@ -603,13 +599,13 @@ describe('StoreContext removed durable replay publication surface', () => {
 });
 
 describe('StoreContext DurableDocumentStatus contract', () => {
-  const statuses = ['current', 'stale', 'unavailable'] satisfies DurableDocumentStatus[];
-
-  it('covers every DurableConversionStatus member plus stale', () => {
-    expect(statuses).toEqual(['current', 'stale', 'unavailable']);
-    const stale: DurableDocumentStatus = 'stale';
-    expect(stale).toBe('stale');
-  });
+  // A `Record` keyed by the union, not `satisfies DurableDocumentStatus[]`. The array form is a
+  // ONE-WAY check: it rejects a member that is not in the union, but adding a fourth member to the
+  // union leaves this suite silently non-exhaustive and green. Keying by the union makes that a
+  // COMPILE error, which is the property the deleted exhaustiveness test only promised — and unlike
+  // a `toEqual` on this object, it cannot be satisfied by editing the expectation to match.
+  const ALL_STATUSES: Record<DurableDocumentStatus, true> = { current: true, stale: true, unavailable: true };
+  const statuses = Object.keys(ALL_STATUSES) as DurableDocumentStatus[];
 
   it.each(statuses)('stores structured diagnostics for the %s status', (status) => {
     const { getProbe, dispatch } = renderWithProbe();
@@ -634,6 +630,28 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     expect(diagnostic?.severity).toBe('error');
     expect(diagnostic?.code).toBe('conversion-failed');
     expect(diagnostic?.message).toBe(`boom-${status}`);
+  });
+
+  it('clears the durable document whenever SET_DURABLE_STATUS is non-current', () => {
+    const { getProbe, dispatch } = renderWithProbe();
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-status', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    expect(getProbe().store.durableDocument).not.toBeNull();
+
+    act(() => {
+      dispatch()({
+        type: 'SET_DURABLE_STATUS',
+        payload: { status: 'stale', diagnostics: [] },
+      });
+    });
+
+    expect(getProbe().store.durableDocument).toBeNull();
+    expect(getProbe().store.durableStatus).toBe('stale');
   });
 
   it('marks a converted durable sidecar stale instead of unavailable for runtime-only edits', () => {

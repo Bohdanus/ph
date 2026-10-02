@@ -6,13 +6,13 @@ import type { ToolName, ToolArgs, ToolArgsFor, ToolPatch } from './tool-types.ts
 import { saveLastSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
 import { setRefValue } from '../util/ref.ts';
+import { SetToolArgsContext } from './set-tool-args.ts';
 
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
   setToolArgs: (args: ToolArgs) => void;
   getToolArgs: <TName extends ToolName>(toolName: TName) => ToolArgsFor<TName> | null;
   patchToolArgs: <TName extends ToolName>(toolName: TName, patch: ToolPatch<TName>) => void;
-  resetToLastSavedArgs: (toolName?: ToolName) => void;
 }
 
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
@@ -48,14 +48,6 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
 
   const savedArgsForTool = useMemo(() => cloneSavedToolArgs(toolName), [toolName]);
   const toolArgs = toolState.toolName === toolName ? toolState.args : savedArgsForTool;
-
-  const resetToLastSavedArgs = useCallback(
-    (nextToolName: ToolName = toolName) => {
-      const args = cloneSavedToolArgs(nextToolName);
-      setToolState({ toolName: nextToolName, args });
-    },
-    [toolName]
-  );
 
   useEffect(() => {
     setRefValue(currentArgsRef, toolArgs);
@@ -94,13 +86,15 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
       setToolArgs: _setToolArgs,
       getToolArgs,
       patchToolArgs,
-
-      resetToLastSavedArgs,
     }),
-    [_setToolArgs, getToolArgs, patchToolArgs, resetToLastSavedArgs, toolArgs]
+    [_setToolArgs, getToolArgs, patchToolArgs, toolArgs]
   );
 
-  return <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>;
+  return (
+    <SetToolArgsContext.Provider value={_setToolArgs}>
+      <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>
+    </SetToolArgsContext.Provider>
+  );
 };
 
 export const useCurrentTool = (): CurrentToolContextState => {

@@ -13,6 +13,16 @@ export interface MobileToolGroup {
   /** Tile caption: the primary tool's label with the redundant ` Tool` suffix removed. */
   label: string;
   primaryTool: ToolName;
+  /**
+   * The primary as the registry stores it, `figure` included.
+   *
+   * Five `toolbarMap` entries share the `shape` name and differ only by `figure`, and the
+   * shape group's `group[0]` is `{ name: 'shape', figure: 'rectangle' }`. A tile built from
+   * `primaryTool` alone is captioned "Rectangle" and then selects plain `shape`, leaving
+   * `figure` at whatever the outgoing tool held — so the tile does not select the figure it
+   * is labelled with. `SidebarLeft.selectTool` avoids that by taking the whole `ToolbarTool`.
+   */
+  primary: ToolbarTool;
   /** Every `ToolName` in the group — what makes the tile read as pressed. */
   matchingTools: ToolName[];
   tools: ToolbarTool[];
@@ -44,12 +54,35 @@ export const mobileToolGroups: MobileToolGroup[] = toolbarMap.flatMap((section, 
       id: `mobile-tool-${sectionIndex}-${groupIndex}`,
       label: stripToolSuffix(primary.label),
       primaryTool: primary.name,
+      primary,
       matchingTools: [...group].map((tool) => tool.name),
       tools: [...group],
       sectionIndex,
     };
   })
 );
+
+/**
+ * Select a `ToolbarTool`, patching `figure` when the entry carries one.
+ *
+ * One definition, shared by the bottom-bar tile and the tool sheet's picker, because the
+ * two disagreed for a revision: the sheet patched the figure and the bar did not, so the
+ * "Rectangle" tile selected plain `shape`.
+ *
+ * The order is the one `DesktopHeader.handleToolSelection` uses, and deliberately not the
+ * one `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
+ * OUTGOING tool (`useApp.ts`), which reads the outgoing args, so patching the incoming
+ * tool's args first would clobber the values the commit needs.
+ */
+export const makeSelectTool =
+  (
+    goToTool: (name: ToolName) => void,
+    patchToolArgs: (name: ToolName, args: { figure: string }) => void
+  ): ((tool: ToolbarTool) => void) =>
+  (tool) => {
+    goToTool(tool.name);
+    if (tool.figure) patchToolArgs('shape', { figure: tool.figure });
+  };
 
 /** The group the current tool belongs to, or `undefined` for an unregistered tool name. */
 export const findMobileToolGroup = (toolName: ToolName | undefined | null) =>

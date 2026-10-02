@@ -27,15 +27,20 @@ const MagicWand: React.FC<{}> = () => {
     patchToolArgs('magic-wand', { smoothing: Number(event.target.value) });
   };
 
+  const handleContiguousChange = (event: ChangeEvent<HTMLInputElement>) => {
+    patchToolArgs('magic-wand', { contiguous: event.target.checked });
+  };
+
   const handleCopySelection = async () => {
     if (!activeSelection || activeSelection.geometry === 'rectangle') return;
 
     try {
       setIsCopying(true);
-      copyActiveSelection(activeSelection);
+      if (!copyActiveSelection(activeSelection)) {
+        console.error('Failed to copy magic wand selection');
+      }
     } catch (error) {
       console.error('Error copying magic wand selection:', error);
-      alert('Failed to copy magic wand selection');
     } finally {
       setIsCopying(false);
     }
@@ -66,6 +71,11 @@ const MagicWand: React.FC<{}> = () => {
           value={args.tolerance}
           onChange={handleToleranceChange}
         />
+      </label>
+
+      <label className="flex items-center gap-1 whitespace-nowrap text-[10px] font-medium text-gray-700 dark:text-gray-300">
+        <input checked={args.contiguous} type="checkbox" onChange={handleContiguousChange} />
+        Contiguous
       </label>
 
       <label

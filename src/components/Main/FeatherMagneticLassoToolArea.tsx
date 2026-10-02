@@ -5,9 +5,11 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
-import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionOutline } from '../../util/selection.ts';
+import { magneticLassoAnchorSpan } from '../../tools/featherMagneticLasso.ts';
+import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionAnchors } from '../../util/selection.ts';
 import {
   createEdgeMapFromCanvas,
   createMagneticSegment,
@@ -49,6 +51,7 @@ function drawFeatherMagneticOverlay({
   preview,
   args,
   documentFrame,
+  scale,
 }: {
   ctx: CanvasRenderingContext2D;
   selections: Selection[];
@@ -57,6 +60,7 @@ function drawFeatherMagneticOverlay({
   preview: MagneticSegmentResult | null;
   args: FeatherMagneticLassoToolArgs;
   documentFrame: DocumentFrame;
+  scale: number;
 }) {
   const drawPath = (path: Point[]) => {
     if (path.length < 2) return;
@@ -76,8 +80,11 @@ function drawFeatherMagneticOverlay({
   }
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  // `drawSelectionAnchors` resets the alpha itself, but the draft path below is stroked by this
+  // function on the same shared context and writes `strokeStyle`/`lineWidth` with no alpha of its
+  // own, so the reset has to happen before both rather than only inside the anchors.
   resetOverlayAlpha(ctx);
-  selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
+  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, scale));
   if (draftPoints.length === 0) return;
 
   ctx.save();
@@ -172,6 +179,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     ref: containerRef,
     imageSize: totalSize,
   });
+  const containScale = useContainScale(containerRef, totalSize);
 
   function clampToImage(point: Point): Point {
     return {
@@ -207,8 +215,9 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
       preview: previewRef.current,
       selections,
       documentFrame,
+      scale: containScale.current,
     });
-  }, [args, documentFrame, overlayCtxRef, selections]);
+  }, [args, documentFrame, overlayCtxRef, selections, containScale]);
 
   function rebuildPointsFromSegments() {
     const anchors = anchorsRef.current;
@@ -464,7 +473,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   function maybeCommitAutoAnchor(segment: MagneticSegmentResult) {
     const now = Date.now();
     if (now - lastAutoAnchorTimeRef.current < MIN_AUTO_ANCHOR_TIME_MS) return false;
-    if (pathLength(segment.path) < args.frequency) return false;
+    if (pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)) return false;
 
     commitSegment(segment);
     lastAutoAnchorTimeRef.current = now;

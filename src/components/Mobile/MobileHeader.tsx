@@ -6,6 +6,7 @@ import { useHistory } from '../../contexts/useHistory.ts';
 
 import { useFile } from '../../contexts/useFile.tsx';
 import { useApp } from '../../hooks/useApp.ts';
+import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 
 export interface MobileHeaderProps {
@@ -37,8 +38,28 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
   // desktop rule it mirrored (`useHistory.undo`) is gone for the same reason. The
   // dead arm is not carried forward, and a real "revert the current tool's args"
   // affordance, if one is ever wanted, needs a real writer first.
+  //
+  // It is also gated on the document gesture, which the keyboard already gates
+  // (`useKeyboardEvents.tsx:134`) and this button did not. A gesture that commits
+  // on release holds the document, and `undo` replays `selections` from the SAME
+  // `history` array, so `history.length` never moves and the pending commit's
+  // `entries.slice(0, cursor + 1)` then truncates the redo tail with no other
+  // symptom. On a touch screen a second finger tapping Undo mid-drag is the
+  // two-line repro, so this shell is the more exposed of the two.
+  //
+  // The refusal is at the input layer, not in the writer: no dispatch, so
+  // nothing appends, so nothing truncates. `disabled` is not a substitute — it
+  // is read at render time and the gesture slot raises no re-render, so it
+  // cannot see a claim made after the last render.
   const handleUndo = () => {
+    if (isDocumentGestureOpen()) return;
     undo();
+  };
+
+  // The same gate as `handleUndo`, for the same reason.
+  const handleRedo = () => {
+    if (isDocumentGestureOpen()) return;
+    redo();
   };
 
   const handleExport = async () => {
@@ -57,7 +78,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
       });
       if (data) handleImageSave(data);
     } catch (error) {
-      window.alert(`Failed to save image: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to save image:', error);
     }
   };
 
@@ -66,6 +87,10 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
       className="safe-area-top [grid-area:header] md:hidden flex h-12 items-center justify-between gap-1 px-2 bg-[#212529] text-white border-b border-gray-800 select-none z-30"
       data-testid="mobile-header"
     >
+      {/* The mobile shell's document heading, mirroring `DesktopHeader`. Only one of the
+          two headers is in the accessibility tree at any width — each hides the other —
+          so this is never a second `<h1>` on screen. */}
+      <h1 className="sr-only">Photo App</h1>
       {/* Left: Menu toggle & File Name */}
       <div className="flex min-w-0 items-center gap-1">
         <button
@@ -102,7 +127,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
 
         <button
           type="button"
-          onClick={redo}
+          onClick={handleRedo}
           disabled={!canRedo()}
           aria-label="Redo"
           data-testid="mobile-redo-button"

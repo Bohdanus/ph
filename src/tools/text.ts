@@ -17,7 +17,13 @@ export type TextToolArgs = {
   toolName: 'text';
 };
 
-export type TextToolSettings = Omit<TextToolArgs, 'color' | 'text' | 'rect'>;
+/**
+ * `color` is a setting, not a derivation. It used to be omitted because the bar mirrored the store's
+ * foreground into the args on every render, so the value was never the tool's to keep; it is the
+ * tool's own swatch now, and `saveLastSettings` already persists it (`src/util/settings.ts` omits
+ * only `text` and `rect`), so this type has to say the same thing.
+ */
+export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect'>;
 
 export function renderText(ctx: Ctx2D, args: TextToolArgs) {
   const { text, fontSize, lineHeight, fontFamily, color, rect, align, bold, italic } = args;

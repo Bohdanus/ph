@@ -203,20 +203,78 @@ describe('normalizeShapeGeometry', () => {
   });
 
   describe('line', () => {
-    it('ignores the square constraint', () => {
+    it('returns the raw drag without shift', () => {
       const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
-        shiftKey: true,
+        shiftKey: false,
         altKey: false,
       });
       expect(result).toEqual({ start: { x: 10, y: 20 }, end: { x: 90, y: 45 } });
     });
 
-    it('keeps its free angle with shift and alt together', () => {
+    it('mirrors through the anchor without shift when alt is held', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
+        shiftKey: false,
+        altKey: true,
+      });
+      expect(result).toEqual({ start: { x: -70, y: -5 }, end: { x: 90, y: 45 } });
+    });
+
+    it('snaps the angle to a 45 degree multiple while preserving the length', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      // length = hypot(80, 25); angle = atan2(25, 80) rounds to 0
+      const length = Math.hypot(80, 25);
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.x).toBeCloseTo(10 + length, 5);
+      expect(result.end.y).toBeCloseTo(20, 5);
+      expect(result.end).not.toEqual({ x: 90, y: 45 });
+    });
+
+    it('snaps a steep drag up to 45 degrees', () => {
+      const result = normalizeShapeGeometry({ x: 0, y: 0 }, { x: 30, y: 40 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      const length = Math.hypot(30, 40);
+      const snapped = length / Math.SQRT2;
+      expect(result.end.x).toBeCloseTo(snapped, 5);
+      expect(result.end.y).toBeCloseTo(snapped, 5);
+    });
+
+    it('snaps a vertical drag onto the vertical axis', () => {
+      const result = normalizeShapeGeometry({ x: 0, y: 0 }, { x: 3, y: 40 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      const length = Math.hypot(3, 40);
+      expect(result.end.x).toBeCloseTo(0, 5);
+      expect(result.end.y).toBeCloseTo(length, 5);
+    });
+
+    it('mirrors through the anchor before snapping when shift and alt are held', () => {
       const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'line', {
         shiftKey: true,
         altKey: true,
       });
-      expect(result).toEqual({ start: { x: -70, y: -5 }, end: { x: 90, y: 45 } });
+
+      // The mirror yields dx = -80, dy = -25, which quantizes to -pi.
+      const length = Math.hypot(80, 25);
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.x).toBeCloseTo(10 - length, 5);
+      expect(result.end.y).toBeCloseTo(20, 5);
+    });
+
+    it('keeps a zero-length snap degenerate instead of calling atan2(0, 0)', () => {
+      const result = normalizeShapeGeometry({ x: 12, y: 34 }, { x: 12, y: 34 }, 'line', {
+        shiftKey: true,
+        altKey: false,
+      });
+      expect(result).toEqual({ start: { x: 12, y: 34 }, end: { x: 12, y: 34 } });
     });
   });
 
@@ -566,6 +624,83 @@ describe('drawShape', () => {
     drawShape(unfilled, { ...baseArgs, figure: 'rectangle', start: { x: 0, y: 0 }, end: { x: 10, y: 10 } });
     expect(unfilled.fillRect).not.toHaveBeenCalled();
   });
+
+  /**
+   * `setShapeCtx` writes `fillStyle` only when `backgroundColor` is set, so it is a second half of
+   * the fill condition rather than a detail of it. Without that half a `hasFill` figure with no
+   * background colour reaches `ctx.fill()` with whatever `fillStyle` the context already carried:
+   * the canvas default on a fresh surface, and the previous tool's colour on the shared tool
+   * overlay, which `drawShape` paints many times per one `setShapeCtx` (see the bracket note on
+   * `shape`). The fill has to be suppressed, not merely left unset.
+   */
+  describe('the background colour is half of the fill condition', () => {
+    const firableFigures = ['rectangle', 'oval', 'triangle', 'polygon'] as const;
+
+    it.each(firableFigures)('does not fill a %s marked filled that has no background colour', (figure) => {
+      // `backgroundColor` is typed `string | null`, so `null` is the colourless state the type
+      // admits; an absent property is the same falsy branch, which is why the guard coerces.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure,
+        hasFill: true,
+        backgroundColor: null,
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 10 },
+      });
+
+      expect(ctx.fill, figure).not.toHaveBeenCalled();
+      expect(ctx.fillRect, figure).not.toHaveBeenCalled();
+    });
+
+    it.each(firableFigures)('still fills a %s marked filled that has a background colour', (figure) => {
+      // A radius-0 rectangle fills through `fillRect` and the rest through `fill`, so the method
+      // is named per figure rather than asserted as a set -- a rectangle passing on `fill` alone
+      // would mean the assertion was vacuous for it.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure,
+        hasFill: true,
+        backgroundColor: '#ff0000',
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 10 },
+      });
+
+      const fillMethod = figure === 'rectangle' ? 'fillRect' : 'fill';
+      expect(ctx[fillMethod], figure).toHaveBeenCalled();
+    });
+
+    it('suppresses only the fill, leaving the outline drawn', () => {
+      // Each figure strokes through a different call, and a radius-0 rectangle is not one of them:
+      // it takes the axis-aligned fast path at `shape.ts` and strokes with `strokeRect`, so an
+      // assertion on `ctx.stroke` here would pass for the wrong reason on three figures and fail
+      // on the fourth. A guard that removed the whole figure would be caught by this, not by the
+      // two above.
+      const cases = [
+        { figure: 'rectangle', cornerRadius: 0, strokeMethod: 'strokeRect' },
+        { figure: 'rectangle', cornerRadius: 4, strokeMethod: 'stroke' },
+        { figure: 'oval', cornerRadius: 0, strokeMethod: 'stroke' },
+        { figure: 'triangle', cornerRadius: 0, strokeMethod: 'stroke' },
+        { figure: 'polygon', cornerRadius: 0, strokeMethod: 'stroke' },
+      ] as const;
+
+      for (const { figure, cornerRadius, strokeMethod } of cases) {
+        const ctx = createCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure,
+          cornerRadius,
+          hasFill: true,
+          backgroundColor: null,
+          start: { x: 0, y: 0 },
+          end: { x: 10, y: 10 },
+        });
+
+        expect(ctx[strokeMethod], `${figure} r=${cornerRadius}`).toHaveBeenCalled();
+      }
+    });
+  });
 });
 
 describe('setShapeCtx', () => {
@@ -595,6 +730,18 @@ describe('setShapeCtx', () => {
     setShapeCtx(ctx, { ...baseArgs, lineDash: null });
     expect(ctx.setLineDash).toHaveBeenCalledWith([]);
     expect(ctx.lineCap).toBe('butt');
+  });
+
+  it('does not write fillStyle for a filled figure that has no background colour', () => {
+    // The writer side of the same invariant `drawShape` reads: without a colour there is no fill
+    // colour to write, so the context keeps whatever it carried. Pinned here because the symptom
+    // of breaking it is invisible from `drawShape` -- a fix that made `setShapeCtx` always assign
+    // would turn the stale-fill into a wrong-fill and leave every fill assertion here green.
+    const ctx = createCtx();
+    ctx.fillStyle = '#00ff00';
+    setShapeCtx(ctx, { ...baseArgs, hasFill: true, backgroundColor: null });
+
+    expect(ctx.fillStyle).toBe('#00ff00');
   });
 });
 

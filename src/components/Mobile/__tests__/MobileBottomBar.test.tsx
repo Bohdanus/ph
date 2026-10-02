@@ -8,6 +8,7 @@ import { toolbarMap } from '../../../../toolbar-mapping.ts';
 
 const useStoreMock = vi.hoisted(() => vi.fn());
 const goToToolMock = vi.hoisted(() => vi.fn());
+const patchToolArgsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => useStoreMock(),
@@ -15,6 +16,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../hooks/useApp.ts', () => ({
   useApp: () => ({ goToTool: goToToolMock }),
+}));
+
+// The bar selects through the shared figure-aware helper, so it needs
+// `patchToolArgs` as well as `goToTool`.
+vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => ({ toolArgs: { toolName: 'draw' }, patchToolArgs: patchToolArgsMock }),
 }));
 
 const setTool = (toolName: string, hasImage = true) => useStoreMock.mockReturnValue([{ toolName, hasImage }]);
@@ -150,5 +157,48 @@ describe('MobileBottomBar', () => {
     }
     expect(screen.getByRole('button', { name: 'Tool options' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Layers' })).toBeDisabled();
+  });
+});
+
+describe('MobileBottomBar figure selection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setTool('draw');
+  });
+
+  it('selects the figure the tile is captioned with', async () => {
+    const user = userEvent.setup();
+    render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
+
+    // Five `toolbarMap` entries share the `shape` name and differ only by `figure`; the
+    // shape group's primary is `{ name: 'shape', figure: 'rectangle' }`. The tile was built
+    // from `primaryTool` alone, so it read "Rectangle" and selected plain `shape`, leaving
+    // the figure at whatever the outgoing tool held. `SidebarLeft.selectTool` avoids this by
+    // taking the whole `ToolbarTool`.
+    await user.click(screen.getByRole('button', { name: 'Rectangle Tool' }));
+
+    expect(goToToolMock).toHaveBeenCalledWith('shape');
+    expect(patchToolArgsMock).toHaveBeenCalledWith('shape', { figure: 'rectangle' });
+  });
+
+  it('selects first and patches second, so the outgoing tool commits its own args', async () => {
+    const user = userEvent.setup();
+    render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Rectangle Tool' }));
+
+    // `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, which reads the
+    // outgoing args. Patching the incoming tool's args first would clobber them.
+    expect(goToToolMock.mock.invocationCallOrder[0]).toBeLessThan(patchToolArgsMock.mock.invocationCallOrder[0]);
+  });
+
+  it('does not patch a figure for a tool that has none', async () => {
+    const user = userEvent.setup();
+    render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Crop Tool' }));
+
+    expect(goToToolMock).toHaveBeenCalledWith('crop');
+    expect(patchToolArgsMock).not.toHaveBeenCalled();
   });
 });
