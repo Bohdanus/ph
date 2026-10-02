@@ -365,14 +365,44 @@ const LINE_NUMBER_CITATION =
   /[\w./@-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml|html|svg|wasm|avif|webp|jpg|png):\d+/g;
 
 /**
- * The distinct numbered citations in a string, deduplicated.
+ * A fenced code block's contents, removed.
+ *
+ * This is the ONE exemption from the ban, and it is exemption-by-quotation rather than
+ * exemption-by-path. `HANDOFF.md` §96, §99, §106, §107, §108 and §109 are entries whose SUBJECT is a
+ * drifted line-number citation — "every `history-replay.ts` line citation past `:89` is off by
+ * twenty" cannot be stated without the number, because the number is what the finding is about.
+ * Deleting it does not migrate those entries, it deletes the finding.
+ *
+ * A fence is the honest container for that, and it is checkable in a way an exemption list is not: a
+ * reader runs the grep and sees only what is quoted, and the quote is visibly a quotation. An
+ * `ALLOWED` entry naming an occurrence is the shape `AGENTS.md` warns about — an assertion nobody
+ * can falsify, which reads as checked and is not.
+ *
+ * Fenced blocks are stripped rather than inspected, so a fence cannot be used to smuggle a real
+ * citation past the check either: the ban is on prose, and prose is what is left after the strip.
+ * An unterminated fence strips to the end of the document, which is the safe direction — a document
+ * that forgets its closing fence loses the check on everything after it, and the failure to notice
+ * is a fence that is trivially visible.
+ *
+ * Two passes rather than one alternation, because `$` under the `m` flag also matches BEFORE a
+ * newline and a single pattern closed by `$` therefore terminates on the opening fence's own line
+ * end. The paired form runs first and the leftover form second, so the unterminated case is a
+ * consequence of what the first pass did not match rather than a branch of the same pattern.
+ */
+const withoutFencedCode = (markdown) =>
+  markdown.replace(/^[ \t]{0,3}```[\s\S]*?^[ \t]{0,3}```[^\n]*$/gm, '').replace(/^[ \t]{0,3}```[\s\S]*$/m, '');
+
+/**
+ * The distinct numbered citations in a string, deduplicated, with fences removed.
  *
  * A named function rather than a `.test()` on the global pattern, and that is a correctness point
  * rather than a style one: `/g` makes `test()` stateful through `lastIndex`, so a `.test()` loop
  * over several documents skips every second match and reports a corpus that is half clean without
  * anything looking wrong.
  */
-const lineNumberCitationsIn = (text) => [...new Set([...text.matchAll(LINE_NUMBER_CITATION)].map((m) => m[0]))];
+const lineNumberCitationsIn = (text) => [
+  ...new Set([...withoutFencedCode(text).matchAll(LINE_NUMBER_CITATION)].map((m) => m[0])),
+];
 
 /**
  * The documents whose numbered citations are forbidden, and the rule behind the list.
@@ -402,7 +432,7 @@ const lineNumberCitationsByDocument = (documents) =>
   documents
     .filter(({ path }) => LINE_NUMBER_GATED.has(path))
     .flatMap(({ path, text }) => {
-      const found = new Set([...text.matchAll(LINE_NUMBER_CITATION)].map((match) => match[0]));
+      const found = new Set([...withoutFencedCode(text).matchAll(LINE_NUMBER_CITATION)].map((m) => m[0]));
       return [...found].map((citation) => `${path}: ${citation}`);
     });
 
@@ -563,6 +593,15 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
     expect(lineNumberCitationsIn('vite 7.0:1 shipped at 20:00')).toEqual([]);
     // A deduplicated repeat is one thing to fix, not five.
     expect(lineNumberCitationsIn('a.ts:1 and again a.ts:1 and again a.ts:1')).toEqual(['a.ts:1']);
+    // A fence is the ONE exemption, and it is exemption by quotation: `HANDOFF.md` carries entries
+    // whose subject IS a drifted citation, and a finding about `:89` cannot be stated without it.
+    expect(lineNumberCitationsIn('```\nhistory-replay.ts:89 is off by twenty\n```\nand `other.ts:4` too')).toEqual([
+      'other.ts:4',
+    ]);
+    // The fence buys nothing to smuggle with: prose after it is still checked.
+    expect(lineNumberCitationsIn('```\nsafe\n```\n\nthen `a.ts:1` here')).toEqual(['a.ts:1']);
+    // An unterminated fence is the failure to notice, and it strips to the end.
+    expect(lineNumberCitationsIn('```\nstill open\n`a.ts:1` after')).toEqual([]);
   });
 
   it('reports the gated documents that still carry a numbered citation', () => {

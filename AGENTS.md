@@ -212,8 +212,8 @@ wrong code. Do not write one. Do not preserve one you read. Do not re-add one to
 keep a diff small.
 
 **Cite the unit. There is always a name available.** The banned form is written
-below with a `‹line›` placeholder, so this section obeys the rule it states and the
-check reads it.
+below with a `‹line›` placeholder rather than a real number, so this section obeys
+the rule it states and the check reads it.
 
 | Instead of                         | Write                                                     |
 | ---------------------------------- | --------------------------------------------------------- |
@@ -233,11 +233,16 @@ check reads it.
 - **A range names ONE enclosing unit, never two endpoints.** A claim too vague to
   name a unit has not been located yet — that is what a line number was hiding.
 
+**The ONE exemption is quotation, in a fenced code block.** A finding whose
+subject IS a drifted citation cannot be stated without one. Fences are stripped
+before the check reads, so a fence is a claim about the form, not about the code —
+and the prose on either side of it is still checked.
+
 **This is enforced, not advised.** `scripts/__tests__/agents-citations.test.mjs`
-reads every tracked markdown document and fails on `file.ext:NNN` in any of them,
-so a document you add is covered the day it lands. The one thing not to do is
-relax the check — not by skipping a document, not by an exemption entry, not by a
-threshold. The format, and why a name is checkable while a number is not, is
+reads every tracked markdown document and fails on `file.ext:‹line›` outside a
+fence, so a document you add is covered the day it lands. The one thing not to do
+is relax the check — not by skipping a document, not by an exemption entry, not by
+a threshold. The format, and why a name is checkable while a number is not, is
 [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md#citations).
 
 ## Handoff documents

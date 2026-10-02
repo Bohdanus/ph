@@ -238,17 +238,32 @@ unit has not been located yet, and citing a line number is how that was hidden.
 number having moved trains people to regenerate citations instead of re-deriving
 them, which is what produced the clusters. A name can be checked, and this
 repository checks it — `scripts/__tests__/agents-citations.test.mjs` reads every
-maintained tracked document and fails on a backticked call the program does not
+tracked markdown document and fails on a backticked call the program does not
 contain, a retired symbol named in any of them, a `§N` that is not a live
-`HANDOFF.md` heading, and a `file.ext:‹line›` citation in any document the check
-covers. Coverage is by document and only grows: migrating a document is what puts
-it under the check, so no commit in the migration is red.
+`HANDOFF.md` heading, and a `file.ext:‹line›` citation anywhere outside a fence.
 
-**The escape hatch** is a numbered citation in a document the check does not
-cover — a point-in-time report ([`README.md`](README.md) names those, and every
-line number in them was true of the tree they measured) or a document still queued
-for migration. There is no per-occurrence exemption, because an exemption is a
-number that gets refreshed and then outlives its reason.
+**The one exemption is quotation.** A finding whose SUBJECT is a drifted line-number
+citation cannot be stated without one — "`history-replay.ts` cites 47 lines past its
+first `switch` arm and all 47 are off by twenty" is the number. Put those in a
+fenced code block, quoting the drifted form verbatim.
+
+The check strips fences before it looks, so a fence is a claim about the FORM
+rather than a claim about the code. That is the difference from an exemption list,
+which is unfalsifiable and reads as checked. A fence is visible, a fence is
+quotation, and the prose on either side of it is still checked — so the fence buys
+nothing to smuggle a real citation with. Note that a fence cannot be nested inside
+another fence to show the shape, which is why this paragraph describes it instead of
+printing one: the outer fence is stripped first and the inner one is then read as
+an opening delimiter, so an example of the exemption written as an example is the
+one thing that trips the rule it is illustrating.
+
+**Everything else is migrated.** There is no per-occurrence exemption and no
+threshold, because an exemption is a number that gets refreshed and then outlives
+its reason. `scripts/resolve-citations.mjs` is the migration's worklist: it reads
+each cited file's AST and proposes the enclosing declaration, `it('...')` title or
+`switch` case for each position, and reports the positions it cannot resolve —
+those are the sentences where the author never had a unit in mind, which is the
+finding the ban was written to surface.
 
 **A description without a source is a rumour.** That covers Adobe claims and this
 project's own claims equally. `docs/TOOLS.md` fails its test on an empty
