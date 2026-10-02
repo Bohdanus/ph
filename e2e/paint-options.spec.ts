@@ -57,6 +57,32 @@ const PAINT_BLEND_MODES = [
   { label: 'Luminosity', value: 'luminosity' },
 ] as const;
 
+/**
+ * `PAINT_PRESETS` (src/tools/brush.ts:144-153) and `CUSTOM_PRESET_LABEL` (`:141`), copied
+ * rather than imported, on the same terms as `PAINT_BLEND_MODES` above: nothing under
+ * `e2e/` may import from `src/`, and a preset added or retuned in the source fails the
+ * equality assertion below instead of going untested.
+ *
+ * `alpha` is stored 0..1 and rendered as a percentage, so the readout carries the converted
+ * value — `Math.round(alpha * 100)` — and the conversion is done here rather than read off a
+ * capture, so the numbers below are the source's own.
+ */
+const PAINT_PRESETS = {
+  brush: [
+    { label: 'Hard Round', lineWidth: 10, alpha: 1, smoothing: 0 },
+    { label: 'Soft Round', lineWidth: 40, alpha: 1, smoothing: 60 },
+    { label: 'Marker', lineWidth: 24, alpha: 0.45, smoothing: 25 },
+  ],
+  pencil: [
+    { label: 'Hard Pencil', lineWidth: 3, alpha: 1, smoothing: 0 },
+    { label: 'Soft Pencil', lineWidth: 12, alpha: 0.7, smoothing: 50 },
+    { label: 'Marker', lineWidth: 24, alpha: 0.45, smoothing: 25 },
+  ],
+} as const;
+
+/** The select's empty value, which `Paint.tsx:159` renders as the Custom option. */
+const CUSTOM = '';
+
 const THIN_SIZE = '4';
 const WIDE_SIZE = '60';
 const FAINT_OPACITY = '15';
@@ -312,5 +338,158 @@ test.describe('Brush and Pencil options bar', () => {
 
     await mode.selectOption({ label: 'Normal' });
     await expect(mode, 'the bar is left on Normal').toHaveValue('source-over');
+  });
+
+  /**
+   * SELECTING A PRESET, which nothing in the suite did: the two tests above only assert the
+   * select is visible, and every other paint test moves the sliders directly. So the whole
+   * preset mechanism — the option list, the four-field write in `handlePresetChange`, and the
+   * `matchPaintPreset` derivation that decides what the select reads back — was untested
+   * end-to-end, and each of those three is a place a regression could hide.
+   *
+   * The bar's own readouts are the assertion surface, not the `value` attributes. `Paint.tsx`
+   * renders each live value INSIDE its `<label>`, so the accessible name is the text a user
+   * reads; a select that held the right `value` while the sliders behind it stayed wrong
+   * would pass a `value` assertion and fail this one.
+   */
+  test('each preset writes every one of its four values into the bar', async ({ page }) => {
+    await selectBrush(page);
+    const preset = presetSelect(page);
+
+    // The option list is asserted as a whole, in order, against the source list: a preset
+    // dropped from `PAINT_PRESETS` and a stale option left behind in the markup both show
+    // up here rather than as a selectOption that quietly matched nothing.
+    const options = await preset
+      .locator('option')
+      .evaluateAll((nodes) =>
+        nodes.map((node) => ({ value: (node as HTMLOptionElement).value, label: node.textContent ?? '' }))
+      );
+    expect(options, 'the preset select must offer Custom first, then the brush presets in source order').toEqual([
+      { value: CUSTOM, label: 'Custom' },
+      ...PAINT_PRESETS.brush.map((entry) => ({ value: entry.label, label: entry.label })),
+    ]);
+
+    // Mark the settings as Custom first, so each selection below has to be an actual write
+    // rather than a no-op that happens to match the seeded defaults.
+    await sizeSlider(page).fill('37');
+    await expect(preset, 'a size no preset carries must read as Custom').toHaveValue(CUSTOM);
+
+    // A blend mode no preset carries, for the same reason: the per-preset assertion below reads
+    // the mode as 'source-over', and the bar seeds on that value, so left alone the assertion
+    // would pass on a `handlePresetChange` that never wrote the field at all. Every preset
+    // declares blendMode 'source-over' (`src/tools/brush.ts:145`-`:147` and `:150`-`:152`), so
+    // Multiply here has to be normalised away by the selection.
+    await modeSelect(page).selectOption({ label: 'Multiply' });
+    await expect(modeSelect(page), 'the mode must be off Normal before a preset is chosen').toHaveValue('multiply');
+
+    for (const entry of PAINT_PRESETS.brush) {
+      await preset.selectOption(entry.label);
+
+      await expect(sizeSlider(page), `${entry.label} must carry its own line width`).toHaveAccessibleName(
+        `Size ${entry.lineWidth}px`
+      );
+      await expect(opacitySlider(page), `${entry.label} must carry its own alpha`).toHaveAccessibleName(
+        `Opacity ${Math.round(entry.alpha * 100)}%`
+      );
+      await expect(smoothingSlider(page), `${entry.label} must carry its own smoothing`).toHaveAccessibleName(
+        `Smoothing ${entry.smoothing}%`
+      );
+      // Every preset declares blendMode 'source-over', so this is where a preset that stopped
+      // normalising the mode would be caught - and it can only be caught because of the
+      // Multiply above.
+      await expect(modeSelect(page), `${entry.label} must leave the mode on Normal`).toHaveValue('source-over');
+    }
+  });
+
+  /**
+   * The DERIVATION, which is the half of the preset mechanism a selection test cannot reach:
+   * `matchPaintPreset` (`src/tools/brush.ts:159`) reads the live args back and names the
+   * matching preset, or Custom when none matches. So the select's displayed value is a
+   * function of the sliders, and the two directions of that function are separate claims:
+   *
+   *   - settings that EQUAL a preset read back as that preset's name, not as Custom;
+   *   - a single field moved off a preset reads back as Custom.
+   *
+   * Both are asserted here because a `matchPaintPreset` that always returned the label, or
+   * always returned Custom, satisfies either assertion alone.
+   */
+  test('the preset select names the settings that match one and Custom once they differ', async ({ page }) => {
+    await selectBrush(page);
+    const preset = presetSelect(page);
+    const [hardRound] = PAINT_PRESETS.brush;
+
+    // Direction one: re-selecting the preset restores every field, which is what makes the
+    // select read back as that preset rather than as Custom.
+    await preset.selectOption('Soft Round');
+    await expect(preset).toHaveValue('Soft Round');
+    await preset.selectOption(hardRound.label);
+
+    await expect(sizeSlider(page)).toHaveAccessibleName(`Size ${hardRound.lineWidth}px`);
+    await expect(opacitySlider(page)).toHaveAccessibleName(`Opacity ${Math.round(hardRound.alpha * 100)}%`);
+    await expect(smoothingSlider(page)).toHaveAccessibleName(`Smoothing ${hardRound.smoothing}%`);
+    await expect(preset, 'settings that match a preset must be NAMED by it, not reported as Custom').toHaveValue(
+      hardRound.label
+    );
+
+    // Direction two: one field off the preset is enough. Smoothing is the field chosen
+    // because `Hard Round` carries 0, the floor, so any move at all leaves the preset.
+    await smoothingSlider(page).fill('5');
+    await expect(preset, 'one field off a preset must read as Custom').toHaveValue(CUSTOM);
+
+    // And the value is still Custom after the write settles, which is the claim a reader of
+    // the select would make: this is not a transient state on the way back to the label.
+    await smoothingSlider(page).fill('0');
+    await expect(preset, 'restoring the field restores the name').toHaveValue(hardRound.label);
+  });
+
+  /**
+   * The two tools carry INDEPENDENT preset lists, and `Marker` is the one label they share.
+   *
+   * `PAINT_PRESETS` is keyed by tool name and `handlePresetChange` looks the selection up in
+   * `PAINT_PRESETS[toolName]`, so a lookup that ignored the key would let the pencil's Marker
+   * write the brush's Marker — which happens to be the same four numbers, and would therefore
+   * pass any assertion about Marker's values alone. The discriminating pair is the FIRST
+   * preset on each bar: `Hard Round` at 10px and `Hard Pencil` at 3px are different labels on
+   * different lists, so an option surviving a tool switch is visible here.
+   */
+  test('the brush and the pencil carry their own presets', async ({ page }) => {
+    await selectBrush(page);
+    await expect(presetSelect(page), 'the brush bar must not offer a pencil preset').not.toHaveValue('Hard Pencil');
+    const brushLabels = await presetSelect(page)
+      .locator('option')
+      .evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
+    expect(brushLabels, 'the brush bar lists the brush presets').toEqual([
+      CUSTOM,
+      ...PAINT_PRESETS.brush.map((entry) => entry.label),
+    ]);
+
+    await selectPencil(page);
+    const pencilLabels = await presetSelect(page)
+      .locator('option')
+      .evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
+    expect(pencilLabels, 'the pencil bar lists the pencil presets, and Marker is the one they share').toEqual([
+      CUSTOM,
+      ...PAINT_PRESETS.pencil.map((entry) => entry.label),
+    ]);
+
+    // The shared label, read off each bar in turn. Equal numbers here are the source's, and
+    // a key-blind lookup would produce the same result — so what this proves is that the
+    // control survives the switch rather than which preset it wrote.
+    await presetSelect(page).selectOption('Marker');
+    await expect(sizeSlider(page), 'Marker writes its own width on the pencil bar').toHaveAccessibleName(
+      `Size ${PAINT_PRESETS.pencil[2].lineWidth}px`
+    );
+
+    // Back to the brush THROUGH THE FLYOUT, which is not redundancy but necessity: once the
+    // pencil is active its group is the one with the tile, so `tool-button-brush` is gone from
+    // the rail and `clickToolButton` has no brush to click. Measured rather than assumed —
+    // a probe found the brush tile at 1 before the switch and 0 after it.
+    await openToolFlyout(page, 'pencil');
+    await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
+
+    await presetSelect(page).selectOption('Marker');
+    await expect(sizeSlider(page), 'and its own on the brush bar').toHaveAccessibleName(
+      `Size ${PAINT_PRESETS.brush[2].lineWidth}px`
+    );
   });
 });
