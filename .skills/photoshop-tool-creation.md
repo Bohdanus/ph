@@ -18,7 +18,8 @@ the Photoshop tool contract, the code surfaces, and the process for getting ther
 **`AGENTS.md` is the short form, and `docs/ORCHESTRATION.md` is the detail behind it.** That
 matters here, because a whole class of rules is in the second file and in neither section of the
 first: the hard worktree rule and its exceptions, `scripts/main-worktree-guard.mjs`, never
-`git stash`, the `git add -A` silent-revert trap and its `comm -13` detection, `WORKTREES.json`, and
+`git stash`, the `git add -A` silent-revert trap and the `merge-takeover-guard.mjs` gate for it,
+`WORKTREES.json`, and
 the swarm board. An agent that reads `AGENTS.md`, finds no worktree rule beyond three traps, and
 concludes none exists is following this document's own index correctly and still gets it wrong.
 **Read `docs/ORCHESTRATION.md` before your first edit**, and treat a rule you cannot find in either
@@ -263,16 +264,12 @@ repository.
   branch never touched can sit in your worktree holding main's older content, and `-A` commits it as
   a deliberate reverting of whatever main has since done. One merge shipped **17 such reverts and not
   one of them was a conflict**, so the merge was clean and the revert was invisible in the diff.
-  Detect it by computation, not by reading the merge diff, and run it **before** the review:
-
-  ```sh
-  comm -13 \
-    <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
-    <(git diff --name-only main..HEAD | sort)
-  ```
-
-  Anything in that set is main content the merge had no business touching; restore it with
-  `git checkout main -- <path>` before the merge lands.
+  This is enforced, not merely documented: `scripts/merge-takeover-guard.mjs` runs from
+  `pre-commit` (a conflicted merge being committed) and `pre-merge-commit` (a clean merge
+  that commits itself), and **refuses** the merge. `docs/ORCHESTRATION.md` is the one home for
+  the mechanism, both loss shapes, and the limits — a fast-forward fires no hook at all, and
+  `--no-verify` bypasses this. The old `comm -13` recipe is retired: it fired hundreds of
+  false positives when run before the merge and missed the very incident it was written for.
 
 **And a red `tsc` in the main worktree may be somebody else's work in progress**, not a broken `main`
 — the main worktree is shared, so it routinely holds an agent's half-written change, and that state
