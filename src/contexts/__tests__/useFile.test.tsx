@@ -128,8 +128,7 @@ describe('FileProvider PSD integration', () => {
 
   /**
    * The `waitFor` around the dialog-close read is the fix for the flake this test
-   * carried as `it.skip` (TEST-FLAKES.md \u00a77), and no assertion was widened to
-   * get here.
+   * used to carry as `it.skip`, and no assertion was widened to get here.
    *
    * `handleImageSave` in `useFile.tsx` resolves the caller's promise from inside
    * its own `try` block and only reaches `setShowSaveDialog(false)` in the
@@ -138,7 +137,7 @@ describe('FileProvider PSD integration', () => {
    * `saveImageToDisk` is called — before that scheduled close has been committed
    * — so the DOM read that followed ran a React 18 auto-batching commit early and
    * saw a dialog that was already logically closed. That is the "one run in five,
-   * never in isolation" signature in \u00a77: whether the read lands before or after
+   * never in isolation" signature it had: whether the read lands before or after
    * the commit depends on when the surrounding suite yields the event loop.
    *
    * Waiting for the dialog to actually leave the DOM is the async flush the read
