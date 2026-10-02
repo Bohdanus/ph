@@ -17,7 +17,7 @@ export interface MobileLayersDrawerProps {
 }
 
 export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, onClose }) => {
-  const [{ layers, activeLayerId, history, historyIndex, totalSize }] = useStore();
+  const [{ layers, activeLayerId, history, historyIndex, totalSize, documentFrame }] = useStore();
   const { createBlankLayer, toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer } = useLayers();
   const { resetHistoryTo, toggleDisabled } = useHistory();
 
@@ -171,7 +171,13 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
             <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-800">
               <button
                 type="button"
-                onClick={() => createBlankLayer({ color: '#ffffff', opacity: 1, size: totalSize, isBedrock: true })}
+                onClick={() =>
+                  createBlankLayer({
+                    color: '#ffffff',
+                    opacity: 1,
+                    pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
+                  })
+                }
                 data-testid="mobile-add-layer-button"
                 className="flex min-h-11 min-w-11 items-center gap-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm"
               >

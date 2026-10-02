@@ -4570,3 +4570,95 @@ is how an earlier version of this entry sent a reader to a file that does not ex
 `src/contexts/presentation-evaluator.ts` (the frame subtraction), `src/util/layer-space.ts` (the
 layer-space rebase, a different axis), `e2e/crop-history.spec.ts` (`:403`, the case that does not
 cover this).
+**Problem.** `usePaintStroke.ts` records brush points in document coordinates, while the runtime
+compositor renders a cropped document with `layerCoordinate - documentFrame.origin`. After a crop,
+the stroke is therefore offset by the frame origin and can render outside the visible document.
+The defect reproduces in the crop/transform headless gate: a bar drawn after a crop is committed,
+but the visible canvas remains unchanged. Sweeping frame heights and raw canvas heights reproduced
+the same bounds before and after the stroke.
+
+**What would close it.** Convert the committed stroke points into the current layer/frame coordinate
+space before `usePaintStroke.ts` writes the history item, then add a crop-followed-by-stroke pixel
+assertion to `e2e/crop-history.spec.ts`. Do not weaken the existing crop history assertions or add
+an accepted console error; the issue is a coordinate transform defect in the paint writer.
+
+**Files.** `src/tools/usePaintStroke.ts`, `src/contexts/useLayer.ts`, `src/contexts/layer-renderer.ts`,
+`e2e/crop-history.spec.ts`.
+
+---
+
+## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
+
+`src/contexts/ThemeContext.tsx:20` hard-codes `DEFAULT_THEME = 'dark'` and the
+`prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e
+suite pins itself to **light** (`e2e/fixtures/extended-test.ts`'s `pinnedTheme` auto fixture),
+because its pixel oracle — `hasDarkPixels`, `getStrokeAnalysis`, `measureInk` — reads "there is
+nothing here" out of a near-white pixel and is calibrated against the light workspace checkerboard.
+That pin is correct and its header says why. This entry is its cost, and the cost is not the pin.
+
+**The gap.** The one test that runs with the pin released
+(`e2e/document-dialogs.spec.ts:1132`, "with nothing stored the document starts dark") asserts the
+`dark` class on `<html>` and the string in `localStorage`. It reads **no pixel**, so it would stay
+green if every `dark:` Tailwind variant in the app stopped applying. No other spec exercises a
+single `dark:` class. **Nothing measures how dark renders.**
+
+**The defect that gap hides, measured.** The dock's collapse glyph is a single `«`/`»` character
+at `text-sm`, `src/components/SidebarRight/SidebarRight.tsx:359`:
+
+- light: `text-gray-500` (#6b7280) on `bg-gray-200` (#e5e7eb) = **3.90:1**
+- dark: `dark:text-gray-400` (#9ca3af) on `dark:bg-gray-700` (#374151) = **4.06:1**
+
+WCAG AA for normal text is **4.5:1**, so this fails in both themes. axe cannot judge it: it returns
+`incomplete` on both with "Element content is too short to determine if it is actual text
+content", and `e2e/accessibility.spec.ts:98` records that **`incomplete` is never asserted** —
+`:268`, "attached but NOT asserted". So this is a live AA failure that the only accessibility gate
+in the repository structurally cannot see, and it is not a dark-only problem: dark being the
+default raises its visibility, it does not create it.
+
+**Fix.** Either raise the glyph's contrast above 4.5:1 in both themes (`dark:text-gray-300` on
+`gray-700` is 7.00:1, and it is the value `PanelGroup.tsx:42` already uses for the same surface), or
+give the button a real accessible name with a visible label and stop rendering the glyph alone as
+the only text. Then either assert the `incomplete` bucket in the axe helper or assert that a
+specific node is absent from it — a gate that logs a bucket it never checks reports "0 violations"
+about a page whose failing control it printed.
+
+### Also live, and found while measuring the above
+
+Both reproduced in **light and dark**; neither is dark-specific.
+
+- **`region`, moderate**, on the flyout/tooltip portal wrapper, with the flyout open
+  (`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`). A real violation at 1115 audited
+  nodes, in a region the file's header lists as unscanned.
+- **`aria-allowed-role`, minor** and **`region`, moderate**, on
+  `<nav role="toolbar" data-testid="mobile-bottom-bar">` (`src/components/Mobile/MobileBottomBar.tsx:25-33`).
+  `role="toolbar"` is not permitted on `nav`. Visible at 500x800, 309 nodes audited.
+
+### `e2e/accessibility.spec.ts`'s header is stale in five places, and reading it costs the next session an hour
+
+Every one of these was fixed in the **same commit that added the file** (`6982cd35`), and the
+header describes the state that commit fixed:
+
+- `:75-83` says dark reports two extra `color-contrast` violations on the panel tab labels, citing
+  `dark:text-gray-400` at `PanelGroup.tsx:42`. That class is now `dark:text-gray-300`
+  (**7.00:1**), and a dark scan of the shell reports **0** violations. Measured: light and dark are
+  both clean in all three scanned regions — shell, New Image dialog, Draw options bar.
+- `:122-128` "**THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE**", and the four-violation
+  attribution block at `:429-480`, describe a red suite. `npm run test:e2e -- accessibility` is
+  **3 passed, 0 violation(s)**.
+- The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
+  File (New/Open/Save) and Tools menus only.
+- `:94` says the Save dialog is unscanned. It was measured here: 0 violations, 45 nodes, both
+  themes. (Not added to the gate, so the header is still right about the gate and wrong about the
+  state.)
+- Dark is **cleaner** than light by one node: `.text-lg > span` (the same `«`) is `incomplete` in
+  light and passes in dark.
+
+**Fix.** Rewrite the header to describe the current state and keep it a measurement rather than a
+narrative: state the three scanned regions, their node counts, that both themes report 0, and that
+`incomplete` is not asserted — which is what let the glyph through.
+
+**Files.** `src/components/SidebarRight/SidebarRight.tsx:359`, `:418`, `:433`,
+`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`,
+`src/components/Mobile/MobileBottomBar.tsx:25-33`,
+`e2e/accessibility.spec.ts:75-83`, `:94`, `:98`, `:122-128`, `:268`, `:429-480`,
+`e2e/fixtures/extended-test.ts` (`pinnedTheme`), `e2e/document-dialogs.spec.ts:1132`

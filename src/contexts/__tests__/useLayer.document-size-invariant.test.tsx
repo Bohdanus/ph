@@ -162,21 +162,11 @@ describe('a tool commit never carries the document size', () => {
     expect(result.current.store.documentFrame).toEqual(frameBefore);
   });
 
-  it('twenty consecutive shape commits never move it', () => {
-    const { result } = renderHook(useHarness, { wrapper: StoreProvider });
-    seedDocument(result);
-
-    const before = { ...result.current.store.totalSize };
-
-    for (let i = 0; i < 20; i += 1) {
-      act(() => {
-        result.current.layers.createLayerFromTool({ args: shapeArgs(i) });
-      });
-      expect(result.current.store.totalSize, `totalSize moved after commit ${i + 1}`).toEqual(before);
-    }
-
-    expect(result.current.store.history.length).toBe(21);
-  });
+  // The N-commits-at-once case this file used to carry now lives in
+  // `canvas-growth.test.tsx`, which does 25 of them and additionally sweeps every
+  // reachable replay cursor, so keeping a 20-commit version here asserted the same
+  // invariant twice. What stays is what this file alone covers: the two WRITER
+  // boundaries, and the control below that keeps them honest.
 
   it('the crop DOES move the size, so the cases above are not green for the wrong reason', () => {
     const { result } = renderHook(useHarness, { wrapper: StoreProvider });

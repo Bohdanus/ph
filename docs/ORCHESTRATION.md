@@ -291,6 +291,81 @@ lost. A merge recommendation is as much a claim about the contents as a prune
 recommendation is, so a `land` entry carrying `mustNotPrune: true` is impossible
 by construction.
 
+### Removal goes through one program
+
+`dispose` in the table above is not advice. **`scripts/dispose-worktree.mjs` is
+the only sanctioned way to remove a worktree and its branch**, and it is a
+program rather than a paragraph for the reason `main-worktree-guard.mjs` is: the
+agent that needs the rule is mid-task, holding a list of paths, and will not
+re-read this file before the destructive command.
+
+It refuses, and says which signal refused, unless all of these hold:
+
+- the generated inventory is **less than 15 minutes old** and calls this
+  worktree `action: "dispose"`;
+- **no board claim, no board file lock and no live board agent** names it;
+- **no Kilo session** has it as its `directory` inside the live window;
+- its **working tree is clean** — re-read now, not taken from the inventory
+  snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
+  this exists for;
+- it holds **no gitignored content that no command rebuilds**. `git status`
+  honours `.gitignore`, so a tree holding only a `.env` reports itself clean and
+  `git worktree remove` deletes it unconditionally. Build and dependency output
+  is exempt by an explicit list — `node_modules/`, `dist/`, `coverage/`,
+  `tsconfig.tsbuildinfo` and the rest, each carrying the command that rebuilds it
+  — because a real worktree here carries a handful of ignored entries once
+  whole directories are collapsed (53 before `--directory`, 66 worktrees and 290
+  entries across the repository) and a rule with no
+  exceptions refuses every worktree. **The list is the exception; an ignored path
+  it does not name counts as work.** `.serena/`, `playwright/.auth`, `*.local`
+  and `*.log` are deliberately absent from it.
+
+Any one of those refuses on its own. `in-use` from two independent sources is the
+one that matters: `session.directory` records where a chat was **opened**, so its
+absence is never evidence of abandonment, and the board's `agents` table is what
+covers a chat that was opened in `main` and driven into a task worktree.
+
+**A signal that could not be read is not an empty signal.** A `git status` that
+fails refuses as `dirty-tree-unreadable` rather than leaving the counts at zero,
+a board database that is present but unreadable refuses, and a bare name that is
+the basename of two worktrees refuses rather than disposing the first match —
+git guarantees two worktrees cannot share a _path_, which is not the same thing.
+Each of those three was a direction where a failed lookup produced the same
+value as a clean answer.
+
+Then it **anchors** the branch at `refs/keep/disposed/<name>` before deleting
+anything, so no `git gc` can make a disposed branch unreachable, and it
+**salvages** uncommitted work to `.git/worktree-salvage/<name>/` — a
+`git diff HEAD --binary` patch plus a `tar` of the untracked and the gitignored
+files, because no diff mentions a file git does not track. That salvage is a
+backstop for a caller that reaches `dispose()` directly; **the CLI does not rely
+on it**, because it refuses a dirty or ignored-content tree first and there is no
+override. Finally it removes the worktree with **no `--force`** and deletes the
+branch with **`git branch -d`**, which refuses an unmerged branch.
+
+**There is no `--force`, deliberately.** `git worktree remove` already refuses a
+dirty tree and prints the modified and untracked paths — the cheapest inventory of
+uncommitted work in the repository, delivered before the only irreversible step.
+Re-running it with `--force` discards exactly what it just named. Treat that
+refusal as a finding: commit the work, carry it to a worktree as a patch, or leave
+it and file it.
+
+`kilo.jsonc` denies `git worktree remove --force` and `rm -rf` against a path
+containing `kilo/`, and puts `git branch -D` behind a prompt. The documented
+throwaway recipe (`git worktree remove --force /tmp/verify-main`) does not match
+those patterns and keeps working: that worktree was created minutes earlier by
+the same command and holds nothing but a checkout.
+
+**A merge subject naming a branch is not evidence that the branch is landed.**
+This is worth stating separately because it is what a sweep did on 2026-10-01: it
+read `git log --grep=fix/stale-citations`, found a fourteen-hour-old
+`merge(fix/stale-citations): …` of an unrelated dead branch, and disposed of a
+live worktree whose tip was not an ancestor of `main`. Every record now carries
+`nameCollisions` — the merges on `main` whose subject already carried that
+branch's name — as an advisory flag that changes no verdict. The fact is
+`mergedIntoMain`, and it is already computed. The name is the only thing that
+misleads, so the inventory now shows the name's history next to the fact.
+
 **Do not flag a worktree for holding work on no ref — that case is derived.** A
 branch at 0 ahead of main, already on it, with a dirty working tree is reported
 `uncommitted-only` and is never prunable whatever the curated table says, and
@@ -653,9 +728,47 @@ tails. That is why these are not optional politeness:
   the sessions a fan-out spawned, so a post about work in a worktree usually has
   **no recipient in the room** and returns `total: 0, active: 0` with an explicit
   warning that nothing was delivered. Treat that response as the answer.
+- **A post that does not fit is a note of the finding's PATH, not a shorter
+  finding.** Kilo's `board_post` rejects a body over 4096 characters, and the
+  rejection kills the turn mid-report: the review that was verified, the mutation
+  that was run, the evidence that was gathered — all of it unwritten, and the
+  session's last act is a tool error rather than an answer. A Kilo chat died here
+  on a review it had already finished. Write the finding to a handoff document and
+  post its path; the repo board caps a message at the same 4096 characters and
+  refuses rather than truncating, so neither channel can hold a document and
+  neither will quietly pretend it did.
 - **An unclaimed path looks free; claim or hold it before editing.** A held file is
   a queue, not a deadlock: do not edit it or wait on the lease. Note the file and
   change, hand it over, or work elsewhere and merge `main` in first.
+
+### A note is a pointer, and every word of it is stored
+
+Three ways prose used to arrive shorter than it was typed, all of them silent, and
+all of them now refusals. The shape they share is the reason the board cannot be
+used to hold a finding: **a note is a log line, so it is capped, and a cap that
+truncates is a lie about what was said.** The repository already wrote this down
+for titles — `truncate()` exists because `slice(0, 70)` with no ellipsis produced
+a title that read as a finished sentence.
+
+- **`--note`, `--reason` and `--body` take prose, so they take every following
+  bare token.** `claim ph-1 --note fixed the thing` used to record `fixed` and
+  discard the rest, exit 0, leaving a claim note that read as a complete sentence.
+  A quoted value still works, and a later flag still ends the prose.
+- **A `--` inside an UNQUOTED note is refused, not split.** `note before --flag
+after` used to store `before` and answer `noted — event #12`. Quote the message,
+  or end the command with a bare `--` — which is why that is the one documented
+  form to type flags first: everything after a `--` is literal, so a `--dir` typed
+  after it becomes part of the note.
+- **A message over 4096 characters is refused, with the limit and the way out
+  named.** `MAX_MESSAGE_CHARS` in `scripts/lib/agent-board/db.mjs` guards
+  `addEvent`, the single point every text-carrying event passes through, so a new
+  command cannot add a path around it. An issue BODY is not an event and is not
+  capped: a body is a document an issue points at, not a log line.
+
+Every one of these refusals was a silent loss first, and each has a test that
+fails if the refusal is softened — including the tempting ones, like letting a
+trailing `--json` be exempt, which guards nothing and hides
+`note x --json trailing words`.
 
 ### `ready` ranks in four steps, and the order is the contract
 

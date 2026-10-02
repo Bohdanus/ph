@@ -117,6 +117,11 @@ export type NewLayerData = NewBedrockSize | NewLayerPos;
 export type BlankImageParams = {
   color: string;
   opacity: number;
+} & NewLayerData;
+
+export type NewDocumentBlankParams = {
+  color: string;
+  opacity: number;
 } & NewBedrockSize;
 
 export type FileImageParams = {

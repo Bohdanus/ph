@@ -1,11 +1,15 @@
 import {
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
   REMOVE_ACTION,
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
+  TOOL_ACTION,
 } from '../util/constants.ts';
 import type { DocumentFrame } from './document-frame.ts';
+import type { AssetRegistry } from './asset-registry.ts';
 import {
   deriveRemoveLayerEntry,
   deriveSetDocumentFrameEntry,
@@ -14,6 +18,10 @@ import {
   isSetLayerPropertiesAction,
   isEntryEnabled,
   layerPropertyKeyFor,
+  operationForTool,
+  sourceToRuntimeLayer,
+  convertLayer,
+  UnsupportedHistoryFeatureError,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
 import {
@@ -21,12 +29,16 @@ import {
   freezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
+  type DurableLayerSnapshot,
+  type DurableOperation,
   type SelectionSnapshot,
 } from './history-model.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
-import type { LayerId } from './layer-types.ts';
+import type { Layer, LayerId, LayerSource } from './layer-types.ts';
+import { findToolProcessor } from '../tools/toolProcessors.ts';
+import type { ToolName } from './tool-types.ts';
 
 const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.freeze([]), activeSelectionId: null });
 
@@ -75,6 +87,11 @@ export type AppendBoundaryInput = Readonly<{
    * defaulted empty `before` is a wrong baseline, not a harmless one.
    */
   currentSelections?: SelectionSnapshot;
+  /**
+   * The live layer record at the append point. Tool derivation needs its current
+   * position for affine validation; a writer closure is not authoritative here.
+   */
+  currentLayer?: Layer;
   id?: string;
 }>;
 
@@ -99,6 +116,96 @@ function unavailable(entry: HistoryItem, message: string, code: MigrationDiagnos
       },
     ],
   };
+}
+
+function durableEntryForOperation(entry: HistoryItem, operation: DurableOperation): DurableHistoryEntry {
+  return Object.freeze({
+    id: entry.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled: isEntryEnabled(entry),
+    operation,
+  });
+}
+
+function unavailableFromError(entry: HistoryItem, error: unknown): AppendBoundaryResult {
+  return unavailable(
+    entry,
+    error instanceof Error ? error.message : String(error),
+    error instanceof UnsupportedHistoryFeatureError ? 'unsupported-history-feature' : 'invalid-history-entry'
+  );
+}
+
+function sourceFromEntry(entry: HistoryItem): LayerSource | undefined {
+  const candidate = entry.layerSource ?? entry.args;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+  const kind = (candidate as { kind?: unknown }).kind;
+  return kind === 'blank' || kind === 'image' || kind === 'tool' ? (candidate as LayerSource) : undefined;
+}
+
+function compareRuntimeLayerToSnapshot(runtime: Layer, snapshot: DurableLayerSnapshot): string | null {
+  if (runtime.id !== snapshot.id) return 'the durable layer id does not match the legacy entry';
+  if (runtime.name !== snapshot.name) return 'the durable layer name does not match the legacy source';
+  if (runtime.isBedrock !== snapshot.isBedrock) return 'the durable bedrock flag does not match the legacy source';
+  if (runtime.visible !== snapshot.visible) return 'the durable layer visibility does not match the legacy source';
+  if (runtime.opacity !== snapshot.opacity) return 'the durable layer opacity does not match the legacy source';
+  if (runtime.locked !== snapshot.locked) return 'the durable layer lock state does not match the legacy source';
+  if (runtime.blendMode !== snapshot.blendMode) return 'the durable layer blend mode does not match the legacy source';
+  if (!sameJsonValue(runtime.pos, snapshot.pos)) return 'the durable layer position does not match the legacy source';
+  return null;
+}
+
+function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayerSnapshot): string | null {
+  const durableSource = durable.source;
+  if (source.kind === 'blank') {
+    if (durableSource.kind !== 'blank') return 'the durable layer source kind does not match the legacy source';
+    if (
+      durableSource.color !== source.color ||
+      durableSource.opacity !== source.opacity ||
+      durableSource.isBedrock !== !!source.isBedrock
+    ) {
+      return 'the durable blank layer source does not match the legacy source';
+    }
+    const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
+    return sameJsonValue(durableSource.size, size)
+      ? null
+      : 'the durable blank layer size does not match the legacy source';
+  }
+
+  if (source.kind === 'image') {
+    if (durableSource.kind !== 'raster') return 'the durable layer source kind does not match the legacy source';
+    if (
+      durableSource.width !== source.bitmap.width ||
+      durableSource.height !== source.bitmap.height ||
+      (durableSource.name ?? undefined) !== (source.name || undefined) ||
+      durableSource.isBedrock !== !!source.isBedrock
+    ) {
+      return 'the durable raster layer source does not match the legacy source';
+    }
+    return typeof durableSource.assetId === 'string' && durableSource.assetId.length > 0
+      ? null
+      : 'the durable raster layer source has no registered asset';
+  }
+
+  if (durableSource.kind === 'legacy-tool') {
+    return `The tool ${source.args.toolName} has no durable source representation`;
+  }
+  if (durableSource.kind !== 'text' && durableSource.kind !== 'vector') {
+    return 'the durable layer source kind does not match the legacy source';
+  }
+  if (
+    durableSource.toolName !== source.args.toolName ||
+    durableSource.isBedrock !== !!source.isBedrock ||
+    !sameJsonValue(durableSource.args, source.args)
+  ) {
+    return 'the durable tool layer source does not match the legacy source';
+  }
+  const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
+  if (!sameJsonValue(durableSource.size, size)) return 'the durable tool layer size does not match the legacy source';
+  const sourcePos = source.isBedrock ? { x: 0, y: 0, ...source.size } : source.pos;
+  if (!sameJsonValue(durableSource.sourcePos, sourcePos)) {
+    return 'the durable tool layer position does not match the legacy source';
+  }
+  return null;
 }
 
 /**
@@ -127,7 +234,8 @@ function unavailable(entry: HistoryItem, message: string, code: MigrationDiagnos
 function translate(
   entry: HistoryItem,
   currentFrame: DocumentFrame,
-  currentSelections: SelectionSnapshot
+  currentSelections: SelectionSnapshot,
+  currentLayer: Layer | undefined
 ): AppendBoundaryResult {
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
     if (entry.documentSource) {
@@ -190,6 +298,63 @@ function translate(
       );
     }
     return { entry, durableEntry, diagnostics: [] };
+  }
+
+  if (entry.actionName === TOOL_ACTION) {
+    if (!currentLayer) {
+      return unavailable(
+        entry,
+        `The append boundary does not translate "${entry.actionName}" without the live layer ${entry.layerId}.`,
+        'unsupported-history-feature'
+      );
+    }
+    try {
+      // `operationForTool` only needs the durable layer's position today. The
+      // append boundary deliberately passes the store's live record instead of
+      // converting it through a registry, which keeps retained operations
+      // asset-free and validates affine bounds against current geometry.
+      const operation = operationForTool(entry, currentLayer as unknown as DurableLayerSnapshot);
+      if (!operation) {
+        return unavailable(
+          entry,
+          'The tool action has no retained durable operation; the legacy entry remains authoritative.',
+          'unsupported-history-feature'
+        );
+      }
+      if (operation.kind === 'reposition-layer' && !operation.move && !operation.resize) {
+        return unavailable(
+          entry,
+          'A layer reposition without movement or resizing has no durable operation.',
+          'unsupported-history-feature'
+        );
+      }
+      if (operation.kind === 'apply-raster-processor') {
+        const processor = findToolProcessor(operation.processorId as ToolName);
+        if (!processor || processor.commit === 'raster') {
+          return unavailable(
+            entry,
+            `Tool ${operation.processorId} commits raster pixels and has no retained append translation.`,
+            'unsupported-history-feature'
+          );
+        }
+        // `transform` with a trapezoid is the one raster-shaped durable
+        // operation whose processor is declared affine-operation. Keep it on
+        // the boundary; only commit:'raster' is refused here.
+      } else if (
+        operation.kind !== 'apply-filter' &&
+        operation.kind !== 'apply-affine-transform' &&
+        operation.kind !== 'reposition-layer'
+      ) {
+        return unavailable(
+          entry,
+          `The tool action produced unsupported durable operation "${operation.kind}".`,
+          'unsupported-history-feature'
+        );
+      }
+      return { entry, durableEntry: durableEntryForOperation(entry, operation), diagnostics: [] };
+    } catch (error) {
+      return unavailableFromError(entry, error);
+    }
   }
 
   return unavailable(
@@ -302,6 +467,62 @@ export function deriveReorderLayersEntry(
   });
 }
 
+/**
+ * Inputs needed by the store-boundary source-backed planners. The registry and
+ * document id are intentionally absent from `AppendBoundaryInput`: a source
+ * backed entry may register a raster, so only the store can own this step.
+ */
+export type SourceBackedEntryContext = Readonly<{
+  documentId: string;
+  registry: AssetRegistry;
+  preLayers: ReadonlyMap<LayerId, DurableLayerSnapshot>;
+  /** Runtime layer record used for merge removal ids; durable snapshots remain the order oracle. */
+  liveLayers?: Readonly<Record<LayerId, Layer>>;
+}>;
+
+function durableLayerForSource(item: HistoryItem, context: SourceBackedEntryContext): DurableLayerSnapshot | null {
+  const source = sourceFromEntry(item);
+  if (!source) return null;
+  const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, new Map(context.preLayers));
+  const layer = convertLayer(runtimeLayer, context.documentId, context.registry);
+  if (layer.source.kind === 'legacy-tool') {
+    throw new UnsupportedHistoryFeatureError(
+      `Tool ${layer.source.toolName} has no durable source representation`,
+      item.id
+    );
+  }
+  return layer;
+}
+
+/** Store-boundary planner for a source-backed `NEW_LAYER` append. */
+export function deriveCreateLayerEntry(
+  item: HistoryItem,
+  context: SourceBackedEntryContext
+): DurableHistoryEntry | null {
+  if (
+    item.actionName !== NEW_LAYER_ACTION &&
+    !(item.actionName === TOOL_ACTION && sourceFromEntry(item)?.kind === 'tool')
+  ) {
+    return null;
+  }
+  const layer = durableLayerForSource(item, context);
+  if (!layer) return null;
+  return durableEntryForOperation(item, Object.freeze({ kind: 'create-layer', layer }));
+}
+
+/** Store-boundary planner for an atomic `MERGE_ACTION` append. */
+export function deriveMergeDocumentEntry(
+  item: HistoryItem,
+  context: SourceBackedEntryContext
+): DurableHistoryEntry | null {
+  if (item.actionName !== MERGE_ACTION) return null;
+  const result = durableLayerForSource(item, context);
+  if (!result) return null;
+  const layerIds = context.liveLayers ? Object.keys(context.liveLayers) : [...context.preLayers.keys()];
+  const removedLayerIds = Object.freeze(layerIds.filter((id) => id !== result.id));
+  return durableEntryForOperation(item, Object.freeze({ kind: 'merge-document', result, removedLayerIds }));
+}
+
 function validateTimeline(entry: HistoryItem, timeline: HistoryTimeline): MigrationDiagnostic | null {
   if (timeline.entries.some((candidate) => candidate.id === entry.id)) {
     return {
@@ -329,10 +550,11 @@ export function planHistoryAppend({
   timeline,
   currentFrame,
   currentSelections = EMPTY_SELECTIONS,
+  currentLayer,
   id,
 }: AppendBoundaryInput): AppendBoundaryResult {
   const entry = createHistoryItem(item, id);
-  const result = translate(entry, currentFrame, currentSelections);
+  const result = translate(entry, currentFrame, currentSelections, currentLayer);
   const timelineDiagnostic = validateTimeline(entry, timeline);
   if (!timelineDiagnostic) return result;
   return {
@@ -395,6 +617,12 @@ export type DurableAppendInput = Readonly<{
    * and a reconversion interchangeable.
    */
   durableLayerOrder?: readonly LayerId[] | null;
+  /**
+   * The durable pre-append layer snapshots used to grade source-backed create
+   * and merge plans. A missing map still permits canonical-shape validation,
+   * but cannot prove a merge's complete removal set.
+   */
+  preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null;
 }>;
 
 function sameFrame(left: unknown, right: unknown): boolean {
@@ -504,7 +732,8 @@ function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]):
 export function validatePlannedDurableEntry(
   entry: HistoryItem,
   planned: DurableHistoryEntry,
-  preLayerOrder?: readonly LayerId[] | null
+  preLayerOrder?: readonly LayerId[] | null,
+  preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null
 ): string | null {
   if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
   if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
@@ -611,6 +840,69 @@ export function validatePlannedDurableEntry(
     return planned.operation.layerId === entry.layerId ? null : 'the durable layer id does not match the legacy entry';
   }
 
+  const sourceBackedCreate =
+    entry.actionName === NEW_LAYER_ACTION ||
+    (entry.actionName === TOOL_ACTION && sourceFromEntry(entry)?.kind === 'tool');
+  if (sourceBackedCreate || entry.actionName === MERGE_ACTION) {
+    const source = sourceFromEntry(entry);
+    if (!source) return 'a source-backed layer action has no usable layer source';
+
+    const operation = planned.operation;
+    const isCreate = sourceBackedCreate;
+    if (isCreate && operation.kind !== 'create-layer') {
+      return `a new layer action produced a "${operation.kind}" operation`;
+    }
+    if (!isCreate && operation.kind !== 'merge-document') {
+      return `a merge action produced a "${operation.kind}" operation`;
+    }
+
+    const snapshot =
+      operation.kind === 'create-layer'
+        ? operation.layer
+        : operation.kind === 'merge-document'
+          ? operation.result
+          : null;
+    if (!snapshot) return 'the durable source-backed operation has no result layer';
+    const operationKeys = Object.keys(operation);
+    const expectedKeys = isCreate ? ['kind', 'layer'] : ['kind', 'result', 'removedLayerIds'];
+    if (operationKeys.length !== expectedKeys.length || expectedKeys.some((key) => !operationKeys.includes(key))) {
+      return isCreate
+        ? 'the durable create-layer operation does not have the canonical shape'
+        : 'the durable merge-document operation does not have the canonical shape';
+    }
+    if (snapshot.id !== entry.layerId) return 'the durable result layer id does not match the legacy entry';
+
+    // `sourceToRuntimeLayer` is the adapter's source-to-runtime rule. Grade the
+    // fields that rule owns, but not `order`: the store's pre-append layer set
+    // determines that number and is supplied only by the source-backed planner.
+    let runtime: Layer;
+    try {
+      runtime = sourceToRuntimeLayer(entry.layerId, source, new Map(preLayers ?? []));
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    const runtimeProblem = compareRuntimeLayerToSnapshot(runtime, snapshot);
+    if (runtimeProblem) return runtimeProblem;
+    const sourceProblem = compareDurableSourceToLegacy(source, snapshot);
+    if (sourceProblem) return sourceProblem;
+
+    if (operation.kind === 'merge-document') {
+      const removedLayerIds = operation.removedLayerIds;
+      if (new Set(removedLayerIds).size !== removedLayerIds.length) {
+        return 'the durable merge-document removal set contains duplicate layer ids';
+      }
+      if (removedLayerIds.includes(snapshot.id))
+        return 'the durable merge-document removal set removes its result layer';
+      if (preLayers) {
+        const expectedRemoved = [...preLayers.keys()].filter((id) => id !== snapshot.id);
+        if (!sameJsonValue(removedLayerIds, expectedRemoved)) {
+          return 'the durable merge-document removal set does not match the pre-append layer set';
+        }
+      }
+    }
+    return null;
+  }
+
   return `no durable translation is published for "${entry.actionName}" yet`;
 }
 
@@ -624,6 +916,7 @@ export function decideDurableAppend({
   documentRevision,
   preLayerOrder,
   durableLayerOrder,
+  preLayers,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
   if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
@@ -676,7 +969,7 @@ export function decideDurableAppend({
     }
   }
 
-  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder);
+  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder, preLayers);
   if (problem) return { outcome: 'mismatch', reason: problem };
 
   const cursor = base.history.length;
