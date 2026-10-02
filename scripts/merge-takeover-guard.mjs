@@ -183,7 +183,16 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     // The two abnormal shapes, and they are the whole defect. In both, git decided a
     // whole file by COPYING one side's content when main had a committed change to it,
     // and neither produces a conflict marker.
-    if (resultBlob === baseBlob) {
+    //
+    // Copying one whole side is not by itself a loss, though, and treating it as one is how
+    // a gate gets `--no-verify`'d. Resolving `git merge main` with `--theirs` is ordinary
+    // and often CORRECT: main's version is frequently a strict superset of the branch's,
+    // the branch's own lines and all. So before reporting, ask the only question that
+    // decides it — does the result DELETE anything the protected side had? A pure addition
+    // keeps every line the protected side introduced and lost nothing.
+    const deleted = countDeleted(headRef, result, path, cwd);
+
+    if (resultBlob === baseBlob && deleted > 0) {
       // `git add -A` in a feature worktree while the root checkout sat at another HEAD:
       // the branch committed the pre-divergence content of a file it never worked on,
       // so the merge handed main back its own older version. This is the shape that cost
@@ -192,20 +201,23 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
       takeovers.push({
         path,
         kind: 'restored-pre-divergence-content',
+        deleted,
         reason: `the result is byte-for-byte the pre-divergence content from ${truncate(base)}, so main's committed change to it was undone`,
       });
-    } else if (resultBlob === incomingBlob) {
-      // `git checkout --theirs <file>`, or any resolution that keeps one whole side.
+    } else if (resultBlob === incomingBlob && deleted > 0) {
+      // `git checkout --theirs <file>`, or any resolution that keeps one whole side — and
+      // here the result actually drops lines the protected side had.
       takeovers.push({
         path,
         kind: 'whole-file-takeover',
-        reason: `the result is byte-for-byte the incoming side's ${truncate(incomingRef)}, so main's committed change to it is gone`,
+        deleted,
+        reason: `the result is byte-for-byte the incoming side's ${truncate(incomingRef)} and drops ${deleted} line(s) the merged-into side had, so its committed work is gone`,
       });
     }
   }
 
   takeovers.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { takeovers, scanned: movedByMerge.length, incoming: incomingRef, base };
+  return { takeovers, scanned: movedByMerge.length, incoming: incomingRef, base, head: headRef };
 }
 
 function splitZ(text) {
@@ -220,18 +232,34 @@ function blobAt(treeish, path, cwd) {
   return tryGit(['rev-parse', '--verify', '--quiet', `${treeish}:${path}`], { cwd });
 }
 
-function report({ takeovers, scanned, incoming, base }) {
+/**
+ * How many lines the result REMOVES relative to the protected side.
+ *
+ * This is the discriminator between a real loss and a whole-file copy that lost nothing.
+ * `--numstat` reports added and deleted counts, and a result that only ever adds is a
+ * superset: every line the protected side had is still present, whatever the file's overall
+ * shape. `git diff` alone cannot be read this way — a two-line file rewritten as one
+ * different line shows as one change, and a file reformatted wholesale shows as hundreds
+ * of deletions that are really just reflowed text.
+ */
+function countDeleted(fromTree, toTree, path, cwd) {
+  const line = tryGit(['diff', '--numstat', fromTree, toTree, '--', path], { cwd });
+  if (!line) return 0;
+  const [added, deleted] = line.split('\t');
+  if (deleted === '-') return Number.POSITIVE_INFINITY; // binary: not a text superset
+  return Number.parseInt(deleted, 10) || 0;
+}
+
+function report({ takeovers, scanned, incoming, base, head }) {
   const lines = [];
   if (takeovers.length === 0) {
     lines.push(`merge-takeover-guard: clean — ${scanned} path(s) moved by the merge, none taken over wholesale.`);
     return lines.join('\n');
   }
   lines.push('');
-  lines.push(
-    `merge-takeover-guard: REFUSING this merge — ${takeovers.length} path(s) would silently lose main's work.`
-  );
+  lines.push(`merge-takeover-guard: REFUSING this merge — ${takeovers.length} path(s) would drop committed work.`);
   lines.push('');
-  lines.push(`  incoming ${truncate(incoming)}   merge-base ${truncate(base)}`);
+  lines.push(`  merged into ${truncate(head)}   incoming ${truncate(incoming)}   merge-base ${truncate(base)}`);
   lines.push('');
   for (const { path, reason } of takeovers) {
     lines.push(`  ${path}`);

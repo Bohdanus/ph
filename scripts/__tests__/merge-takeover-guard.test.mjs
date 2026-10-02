@@ -274,6 +274,59 @@ describe('the shapes it must NOT report', () => {
     expect(mergeAndInspect('feat').takeovers).toEqual([]);
   });
 
+  it('stays silent when the incoming side is a strict SUPERSET of this side', () => {
+    // Found by running the guard, not by reading it. Resolving `git merge main` with
+    // `--theirs` is ordinary and often correct: main's version routinely already contains
+    // the branch's line plus more, and taking it loses nothing. An earlier version of this
+    // guard blocked it and printed "would silently lose main's work" while main's work sat
+    // in the result untouched — a false positive on the repo's single most common merge,
+    // which is precisely how a gate ends up `--no-verify`'d for good.
+    //
+    // The discriminator is whether the result DELETES anything this side had. An addition-
+    // only result is a superset, whatever the file's overall shape.
+    write('f.txt', 'alpha\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbranch-line\n');
+    commit('branch adds a line');
+
+    git(['checkout', '-q', 'main']);
+    // main already carries the branch's line and adds its own: a superset.
+    write('f.txt', 'alpha\nbranch-line\nMAIN-ADDED-LATER\n');
+    commit('main adds more to the same file');
+
+    git(['checkout', '-q', 'feat']);
+    const seen = mergeAndInspect('main', { resolve: () => takeTheirs('f.txt') });
+
+    expect(seen.conflicted).toBe(true);
+    expect(seen.takeovers).toEqual([]);
+    // Nothing was lost, and that is the whole point: the branch's line survived.
+    expect(git(['show', ':0:f.txt'])).toContain('branch-line');
+    expect(git(['show', ':0:f.txt'])).toContain('MAIN-ADDED-LATER');
+  });
+
+  it('still reports when the incoming side is a superset EXCEPT it drops a line', () => {
+    // The other side of the same discriminator, so the fix above cannot have bought its
+    // silence by simply never reporting a whole-file copy.
+    write('f.txt', 'alpha\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbranch-line\n');
+    commit('branch adds a line');
+
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nMAIN-ADDED-LATER\n');
+    commit('main changes the same line differently');
+
+    git(['checkout', '-q', 'feat']);
+    const seen = mergeAndInspect('main', { resolve: () => takeTheirs('f.txt') });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].deleted).toBeGreaterThan(0);
+  });
+
   it('does not report a path main never changed, even when the incoming side supplies all of it', () => {
     // THE false-positive test, and the one the mutation check proved was missing: with the
     // "main must have changed it" filter removed, this suite stayed green while the guard
