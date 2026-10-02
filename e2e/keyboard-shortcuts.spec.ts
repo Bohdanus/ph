@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   drawLine,
@@ -11,7 +11,7 @@ import {
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { clickToolButton, resolveToolTile } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -138,24 +138,35 @@ test.describe('Keyboard shortcuts', () => {
      * for every member of the group.
      *
      * The tile is RESOLVED rather than addressed, which is the whole difference between this
-     * test and the version from before the rail learned to fold itself away. Three of these
-     * four tools are rows of the three-dots tile's flyout at the suite's viewport and have
-     * no tile of their own to address. Resolution keeps the question identical at every
-     * window because the app answers it identically at every window: the three-dots tile
-     * computes `aria-pressed` with the same `group.some(...)`, over the collapsed set. The
-     * addressed version did not fail HERE — `getByTestId` reports zero elements rather than
-     * failing — so the absence surfaced one line later as "element(s) not found" against a
-     * test id that was correct and simply not rendered.
+     * test and the version from before the rail learned to fold itself away. TWO of these four
+     * tools are rows of the three-dots tile's flyout at the suite's viewport and have no tile
+     * of their own to address: Text and Clone Stamp, the fifteenth and ninth of the sixteen
+     * groups in `toolbar-mapping.ts`. The other two are among the seven rows the rail keeps at
+     * 1280x720 — Move is the first group and Crop the sixth — so they are addressed directly
+     * whatever the window. Crop used to be folded at this viewport; the rail now fills its
+     * whole slot with whole rows (`TOOLBAR_HEIGHT_BUDGET = 1`, `toolbar-overflow.ts:43`) and
+     * keeps seven of the sixteen groups here, which is why the count moved from three to two.
+     * Resolution keeps the question identical at every window because the app answers it
+     * identically at every window: the three-dots tile paints its lit state from the same
+     * `group.some(...)` predicate over the collapsed set, which is the channel
+     * `expectToolSelected` reads for a tool with no tile of its own. (It deliberately renders
+     * NO `aria-pressed` — `SidebarLeft.tsx:653`, which is why that helper reads the class and
+     * not the attribute; the sentence here used to say the attribute, and named a mechanism
+     * the tile does not have.) The addressed version did not fail HERE —
+     * `getByTestId` reports zero elements rather than failing — so the absence surfaced one
+     * line later as "element(s) not found" against a test id that was correct and simply not
+     * rendered.
      *
      * WHICH IS NOT ENOUGH ON ITS OWN, and the `bar` column is why. The three-dots tile
      * answers "is SOME tool of the collapsed set selected", so at a window where the rail
      * has folded anything it is lit for a large fraction of the tool list — and measured at
      * 1280x720 it is ALREADY lit on load, because the app starts on a tool that has been
-     * folded away. Asserting only the resolved tile would have made `C`, `T` and `S` pass
+     * folded away. Asserting only the resolved tile would have made `T` and `S` pass
      * with the shortcut deleted, which is why the tile alone is not what is asserted here.
      * `bar` is a control of that tool's own options bar, and the bar is the one thing in the
      * document that is driven by `toolName` itself: each row's control is absent before the
-     * keystroke and present after, so the row says WHICH tool is up. The tile assertion is
+     * keystroke and present after, so the row says WHICH tool is up — which for `T` and `S` is
+     * the entire question, since neither has a tile that can answer it. The tile assertion is
      * kept anyway, because it pins the reachability contract this branch is about — a tool
      * the rail could not show is still represented, and the tile standing for it lights.
      */
@@ -169,10 +180,7 @@ test.describe('Keyboard shortcuts', () => {
     for (const { key, tool, bar } of SINGLE_TOOL_SHORTCUTS) {
       test(`${key.toUpperCase()} selects ${tool}`, async ({ page }) => {
         await page.keyboard.press(key);
-        await expect(await resolveToolTile(page, tool), 'the tile standing for the tool is lit').toHaveAttribute(
-          'aria-pressed',
-          'true'
-        );
+        await expectToolSelected(page, tool);
         await expect(page.locator(bar), 'the tile is lit for a tool of its own, not a neighbour of one').toBeVisible();
       });
     }
@@ -195,13 +203,10 @@ test.describe('Keyboard shortcuts', () => {
       // observation it was before the collapse: a tile that was not lit lights for a member
       // of the brush group that is not the group's own identity.
       await page.keyboard.press('v');
-      await expect(await resolveToolTile(page, 'brush'), 'the baseline leaves the brush group unlit').toHaveAttribute(
-        'aria-pressed',
-        'false'
-      );
+      await expectToolSelected(page, 'brush', false);
 
       await page.keyboard.press('e');
-      await expect(await resolveToolTile(page, 'brush')).toHaveAttribute('aria-pressed', 'true');
+      await expectToolSelected(page, 'brush');
       await expect(page.locator('#eraser-mode')).toBeVisible();
       await expect(page.locator('#brush-size'), 'the paint bar is not the one on screen').toHaveCount(0);
     });
@@ -335,8 +340,7 @@ test.describe('Keyboard shortcuts', () => {
       // asserting both halves of a single fact. The collapse is a SUFFIX of the rail's rows
       // (`fittedThrough` in `toolbar-overflow.ts`), so a tile below a collapsed row is
       // collapsed too — and Move is the first row, which is the last thing a suffix reaches.
-      const drawTile = await resolveToolTile(page, 'draw');
-      await expect(drawTile, 'the tile standing for the tool is lit').toHaveAttribute('aria-pressed', 'true');
+      await expectToolSelected(page, 'draw');
       // …and the Draw bar, because that tile was ALREADY lit before the click: the rail
       // starts on a tool the window folded away, so `aria-pressed` on the three-dots tile
       // cannot tell this precondition from the app's opening state. The bar is driven by
@@ -359,8 +363,8 @@ test.describe('Keyboard shortcuts', () => {
 
       await page.keyboard.press('v');
       await expect(width, 'V typed into the field changes nothing about it').toHaveValue('123');
-      await expect(drawTile, 'no tool switched while the field had focus').toHaveAttribute('aria-pressed', 'true');
-      await expect(await resolveToolTile(page, 'reposition')).toHaveAttribute('aria-pressed', 'false');
+      await expectToolSelected(page, 'draw');
+      await expectToolSelected(page, 'reposition', false);
     });
 
     test('a tool shortcut is ignored while a layer name is being edited', async ({ page }) => {
@@ -369,8 +373,7 @@ test.describe('Keyboard shortcuts', () => {
       // its own at this window, and `V` is what this test proves did not reach the shortcut.
       // The Move assertion is the other half of the same fact and cannot be the same
       // element, for the same suffix reason.
-      const textTile = await resolveToolTile(page, 'text');
-      await expect(textTile, 'the tile standing for the tool is lit').toHaveAttribute('aria-pressed', 'true');
+      await expectToolSelected(page, 'text');
       // The bar, for the same reason the Draw guard above states it: the three-dots tile
       // was already lit when this test began, so the tile cannot establish that `T` did
       // anything. What makes the rest of the test meaningful is the PAIR below — the tile
@@ -388,8 +391,8 @@ test.describe('Keyboard shortcuts', () => {
       await page.keyboard.type('v');
 
       await expect(name, 'the letter belongs to the name').toContainText('v');
-      await expect(textTile, 'V did not reach the reposition shortcut').toHaveAttribute('aria-pressed', 'true');
-      await expect(await resolveToolTile(page, 'reposition')).toHaveAttribute('aria-pressed', 'false');
+      await expectToolSelected(page, 'text');
+      await expectToolSelected(page, 'reposition', false);
     });
   });
 });

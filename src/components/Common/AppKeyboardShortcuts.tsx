@@ -5,6 +5,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
 import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
+import type { SpongeMode } from '../../tools/sponge.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
 
 /**
@@ -22,14 +23,33 @@ const lassoGroup = [
   'polygonal-lasso',
   'feather-magnetic-lasso',
 ] as const satisfies readonly ToolName[];
-/** `M`: the marquee tile — rectangular and elliptical, NOT the wand, which moved to `W`. */
-const marqueeGroup = ['rectangular-selection', 'elliptical-selection'] as const satisfies readonly ToolName[];
+/**
+ * `M`: the marquee tile — all four of Adobe's marquee tools, NOT the wand, which moved to `W`.
+ *
+ * The order is the flyout order from `toolbar-mapping.ts`, and it is what `Shift+M` walks.
+ * Adobe publishes "Switch between marquee tools — SHIFT+M"
+ * (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`)
+ * without enumerating which tools the cycle covers, and its default-shortcut table names
+ * only the Rectangular and Elliptical Marquees against `M`. Two third-party sources
+ * disagree on whether the 1-pixel pair is inside the cycle at all
+ * (`guides.wmlcloud.com`, reproducing Adobe's own CS5 "Basic Selection Tools", says they were
+ * never assigned `M`; `flylib.com`'s Real World Adobe Photoshop CS2 says the cycle covers
+ * four). This app follows the group: the cycle is the marquee tile, and a tool the rail
+ * shows behind the same key that a user has just pressed is a tool they will expect the key
+ * to reach. Recorded as unresolved in `selection.notes.md`.
+ */
+const marqueeGroup = [
+  'rectangular-selection',
+  'elliptical-selection',
+  'single-row-marquee',
+  'single-column-marquee',
+] as const satisfies readonly ToolName[];
 /** `W`: the object-selection tile — the wand and the quick selection, which now share it. */
 const objectSelectionGroup = ['magic-wand', 'quick-selection'] as const satisfies readonly ToolName[];
 /** `G`: paint bucket and gradient, one tile, one fill gesture between a click and a drag. */
 const fillGroup = ['paint-bucket', 'gradient'] as const satisfies readonly ToolName[];
-/** `O`: the dodge/burn tonal pair, which also share one options bar (`ToolbarsRight/Tonal`). */
-const tonalGroup = ['dodge', 'burn'] as const satisfies readonly ToolName[];
+/** `O`: the whole toning flyout — the Dodge, the Burn and the Sponge, in Adobe's order. */
+const tonalGroup = ['dodge', 'burn', 'sponge'] as const satisfies readonly ToolName[];
 const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies readonly ToolName[];
 
 /**
@@ -49,6 +69,7 @@ const tipSizeField = {
   smudge: 'size',
   dodge: 'size',
   burn: 'size',
+  sponge: 'size',
   'clone-stamp': 'size',
 } as const satisfies Partial<Record<ToolName, 'lineWidth' | 'size'>>;
 
@@ -82,7 +103,7 @@ export const AppKeyboardShortcuts = () => {
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { copyActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
+  const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -277,7 +298,15 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage,
     onKeyDown: () => {
-      copyActiveSelection();
+      // The only copy call site with no `try` around it, and the one that most needs the
+      // boolean read: `copySelection` returns `false` for a null snapshot instead of
+      // throwing, so an unread result is a failed copy that leaves no trace anywhere. This
+      // registration deliberately does NOT set `repeat`, which is what keeps the log to one
+      // line per press — `useKeyboardEvents.tsx:154` drops an `event.repeat` before
+      // `onKeyDown` runs, so a held Meta+C is one intent and one line, not a scrub.
+      if (!copyActiveSelection()) {
+        console.error('Failed to copy selection');
+      }
     },
   });
 
@@ -309,9 +338,30 @@ export const AppKeyboardShortcuts = () => {
     key: 'j',
     mod: true,
     preventDefault: true,
+    // `hasImage` alone, deliberately NOT `hasImage && hasActiveSelection`. `enabled` is
+    // resolved BEFORE `preventDefault` (`useKeyboardEvents.tsx:111` continues out of the loop
+    // body before :140 runs), so gating on the selection would hand the key back to the browser
+    // — Ctrl+J is Downloads in Chrome on Windows and Linux — and replace a silent no-op with an
+    // out-of-app page. `preventDefault: true` is what claims the key, so the registration stays
+    // enabled and the empty case is answered where it belongs, in the handler. That is also what
+    // the rest of this file already does for "nothing to act on": Meta+Z on an empty history is a
+    // silent no-op (see the undo describe block), and every `copyActiveSelection` button guard
+    // returns BEFORE calling rather than logging a refusal that never happened.
     enabled: hasImage,
-    onKeyDown: () => {
-      layerViaCopy();
+    onKeyDown: async () => {
+      // No selection is a state, not a failure: `layerViaCopy` would return `false` at
+      // `useSelectionClipboard.ts:90` before touching anything. Reporting it would put a failure
+      // in the console for the ordinary state of a document the user has not selected in yet.
+      if (!hasActiveSelection) return;
+
+      // `layerViaCopy`'s null-snapshot exits are an in-band channel its callers are expected to
+      // report — `src/util/selection.ts:420-428` says so, and this was the only caller in the
+      // family that discarded the boolean. `await` rather than a `.catch`: the promise is not
+      // swallowed, so a throw from the un-`try`-wrapped `copySelectionToCanvas` still reaches the
+      // console with its stack, which a defensive catch that can never fire would destroy.
+      if (!(await layerViaCopy())) {
+        console.error('Failed to create a layer from the active selection');
+      }
     },
   });
 
@@ -515,6 +565,66 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage && opacityTool(toolName) !== null,
     onKeyDown: () => setOpacity(OPACITY_TEN_PERCENT),
+  });
+
+  /**
+   * The Sponge's two mode keys: `Shift+Alt+D` for Desaturate and `Shift+Alt+S` for
+   * Saturate, with the Sponge selected.
+   *
+   * Adobe's own manual shortcut tables give both rows verbatim — "Desaturate (Sponge Tool)
+   * Alt+Shift+D" and "Saturate (Sponge Tool) Alt+Shift+S" — and Julieanne Kost restates
+   * them on Adobe's behalf. They are **tool-conditional**, which is load-bearing rather
+   * than a workaround: the SAME `Alt+Shift+S` is Shadows on the Dodge and the Burn, on the
+   * same page of the same table, so Photoshop resolves the collision by which tool is
+   * active. `enabled: toolName === 'sponge'` is that resolution, and it is also what keeps
+   * this registration from claiming the Dodge's Shadows key.
+   *
+   * `preventDefault` is on because `Alt+S` is a browser and OS chord on several platforms
+   * and an unbound one would otherwise act on the user's document.
+   *
+   * **THEY ARE REGISTERED LAST ON PURPOSE, and that position is load-bearing.**
+   * `matchesShortcut` only compares a modifier the registration actually DECLARES
+   * (`src/hooks/useKeyboardEvents.tsx:70-77`), and the Clone Stamp's bare `s` at
+   * `key: 's', mod: false` declares neither `shift` nor `alt` — so it matches `Alt+Shift+S`
+   * as readily as a bare `s`. Dispatch is last-registered-wins (`useKeyboardEvents.tsx:109`
+   * walks the registration array backwards), which is why a registration sitting earlier in
+   * this function loses to one sitting later. Registered up here with the other tool
+   * selectors, `Alt+Shift+S` reached the Clone Stamp instead of the Sponge and Adobe's
+   * Saturate key was dead on arrival; `Alt+Shift+D` was unaffected because no registration
+   * for `d` leaves its modifiers undeclared. Moving the pair to the end fixes it without
+   * touching the Clone Stamp's own `Shift+S`, which is pinned behaviour.
+   *
+   * The alternative — declaring `shift: false, alt: false` on the Clone Stamp — was rejected
+   * because `Shift+S` selecting the Clone Stamp is itself pinned by
+   * `src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx`. The dependency this
+   * creates is on ORDER rather than on the flag, so the reason is recorded here and in the
+   * tests that pin it.
+   *
+   * **The Dodge's and the Burn's own `Alt+Shift+S/M/H` range keys are NOT bound here.** They
+   * are listed in their descriptions and do nothing. That asymmetry is the point of the
+   * `enabled` gate rather than an oversight in it, and the missing pair is recorded in
+   * `HANDOFF.md` §145 rather than fixed in this change.
+   */
+  const setSpongeMode = (mode: SpongeMode) => patchToolArgs('sponge', { mode });
+
+  useKeyDownShortcut({
+    key: 'd',
+    mod: false,
+    shift: true,
+    alt: true,
+    preventDefault: true,
+    enabled: hasImage && toolName === 'sponge',
+    onKeyDown: () => setSpongeMode('desaturate'),
+  });
+
+  useKeyDownShortcut({
+    key: 's',
+    mod: false,
+    shift: true,
+    alt: true,
+    preventDefault: true,
+    enabled: hasImage && toolName === 'sponge',
+    onKeyDown: () => setSpongeMode('saturate'),
   });
 
   return null;

@@ -15,6 +15,15 @@ here, not paraphrased, and not restated with a citation attached. Where the two 
 `AGENTS.md` wins and this document is wrong. What follows is only what `AGENTS.md` does not say:
 the Photoshop tool contract, the code surfaces, and the process for getting there.
 
+**`AGENTS.md` is the short form, and `docs/ORCHESTRATION.md` is the detail behind it.** That
+matters here, because a whole class of rules is in the second file and in neither section of the
+first: the hard worktree rule and its exceptions, `scripts/main-worktree-guard.mjs`, never
+`git stash`, the `git add -A` silent-revert trap and its `comm -13` detection, `WORKTREES.json`, and
+the swarm board. An agent that reads `AGENTS.md`, finds no worktree rule beyond three traps, and
+concludes none exists is following this document's own index correctly and still gets it wrong.
+**Read `docs/ORCHESTRATION.md` before your first edit**, and treat a rule you cannot find in either
+as a rule you do not know rather than one that does not apply.
+
 Every `file:line` here was last re-verified on 2026-09-28. **Re-verify before you rely on one**,
 and name a symbol as well as a line wherever you can: a stale citation sends the next session
 after a bug that does not exist, and writing this skill corrected more than sixty of them.
@@ -71,6 +80,30 @@ These are the ones that actually change outcomes. Each is expanded where it is u
    closed one. → [Phase 9](#the-entry-shape)
 5. **Verify every citation before you commit the handoff.** Adding one import shifts every
    line below it. → [Phase 9](#verify-every-citation-before-you-commit-the-handoff)
+6. **A hard fix is a requirements problem until proven otherwise.** Compute and time are
+   effectively unlimited here, so effort is free and giving up is expensive. Before you conclude
+   that a defect is not fixable, or that a feature is out of scope, spend the effort on
+   establishing what the feature was **for** — read the older chats, read the plan documents, read
+   the pre-existing handoff entries, and research the upstream product's documented behaviour. A
+   wrong requirement produces a clean, well-tested, useless implementation, which is worse than a
+   red test because nothing about it looks wrong.
+7. **Search the chats by meaning, not by id.** The ids in this document are the ones somebody
+   happened to write down. To recover a requirement, search the project's session history broadly —
+   by the feature noun, by the commit subject, by the file paths the work touched, and by the
+   operator's own phrasing — and widen to synonyms when nothing hits. The `chat-history-query` skill
+   is the surface for it. **A chat id attached to a worktree is a claim about a moment, not the set
+   of sessions that worked on it**, so a requirement recovered only from the recorded ids has been
+   recovered from one corner.
+8. **When the requirement is unclear, go back to Adobe.** Defaults, ranges, modifier semantics and
+   commit points are exactly what Adobe's user guide and API reference publish and what reading code
+   cannot recover. `developer.adobe.com` is fetchable and carries exact parameter names. **Do not
+   resolve an ambiguity from memory when a source can be asked.**
+9. **Escalating is the last resort.** Time and compute are effectively unlimited; the scarce things
+   are autonomy and correctness, so a question is a request to take over a decision you had the tools
+   to make. Exhaust the searches above first, then write the question into a file with what each one
+   did **not** find. The exceptions are real and they are narrower than they look: a **recording
+   decision** — a re-recorded baseline, a deliberately waived threshold — is genuinely the
+   operator's, because it is a statement about what the number is allowed to mean.
 
 ## How to read this document
 
@@ -135,7 +168,7 @@ git merge --ff-only main
 ### 0.3 `.kilo` is gitignored — a new worktree has no plan documents
 
 ```bash
-git check-ignore -v .kilo   # .gitignore:34:.kilo	.kilo
+git check-ignore -v .kilo   # .gitignore:49:.kilo	.kilo
 git ls-files .kilo | wc -l  # 0
 ```
 
@@ -201,6 +234,61 @@ git diff --cached --stat                          # read this: it is what you ar
 ```
 
 `git add -A` in a shared checkout stages another session's in-flight work under your commit message, with no clean undo once pushed. **One investigation to skip:** `.eslintcache` and `.serena/` appear in and disappear from `git status` across sessions because a fast-forward brought a new `.gitignore` line; run `git check-ignore -v` before treating either as another session's work.
+
+### 0.7 Four traps at commit and integration time
+
+`AGENTS.md` does not carry these, so they are stated here. Each has already cost real work in this
+repository.
+
+- **A commit made from the main worktree is refused.** `scripts/main-worktree-guard.mjs` runs first
+  in `.husky/pre-commit`, ahead of `gate:commit`, and tells you the worktree recipe instead of a bare
+  "no". It stops the **commit, not the write** — it runs after the edit — so it converts rogue commits
+  into a dirty tree the next `git status` names. A landing never reaches it, because a fast-forward
+  runs no hook and `git merge` runs `pre-merge-commit`; the one override is `ALLOW_MAIN_COMMIT=1`,
+  and only the exact value `1`. Everything that changes a tracked file belongs in the branch's own
+  worktree, **including a comment**, and `git rev-parse --show-toplevel` before the first edit is the
+  only thing that distinguishes where you are from where you believe you are.
+- **Never resolve _or repair_ a merge conflict in the main worktree.** `reset --hard` and
+  `checkout --ours`/`--theirs` destroy another session's uncommitted work; `hash-object` and
+  `update-index` write an index entry no later `git status` reconciles. `git merge --abort` and redo
+  it in the worktree. After any interrupted merge, `git rev-parse -q --verify MERGE_HEAD` before
+  committing — an interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` behind with no
+  `MERGE_HEAD`, and `git commit` then lands a single-parent commit that reads as a resolution.
+- **Never `git stash`.** It is a shared, unordered stack in the common git dir. The silent part is
+  the one that matters: `git stash push` on a CLEAN tree exits 0, prints nothing and creates **no
+  entry at all**, so the `git stash pop` that follows takes `stash@{0}`, which is whoever pushed
+  last. This has destroyed work here.
+- **`git add -A` in a worktree whose _root_ checkout is dirty is a silent-revert trap, and it is not
+  the same one as above.** The root is a different checkout at a different `HEAD`, so a file your
+  branch never touched can sit in your worktree holding main's older content, and `-A` commits it as
+  a deliberate reverting of whatever main has since done. One merge shipped **17 such reverts and not
+  one of them was a conflict**, so the merge was clean and the revert was invisible in the diff.
+  Detect it by computation, not by reading the merge diff, and run it **before** the review:
+
+  ```sh
+  comm -13 \
+    <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
+    <(git diff --name-only main..HEAD | sort)
+  ```
+
+  Anything in that set is main content the merge had no business touching; restore it with
+  `git checkout main -- <path>` before the merge lands.
+
+**And a red `tsc` in the main worktree may be somebody else's work in progress**, not a broken `main`
+— the main worktree is shared, so it routinely holds an agent's half-written change, and that state
+blocks every commit made from there. Read `git status --porcelain` first: a path you have not touched
+is not yours to stage and its type error is not yours to resolve. Check whether the _committed_ state
+is green instead, in a throwaway worktree, and report the block.
+
+### 0.8 Before you start: is this tool actually missing?
+
+`docs/TOOLS-RESEARCH-BRIEF.md` and the backlog in
+[Appendix B](#appendix-b--the-tool-backlog--what-to-build-next) are claims about a moment, and the
+moment is old. **Re-derive before you build**: `git merge-base --is-ancestor <sha> main` for every
+commit the backlog says is unlanded, `grep -n "'<tool>'" src/tools/toolsMap.ts`, and
+`ls src/components/ToolbarsRight/`. The backlog once listed six tools as ABSENT that are in
+`toolsMap.ts` with real options bars today, and named a branch that no longer exists. A backlog row
+is a starting point, exactly as a chat id is.
 
 ---
 
@@ -789,7 +877,7 @@ Two more habits from that `README.md` that make a doc set worth maintaining:
   spec says so in that section. **Do not promote a reconstruction to a spec** — that is the
   single rule that keeps a research corpus from decaying into folklore.
 
-**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore:34`
+**`.kilo` is gitignored, so the doc set never reaches a worktree.** The rule is `.gitignore:49`
 (`.kilo`, alongside `.serena`), and `git check-ignore -v .kilo/plans/ps-research/README.md`
 confirms it. Two consequences, both of which will bite:
 
@@ -1546,7 +1634,7 @@ Every `file:line` below was read in `main` on 2026-09-28. Re-read them before yo
 
 An operator who says "strip the undoable requirement" is not asking you to delete undo.
 They are asking you **not to spend their task migrating the history system**. They have
-read `HANDOFF.md:137-192` ("P0 — the durable replay path has no production caller") and
+read `HANDOFF.md` §1 ("P0 — the durable replay path has no production caller") and
 they do not want their tool to be the reason that file grows.
 
 > **The reframe.** You are not removing undo. You are **choosing a `commit` kind whose
@@ -1588,8 +1676,8 @@ document. Say so in the PR.
 | `ToolCommitKind`          | the eight-value union at `src/tools/toolProcessors.ts:40-48`; a tool's declared answer to "how does my result become state?"                                                                                                      |
 | `ToolProcessorDefinition` | the registry entry type in `src/tools/toolProcessors.ts`: `creator?`, `commit`, `replay`, `imageProcessor`. The registry is keyed by `PixelToolName`, **not** `ToolName`, so a pixel-free tool goes in `PIXEL_FREE_TOOLS` instead |
 | `replay`                  | the frozen descriptor at `src/tools/toolProcessors.ts:54-59` — `{ kind, deterministic, version, requiresRaster }`, built by the `replay()` factory at `:69-70`                                                                    |
-| `DurableOperation`        | the durable operation union at `src/contexts/history-model.ts:87-110` — the twelve shapes a durable history entry can hold                                                                                                        |
-| `DurableHistoryEntry`     | `{ id, schemaVersion, enabled, operation }`, `src/contexts/history-model.ts:115-120`                                                                                                                                              |
+| `DurableOperation`        | the durable operation union at `src/contexts/history-model.ts:93-115` — the eleven shapes a durable history entry can hold                                                                                                        |
+| `DurableHistoryEntry`     | `{ id, schemaVersion, enabled, operation }`, `src/contexts/history-model.ts:120-125`                                                                                                                                              |
 | `operationForTool`        | `src/contexts/history-adapter.ts:349-427` — **the whole decision point.** Maps one legacy `TOOL_ACTION` entry to one `DurableOperation`, or `null`, or throws                                                                     |
 | `imageProcessor`          | `(params) => (args) => [BitmapSource, Partial<Pos>?]`; called with `{ bitmap, size }` on replay, `{ size }` for a creator, `{ bitmap, size }` in materialization                                                                  |
 | `ToolArgs`                | the closed per-tool args union, `src/contexts/tool-types.ts:28-79`; every settings field you add is an optional member of your tool's entry                                                                                       |
@@ -1605,11 +1693,11 @@ derived from `operationForTool` and the two consumers of its output.
 | -------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `raster`             | My output is a new raster for the layer.                                      | `apply-raster-processor` with `processorId: args.toolName`, `src/contexts/history-adapter.ts:416-424`                                                                                                                                                                                                                             | **YES.** No allowlist; `args.toolName` becomes the `processorId` and the materializer resolves it by lookup: `toolProcessors[operation.processorId]` at `src/contexts/materialization.ts:277`                                                                                                                                           | zero edits to the history files                                                                          | **ESCAPE HATCH — tier 1. Use this.**                                                                                                                     |
 | `geometry`           | I only move and/or resize the layer's `pos`.                                  | `reposition-layer` carrying `move` and/or `resize`, `src/contexts/history-adapter.ts:403-415`                                                                                                                                                                                                                                     | **YES.** The arm reads only `args.move` / `args.resize`; it never reads `args.toolName`. Replay applies it by patching `pos`, `src/contexts/durable-replay.ts:96-106`                                                                                                                                                                   | zero edits to the history files                                                                          | **ESCAPE HATCH — tier 1**, for pure move/resize only                                                                                                     |
-| `source`             | I _create_ a layer; my args **are** the layer source.                         | `create-layer`, `src/contexts/history-adapter.ts:504` — reached from the `NEW_LAYER_ACTION \|\| (TOOL_ACTION && source)` arm at `:500`, **not** from `operationForTool`                                                                                                                                                           | **YES for the create path.** The op carries no tool name; the name lives on `DurableLayerSource.toolName`, a free `string` (`src/contexts/history-model.ts:31`, `:47`)                                                                                                                                                                  | zero edits to the history files                                                                          | **ESCAPE HATCH for a creator only.** See the trap below                                                                                                  |
-| `layer-operation`    | I am a non-destructive filter: append a retained op, do not touch pixels now. | `apply-filter` carrying a `DurableFilter`, `src/contexts/history-adapter.ts:391-402`                                                                                                                                                                                                                                              | **NO.** Allowlist `['blur', 'color', 'levels']` at `src/contexts/history-adapter.ts:393`; closed union `DurableFilter['toolName']` at `src/contexts/history-model.ts:75`; a `switch` with **no `default` arm** at `src/contexts/materialization.ts:73-89`; a second throw at `src/contexts/materialization.ts:100-102`                  | four hardcoded sites across three files                                                                  | **NOT an escape hatch — tier 2**                                                                                                                         |
+| `source`             | I _create_ a layer; my args **are** the layer source.                         | `create-layer`, `src/contexts/history-adapter.ts:504` — reached from the `NEW_LAYER_ACTION \|\| (TOOL_ACTION && source)` arm at `:500`, **not** from `operationForTool`                                                                                                                                                           | **YES for the create path.** The op carries no tool name; the name lives on `DurableLayerSource.toolName`, a free `string` (`src/contexts/history-model.ts:31`, `:44`)                                                                                                                                                                  | zero edits to the history files                                                                          | **ESCAPE HATCH for a creator only.** See the trap below                                                                                                  |
+| `layer-operation`    | I am a non-destructive filter: append a retained op, do not touch pixels now. | `apply-filter` carrying a `DurableFilter`, `src/contexts/history-adapter.ts:391-402`                                                                                                                                                                                                                                              | **NO.** Allowlist `['blur', 'color', 'levels']` at `src/contexts/history-adapter.ts:393`; closed union `DurableFilter['toolName']` at `src/contexts/history-model.ts:81`; a `switch` with **no `default` arm** at `src/contexts/materialization.ts:73-89`; a second throw at `src/contexts/materialization.ts:100-102`                  | four hardcoded sites across three files                                                                  | **NOT an escape hatch — tier 2**                                                                                                                         |
 | `selection`          | I produce selection state.                                                    | **`null`.** `src/contexts/history-adapter.ts:503` returns `null` for `selection` and `document-operation` alike. Selection state enters the durable timeline as a `set-selection` op derived from the `SELECTION_ACTION` entry's args by `deriveSetSelectionEntry` (`src/contexts/history-adapter.ts:311-328`, arm at `:556-599`) | the **op** is generic; the **representation** is not — `SelectionGeometry` (`src/contexts/general-types.ts:19`) and `SelectionSourceTool` (`:17-18`) are closed unions                                                                                                                                                                  | a new geometry widens both unions                                                                        | **NOT an escape hatch — tier 2**                                                                                                                         |
-| `affine-operation`   | I retain an affine transform.                                                 | `apply-affine-transform`, `src/contexts/history-adapter.ts:384-388`                                                                                                                                                                                                                                                               | **NO — the commit kind is never consulted.** The affine arm sits behind `if (args.toolName === 'transform')` at `src/contexts/history-adapter.ts:357`, which returns or throws from inside its own block. A new tool declaring `commit: 'affine-operation'` falls past every `processor.commit === …` test and hits the throw at `:426` | the `toolName` gate at `:357`, the trapezoid arm at `:362-373`, `src/contexts/history-replay.ts:162-188` | **NOT an escape hatch.** The _op_ is generic; the _kind_ is a name-keyed special case                                                                    |
-| `document-operation` | I own the document frame, not a layer.                                        | **`null`**, `src/contexts/history-adapter.ts:503`. Legacy replay `continue`s: `if (processor.commit === 'document-operation') continue;` at `src/contexts/history-replay.ts:195`                                                                                                                                                  | n/a                                                                                                                                                                                                                                                                                                                                     | none — but the op is discarded by **both** systems                                                       | **NOT an escape hatch.** This is crop's declaration, and it silently loses the operation in legacy replay too                                            |
+| `affine-operation`   | I retain an affine transform.                                                 | `apply-affine-transform`, `src/contexts/history-adapter.ts:384-388`                                                                                                                                                                                                                                                               | **NO — the commit kind is never consulted.** The affine arm sits behind `if (args.toolName === 'transform')` at `src/contexts/history-adapter.ts:357`, which returns or throws from inside its own block. A new tool declaring `commit: 'affine-operation'` falls past every `processor.commit === …` test and hits the throw at `:426` | the `toolName` gate at `:357`, the trapezoid arm at `:362-373`, `src/contexts/history-replay.ts:182-208` | **NOT an escape hatch.** The _op_ is generic; the _kind_ is a name-keyed special case                                                                    |
+| `document-operation` | I own the document frame, not a layer.                                        | **`null`**, `src/contexts/history-adapter.ts:503`. Legacy replay `continue`s: `if (processor.commit === 'document-operation') continue;` at `src/contexts/history-replay.ts:215`                                                                                                                                                  | n/a                                                                                                                                                                                                                                                                                                                                     | none — but the op is discarded by **both** systems                                                       | **NOT an escape hatch.** This is crop's declaration, and it silently loses the operation in legacy replay too                                            |
 | `unimplemented`      | I do not exist yet.                                                           | **throws** `UnsupportedHistoryFeatureError` at `src/contexts/history-adapter.ts:504`                                                                                                                                                                                                                                              | n/a                                                                                                                                                                                                                                                                                                                                     | none                                                                                                     | **NOT an escape hatch.** The processor is also a no-op: `unimplemented = () => () => [null as never] as ToolResult` at `src/tools/toolProcessors.ts:110` |
 
 #### Three traps the table exposes
@@ -1623,20 +1711,20 @@ block**; then `processor.commit === 'layer-operation'` (`:391`), `=== 'geometry'
 `=== 'raster'` (`:416`), and `=== 'document-operation' || === 'selection'` returning `null`
 (`:425`); then `throw new UnsupportedHistoryFeatureError(...)` at `:426`. A tool named
 `warp` with `commit: 'affine-operation'` reaches `:426` and throws. Legacy replay survives
-it (`src/contexts/history-replay.ts:162-188` handles the kind for any tool name), so the
+it (`src/contexts/history-replay.ts:182-208` handles the kind for any tool name), so the
 failure is **durable-only** and silent until the shadow is exercised.
 
 **`source` — only an escape hatch in its creator role.** `operationForTool` has no
 `commit === 'source'` arm at all, so a `source` tool dispatched as a `TOOL_ACTION` against
 an **existing** layer (no `layerSource`) falls past every arm to the throw at `:426`, while
 legacy replay rasterizes it through its own default arm
-(`src/contexts/history-replay.ts:196`). `draw`, `shape`, `text`, `rectangle`, `ellipse`,
+(`src/contexts/history-replay.ts:216`). `draw`, `shape`, `text`, `rectangle`, `ellipse`,
 `triangle`, `polygon` and `line` all declare `commit: 'source'` and are all marked
 `creator: true` (`src/tools/toolProcessors.ts:145-159`, `:220-224`); keep that pairing.
 
 **`layer-operation` — looks generic and is not.** Sharpen, Noise Reduction and Vibrance
 are the natural next tools and all three are filters. They work perfectly in legacy replay
-(`src/contexts/history-replay.ts:152-161` appends a retained operation for **any**
+(`src/contexts/history-replay.ts:172-181` appends a retained operation for **any**
 `layer-operation` tool, no name check) and fail **only** the shadow, with an
 `Unsupported filter ${args.toolName}` throw (`src/contexts/history-adapter.ts:394`) that
 voids the whole durable document.
@@ -1684,17 +1772,17 @@ that retains an affine transform touches three:
 | #   | Site                                                  | What is hardcoded                                                                     | Compiler?                                                                      |
 | --- | ----------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | 1   | `src/contexts/history-adapter.ts:393`                 | `if (!['blur', 'color', 'levels'].includes(args.toolName)) throw …`                   | no                                                                             |
-| 2   | `src/contexts/history-model.ts:74-78`                 | `DurableFilter.toolName: 'blur' \| 'color' \| 'levels'`                               | yes, at the cast on `history-adapter.ts:397`                                   |
+| 2   | `src/contexts/history-model.ts:80-84`                 | `DurableFilter.toolName: 'blur' \| 'color' \| 'levels'`                               | yes, at the cast on `history-adapter.ts:397`                                   |
 | 3   | `src/contexts/materialization.ts:73-89`               | `filterForOperation` — a `switch` over three names with **no `default` arm**          | yes: declared return `string` + closed-union argument make a new member TS2364 |
 | 4   | `src/contexts/materialization.ts:100-102`             | `operationFilter` re-derives the processor by name and throws on a `version` mismatch | no                                                                             |
 | 5   | `src/tools/__tests__/tool-processors.test.ts:114-128` | the `requiresRaster` tool list is asserted exhaustively                               | yes                                                                            |
 | 6   | `src/contexts/history-adapter.ts:357`                 | `if (args.toolName === 'transform')` — the whole affine arm                           | no                                                                             |
 | 7   | `src/contexts/history-adapter.ts:362-373`             | the trapezoid raster boundary, keyed on `trapezoid` and `transform` args              | no                                                                             |
-| 8   | `src/contexts/history-replay.ts:163-164`              | `toolArgs.toolName === 'transform' ? … : 0`                                           | no                                                                             |
+| 8   | `src/contexts/history-replay.ts:183-184`              | `toolArgs.toolName === 'transform' ? … : 0`                                           | no                                                                             |
 
 Touching any of these is a **history-migration task, not a tool task**: it changes what an
 existing durable document means, and `DURABLE_SCHEMA_VERSION` is `1`
-(`src/contexts/history-model.ts:143`), checked in exactly one place,
+(`src/contexts/history-model.ts:148`), checked in exactly one place,
 `src/contexts/history-append.ts:316`. If your tool fits none of the existing generic ops
 and you would have to widen one of these, that is a `HANDOFF.md` entry, and you ship the
 tool on `commit: 'raster'`. **To add a selection tool**, see the next section.
@@ -1703,18 +1791,18 @@ tool on `commit: 'raster'`. **To add a selection tool**, see the next section.
 
 If your tool's semantics fit none of `create-layer`, `remove-layer`,
 `set-layer-properties`, `reposition-layer`, `reorder-layers`, `apply-filter`,
-`apply-affine-transform`, `apply-raster-processor`, `rasterize-layer`,
-`set-document-frame`, `merge-document` or `set-selection`
-(`src/contexts/history-model.ts:87-110`), the answer is a `HANDOFF.md` entry and the tool
+`apply-affine-transform`, `apply-raster-processor`, `set-document-frame`,
+`merge-document` or `set-selection`
+(`src/contexts/history-model.ts:93-115`), the answer is a `HANDOFF.md` entry and the tool
 ships on `commit: 'raster'`. This is a boundary, not a judgement call. Here is the bill,
 and note the enforcement column — sites 1, 2 and 11 are the only ones the compiler holds
 you to:
 
 | #   | Site                                                                                       | Enforced by the compiler?                 |
 | --- | ------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| 1   | `src/contexts/history-model.ts:87-110` — the union                                         | —                                         |
-| 2   | `src/contexts/history-model.ts:247-303` `cloneOperation`                                   | **yes** (TS2366, no `default`)            |
-| 3   | `src/contexts/history-model.ts:158-175` `collectDurableAssetIds`                           | no (partial switch)                       |
+| 1   | `src/contexts/history-model.ts:93-115` — the union                                         | —                                         |
+| 2   | `src/contexts/history-model.ts:254-304` `cloneOperation`                                   | **yes** (TS2366, no `default`)            |
+| 3   | `src/contexts/history-model.ts:163-177` `collectDurableAssetIds`                           | no (partial switch)                       |
 | 4   | `src/contexts/durable-replay.ts:68-143` `replayDurableDocument`                            | **no — a missing case is a silent no-op** |
 | 5   | `src/contexts/history-adapter.ts:349-427` `operationForTool`                               | no                                        |
 | 6   | `src/contexts/history-adapter.ts:444-638` `legacyHistoryToDurable`                         | no                                        |
@@ -1764,7 +1852,7 @@ of them fails in a different way.
    `['blur', 'color', 'levels']`. This fires first, and its throw voids the entire durable
    document (`src/contexts/history-adapter.ts:657-665`).
 2. **The type forbids it.** `DurableFilter.toolName` is the literal union
-   `'blur' | 'color' | 'levels'` (`src/contexts/history-model.ts:75`). The cast at
+   `'blur' | 'color' | 'levels'` (`src/contexts/history-model.ts:81`). The cast at
    `src/contexts/history-adapter.ts:397` is a cast precisely because the compiler cannot
    check it.
 3. **Materialization cannot render it.** `filterForOperation`
@@ -1774,7 +1862,7 @@ of them fails in a different way.
    (`src/contexts/materialization.ts:100-102`) re-derives the processor from
    `operation.filter.toolName` and throws on a `replay.version` mismatch.
 
-The legacy side has none of this: `src/contexts/history-replay.ts:152-161` appends a
+The legacy side has none of this: `src/contexts/history-replay.ts:172-181` appends a
 retained operation for **any** `layer-operation` tool, no name check. So a new filter tool
 is legacy-good and durable-fatal, and the failure is invisible until the shadow runs. The
 honest move in a stripped task: declare `commit: 'raster'`, accept that the shadow no
@@ -1815,7 +1903,7 @@ writer at `:270`, and neither names a tool.
 - `SelectionMetadata` — `src/contexts/general-types.ts:33-59` — is the per-tool settings
   bag (`magneticLasso`, `magicWand`, `featherRadius`, …). A new tool with settings needs a
   member here, and this object is what the durable `set-selection` op deep-copies
-  (`src/contexts/history-model.ts:193`).
+  (`src/contexts/history-model.ts:192`).
 
 **And selections are outside durable replay authority at the cutover.** The tree says so
 twice. `src/contexts/StoreContext.tsx:63-65`: "A selection can therefore only enter the
@@ -1860,7 +1948,7 @@ covering the representation.
 
 - **`affine-operation`** — see the trap above. Generic op, name-gated kind.
 - **`document-operation`** — `src/contexts/history-adapter.ts:503` returns `null` and
-  `src/contexts/history-replay.ts:195` `continue`s, so the operation is discarded by
+  `src/contexts/history-replay.ts:215` `continue`s, so the operation is discarded by
   **both** systems. It is crop's declaration, not a way to skip work.
 - **`unimplemented`** — `src/contexts/history-adapter.ts:504` throws, which voids the
   whole durable document, and the processor is
@@ -2159,9 +2247,10 @@ hard-edged — not an oversight."
 #### `**Fix — needs a call, not a patch.**`
 
 Use that exact label when the change would break an existing pin and the choice belongs to
-the operator. The one live instance is `HANDOFF.md:1143`, where the six path tools are
-selectable but `unimplemented`, and either hiding them from `toolbarMap` or making the
-processor throw is defensible:
+the operator. The one live instance is `HANDOFF.md` §53 ("Six selectable tools do nothing at
+all, and the honest fix is five lines"), where the six path tools are selectable but
+`unimplemented`, and either hiding them from `toolbarMap` or making the processor throw is
+defensible:
 
 > **Fix — needs a call, not a patch.** Two honest options, and the choice is the
 > operator's. Either hide the six from `toolbarMap` until they work, or make
@@ -2315,6 +2404,24 @@ so a preview painted on `toolOverlayRef` stays invisible even when the handlers 
 and that are positionally coupled to each other. Assign the whole spine to one session. If another session already has one of these open
 when you start, **stop and report** rather than editing: a merge of two `toolProcessors.ts` edits is worse than a delay, and `git status`
 in a shared worktree is not a lock.
+
+**The board cannot enforce that, and the reason matters.** Board identity is the git branch, and
+`holdFiles` refuses only a _foreign_ lock, so two writers in one worktree are the same agent to the
+board: both holds are granted and the file reads as uncontended. It is a discipline, not a lock, and
+when two writers do collide neither sees it in the board — the symptom is a clobbered index in
+someone else's file, not a refusal. Read-only agents may share a worktree freely; a reader mutates
+nothing.
+
+**And do not reach for Kilo's `board_read` when you want to know whether anyone is working.** That
+tool carries messages between one session and the task children it spawned, so outside a fan-out it
+reports `messages: []` truthfully and knows nothing about this repository, and `board_post` about
+work in a worktree usually returns `total: 0, active: 0` with a warning that nothing was delivered.
+**Neither response is evidence that nobody is working.** The cross-session channel is
+`npm run swarm`: `-- claim <id> --files <paths>` before your first edit, `-- check <paths>` before
+touching anything a brief or a sibling names, and `-- note` the branch and its paths before you
+start integrating. **Claim the merge, not just the files** — a branch about to land carries a
+hazard to every path in it, and no file claim expresses that. A held file is a queue, not a
+deadlock, and an unclaimed path _looks_ free.
 
 ### The gesture contract
 
@@ -2924,12 +3031,14 @@ run, where their own input reaches the page as real input. Reproduce the rule in
 dispatch; do not restate the table.
 
 What the rule costs, and why it is not a preference: a headed run fails a **disjoint** set of
-specs from a headless one. The measured disjoint sets were the CDP specs deriving an expected size
-from `getDevicePixelRatio()` (which pass headless) against the CDP specs with an explicit
+specs from a headless one. The disjoint sets were the CDP specs that derived an expected size
+from the device pixel ratio (which pass headless) against the CDP specs with an explicit
 `deviceScaleFactor: 2` (which pass headed). Both are fixed, and the fix was to remove the scale
 assertion rather than re-derive it, so the sets are now empty **by construction, not by
-observation**. If something only reproduces visually, that is the operator's call — name the
-command and stop there.
+observation** — the helper that read the device pixel ratio is gone, and
+`e2e/helpers/__tests__/cdp-helpers.unit.test.ts:145` and `:155` pin that it stays gone. If
+something only reproduces visually, that is the operator's call — name the command and stop
+there. `docs/TESTING.md:25-28` is the authority for the rule.
 
 Read a failure from disk, never a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing
 test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record
@@ -3245,10 +3354,34 @@ item 36: "baselines were recorded through the `draw` tool and are unaffected as 
 left alone"). When a new paint engine changes stroke rendering, check that tripwire list before
 touching a baseline.
 
-**Pass all three fields.** This repo's own history shows both accepted shapes: the research wave
-passed `model: 'kilo/stealth/space-bunny-alpha'`, the review wave passed
-`model: 'Space Bunny Alpha (new)', variant: 'max'`. The `variant: 'max'` pairing is the one to
-copy for anything adversarial or architecture-shaped.
+#### Subagent model fields
+
+`task` takes `model`, `provider` and `variant`, and **`provider` must be sent together with
+`model`**. Omitting it inherits the current turn's model, and a bare model name can resolve
+through the Kilo Gateway onto a paid id. Three rules ride with that, and the first has no
+exception:
+
+- **A free session must never launch a GPT subagent.** Every GPT model is paid, and the failure is
+  an `APIError: Add credits to continue` at zero tokens — the subagent dies before it does
+  anything, and the orchestrator that launched it was itself free.
+- **The default is `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'`.** The
+  `variant: 'max'` pairing is the one to copy for anything adversarial or architecture-shaped.
+- **`agent_manager` inherits the current turn's model** unless both `model` and `provider` are set,
+  so a main turn on a paid model silently spawns paid worktrees.
+
+**Do not copy a qualified id.** A brief that passes `model: 'kilo/stealth/space-bunny-alpha'` with
+no `provider` is exactly the shape that fell through to `~openai/gpt-luna-latest` on 2026-09-28 and
+killed both subagents in under a second. Audit the live session database before spawning a fleet
+rather than after one has died:
+
+```bash
+sqlite3 ~/.local/share/kilo/kilo.db "SELECT id, model, parent_id, title FROM session WHERE json_extract(data,'$.model') IS NOT NULL ORDER BY time_updated DESC LIMIT 20"
+```
+
+And every subagent you send **inherits your working directory**: create the worktree before the
+fan-out, never after it, and put the **absolute** path in every brief — a subagent's cwd only
+affects relative `bash`, while its `edit` and `write` calls take absolute paths, so the brief is
+what moves the work.
 
 ### The rule that actually matters
 
@@ -3319,7 +3452,7 @@ read/write rights on the source tree.
 2. `<ABSOLUTE PATH>/<plan>.md` — <what it is, which section>
 3. `<ABSOLUTE PATH>/AGENTS.md` — the binding repo rules
 
-<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore:34`), so it is not carried into a
+<Absolute paths, not relative. `.kilo` is gitignored (`.gitignore:49`), so it is not carried into a
 fresh worktree: a plan that exists in one checkout must be named by absolute path, or the subagent
 will read a file that is not there.>
 
@@ -3434,6 +3567,20 @@ paths that were identical by construction and would pass if one were deleted out
 assertion that re-read the registry argument it was supposed to check — a tautology over its own
 setup. **A test that passes with the fix reverted is worse than no test: it consumes a maintainer's
 trust.**
+
+### Sometimes reimplementing beats reconciling
+
+When two branches independently implemented the same feature, the cost is rarely the code — it is
+deciding, line by line, which of two sets of intentions was right, in a checkout other sessions are
+committing into. Weigh that against writing the feature once, correctly, against the real
+requirement. **This is a first-class option, not a last resort**, and it is a `hard-merge`
+decision: `.skills/hard-merge.md` Phase 0 is where the tool is chosen, and its Phase 6 gate admits a
+declared reimplementation alongside a union, a graft and a third design.
+
+**If the requirement is genuinely unclear, that cost is not worth paying at all.** Recover the
+requirement first — by meaning, not by id, and from Adobe's own documentation when the transcript
+runs out — and only then choose between reconciling and rebuilding. A reimplementation decided on a
+guessed requirement is a rewrite of the guess.
 
 ### Two failure shapes
 
@@ -3587,7 +3734,7 @@ does not ship is lost.** `.gitignore` matches `.kilo`, and therefore `.kilo/plan
 
 ```bash
 $ git check-ignore -v .kilo/plans
-.gitignore:34:.kilo	.kilo/plans
+.gitignore:49:.kilo	.kilo/plans
 ```
 
 Run that before writing. A plan in `.kilo/plans/` is a working document on one machine; a finding
@@ -3830,7 +3977,7 @@ PLAYWRIGHT_PORT=5199 npm run test:e2e
 
 Batching merges and then debugging four sets of failures at once is what `08-merge-plan.md:112-113` explicitly warns against; the full gate after each merge is what makes "which merge broke it" answerable. The model is `f534335`, "merge: 15 review branches from the untouched-code campaign": 15 `rev2/*` leaves into `rev2/integration`, then that line into `main` with a body listing the highlights, the gates run, and the pin delta. The handoff doc ships inside the merge.
 
-Integration lines here are `rev2/integration`, `history/integration` and `cleanup/integration` — check with `git branch --list '*integration*'` before assuming one exists. `ps-integration` is **not** one: it is a parked preservation branch. `HANDOFF.md:580` lists it as holding unmerged commits and `HANDOFF.md:605-609` records that merging `wip/ps-integration` as written would break the others, because it reads `process.env.E2E_PORT` where they all use `PLAYWRIGHT_PORT`. Review it; do not land it.
+Integration lines here are `rev2/integration`, `history/integration` and `cleanup/integration` — check with `git branch --list '*integration*'` before assuming one exists. `ps-integration` is **not** one: it is a parked preservation branch. `HANDOFF.md` §17 lists it as holding unmerged commits and §17 records that merging `wip/ps-integration` as written would break the others, because it reads `process.env.E2E_PORT` where they all use `PLAYWRIGHT_PORT`. Review it; do not land it.
 
 ### 10.5 When two branches touch the same file
 
@@ -3962,14 +4109,14 @@ The deciding lines, all verified on that tree:
 - **Why `raster` is free.** `operationForTool`'s raster arm is fully generic:
   `processorId: args.toolName` with **no allowlist** (`src/contexts/history-adapter.ts:416-424`).
   `DurableOperation`'s variant types it `processorId: string` — an open string, not a union
-  (`src/contexts/history-model.ts:100-106`) — and the materializer resolves it by **lookup**,
+  (`src/contexts/history-model.ts:106-112`) — and the materializer resolves it by **lookup**,
   `toolProcessors[operation.processorId as keyof typeof toolProcessors]`, rejecting only an
   unknown name or a version mismatch (`src/contexts/materialization.ts:277-281`). Name-agnostic
   end to end. A new `raster` tool is CHEAP by construction.
 - **Why `layer-operation` is not.** Three hard-coded name lists trip in sequence: the runtime
   allowlist `if (!['blur', 'color', 'levels'].includes(args.toolName)) throw`
   (`history-adapter.ts:391-402`, list at `:393`); the 3-member type union
-  `DurableFilter.toolName: 'blur' | 'color' | 'levels'` (`history-model.ts:74-78`); and
+  `DurableFilter.toolName: 'blur' | 'color' | 'levels'` (`history-model.ts:80-84`); and
   `filterForOperation`, a `switch` over those three names with **no `default` arm**
   (`materialization.ts:73-89`) whose missing return becomes a compile error the moment the union
   grows. A fourth filter name is a three-file edit minimum.
@@ -3997,13 +4144,13 @@ always verified.
 
 | Tool                                                   | Photoshop behaviour (FROM-MEMORY)                                                                    | Status here                                                                                                                                                                        | COST                                                                                       | Deciding `file:line`                                                                                                                  | Effort                                      |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| **Eraser** (Eraser / Background Eraser / Magic Eraser) | Paints the backdrop through the alpha channel; Brush-based, with Erase-to-History and Airbrush modes | **SHIPPED** on `ps/missing-tools` (`80eb207`): `src/tools/eraser.ts`, `src/components/ToolbarsRight/Eraser/Eraser.tsx`                                                             | **CHEAP**                                                                                  | `history-adapter.ts:416-424` (generic raster arm)                                                                                     | S                                           |
-| **Clone Stamp** (+ Pattern Stamp)                      | Copies from a user-set source point, with Aligned and Sample-All-Layers                              | **ABSENT** — 0 hits for `clone-stamp` / "clone stamp"                                                                                                                              | **CHEAP**                                                                                  | `history-adapter.ts:416-424`                                                                                                          | M (needs a source offset + alignment state) |
-| **Paint Bucket**                                       | Tolerance flood fill, contiguous / global, anti-aliased edge                                         | **SHIPPED** on `ps/missing-tools` (`80eb207`): `src/tools/fill.ts` over `src/util/floodFill.ts`                                                                                    | **CHEAP**, but do not write it                                                             | `history-adapter.ts:416-424`; see `### Already in flight`                                                                             | S once the branch lands                     |
-| **Gradient**                                           | Linear / radial / angle / reflected / diamond along the drag; multi-stop, dither                     | **ABSENT** — the 19 `gradient` hits in `src` are all CSS                                                                                                                           | **CHEAP** (`createLinearGradient` is universal)                                            | `history-adapter.ts:416-424`                                                                                                          | S                                           |
+| **Eraser** (Eraser / Background Eraser / Magic Eraser) | Paints the backdrop through the alpha channel; Brush-based, with Erase-to-History and Airbrush modes | **SHIPPED on `main`** — `toolsMap.ts:122-123` (`80eb207`): `src/tools/eraser.ts`, `src/components/ToolbarsRight/Eraser/Eraser.tsx`                                                 | **CHEAP**                                                                                  | `history-adapter.ts:416-424` (generic raster arm)                                                                                     | S                                           |
+| **Clone Stamp** (+ Pattern Stamp)                      | Copies from a user-set source point, with Aligned and Sample-All-Layers                              | **SHIPPED** — `toolsMap.ts:96`, panel `ToolbarsRight/CloneStamp`                                                                                                                   | **CHEAP**                                                                                  | `history-adapter.ts:416-424`                                                                                                          | M (needs a source offset + alignment state) |
+| **Paint Bucket**                                       | Tolerance flood fill, contiguous / global, anti-aliased edge                                         | **SHIPPED on `main`** — `toolsMap.ts:124` (`80eb207`): `src/tools/fill.ts` over `src/util/floodFill.ts`                                                                            | **CHEAP**, but do not write it                                                             | `history-adapter.ts:416-424`; see `### Already in flight`                                                                             | S once the branch lands                     |
+| **Gradient**                                           | Linear / radial / angle / reflected / diamond along the drag; multi-stop, dither                     | **SHIPPED** — `toolsMap.ts:97`, panel `ToolbarsRight/Gradient`                                                                                                                     | **CHEAP** (`createLinearGradient` is universal)                                            | `history-adapter.ts:416-424`                                                                                                          | S                                           |
 | **Dodge / Burn / Sponge**                              | Per-pixel tonal or saturation remap inside the brush footprint, with Exposure and Range              | **ABSENT** — the `dodge`/`burn` hits are `'color dodge'` / `'color burn'` blend-mode names at `src/contexts/psd-utils.ts:23-24`                                                    | **CHEAP for history, EXPENSIVE in effect**                                                 | `history-adapter.ts:416-424` for the history; the cost is the JS kernel, because the `ctx.filter` route is the inert one — see Tier 3 | M                                           |
 | **Zoom / Hand / Rotate View**                          | Viewport transforms; commit nothing, record nothing                                                  | **ABSENT.** `zoom-container` is a bare class at `Main.tsx:245` with the transform commented out at `:248`, and `'zoom'` at `Main.tsx:68` is a dead sentinel meaning "no tool area" | **CHEAPEST** — view state, not document state, so no processor and no history entry at all | `Main.tsx:68,245,248`                                                                                                                 | S                                           |
-| **Eyedropper / Color Sampler**                         | Samples a pixel; commits nothing, records nothing                                                    | **SHIPPED** on `ps/missing-tools` (`80eb207`): `src/tools/eyedropper.ts`, which has no processor at all                                                                            | **CHEAPEST**                                                                               | `SidebarLeft.tsx:56-58` already dispatches `SET_COLOR`; a sampler reuses it                                                           | S                                           |
+| **Eyedropper / Color Sampler**                         | Samples a pixel; commits nothing, records nothing                                                    | **SHIPPED on `main`** — `toolsMap.ts:127` (`80eb207`): `src/tools/eyedropper.ts`, which has no processor at all                                                                    | **CHEAPEST**                                                                               | `SidebarLeft.tsx:56-58` already dispatches `SET_COLOR`; a sampler reuses it                                                           | S                                           |
 
 #### Tier 2 — CHEAP, lower frequency, or a defect rather than a feature
 
@@ -4026,10 +4173,10 @@ always verified.
 | **History Brush / Art History Brush**                                                         | Replays or resamples from the document's own history states            | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — Art History needs a per-operation snapshot buffer that no type in the tree models                                                                                                             | `src/contexts/history-types.ts` has no per-step pixel payload; the durable baseline (`history-adapter.ts:466-471`) is a single state, not a tape                           | L                              |
 | **Selection keystone** — mask, add/subtract/intersect, holes, disjoint islands, anti-aliasing | A region, not a loop                                                   | **PARTIAL** and structurally blocking. `Selection` is one `points: Point[]` boundary loop (plus optional `lifecycle` / `geometry` / `sourceTool` / `metadata`). `rasterizePolygonMask` (`src/util/selection.ts:576`) **binarizes** the anti-aliased alpha the Canvas2D just computed — and it is reached from **one** caller, the feathered copy (`:739`), so the binarize is a feathered-path property, not a general one. The default polygon path never binarized: `copyPolygonSelectionToCanvas` (`:501-535`) `clip()`s to the path and returns `{ bitmap, pos }` with the soft alpha intact. `drawPolygonPath` (`:453`) never sets a fill rule, so the browser's non-zero default applies, while `isPointInPolygon` (`:247`) is even-odd ray casting — the two disagree, and `clip()` is what makes that disagreement visible: a self-intersecting loop is filled by winding number on screen but hit-tested even-odd. `copySelectionToCanvas` (`:769`) routes **only** `feather-magnetic-lasso` (`:781`) through the feathered path | **EXPENSIVE** — a new document-model type. This is the keystone: it unblocks every paint tool, every region-scoped adjustment, and all 7 `commit: 'selection'` tools at once                                  | `src/contexts/general-types.ts:61-70`; note `SelectionMode` **does** exist at `src/tools/selection.ts:5` but is `'fill' \| 'outline'`, a fill mode, not a combination mode | XL                             |
 | **Selection Brush / Object Selection**                                                        | Paints or computes a region                                            | **ABSENT** — but **Quick Selection is BUILT**: `'quick-selection'` is registered (`toolProcessors.ts:213-219`, `toolsMap.ts`), has real args (`tool-types.ts:44`) and its own options bar (`src/components/ToolbarsRight/QuickSelection/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — blocked by the keystone above, not by itself                                                                                                                                                  | `general-types.ts:61`; a selection-creating tool cannot be expressed as a raster write                                                                                     | L (after the keystone)         |
-| **`levels` = real Levels; `color` = Black & White + Tint**                                    | Channel selector, histogram, input black/gamma/white, output levels    | **PARTIAL**: `levels` is Brightness/Contrast, `color` is grayscale/sepia/saturation with a fixed `#d9c09a` sepia matrix. The corpus resolved both identities on 2026-09-26 and **neither was implemented** — `src/tools/settings.ts:53-54` are unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | **EXPENSIVE** — a `layer-operation` name trips three closed lists                                                                                                                                             | `history-adapter.ts:393`; `history-model.ts:74-78`; `materialization.ts:73-89`                                                                                             | M                              |
+| **`levels` = real Levels; `color` = Black & White + Tint**                                    | Channel selector, histogram, input black/gamma/white, output levels    | **PARTIAL**: `levels` is Brightness/Contrast, `color` is grayscale/sepia/saturation with a fixed `#d9c09a` sepia matrix. The corpus resolved both identities on 2026-09-26 and **neither was implemented** — `src/tools/settings.ts:53-54` are unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | **EXPENSIVE** — a `layer-operation` name trips three closed lists                                                                                                                                             | `history-adapter.ts:393`; `history-model.ts:80-84`; `materialization.ts:73-89`                                                                                             | M                              |
 | **Path Selection / Direct Selection**                                                         | Edits existing vector anchors                                          | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — no vector path model exists anywhere in `src/`                                                                                                                                                | `src/contexts/general-types.ts` has no path type; `src/tools/toolProcessors.ts:300-325` is the pen family's current state                                                  | XL                             |
 | **Path Operations, Transform Selection, Select menu**                                         | Boolean path ops; Select ▸ Modify / Grow / Similar / Refine Edge       | **PARTIAL**: the **Select menu does not exist at all** — `src/components/Menu/Menu.tsx` is 13 lines rendering only `DesktopHeader` and `ToolbarHorizontal`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — combination modes and path ops are the keystone and the path model                                                                                                                            | `src/components/Menu/Menu.tsx:1-13`                                                                                                                                        | M (menu shell) / L (the modes) |
-| **The AI group** (Generative Fill, Generative Expand, Neural Filters)                         | Cloud model inference                                                  | **ABSENT** — no network surface, no async tool-completion model in the tool contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | **EXPENSIVE** — and out of scope for this repo until a tool contract admits async, non-deterministic, cancellable commits. `replay.deterministic` (`src/tools/toolProcessors.ts:52-58`) is a hard requirement | `src/tools/toolProcessors.ts:52-58`; `history-model.ts:115-117` pins a schema version per entry                                                                            | XL / defer                     |
+| **The AI group** (Generative Fill, Generative Expand, Neural Filters)                         | Cloud model inference                                                  | **ABSENT** — no network surface, no async tool-completion model in the tool contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | **EXPENSIVE** — and out of scope for this repo until a tool contract admits async, non-deterministic, cancellable commits. `replay.deterministic` (`src/tools/toolProcessors.ts:52-58`) is a hard requirement | `src/tools/toolProcessors.ts:52-58`; `history-model.ts:120-122` pins a schema version per entry                                                                            | XL / defer                     |
 | **The pen family proper** (Pen, Freeform Pen, Curvature Pen)                                  | Bezier path construction with anchors and handles                      | **SELECTABLE AND INERT** (see Tier 2) — the build is a separate, much larger job                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | **EXPENSIVE** — a new document-model type                                                                                                                                                                     | `src/tools/toolProcessors.ts:300-325`; nothing in `general-types.ts` models a path                                                                                         | XL                             |
 
 ### Suggested first three
@@ -4067,15 +4214,39 @@ options bar and the theme tokens wholesale.
 
 ### Already in flight
 
-**Re-derive this; never trust a table.** Run `git branch --list 'ps/*' 'merge/ps*' 'wip/ps-*'` and
-test each with `git merge-base --is-ancestor <branch> main`. A "0 commits ahead" branch is not a
-safety test — a worktree whose work was never committed is also 0 ahead. What matters:
+**Re-derive this; never trust a table — and derive it with the generator, not by hand.** Run
+`node scripts/worktree-inventory.mjs` to regenerate `WORKTREES.json`, which is **untracked and
+gitignored** on purpose: every value in it describes the machine that produced it, so a tracked copy
+is a diff nobody can review and a collision two agents cannot resolve. **Never hand-edit it, never
+`git add -f` it**, and note that a fresh clone has none — generate one before you read a worktree
+list, and treat any you find as a claim about a moment.
 
-- **`ps/tool-expansion` is consolidated onto `merge/ps-tool-expansion`** (tip `ab5f53c`, 2026-09-28)
-  and is **not in `main`** — the ancestor test fails. Eight tools landed there that `main` lacks:
-  `elliptical-selection`, `quick-selection`, `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`,
-  `gradient`. It is parked behind an operator decision on seven export baselines. **Check that
-  branch before writing any of the eight.**
+**Read `action` first.** It is the whole answer: `land` merge it · `at-risk` save it, it needs a
+human · `dispose` delete it · `in-use` leave it alone · `keep` never a candidate · `undecided` do
+not remove it. Two things that catch people: a **`land` is a point-in-time answer**, only as fresh as
+`generatedAt`, so re-read `dirty` and `mergeConflict` before acting on one you did not generate; and
+**`mustNotPrune` vetoes `land` as well as `dispose`**, so a branch reading `land` with that flag set
+is a contradiction rather than a clean merge.
+
+Do not hand-roll `git branch --list` plus `merge-base --is-ancestor` when the generator has already
+done it. A "0 commits ahead" branch is not a safety test either way — a worktree whose work was
+never committed is also 0 ahead — and that is what `uncommitted-only` exists to say: never prunable
+whatever the curated table claims, and `worktree-inventory.test.mjs` re-derives that set from the
+live worktrees to keep it true. Keep a judgement you need in
+`scripts/lib/worktree-inventory/curated.mjs`; **an uncurated worktree is not at risk and there is
+deliberately no rule demanding an entry for one**, so write an entry when you have a judgement to
+record and not per worktree. What matters:
+
+- **`ps/tool-expansion` was consolidated onto `merge/ps-tool-expansion`** (tip `ab5f53c`,
+  2026-09-28) — and an earlier revision of this bullet said it was **not in `main`**. That was
+  wrong, and it was wrong in the direction that costs the most: `git merge-base --is-ancestor
+ab5f53c main` **passes**. The eight tools — `elliptical-selection`, `quick-selection`,
+  `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`, `gradient` — **are on `main` today**, with
+  real options-bar components under `src/components/ToolbarsRight/` (`CloneStamp`, `Gradient`,
+  `Sharpen`, `Smudge`, `Tonal`, `EllipticalSelection`, `QuickSelection`) and rows in
+  `src/tools/toolsMap.ts:96-106`. The branch `merge/ps-tool-expansion` no longer exists either, so
+  "check that branch" sent an agent nowhere. **Re-run the ancestor test and grep `toolsMap.ts`
+  before believing any absence in this document** — see §0.8.
 - **`dodge` and `burn` share one options-bar component**, `ToolbarsRight/Tonal/Tonal.tsx`. That is
   the precedent for one file per tool _family_ rather than per tool, and the collision to expect if
   two agents take one each.
@@ -4104,7 +4275,7 @@ merge --ff-only main`.
 2. **`.kilo` is gitignored, so a worktree has no plan docs and no skills.** Symptom: the
    research corpus, the skill, and every plan directory appear not to exist; you re-research
    something that was already answered. Defence: read the corpus from the **main** checkout
-   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore:34`
+   (`/Users/bkalynovskyi/ph/.kilo/plans/…`), not from the worktree. Verified: `.gitignore:49`
    matches `.kilo`, and `git ls-files .kilo` returns nothing. Note the corollary —
    `HANDOFF.md`, `docs/handoffs/`, and `e2e/OPEN_PROBLEMS.md` **are** tracked and do exist in a
    worktree.
@@ -4267,7 +4438,7 @@ merge --ff-only main`.
     This is correct fail-closed behaviour and must not be "fixed" by manufacturing a durable
     no-op operation.
 29. **`commit: 'document-operation'` is a no-op in legacy replay too.** Verified:
-    `src/contexts/history-replay.ts:195` is literally `if (processor.commit ===
+    `src/contexts/history-replay.ts:215` is literally `if (processor.commit ===
 'document-operation') continue;`. It silently loses **both** systems. The durable half returns
     `null` for `document-operation` alongside `selection` (`history-adapter.ts:503`), so the
     durable shadow is not the thing to fix.
@@ -4348,7 +4519,7 @@ merge --ff-only main`.
 ## Appendix B — the research corpus that already exists
 
 `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/` — 11 files, ~265 KB, in the **main** checkout
-only. `.gitignore:34` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
+only. `.gitignore:49` matches `.kilo`, and `git ls-files .kilo` returns nothing, so **a worktree
 has none of it** (trap 2). Read it from the main checkout.
 
 **The rule: read before re-researching. A new research wave that ignores this corpus does not
@@ -4427,7 +4598,7 @@ depend on it.
   re-verify any of them.
 - **Open citations I dropped rather than guess:** the `#d9c09a` sepia matrix in
   `src/tools/functions.ts`; `PolygonClickToolArea.tsx:733-738`; `useHistory.test.tsx:87-96`;
-  `useCurrentTool.tsx:26-31`; `toolIcons.test.tsx:21-60`; `HANDOFF.md:784`; `draw.ts`'s file
+  `useCurrentTool.tsx:26-31`; `toolIcons.test.tsx:21-60`; `HANDOFF.md` §45; `draw.ts`'s file
   length and its `:102` re-stroke. Each is marked in the correction table. A dropped citation is
   a claim the next session must re-derive, which is cheaper than a wrong one.
 

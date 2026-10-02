@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import DesktopHeader from '../DesktopHeader.tsx';
+import DesktopHeader, { MENUS_EXCLUDE } from '../DesktopHeader.tsx';
+import { availableTools } from '../../../../toolbar-mapping.ts';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 import type { TextToolArgs } from '../../../tools/text.ts';
@@ -80,12 +81,6 @@ function stubConfirm(result: boolean) {
   return confirm;
 }
 
-function stubAlert() {
-  const alert = vi.fn();
-  vi.stubGlobal('alert', alert);
-  return alert;
-}
-
 function openMenu(name: 'File' | 'Tools' | 'Edit') {
   fireEvent.click(screen.getByRole('button', { name }));
 }
@@ -140,32 +135,15 @@ describe('DesktopHeader', () => {
 
     openMenu('Tools');
 
-    expect(screen.getByTestId('tools-menu-color-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-blur-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-levels-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-transform-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-crop-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-shape-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-text-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-polygonal-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-freehand-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-feather-magnetic-lasso-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-magic-wand-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-rectangular-selection-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-reposition-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-brush-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-pencil-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-color-replacement-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-freeform-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-curvature-pen-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-rectangle-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-ellipse-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-triangle-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-polygon-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-line-button')).toBeInTheDocument();
-    expect(screen.getByTestId('tools-menu-custom-shape-button')).toBeInTheDocument();
+    // Derived from the registry rather than written out by hand. This was a literal list of
+    // 24 names that never included the Dodge, the Burn, the Smudge, the Sharpen or the eraser
+    // family, so it could not have caught a tool missing from `TOOL_MENU_ITEMS` — which is
+    // exactly how the Sponge shipped without a menu entry. Every `availableTools` name now has
+    // to produce a row, so the next omission fails here instead of in the app.
+    const missing = availableTools
+      .filter((tool) => !MENUS_EXCLUDE.includes(tool))
+      .filter((tool) => screen.queryByTestId(`tools-menu-${tool}-button`) === null);
+    expect(missing, `tools absent from the Tools menu: ${missing.join(', ')}`).toEqual([]);
   });
 
   it('toggles the file menu open and closed', () => {
@@ -568,9 +546,8 @@ describe('DesktopHeader File > New', () => {
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
-  it('alerts with the Error message when the new document dialog rejects', async () => {
+  it('logs the Error when the new document dialog rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = stubAlert();
     stubConfirm(true);
     file.openNewImageDialog.mockRejectedValue(new Error('dialog exploded'));
     render(<DesktopHeader />);
@@ -578,23 +555,21 @@ describe('DesktopHeader File > New', () => {
     await clickFileMenuItem('header-file-new-button');
 
     expect(consoleError).toHaveBeenCalledWith('Unable to create document', expect.any(Error));
-    expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to create document: dialog exploded');
     expect(app.setBlankImage).not.toHaveBeenCalled();
-    // The throw used to skip `setOpenMenu(null)` too and strand the dropdown behind the
-    // alert. It no longer does: activating the item dismisses the menu on every path.
+    // The throw must not strand the dropdown either. It used to skip `setOpenMenu(null)`
+    // and leave the menu over the canvas; activating the item dismisses it on every path.
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
-  it('stringifies a non-Error rejection for the new document alert', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = stubAlert();
+  it('passes a non-Error rejection through to the console unchanged', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     stubConfirm(true);
     file.openNewImageDialog.mockRejectedValue('plain failure');
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-new-button');
 
-    expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to create document: plain failure');
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to create document', 'plain failure');
   });
 });
 
@@ -667,28 +642,25 @@ describe('DesktopHeader File > Open', () => {
     expect(screen.queryByTestId('header-file-open-button')).toBeNull();
   });
 
-  it('alerts with the Error message when loading rejects', async () => {
+  it('logs the Error when loading rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = stubAlert();
     file.openLoadImageDialog.mockRejectedValue(new Error('read failed'));
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
     expect(consoleError).toHaveBeenCalledWith('Unable to open document', expect.any(Error));
-    expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to open document: read failed');
     expect(app.setImageFromUpload).not.toHaveBeenCalled();
   });
 
-  it('stringifies a non-Error rejection for the open alert', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = stubAlert();
+  it('passes a non-Error rejection through to the console unchanged', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     file.openLoadImageDialog.mockRejectedValue({ code: 42 });
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
-    expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to open document: [object Object]');
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to open document', { code: 42 });
   });
 });
 
@@ -761,22 +733,19 @@ describe('DesktopHeader File > Save', () => {
     expect(file.openSaveImageDialog).not.toHaveBeenCalled();
   });
 
-  it('alerts when the save dialog rejects', async () => {
+  it('logs when the save dialog rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = stubAlert();
     file.openSaveImageDialog.mockRejectedValue(new Error('encoder died'));
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
     expect(consoleError).toHaveBeenCalledWith('Unable to prepare document export', expect.any(Error));
-    expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to prepare export: encoder died');
     expect(app.handleImageSave).not.toHaveBeenCalled();
   });
 
-  it('alerts when committing the dirty tool throws before the dialog opens', async () => {
+  it('logs when committing the dirty tool throws before the dialog opens', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = stubAlert();
     layers.commitDirtyTool.mockImplementation(() => {
       throw new Error('commit failed');
     });
@@ -785,19 +754,17 @@ describe('DesktopHeader File > Save', () => {
     await clickFileMenuItem('header-file-save-button');
 
     expect(consoleError).toHaveBeenCalledWith('Unable to prepare document export', expect.any(Error));
-    expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to prepare export: commit failed');
     expect(file.openSaveImageDialog).not.toHaveBeenCalled();
   });
 
-  it('stringifies a non-Error rejection for the export alert', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = stubAlert();
+  it('passes a non-Error rejection through to the console unchanged', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     file.openSaveImageDialog.mockRejectedValue('disk offline');
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
-    expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to prepare export: disk offline');
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to prepare document export', 'disk offline');
   });
 });
 

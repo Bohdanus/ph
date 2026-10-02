@@ -149,6 +149,10 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
       const blendMode = blendModes[source.blendMode ?? 'normal'];
       if (!blendMode) warn(`Blend mode "${source.blendMode}" is unsupported; using normal.`);
       const id = uuidv4();
+      // The flattened composite is a raster preview of the whole document:
+      // the runtime snapshot is not bedrock, while its source is bedrock so
+      // replay can retain the imported document frame without treating the
+      // preview layer itself as the document-opening layer.
       layers[id] = {
         id,
         name,

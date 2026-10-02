@@ -16,23 +16,9 @@
  *   2. A paid-model launch that died at zero tokens is classified as a
  *      failure, not as a finished session that happened to be quiet.
  *
- * Everything runs under the root jsdom project per AGENTS.md, and that is a
- * deliberate constraint with a real cost, so it is stated rather than claimed as
- * free. What is actually true of this file:
- *
- *   - It CREATES GIT REPOSITORIES. `makeRepo` runs `git init`, three commits, a
- *     branch and `git worktree add` per test, and the curated-table guards read
- *     git in the repository this suite is running in. So a test here is bounded
- *     by process spawns, which is what the budget below is for.
- *   - It READS THE MACHINE'S CLOCK in exactly one place — 'is stamped in the
- *     PAST, never the future' — and keeps reading it on purpose, because the
- *     thing it defends (a tracked `asOf` that is not in the future) has no
- *     other reference to be checked against. The reasoning is at that test.
- *   - It reads a machine-LOCAL database under `$HOME/.local/share/kilo`, in one
- *     test, and the cross-check it wants is only possible where that database
- *     exists. That test says which outcome it got rather than reporting green
- *     for asserting nothing.
- *   - `node:sqlite` is exercised only where a real temporary database is cheap.
+ * Everything runs under the root jsdom project per AGENTS.md, so these are
+ * environment-agnostic: no git repository is created, no clock is read, and
+ * `node:sqlite` is only exercised where a real temporary database is cheap.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -49,6 +35,19 @@ import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../l
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
+import {
+  auditWrites,
+  buildPathIndex,
+  buildCallRecords,
+  emptyWriteHistory,
+  patchTargetPaths,
+  rootSessionId,
+  summariseReads,
+  summariseShell,
+  summariseWrites,
+  worktreeNameFromPath,
+} from '../lib/worktree-inventory/writes.mjs';
+import { resolveReadsReleasedBefore } from '../worktree-inventory.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
 
 /**
@@ -56,41 +55,44 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
  *
  * The "against a real repository" blocks build a throwaway git repository per
  * test and then run real `git` against it, so a test here is bounded by process
- * spawns and git's own startup rather than by anything being computed. Two tests
- * are worse, because they read git in every worktree in the repository this suite
- * happens to be running in, and that number is a property of the MACHINE's fleet
- * rather than of the code: `never asks the table to protect a worktree whose
- * protection is derived` and `never offers a live worktree that holds
- * uncommitted work on no ref for disposal`. Both are named "live" for that
- * reason. Neither of them asserts a fleet size, so both are cheap in CI, where
- * the repository has one worktree, and both are the reason the remaining
- * curated-table rules are pinned against a fixture instead.
+ * spawns and git's own startup rather than by anything being computed. The
+ * `curated table` block is worse: it reads git in every worktree in the
+ * repository, so its cost is a function of how many worktrees exist on the
+ * machine — 70-odd when these numbers were first taken, 93 when they were last
+ * checked, and it grows with the fleet.
  *
  * The default is not merely tight for that, it is at or above the measured cost
- * of this file's own slowest test: across three isolated runs of the three
- * `scripts/` suites on this machine the slowest span here EXCLUDING the two tests
- * that declare their own budget was 3.0s (`reports a conflict when both sides
- * changed the same line`), and `reports whether the commit list was cut off at the
- * cap` has been reported failing at the 5s default with no code change.
+ * of this file's own slowest test. Spawns and git cost whatever the machine is
+ * doing, so the figure is an OBSERVATION OF ONE RUN and not a property of the
+ * file: 3.0s across three isolated runs on an idle machine, and 2.9s for the same
+ * test when the file was measured again on a busier day with 93 worktrees live.
+ * `reports whether the commit list was cut off at the cap` has been reported
+ * failing at the 5s default with no code change, and at the pre-fix commit on a
+ * loaded machine the failure that appeared instead was a DIFFERENT test in this
+ * file — which is what a population of marginal tests looks like, not five
+ * specific ones.
  *
  * What is deliberately NOT claimed here: any contention factor. A full 266-file
  * run was measured against these same tests and came out FASTER per test than the
  * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
  * not a thing this suite can currently support. The headroom below is stated for
- * what it is: 15s is about five times this file's own worst measured case, and is
- * deliberately tighter than the two sibling suites because they spawn a CLI per
- * assertion and this one does not. It is also exactly the floor
- * `suite-budgets.test.mjs` holds every budgeted suite to, which is a floor and
- * not a target — this file has to be as slow as the work is before the guard has
- * anything to say about it.
+ * what it is: 15s against the worst span this file has been seen to take is 5x,
+ * and is deliberately tighter than the two sibling suites because they spawn a CLI
+ * per assertion and this one does not.
  *
  * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
  * only decides how long a test may run before the harness reports it, and no
  * assertion below is changed by it.
  *
- * A per-test `it(name, fn, timeout)` argument still wins over this, and the two
- * live tests that read every worktree keep their declared `60_000`: their cost is
- * a function of how many worktrees exist, which is not a function of the code.
+ * A per-test `it(name, fn, timeout)` argument still wins over this. The THREE
+ * tests that read every worktree keep their declared `60_000`, which is what they
+ * actually need: the live worktree read measured 21.5s on a machine with 70
+ * worktrees and 12.3s on a busier day with 93, and that is a function of how many
+ * worktrees exist rather than of this test. `liveWorktreeFacts` memoises, so the
+ * three pay for the read once, and which of them asks first is not something the
+ * budget may depend on. 60s is the one budget here that is sized against a cost
+ * that GROWS, so re-measure it if the worktree count changes by an order of
+ * magnitude.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -271,39 +273,6 @@ function makeRepo() {
   return dir;
 }
 
-/**
- * A throwaway repository whose WORKTREES have a known set of shapes, for the
- * curated-table rule.
- *
- * `makeRepo` gives a branch, not a fleet. This adds three worktrees inside the
- * repository — so it exercises the in-repository prefix rule too — one per way a
- * worktree can hold work plus one that holds nothing:
- *
- *   wt-ahead   two commits on a branch main has not seen: `ahead > 0`
- *   wt-edits   at main's tip with an untracked file: `ahead === 0`, and the only
- *              copy of the work is in the tree
- *   wt-clean   at main's tip and clean: holds nothing, and needs no entry
- *
- * The worktrees are created INSIDE `dir` so `inRepositoryWorktrees` cannot be
- * satisfied by a filter that keeps everything.
- */
-function makeRepoWithWorktrees() {
-  const dir = makeRepo();
-  const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
-  // A branch at HEAD, so `wt-clean` is 0 ahead of main and already on it. A
-  // detached worktree would do too, but a named branch is the shape the
-  // generator classifies in production.
-  g('branch', 'empty');
-  g('worktree', 'add', '--quiet', join(dir, 'wt-clean'), 'empty');
-  g('worktree', 'add', '--quiet', '-b', 'edits', join(dir, 'wt-edits'), 'empty');
-  g('worktree', 'add', '--quiet', '-b', 'ahead', join(dir, 'wt-ahead'), 'side');
-  // Untracked rather than modified: `wt-edits` is a separate checkout of a
-  // branch at main's tip, so a modified file would need the blob git already
-  // has to differ, and this way the "work in no commit" claim is unambiguous.
-  writeFileSync(join(dir, 'wt-edits', 'scratch.txt'), 'never committed');
-  return dir;
-}
-
 /** A worktree shaped like the ones this repository actually has. */
 function wt(overrides = {}) {
   return {
@@ -338,8 +307,7 @@ const noSessions = [];
 const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true && r.dirty + r.untracked > 0;
 
 /**
- * Every worktree of an arbitrary git repository, with the git facts the rules
- * below read.
+ * Every worktree of this repository, with the git facts the rule above reads.
  *
  * `collectWorktrees` is not used because it also runs `git merge-tree` on every
  * unmerged branch: that is the right cost for a generator which has to print all
@@ -354,15 +322,14 @@ const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true 
  * everything, and a guard written that way is green no matter what the generator
  * does with a dirty merged branch.
  *
- * The repository is a PARAMETER, and that is the load-bearing part of this
- * signature. The same reader serves the two `live` tests, which read the checkout
- * this suite runs in, and the curated-table fixture tests, which read a
- * throwaway repository whose worktrees this file built. A reader hard-wired to
- * `process.cwd()` is what made a rule about the code a rule about the machine:
- * `git worktree list` in a CI checkout has one entry, and a test that needed
- * more than one was red on every machine but the operator's.
+ * Memoised: two tests below need the same few seconds of git, and a second read
+ * of a repository other agents are actively writing to could see a different
+ * shape than the first.
  */
-function worktreeFacts(cwd) {
+let _liveFacts = null;
+function liveWorktreeFacts() {
+  if (_liveFacts) return _liveFacts;
+  const cwd = process.cwd();
   const missing = new Set(findMissingWorktrees(cwd).map((w) => w.path));
   // The MAIN checkout is the first entry of `git worktree list`, never `cwd`:
   // this suite is run from a task worktree as often as from the root checkout,
@@ -388,94 +355,8 @@ function worktreeFacts(cwd) {
         commitsAhead: [],
       };
     });
-  return { mainPath, worktrees };
-}
-
-/**
- * `worktreeFacts` memoised for THIS repository only.
- *
- * Two live tests below need the same few seconds of git, and a second read of a
- * repository other agents are actively writing to could see a different shape
- * than the first. The memo is keyed by directory so a fixture read is never
- * answered from the live one, or the two would quietly describe one repository.
- */
-const _liveFacts = new Map();
-function liveWorktreeFacts() {
-  const cwd = process.cwd();
-  if (!_liveFacts.has(cwd)) _liveFacts.set(cwd, worktreeFacts(cwd));
-  return _liveFacts.get(cwd);
-}
-
-/**
- * The worktrees of a repository that are INSIDE it, in the sense the curated
- * table means.
- *
- * The MAIN checkout is the first entry of `git worktree list` — not `cwd`, which
- * under a task worktree is that worktree, and against which every other worktree
- * path would fail the prefix test. Several agents run scratch worktrees in /tmp,
- * and "every worktree needs a curated entry" is not a sensible rule for a
- * transient one: the curated table documents THIS repository's worktrees.
- *
- * Returns the facts, not the names, because the rule below needs all three of
- * `ahead`, `mergedIntoBase` and the working-tree counts, and a caller that
- * re-derived them from a filtered name list is how two guards drift apart.
- */
-function inRepositoryWorktrees(facts) {
-  const root = facts.worktrees.find((w) => w.isPrimary)?.path ?? facts.mainPath;
-  return facts.worktrees.filter((w) => w.path === root || w.path.startsWith(`${root}/`));
-}
-
-/**
- * Whether a worktree holds work, over the three facts git reports.
- *
- * A worktree that holds NOTHING is not what the curated table is for. Its own
- * comment used to say what the rule protects: "an uncurated worktree is one
- * nobody has written down what it is for, which is how a preservation branch
- * gets mistaken for a disposable one." A worktree that is clean, 0 ahead of main
- * and already on main has no work to mistake for anything — it is a scratch
- * space, and it cannot be lost.
- *
- * Demanding a summary for those is what made the guard the recurring red: the
- * table was re-derived by hand FOUR times in one session, every time only
- * because an agent had created a worktree that held nothing yet, and main went
- * red within minutes of the derived guard landing. The shape is the same one
- * `mustNotPrune` was just removed for — the risk is derivable from git, and only
- * the risk deserves a hand-written claim.
- *
- * So the rule is the risk, not the existence: a worktree is required to be
- * documented exactly when it has commits git cannot find on main, or edits that
- * are in no commit at all, or a branch that is not on main. That is every way a
- * worktree can hold work.
- *
- * A worktree whose facts could not be read is treated as HOLDING work, never as
- * clean: `ahead: null` means git could not be asked, and a guard that read that
- * as "nothing at risk" would be reporting on the absence of a lookup.
- */
-function holdsSomething(f) {
-  if (!f || typeof f.ahead !== 'number' || typeof f.mergedIntoBase !== 'boolean') return true;
-  return f.ahead > 0 || f.mergedIntoBase === false || f.workingTree.modified + f.workingTree.untracked > 0;
-}
-
-/**
- * The curated-table rule, as a function of FACTS and a curated lookup, so a test
- * can pin it against a repository it built.
- *
- * `curated` is a parameter rather than the imported `CURATED` for the same
- * reason `worktreeFacts` takes a directory: the property under test is "a
- * worktree that holds work and has no entry is reported", and a rule that reads
- * a module-level table cannot be exercised on a fixture without also editing a
- * tracked file. The live tests pass `CURATED`; the fixture tests pass their own.
- *
- * `alsoAllowed` carries the names the rule exempts by construction — the main
- * checkout, which AGENTS.md describes rather than the table, and the worktree
- * that documents this very suite.
- */
-function uncategorisedWorktrees(facts, curated, { alsoAllowed = [] } = {}) {
-  const permitted = new Set(['ph', ...alsoAllowed]);
-  return inRepositoryWorktrees(facts)
-    .filter(holdsSomething)
-    .map((w) => w.name)
-    .filter((name) => !permitted.has(name) && !curated[name]);
+  _liveFacts = { mainPath, worktrees };
+  return _liveFacts;
 }
 
 /**
@@ -619,15 +500,27 @@ describe('resolveBoardDb', () => {
 });
 
 describe('readBoard: liveness of claims and locks', () => {
-  /** A board database with the real schema and one row of each kind. */
+  /**
+   * A board database with the CURRENT schema and one row of each kind.
+   *
+   * `file_locks` deliberately has NO `issue_id` column. That is v1 residue:
+   * attribution moved to the `issue_locks` pairing table, and the migration
+   * copies rows into it without dropping the old column — so every board created
+   * before v2 still carries it and every board created AT v2 does not. This
+   * fixture used to build the v1 shape, which is precisely why `readBoard`
+   * selecting `file_locks.issue_id` passed here and threw
+   * `no such column: issue_id` on a fresh clone. A fixture must be the shape a
+   * real new database has, or it certifies the bug.
+   */
   function makeBoard({ leaseUntil, releasedAt = null, expiresAt }) {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
     const db = new DatabaseSync(join(dir, 'board.db'));
     db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
              CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
                                   lease_until TEXT, released_at TEXT);
-             CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
-                                     expires_at TEXT, released_at TEXT);
+             CREATE TABLE file_locks (path TEXT NOT NULL, agent_id TEXT NOT NULL, worktree TEXT,
+                                     acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+                                     released_at TEXT, PRIMARY KEY (path, agent_id));
              CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
                                  session_id TEXT, last_seen TEXT);`);
     db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', 'x');
@@ -642,8 +535,8 @@ describe('readBoard: liveness of claims and locks', () => {
     db.prepare('INSERT INTO file_locks VALUES (?,?,?,?,?,?)').run(
       'src/a.ts',
       'agent-a',
-      'ph-1',
       '/repo/.kilo/worktrees/x',
+      '2026-09-28T12:00:00.000Z',
       expiresAt,
       releasedAt
     );
@@ -1968,6 +1861,35 @@ describe('the read and computed chat views together', () => {
 });
 
 describe('the curated table', () => {
+  // WHY THERE IS NO "EVERY WORKTREE HAS AN ENTRY" RULE HERE
+  // ---------------------------------------------------------
+  // There was one, and it was the recurring red. It demanded a curated entry for
+  // every live in-repo worktree holding work — which is what an in-flight task
+  // looks like for the whole of its life, from an agent's first edit to its
+  // merge — so it was red from the first minute of every task, in every OTHER
+  // checkout too, because the list it read is the repository's and not the
+  // caller's. Narrowing it from "exists" to "holds work" moved the red from the
+  // first minute of a task to every minute of it. The table was re-derived by
+  // hand four times in one session for exactly that reason.
+  //
+  // It could not be fixed by data entry, because it compares a COMMITTED file
+  // against LIVE machine state. Nothing an agent can do at session end makes the
+  // table agree with a fleet that keeps moving, and the entry it would have to
+  // write is prose about work that has not happened yet. Measured while this was
+  // being fixed: 160 curated keys against 102 live in-repo worktrees, 26 of
+  // which had no entry and 8 of those holding work on no ref. The table was an
+  // accumulating log of past tasks, not an index of the present one.
+  //
+  // So the rule is the RISK, not the existence, and it is asserted where the risk
+  // is derived: `describe('work git cannot see: derived from the worktrees,
+  // never curated')` below pins it over the real repository with the curated
+  // entry REMOVED — the state most of those worktrees are actually in — and pins
+  // that no curated field except `mustNotPrune` can move a verdict at all.
+  //
+  // What is left for a human is a judgement git cannot make about a tree it
+  // already calls disposable, and that is `mustNotPrune` on a clean merged
+  // branch. No entry sets it today.
+
   it('gives every entry a summary, because the inventory is read as prose', () => {
     for (const [name, entry] of Object.entries(CURATED)) {
       expect(typeof entry.summary, `${name} has no summary`).toBe('string');
@@ -1999,113 +1921,6 @@ describe('the curated table', () => {
       `curated prose contains counts that will drift: ${offenders.join('; ')}. ` +
         'Describe what is there; read dirty/untracked/ahead/behind from the record.'
     ).toEqual([]);
-  });
-
-  it('reports a worktree that holds work and has no entry, in a repository this suite built', () => {
-    // THE RULE, against a fixture. The previous version of this test read
-    // `git worktree list` in whatever checkout it ran in and asserted on the
-    // result, so what it checked was the SIZE of the operator's fleet: it was
-    // red in a CI checkout (`expected 1 to be greater than 1` — one worktree,
-    // because CI clones one) and red on the operator's laptop naming real
-    // worktrees that other agents had created minutes earlier. `npm run test` IS
-    // the `ci` job's Test step, so a gate that can only pass on one machine was
-    // never a gate.
-    //
-    // Three worktrees hold work by the three different routes git reports, one
-    // holds nothing, and the rule has to tell them apart by FACT rather than by
-    // how many of them there happen to be.
-    const dir = makeRepoWithWorktrees();
-    try {
-      const facts = worktreeFacts(dir);
-      const uncategorised = uncategorisedWorktrees(facts, {}).sort();
-
-      expect(
-        uncategorised,
-        'a worktree holding commits git cannot find on main, or edits in no commit, or sitting ' +
-          'on a branch main has not seen, has to be described in the curated table'
-      ).toEqual(['wt-ahead', 'wt-edits']);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('reads the three shapes it is about to tell apart from git, not from their names', () => {
-    // The case above is only meaningful if the fixture still has the shapes it
-    // was built for. `worktree add` and a stray `.gitignore` can change them
-    // silently, and then the test would be passing on a repository where every
-    // worktree looks identical — which is the state in which the rule cannot
-    // distinguish anything.
-    const dir = makeRepoWithWorktrees();
-    try {
-      const byName = new Map(worktreeFacts(dir).worktrees.map((w) => [w.name, w]));
-      const shape = (n) => {
-        const w = byName.get(n);
-        return { ahead: w.ahead, merged: w.mergedIntoBase, changed: w.workingTree.modified + w.workingTree.untracked };
-      };
-
-      expect(shape('wt-ahead'), 'the worktree with commits on a branch main has not seen').toEqual({
-        ahead: 2,
-        merged: false,
-        changed: 0,
-      });
-      expect(shape('wt-edits'), 'the worktree whose only copy of the work is in its tree').toEqual({
-        ahead: 0,
-        merged: true,
-        changed: 1,
-      });
-      expect(shape('wt-clean'), 'the scratch worktree, which holds nothing').toEqual({
-        ahead: 0,
-        merged: true,
-        changed: 0,
-      });
-      expect(holdsSomething(byName.get('wt-ahead'))).toBe(true);
-      expect(holdsSomething(byName.get('wt-edits'))).toBe(true);
-      expect(holdsSomething(byName.get('wt-clean'))).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('stops reporting a worktree the moment an entry describes it', () => {
-    // The half of the rule the first case cannot reach on its own: `no entry` is
-    // only load-bearing if `an entry` removes the worktree from the report. A
-    // rule that ignored the table would pass the case above forever.
-    const dir = makeRepoWithWorktrees();
-    try {
-      const facts = worktreeFacts(dir);
-      const described = { 'wt-ahead': { summary: 'injected entry' } };
-      expect(uncategorisedWorktrees(facts, described).sort()).toEqual(['wt-edits']);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('exempts the main checkout and a worktree documented elsewhere, by name', () => {
-    // `ph` is described in AGENTS.md rather than per-worktree, and a worktree
-    // whose own subject is the curated table cannot be expected to hold an entry
-    // about itself. Both exemptions are read from the same predicate as the
-    // report itself, so this is a statement about the rule and not about a list
-    // of names the rule happens to contain.
-    const dir = makeRepoWithWorktrees();
-    try {
-      const facts = worktreeFacts(dir);
-      expect(uncategorisedWorktrees(facts, {}, { alsoAllowed: ['wt-edits'] }).sort()).toEqual(['wt-ahead']);
-      expect(uncategorisedWorktrees(facts, {}, { alsoAllowed: ['wt-edits', 'wt-ahead'] })).toEqual([]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('holds a worktree whose git facts could not be read to needing an entry, not to being clean', () => {
-    // `ahead: null` means git could not be asked, not that there is nothing to
-    // lose. The derived set in the block below is worthless if this reads an
-    // unread fact as "safe", so the rule is pinned on the two shapes git can
-    // actually produce for a failure.
-    expect(holdsSomething(undefined)).toBe(true);
-    expect(holdsSomething({ ahead: null, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0 } })).toBe(
-      true
-    );
-    expect(holdsSomething({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0 } })).toBe(false);
   });
 
   it('agrees with git about every `landed: true` claim, so the two cannot contradict', () => {
@@ -2450,6 +2265,132 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     // See the timeout note on the curated-table test that shares this read.
   }, 60_000);
 
+  it('protects that shape in a worktree NOBODY has written anything down about', () => {
+    // The guard above builds the document WITH the curated table, so a curated
+    // entry is standing behind every verdict it checks. This one takes the entry
+    // away, which is the state the deleted coverage rule used to make impossible
+    // to reach: of the ten live worktrees holding work on no ref when this was
+    // written, eight had no entry at all. If the protection came from the table,
+    // those eight would be disposable and nothing here would be able to say so.
+    //
+    // So this is the coverage rule's actual subject — "a preservation branch gets
+    // mistaken for a disposable one" — asserted as the invariant it needed,
+    // against `classify` on git's facts and nothing else. It cannot be made green
+    // by adding curated entries, which is the point: creating a worktree, and
+    // this agent's own worktree, change nothing here.
+    const inv = liveInventory();
+    const { worktrees } = liveWorktreeFacts();
+    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+
+    // Non-vacuity, and it comes first so a green run cannot mean "git refused to
+    // answer, so the set below was empty for a reason unrelated to risk".
+    expect(
+      inRepo
+        .filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean')
+        .map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
+      'git could not be read in these worktrees, so the set below would be empty for a reason that has ' +
+        'nothing to do with whether any work is at risk'
+    ).toEqual([]);
+
+    // The same three signals `buildInventory` would pass here, with the curated
+    // entry removed. `liveInventory()` builds with liveness deliberately empty,
+    // so `noChats`/`noSessions` reproduce it exactly and the only difference
+    // between this call and the record it is compared against is the curation.
+    const exposed = [];
+    const silent = [];
+    for (const r of inRepo) {
+      if (!holdsWorkGitCannotSee(r)) continue;
+      const facts = worktrees.find((x) => x.name === r.name);
+      const bare = classify(facts, { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW });
+      const where =
+        `${r.name} (curated: ${CURATED[r.name] ? 'yes' : 'NONE'}): ahead=${r.ahead} onMain=${r.mergedIntoMain} ` +
+        `dirty=${r.dirty} untracked=${r.untracked} -> status=${bare.status} recommendation=${bare.recommendation} ` +
+        `action=${bare.action} prunable=${bare.prunable}`;
+      // The three ways to lose, which is what the sibling guard checks. `undecided`
+      // is not one of them: an unreadable head or a detached one yields it, and
+      // `classify` reaches it precisely so the worktree is not removed.
+      if (bare.prunable || bare.recommendation === RECOMMENDATION.PRUNE || bare.action === ACTION.DISPOSE) {
+        exposed.push(where);
+      } else if (facts.tip === null || facts.detached) {
+        // git could not name a tip, so the shape is not classifiable and
+        // `undecided` is the honest answer. Reported rather than skipped, because
+        // "the guard had nothing to check" and "the guard checked nothing" look
+        // identical in a green run otherwise.
+        silent.push(`${where} (tip unreadable or detached)`);
+      } else if (bare.action !== ACTION.AT_RISK) {
+        // Everything git could answer, it answered, and the work is on no ref.
+        // Anything other than at-risk here means the record does not point an
+        // operator at the only copy of it.
+        exposed.push(`${where} — readable, so this must be reported as at-risk, not as anything else`);
+      }
+    }
+    expect(
+      exposed,
+      'these worktrees hold work that is in no commit on any branch, so the working tree is the only ' +
+        'copy, and with nothing curated about them classify does not report them as at risk: ' +
+        exposed.join('; ') +
+        // Named rather than dropped, so a green run cannot be read as "the guard
+        // checked everything" when it could not classify something.
+        (silent.length ? ` (skipped as unclassifiable: ${silent.join('; ')})` : '')
+    ).toEqual([]);
+  }, 60_000);
+
+  it('lets the curated table move a verdict only by vetoing a disposal', () => {
+    // The reason the coverage rule could not simply be dropped: a curated entry
+    // that changed a verdict would be a hand-written claim overriding git, and
+    // `curated.mjs` is prose maintained by agents under time pressure. `classify`
+    // reads exactly one field, `mustNotPrune`, and it can only ever make a
+    // worktree LESS safe to delete. Everything else — `summary`, `note`,
+    // `liveNote`, `issues`, `landed` — is documentation, and documentation that
+    // moves a verdict is a lie the generator cannot detect.
+    //
+    // Both directions of the verdict are covered, because the two live in
+    // different branches of `classify`: a clean merged branch (`LANDED` ->
+    // `prune`, which is where a curated veto has something to bite on) and a
+    // clean unmerged one (`UNMERGED_WORK` -> `ready-to-land`, the verdict
+    // `mustNotPrune` is documented as also vetoing).
+    const LANDABLE = wt({ name: 'landable', ahead: 0, mergedIntoBase: true });
+    const TO_LAND = wt({ name: 'to-land', ahead: 4, mergedIntoBase: false, merge: { conflict: false } });
+    const verdictOf = (w, curated) => {
+      const v = classify(w, { chatSummary: noChats, chatSessions: noSessions, curated, nowMs: NOW });
+      return `${v.status}/${v.recommendation}/${v.action}/prunable=${v.prunable}`;
+    };
+
+    // Real field values, each taken from whichever entry actually carries it,
+    // so a field that exists in this table is covered by this loop.
+    const all = Object.values(CURATED);
+    const carrying = (field) => all.find((e) => e[field] !== undefined && e[field] !== null);
+    const PROSE = {
+      summary: carrying('summary').summary,
+      note: carrying('note').note,
+      liveNote: carrying('liveNote').liveNote,
+      issues: carrying('issues').issues,
+      landed: carrying('landed').landed,
+    };
+    expect(
+      Object.keys(PROSE),
+      'a curated field this table uses has no entry carrying it, so the loop below probes a value ' +
+        'nothing in the table actually holds'
+    ).toEqual(['summary', 'note', 'liveNote', 'issues', 'landed']);
+
+    for (const shape of [LANDABLE, TO_LAND]) {
+      const bare = verdictOf(shape, null);
+      for (const [field, value] of Object.entries(PROSE)) {
+        expect(
+          verdictOf(shape, { [field]: value }),
+          `curated.${field} changed the verdict for ${shape.name} (${bare}) — a prose field must never move it`
+        ).toBe(bare);
+      }
+      // And the one field that may: if this stopped differing, the loop above
+      // would be asserting inertness over a table whose veto had been disabled.
+      expect(
+        verdictOf(shape, { mustNotPrune: true, note: PROSE.note }),
+        `curated.mustNotPrune no longer changes the verdict for ${shape.name} (${bare}), so the assertions above ` +
+          'prove nothing: the table has stopped being able to veto anything'
+      ).not.toBe(bare);
+    }
+  });
+
   it('refuses to dispose of that shape even with nothing but a dirty tree behind it', () => {
     // The live set above can legitimately be EMPTY — every worktree of this shape
     // may have committed or been disposed, which is the GOOD outcome and must not
@@ -2538,6 +2479,12 @@ describe('the generated file is already formatted', () => {
     // --fail-on-changes` refuses and un-stages, and the only ways out are a
     // .prettierignore or dropping .json from the linted set — both of which
     // weaken a gate to accommodate a generator.
+    //
+    // That gate no longer reaches this file: `lint:check` runs over
+    // `git ls-files`, and the inventory is untracked. This test is now the only
+    // thing keeping the output formatted, which is worth more than the check it
+    // replaced — an unformatted generated file is still read by a human deciding
+    // whether to delete a worktree.
     const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
     const inv = buildInventory({
       worktrees: [wt({ name: 'a', issues: [] })],
@@ -2554,5 +2501,730 @@ describe('the generated file is already formatted', () => {
     expect(formatted.endsWith('\n')).toBe(true);
     // Still valid JSON with every field intact after the reflow.
     expect(JSON.parse(formatted).worktrees).toHaveLength(1);
+  });
+});
+
+describe('the generated inventory is untracked, and stays that way', () => {
+  const INVENTORY = 'WORKTREES.json';
+
+  // The worktree root, resolved rather than assumed. This suite is run from a task
+  // worktree as often as from the root checkout, and `check-ignore` resolves its
+  // argument against the cwd: from `scripts/`, the probe path would become
+  // `scripts/WORKTREES.json`, the anchored `/WORKTREES.json` would not match it,
+  // and the assertion below would report a hard rule as broken while the
+  // `ls-files` one stopped describing a file that exists anywhere.
+  //
+  // Resolving it with git also removes a vacuity path. `gitSucceeds` swallows
+  // every throw, so a missing or broken git leaves an assertion that expects
+  // `false` passing without having asked anything; this call throws instead, and
+  // takes all three cases down with it rather than two.
+  const REPO = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+
+  // One fact per `it`, and one gate per fact. `check-ignore` and `ls-files` can
+  // both be satisfied by a file that is tracked AND ignored, so asserting only
+  // the first would let a re-added inventory pass as a rule that still holds.
+  // The two injections that prove which gate is which are recorded with the
+  // change that introduced them.
+  const gitSucceeds = (args) => {
+    try {
+      execFileSync('git', args, { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it('is not tracked, so a regeneration cannot become a commit', () => {
+    // Injection: `git add -f WORKTREES.json` turns this red and leaves the
+    // test below green — this is the gate that decides "untracked", and the
+    // other is not a redundant restatement of it.
+    expect(gitSucceeds(['ls-files', '--error-unmatch', INVENTORY])).toBe(false);
+  });
+
+  it('is ignored by a rule that is still in .gitignore', () => {
+    // `--no-index` or this assertion is worthless: without it git declines to
+    // report a rule for a path the index still tracks, so the same
+    // `git add -f` that reds the test above would decide this one too, and
+    // deleting the .gitignore line would be invisible here.
+    // Injection: removing the `/WORKTREES.json` line from .gitignore turns this
+    // red and leaves the test above green.
+    //
+    // This must not depend on the file existing. A fresh checkout has no
+    // inventory until something generates one, and `check-ignore` reads
+    // patterns rather than the filesystem, so the assertion holds there too.
+    expect(gitSucceeds(['check-ignore', '--no-index', INVENTORY])).toBe(true);
+  });
+
+  it('reaches neither the generator nor the curated table', () => {
+    // The guard is that the rule cannot be broadened into the tracked source it
+    // sits beside. `curated.mjs` is hand-written source that the suite imports,
+    // and losing it to an ignore rule would delete the findings that stop a
+    // worktree being pruned — so `scripts/**` in `.gitignore` is the injection
+    // that reds this alone, with the two above green.
+    //
+    // What this does NOT establish, and an earlier version of this comment
+    // claimed it did: that the leading slash stops the rule reaching a worktree's
+    // own `WORKTREES.json`. `.kilo` already ignores those, so that path is green
+    // with or without the anchor — the anchor has no observable behaviour in this
+    // repository, and there is nothing here to test.
+    for (const source of ['scripts/worktree-inventory.mjs', 'scripts/lib/worktree-inventory/curated.mjs']) {
+      expect(gitSucceeds(['check-ignore', '--no-index', source]), `${source} must stay tracked`).toBe(false);
+    }
+  });
+});
+
+/**
+ * Call history: who wrote in each worktree, who read it, who ran commands in it,
+ * ever, and which of those may be released.
+ *
+ * The property under test is ATTRIBUTION plus COMPLETENESS, and they pull against
+ * each other. `chats.mjs` attributes a chat to a worktree by the directory the
+ * chat OPENED in, which is wrong in both directions at once: a chat opened in the
+ * main checkout and then driven into a task worktree is recorded against main for
+ * its whole life, and a chat whose worktree was deleted points at a directory
+ * that no longer exists. So the tests below are about WHICH DIRECTORY a call lands
+ * in and about whether an unplaceable call is admitted rather than dropped.
+ *
+ * Every bug these pin was found by running against the real 428k-row database,
+ * not by reading the code. Two of them — the missing path separator and the
+ * project filter — were invisible to a single-project fixture, which is why the
+ * fixture below deliberately does NOT list the repository root in
+ * `project_directory`, exactly as the live database does not.
+ */
+describe('the call history', () => {
+  const ROOT = '/repo';
+
+  /**
+   * A session/part database shaped like the real one.
+   *
+   * `project_directory` holds whatever `rows.projectDirectories` says, and the
+   * default registers the root under `p1`. A test that needs the project filter
+   * to be ABLE to match omits it — which is the live shape, since the real
+   * `project_directory` stores `/Users/bkalynovskyi/ph` while a macOS-normalised
+   * lookup asks for `/private/Users/bkalynovskyi/ph` and matches nothing.
+   */
+  function makeSessionDb(rows) {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-calls-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE project_directory (project_id TEXT, directory TEXT, type TEXT);
+             CREATE TABLE session (id TEXT, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
+               agent TEXT, time_created INTEGER, time_updated INTEGER);
+             CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+               time_updated INTEGER, data TEXT);`);
+    for (const pd of rows.projectDirectories ?? [['p1', ROOT, 'primary']]) {
+      db.prepare('INSERT INTO project_directory VALUES (?,?,?)').run(...pd);
+    }
+    const addSession = db.prepare(
+      'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+    );
+    const addPart = db.prepare(
+      'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+    );
+    for (const s of rows.sessions ?? []) {
+      addSession.run(
+        s.id,
+        s.projectId ?? 'p1',
+        s.parentId ?? null,
+        s.directory,
+        s.title ?? s.id,
+        s.agent ?? 'code',
+        s.at,
+        s.at
+      );
+    }
+    for (const [i, w] of (rows.calls ?? []).entries()) {
+      addPart.run(`p${i}`, `m${i}`, w.sessionId, w.at, w.at, JSON.stringify(w.data));
+    }
+    db.close();
+    return { dir, dbPath, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  const tool = (name, input, status = 'completed') => ({ type: 'tool', tool: name, state: { status, input } });
+
+  const run = (dbPath, extra = {}) =>
+    auditWrites({
+      dbPath,
+      root: ROOT,
+      worktreePaths: [],
+      nowMs: NOW,
+      liveWindowMs: 30 * 60 * 1000,
+      ...extra,
+    });
+
+  it('reads the worktree name out of a path, and only out of a worktree path', () => {
+    // The separator is the whole test. The root arrives with no trailing slash,
+    // and concatenating the segment onto it built `<root>.kilo/worktrees/` —
+    // which matches nothing, so every call to a deleted worktree was silently
+    // filed under the main checkout instead.
+    expect(worktreeNameFromPath(`${ROOT}/.kilo/worktrees/gone-one/src/a.ts`, ROOT)).toBe('gone-one');
+    expect(worktreeNameFromPath(`${ROOT}/src/a.ts`, ROOT)).toBeNull();
+    expect(worktreeNameFromPath('/somewhere/else/.kilo/worktrees/x/src/a.ts', ROOT)).toBeNull();
+  });
+
+  it("attributes to the most specific worktree, and returns the caller's spelling of it", () => {
+    const index = buildPathIndex(ROOT, [`${ROOT}/.kilo/worktrees/x`]);
+    // The main checkout contains every worktree, so a match that did not prefer
+    // the longer path would file every worktree's calls under main.
+    expect(index.match(`${ROOT}/.kilo/worktrees/x/src/a.ts`)).toBe(`${ROOT}/.kilo/worktrees/x`);
+    expect(index.match(`${ROOT}/src/a.ts`)).toBe(ROOT);
+    // Both results are the path as the CALLER spelled it, un-normalised, because
+    // callers look records up by the worktree path `git worktree list` printed.
+    // Returning macOS's `/private` form instead misses every in-repo worktree at
+    // once — which is exactly the 10,074-vs-3,480 misattribution.
+    for (const hit of [index.match(`${ROOT}/src/a.ts`), index.match(`${ROOT}/.kilo/worktrees/x/src/a.ts`)]) {
+      expect(hit.startsWith('/private/')).toBe(false);
+    }
+  });
+
+  it('finds the files an apply_patch names, and not the ones its body mentions', () => {
+    const patch = [
+      '*** Begin Patch',
+      `*** Update File: ${ROOT}/src/real.ts`,
+      `*** Add File: ${ROOT}/src/added.ts`,
+      `*** Delete File: ${ROOT}/src/gone.ts`,
+      `*** Move to: ${ROOT}/src/moved.ts`,
+      '@@',
+      ' const seen = "*** Update File: not/a/target.ts";',
+      '*** End Patch',
+    ].join('\n');
+    // The body line is a CONTEXT line that happens to contain the header text.
+    // Anchoring only on the text would count a file that was never written.
+    expect(patchTargetPaths(patch)).toEqual([
+      `${ROOT}/src/real.ts`,
+      `${ROOT}/src/added.ts`,
+      `${ROOT}/src/gone.ts`,
+      `${ROOT}/src/moved.ts`,
+    ]);
+    expect(patchTargetPaths(null)).toEqual([]);
+  });
+
+  it("rolls a subagent's call up to the chat a human opened", () => {
+    const byId = new Map([
+      ['child', { id: 'child', parentId: 'parent' }],
+      ['parent', { id: 'parent', parentId: null }],
+    ]);
+    expect(rootSessionId('child', byId)).toBe('parent');
+    // A cycle must terminate rather than hang the generator.
+    const cyclic = new Map([
+      ['a', { id: 'a', parentId: 'b' }],
+      ['b', { id: 'b', parentId: 'a' }],
+    ]);
+    expect(rootSessionId('a', cyclic)).toBeTruthy();
+  });
+
+  it('keeps a writer whose session belongs to a different project', () => {
+    // THE test for the project filter. The filter this replaced looked the
+    // project up with a macOS-normalised root, `project_directory` stores the
+    // unprefixed spelling, the lookup matched zero rows — and the branch that
+    // scoped on it was live code that would have dropped this write the day
+    // someone "fixed" the path spelling. On the real database that is 30 sessions
+    // and 774 completed writes.
+    const fx = makeSessionDb({
+      projectDirectories: [['p2', '/some/other/project', 'primary']],
+      sessions: [
+        { id: 'other', projectId: 'p2', directory: '/some/other/project', at: NOW - 10_000 },
+        { id: 'mine', projectId: 'p1', directory: ROOT, at: NOW - 10_000 },
+      ],
+      calls: [
+        { sessionId: 'other', at: NOW - 10_000, data: tool('edit', { filePath: `${ROOT}/src/a.ts` }) },
+        { sessionId: 'mine', at: NOW - 9_000, data: tool('edit', { filePath: `${ROOT}/src/b.ts` }) },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath);
+      // Both writers are present, and the cross-project one is a chat id that can
+      // be acted on rather than a number that quietly went down.
+      expect(audit.byWorktree.get(ROOT).write.calls).toBe(2);
+      expect([...audit.byWorktree.get(ROOT).write.chats.keys()].sort()).toEqual(['mine', 'other']);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('keeps a subagent of a cross-project chat, rolled up to its parent', () => {
+    // The family walk must read the whole session table rather than any filtered
+    // subset, or a subagent whose parent lives under another project is recorded
+    // as a chat of its own — an id no human can act on.
+    const fx = makeSessionDb({
+      projectDirectories: [['p2', '/some/other/project', 'primary']],
+      sessions: [
+        { id: 'parent', projectId: 'p2', directory: '/some/other/project', at: NOW - 10_000 },
+        { id: 'child', projectId: 'p1', parentId: 'parent', directory: `${ROOT}/.kilo/worktrees/x`, at: NOW - 9_000 },
+      ],
+      calls: [
+        { sessionId: 'child', at: NOW - 9_000, data: tool('edit', { filePath: `${ROOT}/.kilo/worktrees/x/src/a.ts` }) },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`] });
+      const rec = audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`);
+      expect([...rec.write.chats.keys()]).toEqual(['parent']);
+      // The subagent's work is counted as subagent work on the parent, so the
+      // owner list has one entry and the reader can see it was delegated.
+      expect(rec.write.subagentCalls).toBe(1);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('counts only calls that completed', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: ROOT, at: NOW - 10_000 }],
+      calls: [
+        { sessionId: 's1', at: NOW - 10_000, data: tool('edit', { filePath: `${ROOT}/src/ok.ts` }) },
+        { sessionId: 's1', at: NOW - 9_000, data: tool('edit', { filePath: `${ROOT}/src/bad.ts` }, 'error') },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath);
+      // The errored edit changed nothing. Counting it would put a number in the
+      // file that overstates what was written, and the number is what is trusted.
+      expect(audit.byWorktree.get(ROOT).write.calls).toBe(1);
+      const chat = [...audit.byWorktree.get(ROOT).write.chats.values()][0];
+      expect(chat.files.has(`${ROOT}/src/bad.ts`)).toBe(false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("keeps a deleted worktree's writers attached to it instead of the main checkout", () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: `${ROOT}/.kilo/worktrees/deleted`, at: NOW - 10_000 }],
+      calls: [
+        {
+          sessionId: 's1',
+          at: NOW - 10_000,
+          data: tool('edit', { filePath: `${ROOT}/.kilo/worktrees/deleted/src/a.ts` }),
+        },
+        {
+          sessionId: 's1',
+          at: NOW - 9_000,
+          data: tool('edit', { filePath: `${ROOT}/.kilo/worktrees/deleted/src/b.ts` }),
+        },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/live`] });
+      // The registry lost the worktree, but the path remembers it. Longest-prefix
+      // matching would have handed both calls to the main checkout, which
+      // contains every worktree.
+      expect(audit.byWorktree.get('gone:deleted').write.calls).toBe(2);
+      expect(audit.byWorktree.has(ROOT)).toBe(false);
+      expect(audit.goneWorktrees[0]).toEqual(
+        expect.objectContaining({ name: 'deleted', writeCalls: 2, chatCount: 1, chatIds: ['s1'] })
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('resolves a relative path against the session directory, and marks that it did', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: `${ROOT}/.kilo/worktrees/x`, at: NOW - 10_000 }],
+      calls: [{ sessionId: 's1', at: NOW - 10_000, data: tool('edit', { filePath: 'src/a.ts' }) }],
+    });
+    try {
+      const audit = run(fx.dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`] });
+      const summary = summariseWrites(audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`).write, {
+        nowMs: NOW,
+        liveWindowMs: 30 * 60 * 1000,
+      });
+      // The working directory is the only thing that gives a relative path a
+      // location, and it is not in the call — so the resolution is recorded as
+      // what it is, different evidence from a recorded absolute path.
+      expect(summary.chats[0].assumedCwdPaths).toBe(1);
+      expect(summary.chats[0].files).toEqual([`${ROOT}/.kilo/worktrees/x/src/a.ts`]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('keeps a relative path with no session directory out of the path index', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: null, at: NOW - 10_000 }],
+      calls: [{ sessionId: 's1', at: NOW - 10_000, data: tool('edit', { filePath: 'src/a.ts' }) }],
+    });
+    try {
+      const audit = run(fx.dbPath);
+      // `src/a.ts` read as root-relative would be filed under the main
+      // checkout, which is a plausible-looking lie about a 2-character path.
+      expect(audit.byWorktree.has(ROOT)).toBe(false);
+      expect(audit.byWorktree.has('relative:src/a.ts')).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('counts reads in their own structure, and never as writes', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: ROOT, at: NOW - 10_000 }],
+      calls: [
+        { sessionId: 's1', at: NOW - 10_000, data: tool('edit', { filePath: `${ROOT}/src/a.ts` }) },
+        { sessionId: 's1', at: NOW - 9_000, data: tool('read', { filePath: `${ROOT}/src/b.ts` }) },
+        { sessionId: 's1', at: NOW - 8_000, data: tool('grep', { pattern: 'x', path: `${ROOT}/src` }) },
+        { sessionId: 's1', at: NOW - 7_000, data: tool('glob', { pattern: '**/*.ts', path: `${ROOT}/src` }) },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath);
+      const rec = audit.byWorktree.get(ROOT);
+      // Reading a file is interest, not authorship. Merging the two lists is what
+      // would make a release have to remember which entry was which, forever.
+      expect(rec.write.calls).toBe(1);
+      expect(rec.read.calls).toBe(3);
+      expect(audit.totalWriteCalls).toBe(1);
+      expect(audit.totalReadCalls).toBe(3);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('counts a read that named no path, rather than dropping it', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: ROOT, at: NOW - 10_000 }],
+      calls: [
+        { sessionId: 's1', at: NOW - 10_000, data: tool('glob', { pattern: '**/AGENTS.md' }) },
+        { sessionId: 's1', at: NOW - 9_000, data: tool('grep', { pattern: 'undo' }) },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath);
+      // 4% of greps and 66% of globs record no path, because they defaulted to
+      // the working directory. They are real reads with no location, and
+      // omitting them makes the read count a lie.
+      expect(audit.totalReadCalls).toBe(2);
+      const unlocated = [...audit.byWorktree.values()].find((r) => r.read.unlocatedCalls === 2);
+      expect(unlocated).toBeTruthy();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('reports shell traffic separately, and says it is not a write count', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: `${ROOT}/.kilo/worktrees/x`, at: NOW - 10_000 }],
+      calls: [
+        { sessionId: 's1', at: NOW - 10_000, data: tool('edit', { filePath: `${ROOT}/.kilo/worktrees/x/src/a.ts` }) },
+        { sessionId: 's1', at: NOW - 9_000, data: tool('bash', { command: 'sed -i s/a/b/ src/a.ts' }) },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`] });
+      const rec = audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`);
+      // A `sed -i` changes a file and leaves no filePath anywhere, so
+      // `writeCalls: 1` alongside a shell command is a number that reads as
+      // complete when it is not. The shell structure exists to name the gap.
+      expect(rec.write.calls).toBe(1);
+      expect(rec.shell.calls).toBe(1);
+      expect(summariseShell(rec.shell, { nowMs: NOW, liveWindowMs: 1 }).writeCapableCalls).toBe(1);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('resolves a shell call with no workdir against the session directory', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: `${ROOT}/.kilo/worktrees/x`, at: NOW - 10_000 }],
+      calls: [{ sessionId: 's1', at: NOW - 10_000, data: tool('bash', { command: 'npm test' }) }],
+    });
+    try {
+      const audit = run(fx.dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`] });
+      // 40,658 calls on the real database recorded no workdir, and the session's
+      // own directory was sitting in the table the whole time.
+      expect(audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`).shell.calls).toBe(1);
+      expect(audit.unmapped.shell).toBe(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('counts unplaceable calls per kind, and never mixes them into a total', () => {
+    const fx = makeSessionDb({
+      sessions: [{ id: 's1', directory: ROOT, at: NOW - 10_000 }],
+      calls: [
+        { sessionId: 's1', at: NOW - 10_000, data: tool('edit', { filePath: '/elsewhere/project/src/a.ts' }) },
+        { sessionId: 's1', at: NOW - 9_000, data: tool('read', { filePath: '/elsewhere/project/src/b.ts' }) },
+        { sessionId: 's1', at: NOW - 8_000, data: tool('bash', { command: 'ls', workdir: '/elsewhere/project' }) },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath);
+      // One mixed counter made the write total meaningless the moment a second
+      // kind existed: `attributed + unmapped` silently summed three different
+      // things and produced a plausible wrong number.
+      expect(audit.unmapped).toEqual({ write: 1, read: 1, shell: 1 });
+      expect(audit.attributedWriteCalls).toBe(0);
+      expect(audit.totalWriteCalls).toBe(1);
+      expect(audit.totalReadCalls).toBe(1);
+      expect(audit.totalShellCalls).toBe(1);
+      // Per kind, not one shared list.
+      const kinds = new Set(audit.unmappedBuckets.map((b) => b.bucket.split(':')[0]));
+      expect([...kinds].sort()).toEqual(['read', 'shell', 'write']);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('reports an unavailable database as empty rather than throwing', () => {
+    const audit = auditWrites({ dbPath: join(tmpdir(), 'definitely-not-a.db'), root: ROOT, nowMs: NOW });
+    expect(audit.available).toBe(false);
+    expect(audit.byWorktree.size).toBe(0);
+    expect(audit.unmapped).toEqual({ write: 0, read: 0, shell: 0 });
+    expect(emptyWriteHistory({ nowMs: NOW, liveWindowMs: 1 }).activeNow).toBe(false);
+  });
+
+  it('keeps the evidence a suppression overrode, so the override is auditable', () => {
+    const kind = {
+      calls: 3,
+      subagentCalls: 0,
+      unlocatedCalls: 0,
+      chats: new Map([
+        [
+          's1',
+          {
+            id: 's1',
+            title: 'a chat',
+            agent: 'code',
+            openedIn: ROOT,
+            openedHere: true,
+            calls: 3,
+            subagentCalls: 0,
+            assumedCwd: 0,
+            firstAt: NOW - 60_000,
+            lastAt: NOW - 60_000,
+            files: new Set([`${ROOT}/src/a.ts`]),
+          },
+        ],
+      ]),
+    };
+    const live = summariseWrites(kind, { nowMs: NOW, liveWindowMs: 30 * 60 * 1000 });
+    expect(live.activeNow).toBe(true);
+    expect(live.currentChatIds).toEqual(['s1']);
+
+    const suppressed = summariseWrites(kind, { nowMs: NOW, liveWindowMs: 30 * 60 * 1000, suppressed: true });
+    // The override empties the claim and keeps the derivation. A file that says
+    // "nobody is writing" with no record of what it overrode cannot be told
+    // apart from a bug in the generator.
+    expect(suppressed.activeNow).toBe(false);
+    expect(suppressed.currentChatIds).toEqual([]);
+    expect(suppressed.derivedChatIds).toEqual(['s1']);
+    // The archaeology half survives suppression.
+    expect(suppressed.lastAt).toBe(new Date(NOW - 60_000).toISOString());
+  });
+
+  it('releases readers below the watermark and keeps every writer', () => {
+    const old = Date.parse('2026-01-01T00:00:00Z');
+    const recent = NOW - 60_000;
+    const kind = (lastAt) => ({
+      calls: 1,
+      subagentCalls: 0,
+      unlocatedCalls: 0,
+      chats: new Map([
+        [
+          lastAt === old ? 'stale' : 'fresh',
+          {
+            id: lastAt === old ? 'stale' : 'fresh',
+            title: 't',
+            agent: 'code',
+            openedIn: ROOT,
+            openedHere: true,
+            calls: 1,
+            subagentCalls: 0,
+            assumedCwd: 0,
+            firstAt: lastAt,
+            lastAt,
+            files: new Set(),
+          },
+        ],
+      ]),
+    });
+    const stale = kind(old);
+    const fresh = kind(recent);
+    const released = summariseReads(stale, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 });
+    expect(released.chatCount).toBe(0);
+    expect(released.releasedBefore).toBe(new Date(NOW - 3_600_000).toISOString());
+    // A reader newer than the mark is not released.
+    expect(summariseReads(fresh, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 }).chatCount).toBe(1);
+    // The call total is untouched: a release hides WHO, never HOW MUCH, so the
+    // fact that reads happened survives the release.
+    expect(released.calls).toBe(1);
+
+    // Writers are a different structure with no watermark parameter at all, so
+    // a release cannot reach them.
+    expect(summariseWrites(stale, { nowMs: NOW, liveWindowMs: 1 }).chatCount).toBe(1);
+  });
+
+  it('moves the release mark forward only, and carries it across runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-release-'));
+    const target = join(dir, 'WORKTREES.json');
+    const write = (mark) => writeFileSync(target, JSON.stringify({ ownership: { readsReleasedBefore: mark } }), 'utf8');
+    try {
+      // No file yet: no release has happened, which is the correct first state.
+      expect(resolveReadsReleasedBefore(target, null, NOW)).toBe(0);
+      write('2026-01-01T00:00:00.000Z');
+      expect(resolveReadsReleasedBefore(target, null, NOW)).toBe(Date.parse('2026-01-01T00:00:00.000Z'));
+      // A later release advances it.
+      expect(resolveReadsReleasedBefore(target, 'now', NOW)).toBe(NOW);
+      write(new Date(NOW).toISOString());
+      // A release asked for with a cut-off in the PAST cannot un-release readers
+      // a later release already removed. Those rows are gone from the document and
+      // the mark is the only memory of them.
+      expect(resolveReadsReleasedBefore(target, '2020-01-01T00:00:00Z', NOW)).toBe(NOW);
+      // An unparseable cut-off is an error, not a silent "now".
+      expect(() => resolveReadsReleasedBefore(target, 'last tuesday', NOW)).toThrow(/ISO/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('makes a recent WRITE a stronger liveness claim than a recent message', () => {
+    const chatSummary = { ...noChats, lastActivity: null };
+    // `derivedChatIds`, not `activeNow`: the classifier reads the signal as it
+    // was BEFORE any declared hard state, so an override cannot erase the
+    // evidence that justified it.
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary,
+      chatSessions: [],
+      nowMs: NOW,
+      writeHistory: { activeNow: true, derivedChatIds: ['s1'] },
+    });
+    expect(verdict.live).toBe(true);
+    expect(verdict.reasons.join(' ')).toContain('wrote a file');
+  });
+
+  it('lets a declared hard state outrank every liveness signal, and says so', () => {
+    const liveSignal = { count: 1, lastActivity: NOW - 60_000 };
+    expect(classify(wt({}), { chatSummary: liveSignal, chatSessions: [], nowMs: NOW }).live).toBe(true);
+
+    const verdict = classify(wt({}), {
+      chatSummary: liveSignal,
+      chatSessions: [],
+      nowMs: NOW,
+      boardAgents: [{ agentId: 'feat/x', live: true }],
+      liveWritersSuppressed: 'the editor restarted',
+    });
+    expect(verdict.live).toBe(false);
+    expect(verdict.liveSuppressed).toBe(true);
+    // Both recency signals are retained, so the file records that something was
+    // overridden and what it overrode rather than silently disagreeing.
+    expect(verdict.derivedLive).toBe(true);
+    expect(verdict.reasons.join(' ')).toContain('the editor restarted');
+  });
+
+  it('publishes three histories and the release mark in the document', () => {
+    const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
+    const chatAudit = { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 };
+    const chat = (id, lastAt) => ({
+      id,
+      title: 't',
+      agent: 'code',
+      openedIn: '/repo/.kilo/worktrees/example',
+      openedHere: true,
+      calls: 1,
+      subagentCalls: 0,
+      assumedCwd: 0,
+      firstAt: lastAt,
+      lastAt,
+      files: new Set(['/repo/.kilo/worktrees/example/src/a.ts']),
+    });
+    const kind = (id, lastAt) => ({
+      calls: 1,
+      subagentCalls: 0,
+      unlocatedCalls: 0,
+      chats: new Map([[id, chat(id, lastAt)]]),
+    });
+    const writeAudit = {
+      available: true,
+      dbPath: 'k',
+      byWorktree: new Map([
+        [
+          '/repo/.kilo/worktrees/example',
+          {
+            key: '/repo/.kilo/worktrees/example',
+            path: '/repo/.kilo/worktrees/example',
+            write: kind('writer', NOW - 60_000),
+            read: kind('reader', NOW - 60_000),
+            shell: kind('sheller', NOW - 60_000),
+          },
+        ],
+      ]),
+      goneWorktrees: [{ name: 'deleted-one', writeCalls: 9, chatCount: 1, chatIds: ['s2'], lastWriteAt: null }],
+      attributedWriteCalls: 1,
+      totalWriteCalls: 2,
+      totalReadCalls: 3,
+      totalShellCalls: 4,
+      unmapped: { write: 1, read: 2, shell: 3 },
+      unmappedBuckets: [{ bucket: 'write:/elsewhere', calls: 1 }],
+    };
+
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'example' })],
+      root: ROOT,
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit,
+      writeAudit,
+      nowMs: NOW,
+      liveWritersSuppressed: 'the editor restarted',
+      readsReleasedBeforeMs: 0,
+    });
+
+    const w = inv.worktrees[0];
+    // Three structures, and the reader is its own — the release reaches it alone.
+    expect(w.writeHistory.chats.map((c) => c.id)).toEqual(['writer']);
+    expect(w.readHistory.chats.map((c) => c.id)).toEqual(['reader']);
+    expect(w.shellHistory.writeCapableCalls).toBe(1);
+    expect(w.writeHistory.derivedChatIds).toEqual(['writer']);
+    expect(w.liveSuppressed).toBe(true);
+
+    // A file reporting zero live writers is ambiguous between "nobody is writing"
+    // and "every writer is dead", and those two demand opposite responses, so the
+    // reason travels with the count.
+    expect(inv.ownership.liveWriterCount).toBe(0);
+    expect(inv.ownership.suppressed).toBe(true);
+    expect(inv.ownership.reason).toBe('the editor restarted');
+    expect(inv.ownership.readsReleasedBefore).toBeNull();
+
+    // No `sessions` key any more: it reported every session on the machine,
+    // including the ones that never wrote, under a key that said `writes`.
+    expect(inv.dataSources.calls.write).toEqual({ total: 2, attributed: 1, unmapped: 1 });
+    expect(inv.dataSources.calls.read.unmapped).toBe(2);
+    expect(inv.dataSources.calls.shell.unmapped).toBe(3);
+    expect(inv.dataSources.calls.sessions).toBeUndefined();
+    expect(inv.goneWorktrees).toEqual(writeAudit.goneWorktrees);
+    expect(inv.totals.goneWorktreesWithWrites).toBe(1);
+    expect(inv.totals.totalShellCalls).toBe(4);
+  });
+});
+
+describe('readBoard: a board it cannot query', () => {
+  /**
+   * The module header promises that "every function here returns an empty result
+   * rather than throwing", on the grounds that an inventory which cannot be
+   * generated is a worse tool than one that generates and says the board was
+   * unavailable. `readBoard` was `try { … } finally` with no `catch`, so any
+   * query error escaped `main()` and the generator died having written nothing.
+   */
+  it('degrades to unavailable, and says why, instead of throwing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-broken-'));
+    const dbPath = join(dir, 'board.db');
+    const db = new DatabaseSync(dbPath);
+    // Opens fine. Cannot be queried: `claims` is a table of nonsense, so the very
+    // first SELECT in `readBoard` throws. This is the shape a board has after a
+    // partial migration, which is exactly the case the promise is about.
+    db.exec('CREATE TABLE claims (nonsense TEXT)');
+    db.close();
+
+    const board = readBoard(dir, { nowMs: NOW, dbPath });
+    expect(board.available).toBe(false);
+    expect(board.claims.size).toBe(0);
+    expect(board.fileLocks.size).toBe(0);
+    expect(board.issues).toEqual([]);
+    // "board unavailable" and "board broken" are different states, so the reason
+    // is reported rather than swallowed.
+    expect(board.error).toBeTruthy();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

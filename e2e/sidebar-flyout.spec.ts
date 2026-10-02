@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas, hasDarkPixels, loadImageData, waitForCanvasPixels } from './helpers/canvas-helpers';
 import {
   clickToolButton,
@@ -17,13 +17,16 @@ import {
 /**
  * This file is about TILE flyouts, and the rail no longer always has the tile.
  *
- * The left rail is one column by default and fits sixteen rows of a 44px tile into 80% of
- * the slot it has left after its own chrome. At an ordinary 1280x720 window the rows that
- * do not fit — everything from the Brush group down — move into a three-dots tile, so the
- * Brush, Pen, Type and Shape tiles are not on the rail at all. That is the product contract
- * and not a defect: a tool is always reachable from exactly one of a tile of its own or the
- * three-dots flyout (`e2e/toolbar-overflow.spec.ts` pins that arithmetic). What it means for
- * THIS file is that two questions must not be confused:
+ * The left rail is one column by default and fits whole 44px rows into the WHOLE of the slot
+ * it has left after its own chrome — a fifth of that slot used to be reserved as headroom, and
+ * the fit no longer reserves anything. At an ordinary 1280x720 window it shows seven of the
+ * sixteen groups: Move, Marquee, Lasso, Magic Wand, Eyedropper, Crop and Colour. The other nine
+ * — the Brush group down to Shape — move into a three-dots tile, so the Brush, Pen, Type and
+ * Shape tiles are not on the rail at all, and it takes a window of 1094 for the rail to show
+ * all sixteen. That is the product contract and not a defect: a tool is always reachable from
+ * exactly one of a tile of its own or the three-dots flyout (`e2e/toolbar-overflow.spec.ts` pins
+ * that reachability, `e2e/toolbar-fit.spec.ts` the arithmetic behind how many rows fit). What
+ * it means for THIS file is that two questions must not be confused:
  *
  *   - a question about a TILE ("does this tile's flyout paint", "does Escape give focus back
  *     to this tile") needs a tile that EXISTS, and at a short window it may not;
@@ -46,6 +49,9 @@ import {
  *   (c) two tests — the pen group and the colors group — go the OTHER way and ask for the
  *       three-dots flyout on purpose, because their claim is that a collapsed group still
  *       lists every one of its tools. Their names say "present in flyout", not "on a tile".
+ *       The Pen is the fourteenth row and needs a 1044px window for a tile, so an ordinary
+ *       window folds it for free; the Colour group is the seventh and an ordinary window shows
+ *       it, so its test SHORTENS the window to 600 to keep asking the same question.
  *
  * The fourth thing worth stating once, because several tests below are only meaningful with
  * it: `toBeVisible()` does not test CLIPPING. The rail is `overflow-y-auto`, which makes CSS
@@ -65,7 +71,7 @@ import {
  */
 const WAND = 'magic-wand';
 const WAND_ALTERNATE = { toolName: 'quick-selection', label: 'Quick Selection Tool' };
-/** Three items, so the tallest flyout the collapsed rail still shows. */
+/** Three items — the tallest menu on the rail at 720, tied with the Colour group's. */
 const LASSO = 'freehand-lasso';
 const MARQUEE = 'rectangular-selection';
 
@@ -99,14 +105,42 @@ const flyoutItem = (page: Page, toolName: string, label: string) =>
 /**
  * A window tall enough that the one-column rail collapses NOTHING.
  *
- * Sixteen rows of a 44px tile with a 6px gap and four section separators is about 846px of
- * tiles against a budget of 80% of the slot, and the rail's chrome takes another ~320px, so
- * nothing collapses only above roughly 1250px — there is no desktop window at which a
- * one-column rail shows all sixteen groups, and a 900px window collapses like any other.
- * Read this as "the rail is not collapsed", never as "the window is this tall": the rule is
- * on the slot, and `e2e/toolbar-overflow.spec.ts` owns the arithmetic.
+ * Every number here is MEASURED in Chrome against this tree, and the window itself is chosen
+ * from them. The rail's chrome is 135px — 8 of `py-2`, the 26px header row and its `mb-1` above
+ * the tools box, and the `<hr>`'s 8 + 1 + 8, the 72px colour cluster and 8 of `py-2` again
+ * below it. The tools box that `toolbar-fit-store.ts` charges for SEPARATELY has no padding
+ * and no border left, so the slot is the tools box, and the tools box starts 138px below the
+ * window top and ends 134px above its bottom: the slot is `H - 272`. The budget is the WHOLE
+ * of that slot, floored to a whole pixel — it used to be 80% of it, which is what moved every
+ * number in the next sentence.
+ *
+ * Sixteen rows of a 44px tile with fifteen 6px gaps and four 7px section separators is 822px,
+ * so the fit collapses nothing at a slot of 822 and nothing above that: a viewport HEIGHT of
+ * 1094. The old 80% budget needed a slot of 1027.5 for the same 822, which is the 1300 this
+ * constant used to be derived from. `e2e/toolbar-fit.spec.ts` sweeps that boundary from both
+ * sides rather than trusting this arithmetic: at 1100 every group has a tile, at 1000 thirteen
+ * of the sixteen do.
+ *
+ * WIDTH carries none of this, and the distinction is the one that was wrong before: the fit reads
+ * only the slot's height, so every width from 1024 to 1600 shows the same SEVEN tool tiles, and
+ * the same three-dots tile, at 720 tall — eight tiles in all, where the 80% budget left room for
+ * six of them. The tablet band is MORE generous rather than less — its header row renders empty,
+ * which takes its chrome to 109 — so the same 720px window shows EIGHT tool tiles there, and a
+ * 900px window is in that band rather than in the desktop one. What no width does is change the
+ * rule: all sixteen groups are on the rail from 1094 tall, and a window under 680 shows fewer
+ * than seven. At 720 the three-dots tile therefore lists the BRUSH group down where the 80% budget
+ * listed the Colors/Levels group down — one row deeper, so the first group to fold is no longer
+ * reachable by accident of how deep it sits in the map.
+ *
+ * So the height is the only number in this constant that carries weight, and 1500 leaves 406px
+ * of slack over the 822 a full grid needs — eight more tool rows, at 50 a row, and 57 for one
+ * that opens a section — before the premise would fail. 1400 left 80px under the old budget,
+ * which was one row and a bit, and the grid grows every time the toolbar map does; a premise
+ * that thin is one routine map change away from failing a test that has nothing to do with the
+ * change. Read this as "the rail is not collapsed", never as "the window is this tall": the rule
+ * is on the slot, and `e2e/toolbar-fit.spec.ts` owns the arithmetic.
  */
-const NO_COLLAPSE = { width: 1280, height: 1400 };
+const NO_COLLAPSE = { width: 1280, height: 1500 };
 
 /**
  * The box the shape test drags, in CSS pixels, centred on the canvas.
@@ -149,7 +183,7 @@ const longPressWithMouse = async (page: Page, toolName: string): Promise<void> =
   await page.mouse.up();
   // Move off the tile so the hover tooltip goes away before anything is probed. Both
   // overlays are portalled next to the same anchor, and hovering the tile starts the
-  // tooltip's 250ms timer before the 300ms press opens the flyout, so the tooltip is on
+  // tooltip's 250ms timer before the press opens the flyout, so the tooltip is on
   // screen for most of the time a flyout is. The tooltip is `pointer-events-none`, so it
   // cannot now intercept a click — but a test that leaves it there is reading the
   // geometry of two overlapping overlays when it means to read one.
@@ -162,21 +196,42 @@ const longPressWithMouse = async (page: Page, toolName: string): Promise<void> =
  * painted (clipped by an ancestor), or it can be laid out outside it (a menu taller than the
  * window it is anchored in, which is what the three-dots menu is and what no real tile's
  * menu is any more — see the anchoring test below for why).
+ *
+ * The row's OWN box and its icon's are collected here too, because `rect` is already read
+ * for the checks above and the density the flyout is drawn at is the one thing in this file
+ * that nothing else measures. They are recorded, not asserted: the reader that consumes them
+ * is the anchoring test, which is the only place a menu of the tallest shape the map has is
+ * on screen.
  */
 const readFlyoutGeometry = async (
   page: Page
-): Promise<{ itemCount: number; offscreen: string[]; unpainted: string[] }> =>
+): Promise<{
+  itemCount: number;
+  offscreen: string[];
+  unpainted: string[];
+  rowHeights: number[];
+  iconHeights: number[];
+}> =>
   page.evaluate(() => {
     const menu = document.querySelector('[role="menu"]');
-    if (!menu) return { itemCount: 0, offscreen: [], unpainted: [] };
+    if (!menu) return { itemCount: 0, offscreen: [], unpainted: [], rowHeights: [], iconHeights: [] };
 
     const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
     const offscreen: string[] = [];
     const unpainted: string[] = [];
+    const rowHeights: number[] = [];
+    const iconHeights: number[] = [];
 
     for (const item of items) {
       const rect = item.getBoundingClientRect();
       const label = item.getAttribute('aria-label') ?? item.textContent ?? 'unknown';
+
+      rowHeights.push(rect.height);
+      // The one `<svg>` a row always renders (`IconShell`, at whatever size the row's
+      // `[&_svg]:!h-4` forces it to). A row with no icon is not a shape this menu has, so
+      // the caller can require one entry per item rather than a smaller array of unknowns.
+      const icon = item.querySelector('svg')?.getBoundingClientRect();
+      if (icon) iconHeights.push(icon.height);
 
       if (rect.left < 0 || rect.top < 0 || rect.right > window.innerWidth || rect.bottom > window.innerHeight) {
         offscreen.push(
@@ -193,7 +248,7 @@ const readFlyoutGeometry = async (
       }
     }
 
-    return { itemCount: items.length, offscreen, unpainted };
+    return { itemCount: items.length, offscreen, unpainted, rowHeights, iconHeights };
   });
 
 const readTooltipGeometry = async (
@@ -494,9 +549,40 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
   });
 
   test('all colors tools present in flyout', async ({ page }) => {
-    // As the pen test above: the Colors group is a collapsed row too, and this is the
-    // assertion that its three entries stay together in one menu rather than being split
-    // across a tile and a flyout.
+    // As the pen test above, and for the same reason — its claim is that the group's three
+    // entries stay together in ONE menu rather than being split across a tile and a flyout.
+    // The Pen is the fourteenth row and needs a 1044px window for a tile of its own, so an
+    // ordinary window folds it and the test gets the three-dots menu for free. The Colour
+    // group is the SEVENTH, and the whole-slot fit puts a tile there at 720: seven tool tiles
+    // stand where the 80% budget left six, and the Colour group is one of them. Left at the
+    // default window this would stop being a test of the three-dots menu and become a second
+    // tile's own flyout — still passing, for a reason it no longer claims.
+    //
+    // So the window is shortened to 600, where the rail has room for five tool rows and the
+    // three-dots tile, and the premise is ASSERTED rather than assumed, which is `expectTileOnRail`
+    // inverted and the reason this cannot drift silently: a rail that grew room for a Colour tile
+    // would leave the poll below true forever and fail here instead of quietly changing what the
+    // test is about. 600 rather than something just under the 680 the Colour row needs, so that
+    // no rounding change in the rail's own chrome can move the boundary past it.
+    //
+    // The premise of the resize itself is asserted first, for the same reason: nothing else in
+    // this file says WHICH group the seventh row is. `e2e/toolbar-fit.spec.ts` pins the count at
+    // 720 (seven of sixteen), this pins that the seventh is the Colour — and if the fit ever
+    // folds it again, the test below still works and this line is what says the resize is no
+    // longer needed.
+    await expect(
+      getToolButton(page, 'color'),
+      'at 1280x720 the seventh visible row is the Colour group, which is why this test has to shorten the window'
+    ).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await expect
+      .poll(async () => await hasOwnToolTile(page, 'color'), {
+        message:
+          'the rail has room for a "color" tile at 600px tall, so this test is about that TILE\'s flyout ' +
+          `rather than the three-dots one. Shorten the window, or accept that the colour group's three ` +
+          `entries are now reachable from a tile and rewrite the test around that.`,
+      })
+      .toBe(false);
     await openToolFlyout(page, 'color');
 
     const flyout = page.getByRole('menu');
@@ -546,19 +632,38 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
 
   test('a long-pressed flyout is anchored to its tile, with the whole menu on screen', async ({ page }) => {
     // This test used to open the SHAPE group's flyout and assert the vertical clamp, on the
-    // arithmetic that the shape tile sat near the end of a 720px window and its six-item,
-    // 254px menu would run to 761. That arithmetic no longer describes this rail, and it is
-    // worth being precise about why, because "just use a taller window" does not restore it:
+    // arithmetic that the shape tile sat near the end of a 720px window and its six-item menu
+    // would run past the fold — 254px then, and 153px in this tree (six 24.5px rows, `p-0.5`
+    // and a 1px border). That arithmetic no longer describes this rail, and it is worth being
+    // precise about why, because "just use a taller window" does not restore it:
     //
     //   - the shape group is a SUFFIX row, so at an ordinary window it has no tile at all;
-    //   - growing the window puts the tile back but moves the fold with it. Measured: the rows
-    //     are 50px apart starting at y=157, so the k-th visible row's top is `157 + 50(k - 1)`,
-    //     and the shortest window that can show k tool rows plus the three-dots row needs
-    //     `50(k + 1) <= 0.8(H - 321)`, i.e. `H >= 383.5 + 62.5k`. For the tallest menu in the
-    //     map (254px) to hang off the fold then needs
-    //     `157 + 50(k - 1) + 254 > H - 8 >= 375.5 + 62.5k`, which is `-22.5 > 12.5k` — true for
-    //     no k at all. The fit's deliberate fifth of empty slot plus the rail's own bottom
-    //     chrome always leave more room beneath the deepest tile than any menu needs.
+    //   - growing the window puts the tile back but moves the fold with it.
+    //
+    // Every constant of that second point is MEASURED in Chrome against this tree, but the reason
+    // the clamp is out of reach is not the one it was: there is no reserved fifth of empty slot
+    // any more, and the headroom argument does not survive its removal. What replaces it is
+    // arithmetic that holds at EVERY height. The first row's top is 138 (100 of shell above the
+    // rail, 8 of `py-2`, the 26px header row and its `mb-1`), the in-section pitch is 50 (a 44px
+    // tile and a 6px row gap), a section boundary costs 7 more, and the tools box ends 134px above
+    // the window bottom. So the room UNDER the deepest visible tile is those 134, plus the
+    // three-dots row the fit reserves (50) for as long as a collapse is in play, plus whatever
+    // fraction of a row nothing could use — 184px, and never less, because the window has to
+    // grow by 50 a row to keep a row visible while the row itself moves 50 down: the leftover
+    // cannot shrink with depth. In symbols, with `b` section boundaries crossed, the k-th row's
+    // top is `138 + 50(k - 1) + 7b`, the shortest window showing k tool rows is
+    // `H >= 316 + 50k + 7b` (the slot is `H - 272` and the fit charges a row for the three-dots
+    // tile), and the six-item menu ends at `241 + 50k + 7b` against a padded window bottom of at
+    // least `308 + 50k + 7b` — 67px clear, for every k.
+    //
+    // Leaving the section separators out of that can only help the menu: a boundary costs 7 more,
+    // which pushes a tile DOWN but is charged to the fit as well, so it cannot change the sign.
+    // The one window tighter than the 67 is the one where nothing collapses, because there the
+    // reserved row is not reserved: the full sixteen-row grid is 822 and needs a 1094px window,
+    // and at 1094 the Shape tile is the deepest row of the whole map at y=916, its six-item menu
+    // ends at 1069, and the padded window ends at 1086. Measured on the real map, and 17px is the
+    // closest this rail has come to clamping one of its own menus — which is why the fit should
+    // not be given a headroom fraction back.
     //
     // So the clamp is pinned where it is still reachable, and not here: `clampToViewport`'s
     // arithmetic is asserted in jsdom by `AnchoredOverlay.test.tsx`, and the one menu that IS
@@ -567,9 +672,10 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     //
     // What a browser can still be asked, and what this now asks, is the part that is true at
     // every window: the overlay is placed at its ANCHOR's top edge and every one of its items
-    // is inside the window and painted. The Lasso is the tallest menu the collapsed rail
-    // still shows — three items against the Wand's two — so it is the closest stand-in for the
-    // six-item menu this used to open.
+    // is inside the window and painted. The Lasso is as tall a menu as the rail shows at 720 —
+    // three items, matched by the Colour group and against the Wand's two, and every one of the
+    // six-item menus in the map (Brush, Pen, Shape) is a collapsed row there — so it is the
+    // closest stand-in for the six-item menu this used to open.
     await expectTileOnRail(page, LASSO);
     const tileTop = await getToolButton(page, LASSO).boundingBox();
     if (!tileTop) throw new Error(`no box for tool-button-${LASSO}`);
@@ -582,6 +688,40 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     expect(geometry.itemCount).toBeGreaterThan(1);
     expect(geometry.offscreen, 'flyout items laid out outside the viewport').toEqual([]);
     expect(geometry.unpainted, 'flyout items whose centre is not painted (clipped by an ancestor)').toEqual([]);
+
+    // THE DENSITY OF A FLYOUT ROW, asserted here because nothing in `e2e/` measures a row's own
+    // box: every other reference to a `menuitemradio` is focus, a `count()` or a test id. This
+    // menu is as tall as any the rail opens at 720 — the taller ones in the map, the Brush,
+    // Pen and Shape groups' six, are all on collapsed rows there — and every row of it measures
+    // 24.5px in this tree: `py-1` around a 16.5px content box (the 11px label's line box at the
+    // inherited 1.5), with a 16px icon because the row's `[&_svg]:!h-4` overrides `IconShell`'s
+    // rail-sized `h-7`.
+    //
+    // The two bounds, and what each one is for, from breaks measured against this tree: putting
+    // `py-1.5` back yields a 28.5px row with the icon still at 16, and dropping `[&_svg]:!h-4`
+    // yields a 36px row with a 28px icon. 27 therefore rejects both while admitting the measured
+    // 24.5 with 2.5px of slack. The icon's EXACT 16 is what pins the load-bearing utility itself,
+    // and it is not redundant with the row bound: an 18px icon makes a 26.5px row, which the row
+    // bound admits, so a re-sized icon is the one density regression a row-height bound cannot
+    // see by construction.
+    //
+    // The control comes FIRST, and it is not bookkeeping: both bounds are taken over a collected
+    // array, and `Math.max()` of an empty array is `-Infinity`, so a read that collected nothing
+    // would sail through the row bound as a silent pass — the exact vacuity `AGENTS.md` rules
+    // out. Tying both arrays to the item count the two assertions above already established is
+    // stronger than a non-empty check: every row, and every row's icon, was measured.
+    expect(geometry.rowHeights.length, 'every flyout item reported its own row box').toBe(geometry.itemCount);
+    expect(geometry.iconHeights.length, 'every flyout item reported its own icon box').toBe(geometry.itemCount);
+    expect(
+      Math.max(...geometry.rowHeights),
+      'flyout row height: `py-1` around a 16px icon. A regression to the pre-density row (40px measured), ' +
+        'to `py-1.5` (28.5px measured), or to a lost `[&_svg]:!h-4` (36px measured) all fail here'
+    ).toBeLessThanOrEqual(27);
+    expect(
+      [...new Set(geometry.iconHeights)],
+      'flyout row icon height, the distinct sizes found: 16 is `IconShell`’s `h-7` overridden by ' +
+        'the row’s `[&_svg]:!h-4`, which is the utility that makes the row 24.5px instead of 36px'
+    ).toEqual([16]);
 
     // The placement, which the two assertions above cannot distinguish from any other spot on
     // the screen: `AnchoredOverlay` puts the menu at `anchorRect.top` and only clamps it to
@@ -607,8 +747,48 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     const box = await menu.boundingBox();
     if (!box) throw new Error('no box for the flyout');
 
-    // `p-1.5` of padding inside the menu's border, which is not inside any item.
-    await page.mouse.click(box.x + 2, box.y + 2);
+    // The claim is a click that lands on the MENU and NOT on one of its items, so the point is
+    // derived from the menu's OWN padding and border rather than written down. It used to be a
+    // hardcoded 2px from the border box, which was inside the old `p-1.5`; the menu is `p-0.5`
+    // now, so that point sits 1px from the first item — one padding change away from picking a
+    // tool, which closes the menu and fails this test for a reason that has nothing to do with
+    // what it claims. The CENTRE of the padding band cannot be that, and reading the band off
+    // the menu means the next density change moves the probe with it instead of past it.
+    const inset = await menu.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        horizontal: Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft) / 2,
+        vertical: Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.paddingTop) / 2,
+        padding: Number.parseFloat(style.paddingLeft),
+      };
+    });
+    // A menu with no padding has no padding to probe, and the point below would land on the
+    // border — or on an item, which is the failure this whole test would then misreport.
+    if (!(inset.padding > 0)) {
+      throw new Error(
+        `the flyout has ${inset.padding}px of horizontal padding, so this test has no menu-owned point to click`
+      );
+    }
+    const probe = { x: box.x + inset.horizontal, y: box.y + inset.vertical };
+
+    // The control, and the reason the derived point cannot drift silently: the click has to land
+    // inside the menu and outside every item, or the assertion below is measuring a pick.
+    const landing = await menu.evaluate((element, point) => {
+      const hit = document.elementFromPoint(point.x, point.y);
+      const items = Array.from(element.querySelectorAll('[role="menuitemradio"]'));
+      return {
+        tag: hit?.tagName ?? 'nothing',
+        insideMenu: hit !== null && element.contains(hit),
+        onItem: hit !== null && items.some((item) => item === hit || item.contains(hit)),
+      };
+    }, probe);
+    expect(landing.insideMenu, `the probe point is inside the menu (it hit ${landing.tag})`).toBe(true);
+    expect(
+      landing.onItem,
+      'the probe point is on a menu item, so the click below would pick a tool rather than test the menu'
+    ).toBe(false);
+
+    await page.mouse.click(probe.x, probe.y);
 
     await expect(menu).toBeVisible();
   });

@@ -62,8 +62,6 @@ const createStoreMocks = vi.hoisted(() => () => {
   return { canvas, ctx, container, cr };
 });
 
-const promptMock = vi.hoisted(() => vi.fn());
-
 // Non-zero on purpose: a zero-origin frame makes document and canvas coordinates identical, so a
 // conversion that dropped the offset would still satisfy every assertion in this file.
 const DOCUMENT_FRAME = { x: 30, y: 40, width: 800, height: 600 };
@@ -210,9 +208,6 @@ describe('ShapeToolArea', () => {
     createLayerFromToolMock.mockClear();
     drawShapeMock.mockClear();
     setShapeCtxMock.mockClear();
-    promptMock.mockReset();
-    vi.spyOn(globalThis, 'prompt').mockImplementation(promptMock);
-    promptMock.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -877,8 +872,7 @@ describe('ShapeToolArea', () => {
       );
     });
 
-    it('creates a layer from a bare pointer-up without prompting or previewing', () => {
-      promptMock.mockReturnValue(null);
+    it('creates a layer from a bare pointer-up without opening the Create dialog', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -887,13 +881,13 @@ describe('ShapeToolArea', () => {
       });
       // Releasing at a different position with no pointermove leaves
       // originalShapeRef null, so handlePointerUp re-derives the geometry from
-      // the release coordinate. That makes start != end, which skips the
-      // click-size prompt and commits a drag the user never previewed.
+      // the release coordinate. That makes start != end, which is not a click, so
+      // the Create dialog stays shut and a drag the user never previewed commits.
       act(() => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 200, clientY: 260 });
       });
 
-      expect(promptMock).not.toHaveBeenCalled();
+      expect(document.body.querySelector('[data-testid="create-shape-dialog"]')).toBeNull();
       expect(drawShapeMock).not.toHaveBeenCalled();
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
 
@@ -971,74 +965,220 @@ describe('ShapeToolArea', () => {
       expect(fullArgs.args.figure).toBe('oval');
     });
 
-    it('prompts for dimensions on a click with no movement and expands the shape', () => {
-      promptMock.mockReturnValue('100');
+    // Adobe's contract for a bare click: "Click on the canvas to bring up the Create Rectangle
+    // dialog" (https://helpx.adobe.com/photoshop/using/modify-shapes.html). The click itself commits
+    // nothing — the size is the dialog's to supply.
+    describe('bare click opens the Create dialog', () => {
+      const clickOnce = (toolArea: HTMLElement, at: Point, modifiers: DragModifiers = {}) => {
+        act(() => {
+          fireEvent.pointerDown(toolArea, { button: 0, clientX: at.x, clientY: at.y, ...modifiers });
+        });
+        act(() => {
+          fireEvent.pointerUp(toolArea, { button: 0, clientX: at.x, clientY: at.y, ...modifiers });
+        });
+      };
 
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
+      it('opens the Create Rectangle dialog and commits nothing on the click', () => {
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
 
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
+        clickOnce(toolArea, { x: 10, y: 20 });
 
-      expect(promptMock).toHaveBeenCalledTimes(2);
-      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
-      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
-      // Click at (10,20) → prompt returns 100 for width/height
-      // end = (40+100, 60+100) = (140, 160), adjusted by pos {x:38, y:58} → (102, 102)
-      expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
-      expect(fullArgs.args.end).toEqual({ x: 102, y: 102 });
-      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 104, height: 104 });
-    });
-
-    it('does not create a layer when the prompt returns null', () => {
-      promptMock.mockReturnValue(null);
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
-
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        const dialog = document.body.querySelector('[data-testid="create-shape-dialog"]');
+        expect(dialog).not.toBeNull();
+        expect(dialog!.querySelector('h2')?.textContent).toBe('Create Rectangle');
+        expect(createLayerFromToolMock).not.toHaveBeenCalled();
       });
 
-      expect(createLayerFromToolMock).not.toHaveBeenCalled();
-    });
+      it('names the dialog after the figure, so an ellipse click does not say Rectangle', () => {
+        toolArgsState.toolArgs = { ...toolArgsState.toolArgs, figure: 'oval' };
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
 
-    it('does not create a layer when prompt values are zero or negative', () => {
-      promptMock.mockReturnValueOnce('0').mockReturnValueOnce('100');
+        clickOnce(toolArea, { x: 10, y: 20 });
 
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
-
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        const dialog = document.body.querySelector('[data-testid="create-shape-dialog"]');
+        expect(dialog!.querySelector('h2')?.textContent).toBe('Create Ellipse');
       });
 
-      expect(createLayerFromToolMock).not.toHaveBeenCalled();
-    });
+      it('commits the shape the dialog describes, anchored at the clicked point', () => {
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
 
-    it('does not create a layer when prompt values are non-numeric', () => {
-      promptMock.mockReturnValueOnce('abc').mockReturnValueOnce('100');
+        clickOnce(toolArea, { x: 10, y: 20 });
+        fireEvent.change(document.body.querySelector('[data-testid="create-shape-width-input"]')!, {
+          target: { value: '40' },
+        });
+        fireEvent.change(document.body.querySelector('[data-testid="create-shape-height-input"]')!, {
+          target: { value: '30' },
+        });
+        act(() => {
+          fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-submit-button"]')!);
+        });
 
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
-
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+        expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+        // The clicked canvas point is (10,20); the frame offsets it to document (40,60).
+        expect(committedGeometry(createLayerFromToolMock.mock.calls[0][0])).toEqual({
+          start: { x: 40, y: 60 },
+          end: { x: 80, y: 90 },
+        });
       });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+
+      it('anchors on the midpoint when the dialog asks for From Center', () => {
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
+
+        clickOnce(toolArea, { x: 10, y: 20 });
+        fireEvent.change(document.body.querySelector('[data-testid="create-shape-width-input"]')!, {
+          target: { value: '40' },
+        });
+        fireEvent.change(document.body.querySelector('[data-testid="create-shape-height-input"]')!, {
+          target: { value: '30' },
+        });
+        fireEvent.click(document.body.querySelector('[data-testid="create-shape-from-center"]')!);
+        act(() => {
+          fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-submit-button"]')!);
+        });
+
+        expect(committedGeometry(createLayerFromToolMock.mock.calls[0][0])).toEqual({
+          start: { x: 20, y: 45 },
+          end: { x: 60, y: 75 },
+        });
       });
 
-      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      it('seeds From Center from the Alt held at the press, and the dialog can clear it', () => {
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
+
+        clickOnce(toolArea, { x: 10, y: 20 }, { altKey: true });
+
+        const fromCenter = document.body.querySelector<HTMLInputElement>('[data-testid="create-shape-from-center"]')!;
+        expect(fromCenter.checked).toBe(true);
+
+        // The latched Alt is a default, not a lock: Adobe's dialog owns From Center once it is up.
+        act(() => {
+          fireEvent.click(fromCenter);
+        });
+        act(() => {
+          fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-submit-button"]')!);
+        });
+
+        expect(committedGeometry(createLayerFromToolMock.mock.calls[0][0]).start).toEqual({ x: 40, y: 60 });
+      });
+
+      it('applies the dialog radius to the committed layer without touching the tool settings', () => {
+        toolArgsState.toolArgs = { ...toolArgsState.toolArgs, figure: 'rectangle', cornerRadius: 4 };
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
+
+        clickOnce(toolArea, { x: 10, y: 20 });
+        // The field seeds from the bar's live radius, so the dialog opens on what the bar shows.
+        expect(document.body.querySelector<HTMLInputElement>('[data-testid="create-shape-radius-input"]')!.value).toBe(
+          '4'
+        );
+        fireEvent.change(document.body.querySelector('[data-testid="create-shape-radius-input"]')!, {
+          target: { value: '12' },
+        });
+        act(() => {
+          fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-submit-button"]')!);
+        });
+
+        expect(createLayerFromToolMock.mock.calls[0][0].args.cornerRadius).toBe(12);
+        // The bar's own setting is untouched: the dialog describes the layer it creates, it does
+        // not rewrite the tool behind the user's back.
+        expect(toolArgsState.toolArgs.cornerRadius).toBe(4);
+      });
+
+      it('offers no Corner Radius to a figure whose renderer cannot round its corners', () => {
+        toolArgsState.toolArgs = { ...toolArgsState.toolArgs, figure: 'triangle' };
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
+
+        clickOnce(toolArea, { x: 10, y: 20 });
+
+        // `drawShape` reads `cornerRadius` in its rectangle branch only (`src/tools/shape.ts:240`).
+        // A field here would take a value and drop it.
+        expect(document.body.querySelector('[data-testid="create-shape-radius-input"]')).toBeNull();
+      });
+
+      it('commits nothing when the dialog is cancelled, and closes on the backdrop', () => {
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
+
+        clickOnce(toolArea, { x: 10, y: 20 });
+        act(() => {
+          fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-cancel-button"]')!);
+        });
+
+        expect(createLayerFromToolMock).not.toHaveBeenCalled();
+        expect(document.body.querySelector('[data-testid="create-shape-dialog"]')).toBeNull();
+
+        // Reopening proves the close was a state change and not a one-way unmount.
+        clickOnce(toolArea, { x: 10, y: 20 });
+        expect(document.body.querySelector('[data-testid="create-shape-dialog"]')).not.toBeNull();
+        act(() => {
+          fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-backdrop"]')!);
+        });
+        expect(document.body.querySelector('[data-testid="create-shape-dialog"]')).toBeNull();
+        expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      });
+
+      it('closes on Escape, and the escape never reaches the app shortcuts', () => {
+        const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+        const toolArea = container.firstElementChild as HTMLDivElement;
+
+        clickOnce(toolArea, { x: 10, y: 20 });
+        const dialog = document.body.querySelector('[data-testid="create-shape-dialog"]')!;
+        const onKeyDown = vi.fn();
+        act(() => {
+          fireEvent.keyDown(dialog, { key: 'Escape' });
+        });
+        onKeyDown.mockRestore();
+
+        expect(document.body.querySelector('[data-testid="create-shape-dialog"]')).toBeNull();
+        expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      });
+
+      // The Line is the documented exception: Adobe names drag-and-release only and never a
+      // Create Line dialog (https://helpx.adobe.com/photoshop/using/tool-techniques/line-tool.html).
+      it('gives the Line tool no dialog, because Adobe documents none', () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        toolArgsState.toolArgs = { ...toolArgsState.toolArgs, figure: 'line' };
+
+        try {
+          const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+          const toolArea = container.firstElementChild as HTMLDivElement;
+
+          clickOnce(toolArea, { x: 10, y: 20 });
+
+          expect(document.body.querySelector('[data-testid="create-shape-dialog"]')).toBeNull();
+          expect(createLayerFromToolMock).not.toHaveBeenCalled();
+          expect(String(consoleError.mock.calls[0][0])).toContain('needs a drag');
+        } finally {
+          consoleError.mockRestore();
+        }
+      });
+
+      it('opens no native browser dialog on any route', () => {
+        const promptSpy = vi.spyOn(globalThis, 'prompt').mockImplementation(() => null);
+        const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => undefined);
+
+        try {
+          const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+          const toolArea = container.firstElementChild as HTMLDivElement;
+
+          clickOnce(toolArea, { x: 10, y: 20 });
+          act(() => {
+            fireEvent.click(document.body.querySelector('[data-testid="create-shape-dialog-submit-button"]')!);
+          });
+
+          expect(promptSpy).not.toHaveBeenCalled();
+          expect(alertSpy).not.toHaveBeenCalled();
+        } finally {
+          promptSpy.mockRestore();
+          alertSpy.mockRestore();
+        }
+      });
     });
 
     it('cancels a pending animation frame on pointer up', () => {
@@ -1564,10 +1704,10 @@ describe('ShapeToolArea', () => {
       expect(isDocumentGestureOpen()).toBe(false);
     });
 
-    it('releases the claim before the commit path, so a release that commits nothing still frees the keyboard', () => {
+    it('releases the claim before the commit path, so a click that only opens the dialog still frees the keyboard', () => {
       // The release is the first statement inside the `isPointerUpValid` branch, which is what covers
-      // the prompt early-return below: a click the user dismisses must not leave the keyboard dead.
-      promptMock.mockReturnValue(null);
+      // the bare-click branch below: a click that opens the Create dialog commits nothing, and a
+      // gesture left open would gate every later keystroke until some future drag released it.
       const { toolArea } = renderToolArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
