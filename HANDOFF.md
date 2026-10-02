@@ -4315,42 +4315,6 @@ process rule, converting "rogue commits nobody can attribute" into "a dirty tree
 `scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
 `kilo.jsonc:31-69`, `AGENTS.md` (delegation section)
 
-## 155. The export branch validates the composited canvas against the document frame's WIDTH and never checks its HEIGHT
-
-`fix/export-decouple-display` decouples the export surface from the visible workspace
-canvas, which is the right change and unblocks the retina work. Its one real defect is a
-half-written guard in the new module. `renderExportCanvas` composites into a canvas and
-then asserts it got the right shape:
-
-```ts
-if (!published || canvas.width !== documentFrameSize(documentFrame).width) {
-  throw new Error('Unable to render the document for export');
-}
-```
-
-The height is never compared. A compositor that sized the target to the correct width and
-the wrong height passes this check, and the encoder then writes a file of the wrong
-dimensions from a surface that reported success.
-
-**The file exists on no other ref.** `git cat-file -e main:src/contexts/export-canvas.ts`
-fails — the branch is the only holder of the module, the `useFile.tsx` call site and the
-three header call sites. Deleting the worktree, or letting a sweep dispose it as
-`0 commits ahead`, loses all of it: the branch reads as disposable by commit count and
-merged-by-`git cherry` means neither that it is safe to drop nor that it is already landed.
-`git cherry main fix/export-decouple-display` reports `+` for both patches.
-
-**Fix.** Add the height disjunct so the guard is a shape check and not a width check:
-
-```ts
-const { width, height } = documentFrameSize(documentFrame);
-if (!published || canvas.width !== width || canvas.height !== height) {
-```
-
-Add the wrong-height-only case beside the existing wrong-width one, so the guard is pinned
-by a test that fails without the disjunct.
-
-**Files.** `fix/export-decouple-display:src/contexts/export-canvas.ts:55`
-
 ## 156. `fix/overnight-test-red` restores an attribute a written prohibition forbids, and narrows a machine-wide gate to one worktree
 
 The branch is 12 commits that fixed a genuinely red suite, and it should not be merged:
@@ -4648,9 +4612,9 @@ for one. Its only visual signal is `saving ? 'Saving…' : 'Save'` at `:141`. It
 resolves.
 
 So a broken layer bitmap — a transferred or detached `ImageBitmap` raises `InvalidStateError`
-inside `drawImage`, which `layer-renderer.ts:130-133` catches into a `false` return — produces a
+inside `drawImage`, which `layer-renderer.ts:152-155` catches into a `false` return — produces a
 click with no visible consequence at all. Before the export decouple, the same broken layer left
-the display canvas holding the last good composite (`layer-renderer.ts:108-111` states that
+the display canvas holding the last good composite (`layer-renderer.ts:122-126` states that
 preservation as its contract) and the export encoded a stale-but-real file.
 
 **Fix.** Add an error state to `SaveDialog` and render it in the panel body between `:122` and
@@ -4672,9 +4636,9 @@ a mechanical edit.
 and its inputs are pointer coordinates divided by the contain fit, so `pos.width` is generally
 fractional. `draw.ts:102` then does `new OffscreenCanvas(size.width, size.height)`, whose
 constructor **truncates** — the mechanism `src/tools/shape.ts:131-137` already documents. The
-composite draws at the _untruncated_ size (`src/contexts/layer-renderer.ts:81`,
-`ctx.drawImage(bitmap, x, y, position.width, position.height)`) with `imageSmoothingEnabled` at
-its default `true`, because nothing in the composite path sets it.
+composite draws at the _untruncated_ size (`src/contexts/presentation-evaluator.ts:168`,
+`ctx.drawImage(bitmap, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height)`) with
+`imageSmoothingEnabled` at its default `true`, because nothing in the composite path sets it.
 
 So every brush, pencil and `penType: 'pen'` stroke is stretched by
 `pos.width / trunc(pos.width)` onto a fractional destination x. For a 200px pencil drag that is
@@ -4688,13 +4652,13 @@ in the tree: `shapeGeometryBounds` (`src/tools/shape.ts:149-162`) floors the ori
 far edge, producing four integers.
 
 **Fix.** Round `pointsBoundingPos` outward the way `shapeGeometryBounds` does. Verify against
-`e2e/paint-tool-pixels.spec.ts:244-247`, whose `edge.height < 30` is a **capture-pixel**
+`e2e/paint-tool-pixels.spec.ts:250-251`, whose `edge.height < 30` is a **capture-pixel**
 measurement with no scale correction and is recorded in DPR-1 numbers — a 0.12% resample moves
 it, and it sits closest to its limit of anything in the suite.
 
 **Files.** `src/util/draw.ts:6-27`, `src/tools/draw.ts:99-103`,
-`src/contexts/layer-renderer.ts:81`, `CANVAS-RESOLUTION-PLAN.md:184`,
-`e2e/paint-tool-pixels.spec.ts:244-247`
+`src/contexts/presentation-evaluator.ts:168`, `CANVAS-RESOLUTION-PLAN.md:184`,
+`e2e/paint-tool-pixels.spec.ts:250-251`
 
 ---
 
@@ -4772,7 +4736,7 @@ move any layout arithmetic — but it would put the six known 2× failures in
 
 ## 166. The raster and PSD export branches size from different fields, and nothing reconciles them
 
-`src/contexts/export-canvas.ts:55`, `src/contexts/psd-utils.ts:239`
+`src/contexts/export-canvas.ts:61-66`, `src/contexts/psd-utils.ts:243`
 
 `renderExportCanvas` derives its extent from `documentFrame` and ignores its `size` argument
 whenever the frame is valid. `savePsd` does the opposite: it sizes the composite from `size`
@@ -4782,18 +4746,20 @@ alone, so an invalid-but-truthy frame reaches `savePsd` unvalidated, while the r
 validates it with `isValidDocumentFrame`.
 
 **Unreachable today, and that is the whole risk.** Every store writer that sets a frame re-derives
-`totalSize` from it (`src/contexts/StoreContext.tsx:357,575-576,982-983,1031-1032,1088-1089`), and
-the one reducer arm that could set `size` alone — `SET_SIZE` at `StoreContext.tsx:467-478` — has
-no dispatcher anywhere; the only non-test reference is commented out at `:1165-1170`. A future
+`totalSize` from it (`src/contexts/StoreContext.tsx:419,455-456,1197-1198,1243-1244,1288`), and
+the one reducer arm that could set `size` alone — `SET_SIZE` at `StoreContext.tsx:588-600` — has
+no dispatcher anywhere; the only non-test reference is commented out at `:1379-1384`. A future
 dispatcher is what turns a comment defect into a silent one-document-two-sizes bug.
 
 **Fix.** Reconcile them at the boundary rather than documenting the gap: have the raster branch
 size from `size` and take only the origin from the frame, or make both branches read one field.
 Whatever is chosen, the `isValidDocumentFrame` check should move to the shared boundary so the
-two branches cannot disagree about what a valid frame is. A regression test must carry a frame
-whose **origin** is non-zero — the extent case is already pinned at
-`src/contexts/__tests__/export-canvas.test.ts`, the origin is not, and origin is what a crop
-changes.
+two branches cannot disagree about what a valid frame is. Both halves are now
+pinned: the extent at `src/contexts/__tests__/export-canvas.test.ts`, and the origin — through
+the call site, which is where a frame can be dropped — at `src/contexts/__tests__/useFile.test.tsx`
+("renders the export surface from the staged documentFrame, not from size alone"), which gives
+the frame a non-zero origin and an extent that disagrees with `size`.
 
-**Files.** `src/contexts/export-canvas.ts:44,55`, `src/contexts/psd-utils.ts:205-209,239`,
-`src/contexts/useFile.tsx:122`, `src/contexts/StoreContext.tsx:357,467-478,575-576,982-983,1031-1032,1088-1089,1165-1170`
+**Files.** `src/contexts/export-canvas.ts:44,61-66`, `src/contexts/psd-utils.ts:209-213,243`,
+`src/contexts/useFile.tsx:122`,
+`src/contexts/StoreContext.tsx:419,455-456,588-600,1197-1198,1243-1244,1288,1379-1384`

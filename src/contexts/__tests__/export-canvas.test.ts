@@ -82,8 +82,9 @@ describe('renderExportCanvas', () => {
     expect(drawLayersToCanvasMock).toHaveBeenCalledTimes(1);
     expect(drawLayersToCanvasMock.mock.calls[0][0]).toBe(returned);
 
-    // `drawLayersToCanvas` stamps every layer at `pos.x - frame.x`, `pos.y - frame.y`
-    // (layer-renderer.ts:78-79), so the frame supplies the origin as well as the extent.
+    // Every layer is stamped at `position.x - frame.x`, `position.y - frame.y`
+    // (presentation-evaluator.ts:163-164), so the frame supplies the origin as well as the
+    // extent.
     expect(drawLayersToCanvasMock.mock.calls[0][2]).toEqual(frame);
   });
 
@@ -93,7 +94,7 @@ describe('renderExportCanvas', () => {
     const middle = blankLayer({ id: 'middle', order: 2 });
 
     // Deliberately unsorted insertion order. `getSortedLayersArray` is what both existing
-    // `drawLayersToCanvas` callers apply (useLayer.ts:640, useHistory.ts:70); without it
+    // `drawLayersToCanvas` callers apply (useLayer.ts:768, useHistory.ts:70); without it
     // the export would composite in object-iteration order and invert the stack. Nothing
     // else in this module sorts.
     renderExportCanvas(
@@ -106,7 +107,7 @@ describe('renderExportCanvas', () => {
   });
 
   it('falls back to the frame its own size implies, so an omitted or invalid frame still exports', () => {
-    // `savePsd` defaults the frame the same way (psd-utils.ts:208). Two callers in the
+    // `savePsd` defaults the frame the same way (psd-utils.ts:209-213). Two callers in the
     // repo pass the raw store value, so a missing frame is reachable, not hypothetical.
     const omitted = renderExportCanvas(record(blankLayer()), { width: 320, height: 240 });
     const malformed = renderExportCanvas(record(blankLayer()), { width: 320, height: 240 }, {
@@ -154,13 +155,42 @@ describe('renderExportCanvas', () => {
 
   it('throws when the compositor reports success but left the surface at its default size', () => {
     // The other disjunct, isolated. `drawLayersToCanvas` returns `true` without drawing
-    // when `typeof document === 'undefined'` (layer-renderer.ts:118) — a "successful"
+    // when `typeof document === 'undefined'` (layer-renderer.ts:132) — a "successful"
     // export of nothing, which the extent check is what catches.
     drawLayersToCanvasMock.mockImplementationOnce(() => true);
 
     expect(() => renderExportCanvas(record(blankLayer()), { width: 800, height: 600 })).toThrow(
       /Unable to render the document for export/
     );
+  });
+
+  it('rejects a surface at the right width and the wrong height, and accepts the correct shape', () => {
+    // The guard is a SHAPE check, and this is the case a width-only check cannot see: the
+    // compositor reported success AND matched the frame on the x axis, so `canvas.width`
+    // agrees with the frame while the encoded file's dimensions do not. Both axes are
+    // asserted in one case because the halves are the same assertion read forwards and
+    // backwards — a guard that rejected everything would satisfy the first half alone, and
+    // the export would refuse every document instead of encoding a wrong-sized one.
+    drawLayersToCanvasMock.mockImplementationOnce((canvas) => {
+      canvas.width = 800;
+      canvas.height = 300;
+      return true;
+    });
+
+    expect(() => renderExportCanvas(record(blankLayer()), { width: 800, height: 600 })).toThrow(
+      /Unable to render the document for export/
+    );
+
+    // The correct shape, and the exact extent `documentFrameSize` reports, is accepted —
+    // with no frame argument in play, so nothing else could be supplying the dimensions.
+    drawLayersToCanvasMock.mockImplementationOnce((canvas) => {
+      canvas.width = 800;
+      canvas.height = 600;
+      return true;
+    });
+    const canvas = renderExportCanvas(record(blankLayer()), { width: 800, height: 600 });
+
+    expect({ width: canvas.width, height: canvas.height }).toEqual({ width: 800, height: 600 });
   });
 
   it('detaches the surface from the document, so no visible canvas is reachable from an export', () => {
