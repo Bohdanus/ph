@@ -205,9 +205,9 @@ describe('useSelectionClipboard layerViaCopy', () => {
     // `useSelectionClipboard.ts:92`, snapshots it there, and converts the snapshot's
     // bounds back at `:100` — so the round trip is the identity on position and the
     // layer must land exactly where the selection is, whatever the frame origin is.
-    // `createLayerFromBitmap` reads `pos` as document space: `layer-renderer.ts:116`
-    // hands `layer.pos` to `drawEvaluatedPresentation` with `{ kind: 'document',
-    // frame }`, and `presentation-evaluator.ts:163-164` subtracts the frame there.
+    // `createLayerFromBitmap` reads `pos` as document space: `layer-renderer.ts:115`
+    // hands `evaluation` to `drawEvaluatedPresentation` with `{ kind: 'document',
+    // frame }`, and `presentation-evaluator.ts:277` subtracts the frame there.
     storeState.documentFrame = { x: 10, y: 20, width: 90, height: 80 };
     storeState.totalSize = { width: 90, height: 80 };
     const api = renderProbe();

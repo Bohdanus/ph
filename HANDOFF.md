@@ -5058,32 +5058,40 @@ As written they are contradictory: the only way to satisfy G13 is for the durabl
 exist and be wired, and the compositor's own import of `materialization.ts`
 (`src/contexts/durable-compositor.ts:4`) is exactly what G0 forbids. No state satisfies both.
 
-**Proof, and the gate that finds it.** The G0 assertion
-(`src/contexts/__tests__/StoreContext.boundary-gates.test.ts:111`) read ONE file —
-`../StoreContext.tsx` — so it could not see `durable-compositor.ts` at all, and passed. Widened to
-every production module under `src/` (excluding `__tests__`, `*.test.*`, `*.stories.*` and ambient
-`*.d.ts`, the convention already established for this question at
-`src/contexts/__tests__/history-writer-census.test.ts:214-234`), it is RED by exactly one hit:
+**Proof, and the gate that finds it.** The G0 assertion read ONE file — `../StoreContext.tsx`
+— so it could not see `durable-compositor.ts` at all, and passed. Widened to every tracked
+production module (excluding `__tests__`, `test`, `*.test.*`, `*.spec.*`, `*.stories.*` and
+ambient `*.d.ts`, the convention already established for this question at
+`src/contexts/__tests__/history-writer-census.test.ts:214-234`), it is RED by exactly one hit.
+The walk's roots are `src/` **and** `toolbar-mapping.ts`: `tsconfig.app.json:43` puts that file
+in the app's `include` beside `src` and four components import it, so a walk rooted only at
+`src/` reported a subset while implying the repository. The violation is:
 
 ```
-{ "file": "contexts/durable-compositor.ts", "line": 4, "specifier": "./materialization.ts" }
+{ "file": "src/contexts/durable-compositor.ts", "line": 4, "specifier": "./materialization.ts" }
 ```
 
 The forbidden set is unchanged and correct — `replay-coordinator`, `materialization`,
 `replay-checkpoints` — and must stay that way: `presentation-evaluator.ts` is imported by production
 on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`, `materialization.ts:14`), and `durable-replay.ts`
 is read as a value at `StoreContext.tsx:41`, so adding either would make the gate red on correct code.
+A specifier is matched on its BASENAME, not by substring, so a helper named
+`materialization-utils.ts` is not a violation of a gate about `materialization.ts`.
 
-**The work is committed and deliberately not landed**, on branch `fix/blind-gates` as `be730a59`,
-because landing it turns `main` red and this is a plan contradiction, not a code defect to fix
-quietly. The detector is proven both ways: narrowing the walk back to one file leaves the property
-leg GREEN while `durable-compositor.ts` violates it, which reproduces the original blind gate; and
-injecting an import into a module the old gate could not see turns it red naming both files.
+**The gate is LANDED, as a tripwire rather than a red run.** The property leg is `it.fails`
+(`src/contexts/__tests__/StoreContext.boundary-gates.test.ts`), so `main` is green while the
+contradiction stands and the leg goes RED the moment `durable-compositor.ts` stops importing
+`materialization.ts` — which is the moment G0 and G13 stop disagreeing and the leg must become a
+plain `it`. `it.fails` can only say "at least one violation exists", so a companion plain assertion
+beside it, `has no forbidden production import beyond the one §177 tracks`, turns red if a SECOND
+violation appears anywhere — including in `toolbar-mapping.ts`, which no earlier version of the gate
+could read.
 
 **What is needed.** An operator ruling on which of G0/G13 governs while the durable path is
 unwired: either the forbidden set gains an explicit exemption for the compositor pair, or the
-compositor is removed until it can be wired. Until then the red gate stays off `main`, and
-`be730a59` is the standing proof that the one-file gate was blind rather than satisfied.
+compositor is removed until it can be wired. That ruling is not the test's to make, and no entry in
+`docs/OVERRIDES.md` records one. When it comes, the property leg is deleted in the same change —
+it is a pin, and a pin that outlives its defect is a gate that stops meaning anything.
 
 ## 178. `fix/rail-drop-draw` is parked on a premise OVR-2 voided
 
