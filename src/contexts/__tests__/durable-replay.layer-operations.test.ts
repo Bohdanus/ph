@@ -559,6 +559,15 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
       ]),
     });
 
+    // The lease the producer takes and gives back. Spying is the only way to SEE it: the
+    // fixture below is not the bitmap the registry owns (`registerBaseline` snapshots a
+    // non-`ImageBitmap` source into its own immutable copy), so the `close` spy can never fire
+    // however the lease is handled — which is why the `not.toHaveBeenCalled()` this replaces
+    // passed whether the lease was released, leaked, or never taken.
+    const resolve = vi.spyOn(registry, 'resolve');
+    const retain = vi.spyOn(registry, 'retain');
+    const release = vi.spyOn(registry, 'release');
+
     try {
       await expect(
         materializeLayer(layer, {
@@ -569,15 +578,29 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         })
       ).rejects.toThrow(/processor crash/);
 
+      // The lease WAS taken — `retain` is the positive observation that makes the release below
+      // a statement about a real obligation rather than about a lease that never existed.
+      expect(resolve).toHaveBeenCalledWith(assetId, undefined);
+      expect(retain).toHaveBeenCalledWith(assetId);
+      // ...and it was given back exactly once, in the producer's `finally` (materialization.ts:293),
+      // so a throw mid-processor cannot leave the baseline retained forever.
+      expect(release).toHaveBeenCalledWith(assetId);
+      expect(retain.mock.calls.length).toBe(release.mock.calls.length);
+
       // The bitmap should still be alive — the source lease was released
       // but the baseline document is still alive.
       expect(close).not.toHaveBeenCalled();
+      expect(registry.getRecord(assetId)).toBeDefined();
     } finally {
       blurSpy.mockRestore();
       void originalProcessor;
     }
 
     registry.shutdown();
+
+    // The control that makes the survival assertion above non-vacuous: this same observation
+    // DOES see the asset go away once the baseline is disposed.
+    expect(registry.getRecord(assetId)).toBeUndefined();
   });
 
   it('materialization rejects a zero-width raster source due to degenerate affine bounds', async () => {
