@@ -5034,3 +5034,87 @@ the operator's to write.
 `src/contexts/UnsavedChangesContext.tsx`, `src/contexts/useFile.tsx:190`,
 `src/components/SaveDialog/SaveDialog.tsx:54`, `src/contexts/StoreContext.tsx:426`,
 `docs/FEATURES.md`
+
+## 175. Paste places a layer at a canvas-space position that the layer reader treats as document space
+
+**Problem.** `pasteSelectionClipboard` (`src/contexts/useSelectionClipboard.ts:70-75`) builds
+
+```ts
+x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2));
+```
+
+`totalSize` is the DOCUMENT size — `documentFrameSize(nextFrame)` at `src/contexts/StoreContext.tsx:419`
+and `:456` — so `(totalSize.width - width) / 2` is already the document-space offset that centres
+the pasted layer. Adding `documentFrame.x` converts it to canvas space, and the result is passed
+as `pos` to `createLayerFromBitmap` (`src/contexts/useSelectionClipboard.ts:76-80`), which reads
+`pos` as DOCUMENT space. On a cropped document the pasted layer therefore lands `documentFrame.x`
+pixels right and `documentFrame.y` pixels down of centre, by exactly the frame origin.
+
+**This is enshrined as correct by three passing tests**, which is what makes it a trap:
+`src/contexts/__tests__/useSelectionClipboard.test.tsx:213` asserts `pos {47, 37}` against a frame
+`{x: 12, y: 7, width: 100, height: 100}`, where the document-space centre is `{35, 30}` — the
+asserted value is `{35, 30}` plus the frame origin. The companions are at `:230` and `:246`. Those
+three assertions must be re-pointed in the same change that fixes the code; they are not evidence
+that the current behaviour is right.
+
+**The sibling path is correct**, which is why this reads as a copy/paste asymmetry rather than a
+shared convention: `layerViaCopy` (`src/contexts/useSelectionClipboard.ts:92` out, `:100` back) is
+a proven round-trip identity, pinned by
+`src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx:208`. The pin that used to sit
+there asserted the double-count this entry describes, and was deleted on that evidence — its stated
+mechanism (`documentToCanvasPos` at `:100`) named a call the line does not make.
+
+**Fix.** Drop `documentFrame.x` / `documentFrame.y` from the centring expression at `:71-72`, and
+re-point the three assertions above. No conversion is needed in the other direction: the reader
+already treats `pos` as document space.
+
+## 176. Copy clamps canvas-space points against the document size
+
+**Problem.** `layerViaCopy` converts the selection out of document space
+(`documentToCanvasPos` at `src/contexts/useSelectionClipboard.ts:92`) and then hands the
+canvas-space points to `copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize)` at
+`:93`. `totalSize` is the document size (see §175), and the copy path clamps against it —
+`getSelectionCanvasBounds` in `src/util/selection.ts:531-536` does
+`maxX = Math.min(imageSize.width, maxX)`. Canvas coordinates run as high as
+`frame.x + totalSize.width`, so the rightmost `frame.x` pixels and the bottom `frame.y` pixels of a
+cropped document are unclippable and a selection reaching them is silently truncated, while a
+selection one pixel left of the origin clamps to 0.
+
+**Fix.** Pass the canvas-space extent — `totalSize` offset by the frame origin, or the canvas's own
+`width`/`height` — as the clamp bound rather than the document size. `:45` is the same call in
+`copySelectionToCanvas`'s other caller and needs the same bound.
+
+## 177. G0 and G13 cannot both be satisfied, and the widened gate that proves it is committed red
+
+**Problem.** The plan's G0 forbids production source from importing the retired replay and
+materialization modules; G13 requires `materialization.ts` to have exactly one production importer.
+As written they are contradictory: the only way to satisfy G13 is for the durable compositor to
+exist and be wired, and the compositor's own import of `materialization.ts`
+(`src/contexts/durable-compositor.ts:4`) is exactly what G0 forbids. No state satisfies both.
+
+**Proof, and the gate that finds it.** The G0 assertion
+(`src/contexts/__tests__/StoreContext.boundary-gates.test.ts:111`) read ONE file —
+`../StoreContext.tsx` — so it could not see `durable-compositor.ts` at all, and passed. Widened to
+every production module under `src/` (excluding `__tests__`, `*.test.*`, `*.stories.*` and ambient
+`*.d.ts`, the convention already established for this question at
+`src/contexts/__tests__/history-writer-census.test.ts:214-234`), it is RED by exactly one hit:
+
+```
+{ "file": "contexts/durable-compositor.ts", "line": 4, "specifier": "./materialization.ts" }
+```
+
+The forbidden set is unchanged and correct — `replay-coordinator`, `materialization`,
+`replay-checkpoints` — and must stay that way: `presentation-evaluator.ts` is imported by production
+on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`, `materialization.ts:14`), and `durable-replay.ts`
+is read as a value at `StoreContext.tsx:41`, so adding either would make the gate red on correct code.
+
+**The work is committed and deliberately not landed**, on branch `fix/blind-gates` as `be730a59`,
+because landing it turns `main` red and this is a plan contradiction, not a code defect to fix
+quietly. The detector is proven both ways: narrowing the walk back to one file leaves the property
+leg GREEN while `durable-compositor.ts` violates it, which reproduces the original blind gate; and
+injecting an import into a module the old gate could not see turns it red naming both files.
+
+**What is needed.** An operator ruling on which of G0/G13 governs while the durable path is
+unwired: either the forbidden set gains an explicit exemption for the compositor pair, or the
+compositor is removed until it can be wired. Until then the red gate stays off `main`, and
+`be730a59` is the standing proof that the one-file gate was blind rather than satisfied.
