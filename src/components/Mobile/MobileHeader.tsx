@@ -23,7 +23,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
   onOpenMenu,
   isMenuOpen = false,
 }) => {
-  const [{ canvasRef, fileName, hasImage, layers, totalSize, documentFrame }] = useStore();
+  const [{ fileName, hasImage, layers, totalSize, documentFrame }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { commitDirtyTool } = useLayers();
   const { openSaveImageDialog } = useFile();
@@ -64,13 +64,12 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
 
   const handleExport = async () => {
     try {
-      if (!hasImage || !canvasRef.current) return;
+      if (!hasImage) return;
       let exportLayers!: ReturnType<typeof commitDirtyTool>;
       flushSync(() => {
         exportLayers = commitDirtyTool();
       });
       const data = await openSaveImageDialog({
-        canvas: canvasRef.current,
         fileName,
         layers: exportLayers,
         size: totalSize,
@@ -87,6 +86,10 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
       className="safe-area-top [grid-area:header] md:hidden flex h-12 items-center justify-between gap-1 px-2 bg-[#212529] text-white border-b border-gray-800 select-none z-30"
       data-testid="mobile-header"
     >
+      {/* The mobile shell's document heading, mirroring `DesktopHeader`. Only one of the
+          two headers is in the accessibility tree at any width — each hides the other —
+          so this is never a second `<h1>` on screen. */}
+      <h1 className="sr-only">Photo App</h1>
       {/* Left: Menu toggle & File Name */}
       <div className="flex min-w-0 items-center gap-1">
         <button

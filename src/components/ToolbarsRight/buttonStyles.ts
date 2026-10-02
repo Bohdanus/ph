@@ -95,9 +95,16 @@ export const TOOLBAR_MENU_BUTTON_INACTIVE = 'text-blue-600 hover:bg-blue-100 dar
  * Menu item button style (used in dropdown menus)
  * Light theme: dark text, white/transparent background, hover to light gray
  * Dark theme: light text, transparent background, hover to darker gray
+ *
+ * The `disabled:` variants are load-bearing, not decoration. `Image ▸ Adjustments` ships
+ * Adobe's item list with the unbuilt commands as real `<button disabled>` elements, and a
+ * disabled button still matches `:hover` in every engine while Tailwind's preflight adds no
+ * `button:disabled` rule — so without these the twenty-one unbuilt commands are pixel-identical
+ * to the two that work and paint the hover affordance of a live item. The disabled rules come
+ * last so they win over the `hover:` ones in the generated CSS.
  */
 export const MENU_ITEM_BUTTON =
-  'w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700';
+  'w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700 disabled:cursor-default disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600 dark:disabled:hover:bg-transparent';
 
 /**
  * Dialog button style for secondary actions (Cancel, Close)

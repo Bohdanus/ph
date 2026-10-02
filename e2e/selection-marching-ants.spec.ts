@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import type { CssBox, ImageSize, Point } from './helpers/screenshot-scale';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';

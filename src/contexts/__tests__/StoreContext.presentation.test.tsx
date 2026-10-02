@@ -123,10 +123,7 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
 
     // A newer preview wins the race before the bitmap arrives.
     act(() => {
-      dispatch()({
-        type: 'PUBLISH_RUNTIME_PRESENTATION',
-        payload: { layers: { [layerId]: layerWithCanvas(layerId, newer) } },
-      });
+      store().publishRuntimePresentation({ [layerId]: layerWithCanvas(layerId, newer) });
     });
     await promote(store(), { layerId, canvas: staged });
 
@@ -201,10 +198,7 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
       vi.fn(async () => replacement)
     );
     act(() => {
-      dispatch()({
-        type: 'PUBLISH_RUNTIME_PRESENTATION',
-        payload: { layers: { [layerId]: { ...store().layers[layerId], tmpCanvas: stagedAgain } } },
-      });
+      store().publishRuntimePresentation({ [layerId]: { ...store().layers[layerId], tmpCanvas: stagedAgain } });
     });
     await promote(store(), { layerId, canvas: stagedAgain });
 
@@ -259,7 +253,7 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     const published = { ...before.layers[layerId], tmpCanvas: staged };
 
     act(() => {
-      dispatch()({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers: { [layerId]: published } } });
+      store().publishRuntimePresentation({ [layerId]: published });
     });
 
     expect(store().layers[layerId]).toBe(published);
@@ -296,14 +290,9 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     const secondName = store().layers['layer-2'].name;
 
     act(() => {
-      dispatch()({
-        type: 'PUBLISH_RUNTIME_PRESENTATION',
-        payload: {
-          layers: {
-            [layerId]: { ...before, pos: { x: 99, y: 0, width: 100, height: 80 } },
-            'layer-2': { ...store().layers['layer-2'], name: 'renamed' },
-          },
-        },
+      store().publishRuntimePresentation({
+        [layerId]: { ...before, pos: { x: 99, y: 0, width: 100, height: 80 } },
+        'layer-2': { ...store().layers['layer-2'], name: 'renamed' },
       });
     });
 
@@ -339,15 +328,10 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     const before = store().layers[layerId];
 
     act(() => {
-      dispatch()({
-        type: 'PUBLISH_RUNTIME_PRESENTATION',
-        payload: {
-          layers: {
-            [layerId]: {
-              ...before,
-              operations: [{ id: 'op-1', args: { toolName: 'blur', radius: 9 }, enabled: true }],
-            },
-          },
+      store().publishRuntimePresentation({
+        [layerId]: {
+          ...before,
+          operations: [{ id: 'op-1', args: { toolName: 'blur', radius: 9 }, enabled: true }],
         },
       });
     });

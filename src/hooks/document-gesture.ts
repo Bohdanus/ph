@@ -39,6 +39,8 @@ export type DocumentGestureKind =
   | 'polygon-selection'
   | 'freehand-lasso'
   | 'rectangular-selection'
+  | 'single-row-marquee'
+  | 'single-column-marquee'
   | 'layer-transform'
   | 'brush-stroke'
   | 'shape-draw'

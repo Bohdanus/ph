@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { createToolbarFitStore, planFor } from './toolbar-fit-store.ts';
 import type { ToolbarOverflowPlan, ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -20,17 +20,38 @@ export type ToolbarOverflow = {
 /**
  * Which tool groups the rail cannot show at its current height.
  *
- * `useSyncExternalStore` rather than a `ResizeObserver` in an effect writing to state,
- * because the value is external mutable state — the DOM — and because React re-reads the
- * snapshot in its commit-phase consistency check, so a rail that only learns its height
- * after layout is refitted BEFORE the browser paints. An effect-based `setState` is a
- * passive update, and the first paint would show an overflowing rail that the next frame
- * collapses: a visible jump on every page load, on the screen the user looks at first.
+ * `useSyncExternalStore` rather than a `ResizeObserver` in an effect writing to state, because
+ * the value is external mutable state — the DOM — and because React re-reads the snapshot after
+ * every render, so a rail that only learns its height after layout is refitted in the same commit
+ * rather than a frame later.
  *
- * The snapshot is a version number and the plan is memoised on it, so the rail re-renders
- * when the MEASUREMENT changes and not on a per-frame basis while a window is being dragged:
- * `publish` refuses to bump the version for a re-measure that reads the same, and a
- * drag that does not change the slot height does not change the fit.
+ * **THE FIRST PAINT DEPENDS ON REACT'S PASSIVE-EFFECT SCHEDULING, AND MEASUREMENT SAYS IT HAS
+ * NOT FAILED YET.** React subscribes to an external store in a PASSIVE effect, so a ref callback
+ * that measures during commit has nobody to notify, and `setSlots` — a layout effect, so still
+ * inside the commit — publishes into the same empty listener set. The committed tree therefore
+ * holds the plan from BEFORE the measurement, and an unmeasured rail shows every tool: fifteen
+ * tiles in a slot that fits seven at 720, corrected on the next commit.
+ *
+ * That next commit has been arriving before the browser paints. A `MutationObserver` installed
+ * before the app's own script, whose callbacks are microtasks and therefore run before the paint
+ * the mutation enables, recorded the FIRST rail it ever saw as already fitted — seven tiles at
+ * 720 — with no code doing anything about it. Chrome flushes React's passive effects inside the
+ * mounting task, so this is what happens in practice rather than what React promises.
+ *
+ * **It IS NOT PROMISED, AND CLOSING IT IS CURRENTLY BLOCKED.** The obvious fix — a layout effect
+ * that re-renders when the snapshot has moved ahead of the render — is refused by
+ * `react-hooks/set-state-in-effect` ("Calling setState synchronously within an effect can trigger
+ * cascading renders"), which is the repository's rule and not this file's. `HANDOFF.md` carries
+ * the finding with the measurement; the rule is not suppressed to make the warning go away.
+ *
+ * The snapshot is a version number and the plan is memoised on it, so the rail re-renders when the
+ * PLAN changes and not on every frame of a window drag: `publish` measures each observation,
+ * derives the plan from it, and notifies only when the plan differs from the one on screen. A
+ * 900-to-1400px drag is about five hundred observations and four renders, and nothing is skipped —
+ * the measurement still runs on every one.
+ *
+ * `setSlots` is a layout effect rather than a render-phase call because the store publishes
+ * synchronously, and a publish during render is a render-phase update.
  */
 export const useToolbarOverflow = (slots: readonly ToolbarSlot[]): ToolbarOverflow => {
   const [store] = useState(createToolbarFitStore);
@@ -47,6 +68,10 @@ export const useToolbarOverflow = (slots: readonly ToolbarSlot[]): ToolbarOverfl
     },
     [store]
   );
+
+  useLayoutEffect(() => {
+    store.setSlots(slots);
+  }, [store, slots]);
 
   const version = useSyncExternalStore(store.subscribe, store.getSnapshot, () => 0);
   // `metricsFor` hands back the SAME object for a given version, which is what makes this

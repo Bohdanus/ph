@@ -11,6 +11,7 @@ import { createAffineLayerOperation, createLayerOperation, reorderLayers } from 
 import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
+import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
 import { deriveSelectionBaseline, type SelectionHistoryArgs } from './selection-baseline.ts';
@@ -76,10 +77,22 @@ export function replayHistory(
     const { actionName, args, documentSource, layerId, layerSource } = item;
     const source = layerSource ?? (args as LayerSource | undefined);
     if (documentSource) {
-      layers = cloneLayers(documentSource.layers);
-      documentFrame = documentSource.frame
-        ? cloneDocumentFrame(documentSource.frame)
-        : documentFrameFromSize(documentSource.size);
+      // A document replacement means to be a WHOLE new document, so it is honoured
+      // only as the first entry, which is how one is ever written: the single
+      // production producer is `REPLACE_DOCUMENT` with `history: [entry]`
+      // (`useApp.ts:120`, `useLayer.ts:195`). Carried mid-history it would replace
+      // the layer record and resize the canvas from anywhere in the timeline, which
+      // is the same class of defect as the mid-history bedrock source below, so it is
+      // refused — the durable converter already refuses it, reporting
+      // `document-replacement` and holding the previous state
+      // (`history-adapter.ts:640`). Unreachable in production today, so this is a
+      // parity repair rather than a fix for something a user can see.
+      if (index === 0) {
+        layers = cloneLayers(documentSource.layers);
+        documentFrame = documentSource.frame
+          ? cloneDocumentFrame(documentSource.frame)
+          : documentFrameFromSize(documentSource.size);
+      }
       continue;
     }
     // A bedrock source sizes the DOCUMENT, so it may only establish the frame for
@@ -158,6 +171,16 @@ export function replayHistory(
     if (!processor) continue;
 
     if (processor.commit === 'layer-operation') {
+      // A retained filter this browser cannot apply must not be re-appended: the layer would then
+      // present unchanged pixels that no replay reproduces, and `layer-renderer` would refuse to
+      // draw it at all. Skipping is the same refusal the commit path makes, at replay time.
+      if (processor.requiresCanvasFilter) {
+        try {
+          requireCanvasFilter(toolArgs.toolName);
+        } catch {
+          continue;
+        }
+      }
       layers = {
         ...layers,
         [layerId]: {

@@ -46,7 +46,6 @@ describe('FileProvider PSD integration', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'drawing.psd',
       layers: {},
       size: { width: 10, height: 8 },
@@ -107,7 +106,6 @@ describe('FileProvider PSD integration', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'drawing.psd',
       layers: {},
       size: { width: 10, height: 8 },
@@ -155,7 +153,6 @@ describe('FileProvider PSD integration', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'drawing.psd',
       layers: {},
       size: { width: 10, height: 8 },
@@ -169,7 +166,15 @@ describe('FileProvider PSD integration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
-      expect(saveImageToDisk).toHaveBeenCalledWith(input.canvas, 'drawing (copy)', 'image/jpeg', 0.35)
+      expect(saveImageToDisk).toHaveBeenCalledWith(
+        // The encoded surface is rendered here from `(layers, size)`, not the caller's
+        // canvas — a caller no longer supplies one. Its extent is the assertion, because
+        // an identity check would pin the coupling this change removes.
+        expect.objectContaining({ width: 10, height: 8 }),
+        'drawing (copy)',
+        'image/jpeg',
+        0.35
+      )
     );
     expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 });
     // The dialog close is scheduled by the `finally` that runs AFTER the promise
@@ -385,7 +390,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'test.png',
       layers: {},
       size: { width: 10, height: 10 },
@@ -410,7 +414,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'test.png',
       layers: {},
       size: { width: 10, height: 10 },
@@ -436,7 +439,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'test.png',
       layers: {},
       size: { width: 10, height: 10 },
@@ -459,7 +461,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'test.png',
       layers: {},
       size: { width: 10, height: 10 },
@@ -481,7 +482,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'test.png',
       layers: {},
       size: { width: 10, height: 10 },
@@ -503,7 +503,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'test.png',
       layers: {},
       size: { width: 10, height: 10 },
@@ -531,7 +530,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'drawing.psd',
       layers: {},
       size: { width: 10, height: 8 },
@@ -562,7 +560,6 @@ describe('FileProvider save dialog edge cases', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'test.png',
       layers: {},
       size: { width: 10, height: 10 },
@@ -608,7 +605,6 @@ describe('FileProvider save dialog after a failed export', () => {
   });
 
   const stagedInput = () => ({
-    canvas: document.createElement('canvas'),
     fileName: 'test.png',
     layers: {},
     size: { width: 10, height: 10 },
@@ -906,7 +902,6 @@ describe('FileProvider document frame and non-Error failures', () => {
     );
     const documentFrame = { x: 10, y: 20, width: 30, height: 40 };
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'drawing.psd',
       layers: {},
       size: { width: 30, height: 40 },
@@ -931,7 +926,6 @@ describe('FileProvider document frame and non-Error failures', () => {
       </FileProvider>
     );
     const input = {
-      canvas: document.createElement('canvas'),
       fileName: 'drawing.psd',
       layers: {},
       size: { width: 10, height: 8 },
@@ -980,7 +974,6 @@ describe('FileProvider document frame and non-Error failures', () => {
     act(() => {
       void filesRef
         .current!.openSaveImageDialog({
-          canvas: document.createElement('canvas'),
           fileName: 'test.png',
           layers: {},
           size: { width: 10, height: 10 },
@@ -991,6 +984,44 @@ describe('FileProvider document frame and non-Error failures', () => {
 
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
     expect(console.error).toHaveBeenCalledWith('Failed to save image:', 'encoder exploded');
+  });
+
+  it('renders the export surface from the staged documentFrame, not from size alone', async () => {
+    // The frame is what carries a document's ORIGIN, and the origin is what a crop
+    // changes (`canvasRectToDocumentFrame`). `size` cannot express it: the store derives
+    // `totalSize` from the frame's extent, so the two agree on width and height and
+    // disagree only on x/y. Dropping the frame from this call site leaves every suite in
+    // the repository green — nothing below `renderExportCanvas` observes it — and a
+    // cropped document exports at the correct size with its content shoved to the
+    // top-left. So the frame is given a non-zero origin AND an extent that disagrees with
+    // `size`, and both must survive to the encoded surface.
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef
+        .current!.openSaveImageDialog({
+          fileName: 'cropped.png',
+          layers: {},
+          size: { width: 10, height: 10 },
+          documentFrame: { x: 40, y: 25, width: 640, height: 480 },
+        })
+        .then(resolved);
+    });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith({ fileName: 'cropped (copy)', format: 'image/png' }));
+    // 640x480, not the 10x10 that `size` implies and not the 300x150 canvas default.
+    expect(saveImageToDisk).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 640, height: 480 }),
+      'cropped (copy)',
+      'image/png',
+      undefined
+    );
   });
 
   it('proposes a bare copy name when the requested file name is empty', async () => {
@@ -1004,7 +1035,6 @@ describe('FileProvider document frame and non-Error failures', () => {
     act(() => {
       void filesRef
         .current!.openSaveImageDialog({
-          canvas: document.createElement('canvas'),
           fileName: '',
           layers: {},
           size: { width: 10, height: 10 },

@@ -260,10 +260,15 @@ function printSummary(inventory, quiet) {
   for (const w of inventory.worktrees) {
     const dirty = w.dirty + w.untracked > 0 ? ` dirty=${w.dirty} untracked=${w.untracked}` : '';
     const chats = w.chats.unfinished.length > 0 ? ` unfinished-chats=${w.chats.unfinished.length}` : '';
+    // Printed, because a field nothing prints and nothing reads is a field
+    // nothing acts on: this is the one place an agent actually looks before it
+    // disposes of something, and the collision count is what stops a reader
+    // treating a branch NAME as proof the work is already landed.
+    const collided = w.nameCollisions.length > 0 ? ` name-in-${w.nameCollisions.length}-merge(s)` : '';
     process.stdout.write(
       `  ${String(w.riskScore).padStart(2)}  ${w.name.padEnd(38)} ${w.action.padEnd(10)} ` +
         `ahead=${String(w.ahead).padStart(3)} behind=${String(w.behind).padStart(3)}` +
-        `${dirty}${chats}\n`
+        `${dirty}${chats}${collided}\n`
     );
   }
 }

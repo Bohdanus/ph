@@ -186,12 +186,13 @@ describe('useLayers drawAllLayers', () => {
   it('swallows a refused publication: one attempt, no throw, no retry, no result', () => {
     // The record of what `useLayers` does with a `false`, established rather than
     // assumed. `drawAllLayers` calls `drawLayersToCanvas` and drops the boolean
-    // (`useLayer.ts`: the call is a statement, not an assignment), so a refusal
-    // that already left the visible canvas untouched by the renderer's own
-    // staging stays entirely unobservable here — there is no error channel, no
-    // retry, and `drawAllLayers` returns `undefined` on success and on refusal
-    // alike. A future caller reading that boolean has to change this file, and
-    // this is the assertion that will then be wrong.
+    // (`useLayer.ts:773`: the call is a statement, not an assignment), so a
+    // refusal never reaches a caller: there is no throw, no retry, and
+    // `drawAllLayers` returns `undefined` on success and on refusal alike. The one
+    // channel a refusal DOES have is `console.error` — `useLayer.ts:774` reports
+    // `'Unable to publish runtime layer presentation'`, and the sibling test below
+    // is what asserts it. A future caller reading that boolean has to change this
+    // file, and this is the assertion that will then be wrong.
     const { result } = setup({ layers: { edited: makeLayer('edited', 1) } });
     drawLayersToCanvas.mockReturnValueOnce(false);
 
@@ -222,5 +223,18 @@ describe('useLayers drawAllLayers', () => {
     });
 
     expect(drawLayersToCanvas).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a renderer publish failure without throwing through the pointer-move path', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    drawLayersToCanvas.mockReturnValue(false);
+    const { result } = setup({ layers: { edited: makeLayer('edited', 1) } });
+
+    act(() => {
+      expect(() => result.current.layers.drawAllLayers()).not.toThrow();
+    });
+
+    expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation');
+    consoleError.mockRestore();
   });
 });

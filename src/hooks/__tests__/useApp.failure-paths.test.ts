@@ -27,6 +27,7 @@ const harness = vi.hoisted(() => ({
     clearPreviewLayers: vi.fn(),
   },
   dispatch: vi.fn(),
+  adoptLayerBitmaps: vi.fn(),
   layerMocks: {
     createBlankLayer: vi.fn(),
     createLayerFromBitmap: vi.fn(),
@@ -35,7 +36,7 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [harness.state, harness.dispatch],
+  useStore: () => [{ ...harness.state, adoptLayerBitmaps: harness.adoptLayerBitmaps }, harness.dispatch],
 }));
 
 vi.mock('../../contexts/useLayer.ts', () => ({ useLayers: () => harness.layerMocks }));
@@ -149,10 +150,11 @@ describe('useApp failure paths', () => {
     // The rasters the import built are adopted AFTER the replacement that names them: the
     // presentation scope is keyed by the owning document, so a registration published before
     // the replacement would be filed under the outgoing document id and closed by its release.
-    expect(harness.dispatch.mock.calls.map((call) => call[0].type)).toEqual([
-      'REPLACE_DOCUMENT',
-      'ADOPT_LAYER_BITMAPS',
-    ]);
+    expect(harness.dispatch.mock.calls.map((call) => call[0].type)).toEqual(['REPLACE_DOCUMENT']);
+    expect(harness.adoptLayerBitmaps).toHaveBeenCalledOnce();
+    expect(harness.dispatch.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.adoptLayerBitmaps.mock.invocationCallOrder[0]
+    );
   });
 
   it('marks the document as saved through a batched update', () => {

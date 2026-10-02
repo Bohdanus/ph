@@ -1,6 +1,7 @@
 import { type PointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -68,6 +69,7 @@ function drawPolygonOverlay({
   isFreehand,
   closePath,
   documentFrame,
+  scale,
 }: {
   ctx: CanvasRenderingContext2D;
   selections: Selection[];
@@ -76,6 +78,7 @@ function drawPolygonOverlay({
   isFreehand: boolean;
   closePath: boolean;
   documentFrame: DocumentFrame;
+  scale: number;
 }) {
   const canvas = ctx.canvas;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -83,7 +86,7 @@ function drawPolygonOverlay({
   // function on the same shared context and writes `strokeStyle`/`lineWidth` with no alpha of its
   // own, so the reset has to happen before both rather than only inside the anchors.
   resetOverlayAlpha(ctx);
-  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame));
+  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, scale));
 
   if (points.length === 0) return;
 
@@ -212,6 +215,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     ref: containerRef,
     imageSize: totalSize,
   });
+  const containScale = useContainScale(containerRef, totalSize);
 
   function clearOverlay() {
     const ctx = overlayCtxRef.current;
@@ -478,7 +482,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   function getAnchorSelectionAtPoint(point: Point): Selection | null {
     return (
       selections.find((selection) =>
-        selection.isActive ? findSelectionAnchorAtPoint(selection, point) !== null : false
+        selection.isActive ? findSelectionAnchorAtPoint(selection, point, containScale.current) !== null : false
       ) ?? null
     );
   }
@@ -572,9 +576,10 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
         preview: previewRef.current,
         selections: selectionOverride ?? selections,
         documentFrame,
+        scale: containScale.current,
       });
     },
-    [documentFrame, isFreehand, overlayCtxRef, selections]
+    [documentFrame, isFreehand, overlayCtxRef, selections, containScale]
   );
 
   /**
@@ -669,7 +674,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     const activeAnchorSelection = getAnchorSelectionAtPoint(documentCoords);
 
     if (activeAnchorSelection) {
-      const anchorIndex = findSelectionAnchorAtPoint(activeAnchorSelection, documentCoords);
+      const anchorIndex = findSelectionAnchorAtPoint(activeAnchorSelection, documentCoords, containScale.current);
       if (anchorIndex !== null) {
         selectionDragRef.current = {
           type: 'anchor',

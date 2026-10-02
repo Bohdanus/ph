@@ -29,6 +29,7 @@ import { selection } from '../selection.ts';
 import { shape } from '../shape.ts';
 import { sharpen } from '../sharpen.ts';
 import { smudge } from '../smudge.ts';
+import { sponge } from '../sponge.ts';
 import { text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -200,6 +201,7 @@ describe('toolProcessors registry', () => {
         'pencil',
         'sharpen',
         'smudge',
+        'sponge',
       ].sort()
     );
   });
@@ -252,6 +254,7 @@ describe('toolProcessors registry', () => {
         'pencil',
         'sharpen',
         'smudge',
+        'sponge',
       ].sort()
     );
     for (const toolName of rasterCommitted) {
@@ -275,6 +278,8 @@ describe('toolProcessors registry', () => {
         'rectangle',
         'rectangular-selection',
         'shape',
+        'single-column-marquee',
+        'single-row-marquee',
         'text',
         'triangle',
       ].sort()
@@ -321,6 +326,8 @@ describe('toolProcessors registry', () => {
       'rectangular-selection': 'selection',
       'elliptical-selection': 'selection',
       'quick-selection': 'selection',
+      'single-row-marquee': 'selection',
+      'single-column-marquee': 'selection',
       brush: 'raster',
       pencil: 'raster',
       'color-replacement': 'raster',
@@ -332,6 +339,7 @@ describe('toolProcessors registry', () => {
       smudge: 'raster',
       dodge: 'raster',
       burn: 'raster',
+      sponge: 'raster',
       'clone-stamp': 'raster',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
@@ -510,6 +518,7 @@ const realBarNames = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
   'color-replacement',
 ] as const satisfies readonly ToolName[];
 
@@ -684,6 +693,7 @@ const directProcessorSources: readonly [ToolName, unknown][] = [
   ['smudge', smudge],
   ['dodge', dodge],
   ['burn', burn],
+  ['sponge', sponge],
   ['clone-stamp', cloneStamp],
   ['rectangle', shape],
   ['ellipse', shape],
@@ -734,19 +744,28 @@ describe('toolProcessors processor identity', () => {
       seen.set(imageProcessor, [...(seen.get(imageProcessor) ?? []), toolName]);
     }
 
-    // The only legitimate sharing is the lasso pair and the shape/figure family,
-    // which are the same module export wired to several tool names on purpose.
+    // The only legitimate sharing is the lasso pair, the shape/figure family, and the
+    // marquee trio, which are the same module export wired to several tool names on purpose.
+    // `rectangularSelection` joins that list because a selection is geometry in the store and
+    // no pixels at all: the processor is a pass-through that hands the document bitmap back
+    // untouched (`rectangularSelection.ts:9`-`:13`), so the Rectangular Marquee and the two
+    // 1-pixel marquees have nothing to differ on. A processor that DID differ per tool would
+    // fail this assertion, which is the point of it.
     const shared = [...seen.entries()]
       .filter(([, names]) => names.length > 1)
       .map(([processor, names]) => ({
         names: names.sort(),
-        isIntentional: processor === selection || processor === shape,
+        isIntentional: processor === selection || processor === shape || processor === rectangularSelection,
       }))
       .sort((a, b) => a.names[0].localeCompare(b.names[0]));
 
     expect(shared).toEqual([
       { names: ['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle'], isIntentional: true },
       { names: ['freehand-lasso', 'polygonal-lasso'], isIntentional: true },
+      {
+        names: ['rectangular-selection', 'single-column-marquee', 'single-row-marquee'],
+        isIntentional: true,
+      },
     ]);
   });
 });
@@ -784,6 +803,8 @@ describe('toolProcessors declared inner-processor arity', () => {
         'rectangular-selection',
         'elliptical-selection',
         'quick-selection',
+        'single-row-marquee',
+        'single-column-marquee',
       ].sort()
     );
   });
@@ -807,6 +828,8 @@ describe('toolProcessors declared inner-processor arity', () => {
         'rectangular-selection',
         'elliptical-selection',
         'quick-selection',
+        'single-row-marquee',
+        'single-column-marquee',
       ].sort()
     );
   });
@@ -848,6 +871,10 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['rectangular-selection', 'source-bitmap', 0, 0],
     ['elliptical-selection', 'source-bitmap', 0, 0],
     ['quick-selection', 'source-bitmap', 0, 0],
+    // The 1-pixel marquees share `rectangularSelection`, which is the pass-through that hands
+    // the document bitmap back untouched, so they resolve to the same outcome as the row above.
+    ['single-row-marquee', 'source-bitmap', 0, 0],
+    ['single-column-marquee', 'source-bitmap', 0, 0],
     ['brush', 'canvas', 40, 24],
     ['pencil', 'canvas', 40, 24],
     ['color-replacement', 'canvas', 40, 24],
@@ -866,6 +893,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['smudge', 'canvas', 40, 24],
     ['dodge', 'canvas', 40, 24],
     ['burn', 'canvas', 40, 24],
+    ['sponge', 'canvas', 40, 24],
     ['clone-stamp', 'canvas', 40, 24],
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
@@ -1072,6 +1100,8 @@ describe('toolsMap exhaustiveness', () => {
     ['rectangular-selection', 'rectangular-selection'],
     ['elliptical-selection', 'elliptical-selection'],
     ['quick-selection', 'quick-selection'],
+    ['single-row-marquee', 'single-row-marquee'],
+    ['single-column-marquee', 'single-column-marquee'],
     ['brush', 'brush'],
     ['pencil', 'pencil'],
     ['color-replacement', 'color-replacement'],
@@ -1084,6 +1114,7 @@ describe('toolsMap exhaustiveness', () => {
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
+    ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],

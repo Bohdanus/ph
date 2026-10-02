@@ -25,7 +25,7 @@ import {
 import type { HistoryItem } from './history-types.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
-import type { ToolArgs } from './tool-types.ts';
+import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
 import type { ActionType } from '../util/constants.ts';
 import {
@@ -42,6 +42,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
+import { toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
@@ -103,18 +104,23 @@ function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject
     if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`Non-finite value at ${path}`);
     return value;
   }
-  if (Array.isArray(value))
-    return Object.freeze(
-      value.map(
-        (item, index) => plainValue(item, `${path}[${index}]`) as Exclude<PlainObject[keyof PlainObject], undefined>
-      )
-    );
+  if (Array.isArray(value)) {
+    const result = new Array<Exclude<PlainObject[keyof PlainObject], undefined>>(value.length);
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index) || value[index] === undefined) continue;
+      result[index] = plainValue(value[index], `${path}[${index}]`) as Exclude<
+        PlainObject[keyof PlainObject],
+        undefined
+      >;
+    }
+    return Object.freeze(result);
+  }
   if (!value || Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`Non-plain value at ${path}`);
   return Object.freeze(
     Object.fromEntries(
       Object.entries(value)
-        .filter(([, item]) => item !== undefined)
-        .map(([key, item]) => [key, plainValue(item, `${path}.${key}`)])
+        .filter(([key]) => Object.prototype.propertyIsEnumerable.call(value, key))
+        .map(([key, item]) => [key, item === undefined ? undefined : plainValue(item, `${path}.${key}`)])
     )
   ) as PlainObject;
 }
@@ -184,7 +190,7 @@ function convertSource(
   }
 }
 
-function convertLayer(layer: Layer, documentId: string, registry: AssetRegistry): DurableLayerSnapshot {
+export function convertLayer(layer: Layer, documentId: string, registry: AssetRegistry): DurableLayerSnapshot {
   if (!layer.source) {
     if (!layer.bitmap)
       throw new UnsupportedHistoryFeatureError(`Layer ${layer.id} has no durable source or raster materialization`);
@@ -240,6 +246,36 @@ function frameFromLegacy(
         : documentFrameFromSize(initialSize);
 }
 
+/**
+ * The frame the FIRST entry establishes when it is a bedrock source rather than a
+ * document source — the shape `File > New` produces, where `createBlankLayer(params,
+ * true)` replaces the document and writes a single `NEW_LAYER` entry carrying
+ * `{ isBedrock: true, size }` (`useLayer.ts:245-258`, `history-utils.ts:22-25`).
+ *
+ * The baseline describes the document at cursor -1, and for that history the bedrock
+ * size IS that document, so reading it here is what makes the shadow agree with the
+ * authority instead of coinciding with it. It has to be read, because the converter's
+ * create-layer arm cannot reach it: it publishes the layer and deliberately leaves
+ * `currentFrame` alone, which is right for every LATER entry and wrong for the one
+ * that opened the document.
+ *
+ * It outranks `options.initialFrame` deliberately, and for the same reason legacy
+ * replay does: that option is the store's CURRENT frame, which a later crop has
+ * already moved, while legacy replay restores the bedrock size when the cursor walks
+ * back to index 0. A converter that preferred it would describe cursor -1 as the
+ * cropped document, so the two models would disagree at exactly the cursor where the
+ * user can undo into the un-cropped original.
+ */
+function frameFromFirstEntryBedrock(item: HistoryItem | undefined): DocumentFrame | undefined {
+  if (!item || item.documentSource) return undefined;
+  const source = item.layerSource ?? asLegacyLayerSource(item.args);
+  if (source?.isBedrock) return documentFrameFromSize(source.size);
+  if ((item.args as NewBedrockSize | undefined)?.isBedrock) {
+    return documentFrameFromSize((item.args as NewBedrockSize).size);
+  }
+  return undefined;
+}
+
 function entry<Op extends DurableOperation>(id: string, operation: Op, enabled = true): DurableHistoryEntry<Op> {
   return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
 }
@@ -270,7 +306,7 @@ export function deriveSetDocumentFrameEntry(
  * Structural guard for a durable selection snapshot.
  *
  * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
- * as `next?.activeSelectionId ?? null` (`history-replay.ts:102`): a snapshot that
+ * as `next?.activeSelectionId ?? null` (`history-replay.ts:122`): a snapshot that
  * omits the id still retains its selections and only loses the active id.
  * Rejecting that shape here would make the shadow clear selections that legacy
  * replay keeps. The guard only asks whether the value can be read as a snapshot
@@ -440,7 +476,7 @@ export function isEntryEnabled(item: HistoryItem): boolean {
   return !item.disabled && nested?.enabled !== false;
 }
 
-function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): DurableOperation | null {
+export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): DurableOperation | null {
   const candidate = item.args as { args?: unknown } | undefined;
   const args = (candidate && candidate.args && typeof candidate.args === 'object' ? candidate.args : item.args) as
     ToolArgs | undefined;
@@ -557,8 +593,11 @@ export function legacyHistoryToDurable(
   // `previousSelectionState` is the only record that the selection existed, and
   // `durable-replay.ts` applies only each operation's `after`.
   const selectionBaseline = deriveSelectionBaseline(legacyHistory);
-  const initial = snapshotFromDocumentSource(first, documentId, registry) ?? {
-    frame: options.initialFrame ?? documentFrameFromSize(initialSize),
+  // A source never carries a document frame. Bedrock establishes the frame only
+  // at history index 0; the durable path's only frame writer is the
+  // `set-document-frame` operation.
+  const initial = (first && isEntryEnabled(first) ? snapshotFromDocumentSource(first, documentId, registry) : null) ?? {
+    frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
     layers: [],
     activeLayerId: null,
   };
@@ -572,34 +611,49 @@ export function legacyHistoryToDurable(
   // Ids already published as a durable entry. Two id-based resolvers exist and
   // both take the FIRST match, which is what a repeated id threatens:
   // `updateHistoryTimeline` finds the first entry in the LEGACY timeline
-  // (`history-timeline.ts:24`) and `toggleDurableEntry` finds the first in the
+  // (`history-timeline.ts:23-28`) and `toggleDurableEntry` finds the first in the
   // durable document (`toggleDurableEntry` below). Publishing a repeat would give
   // the two lists different first matches for one key, so a History-panel toggle
   // would disable a different edit in each model. Skipping the repeat keeps them
   // aligned. Replay is not part of this: `replayDurableDocument` addresses
-  // history by ARRAY INDEX (`durable-replay.ts:65`), so no replay is misresolved
+  // history by ARRAY INDEX (`durable-replay.ts:56-59`), so no replay is misresolved
   // either way — the alignment of the two id resolvers is the whole reason this
   // is a warning. An error diagnostic would withhold the shadow outright
   // (`convertLegacyHistorySafely` voids on the first one), which is not a price
   // worth paying for a timeline that still replays correctly.
   //
-  // Only ids that actually reached `entries` are recorded, which is the exact
-  // scope of the guarantee. An entry the conversion never published — the
-  // baseline document source, a refused document replacement, or one whose
-  // derivation threw into the per-item catch — does not consume its id, so a
-  // later entry publishing that id raises no diagnostic. For the BASELINE that is
-  // a real hole rather than a safe answer: the baseline id is not a durable
-  // entry, so this set cannot see it, but the legacy timeline still holds it, and
-  // a later entry reusing it makes the two first-match resolvers disagree
-  // exactly as a repeat would. Production mints a fresh `uuidv4()` per commit so
-  // nothing produces it today, and `history-adapter.diagnostics.test.ts` pins the
-  // limit for whoever closes it.
-  const publishedEntryIds = new Set<string>();
+  // Only ids that actually reached `entries` are recorded, except for the
+  // document-source baseline. That source is not a durable entry, but its id is
+  // still the first key the legacy timeline can resolve, so a later entry that
+  // reuses it must be refused just like a published duplicate. Refused document
+  // replacements and entries whose derivation throws do not consume their ids.
+  const baselineEntryId = first?.documentSource ? first.id : undefined;
+  const publishedEntryIds = new Set<string>(baselineEntryId ? [baselineEntryId] : []);
 
   for (const item of legacyHistory) {
+    if (item !== first && item.documentSource && publishedEntryIds.has(item.id)) {
+      diagnostics.push({
+        historyId: item.id,
+        actionName: item.actionName,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: `History entry ${item.id} (${item.actionName}) reuses the id of the baseline document-source entry, so it was not published as a durable entry. The baseline is not itself in durable history, but its id is already meaningful to the legacy timeline and must remain unique.`,
+      });
+      legacyCursorToDurableCursor.push(entries.length - 1);
+      continue;
+    }
     if (item.documentSource && (item.actionName === OPEN_DOCUMENT_ACTION || entries.length === 0)) {
       // The first open-document source is the baseline, not a replay operation.
       if (entries.length === 0) {
+        if (!isEntryEnabled(item)) {
+          diagnostics.push({
+            historyId: item.id,
+            actionName: item.actionName,
+            severity: 'warning',
+            code: 'invalid-history-entry',
+            message: `History entry ${item.id} is disabled and carries the document's opening state, so legacy replay skips it and the durable baseline starts empty. The disabled opening state was not adopted as the baseline; both models agree at this cursor.`,
+          });
+        }
         legacyCursorToDurableCursor.push(-1);
         continue;
       }
@@ -636,7 +690,7 @@ export function legacyHistoryToDurable(
         const layerToMoveId = args?.layerToMoveId;
         const afterWhichLayerId = args?.afterWhichLayerId;
         // `replayHistory` skips the move entirely when either id is absent
-        // (`history-replay.ts:127`), leaving the order untouched, so conversion
+        // (`history-replay.ts:148`), leaving the order untouched, so conversion
         // records nothing and leaves `currentLayers` alone. A named but missing
         // anchor is not a placement at the bottom: `remaining.indexOf` would be
         // -1, and `+ 1` would record a move to index 0 that the document never
@@ -674,17 +728,16 @@ export function legacyHistoryToDurable(
           if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
         } else {
           // `replayHistory` drops a frame action whose `nextFrame` is not a valid
-          // frame too (`history-replay.ts:99-105` guards the assignment on
+          // frame too (`history-replay.ts:112-117` guards the assignment on
           // `isValidDocumentFrame`), so for an enabled entry the shadow stays in
           // PARITY with legacy replay and there is no disagreement to fail closed
-          // over. (Two shapes are not parity and are not claimed to be: a
-          // DISABLED entry, which legacy replay skips without an opinion
-          // (`history-replay.ts:74`), and a bedrock source on the INITIAL document
-          // entry, which still establishes the legacy frame
-          // (`history-replay.ts:91-97`) while the create-layer arm never touches
-          // `currentFrame`. A bedrock commit at any LATER index is not a
-          // disagreement: legacy replay ignores it too, so both sides hold the
-          // frame the baseline established.)
+          // over. (One shape is not parity and is not claimed to be: a DISABLED
+          // entry, which legacy replay skips without an opinion
+          // (`history-replay.ts:75`). A bedrock source is parity at every index —
+          // legacy replay honours it only for the initial document entry
+          // (`history-replay.ts:104-109`) and `frameFromFirstEntryBedrock` reads the
+          // same entry for the baseline, so a bedrock commit at any LATER index
+          // moves neither side.)
           // But parity alone is not observability: this branch cannot throw, so
           // without a diagnostic the conversion reports `status: 'current'`
           // while silently losing a document-frame change, and the only other
@@ -773,7 +826,9 @@ export function legacyHistoryToDurable(
     }
     if (operation) {
       if (publishedEntryIds.has(item.id)) {
-        // A repeat of an id that is already a durable entry's id. The fold state
+        const isBaselineId = item.id === baselineEntryId;
+        // A repeat of an id already claimed by the durable timeline (or by its
+        // document-source baseline). The fold state
         // (`currentLayers`, `currentFrame`, `currentSelections`) is deliberately
         // LEFT ADVANCED: the legacy timeline is authoritative and the duplicate is
         // a real edit, so the operations derived after it must see the state the
@@ -797,7 +852,9 @@ export function legacyHistoryToDurable(
           actionName: item.actionName,
           severity: 'warning',
           code: 'invalid-history-entry',
-          message: `History entry ${item.id} (${item.actionName}) repeats an id already published as a durable entry, so it was not published again. A history entry id must be unique within a document: the edit it describes is missing from the durable document, and every entry after it was derived from the state this one would have produced, which that document does not reach.`,
+          message: isBaselineId
+            ? `History entry ${item.id} (${item.actionName}) reuses the id of the baseline document-source entry, so it was not published as a durable entry. The baseline is not itself in durable history, but its id is already meaningful to the legacy timeline and must remain unique.`
+            : `History entry ${item.id} (${item.actionName}) repeats an id already published as a durable entry, so it was not published again. A history entry id must be unique within a document: the edit it describes is missing from the durable document, and every entry after it was derived from the state this one would have produced, which that document does not reach.`,
         });
       } else {
         publishedEntryIds.add(item.id);
@@ -862,7 +919,11 @@ export function convertLegacyHistorySafely(
 /** Named alias used at the compatibility boundary by importers and callers. */
 export const convertLegacyHistory = legacyHistoryToDurable;
 
-function sourceToRuntimeLayer(id: LayerId, source: LayerSource, layers: Map<LayerId, DurableLayerSnapshot>): Layer {
+export function sourceToRuntimeLayer(
+  id: LayerId,
+  source: LayerSource,
+  layers: Map<LayerId, DurableLayerSnapshot>
+): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
   return {
@@ -870,9 +931,9 @@ function sourceToRuntimeLayer(id: LayerId, source: LayerSource, layers: Map<Laye
     name: source.kind === 'image' ? (source.name ?? 'Image') : source.kind === 'tool' ? source.args.toolName : 'Blank',
     isBedrock: !!source.isBedrock,
     visible: true,
-    opacity: source.kind === 'blank' ? source.opacity : 1,
+    opacity: 1,
     locked: false,
-    blendMode: 'source-over',
+    blendMode: source.kind === 'tool' ? toolLayerBlendMode(source.args) : 'source-over',
     order: Math.max(-1, ...[...layers.values()].map((layer) => layer.order)) + 1,
     pos,
     source,

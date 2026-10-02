@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
-import { DEFAULT_TOOL, REORDER_ACTION } from '../util/constants.ts';
+import { DEFAULT_TOOL, MERGE_ACTION, NEW_LAYER_ACTION, REORDER_ACTION } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
@@ -18,15 +18,28 @@ import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.
 import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
-import { freezeDurableDocument, type DurableDocument, type DurableHistoryEntry } from './history-model.ts';
+import {
+  collectDurableAssetIds,
+  freezeDurableDocument,
+  type DurableDocument,
+  type DurableHistoryEntry,
+  type DurableLayerSnapshot,
+} from './history-model.ts';
 import {
   convertLegacyHistorySafely,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
-import { decideDurableAppend, deriveReorderLayersEntry, durableAppendDiagnostic } from './history-append.ts';
+import {
+  decideDurableAppend,
+  deriveCreateLayerEntry,
+  deriveMergeDocumentEntry,
+  deriveReorderLayersEntry,
+  durableAppendDiagnostic,
+  type SourceBackedEntryContext,
+} from './history-append.ts';
 import { replayDurableDocument } from './durable-replay.ts';
-import { getAssetRegistry } from './asset-registry.ts';
+import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
   DocumentPresentationScope,
@@ -79,6 +92,12 @@ import {
  */
 export type DurableDocumentStatus = DurableConversionStatus | 'stale';
 
+type DurableProjection = {
+  document: DurableDocument | null;
+  status: DurableDocumentStatus;
+  diagnostics: readonly MigrationDiagnostic[];
+};
+
 export type StoreData = {
   // refs
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -96,6 +115,10 @@ export type StoreData = {
    * publication. Pass every layer a single commit produced in one call.
    */
   promoteLayerPresentation: (request: LayerPresentationRequest | readonly LayerPresentationRequest[]) => void;
+  /** Internal presentation publication; logical layer state is checked by the store. */
+  publishRuntimePresentation: (layers: LayersRecord) => void;
+  /** Internal adoption registration; the action is not part of public dispatch. */
+  adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => void;
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
@@ -155,6 +178,8 @@ type StoreUpdates = Partial<
     | 'durableStatus'
     | 'durableDiagnostics'
     | 'promoteLayerPresentation'
+    | 'publishRuntimePresentation'
+    | 'adoptLayerBitmaps'
   >
 >;
 
@@ -170,20 +195,72 @@ type ReorderLayersIntent = {
   afterWhichLayerId?: LayerId | null;
 };
 
-type ReorderLayersAction = {
+type ReorderLayersIntentAction = {
   type: 'REORDER_LAYERS';
   /** Callers provide intent only; the store owns the history and projection metadata. */
   payload: ReorderLayersIntent;
-  /** Dispatcher-owned metadata keeps the reducer and fast path on one history item and conversion. */
-  historyItem?: HistoryItem;
-  durableProjection?: {
-    document: DurableDocument | null;
-    status: DurableDocumentStatus;
-    diagnostics: readonly MigrationDiagnostic[];
-  };
+  historyItem?: never;
+  durableProjection?: never;
 };
 
-type Action =
+type ReorderLayersCommittedAction = {
+  type: 'REORDER_LAYERS';
+  payload: ReorderLayersIntent;
+  /** Dispatcher-owned metadata keeps the reducer and fast path on one history item and conversion. */
+  historyItem: HistoryItem;
+  durableProjection: DurableProjection;
+};
+
+type ReorderLayersAction = ReorderLayersIntentAction | ReorderLayersCommittedAction;
+
+type CommitDocumentEditIntentPayload = {
+  updates?: StoreUpdates;
+  historyItem: HistoryItem;
+  /** The durable entry the append boundary planned for this edit. */
+  durableEntry?: DurableHistoryEntry | null;
+  /** Diagnostics from the append boundary; they are folded into the projection. */
+  durableDiagnostics?: readonly MigrationDiagnostic[];
+  durableDocument?: never;
+  durableStatus?: never;
+};
+
+type CommitDocumentEditCommittedPayload = Omit<CommitDocumentEditIntentPayload, 'durableDocument' | 'durableStatus'> & {
+  durableDocument: DurableDocument | null;
+  durableStatus: DurableDocumentStatus;
+  durableDiagnostics: readonly MigrationDiagnostic[];
+};
+
+type ApplyHistoryReplayIntentPayload = {
+  updates: StoreUpdates;
+  timeline: HistoryTimeline;
+  durableDiagnostics?: readonly MigrationDiagnostic[];
+  durableDocument?: never;
+  durableStatus?: never;
+};
+
+type ApplyHistoryReplayCommittedPayload = Omit<ApplyHistoryReplayIntentPayload, 'durableDocument' | 'durableStatus'> & {
+  durableDocument: DurableDocument | null;
+  durableStatus: DurableDocumentStatus;
+  durableDiagnostics: readonly MigrationDiagnostic[];
+};
+
+type ReplaceDocumentIntentPayload = {
+  documentId: string;
+  updates: StoreUpdates;
+  history: HistoryItem[];
+  historyIndex?: number;
+  durableDiagnostics?: readonly MigrationDiagnostic[];
+  durableDocument?: never;
+  durableStatus?: never;
+};
+
+type ReplaceDocumentCommittedPayload = Omit<ReplaceDocumentIntentPayload, 'durableDocument' | 'durableStatus'> & {
+  durableDocument: DurableDocument | null;
+  durableStatus: DurableDocumentStatus;
+  durableDiagnostics: readonly MigrationDiagnostic[];
+};
+
+export type Action =
   | { type: 'SET_HAS_IMAGE'; payload: boolean }
   | { type: 'SET_HAS_UNSAVED_CHANGES'; payload: boolean }
   | { type: 'SET_FILE_NAME'; payload: string }
@@ -193,27 +270,8 @@ type Action =
   | { type: 'SET_LAYERS'; payload: LayersRecord }
   | { type: 'SET_ACTIVE_LAYER'; payload: LayerId | null }
   | { type: 'ADD_LAYER'; payload: { layers: LayersRecord; activeLayerId: LayerId } }
-  | { type: 'PUBLISH_RUNTIME_PRESENTATION'; payload: { layers: LayersRecord } }
   | { type: 'PROMOTE_LAYER_PRESENTATIONS'; payload: LayerPresentationBatch }
   | ReorderLayersAction
-  /**
-   * Rasters a writer built itself and is about to publish into a layer record:
-   * an import, a merge, a document import. They are already in the layer record
-   * by the time this runs, so the transition publishes nothing; it exists so the
-   * presentation scope learns about them and the scope's completeness guarantee
-   * covers every bitmap the store holds rather than only the ones it materialized.
-   *
-   * Publishing state from adoption would be a bug, not a missing feature: the
-   * writer has already published the layer records these rasters live in, so a
-   * reducer that moved state here would either re-publish that same record or
-   * invent a transition no writer asked for. The action is therefore a
-   * deliberate no-op rather than a forgotten arm — but the reducer has no
-   * `ADOPT_LAYER_BITMAPS` case, because the dispatcher registers the bitmaps and
-   * returns without ever forwarding the action, so `default: return state` is
-   * what covers it. An arm here would be unreachable code describing a path that
-   * does not exist.
-   */
-  | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
   /**
    * Document metadata only, such as save state. Layer, frame, selection, and
    * history mutations have their own actions, so a history writer can never be
@@ -222,43 +280,15 @@ type Action =
   | { type: 'BATCH_UPDATES'; payload: StoreUpdates }
   | {
       type: 'COMMIT_DOCUMENT_EDIT';
-      payload: {
-        updates?: StoreUpdates;
-        historyItem: HistoryItem;
-        /**
-         * The durable entry the append boundary planned for this edit. When the
-         * store can publish it against its current durable document, the planned
-         * entry becomes the durable state instead of a full reconversion. It is
-         * never authoritative on its own: a disagreement falls back to the
-         * conversion and is reported as a diagnostic.
-         */
-        durableEntry?: DurableHistoryEntry | null;
-        durableDocument?: DurableDocument | null;
-        durableStatus?: DurableDocumentStatus;
-        durableDiagnostics?: readonly MigrationDiagnostic[];
-      };
+      payload: CommitDocumentEditIntentPayload | CommitDocumentEditCommittedPayload;
     }
   | {
       type: 'APPLY_HISTORY_REPLAY';
-      payload: {
-        updates: StoreUpdates;
-        timeline: HistoryTimeline;
-        durableDocument?: DurableDocument | null;
-        durableStatus?: DurableDocumentStatus;
-        durableDiagnostics?: readonly MigrationDiagnostic[];
-      };
+      payload: ApplyHistoryReplayIntentPayload | ApplyHistoryReplayCommittedPayload;
     }
   | {
       type: 'REPLACE_DOCUMENT';
-      payload: {
-        documentId: string;
-        updates: StoreUpdates;
-        history: HistoryItem[];
-        historyIndex?: number;
-        durableDocument?: DurableDocument | null;
-        durableStatus?: DurableDocumentStatus;
-        durableDiagnostics?: readonly MigrationDiagnostic[];
-      };
+      payload: ReplaceDocumentIntentPayload | ReplaceDocumentCommittedPayload;
     }
   | {
       type: 'SET_DURABLE_STATUS';
@@ -278,7 +308,14 @@ type Action =
   | { type: 'MARK_SELECTION_COPIED'; payload: { id: string } }
   | { type: 'CLEAR_SELECTIONS' };
 
-export type StoreDispatch = Dispatch<Action>;
+type InternalAction =
+  | { type: 'PUBLISH_RUNTIME_PRESENTATION'; payload: { layers: LayersRecord } }
+  | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } };
+
+type StoreAction = Action | InternalAction;
+
+export type PublicAction = Action;
+export type StoreDispatch = Dispatch<PublicAction>;
 
 const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 
@@ -292,6 +329,8 @@ const initialState: StoreData = {
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
   promoteLayerPresentation: () => undefined,
+  publishRuntimePresentation: () => undefined,
+  adoptLayerBitmaps: () => undefined,
   previewLayers: { current: {} },
 
   hasImage: false,
@@ -325,7 +364,25 @@ const initialState: StoreData = {
   backgroundColor: '#ffffff',
 };
 
-type CommitDocumentEditAction = Extract<Action, { type: 'COMMIT_DOCUMENT_EDIT' }>;
+function normalizeDurableProjection(projection: DurableProjection): DurableProjection {
+  return projection.status === 'current' ? projection : { ...projection, document: null };
+}
+
+function appendBoundaryDiagnostics(
+  projection: DurableProjection,
+  diagnostics: readonly MigrationDiagnostic[]
+): DurableProjection {
+  const merged: DurableProjection = {
+    ...projection,
+    diagnostics: [...projection.diagnostics, ...diagnostics],
+  };
+  // Boundary errors describe an append that the durable side cannot trust. A
+  // warning is deliberately retained without changing a current document into
+  // an unavailable one; severity is part of the diagnostic contract.
+  return diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+    ? { ...merged, document: null, status: 'unavailable' }
+    : normalizeDurableProjection(merged);
+}
 
 /**
  * The one post-transition projection, shared by every path that publishes a
@@ -344,13 +401,18 @@ function projectPublishedTimeline(
   payload: {
     updates?: StoreUpdates;
     timeline: HistoryTimeline;
-    durableDocument?: DurableDocument | null;
-    durableStatus?: DurableDocumentStatus;
-    durableDiagnostics?: readonly MigrationDiagnostic[];
+    durableDocument: DurableDocument | null;
+    durableStatus: DurableDocumentStatus;
+    durableDiagnostics: readonly MigrationDiagnostic[];
   }
 ): StoreData {
   const updates = payload.updates ?? {};
   const nextFrame = updates.documentFrame;
+  const durable = normalizeDurableProjection({
+    document: payload.durableDocument,
+    status: payload.durableStatus,
+    diagnostics: payload.durableDiagnostics,
+  });
   return {
     ...state,
     ...updates,
@@ -358,14 +420,48 @@ function projectPublishedTimeline(
     history: [...payload.timeline.entries],
     historyIndex: payload.timeline.cursor,
     branchRevision: payload.timeline.branchRevision,
-    ...(payload.durableDocument !== undefined
-      ? {
-          durableDocument: payload.durableDocument,
-          durableStatus: payload.durableStatus ?? (payload.durableDocument ? 'current' : 'unavailable'),
-          durableDiagnostics: payload.durableDiagnostics ?? [],
-        }
-      : {}),
+    durableDocument: durable.document,
+    durableStatus: durable.status,
+    durableDiagnostics: durable.diagnostics,
     hasUnsavedChanges: true,
+  };
+}
+
+function replacementFrame(
+  state: StoreData,
+  payload: Pick<ReplaceDocumentIntentPayload, 'updates' | 'history'>
+): DocumentFrame {
+  const updates = payload.updates;
+  if (updates.documentFrame) return cloneDocumentFrame(updates.documentFrame);
+  if (updates.totalSize) return documentFrameFromSize(updates.totalSize);
+
+  const baseline = payload.history[0]?.documentSource;
+  if (baseline?.frame) return cloneDocumentFrame(baseline.frame);
+  if (baseline?.size) return documentFrameFromSize(baseline.size);
+  return cloneDocumentFrame(state.documentFrame);
+}
+
+/** One projection for both the reducer and REPLACE_DOCUMENT's dispatcher fast path. */
+function projectReplacedDocument(
+  state: StoreData,
+  payload: Pick<ReplaceDocumentIntentPayload, 'documentId' | 'updates' | 'history' | 'historyIndex'>,
+  projection: DurableProjection
+): StoreData {
+  const nextFrame = replacementFrame(state, payload);
+  const durable = normalizeDurableProjection(projection);
+  return {
+    ...state,
+    ...payload.updates,
+    documentFrame: cloneDocumentFrame(nextFrame),
+    totalSize: documentFrameSize(nextFrame),
+    documentId: payload.documentId,
+    documentRevision: state.documentRevision + 1,
+    branchRevision: 0,
+    durableDocument: durable.document,
+    durableStatus: durable.status,
+    durableDiagnostics: durable.diagnostics,
+    history: payload.history,
+    historyIndex: payload.historyIndex ?? payload.history.length - 1,
   };
 }
 
@@ -395,6 +491,41 @@ function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
  */
 function layerOrderBottomFirst(layers: LayersRecord): LayerId[] {
   return getSortedLayersArray(layers).map((layer) => layer.id);
+}
+
+function durableLayersAtCursor(document: DurableDocument | null): Map<LayerId, DurableLayerSnapshot> {
+  if (!document) return new Map();
+  const replayed = replayDurableDocument(document, document.cursor);
+  return new Map(Object.entries(replayed.layers).map(([id, layer]) => [id, layer.snapshot]));
+}
+
+function sourceBackedEntryContext(
+  state: StoreData,
+  historyItem: HistoryItem,
+  registry: ReturnType<typeof getAssetRegistry>
+): SourceBackedEntryContext | null {
+  if (historyItem.actionName !== NEW_LAYER_ACTION && historyItem.actionName !== MERGE_ACTION) {
+    return null;
+  }
+  const candidate = historyItem.layerSource ?? historyItem.args;
+  const candidateRecord = candidate as { kind?: unknown; args?: unknown } | undefined;
+  if (
+    candidateRecord &&
+    candidateRecord.kind === 'tool' &&
+    !['text', 'shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(
+      (candidateRecord.args as ToolArgs).toolName
+    )
+  ) {
+    // Raster creator tools have no durable source representation yet. They are
+    // intentionally conversion-only; do not enter the planner only to throw.
+    return null;
+  }
+  return {
+    documentId: state.documentId,
+    registry,
+    preLayers: durableLayersAtCursor(state.durableStatus === 'current' ? state.durableDocument : null),
+    liveLayers: state.layers,
+  };
 }
 
 function reorderLayersFromState(layers: LayersRecord, intent: ReorderLayersIntent): LayersRecord {
@@ -456,7 +587,7 @@ function updateCommittedSelection(state: StoreData, selection: Selection): Store
   };
 }
 
-function reducer(state: StoreData, action: Action): StoreData {
+function reducer(state: StoreData, action: StoreAction): StoreData {
   switch (action.type) {
     case 'SET_HAS_IMAGE':
       return { ...state, hasImage: action.payload };
@@ -539,14 +670,13 @@ function reducer(state: StoreData, action: Action): StoreData {
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'REORDER_LAYERS': {
-      const historyItem = action.historyItem ?? createReorderHistoryItem(action.payload);
+      if (!action.historyItem || !action.durableProjection) return state;
+      const historyItem = action.historyItem;
       const timeline = updateHistoryTimeline(
         { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
         { type: 'append', entry: historyItem }
       );
-      const durableProjection =
-        action.durableProjection ??
-        buildDurableDocument(state, [...timeline.entries], timeline.cursor, timeline.branchRevision);
+      const durableProjection = action.durableProjection;
       return projectPublishedTimeline(state, {
         updates: { layers: reorderLayersFromState(state.layers, action.payload) },
         timeline,
@@ -556,40 +686,53 @@ function reducer(state: StoreData, action: Action): StoreData {
       });
     }
     case 'COMMIT_DOCUMENT_EDIT': {
+      if (
+        action.payload.durableDocument === undefined ||
+        action.payload.durableStatus === undefined ||
+        action.payload.durableDiagnostics === undefined
+      )
+        return state;
+      const committedPayload = action.payload as CommitDocumentEditCommittedPayload;
       const timeline = updateHistoryTimeline(
         { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
-        { type: 'append', entry: action.payload.historyItem }
+        { type: 'append', entry: committedPayload.historyItem }
       );
-      return projectPublishedTimeline(state, { ...action.payload, timeline });
+      return projectPublishedTimeline(state, { ...committedPayload, timeline });
     }
     case 'APPLY_HISTORY_REPLAY': {
-      return projectPublishedTimeline(state, action.payload);
+      if (
+        action.payload.durableDocument === undefined ||
+        action.payload.durableStatus === undefined ||
+        action.payload.durableDiagnostics === undefined
+      )
+        return state;
+      return projectPublishedTimeline(state, action.payload as ApplyHistoryReplayCommittedPayload);
     }
     case 'REPLACE_DOCUMENT': {
-      const updates = action.payload.updates;
-      const nextFrame =
-        updates.documentFrame ?? (updates.totalSize ? documentFrameFromSize(updates.totalSize) : state.documentFrame);
-      return {
-        ...state,
-        ...updates,
-        documentFrame: cloneDocumentFrame(nextFrame),
-        totalSize: documentFrameSize(nextFrame),
-        documentId: action.payload.documentId,
-        documentRevision: state.documentRevision + 1,
-        branchRevision: 0,
-        durableDocument: action.payload.durableDocument ?? null,
-        durableStatus: action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
-        durableDiagnostics: action.payload.durableDiagnostics ?? [],
-        history: action.payload.history,
-        historyIndex: action.payload.historyIndex ?? action.payload.history.length - 1,
-      };
+      if (
+        action.payload.durableDocument === undefined ||
+        action.payload.durableStatus === undefined ||
+        action.payload.durableDiagnostics === undefined
+      )
+        return state;
+      const committedPayload = action.payload as ReplaceDocumentCommittedPayload;
+      return projectReplacedDocument(state, committedPayload, {
+        document: committedPayload.durableDocument,
+        status: committedPayload.durableStatus,
+        diagnostics: committedPayload.durableDiagnostics,
+      });
     }
     case 'SET_COLOR':
       return { ...state, color: action.payload };
     case 'SET_BACKGROUND_COLOR':
       return { ...state, backgroundColor: action.payload };
     case 'SET_DURABLE_STATUS':
-      return { ...state, durableStatus: action.payload.status, durableDiagnostics: action.payload.diagnostics };
+      return {
+        ...state,
+        durableDocument: action.payload.status === 'current' ? state.durableDocument : null,
+        durableStatus: action.payload.status,
+        durableDiagnostics: action.payload.diagnostics,
+      };
     case 'SET_SELECTIONS':
       // Selection state only; no durable input moves.
       return {
@@ -667,7 +810,7 @@ function buildDurableDocument(
       documentId: state.documentId,
       documentRevision: state.documentRevision,
       branchRevision,
-      durableRevision: (state.durableDocument?.durableRevision ?? 0) + 1,
+      durableRevision: (state.durableStatus === 'current' ? (state.durableDocument?.durableRevision ?? 0) : 0) + 1,
       initialSize: state.totalSize,
       initialFrame: state.documentFrame,
     });
@@ -797,7 +940,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     latestStateRef.current = storeState;
   }, [storeState]);
-  const dispatch: StoreDispatch = (action) => {
+  const dispatchAction = (action: StoreAction) => {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
     const currentState = latestStateRef.current;
@@ -817,7 +960,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return false;
       });
       if (!promotions.length) return;
-      const accepted: Action =
+      const accepted: Extract<Action, { type: 'PROMOTE_LAYER_PRESENTATIONS' }> =
         promotions.length === action.payload.promotions.length
           ? action
           : { type: 'PROMOTE_LAYER_PRESENTATIONS', payload: { promotions } };
@@ -923,7 +1066,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         converted.diagnostics = [...converted.diagnostics, durableAppendDiagnostic(historyItem, decision.reason)];
       }
       const nextLayers = reorderLayersFromState(currentState.layers, intent);
-      const committedAction: ReorderLayersAction = {
+      const committedAction: ReorderLayersCommittedAction = {
         ...action,
         payload: intent,
         historyItem,
@@ -956,9 +1099,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       );
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
+      const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
       // One append, one durable entry: the boundary's plan is published when the
       // store's durable document still describes the timeline it was planned
       // against, and the whole timeline is reconverted otherwise.
+      const registry = getAssetRegistry();
+      const sourceContext = sourceBackedEntryContext(currentState, action.payload.historyItem, registry);
+      let plannedEntry = action.payload.durableEntry;
+      let plannerTransaction: DocumentAssetTransaction | undefined;
+      if (plannedEntry == null && sourceContext) {
+        try {
+          plannerTransaction = registry.beginDocumentAssetTransaction(currentState.documentId);
+          plannedEntry =
+            action.payload.historyItem.actionName === MERGE_ACTION
+              ? deriveMergeDocumentEntry(action.payload.historyItem, sourceContext)
+              : deriveCreateLayerEntry(action.payload.historyItem, sourceContext);
+        } catch (error) {
+          plannerTransaction?.rollback();
+          plannerTransaction = undefined;
+          plannedEntry = null;
+          console.error('Unable to derive a source-backed durable append plan', error);
+        }
+      }
       const planned = decideDurableAppend({
         documentId: currentState.documentId,
         base: currentState.durableStatus === 'current' ? currentState.durableDocument : null,
@@ -969,38 +1131,98 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
         next: timeline,
         entry: action.payload.historyItem,
-        planned: action.payload.durableEntry,
+        planned: plannedEntry,
         documentRevision: currentState.documentRevision,
+        preLayers: sourceContext?.preLayers,
       });
-      const converted =
-        planned.outcome === 'published'
-          ? { status: 'current' as const, document: planned.document, diagnostics: currentState.durableDiagnostics }
-          : buildDurableDocument(
-              nextFrame
-                ? {
-                    ...currentState,
-                    documentFrame: cloneDocumentFrame(nextFrame),
-                    totalSize: documentFrameSize(nextFrame),
-                  }
-                : currentState,
-              [...timeline.entries],
-              timeline.cursor,
-              timeline.branchRevision
+      const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
+      const publishPlanned = planned.outcome === 'published' && !boundaryHasError;
+      let publicationFailed = false;
+
+      if (!publishPlanned) {
+        plannerTransaction?.rollback();
+        plannerTransaction = undefined;
+      }
+
+      const commitPayload = (projection: DurableProjection): CommitDocumentEditCommittedPayload => ({
+        updates: action.payload.updates,
+        historyItem: action.payload.historyItem,
+        durableEntry: plannedEntry,
+        durableDocument: projection.document,
+        durableStatus: projection.status,
+        durableDiagnostics: projection.diagnostics,
+      });
+
+      // A planned durable append can carry a newly registered asset-bearing
+      // operation. Open the document transaction only after the pure decision
+      // succeeds, publish the state, then commit and reconcile the exact set the
+      // published document names. If any step fails, rollback before rebuilding.
+      if (publishPlanned) {
+        let transaction: DocumentAssetTransaction | undefined = plannerTransaction;
+        try {
+          transaction ??= registry.beginDocumentAssetTransaction(currentState.documentId);
+          const converted = appendBoundaryDiagnostics(
+            { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
+            boundaryDiagnostics
+          );
+          const committedAction: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
+            type: 'COMMIT_DOCUMENT_EDIT',
+            payload: commitPayload(converted),
+          };
+          const nextState = projectPublishedTimeline(currentState, {
+            updates: committedAction.payload.updates,
+            timeline,
+            durableDocument: converted.document,
+            durableStatus: converted.status,
+            durableDiagnostics: converted.diagnostics,
+          });
+          latestStateRef.current = nextState;
+          rawDispatch(committedAction);
+          transaction.commit();
+          if (converted.document) {
+            registry.reconcileDocumentAssets(currentState.documentId, collectDurableAssetIds(converted.document));
+          }
+          // Retirement runs after the transition is published, and only against
+          // the record that transition actually produced.
+          retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
+          return;
+        } catch (error) {
+          publicationFailed = true;
+          transaction?.rollback();
+          console.error('Unable to publish a planned durable append; rebuilding the durable document', error);
+        }
+      }
+
+      let converted: DurableProjection =
+        planned.outcome === 'published' && !boundaryHasError && !publicationFailed
+          ? appendBoundaryDiagnostics(
+              { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
+              boundaryDiagnostics
+            )
+          : appendBoundaryDiagnostics(
+              buildDurableDocument(
+                nextFrame
+                  ? {
+                      ...currentState,
+                      documentFrame: cloneDocumentFrame(nextFrame),
+                      totalSize: documentFrameSize(nextFrame),
+                    }
+                  : currentState,
+                [...timeline.entries],
+                timeline.cursor,
+                timeline.branchRevision
+              ),
+              boundaryDiagnostics
             );
       if (planned.outcome === 'mismatch') {
-        converted.diagnostics = [
-          ...converted.diagnostics,
-          durableAppendDiagnostic(action.payload.historyItem, planned.reason),
-        ];
+        converted = {
+          ...converted,
+          diagnostics: [...converted.diagnostics, durableAppendDiagnostic(action.payload.historyItem, planned.reason)],
+        };
       }
-      const committedAction: CommitDocumentEditAction = {
-        ...action,
-        payload: {
-          ...action.payload,
-          durableDocument: converted.document,
-          durableStatus: converted.status,
-          durableDiagnostics: converted.diagnostics,
-        },
+      const committedAction: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: commitPayload(converted),
       };
       const nextState = projectPublishedTimeline(currentState, {
         updates: committedAction.payload.updates,
@@ -1014,8 +1236,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Retirement runs after the transition is published, and only against the
       // record that transition actually produced: a delete, a merge, and a
       // commit that swaps a layer's cache all leave a published bitmap behind
-      // with no remaining reference. The shared projection above matches the
-      // reducer fields, including the dirty flag, before the queued transition.
+      // with no remaining reference.
       retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
       return;
     }
@@ -1024,17 +1245,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // navigation a no-op instead of a dispatch that throws mid-reducer.
       const replayUpdates = action.payload.updates ?? {};
       const replayFrame = replayUpdates.documentFrame;
-      const converted = buildDurableDocument(
-        replayFrame
-          ? {
-              ...currentState,
-              documentFrame: cloneDocumentFrame(replayFrame),
-              totalSize: documentFrameSize(replayFrame),
-            }
-          : currentState,
-        [...action.payload.timeline.entries],
-        action.payload.timeline.cursor,
-        action.payload.timeline.branchRevision
+      const converted = appendBoundaryDiagnostics(
+        buildDurableDocument(
+          replayFrame
+            ? {
+                ...currentState,
+                documentFrame: cloneDocumentFrame(replayFrame),
+                totalSize: documentFrameSize(replayFrame),
+              }
+            : currentState,
+          [...action.payload.timeline.entries],
+          action.payload.timeline.cursor,
+          action.payload.timeline.branchRevision
+        ),
+        action.payload.durableDiagnostics ?? []
       );
       const nextState = projectPublishedTimeline(currentState, {
         updates: replayUpdates,
@@ -1045,9 +1269,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       latestStateRef.current = nextState;
       rawDispatch({
-        ...action,
+        type: 'APPLY_HISTORY_REPLAY',
         payload: {
-          ...action.payload,
+          updates: replayUpdates,
+          timeline: action.payload.timeline,
           durableDocument: converted.document,
           durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
@@ -1062,54 +1287,51 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (action.type === 'REPLACE_DOCUMENT') {
-      const nextFrame =
-        action.payload.updates.documentFrame ??
-        (action.payload.updates.totalSize
-          ? documentFrameFromSize(action.payload.updates.totalSize)
-          : currentState.documentFrame);
-      const converted = buildDurableDocument(
-        {
-          ...currentState,
-          documentId: action.payload.documentId,
-          documentRevision: currentState.documentRevision + 1,
-          documentFrame: nextFrame,
-          totalSize: documentFrameSize(nextFrame),
-        },
-        action.payload.history,
-        action.payload.historyIndex ?? action.payload.history.length - 1,
-        0
+      const nextFrame = replacementFrame(currentState, action.payload);
+      const converted = appendBoundaryDiagnostics(
+        buildDurableDocument(
+          {
+            ...currentState,
+            documentId: action.payload.documentId,
+            documentRevision: currentState.documentRevision + 1,
+            documentFrame: nextFrame,
+            totalSize: documentFrameSize(nextFrame),
+          },
+          action.payload.history,
+          action.payload.historyIndex ?? action.payload.history.length - 1,
+          0
+        ),
+        action.payload.durableDiagnostics ?? []
       );
       if (currentState.documentId !== action.payload.documentId) {
         getAssetRegistry().disposeDocument(currentState.documentId);
       }
-      latestStateRef.current = {
-        ...currentState,
-        ...action.payload.updates,
-        documentFrame: cloneDocumentFrame(nextFrame),
-        totalSize: documentFrameSize(nextFrame),
+      const nextState = projectReplacedDocument(currentState, action.payload, converted);
+      latestStateRef.current = nextState;
+      const committedPayload: ReplaceDocumentCommittedPayload = {
         documentId: action.payload.documentId,
-        documentRevision: currentState.documentRevision + 1,
-        branchRevision: 0,
+        updates: action.payload.updates,
+        history: action.payload.history,
+        historyIndex: action.payload.historyIndex,
         durableDocument: converted.document,
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
-        history: action.payload.history,
-        historyIndex: action.payload.historyIndex ?? action.payload.history.length - 1,
       };
       rawDispatch({
-        ...action,
-        payload: {
-          ...action.payload,
-          durableDocument: converted.document,
-          durableStatus: converted.status,
-          durableDiagnostics: converted.diagnostics,
-        },
+        type: 'REPLACE_DOCUMENT',
+        payload: committedPayload,
       });
       return;
     }
     latestStateRef.current = reducer(currentState, action);
     rawDispatch(action);
   };
+  const dispatchInternalAction = (action: InternalAction) => dispatchAction(action);
+  const dispatch: StoreDispatch = (action) => dispatchAction(action);
+  const publishRuntimePresentation = (layers: LayersRecord) =>
+    dispatchInternalAction({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers } });
+  const adoptLayerBitmaps = (bitmaps: readonly BitmapSource[]) =>
+    dispatchInternalAction({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps } });
   const promoteLayerPresentation = (request: LayerPresentationRequest | readonly LayerPresentationRequest[]) => {
     const requests = (Array.isArray(request) ? request : [request as LayerPresentationRequest]).filter(
       (candidate) => candidate.canvas
@@ -1159,6 +1381,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     currentArgs: currentArgsRef,
     clearPreviewLayers,
     promoteLayerPresentation,
+    publishRuntimePresentation,
+    adoptLayerBitmaps,
     previewLayers: previewLayersRef,
   };
   //

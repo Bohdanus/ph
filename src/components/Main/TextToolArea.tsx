@@ -21,7 +21,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     argsRef.current = args;
   }, [args]);
 
-  const { redraw, ...pointerEvents } = useRect({
+  const { rectHandles, pointerHandlers } = useRect({
     imageSize: totalSize,
     initialRect: args.rect,
     containerRef,
@@ -44,9 +44,9 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
 
   useEffect(() => {
     if (args.text) {
-      redraw?.();
+      rectHandles.redraw();
     }
-  }, [args.text, redraw]);
+  }, [args.text, rectHandles.redraw]);
 
   function redrawText(rect: RectXY) {
     const currentArgs = argsRef.current;
@@ -134,5 +134,5 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
   //   updateLastHistoryItem({ args: newArgs });
   // }
 
-  return <div className={`${className} cursor-text`} {...pointerEvents} />;
+  return <div className={`${className} cursor-text`} {...pointerHandlers} />;
 };

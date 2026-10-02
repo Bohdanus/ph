@@ -196,6 +196,12 @@ export function buildInventory({
       liveNote: curated?.liveNote ?? null,
       mustNotPrune: Boolean(curated?.mustNotPrune),
 
+      // Merges on `main` whose subject already carried this branch's name.
+      // Advisory and verdict-free — it exists so a reader about to read a name as
+      // proof of landing sees, in the same record, that the name proves nothing.
+      // `git.mjs` carries the reasoning and the 2026-10-01 sweep it replaces.
+      nameCollisions: wt.nameCollisions ?? [],
+
       chats: {
         count: chatSummary.count,
         chatIds: chatSummary.chatIds,

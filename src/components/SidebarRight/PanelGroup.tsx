@@ -39,7 +39,7 @@ import type { PanelId } from '../../contexts/PanelLayout.tsx';
  * holding anything.
  */
 const HEADER_CLASS =
-  'px-3 py-1 bg-gray-200 dark:bg-gray-700 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-400';
+  'px-3 py-1 bg-gray-200 dark:bg-gray-700 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-300';
 
 export interface PanelGroupProps {
   id: PanelId;

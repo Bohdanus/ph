@@ -134,7 +134,7 @@ type LayerSourceParams = {
  * with the same history entry's args (`src/contexts/useHistory.ts:97`), which is
  * what keeps undo, redo and the durable shadow in agreement: the mode rides in
  * `layerSource.args`, so it is already carried by both
- * (`src/contexts/history-adapter.ts:199`).
+ * (`src/contexts/history-adapter.ts:181-187`).
  *
  * Gated on the paint tool names on purpose. `kind: 'tool'` covers every creator
  * tool, and no other one of them exposes a `Mode` control, so an unrecognised value
@@ -143,7 +143,7 @@ type LayerSourceParams = {
  * decide how that layer composites. A mode this build does not recognise, from a
  * document written by one that offered it, falls back to Normal.
  */
-function toolLayerBlendMode(args: ToolArgs): Layer['blendMode'] {
+export function toolLayerBlendMode(args: ToolArgs): Layer['blendMode'] {
   const paintArgs = args as { toolName?: unknown; blendMode?: unknown };
   if (paintArgs.toolName !== 'brush' && paintArgs.toolName !== 'pencil' && paintArgs.toolName !== 'color-replacement') {
     return 'source-over';
@@ -198,7 +198,7 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     tmpCanvas: null,
   };
 
-  const { x, y, width, height } = pos;
+  const { width, height } = pos;
 
   if (kind === 'image') {
     layer.bitmap = source.bitmap;
@@ -211,7 +211,8 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
       if (source.opacity !== 1) {
         ctx.globalAlpha = source.opacity;
       }
-      ctx.fillRect(x, y, width, height);
+      // The bitmap is layer-local even when the layer itself has a document-space origin.
+      ctx.fillRect(0, 0, width, height);
     }
 
     layer.tmpCanvas = canvas;

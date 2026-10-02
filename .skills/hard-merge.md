@@ -138,8 +138,9 @@ file claim expresses that.
 worktree whose root checkout is dirty: the root is a different checkout of a different `HEAD`, so
 `-A` commits a deliberate reverting of whatever `main` has since done to those files, with **no
 conflict marker** — this repository shipped 17 such reverts and not one of them was a conflict. Run
-the `comm -13` set difference in `docs/ORCHESTRATION.md` **before** the review, because a reviewer
-only catches the files its brief happened to mention. And a red `tsc` in the main worktree may be
+`scripts/merge-takeover-guard.mjs` **before** the review, because a reviewer only catches the files
+its brief happened to mention; it refuses a merge that resolved any path by copying one whole
+side's content, and `docs/ORCHESTRATION.md` is its one home. And a red `tsc` in the main worktree may be
 another session's half-written change rather than a broken `main`; check the _committed_ state in a
 throwaway worktree before you touch a path you have not touched.
 
@@ -542,7 +543,7 @@ git -c merge.conflictStyle=zdiff3 merge-tree --write-tree <main> <branch>
 
 This runs the real three-way merge in a scratch object store. It touches **no working tree, no
 index and no ref** — the property that matters, and the one this repository's own inventory script
-depends on (`scripts/lib/worktree-inventory/git.mjs:183-224`). It is not object-store-neutral: the
+depends on (`scripts/lib/worktree-inventory/git.mjs:198`). It is not object-store-neutral: the
 tree it prints is written to the object store as unreachable loose objects. That is the same
 trade the repo already made, and the claim it makes is the one that counts.
 
@@ -552,7 +553,7 @@ Two things to know about the output:
   also means an unresolvable ref. "No conflicts" is a licence to land, so a wrong licence is how a
   branch breaks `main`; a failed run must degrade to **unknown**, never to clean. This is the
   repo's own rule, and it is stated twice — the JSDoc at
-  `scripts/lib/worktree-inventory/git.mjs:193-196` ("`null` is NOT `false`: an unknown answer must
+  `scripts/lib/worktree-inventory/git.mjs:194-197` ("`null` is NOT `false`: an unknown answer must
   not be reported as a clean merge, because 'no conflicts' is a licence to land and a wrong licence
   is how a branch breaks main") and the `return { conflict: null, … }` at `:226-231`. The `^CONFLICT`
   match itself is at `:214`.
@@ -971,7 +972,7 @@ committed file still carried live markers.** It carried **six** of them: an unin
 `<<<<<<< HEAD` at :57, `=======` at :759 and :1001, **an indented `<<<<<<<` at :848**, and two
 space-separated `> > > > > > > main` label lines at :818 and :1003. They passed through three
 further commits — one of them a merge — before `ef85d3ab` ("docs(agents): repair a committed
-conflict in AGENTS.md") removed them.
+conflict in AGENTS.md, and shorten it") removed them.
 
 ```bash
 # search the MERGED TREE, not the working tree — a merge is judged on what it
@@ -992,7 +993,7 @@ gate run _during_ the merge the two agree; for the audit you run afterwards, onl
 anchored, no whitespace, `>` uncounted — finds only **3 of the 6** markers in that commit, because
 `:848` is indented and `:818`/`:1003` are the space-separated `diff3` label form
 `> > > > > > > main`, not `>>>>>>> main`. The same uncounted `>` also matches **every markdown
-blockquote**: it fires 78 times in `.skills/photoshop-tool-creation.md` and 5 times in
+blockquote**: it fires 79 times in `.skills/photoshop-tool-creation.md` and 7 times in
 `HANDOFF.md` on ordinary `>` quote lines. A sweep like that reports a clean merge as broken, and an
 agent who sees it fire on `AGENTS.md` learns to ignore it — strictly worse than not sweeping.
 
@@ -1011,7 +1012,8 @@ printf '%s\n' '> a blockquote' '|---|---|' '======' | grep -cE "$PAT"           
 
 On this repository's own documents — `HANDOFF.md`, `AGENTS.md`, `docs/ORCHESTRATION.md`,
 `docs/TESTING.md`, `docs/PHOTOSHOP-UX.md`, `e2e/OPEN_PROBLEMS.md` and both existing `.skills/`
-documents — the corrected pattern matches **0**; the uncorrected one matches 83. A sweep whose
+documents — the corrected pattern matches **0**; the uncorrected one matches 92 (79 in
+`.skills/photoshop-tool-creation.md`, 7 in `HANDOFF.md`, the rest in this file). A sweep whose
 failure mode is "always fires" looks identical to a working one on the failure case alone.
 
 Gate over the merge's changed files. **A merge with live markers in it is not a resolution.** If
@@ -1212,7 +1214,7 @@ quoted on `main` to prove it.
 
 **The merge commit body is the durable artifact.** Nothing else in this repository records why a
 resolution was what it was, and the corpus is unusually good: of the last 200 merge commits on
-`main`, **50 carry a body that is not just git's `Conflicts:` trailer** (the measurement, which you
+`main`, **63 carry a body that is not just git's `Conflicts:` trailer** (the measurement, which you
 should re-derive rather than trust):
 
 ```bash
@@ -1274,7 +1276,7 @@ incident that produced this document; the rest from the wider merge corpus.
 | 2   | **Opposing product decisions on one literal**                      | `useState(false)` vs `useState(true)`. Resolved against the operator's spoken instruction to the branch that had it.                                                                                                              |
 | 3   | **Both sides rewrote the same explanatory comment**                | The `h-full` / `min-h-full` block in `SidebarLeft.tsx`; also `responsive-shell.spec.ts`, `text-tool.spec.ts`, `document-dialogs.spec.ts` — prose collisions above unchanged code.                                                 |
 | 4   | **A duplicated numbered section**                                  | Two `## 79.` in `HANDOFF.md`, independently authored, both real. Main keeps 79; the branch renumbers to 83.                                                                                                                       |
-| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` at `:859` and on the branch at a different line. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.              |
+| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` at `curated.mjs:947` and on the branch at a different line. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.   |
 | 6   | **A helper whose signature diverged**                              | `leftOf(): number` vs `boxOf(): {left, top}`, and the call sites diverged with it.                                                                                                                                                |
 | 7   | **The same import, added twice**                                   | `SidebarLeft.tsx` and `SidebarLeft.flyout-hardening.test.tsx`. The trivial union — **and the most common shape, so do not let its triviality set your expectation for the rest.**                                                 |
 | 8   | **A document was split on `main`**                                 | `main` split `AGENTS.md` into a thin root plus `docs/ORCHESTRATION.md`, `docs/TESTING.md` and `docs/PHOTOSHOP-UX.md`; the branch edited the long form. Ported the edit to its new home.                                           |
@@ -1565,13 +1567,13 @@ where the check was not actually run** — the same honesty convention the tool-
    as "conflicts" when the real answer is "could not be determined", and a branch reported as
    clean because the ref did not resolve. Defence: match `^CONFLICT` on stdout (the test is at
    `scripts/lib/worktree-inventory/git.mjs:214`), and degrade a failed run to **unknown**, never to
-   clean — the rule the file's own JSDoc states at `git.mjs:193-196` and implements at `:226-231`.
+   clean — the rule the file's own JSDoc states at `git.mjs:194-197` and implements at `:231` and `:233`.
 
 6. **An expired lease makes a file look free while the agent working in it is not.** Symptom: a
    `swarm check` returns `free` for a path another agent is actively rewriting, because its
    45-minute lease lapsed and was swept. Defence: an unclaimed path looks free — claim or hold it
    before editing, and treat "free" as "not currently locked", never as "nobody is here". See
-   `docs/ORCHESTRATION.md:290-294`.
+   `docs/ORCHESTRATION.md:596-606`.
 
 7. **The board cannot see two writers in one worktree, and cannot see two agents on one _feature_
    in two worktrees.** Symptom: two agents pick overlapping work and neither sees the other.

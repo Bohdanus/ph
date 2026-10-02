@@ -30,7 +30,10 @@ import { RectangularSelectionIcon } from './icons/RectangularSelectionIcon';
 import { RectangleShapeIcon } from './icons/RectangleShapeIcon';
 import { ShapeIcon } from './icons/ShapeIcon';
 import { SharpenIcon } from './icons/SharpenIcon';
+import { SingleColumnMarqueeIcon } from './icons/SingleColumnMarqueeIcon';
+import { SingleRowMarqueeIcon } from './icons/SingleRowMarqueeIcon';
 import { SmudgeIcon } from './icons/SmudgeIcon';
+import { SpongeIcon } from './icons/SpongeIcon';
 import { TextIcon } from './icons/TextIcon';
 import { TransformIcon } from './icons/TransformIcon';
 
@@ -55,6 +58,8 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'magic-wand': MagicWandIcon,
   'rectangular-selection': RectangularSelectionIcon,
   'elliptical-selection': EllipticalSelectionIcon,
+  'single-row-marquee': SingleRowMarqueeIcon,
+  'single-column-marquee': SingleColumnMarqueeIcon,
   'quick-selection': QuickSelectionIcon,
   'clone-stamp': CloneStampIcon,
   gradient: GradientIcon,
@@ -62,6 +67,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   smudge: SmudgeIcon,
   dodge: DodgeIcon,
   burn: BurnIcon,
+  sponge: SpongeIcon,
   brush: BrushToolIcon,
   pencil: BrushToolIcon,
   'color-replacement': ColorReplacementIcon,
