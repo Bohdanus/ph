@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_POLYGON_SIDES,
   drawShape,
   isFigureType,
+  MAX_POLYGON_SIDES,
+  MIN_POLYGON_SIDES,
+  polygonSides,
   normalizeFigure,
   normalizeShapeGeometry,
   setShapeCtx,
@@ -594,6 +598,73 @@ describe('drawShape', () => {
     expect(ctx.moveTo).toHaveBeenCalledTimes(1);
     expect(ctx.lineTo).toHaveBeenCalledTimes(sides - 1);
     expect(ctx.closePath).toHaveBeenCalled();
+  });
+
+  /*
+   * The side count is the one shape argument the renderer used to hardcode, so
+   * these two describes are the whole reason the field can be trusted: the
+   * normalizer bounds what reaches the loop, and the loop's vertex count is what
+   * proves the argument arrived.
+   */
+
+  describe("the Polygon's Sides", () => {
+    it('draws as many vertices as the field asks for', () => {
+      // 8 sides means 7 lineTo calls plus the moveTo, because the loop starts at
+      // -PI/2 and the closing vertex is the one already on the path.
+      for (const sides of [3, 5, 6, 8, 12]) {
+        const ctx = createCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'polygon',
+          sides,
+          start: { x: 0, y: 0 },
+          end: { x: 20, y: 20 },
+        });
+        expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+        expect(ctx.lineTo).toHaveBeenCalledTimes(sides - 1);
+      }
+    });
+
+    it('leaves the triangle at three whatever the field says', () => {
+      // The field is offered on the polygon figure only, but the value is
+      // persisted per figure in one shared table, so a sides that survives a
+      // figure switch must not be able to bend the triangle.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'triangle',
+        sides: 9,
+        start: { x: 0, y: 0 },
+        end: { x: 20, y: 20 },
+      });
+      expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to the seeded count when the field is absent or unusable', () => {
+      // Absent is the pre-field document and a store written before Sides existed.
+      expect(polygonSides(undefined)).toBe(DEFAULT_POLYGON_SIDES);
+      // Unusable is every way a persisted or hand-edited value can be nonsense,
+      // and the loop divides by this result, so each would be a wrong polygon or
+      // a NaN path rather than a default.
+      expect(polygonSides(Number.NaN)).toBe(DEFAULT_POLYGON_SIDES);
+      expect(polygonSides(Number.POSITIVE_INFINITY)).toBe(DEFAULT_POLYGON_SIDES);
+      expect(polygonSides(0)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(-4)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(2)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(10_000)).toBe(MAX_POLYGON_SIDES);
+      // And a fractional count rounds, because the loop indexes an angle with it.
+      expect(polygonSides(5.4)).toBe(5);
+      expect(polygonSides(5.6)).toBe(6);
+    });
+
+    it('draws the fallback rather than throwing when the field is absent', () => {
+      // The normalizer is not the only thing standing between a bad value and the
+      // loop: a field the renderer ignored entirely would satisfy the normalizer's
+      // tests and still draw a pentagon for every input.
+      const ctx = createCtx();
+      drawShape(ctx, { ...baseArgs, figure: 'polygon', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
+      expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
+    });
   });
 
   it('fills only when hasFill is set and toolMode is not path', () => {
