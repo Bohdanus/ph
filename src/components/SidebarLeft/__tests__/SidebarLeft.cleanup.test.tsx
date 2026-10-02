@@ -175,14 +175,48 @@ describe('SidebarLeft cleanup', () => {
 
   it('tears down the open flyout and its listeners on unmount', () => {
     vi.useFakeTimers();
+    // `screen` reads the whole document, and the unmount takes the whole tree with it, so
+    // "no `role="menu"` left" is true of a flyout that was torn down and of one that was never
+    // torn down but is gone anyway — which is why the two byte-identical assertions this
+    // replaces could not fail. What only the unmount can get wrong is UNSUBSCRIBING, and the
+    // subscribers an open flyout owns are observable on `window` and `document` themselves.
+    const windowAdd = vi.spyOn(window, 'addEventListener');
+    const windowRemove = vi.spyOn(window, 'removeEventListener');
+    const documentAdd = vi.spyOn(document, 'addEventListener');
+    const documentRemove = vi.spyOn(document, 'removeEventListener');
+
     const { unmount } = render(<SidebarLeft />);
 
+    longPress(toolbarButtonByName('brush'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+
+    // The two subscribers an open flyout installs: Escape (SidebarLeft.tsx:563) and the
+    // outside click (SidebarLeft.tsx:585).
+    const escapeHandler = windowAdd.mock.calls.find(([type]) => type === 'keydown')?.[1];
+    const outsideClickHandler = documentAdd.mock.calls.find(([type]) => type === 'click')?.[1];
+    expect(escapeHandler).toEqual(expect.any(Function));
+    expect(outsideClickHandler).toEqual(expect.any(Function));
+
+    // The control that makes the identical dispatches below mean something: on a LIVE tree the
+    // same two events close the flyout. Without it, a component that never listened at all
+    // would leave no menu either, and the late dispatch would prove nothing.
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    expect(screen.queryByRole('menu')).toBeNull();
     longPress(toolbarButtonByName('brush'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
 
     unmount();
 
     expect(screen.queryByRole('menu')).toBeNull();
+    // Removal by the SAME function reference is the only form the DOM API accepts: a fresh
+    // closure per render would unsubscribe a listener nobody registered and leave the live one
+    // on `window` for the rest of the session.
+    expect(windowRemove).toHaveBeenCalledWith('keydown', escapeHandler);
+    expect(documentRemove).toHaveBeenCalledWith('click', outsideClickHandler);
+    const subscribedAfterUnmount = windowAdd.mock.calls.length + documentAdd.mock.calls.length;
+    const unsubscribedAfterUnmount = windowRemove.mock.calls.length + documentRemove.mock.calls.length;
 
     act(() => {
       vi.advanceTimersByTime(LONG_PRESS_DELAY);
@@ -194,6 +228,11 @@ describe('SidebarLeft cleanup', () => {
       fireEvent.click(document.body);
     });
 
+    // What is left to say that the assertions above do not: the two events the live tree
+    // answered to a moment ago now reach no subscriber at all, and reaching none is
+    // observable — they neither resurrect the flyout nor re-enter the subscription bookkeeping.
     expect(screen.queryByRole('menu')).toBeNull();
+    expect(windowAdd.mock.calls.length + documentAdd.mock.calls.length).toBe(subscribedAfterUnmount);
+    expect(windowRemove.mock.calls.length + documentRemove.mock.calls.length).toBe(unsubscribedAfterUnmount);
   });
 });
