@@ -4,6 +4,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import {
   createCommittedPolygonSelection,
@@ -86,6 +87,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     ref: containerRef,
     imageSize: totalSize,
   });
+  const containScale = useContainScale(containerRef, totalSize);
 
   /**
    * Repaint the whole overlay: every committed selection's outline, then the live
@@ -109,10 +111,12 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       resetOverlayAlpha(ctx);
-      (selectionOverride ?? selections).forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
+      (selectionOverride ?? selections).forEach((selection) =>
+        drawSelectionOutline(ctx, selection, documentFrame, containScale.current)
+      );
       if (previewPoints && previewPoints.length > 0) drawMarqueePreview(ctx, previewPoints);
     },
-    [documentFrame, overlayCtxRef, selections]
+    [documentFrame, overlayCtxRef, selections, containScale]
   );
 
   /** Read and clear in one step, so two routes out of a gesture cannot both commit it. */

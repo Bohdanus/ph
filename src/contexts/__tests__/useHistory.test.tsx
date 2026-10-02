@@ -13,13 +13,40 @@ import {
 } from '../../util/constants.ts';
 import { useHistory } from '../useHistory.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayersRecord, ToolLayerSource } from '../layer-types.ts';
+import type { Layer, LayerSource, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { getSortedLayersArray } from '../layer-utils.ts';
 import { updateHistoryTimeline } from '../history-timeline.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
 
+/**
+ * What this file's store mock is NOT evidence for.
+ *
+ * `createDispatch` re-implements the `APPLY_HISTORY_REPLAY` projection in eight
+ * lines of test code. It cannot detect that the real reducer ignores a field,
+ * mis-orders a projection, or reconverts differently, so the assertions below
+ * are evidence of exactly one thing: what `useHistory` dispatches.
+ *
+ * Exclusions — no assertion in this file may be cited as proof of:
+ *
+ * 1. anything about what the STORE does with the payload — only what the hook
+ *    dispatches is in scope;
+ * 2. durable state, in any form — the mock has no durable projection at all;
+ * 3. `hasUnsavedChanges` — the mock hardcodes it to `true` on every replay;
+ * 4. selection projection through the reducer — the assertion that reads
+ *    `selections` back out of `storeStateMock` reads state the mock just wrote
+ *    from the same payload, so it is a tautology. The dispatch payload is the
+ *    assertion; the state read is a tautology;
+ * 5. asset-retirement or presentation-scope effects.
+ *
+ * `branchRevision` is deliberately NOT an exclusion: the mock reads it from the
+ * payload, which is what the real projection does, so it is faithful on that
+ * field.
+ *
+ * Where a real provider is mandatory, and therefore not here: every durable
+ * assertion, and the reducer's own `APPLY_HISTORY_REPLAY` arm.
+ */
 const storeStateMock = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
   history: [] as HistoryItem[],
@@ -69,6 +96,10 @@ vi.mock('../layer-renderer.ts', async (importOriginal) => {
 const replayControl = vi.hoisted(() => ({
   failure: null as unknown,
   replayCount: 0,
+  // The conversion inputs, so an assertion can pin what the whole-timeline
+  // rebuild was asked to convert rather than only what it published. `readonly`
+  // because `replayHistory` takes its timeline that way.
+  calls: [] as Array<{ entries: readonly HistoryItem[]; targetIndex: number }>,
 }));
 
 vi.mock('../history-replay.ts', async (importOriginal) => {
@@ -77,6 +108,7 @@ vi.mock('../history-replay.ts', async (importOriginal) => {
     ...actual,
     replayHistory: (...args: Parameters<typeof actual.replayHistory>) => {
       replayControl.replayCount += 1;
+      replayControl.calls.push({ entries: args[0], targetIndex: args[1] });
       if (replayControl.failure !== null) throw replayControl.failure;
       return actual.replayHistory(...args);
     },
@@ -108,7 +140,12 @@ function drawImageCallsFor(source: unknown) {
 
 type DispatchedAction = {
   type: string;
-  payload?: { status?: string; diagnostics?: Record<string, unknown>[] };
+  payload?: {
+    status?: string;
+    diagnostics?: Record<string, unknown>[];
+    updates?: Record<string, unknown>;
+    timeline?: { entries: HistoryItem[]; cursor: number; branchRevision: number };
+  };
 };
 
 function dispatchedActions(): DispatchedAction[] {
@@ -260,6 +297,7 @@ describe('useHistory undo replay', () => {
     rendererControl.result = null;
     replayControl.failure = null;
     replayControl.replayCount = 0;
+    replayControl.calls = [];
     installCanvasContextStub();
   });
 
@@ -407,7 +445,14 @@ describe('useHistory undo replay', () => {
       // composited onto the visible canvas.
       expect(drawImageCallsFor(bitmap)).toEqual([[bitmap, 0, 0, 40, 20]]);
       const visibleContext = contextFor(state.canvasRef.current);
-      expect(visibleContext?.clearRect).toHaveBeenCalledWith(0, 0, 40, 20);
+      // The DOCUMENT keeps the frame the initial entry established — 128x64, from
+      // `resetStoreState`'s `totalSize` and `createHistory('layerSource')[0]`'s own
+      // bedrock source. An imported image appended at cursor 1 is a layer commit, not
+      // a document-size authority (`history-replay.ts:85-97`), so replaying past it
+      // must not resize the canvas to the bitmap's 40x20. Only `documentSource` and an
+      // explicit `SET_DOCUMENT_FRAME` may do that, and a replace-document import is
+      // already a single-entry history whose bedrock sits at index 0.
+      expect(visibleContext?.clearRect).toHaveBeenCalledWith(0, 0, 128, 64);
       expect(visibleContext?.drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0);
       // An image source is replayed BY REFERENCE: `createLayerSource` assigns
       // `layer.bitmap = source.bitmap` and never builds a canvas for it
@@ -855,6 +900,182 @@ describe('useHistory undo replay', () => {
       });
       expect(String(diagnostic?.message)).toContain('actionName');
       expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', expect.any(TypeError));
+    });
+  });
+
+  describe('navigation is a cursor move on an existing document', () => {
+    /**
+     * Three entries over two layers: enough that a cursor is reachable by two
+     * different routes, and every entry after the first one carries something a
+     * conversion must be able to see past the cursor.
+     */
+    function navigationHistory(): HistoryItem[] {
+      return [
+        ...createHistory('layerSource'),
+        {
+          id: 'h-3',
+          layerId: 'layer-2',
+          actionName: NEW_LAYER_ACTION,
+          layerSource: { ...createLayerSource(), isBedrock: false },
+        },
+      ] as HistoryItem[];
+    }
+
+    /**
+     * The document identity fields a navigation could carry if it were anything
+     * other than a cursor move. A cursor move must not restate or restamp them.
+     */
+    const DOCUMENT_IDENTITY_KEYS = [
+      'documentId',
+      'documentRevision',
+      'durableDocument',
+      'durableEntry',
+      'durableStatus',
+      'durableDiagnostics',
+    ];
+
+    /**
+     * Every key the hook itself constructs: the payload, plus the two objects it
+     * puts in it. A key deeper than that belongs to store-owned data the hook
+     * only forwards.
+     */
+    function hookConstructedKeys(action: DispatchedAction): string[] {
+      return [
+        ...Object.keys(action.payload ?? {}),
+        ...Object.keys(action.payload?.updates ?? {}),
+        ...Object.keys(action.payload?.timeline ?? {}),
+      ];
+    }
+
+    it('moves the cursor on an undo, over the same entries, carrying no document identity of its own', () => {
+      const { state } = setup(navigationHistory());
+      const entries = state.history;
+      const from = state.historyIndex;
+
+      useHistory().undo();
+
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
+      const [action] = dispatchedActions();
+      expect(action.payload?.timeline).toEqual({ entries, cursor: from - 1, branchRevision: state.branchRevision });
+      // The same array, not a copy: a navigation advances a cursor over the
+      // timeline the store already holds.
+      expect(action.payload?.timeline?.entries).toBe(entries);
+      // The durable cursor is the store's, and this payload gives it exactly one
+      // thing to move. Where the durable cursor lands BY ID is asserted at the
+      // store level against a real provider, not here: this mock has no durable
+      // projection (see the exclusions above).
+      expect(Object.keys(action.payload ?? {})).toEqual(['updates', 'timeline']);
+      expect(hookConstructedKeys(action).filter((key) => DOCUMENT_IDENTITY_KEYS.includes(key))).toEqual([]);
+      // The conversion is asked for the whole timeline at the new cursor.
+      expect(replayControl.calls).toEqual([{ entries, targetIndex: from - 1 }]);
+    });
+
+    it('rebuilds at the target cursor from the whole timeline, so the state at a cursor does not depend on the route', () => {
+      const history = navigationHistory();
+
+      // Route A: two steps back from the end.
+      setup(history);
+      useHistory().undo();
+      useHistory().undo();
+      const stepped = dispatchedActions().at(-1)?.payload?.updates;
+
+      // Route B: one jump to the same cursor, from an identical store state.
+      dispatchMock.mockClear();
+      replayControl.calls = [];
+      setup(history);
+      useHistory().resetHistoryTo(0);
+      const jumped = dispatchedActions().at(-1)?.payload?.updates;
+
+      // There is no fast path here and no cursor-indexed derivation to drift: a
+      // navigation is the whole-timeline conversion evaluated at the new cursor,
+      // so two routes to one cursor publish the same document. This is the pin
+      // that keeps a future shortcut honest — it fails the moment a shortcut
+      // starts from where the cursor was rather than from the timeline.
+      expect(stepped).toBeDefined();
+      expect(jumped).toEqual(stepped);
+      expect(replayControl.calls).toEqual([{ entries: history, targetIndex: 0 }]);
+      expect(replayControl.calls[0].entries.map((entry) => entry.id)).toEqual(['h-1', 'h-2', 'h-3']);
+
+      // Sensitivity: the comparison above is not an accident of comparing two
+      // identical objects. One cursor further and the published state differs.
+      dispatchMock.mockClear();
+      useHistory().resetHistoryTo(1);
+      expect(dispatchedActions().at(-1)?.payload?.updates).not.toEqual(stepped);
+    });
+
+    it('rebuilds a disable-toggle at the cursor it was asked about, over the toggled entries', () => {
+      const history = navigationHistory();
+      const { state } = setup(history);
+      // A cursor with entries behind it and ahead of it: a toggle is a rebuild at
+      // this cursor, not a navigation to another one.
+      state.historyIndex = 1;
+      const branchRevision = state.branchRevision;
+
+      useHistory().toggleDisabled('h-3');
+
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
+      const [action] = dispatchedActions();
+      const timeline = action.payload?.timeline;
+      expect(timeline?.cursor).toBe(1);
+      expect(timeline?.branchRevision).not.toBe(branchRevision);
+      expect(timeline?.entries).not.toBe(state.history);
+      expect(timeline?.entries.map((entry) => entry.id)).toEqual(['h-1', 'h-2', 'h-3']);
+      // The enabled set that converts is the toggled one: the conversion is fed
+      // the new timeline, which is what makes the baseline at this cursor
+      // reflect the toggle.
+      expect(replayControl.calls).toEqual([{ entries: timeline?.entries ?? [], targetIndex: 1 }]);
+      expect(replayControl.calls[0].entries.find((entry) => entry.id === 'h-3')).toMatchObject({ disabled: true });
+    });
+
+    it('hands the store a disabled asset-bearing entry intact at every cursor', () => {
+      const bitmap = { width: 40, height: 20 } as ImageBitmap;
+      // Typed rather than cast: `kind` widens to `string` in a bare object literal,
+      // which overlaps no variant of `LayerSource`, and a non-bedrock source
+      // carries `pos` rather than `size` (`tool-types.ts:111-115`).
+      const imageSource: LayerSource = {
+        kind: 'image',
+        bitmap,
+        pos: { x: 0, y: 0, width: 40, height: 20 },
+      };
+      const history = navigationHistory();
+      history[2] = { ...history[2], layerSource: imageSource };
+      const { state } = setup(history);
+
+      useHistory().toggleDisabled('h-3');
+      expect(state.history[2]).toMatchObject({ disabled: true });
+
+      /**
+       * Navigation neither drops a disabled entry nor rewrites its source, which
+       * is the half of the retention contract this hook owns: the store's
+       * collector ignores both the cursor and `enabled` on purpose so undo can
+       * still redo, and that collector is `collectDurableAssetIds` in
+       * `history-model.ts`, pinned in `history-model.reachability.test.ts`. What
+       * is asserted here is only that the entry reaches the conversion.
+       */
+      function assertDisabledEntryReachedTheConversion() {
+        const converted = replayControl.calls.at(-1)?.entries ?? [];
+        const disabled = converted.find((entry) => entry.id === 'h-3') as
+          (HistoryItem & { layerSource?: { kind: string; bitmap?: unknown } }) | undefined;
+        expect(disabled).toBeDefined();
+        expect(disabled).toMatchObject({ disabled: true });
+        expect(disabled?.layerSource).toEqual(imageSource);
+      }
+
+      // A fresh `useHistory()` per cursor, as a render would produce: the hook
+      // reads the store when it is called, so a navigation issued after the
+      // toggle must see the toggled timeline rather than the one captured before
+      // it. Every cursor of this three-entry timeline is covered.
+      replayControl.calls = [];
+      useHistory().resetHistoryTo(0);
+      assertDisabledEntryReachedTheConversion();
+
+      replayControl.calls = [];
+      useHistory().resetHistoryTo(1);
+      assertDisabledEntryReachedTheConversion();
+
+      replayControl.calls = [];
+      useHistory().resetHistoryTo(2);
+      assertDisabledEntryReachedTheConversion();
     });
   });
 

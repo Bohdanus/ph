@@ -31,9 +31,32 @@ const TOOL_BUTTON_ACTIVE_CLASS =
 const TOOL_BUTTON_INACTIVE_CLASS =
   'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
+/**
+ * The one/two-column toggle's glyph, and WHICH WAY IT POINTS.
+ *
+ * It points the way the rail is about to MOVE, not the way it is currently arranged:
+ * a one-column rail grows a second column to the right when this is pressed, so it shows
+ * `»`, and a two-column rail shrinks back to one and shows `«`. That is Photoshop's own
+ * mapping, read off its toolbar screenshots in both states — a one-column Tools panel shows
+ * a right-pointing double chevron at the top of the rail, and the same button shows a
+ * left-pointing one once the toolbar has been expanded to two columns. Adobe's documentation
+ * does not describe the control's direction in words anywhere, so the glyph here rests on
+ * those images; what the documentation does say is only that the double arrows toggle the
+ * layout, which is what the `aria-label` and `title` below carry.
+ *
+ * It was the other way round, and nothing in the repository noticed: `«` in one column says
+ * "press me and the rail moves left", which is the opposite of what happens. That also made it
+ * the opposite of the dock's own collapse control, which draws `{isCollapsed ? '»' : '«'}`
+ * (`SidebarRight`'s `dock-collapse-toggle`) and therefore already used this mapping — outward to
+ * grow, inward to shrink. Two controls in one application pointing opposite ways at the same
+ * idea is the whole defect; the fix makes them agree rather than documenting that they differ.
+ *
+ * The glyph is pinned by `SidebarLeft.layout.test.tsx`, in both states, because a character in a
+ * JSX span is exactly the kind of thing a refactor silently swaps.
+ */
 const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   <span aria-hidden="true" className="flex items-center justify-center text-lg leading-none font-black tracking-tight">
-    <span>{singleColumn ? '«' : '»'}</span>
+    <span>{singleColumn ? '»' : '«'}</span>
   </span>
 );
 
@@ -75,6 +98,30 @@ const MORE_TOOLS_LABEL = 'More Tools';
  * "is this tool on the rail, or only in the overflow" without a regex over ids.
  */
 const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
+
+/**
+ * The hold a grouped tile needs before its flyout opens, in milliseconds.
+ *
+ * Exported rather than inlined at the `setTimeout` because SIX places had each grown their own
+ * copy of the number — which is how `300` came to sit beside a `350` that was only ever
+ * compatible by the accident of `300 + 50`. A threshold that is duplicated is a threshold that
+ * is changed in one place, and every other place is then either too early (a test that opens a
+ * flyout the app has not opened yet) or too late (a wait that outlives the behaviour it waits
+ * for). Over-advancing a fake timer is the quiet case: 300 against a real 250 changes nothing
+ * observable, so two of the six stayed green and wrong.
+ *
+ * WHAT STILL DUPLICATES IT, so the next person does not rediscover this: ONE place, and it is
+ * the Playwright helper `e2e/helpers/toolbar-helpers.ts`, which cannot import this because the
+ * `e2e` TypeScript project does not compile `src/`. That mirror is pinned against this export
+ * by an assertion in `e2e/helpers/__tests__/toolbar-helpers.unit.test.ts`, which is what makes
+ * it a mirror rather than a fourth opinion. A static import of this file from `e2e/` was tried
+ * and is not available: `tsconfig.e2e.json` sets no `jsx`, so importing a `.tsx` fails the
+ * build even though Playwright's own transform would load it.
+ *
+ * Not the three-dots tile's path, which opens on `pointerdown` with no hold at all — see
+ * `onPointerDown` in `renderToolGroup`.
+ */
+export const FLYOUT_LONG_PRESS_MS = 250;
 
 /** The group key in the one-column rail, which is the one the toolbar map's order reads as. */
 const oneColumnGroupKey = (sectionIndex: number, groupIndex: number): string => `${sectionIndex}-${groupIndex}`;
@@ -495,7 +542,7 @@ const SidebarLeft = () => {
     longPressFlyoutTimeoutRef.current = setTimeout(() => {
       if (suppressLongPressRef.current) return;
       openFlyout(groupIndex);
-    }, 300);
+    }, FLYOUT_LONG_PRESS_MS);
   };
 
   useEffect(() => {
@@ -602,7 +649,13 @@ const SidebarLeft = () => {
             aria-expanded={hasFlyout ? isOpen : undefined}
             aria-haspopup={hasFlyout ? 'menu' : undefined}
             aria-label={tileLabel}
-            aria-pressed={group.some((tool) => tool.name === toolName)}
+            // Absent on the three-dots tile, deliberately. `group` there is the whole hidden
+            // set, so `aria-pressed` would announce — and the active class would paint — for
+            // whichever HIDDEN tool happens to be selected, on a tile whose only job is to open
+            // a menu. A control that opens something carries `aria-haspopup`/`aria-expanded`
+            // (both above) and must not also claim to be a pressed toggle for a tool the user
+            // cannot see.
+            aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
             onClick={() => {
               if (hasFlyout && ignoreNextClickRef.current) {
@@ -616,6 +669,18 @@ const SidebarLeft = () => {
               if (hasFlyout) {
                 if (isOpen) {
                   closeFlyout();
+                  return;
+                }
+                // A tile with an `identity` selects nothing, ever. Its press has already opened
+                // the menu and set `ignoreNextClickRef`, so the only caller that reaches here is
+                // a click with NO press behind it on a CLOSED menu — in practice an assistive
+                // technology's `element.click()`, since a DOM keyboard activation on a `<button>`
+                // is intercepted by `onKeyDown` above and never produces a click at all. Both
+                // readings mean "open the menu", never "pick a tool": the three-dots tile has no
+                // default tool, and `group[0]` standing in for one is the same liability its
+                // `identity` exists to remove.
+                if (identity !== undefined) {
+                  openFlyout(groupIndex);
                   return;
                 }
                 selectTool(primaryTool);
@@ -656,11 +721,41 @@ const SidebarLeft = () => {
               suppressLongPressRef.current = false;
               ignoreNextClickRef.current = false;
               longPressOpenedRef.current = false;
+              // The three-dots tile opens on PRESS, with no hold, and the click that follows
+              // must select nothing. It is the one tile that stands for no tool, so there is no
+              // "default tool" a plain click could honestly mean — and a hold on the one tile
+              // whose entire job is to be the way IN to the hidden tools makes the way in feel
+              // broken, because the tile the user is reaching for is the one that does not
+              // answer. Photoshop's own `…` opens on press for the same reason.
+              //
+              // `ignoreNextClickRef` is set here as well as by `onPointerUp`, because the
+              // pointer can be released outside the button (a press that slides off) and the
+              // click then never fires while a tool has still been selected. `openFlyout` sets
+              // `longPressOpenedRef`, so the ordinary `onPointerUp` path would normally cover
+              // it; setting it up front is what makes "selects nothing" a property of the
+              // PRESS rather than of the release.
+              if (identity !== undefined) {
+                clearLongPressFlyout();
+                ignoreNextClickRef.current = true;
+                if (isOpen) closeFlyout();
+                else openFlyout(groupIndex);
+                return;
+              }
               scheduleFlyoutOpen(groupIndex);
             }}
             onPointerLeave={() => {
               suppressLongPressRef.current = false;
               longPressOpenedRef.current = false;
+              // `ignoreNextClickRef` too, and this is load-bearing rather than tidiness. The
+              // three-dots press sets it, and its only clearer is that button's own `onClick` —
+              // so a press that leaves the button before releasing (a drag, or a pointer capture
+              // stolen by a scroll) never produces that click, and the flag survives. The
+              // casualty is the NEXT activation: for a mouse the next press on any grouped tile
+              // clears it first, but an assistive technology's click on this tile has no press,
+              // so a stranded flag swallows the one activation AT has for reaching a menu.
+              // Cheap, and it cannot lose anything — the press it cancels is one that never
+              // resolved into a click anyway.
+              ignoreNextClickRef.current = false;
               clearLongPressFlyout();
             }}
             onPointerUp={() => {
@@ -674,6 +769,9 @@ const SidebarLeft = () => {
             onPointerCancel={() => {
               suppressLongPressRef.current = false;
               longPressOpenedRef.current = false;
+              // A cancelled pointer never produces a click, so the flag it would have set is
+              // pure residue. See `onPointerLeave` for why that residue is not harmless.
+              ignoreNextClickRef.current = false;
               clearLongPressFlyout();
             }}
             type="button"
@@ -727,19 +825,35 @@ const SidebarLeft = () => {
                * fill the window.
                *
                * DENSITY, in the same comment because the next person will otherwise ask why
-               * this is smaller than the rail's tiles. A flyout row is `py-1` around a 16px
-               * icon, so 24px, where the rail's tile is 44px — and the operator asked for
-               * the flyout at Photoshop's density, which is the compact one, the tile being
-               * the comfortable one. At tile density the menu put three tools in the space
-               * two belong in.
+               * this is smaller than the rail's tiles. A flyout row is 24.5px, where the
+               * rail's tile is 44px — and the operator asked for the flyout at Photoshop's
+               * density, which is the compact one, the tile being the comfortable one. At
+               * tile density the menu put three tools in the space two belong in.
                *
-               * WHAT IS MEASURED AND WHAT IS CHOSEN, because they are not the same claim: in
-               * Chrome at 1280x900 this is a 25px row and an 80px three-item menu, measured,
-               * where it was a 40px row and 134px. The 24px and the 16px are the design, not
-               * a measurement — they are the icon plus `py-1`, and the icon is what has to be
-               * named below for anyone checking. No document in this repo records
-               * Photoshop's own row height, so nothing here should be read as one; the
-               * target was the operator's instruction and this is the density it produced.
+               * WHAT IS MEASURED AND WHAT IS DERIVED, because they are not the same claim and
+               * this heading used to conflate them. MEASURED in Chrome at 1280x900: every row
+               * of a 2-, 3- and 30-item menu is 24.5px, every row icon is 16.0px, and the
+               * 8px gap to the rail is unchanged. DERIVED from those, and not measured: a
+               * three-item menu is 3 × 24.5 + 2px of `p-0.5` a side + two 1px borders =
+               * 79.5px, which is the "80px" below rounded. What the e2e spec PINS is weaker
+               * than either — a row height of at most 27px and an icon of exactly 16 — because a
+               * bound that tight enough to reject the old 40px row is the most falsifiable
+               * number available, and a figure with a decimal place would have rotted the
+               * first time the font metrics moved.
+               *
+               * The row's own numbers are DESIGN values, not measurements — and no document in
+               * this repo records Photoshop's flyout row height, so nothing here should be read
+               * as one. The target was the operator's instruction and this is the density it
+               * produced.
+               *
+               * AND THE HEIGHT IS NOT THE ICON'S TO SET, which is the part that is easy to get
+               * wrong twice. A row's height is `max(icon, label line box) + padding`, and
+               * Tailwind's preflight puts `line-height: 1.5` on `html`, so an 11px label's
+               * line box is 16.5px — half a pixel TALLER than the 16px icon. Forcing the icon
+               * to `0` leaves the row at 24.5px. What the override actually buys is the other
+               * direction: without it the icon is 28px and the row is 36px, so the row's height
+               * is set by whichever of the two is larger, and the override lowers the ceiling
+               * rather than the floor.
                *
                * `min-w-36` so a two-tool menu is not a sliver, which it needs because the
                * labels are `whitespace-nowrap` and cannot wrap to fit. It cannot outgrow the
@@ -803,12 +917,35 @@ const SidebarLeft = () => {
                     <button
                       aria-checked={isSelected}
                       aria-label={tool.label}
-                      // `[&_svg]:!h-4 [&_svg]:!w-4` is what makes the row 24px. The icons are
-                      // sized by `IconShell`, which is fixed at `h-7 w-7` because a RAIL tile
-                      // is 44px and its icon has to fill it — so the menu cannot ask the
-                      // icon for a smaller one, and the `!` is what makes this override win
-                      // against `h-7` instead of depending on which utility Tailwind happened
-                      // to emit last.
+                      // `[&_svg]:!h-4 [&_svg]:!w-4` is what keeps the row off tile density.
+                      // The icons are sized by `IconShell`, which is fixed at `h-7 w-7` with no
+                      // prop, because a RAIL tile is 44px and its icon has to fill it — so the
+                      // menu cannot ask the icon for a smaller one and has to override it from
+                      // here. Left at 28px it becomes the LARGER of the row's two height terms
+                      // and the row is 36px; at 16px the LABEL's line box is what sets the
+                      // 24.5px. The override lowers the row's ceiling, not its floor.
+                      //
+                      // The `!` is NOT what makes the override win, and the comment this
+                      // replaces said it was. It does not need to: `.[&_svg]:!h-4 svg` is
+                      // specificity (0,1,1) against `.h-7`'s (0,1,0), so it wins on
+                      // specificity alone inside `@layer utilities` whatever order the two are
+                      // emitted in — both orders were compiled, and the descendant selector
+                      // wins either way. It is kept deliberately, and pinned by a test, so
+                      // dropping it reads as the change it is rather than as tidying. What it is
+                      // NOT a tripwire for is another utilities-layer rule: inside one cascade
+                      // layer a (0,1,0) declaration loses to a (0,1,1) one with or without
+                      // `!important`, so `!` only changes the outcome against an UNLAYERED or
+                      // inline declaration. The reason to keep it is that `IconShell`'s own
+                      // `h-7` is one refactor away from becoming inline or moving out of the
+                      // layer, and the cost of keeping it is one character.
+                      //
+                      // It reaches one icon by accident worth recording: `MoreToolsIcon` is
+                      // the only rail icon that bypasses `IconShell` — it is `h-6 w-6` and
+                      // declares no overflow of its own, where `IconShell` sets
+                      // `overflow-visible`. It is never a row child (rows take
+                      // `getToolIcon(tool)`), so it is untouched today, and it is the one thing
+                      // that would render at 24px inside a 24.5px row if a row ever rendered an
+                      // `identity.Icon`.
                       className={`flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition-colors [&_svg]:!h-4 [&_svg]:!w-4 ${
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
@@ -880,7 +1017,14 @@ const SidebarLeft = () => {
     // axes — one column has one row per group, so row 12 is in section 4 — and using one for
     // the other is how the tile ends up pushed off the end of the array.
     const lastVisibleRow = toolbarSlots[overflowPlan.fittedThrough - 1];
-    const target = lastVisibleRow?.sectionIndex ?? singleColumnSections.length - 1;
+    // The LAST SECTION is the wrong fallback for the row that is not there. With nothing
+    // fitted — the degenerate band, a window too short to hold a tool row and the three-dots
+    // tile's row together — `toolbarSlots[-1]` is undefined, and the fallback put the lone tile
+    // in section 4, whose `<ul>` carries `mt-1.5 border-t pt-1.5`. That is 13px of separator
+    // chrome for a separator with nothing above it, and the planner charges a lone tile
+    // `tileHeight` and nothing more, so the model was 13px short of the screen in exactly the
+    // state where the slot has no pixels to spare. Section 0 carries none of it.
+    const target = lastVisibleRow?.sectionIndex ?? 0;
     singleColumnSections[target].entries.push({ kind: 'overflow' });
   }
 
@@ -1022,7 +1166,8 @@ const SidebarLeft = () => {
           // `overflow-y-auto`, not `overflow-hidden`, and the difference is the difference
           // between a tile that is somewhere else and a tile that is gone. The fit already
           // keeps the tiles inside the slot — it reserves a row for the three-dots tile and
-          // then fills no more than the 80% budget — so this scrollbar never appears. It is
+          // then fills the budget with whole rows, so what is left over is the fraction of a
+          // row that no tile can use — so this scrollbar never appears. It is
           // here so that IF the arithmetic is ever wrong, the tools it misjudged are still
           // reachable by scrolling rather than clipped out of existence. A rail that could
           // hide a tool is a worse failure than a rail that scrolls.
@@ -1098,9 +1243,10 @@ const SidebarLeft = () => {
         {/* One rule, not two, and 8px of margin instead of 12. The rail carries a single
             divider: it separates the tools from the colour cluster, which is the only
             boundary in the rail that is a boundary. The second `<hr>` this replaces stood
-            between the colour cluster and NOTHING — the commented-out Zoom control is not
-            markup — so it spent 24px of margin (`my-3` is 12px a side) and a 1px hairline
-            painting a rule across the bottom of the panel for no division at all. */}
+            between the colour cluster and NOTHING — the commented-out Zoom control that
+            followed it was deleted with it, so nothing renders below the cluster at all — so
+            it spent 24px of margin (`my-3` is 12px a side) and a 1px hairline painting a rule
+            across the bottom of the panel for no division at all. */}
         <hr className="my-2 shrink-0 border-gray-300 dark:border-gray-700" />
 
         <div className="flex shrink-0 flex-col items-center">
@@ -1122,12 +1268,21 @@ const SidebarLeft = () => {
               data-testid="foreground-color-swatch"
             />
 
+            {/*
+              `opacity-0` hides PIXELS, not the accessibility tree and not the tab
+              order: `element.focus()` still lands on these, so without a name they
+              are two unlabelled "colour" controls a screen reader reaches between
+              the swatches. `e2e/accessibility.spec.ts` reports this as a CRITICAL
+              `label` violation, and all ~172 `getByRole` locators in `e2e/` miss it
+              because nothing ever queried them for an accessible name.
+            */}
             <input
               type="color"
               ref={colorInputRef}
               className="absolute opacity-0 pointer-events-none"
               value={color}
               onChange={handleColorChange}
+              aria-label="Foreground Color"
               data-testid="foreground-color-input"
             />
             <input
@@ -1136,13 +1291,15 @@ const SidebarLeft = () => {
               className="absolute opacity-0 pointer-events-none"
               value={backgroundColor}
               onChange={handleBgColorChange}
+              aria-label="Background Color"
               data-testid="background-color-input"
             />
           </div>
 
+          {/* gray-500 on the gray-100 panel measured 4.39:1, under WCAG AA's 4.5:1. */}
           <button
             onClick={handleSwapColors}
-            className="mt-1 text-[8px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 uppercase font-bold"
+            className="mt-1 text-[8px] text-gray-600 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-200 uppercase font-bold"
             title="Swap Colors"
             data-testid="swap-colors-button"
           >

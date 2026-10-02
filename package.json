@@ -9,6 +9,8 @@
     "build": "vite build",
     "dist": "vite build",
     "swarm": "node scripts/agent-board.mjs",
+    "swarm:release-merged": "node scripts/merge-release.mjs",
+    "dispose": "node scripts/dispose-worktree.mjs",
     "docs:tools": "node scripts/generate-tool-docs.mjs",
     "lint": "node scripts/lint-tracked.js --eslint-only",
     "lint:check": "node scripts/lint-tracked.js",
@@ -30,6 +32,7 @@
     "test:e2e:report": "playwright show-report",
     "test:e2e:clean": "rm -rf test-results/*/ test-results/.last-run.json playwright-report",
     "test:e2e:install": "playwright install chrome",
+    "probe:console": "node scripts/probe-console.mjs",
     "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
     "gate:verify": "npm run tsc && npm run build",
     "gate:commit": "lint-staged --fail-on-changes --no-stash && npm run gate:verify",
@@ -59,6 +62,7 @@
     "uuid": "^14.0.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.1.18",

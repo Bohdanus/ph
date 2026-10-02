@@ -26,7 +26,7 @@ These files are **never** modified by this skill, under any circumstances:
 
 - **Dry-run first**: Every phase starts with a read-only scan; no writes until verification passes
 - **Atomic fixes**: One file per subagent, verified independently before batch commit
-- **Escape hatches**: Stop on any regression (lint/typecheck/test failure on previously passing code)
+- **Escape hatches**: Stop on any regression (lint/typecheck/test failure on previously passing code) — **after you have established it is not a wrong expectation.** Compute and time are effectively unlimited in this repository, so the failure mode is not cost but premature surrender: a `toBeTruthy()` swapped for `toBeInTheDocument()` because a selector was hard to reach is a green suite that has stopped testing anything. **Escalating is a last resort.** Exhaust, in order: read the source under test and find the real behaviour; check `e2e/OPEN_PROBLEMS.md` for a filed instance; recover the intended contract from the project's chat history and the existing handoff entries; re-run the failing assertion with the actual value printed. Write the question into `HANDOFF.md` only once all four are done, and say in the entry which four you ran — a question with no search log behind it is a judgement call wearing a question's clothes.
 - **No source changes**: Except `data-testid` additions when absolutely required for test stability
 - **Deterministic verification**: Run affected file's tests + full suite after each batch
 - **Preserve good tests**: Never rewrite or "simplify" tests that already work and are well-structured
@@ -44,7 +44,42 @@ These files are **never** modified by this skill, under any circumstances:
 
 ## Scope
 
-All test files in `src/**/__tests__/*.test.{ts,tsx}` (currently 55 files, ~400 tests).
+All test files in `src/**/__tests__/*.test.{ts,tsx}`. **The count is re-derived, never trusted** —
+an earlier revision of this line said "currently 55 files, ~400 tests" against a tree that held 259
+test files, so a number written here outlived the tree it described:
+
+```bash
+find src -type d -name __tests__ -exec find {} -name '*.test.ts*' \; | wc -l
+```
+
+---
+
+## Before Phase 1: create the worktree
+
+**Every subagent below inherits this session's working directory.** A fan-out launched from the main
+checkout is five concurrent writers in a shared checkout that other sessions are committing into,
+and no permission can stop it: tool permissions match a path glob and have no term for the working
+directory, so `src/foo.test.ts` is the same pattern in `main` and in a worktree. `task` creates no
+worktree and no session, so the order is fixed:
+
+```bash
+git worktree add -b test/improve-<slug> .kilo/worktrees/<name> main
+```
+
+Create it, **then** dispatch, then put the **absolute** worktree path in every brief — a subagent's
+cwd only affects relative `bash`, while its `edit` and `write` calls take absolute paths, so the
+brief is the thing that moves the work. Never two subagents on one file; split by concern, and
+serialize anything Phase 2's triage assigns to more than one finding in the same file. Pass `model`
+**and** `provider` together — a free session that names a paid model without a provider gets it
+resolved onto the gateway and dies at zero tokens.
+
+**The main worktree is for reading and merging only.** `scripts/main-worktree-guard.mjs` runs first
+in `.husky/pre-commit` and refuses a commit made from it; the one override is
+`ALLOW_MAIN_COMMIT=1`, and only the exact value `1`. Never `git stash`, and never
+`git add -A` in a worktree whose root checkout is dirty: the root is a different checkout at a
+different `HEAD`, so `-A` commits a silent reverting of whatever main has since done, with no
+conflict marker, and this repository has shipped 17 of those. Stage explicit paths, and run the
+`comm -13` set difference in `docs/ORCHESTRATION.md` before integrating.
 
 ---
 
@@ -440,7 +475,9 @@ expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocume
 
 ## Phase 5: Add Coverage (Parallel Subagents, One Component Each)
 
-**Target components with gaps** (from TEST_REVIEW_HANDOFF.md + triage):
+**Target components with gaps** (from the Phase 2 triage — an earlier revision of this line named
+`TEST_REVIEW_HANDOFF.md`, which **does not exist** anywhere in this repository, so it sent the reader
+to a file that returns nothing and reads exactly like "no gaps are known"):
 
 | Component                                                                            | Missing Coverage                                                        |
 | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |

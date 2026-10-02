@@ -307,14 +307,16 @@ AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
       Tests  1 failed | 1956 passed | 3 expected fail (1960)
 ```
 
-`useFile.test.tsx:176` is the `expect(...).toBeNull()` half of a test whose
-first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
-at `:175` — so the save **did** resolve and the pipeline **did** hand back its
+The `expect(screen.queryByText('Save File As...')).toBeNull()` in `useFile.test.tsx` is
+the `toBeNull()` half of a test whose first assertion has already passed —
+`expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
+— so the save **did** resolve and the pipeline **did** hand back its
 details. What failed is that a **Save File As dialog was open when it should not
 be**. (The failure quoted above says `:157`, which is what the reporter printed;
 the file has since grown — the `it.skip` above it, and 19 more lines — so the
-assertion now lives at `:176` and its passing sibling at `:175`. Read the line
-number in the quote as history and these two as the current tree.)
+assertion is the `toBeNull()` above, and its passing sibling is the
+`toHaveBeenCalledWith` directly above that. Read the line
+number in the quote as history and the assertion text as the current tree.)
 
 Read against this entry's own findings that is a real narrowing: the
 encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
@@ -436,15 +438,15 @@ with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
    on this tree at 1280x720: `document.documentElement.scrollHeight` is **720**,
    equal to `innerHeight`, and `window.scrollY` was **0** at every step of the
    failing test's setup. The overflow that made the page 1177px tall was fixed by
-   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:564`);
+   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:909`);
    the canvas box is a constant `108,100 922x583` from tool click to capture. The
-   1177px/440px figures in `e2e/helpers/screenshot-scale.ts:53`,
-   `e2e/helpers/cdp-helpers.ts:60`, `e2e/helpers/toolbar-helpers.ts:102-108` and
+   1177px/440px figures in `e2e/helpers/screenshot-scale.ts:108-116`,
+   `e2e/helpers/cdp-helpers.ts:53-54`, `e2e/helpers/toolbar-helpers.ts:102-108` and
    four unit-test comments now describe a layout this build does not produce.
    **They are stale, not load-bearing, and correcting them is its own change.**
 
 **What the failure therefore is, and is not.** `hasRedPixels`
-(`e2e/helpers/canvas-helpers.ts:473`) wants `red > 180, green < 100,
+(`e2e/helpers/canvas-helpers.ts:464-468,232-234`) wants `red > 180, green < 100,
 blue < 100` anywhere in a 360x140 capture that certainly contains the line. The
 line is composited over an opaque white base, so its red channel is **204 at full
 opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
@@ -480,14 +482,14 @@ composite**, and every action in `drawSlab` reported success while it did not.
 waited on `readPixel(...) not.toBeNull()` and claimed to wait for the seeded base
 layer. It did not: `readPixel` calls `getColorAtPoint(image, x, y, 0)` with no
 `ignoreNearWhite`, and that returns `null` only for an out-of-capture point or a
-fully transparent one (`e2e/helpers/canvas-helpers.ts:718`) — **a white pixel
+fully transparent one (`e2e/helpers/canvas-helpers.ts:728-730,743,757`) — **a white pixel
 satisfied it**, so the poll only asserted that a screenshot was non-empty. It now
 additionally waits for the seeded `Blank 1` row to be in the Layers panel, read by
 name, which is a fact about the document rather than about a capture. And `drawSlab`
 now asserts the stroke **committed** — `undo` is disabled on a seeded document and
 enabled after the append — _before_ it polls for pixels, so a refused commit names
 itself in the default expect timeout instead of surfacing ten seconds later as a
-bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:577`.
+bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:579`.
 
 **To hunt it, capture the artifact, not the name.** The single most valuable
 change to a future report of this is the state at the moment the wait gives up:
@@ -706,7 +708,7 @@ unreadable instead of self-describing.
 `e2e/viewport-drawing.spec.ts:18-22` holds a `{ name, width, height }` list (`normal`
 1280×720, `wide` 1600×900, `narrow` 900×700) and runs **one** test over all three windows,
 asserting per window with `expect.soft(...).toBeLessThanOrEqual(toleranceFor(box))` at
-`e2e/viewport-drawing.spec.ts:342-346`. **Per-case attribution is a weaker signal than it
+`e2e/viewport-drawing.spec.ts:357-364`. **Per-case attribution is a weaker signal than it
 looks**: one test over three windows reports at most one failure carrying three soft-assert
 messages, so "the failing window moves" is read off the message, not off separate test results.
 Before `ffb51607` this file ran three tests in a `for` loop and attribution was direct; anything
@@ -757,16 +759,17 @@ the warm-up has not paid for yet. This is the other half and it looks exactly th
 same in the report, which is the trap. Observed twice, in two different runs, on a
 branch whose only e2e change was a header comment and a viewport ladder:
 
-- `e2e/sidebar-flyout.spec.ts:508` — `Test timeout of 30000ms exceeded while
-running "beforeEach" hook`, `page.goto` never returning. 35.1s elapsed.
-- `e2e/toolbar-fit.spec.ts:188` — the same signature, 35.1s elapsed, inside
+- `e2e/sidebar-flyout.spec.ts` — `Test timeout of 30000ms exceeded while
+running "beforeEach" hook`, `page.goto` never returning, from the file's single
+  `test.beforeEach` (`await page.goto('/')`).
+- `e2e/toolbar-fit.spec.ts:188` — the same signature, inside
   `open(page, height)`.
 
-Both passed in isolation, in the same tree, with no code change in between: 1.8s
-and 6.1s against those 30s budgets. Both runs had another agent's e2e run holding
-the queue, so the dev server was warm and 39 tests had already passed when the
-first one failed — which is what rules section 9's mechanism out, since nothing
-cold was left to lose to.
+Each failed only inside a full run and passed alone every time, in the same tree, with
+no code change in between and far inside that budget. Both runs had another agent's e2e run
+holding the queue, so the dev server was warm and the bulk of the rest of the suite had
+already passed when the first one failed — which is what rules section 9's mechanism out,
+since nothing cold was left to lose to.
 
 The part that is named rather than observed: `e2e/toolbar-fit.spec.ts:188` makes
 EIGHT `open()` calls, one per height per layout, and it never calls
@@ -791,17 +794,20 @@ involved: these suites already isolate the board by pointing `AGENT_BOARD_DIR` a
 a fresh temp directory, and the queue lock lives in that same directory.
 
 What they are is not unit tests. Each one builds its state by spawning the real
-board CLI, so its cost is process spawns and not computation — a cold board call
-is ~60-80ms from a shell, and the slowest test in `e2e-run.test.mjs` spends eight
-of them. Vitest's 5s default is therefore not a budget those files can live
-inside. Measured over three isolated runs, the slowest span per file was 7.1s,
-4.5s and 3.0s: a budget at or below the work it is timing, which is why `npm run
-test` reported five of them as `Test timed out in 5000ms` with no code change
-anywhere.
+board CLI, so its cost is process spawns and not computation — a single cold board
+call costs a large fraction of the per-test budget, and the slowest test in
+`e2e-run.test.mjs` spends eight of them. Vitest's 5s default is therefore not a
+budget those files can live inside. Measured over three isolated runs, the slowest
+span in each of the three files sat at or near that default: one exceeded it
+outright, the other two came in under it by a margin no host guarantees — which is
+why `npm run test` reported five of them as `Test timed out in 5000ms` with no code
+change anywhere. The spans are not quoted here: a figure of that shape is
+re-measured on every slow host and then read as a threshold rather than as an
+observation.
 
-The tempting explanation is a contention factor, and it is false here. A full
-266-file run was measured against the same tests and came out FASTER per test
-than the three-file run — median 0.45x, max 1.1x, n=48. So "a full run is N times
+The tempting explanation is a contention factor, and it is false here. A full-suite
+run was measured against the same tests and came out FASTER per test than the
+three-file run, at the median and at the worst case alike. So "a full run is N times
 more loaded" is not a claim this suite can support, and a number of that shape
 would be a guess wearing a measurement's clothes. Do not reinstate one.
 
@@ -812,10 +818,11 @@ times it, declared twice, or matched by a reader that no longer recognises the
 call it is looking for. It reads the suites' SOURCE, because the budget is a
 `vi.setConfig` side effect that nothing exports and an import can only see the
 default it is guarding. Two properties were checked rather than assumed and are
-worth keeping: the budget is scoped to the file that declares it (a 7s body in an
-undeclared sibling still died at the 5s default in the same run), and a per-test
-`it(name, fn, timeout)` argument still wins over the file budget, which is how the
-two tests that read git in every worktree keep their declared `60_000`.
+worth keeping: the budget is scoped to the file that declares it (a body several
+times the default in an undeclared sibling still died at the 5s default in the same
+run), and a per-test `it(name, fn, timeout)` argument still wins over the file
+budget, which is how the two tests that read git in every worktree keep their
+declared `60_000`.
 
 **Remaining verification:** the code review this change was merged without. Every
 review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
@@ -823,85 +830,7 @@ was not an available substitute, and it was merged on the operator's decision wi
 the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
 fixed two false claims in the new comments, but that is not the review.
 
-## 15. The worktree-inventory suite cannot pass in a checkout without this machine's worktrees
-
-**Problem.** `scripts/__tests__/worktree-inventory.test.mjs` reads the LIVE
-worktree list, and the case at `:1874` guards on it:
-`expect(live.length).toBeGreaterThan(1)`. A fresh clone has exactly one — its own
-main worktree — so the case fails with `expected 1 to be greater than 1`.
-`vitest.config.ts` leaves `include` at the Vitest default and excludes only
-`**/.kilo/**` and `e2e/**`, and `.github/workflows/ci.yml` runs
-`npm run test -- --coverage` after a plain `actions/checkout`, so the `ci` job's
-Test step runs this suite against a checkout that has never had a worktree.
-
-**Reproduced twice, deterministically.** A fresh `--no-single-branch` clone of
-`main` fails this suite with 1 of 123 red. A fresh clone of
-`chore/untrack-worktrees-json` fails with the same 1 of 126, and the three extra
-passing tests are that branch's untracked-inventory tripwire, which passes in a
-clone because the inventory is absent there by design. Neither is a regression of
-that branch: the same case is red on `main`.
-
-**Not claimed.** Whether the `ci` job on `main` is red right now was NOT observed
-— there is no `gh` on this machine to read run history — so this rests on two
-local clones, which have the shape `actions/checkout` produces. Two further cases
-in the same file shell out to `git rev-parse main`, so a clone made with
-`--branch <name>` fails those two as well; that is an artefact of that clone, not
-a defect, and it is why the reproduction must use `--no-single-branch`.
-
-**The call is the operator's.** Either the live-tree cases skip when the
-repository holds fewer than two worktrees, or this suite is excluded from the
-`ci` job. Skipping is only honest if the guard is meaningless without the
-worktrees — on a machine that has them it is the thing stopping a preservation
-branch from reading as disposable, so it must not be skipped there.
-
-## 16. The curated-worktree gate is red for as long as any agent's task runs
-
-**Problem.** `scripts/__tests__/worktree-inventory.test.mjs:1870` requires every
-worktree that HOLDS WORK — commits git cannot find on main, edits in no commit,
-or a branch that is not on main — to have an entry in
-`scripts/lib/worktree-inventory/curated.mjs`. A worktree holds work for the
-whole of every task, from the first edit to the merge. So on a machine running
-several agents this case is red from the moment the first one starts until the
-last one lands, and it is red in EVERY OTHER checkout in between, because the
-list it reads is the repository's, not the caller's. A red `npm run test` on
-`main` therefore reports what other processes on the machine are doing, not the
-tree it was run on — which is the one thing a local suite exists to answer.
-
-Observed on this machine, 93 worktrees, re-derived 2026-09-30 while landing
-`fix/swarm-lock-identity`: 9 held work with no entry (`cleanup-sweep`,
-`contexts-suite`, `e2e-harden-harness`, `infra-suite`, `prepush-gate`,
-`skill-handoff-stability`, `subagent-provider-pair`, `swarm-lease-truth`,
-`swarm-lock-identity`), while 84 were clean and correctly absent from the table.
-Eight of the nine belong to other agents' tasks, so the failure is not one
-agent's oversight; it is the rule's shape.
-
-This is the same failure the guard at `:1894-1911` was written to stop, one
-trigger narrower, and that comment records the first round: demanding a summary
-for a worktree holding NOTHING made "main go red within minutes of the derived
-guard landing", and the table was re-derived by hand four times in one session.
-Narrowing the rule from "exists" to "holds work" did not close the class — it
-moved the red from the first minute of a task to every minute of it.
-
-**Not claimed.** That `ci` is red, and that is not what this is about. A fresh
-`actions/checkout` has one worktree, so this case fails there for the opposite
-reason (`expected 1 to be greater than 1`); that half is section 15 and it is
-not re-argued here. What is new is the multi-agent local machine, where the
-guard has something to compare and compares it against live concurrent work.
-
-**The call is the operator's.** Two shapes that stop the result being a function
-of concurrent activity, and the choice between them is a policy one:
-
-- Narrow the trigger to worktrees whose branch is not a main commit AND whose
-  edits are not the only copy of anything — which is a set a FINISHED task
-  leaves behind, rather than one every in-flight task occupies.
-- Or move the obligation to session end. The cost is that a crashed session
-  leaves an uncurated worktree, which is the case the table exists to protect
-  against, so this trades a constant red for an occasional one.
-
-What cannot stand is the current shape, in which the first thing an agent does
-after its first edit is turn every other checkout's test suite red.
-
-## 17. Files
+## 15. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -911,7 +840,8 @@ after its first edit is turn every other checkout's test suite red.
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs
 - `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
-- `e2e/helpers/canvas-helpers.ts:473,577,718` — the predicate, the poll loop and the sampler
+- `e2e/helpers/canvas-helpers.ts:464-468,568-582,706-712` — the predicate, the poll loop and the
+  sampler
 - `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
 - `scripts/e2e-run.mjs` — the wrapper the scripts that RUN a suite route through
   (`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`). Two independent things,
@@ -945,14 +875,15 @@ after its first edit is turn every other checkout's test suite red.
   where the project's other unit files already are; an earlier version of that file's
   own note justified the location by a coverage-report claim that was a
   non-sequitur, and it is recorded there as wrong rather than quietly replaced
-- `e2e/sidebar-flyout.spec.ts:136-139` — the `beforeEach` that loses the race
+- `e2e/sidebar-flyout.spec.ts` — the `beforeEach` that loses the race
 - `e2e/flyout-longpress-race.spec.ts` — the committed tripwire for the long-press flyout race section 8 names as a CPU-contention flake, and for the misdiagnosis section 9 recounts
-- `e2e/helpers/screenshot-scale.ts:53`, `e2e/helpers/cdp-helpers.ts:60` — the stale 1177px/440px
-  figures section 8 records as stale
+- `e2e/helpers/screenshot-scale.ts:108-116`, `e2e/helpers/cdp-helpers.ts:53-54` — the stale
+  1177px/440px figures section 8 records as stale
 - `src/hooks/useDialogFocusContainment.ts` — where the focus block section 7's lead 3 names now lives
-- `e2e/viewport-drawing.spec.ts:17,72-78` — the three generated cases, the CDP capture, and the
-  `toBeLessThan(25)` soft assertions section 12 measures
-- `e2e/viewport-drawing.spec.ts:1-15` — the `{ name, width, height }` list whose cases
+- `e2e/viewport-drawing.spec.ts:156,334-338` — the CDP capture, and the
+  `toBeLessThan(25)` CEILING guard section 12 measures. It is a hard assertion on the derived
+  tolerance, not one of the soft stroke assertions, which are at `:357-364`
+- `e2e/viewport-drawing.spec.ts:18-22` — the `{ name, width, height }` list whose cases
   section 12 observed moving between runs
 - `e2e/toolbar-fit.spec.ts:188` — the eight-`open()` sweep that never raises its own
   budget, which is what section 13 observed losing
@@ -961,9 +892,3 @@ after its first edit is turn every other checkout's test suite red.
   suites section 14 saw fail only inside a full run, and pass alone
 - `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees
   whose shape has to be re-derived when they commit or land
-- `scripts/__tests__/worktree-inventory.test.mjs:1874` — the `live.length > 1` guard section 15
-  observed failing in a fresh clone, and the suite `ci` runs there without a worktree to find
-- `scripts/__tests__/worktree-inventory.test.mjs:1870` — the curated-entry case whose result is a
-  function of what other agents on this machine are doing, section 16
-- `scripts/lib/worktree-inventory/curated.mjs` — the table section 16 says is red to maintain while
-  a task is in flight, and the file every in-flight agent would have to edit to make it green

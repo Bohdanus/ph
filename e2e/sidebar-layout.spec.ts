@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { toolbarMap } from '../toolbar-mapping.ts';
 
@@ -222,10 +222,16 @@ test.describe('SidebarLeft - Layout Toggle (fast)', () => {
 
   test('the tool order is the toolbar map order in both layouts', async ({ page }) => {
     // A PREFIX comparison against `toolbarMap`, not an equality between the two states. The
-    // fit collapses a suffix of the list, so the two layouts show DIFFERENT numbers of tiles
-    // at one viewport — ten against five at 1280x720, because a two-column row holds two
-    // groups. Comparing the two lists to each other would assert that coincidence of this
-    // viewport rather than the order, and would start failing the day a row changed height.
+    // fit takes a SUFFIX of the list, so the two layouts show DIFFERENT numbers of tiles at
+    // one viewport, and comparing the two lists to each other would assert that coincidence of
+    // this viewport rather than the order, and would start failing the day a row changed height.
+    //
+    // The counts move with the budget and are not pinned here — seven tool tiles in one column
+    // at 1280x720, and all sixteen in two columns, where the whole map fits above 666px and no
+    // three-dots tile is rendered at all. `e2e/toolbar-fit.spec.ts` owns the heights and prints
+    // them on every run; they are font-metric dependent and a second copy is a second thing to
+    // rot. What is true at every one of them, and what this asserts, is that each layout shows
+    // a LEADING run of the map.
     const oneColumnTiles = await tileToolNames(page);
     expect(oneColumnTiles, 'at least the first tool must have a tile at this height').not.toHaveLength(0);
     expect(oneColumnTiles, 'one column keeps the leading tools in the map order').toEqual(

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures/extended-test';
 import { drawLine, getDarkPixelBounds, getWorkspaceCanvas, waitForCanvasRedraw } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
@@ -11,10 +11,18 @@ test.describe('Device pixel ratio', () => {
   // The project default is an emulated `deviceScaleFactor` of 1, so a test that merely reads
   // `window.devicePixelRatio` cannot tell a 1x run from a 2x one - which is why the file
   // used to hold `expect(dpr).toBeGreaterThanOrEqual(1)`, an assertion no page this suite
-  // can load can fail. The app reads layout pixels only and never consults
+  // can load can fail. For POINTER MAPPING the app reads layout pixels only and never consults
   // `devicePixelRatio` (pinned at the unit level in
-  // `src/hooks/__tests__/usePointerPosition.test.ts:777`), so the only app behaviour worth
+  // `src/hooks/__tests__/usePointerPosition.test.ts:856-869`), so the only app behaviour worth
   // asserting here is that drawing still lands under the cursor when the ratio is 2.
+  //
+  // "for POINTER MAPPING" is load-bearing, and it was written here to stop the sentence from
+  // being read as "the app never touches a device-pixel count". It stopped being true when the
+  // three option-bar thumbnails began multiplying their backing store by the ratio
+  // (`src/hooks/useDevicePixelRatio.ts`). This spec is still the right shape for what it covers,
+  // and it still CANNOT detect a change to a backing store: `imageBoundsToCss` is scale-agnostic
+  // by construction, so this file passes identically at a 1x, 2x or 8x store. The gap that leaves
+  // is recorded in `e2e/OPEN_PROBLEMS.md` under "no mobile or HiDPI project".
   test.use({ deviceScaleFactor: 2 });
 
   test('canvas drawing maps CSS pixels, not device pixels, at an emulated ratio of 2', async ({ page }, testInfo) => {

@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
@@ -15,7 +15,7 @@ import {
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
-import { clickToolButton, openToolFlyout, resolveToolTile, selectFromFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
@@ -45,11 +45,14 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * | Draw (test fixture)     | Size            | `<input type=range>`          | `size-slider`                   | `Size 10px`       | `Size 10px`     | 0.5..500, step 0.5                  |
  * | Draw (test fixture)     | Opacity         | `<input type=range>`          | `alpha-slider`                  | `Opacity 90%`     | `Opacity 90%`   | 0..1, step 0.01                    |
  *
- * Toolbar placement (`toolbar-mapping.ts`): `eyedropper` is its OWN single-tool tile, so
- * `clickToolButton(page, 'eyedropper')` selects it directly. The other three share ONE flyout
- * whose primary tool is `brush` (six entries: brush, pencil, color-replacement, eraser,
+ * Toolbar placement (`toolbar-mapping.ts`): `eyedropper` is its OWN single-tool tile, and at the
+ * suite's 1280x720 the rail fills its slot, so its seven visible tiles are the first seven of its
+ * sixteen groups and the eyedropper — the fifth — is one of them: `clickToolButton(page,
+ * 'eyedropper')` selects it directly and there is no flyout to open. The other three share ONE
+ * flyout whose primary tool is `brush` (six entries: brush, pencil, color-replacement, eraser,
  * magic-eraser, paint-bucket), so `clickToolButton(page, 'brush')` only ever selects the Brush
- * and the other three need `openToolFlyout` + `selectFromFlyout`.
+ * and the other three need `openToolFlyout` + `selectFromFlyout` — through the three-dots tile at
+ * that window, because the brush group is the EIGHTH of the sixteen and is therefore folded.
  *
  * Geometry: the app seeds an 800x600 opaque white `Blank 1` base layer on load (there is no
  * file input and no "open image" gesture), so every colour a tool acts on in this spec is
@@ -232,22 +235,35 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
  * and that chosen tool's own name afterwards: the flyout is only reachable again from whichever
  * tile currently leads it.
  *
- * At 1280x720 there is no such tile: the rail folds a SUFFIX, so the whole brush group — the
- * fifth of sixteen — is in the three-dots tile, and this helper's `openToolFlyout` reaches it
- * through the collapse branch rather than through the long press. The selection is then proved on
- * the tile that REPRESENTS the tool, which for a collapsed tool is the three-dots tile and nothing
- * else. That is also why `verifyPrimaryTool` cannot be used here: it asserts a tile's ACCESSIBLE
- * NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name is
- * "More Tools" and never the tool's label. `verifyPrimaryTool` now says exactly that when a tool
- * has no tile of its own, instead of failing on an empty text content. The eyedropper tests below
- * confirm selection through the eyedropper's own options bar for the same reason: it is the fifth
- * of sixteen rows, so the 1280x720 suite viewport folds it away too.
+ * At 1280x720 there is no such tile: the rail folds a SUFFIX, and the brush group is the EIGHTH
+ * of the sixteen, so it is in the three-dots tile and this helper's `openToolFlyout` reaches it
+ * through the collapse branch rather than through the long press. Filling the slot moved the
+ * boundary up the list and not this group: seven tiles fit at that window, the eighth group is
+ * still folded, and the selection is therefore proved on the tile that REPRESENTS the tool, which
+ * for a collapsed tool is the three-dots tile and nothing else.
+ *
+ * That tile is read as SELECTION STATE, not as an accessible name, and `expectToolSelected` picks
+ * the right channel for whichever of the two kinds of tile it is handed. The three-dots tile
+ * deliberately renders NO `aria-pressed` (`SidebarLeft.tsx:635` — a control that opens a menu must
+ * not also claim to be a pressed toggle for a tool the user cannot see), so what it does still
+ * render for the selected member of the collapsed set is the lit class
+ * `TOOL_BUTTON_ACTIVE_CLASS`, painted off the same `group.some(tool => tool.name === toolName)`
+ * predicate the attribute used to expose. Its failure message therefore names the tool by slug;
+ * `label` remains what the flyout item itself is matched on.
+ *
+ * `verifyPrimaryTool` cannot answer the same question for a different reason: it asserts a tile's
+ * ACCESSIBLE NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name
+ * is "More Tools" and never the tool's label. It now says exactly that when a tool has no tile of
+ * its own, instead of failing on an empty text content. The eyedropper tests below do NOT share
+ * that reason: the eyedropper is the fifth of the sixteen and the fifth of the seven the rail
+ * shows at 720, so it has a tile of its own and the helper selects it directly. They confirm the
+ * selection through the eyedropper's own options bar all the same, because that is the one
+ * element in the document driven by `toolName` itself.
  */
 async function selectBrushFamilyTool(page: Page, from: string, toolName: string, label: string): Promise<void> {
   await openToolFlyout(page, from);
   await selectFromFlyout(page, { toolName, label });
-  const tile = await resolveToolTile(page, toolName);
-  await expect(tile, `${label} must be the tool the rail reports as selected`).toHaveAttribute('aria-pressed', 'true');
+  await expectToolSelected(page, toolName);
 }
 
 /**
@@ -284,10 +300,10 @@ async function drawSlab(
   //
   // A committed stroke is a history entry, and a seeded document has exactly one entry at cursor 0,
   // so `undo` is disabled before the draw and enabled after it. The eyedropper test below already
-  // reads that same button to prove the INVERSE — that a click added no entry (`:643-645`) — so this
-  // is the repo's own instrument, used for the other half of the fact. With this assertion first, a
-  // dropped commit names itself in the default expect timeout; with only the pixel poll, it can
-  // only ever report that nothing appeared.
+  // reads that same button to prove the INVERSE — that a click added no entry, in the assertion
+  // that says so — so this is the repo's own instrument, used for the other half of the fact. With
+  // this assertion first, a dropped commit names itself in the default expect timeout; with only
+  // the pixel poll, it can only ever report that nothing appeared.
   await expect(
     page.getByTestId('undo-button'),
     `the ${color} stroke to commit one history entry; a gesture the pointer validators refused leaves no entry and no pixels`
@@ -622,12 +638,12 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
-    // The eyedropper is a single-tool group, so there is no flyout to open — but at the suite's
-    // 1280x720 it is also the FIFTH row, and the collapse is a suffix, so it has no tile of its
-    // own either. The comment that used to claim otherwise was written when the rail defaulted to
-    // two columns and showed seven groups. Selection is therefore confirmed through the tool's own
-    // options bar, which is the one thing in the document driven by `toolName` itself; the tile
-    // that stands for the eyedropper is the three-dots tile, and its own identity is "More Tools".
+    // The eyedropper is a single-tool group, so there is no flyout to open — and it has a tile of
+    // its own here too: the rail fills its slot, so the seven tiles at the suite's 1280x720 are
+    // its first seven groups and the eyedropper is the fifth. So the bar below is confirmed
+    // because it is the element the tool itself drives, not because the tile is missing: the
+    // three-dots tile stands for nothing here. That the tile is on the rail is
+    // `e2e/selection-tools.spec.ts`'s claim to own, so it is linked rather than restated.
     await clickToolButton(page, 'eyedropper');
     await expect(
       page.getByRole('combobox', { name: 'Sample Size' }),
@@ -673,8 +689,9 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
-    // Selection is confirmed by the combobox below, which is the eyedropper's own bar; the tile
-    // it stands on is the three-dots tile at this window, for the reason given in the sibling test.
+    // Selection is confirmed by the combobox below, which is the eyedropper's own bar, and the
+    // tile the helper clicked is that tool's own tile at this window rather than the three-dots
+    // tile — for the reason given in the sibling test.
     await clickToolButton(page, 'eyedropper');
     const sampleSize = page.getByRole('combobox', { name: 'Sample Size' });
     await expect(sampleSize, 'the eyedropper is the active tool').toBeVisible();

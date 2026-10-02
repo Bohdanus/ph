@@ -15,12 +15,20 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Board, BoardError, IDLE_LIVE_MS, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
+import {
+  Board,
+  BoardError,
+  DEFAULT_LEASE_MS,
+  IDLE_LIVE_MS,
+  MAX_MESSAGE_CHARS,
+  isImportedOrigin,
+  parseDuration,
+} from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
 
@@ -1028,6 +1036,75 @@ describe('the event log is the swarm talking', () => {
     expect(event.issue_id).toBeNull();
     expect(event.message).toBe('I am touching StoreContext for the next hour');
   });
+
+  /**
+   * A note is a POINTER, and a pointer has to fit.
+   *
+   * Nothing capped a message at any layer, so a 5000-character note was stored
+   * whole and `watch` printed it as ONE 5100-character line — the log becomes a
+   * wall that every later reader scrolls past. The obvious repair is to truncate,
+   * and that is exactly what this repository has already written down as a defect
+   * in `truncate()`: `slice(0, 70)` with no ellipsis produced a title that read as
+   * a finished sentence, and an agent working from half a message cannot tell
+   * that is what it has. So the cap REJECTS, names the limit, and says where the
+   * finding belongs.
+   */
+  it('refuses an over-long message instead of truncating it', () => {
+    const board = boardFor('a');
+    expect(MAX_MESSAGE_CHARS).toBe(4096);
+    // Exactly at the limit is allowed: a cap that rejects the boundary value
+    // would be off by one against every author who counted.
+    const atLimit = board.note('x'.repeat(MAX_MESSAGE_CHARS));
+    expect(board.events({ since: 0, kind: 'note' }).map((event) => event.message)).toEqual([
+      'x'.repeat(MAX_MESSAGE_CHARS),
+    ]);
+    expect(atLimit.seq).toBeGreaterThan(0);
+    // One character over is refused, and NOTHING is written.
+    expect(() => board.note('x'.repeat(MAX_MESSAGE_CHARS + 1))).toThrow(BoardError);
+    expect(() => board.note('x'.repeat(MAX_MESSAGE_CHARS + 1))).toThrow(/4096-character board limit/);
+    expect(board.events({ since: 0, kind: 'note' })).toHaveLength(1);
+    // The error must not read as a truncated message would: it says nothing was
+    // written, and where the finding goes instead.
+    try {
+      board.note('x'.repeat(MAX_MESSAGE_CHARS + 1));
+      expect.unreachable('the over-long note should have been refused');
+    } catch (error) {
+      expect(error.message).toMatch(/nothing was written/);
+      expect(error.message).toMatch(/handoff document/);
+      expect(error.message).toMatch(/Nothing is truncated/);
+    }
+  });
+
+  it('caps every text-carrying EVENT, because they all pass through one place', () => {
+    const board = boardFor('a');
+    const { id } = board.createIssue({ title: 'capped' });
+    const over = 'x'.repeat(MAX_MESSAGE_CHARS + 1);
+    // claim, comment, defer, reopen, resolve and close all carry prose, and all of
+    // them reach addEvent. The test names them so a future command cannot quietly
+    // add a path around the one guard.
+    expect(() => board.claimIssue(id, { note: over })).toThrow(/board limit/);
+    expect(() => board.comment(id, over)).toThrow(/board limit/);
+    expect(() => board.deferIssue(id, { reason: over })).toThrow(/board limit/);
+    // resolve and close need the live claim first, which the refused claim above
+    // did not take — so take it with a short note.
+    board.claimIssue(id, { note: 'taking it' });
+    expect(() => board.resolveIssue(id, { note: over })).toThrow(/board limit/);
+    // `close` refuses an unresolved issue before it reaches the guard, and refuses
+    // the resolver as verifier, so resolve for real and let ANOTHER agent try to
+    // close it — which is the only way `closeIssue` is reachable at all.
+    board.resolveIssue(id, { note: 'resolved for real' });
+    expect(() => board.closeIssue(id, { agent: 'b', note: over })).toThrow(/board limit/);
+    // Nothing was written by any of them: the issue is still open-and-resolved
+    // rather than closed, and the only note on the board is the short one.
+    expect(board.getIssue(id).status).toBe('resolved');
+    // The refused `claim --note` left no claim.acquire behind, and the short note
+    // that was allowed is the only prose on the board.
+    expect(board.events({ kind: 'claim.acquire' }).map((event) => event.message)).toEqual(['claimed: taking it']);
+    expect(board.events({ kind: 'note' })).toHaveLength(0);
+    // An issue BODY is not an event, and is not capped: a body is a document an
+    // issue points at, not a log line, so it has no reader to protect.
+    expect(() => board.createIssue({ title: 'with a long body', body: over })).not.toThrow();
+  });
 });
 
 describe('the schema this script writes', () => {
@@ -1142,6 +1219,105 @@ describe('the schema this script writes', () => {
     expect(String(version)).not.toBe('2');
     // And nothing was silently moved on its way past.
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issue_locks').get().n).toBe(0);
+  });
+
+  /**
+   * The schema COLLISION, and it is the reason the number alone is not a guard.
+   *
+   * Two branches each raised `SCHEMA_VERSION` to 3 and each called their own
+   * first step "v2" — the same version main had already spent on something
+   * else. A board stamped 2 by main therefore meant two different schemas, and
+   * nothing in the format could tell them apart.
+   *
+   * What turned that into silent data loss is the SECOND half, and it is the
+   * half a version guard does not cover: `runMigrations` answered `false` for a
+   * version it had no step for. `false` is the caller's signal for "a migration
+   * ran and had nothing to do", and it is the value that withholds the version
+   * stamp — so the board sat at 2 with the new table created empty by
+   * `exec(SCHEMA)` and no error anywhere. `integration/merge-sweep` shipped
+   * exactly this and is still unmerged.
+   *
+   * Raised on this script's OWN `migrationSteps` rather than by building a
+   * branch's schema, because that is the shape that has to be caught: a script
+   * that adds a table, bumps the number, and forgets the step. Going through
+   * `open()` rather than calling `runMigrations` directly is the point — the
+   * defect only ever reached a caller that OPENED a board, and the first
+   * version of this case called the method instead, so it exercised the guard
+   * without exercising anything that could produce it.
+   */
+  it('refuses to open a version it claims to migrate but has no step for', () => {
+    // A real v1 board, so `existing` is inside (0, SCHEMA_VERSION) and the
+    // migration path is reached. This script writes v2 and its steps hold only
+    // `1`; emptying them is precisely the state a v3 branch ships when it forgot
+    // to add `steps[2]`. Before the guard, this opened successfully and reported
+    // nothing.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    // And the version was NOT stamped, which is what `false` used to cause.
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    after.close();
+  });
+
+  it('still migrates the version it does have a step for', () => {
+    // The guard must not become a blanket refusal: v1 is a version this script
+    // genuinely knows how to move, and refusing it would strand every v1 board.
+    buildV1Board(dir);
+    const board = boardFor('a');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    board.close();
+  });
+
+  it('leaves no half-open board when a migration refuses', () => {
+    // `open()` assigns `this.db` before `migrate()` runs, and its first line is
+    // `if (this.db) return this`. So a refusal that left the handle in place
+    // meant the natural recovery — catch, fix, retry — got a board back on the
+    // second call with `migrate()` never re-run and NO error, which is the
+    // unmigrated board the guard exists to prevent.
+    // A v1 board, so `existing` is inside (0, SCHEMA_VERSION) and the guard is
+    // reached at all — a fresh board is 0 and is stamped without migrating.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    // Stand in for a script whose steps do not cover v1.
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    expect(board.db).toBeNull();
+    // And the retry actually retries, rather than short-circuiting.
+    delete board.migrationSteps;
+    const reopened = board.open();
+    expect(reopened.db).not.toBeNull();
+    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    reopened.close();
+  });
+
+  it('leaves no half-open board when the statements BEFORE migrate() fail', () => {
+    // The gap a `try` that wrapped only `migrate()` left open. `new
+    // DatabaseSync` SUCCEEDS on a corrupt file — the handle is allocated and
+    // only fails when a statement runs — so the first `PRAGMA` throws and
+    // `migrate()` is never reached. Verified against the previous commit and
+    // against main: same half-open board, same silent second `open()`.
+    writeFileSync(join(dir, 'board.db'), 'this is not a sqlite database');
+    const board = new Board({ dir, identity: identityFor('a') });
+    expect(() => board.open()).toThrow();
+    expect(board.db, 'a failed open left a live handle, so a retry short-circuits').toBeNull();
+  });
+
+  it('refuses before it creates anything, not after', () => {
+    // The two refusals in `migrate()` have to agree: a newer board is refused
+    // BEFORE `exec(SCHEMA)` precisely so it does not half-adopt a schema, and a
+    // missing migration step must not re-create that hazard one line later.
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({});
+    expect(() => board.open()).toThrow(/no v1 migration step/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    const tables = after.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    // Only the v1 board's own tables: nothing from this script's SCHEMA.
+    expect(tables.map((row) => row.name)).not.toContain('issue_locks');
+    expect(tables.map((row) => row.name)).not.toContain('claims');
+    after.close();
   });
 });
 
@@ -1589,6 +1765,51 @@ describe('the command line', () => {
     expect(onlyLive.out).not.toMatch(/^nothing ready/m);
   });
 
+  it('pages the ready queue with `--limit`, and refuses a `--limit` that is not a count', async () => {
+    // Fifty-five ready issues, so the default page of 50 reads as a PAGE and not
+    // as a board that ran out of work.
+    const board = boardFor('a');
+    for (let index = 0; index < 55; index += 1) board.createIssue({ title: `queued work ${index}` });
+    board.close();
+    const page = async (...args) => JSON.parse((await cli(['ready', ...args, '--json'])).out).issues;
+
+    expect(await page()).toHaveLength(50);
+    expect(await page('--limit', '1')).toHaveLength(1);
+    // A page is the head of the RANKED queue, never a different order.
+    expect((await page('--limit', '1'))[0].id).toBe((await page())[0].id);
+    // A page larger than the board is still one page, and the whole board.
+    expect(await page('--limit', '1000')).toHaveLength(55);
+
+    // Five ways of asking for a page that is not a count. Every one of them used
+    // to exit 0 on a silently empty or wrongly sliced queue — `abc` and `0` are
+    // `NaN` and `0` to `slice`, and `-1` is a legal slice that drops the LAST
+    // row instead of the first. The exit-code table reserves 1 for exactly this,
+    // and the empty-page message then told the reader there was no startable
+    // work on a board of fifty-five.
+    for (const bad of ['abc', '0', '-1', '1.5', '']) {
+      const refused = await cli(['ready', '--limit', bad]);
+      expect(refused.code, `--limit ${bad}`).toBe(1);
+      expect(refused.err, `--limit ${bad}`).toMatch(/--limit needs a positive whole number/);
+      expect(refused.out, `--limit ${bad}`).not.toMatch(/nothing ready/);
+    }
+  });
+
+  it('refuses an unanswerable `--limit` on `list` too, which is its other reader', async () => {
+    await cli(['new', 'a filed issue', '--json']);
+    // `list` read the flag with the same unvalidated `Number()` and printed an
+    // empty board at exit 0: a status report that reports nothing and says the
+    // board has no issues in it.
+    for (const bad of ['abc', '0', '-1']) {
+      const refused = await cli(['list', '--limit', bad]);
+      expect(refused.code, `--limit ${bad}`).toBe(1);
+      expect(refused.err, `--limit ${bad}`).toMatch(/--limit needs a positive whole number/);
+    }
+    // And a `--limit` that IS a count still pages the list, and its absence
+    // still means the whole board.
+    expect(JSON.parse((await cli(['list', '--limit', '1', '--json'])).out).issues).toHaveLength(1);
+    expect(JSON.parse((await cli(['list', '--json'])).out).issues).toHaveLength(1);
+  });
+
   it('exits 1 from `check` when a file is taken, so a shell can gate on it', async () => {
     await cli(['hold', 'src/taken.ts']);
     // Asked as a different agent: your own lock is not a conflict with yourself.
@@ -1860,6 +2081,155 @@ describe('the command line', () => {
     expect(watched.out).toContain('a line the swarm reads');
   });
 
+  /**
+   * Every word typed must be a word stored, or the board is not telling the
+   * truth about what anybody said.
+   *
+   * `note before --flag after` stored `before`, discarded `--flag after`, and
+   * answered `noted — event #12` — exit 0, a sequence number, and a `watch` line
+   * carrying a finished-looking sentence that was not the sentence typed. The
+   * words were dropped in `parseArgs`, before any board call, so no check on the
+   * stored message could ever have caught it.
+   *
+   * Prose contains `--`, so the repair is a REFUSAL rather than a guess: quote
+   * the message, or end the command with a bare `--`. Both of those are pinned
+   * here, and the shape is pinned for a GLOBAL flag too — an earlier draft
+   * exempted `--json` and `--agent`, which reads right and is wrong: nothing
+   * follows a trailing global flag, so the exemption guarded nothing, while
+   * `note my finding --json trailing words` drops `trailing words` exactly as
+   * silently as any other flag does. An exemption that guards nothing and hides
+   * a loss is worse than no exemption.
+   */
+  it('refuses a note whose words a -- swallowed, instead of storing the half it kept', async () => {
+    // The quoted form, and the bare `--` form, both store the WHOLE sentence.
+    const quoted = await cli(['note', 'before --flag after', '--json']);
+    expect(quoted.code, quoted.err).toBe(0);
+    expect(JSON.parse(quoted.out).message).toBe('before --flag after');
+    // The helper appends `--dir`/`--agent` LAST, so a bare `--` inside the
+    // arguments would swallow them and leave the board with no home. This one puts
+    // the flags FIRST, the way the CLI has to be typed for a `--` to be usable.
+    const terminated = await (async () => {
+      const out = [];
+      const err = [];
+      const code = await run(['note', '--json', '--dir', dir, '--agent', 'a', '--', 'before --flag after'], {
+        cwd: dir,
+        out: { write: (chunk) => out.push(chunk) },
+        err: { write: (chunk) => err.push(chunk) },
+      });
+      return { code, out: out.join(''), err: err.join('') };
+    })();
+    expect(terminated.code, terminated.err).toBe(0);
+    expect(JSON.parse(terminated.out).message).toBe('before --flag after');
+    // And the unquoted form is refused rather than shortened.
+    const split = await cli(['note', 'before', '--flag', 'after', '--json']);
+    expect(split.code).toBe(1);
+    expect(split.err).toMatch(/dropped, not written/);
+    // The refusal must not have written the half it could read.
+    expect(JSON.parse((await cli(['watch', '--since', '0', '--json'])).out).events.map((e) => e.message)).toEqual([
+      'before --flag after',
+      'before --flag after',
+    ]);
+    // A trailing global flag configures the run and must NOT trip the refusal:
+    // nothing follows it, so no word is lost. `note x --json` is legitimate.
+    const global = await cli(['note', 'a plain finding here', '--json']);
+    expect(global.code, global.err).toBe(0);
+    expect(JSON.parse(global.out).message).toBe('a plain finding here');
+    // But words AFTER a global flag are the same loss as any other, and an
+    // exemption here would have hidden it — this is the case the exemption missed.
+    const afterGlobal = await cli(['note', 'a finding', '--json', 'trailing', 'words']);
+    expect(afterGlobal.code).toBe(1);
+    expect(afterGlobal.err).toMatch(/dropped, not written/);
+    // `comment` takes the same prose and gets the same protection.
+    const { id } = JSON.parse((await cli(['new', 'split text', '--json'])).out);
+    expect((await cli(['comment', id, 'tail', '--flag', 'head'])).code).toBe(1);
+    expect((await cli(['comment', id, 'tail --flag head', '--json'])).code).toBe(0);
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).events.map((e) => e.message)).toContain(
+      'tail --flag head'
+    );
+  });
+
+  /**
+   * Prose in a FLAG takes more than one word, or the flag documents a sentence it
+   * cannot hold.
+   *
+   * `--note`, `--reason` and `--body` were single-token value flags, so
+   * `claim ph-1 --note fixed the thing` recorded `fixed` and threw away the rest,
+   * with exit 0. The board then held a claim note that read as a complete
+   * sentence — `fixed` — and no way for the next agent to know an author had
+   * written four words. `--files a.ts b.ts` had exactly this shape once already and
+   * was fixed by making the parser learn the documented form, so the documented
+   * form here is the same one.
+   */
+  it('keeps an unquoted --note whole, rather than the first word of it', async () => {
+    const { id } = JSON.parse((await cli(['new', 'prose in a flag', '--json'])).out);
+    const claimed = await cli(['claim', id, '--note', 'fixed', 'the', 'thing', 'entirely', '--json']);
+    expect(claimed.code, claimed.err).toBe(0);
+    expect(
+      JSON.parse((await cli(['watch', '--since', '0', '--json'])).out).events.find(
+        (event) => event.kind === 'claim.acquire'
+      ).message
+    ).toContain('fixed the thing entirely');
+    // Quoting still works, and a later flag still ends the prose.
+    expect((await cli(['claim', id, '--note', 'quoted note', '--lease', '30m'])).code).toBe(0);
+    // `--reason` and `--body` carry prose through the same path.
+    const deferred = await cli(['defer', id, '--reason', 'waiting', 'on', 'ph-9', '--json']);
+    expect(deferred.code, deferred.err).toBe(0);
+    expect(JSON.parse(deferred.out).status).toBe('deferred');
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.defer_reason).toBe('waiting on ph-9');
+    const filed = await cli(['new', 'a body in words', '--body', 'several', 'words', 'of', 'body', '--json']);
+    expect(filed.code, filed.err).toBe(0);
+    expect(JSON.parse((await cli(['show', JSON.parse(filed.out).id, '--json'])).out).issue.body).toBe(
+      'several words of body'
+    );
+  });
+
+  /**
+   * The log is longer than one page, and a bare `watch` used to show the wrong
+   * end of it.
+   *
+   * It started at seq 0, printed one 200-event page and stopped. On this
+   * repository's real board — 572 events when this was found — that is the
+   * first seventeen hours and nothing since, so every `note` an agent had just
+   * written was absent from the output. Two agents grepped for their own note
+   * text, got nothing, and concluded the note had not landed; it had. One of
+   * them reported the cause as ANSI colour, and the output contains no ESC byte
+   * at all, so a search for that would have found nothing either.
+   *
+   * Both halves are pinned here because they are two different mistakes: a bare
+   * `watch` has to show the RECENT end (and say it is a window), and an
+   * explicit `--since` has to read forward past the first page instead of
+   * stopping at 200.
+   */
+  it('gives a bare `watch` the RECENT end of a log longer than a page, and says so', async () => {
+    const board = boardFor('a');
+    for (let i = 0; i < 210; i += 1) board.note(`filler note ${i}`);
+    board.note('the note the agent is looking for');
+    const total = board.lastSeq();
+    board.close();
+    expect(total).toBeGreaterThan(200);
+
+    const bare = await cli(['watch']);
+    expect(bare.code).toBe(0);
+    expect(bare.out).toContain('the note the agent is looking for');
+    // The window is the one fact the reader cannot see from the lines, so it is
+    // said out loud, as a comment a pipeline can drop. The line carries the
+    // count SHOWN, the count MATCHED, and the command that reads the rest —
+    // `matched` comes from the query, so a header cannot claim a completeness
+    // the read did not have.
+    expect(bare.out).toMatch(/^# showing the last \d+ of \d+ event\(s\); .*swarm watch --since 0$/m);
+    // And it really is the recent end: the first event is not in it.
+    expect(bare.out).not.toContain('filler note 0');
+
+    // An explicit read starts where it says and does not stop at one page.
+    const whole = await cli(['watch', '--since', '0']);
+    expect(whole.out).toContain('filler note 0');
+    expect(whole.out).toContain('the note the agent is looking for');
+    // Reading from the start is not a window, so it carries no `#` header at
+    // all. Asserted on the line START, not on a phrase: a suffix read has no
+    // window to describe, and the only `#` this command ever writes is one.
+    expect(whole.out).not.toMatch(/^# /m);
+  });
+
   it('exits 2 for an issue that does not exist', async () => {
     const missing = await cli(['show', 'ph-404']);
     expect(missing.code).toBe(2);
@@ -1872,5 +2242,218 @@ describe('the command line', () => {
     expect(report.report[0].free).toBe(false);
     expect(report.report[0].holders[0].agent_id).toBe('a');
     expect(report.report[1].free).toBe(true);
+  });
+});
+
+/**
+ * The two halves of `autoSweep` asking about the same row.
+ *
+ * `autoSweep` renews first and sweeps second, so that a working agent's lease is
+ * never the thing that gets reclaimed. That ordering only works if both halves
+ * agree on WHICH claim is "mine", and for a while they did not: identity is the
+ * git BRANCH, so two agents on one branch in different worktrees share an
+ * `agent_id`, and renewal asked about the CALLER's worktree while `doctor` asked
+ * about the ROW's. A live agent then extended a dead colleague's lease and
+ * released it in the same invocation.
+ */
+describe('lease renewal when two agents share a branch', () => {
+  const openAs = (agentId, worktree) =>
+    new Board({
+      dir,
+      identity: { agentId, kind: 'kilo', worktree, branch: agentId, sessionId: null, pid: 1, meta: {} },
+      now: () => clock,
+    }).open();
+
+  it("renews only the claims made from the caller's own worktree", () => {
+    const mine = join(dir, 'wt-shared-mine');
+    const theirs = join(dir, 'wt-shared-theirs');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(theirs, { recursive: true });
+
+    // Both are `agentId: 'feat/shared'`, because the branch is the identity.
+    const a = openAs('feat/shared', mine);
+    const b = openAs('feat/shared', theirs);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+
+    // Past the full lease, so "renewed" and "expired" are distinguishable: a
+    // lease that is merely ageing is still in the future and would make the
+    // assertion below pass for the wrong reason.
+    advance(DEFAULT_LEASE_MS + 1000);
+    const renewed = a.renewOwnClaims();
+
+    // Exactly one. The other worktree's claim is not this agent's to extend, and
+    // renewing it is what let the sweep below take a live lease away.
+    expect(renewed).toEqual(['ph-1']);
+    const leases = new Map(
+      a.db
+        .prepare('SELECT issue_id, lease_until FROM claims WHERE released_at IS NULL')
+        .all()
+        .map((r) => [r.issue_id, r.lease_until])
+    );
+    expect(Date.parse(leases.get('ph-1'))).toBeGreaterThan(clock);
+    expect(Date.parse(leases.get('ph-2'))).toBeLessThan(clock);
+  });
+
+  it("still releases the dead worktree's claim, and keeps the live one", () => {
+    // The other half of the contract, and the reason the ordering exists:
+    // scoping renewal must not make a dead colleague's claim immortal, AND a
+    // live agent's own claim must survive a sweep it triggered itself.
+    const mine = join(dir, 'wt-live');
+    const gone = join(dir, 'wt-dead');
+    mkdirSync(mine, { recursive: true });
+    mkdirSync(gone, { recursive: true });
+    const a = openAs('feat/x', mine);
+    const b = openAs('feat/x', gone);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+
+    rmSync(gone, { recursive: true, force: true });
+    const sweep = a.autoSweep();
+
+    expect(sweep.renewed).toEqual([]);
+    expect(sweep.released.map((f) => f.issue)).toEqual(['ph-2']);
+    expect(sweep.released[0].kind).toBe('dead-worktree');
+    // The survivor is the whole point of renewing before sweeping.
+    expect(a.db.prepare('SELECT COUNT(*) n FROM claims WHERE released_at IS NULL').get().n).toBe(1);
+  });
+
+  it('keeps renewing a claim that recorded no worktree', () => {
+    // A claim written before a worktree was known must not be converted into a
+    // silent 45-minute countdown by the scoping above.
+    const mine = join(dir, 'wt-nullcase');
+    mkdirSync(mine, { recursive: true });
+    const a = openAs('feat/y', mine);
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    a.db.prepare('UPDATE claims SET worktree = NULL WHERE issue_id = ?').run('ph-1');
+
+    advance(DEFAULT_LEASE_MS * 0.75);
+    expect(a.renewOwnClaims()).toEqual(['ph-1']);
+  });
+});
+
+/**
+ * A sweep reclaims what has lapsed. It does not take anything from a live holder.
+ *
+ * This is the multi-holder case, and it is the one every existing test missed:
+ * all of them use one agent per path, so the guard that matters is never the one
+ * under load. Two live rows for one path are schema-legal — the key is
+ * `(path, agent_id)` — and arise without any `--force` from the ordinary
+ * 45-minute-gap sequence, so the test builds exactly that.
+ */
+describe('doctor with two holders of one path', () => {
+  /**
+   * Two agents, two worktrees that EXIST, one file.
+   *
+   * The worktrees have to exist on disk: `identityFor` points each agent at
+   * `wt-<id>`, and `doctor` reads a missing worktree as "dead agent", so a
+   * fixture that skips the directories has every claim swept before the lock
+   * question is even reached.
+   */
+  const twoHolders = (aLeaseMs, bLeaseMs) => {
+    mkdirSync(join(dir, 'wt-a'), { recursive: true });
+    mkdirSync(join(dir, 'wt-b'), { recursive: true });
+    const a = boardFor('a');
+    const b = boardFor('b');
+    a.createIssue({ id: 'ph-1', title: 'one' });
+    a.claimIssue('ph-1');
+    b.createIssue({ id: 'ph-2', title: 'two' });
+    b.claimIssue('ph-2');
+    const path = 'src/contested.ts';
+    a.holdFiles([path], { issueId: 'ph-1', leaseMs: aLeaseMs });
+    advance(aLeaseMs + 1000); // A's lock has lapsed, so `liveLocks` drops it
+    b.holdFiles([path], { issueId: 'ph-2', leaseMs: bLeaseMs });
+    return { a, b, path };
+  };
+
+  const rowsFor = (board, path) =>
+    board.db.prepare('SELECT agent_id, released_at FROM file_locks WHERE path = ? ORDER BY agent_id').all(path);
+
+  it('releases the lapsed row and leaves the live holder alone', () => {
+    const { a, path } = twoHolders(60_000, 45 * 60 * 1000);
+    // Asserted on the TABLE, not on `liveLocks` — which excludes an expired row
+    // by definition, so it cannot show that the row still exists.
+    expect(rowsFor(a, path)).toEqual([
+      { agent_id: 'a', released_at: null },
+      { agent_id: 'b', released_at: null },
+    ]);
+
+    const lockFindings = a.doctor().filter((f) => f.path);
+    expect(lockFindings.map((f) => f.agent)).toEqual(['a']);
+    // A's stale row is gone. B's is not, and B still holds the file.
+    expect(rowsFor(a, path)).toEqual([
+      { agent_id: 'a', released_at: expect.any(String) },
+      { agent_id: 'b', released_at: null },
+    ]);
+    expect(a.liveLocks().map((l) => l.agent_id)).toEqual(['b']);
+    // The file is still not takeable. A sweep reclaims; it does not hand over.
+    expect(() => a.holdFiles([path])).toThrow(/held by/);
+  });
+
+  it('still collects a second holder once that one lapses too', () => {
+    // The fix must not turn `doctor` into a one-row sweep. Each expired row is
+    // its own finding, so a genuinely stale second holder is still reclaimed.
+    const { a, b, path } = twoHolders(60_000, 60_000);
+    // B's lease is still running here; A's has just lapsed.
+    expect(a.liveLocks().map((l) => l.agent_id)).toEqual(['b']);
+
+    advance(60_001);
+    const lockFindings = a.doctor().filter((f) => f.path);
+    expect(lockFindings.map((f) => f.agent).sort()).toEqual(['a', 'b']);
+    expect(rowsFor(a, path).every((r) => r.released_at !== null)).toBe(true);
+    // Nobody holds it, so it is takeable again — the sweep is not merely refusing.
+    expect(() => a.holdFiles([path])).not.toThrow();
+  });
+
+  it('deletes pairings only for the holder it released', () => {
+    // `releaseFiles` deletes `issue_locks` for `(path, agent_id)`, so a forced
+    // sweep also erased the LIVE holder's attribution: its `swarm show` reported
+    // `files: none locked` for a file it was holding.
+    const { a, path } = twoHolders(60_000, 45 * 60 * 1000);
+    a.doctor();
+    expect(a.db.prepare('SELECT issue_id FROM issue_locks WHERE path = ? ORDER BY issue_id').all(path)).toEqual([
+      { issue_id: 'ph-2' },
+    ]);
+  });
+});
+
+/**
+ * The file this suite imports must be a TEXT file.
+ *
+ * Two raw NUL bytes were committed inside template literals in `db.mjs`, where
+ * backticks had been replaced by \x00. Nothing caught it: the result is valid
+ * JavaScript, every test in this file passed, `tsc` passed, and `build` passed.
+ * The cost was that every TEXT tool — `file`, the read tool, `grep`, diff — reads
+ * the board's central file as binary, which is how it went unnoticed until an
+ * agent could not read the file it needed to change.
+ *
+ * Nothing can assert this behaviourally, because `\0` and a raw NUL are the same
+ * string: restoring both raw bytes leaves all 127 tests green. That was measured
+ * before this case existed. So it is asserted at the byte level, which is the
+ * only level at which the difference is visible.
+ *
+ * `.gitattributes` sets `text=auto`, whose binary sniffing keys on exactly this
+ * byte — so a NUL arriving through any normal git path is what let one in.
+ */
+describe('the board module is a text file', () => {
+  const DB_MODULE = resolve(process.cwd(), 'scripts/lib/agent-board/db.mjs');
+
+  it('contains no NUL byte', () => {
+    const bytes = readFileSync(DB_MODULE);
+    const at = bytes.indexOf(0);
+    expect(at, `a NUL byte at offset ${at} makes every text tool read this file as binary`).toBe(-1);
+  });
+
+  it('uses the escape, not the raw byte, where a NUL is meant', () => {
+    // Pins the intent rather than the absence alone: the composite lock key
+    // joins path and agent_id with a NUL, which is the one byte a POSIX path
+    // cannot contain, so a path can never be made to impersonate another pair.
+    const source = readFileSync(DB_MODULE, 'utf8');
+    expect(source).toContain('${lock.path}\\0${lock.agent_id}');
   });
 });

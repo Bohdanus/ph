@@ -215,6 +215,33 @@ describe('legacyHistoryToDurable baseline derivation', () => {
     expect(converted.legacyCursorToDurableCursor).toEqual([-1, 0]);
     registry.shutdown();
   });
+
+  it('ranks a first bedrock source above the supplied initial frame at cursor -1', () => {
+    const registry = new AssetRegistry();
+    const bedrockSize = { width: 320, height: 240 };
+    const history: HistoryItem[] = [
+      {
+        id: 'bedrock',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'layer-bedrock',
+        layerSource: { ...blankSource, isBedrock: true, size: bedrockSize },
+      },
+    ];
+    const initialFrame = { x: 40, y: 50, width: 640, height: 480 };
+
+    const converted = legacyHistoryToDurable(history, {
+      documentId: 'test-doc',
+      registry,
+      initialFrame,
+      initialSize: { width: 1, height: 1 },
+    });
+
+    // The first bedrock source establishes the opening document frame; the
+    // store's current frame must not outrank it when replaying cursor -1.
+    expect(converted.document.baseline.frame).toEqual({ x: 0, y: 0, ...bedrockSize });
+    expect(replayDurableDocument(converted.document, -1).frame).toEqual({ x: 0, y: 0, ...bedrockSize });
+    registry.shutdown();
+  });
 });
 
 describe('legacyHistoryToDurable per-action option branches', () => {
@@ -341,7 +368,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     // derive, and fabricating one would assert a frame the user never cropped to.
     expect(converted.document.history).toHaveLength(0);
     // And the drop is REPORTED rather than silent. `replayHistory` drops the
-    // same entry (`history-replay.ts:91-97` guards the assignment on
+    // same entry (`history-replay.ts:112-117` guards the assignment on
     // `isValidDocumentFrame`), so the shadow was already in parity — but parity
     // is not observability, and the only other evidence of a lost crop is a
     // frame that no longer matches what the user cropped to.
@@ -657,17 +684,17 @@ describe('document frame conversion diagnostics', () => {
 });
 
 /**
- * Two places where the durable shadow and legacy replay genuinely disagree, or
- * where one of them is silent. These pin CURRENT behaviour, including the
- * behaviour that is wrong: a test here is a tripwire that makes a future fix
- * visible, not an endorsement of the divergence.
+ * Where the durable shadow and legacy replay genuinely disagree, or where one of
+ * them is silent. These pin CURRENT behaviour, including the behaviour that is
+ * wrong: a test here is a tripwire that makes a future fix visible, not an
+ * endorsement of the divergence.
  */
 describe('durable shadow divergences from legacy replay', () => {
   /**
    * NOT a protection for the first test below. Its only entry is a disabled one
    * carrying a `documentSource`, and `replayHistory` skips a disabled item at
-   * `history-replay.ts:74` — before it could reach a dependency — and applies a
-   * `documentSource` by assignment at `history-replay.ts:78-84`, which also
+   * `history-replay.ts:75` — before it could reach a dependency — and applies a
+   * `documentSource` by assignment at `history-replay.ts:79-96`, which also
    * returns before any dependency call. So neither body can run for that
    * fixture, and `expect(legacy.layers).toEqual({})` is the assertion that
    * carries the test; deleting it because these deps "already" throw leaves a
@@ -683,25 +710,7 @@ describe('durable shadow divergences from legacy replay', () => {
     },
   };
 
-  /**
-   * Duplicates the production layer-construction shape (`createLayerSource` in
-   * `layer-utils.ts:166`) so `replayHistory` has a `Layer` to insert — but NO
-   * assertion in the bedrock test below reads it: the frame rewrite it exists to
-   * reach happens at `history-replay.ts:85-89`, BEFORE `createLayer` is called at
-   * `history-replay.ts:108`. Returning a `Layer` at all is load-bearing (the call
-   * would throw otherwise); the fields are not, so treat any change here as untested.
-   */
-  function runtimeLayerFor(layerId: LayerId, source: LayerSource): Layer {
-    const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
-    return {
-      ...blankLayer(layerId),
-      isBedrock: !!source.isBedrock,
-      pos: source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos },
-      source,
-    };
-  }
-
-  it('takes a disabled first entry as the durable baseline, which legacy replay never applies', () => {
+  it('a disabled first entry replays as the empty state legacy replays', () => {
     const registry = new AssetRegistry();
     const disabledOpen: HistoryItem = {
       id: 'baseline',
@@ -716,24 +725,52 @@ describe('durable shadow divergences from legacy replay', () => {
     };
 
     const converted = legacyHistoryToDurable([disabledOpen], { documentId: 'test-doc', registry });
-    const replayed = replayDurableDocument(converted.document);
+    const replayed = replayDurableDocument(converted.document, -1);
     const legacy = replayHistory([disabledOpen], 0, initialSize, unreachableDependencies);
 
-    // KNOWN DIVERGENCE, pinned as-is rather than endorsed. `replayHistory` skips
-    // a disabled item outright (`history-replay.ts:74`), so the document the
-    // USER sees after disabling the first History row is empty. This is the
-    // assertion that proves it — the throwing deps above are never reached.
+    // `replayHistory` skips a disabled item outright (`history-replay.ts:75`),
+    // so the document the USER sees after disabling the first History row is
+    // empty. The durable baseline now follows the same rule.
     expect(legacy.layers).toEqual({});
-    // The converter instead takes that same entry as the durable BASELINE
-    // without ever consulting `isEntryEnabled` (`history-adapter.ts:571`), and
-    // maps it to cursor -1 as if it were the pre-history state.
+    expect(replayed.layers).toEqual({});
+    expect(converted.document.baseline.layers).toEqual([]);
     expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
-    expect(Object.keys(replayed.layers)).toEqual(['layer-1']);
-    // Nothing reports it: the two documents disagree at every cursor and the
-    // conversion still reports no diagnostic at all.
-    expect(converted.diagnostics).toEqual([]);
+    expect(converted.diagnostics).toMatchObject([
+      {
+        historyId: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+      },
+    ]);
     registry.shutdown();
   });
+});
+
+/**
+ * The counterpart of the divergence above, and now an AGREEMENT rather than a
+ * divergence: `replayHistory` lets a bedrock source size the document only for the
+ * initial entry (`history-replay.ts:104-109`), which is the answer the converter's
+ * create-layer arm already gave on its own. Neither side reports anything, so this
+ * is the only thing standing between the two documents and a second divergence at
+ * the same commit.
+ */
+describe('bedrock frame authority between durable shadow and legacy replay', () => {
+  /**
+   * Duplicates the production layer-construction shape (`createLayerSource` in
+   * `layer-utils.ts:166`) so `replayHistory` has a `Layer` to insert. Returning a
+   * `Layer` at all is load-bearing (the call would throw otherwise); the fields are
+   * not, so treat any change here as untested.
+   */
+  function runtimeLayerFor(layerId: LayerId, source: LayerSource): Layer {
+    const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
+    return {
+      ...blankLayer(layerId),
+      isBedrock: !!source.isBedrock,
+      pos: source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos },
+      source,
+    };
+  }
 
   it('leaves the durable frame at the pre-add size when a bedrock layer is added mid-history', () => {
     const registry = new AssetRegistry();
@@ -759,24 +796,25 @@ describe('durable shadow divergences from legacy replay', () => {
     const converted = legacyHistoryToDurable(history, { documentId: 'test-doc', registry });
     const legacy = replayHistory(history, 1, initialSize, dependencies);
 
-    // `replayHistory` rewrites `documentFrame` from ANY bedrock source
-    // (`history-replay.ts:85-89`), so the frame the user sees is the new
-    // bedrock's size...
-    expect(legacy.documentFrame).toEqual({ x: 0, y: 0, ...bedrockSize });
-    // KNOWN DIVERGENCE, pinned as-is rather than endorsed: the converter's
-    // create-layer arm never touches `currentFrame` and `replayDurableDocument`'s
-    // create-layer case ignores `isBedrock` (`durable-replay.ts:69-75`). The
+    // A bedrock source sizes the DOCUMENT, so `replayHistory` lets it establish the
+    // frame only for the initial document entry (`history-replay.ts:104-109`) and a
+    // later layer commit leaves `documentFrame` alone. That is what the user asked
+    // for, and it is the SAME answer the converter already gave.
+    expect(legacy.documentFrame).toEqual(baselineFrame);
+    expect(legacy.totalSize).toEqual(initialSize);
+    // The converter's create-layer arm likewise never touches `currentFrame`, and
+    // `replayDurableDocument`'s create-layer case ignores `isBedrock`
+    // (`durable-replay.ts:61-67`), so the two AGREE at the pre-add size. The
     // document has exactly ONE durable entry, so -1 and 0 are the only two
-    // positions `replayDurableDocument` can return — any larger cursor clamps to
-    // 0 and would assert the tip twice.
+    // positions `replayDurableDocument` can return — any larger cursor clamps to 0
+    // and would assert the tip twice.
     expect(replayDurableDocument(converted.document, -1).frame).toEqual(baselineFrame);
     expect(replayDurableDocument(converted.document, 0).frame).toEqual(baselineFrame);
-    // The layer itself IS published, so the divergence is the frame alone — and
-    // it is silent: no diagnostic says the durable frame disagrees with the one
-    // the document replays. At -1 the bedrock layer is not there yet, so this
-    // pins the frame as the ONLY thing that fails to track the add.
+    // The layer itself IS still published by both, so neither the frame nor the
+    // layer set diverges, and the conversion still reports no diagnostic.
     expect(Object.keys(replayDurableDocument(converted.document, -1).layers)).toEqual(['layer-1']);
     expect(Object.keys(replayDurableDocument(converted.document, 0).layers)).toEqual(['layer-1', 'layer-bedrock']);
+    expect(Object.keys(legacy.layers)).toEqual(['layer-1', 'layer-bedrock']);
     expect(converted.diagnostics).toEqual([]);
     registry.shutdown();
   });
@@ -1027,6 +1065,48 @@ describe('legacyHistoryToDurable source helpers', () => {
       isBedrock: true,
     });
     expect(operation?.kind === 'create-layer' && operation.layer.pos).toEqual({ x: 0, y: 0, width: 320, height: 240 });
+    registry.shutdown();
+  });
+
+  it('a blank snapshot carries layer opacity 1 and source opacity unchanged', () => {
+    const registry = new AssetRegistry();
+    const source: LayerSource = {
+      ...blankSource,
+      opacity: 0.35,
+      pos: { x: 4, y: 5, width: 100, height: 80 },
+    };
+
+    const converted = convert(
+      [{ id: 'translucent-blank', actionName: NEW_LAYER_ACTION, layerId: 'blank', layerSource: source }],
+      registry
+    );
+    const operation = converted.document.history[0]?.operation;
+
+    expect(operation?.kind).toBe('create-layer');
+    if (operation?.kind === 'create-layer') {
+      expect(operation.layer.opacity).toBe(1);
+      expect(operation.layer.source).toMatchObject({ kind: 'blank', opacity: 0.35 });
+    }
+    registry.shutdown();
+  });
+
+  it('derives a paint tool blend mode from the source args', () => {
+    const registry = new AssetRegistry();
+    const source: LayerSource = {
+      kind: 'tool',
+      args: { toolName: 'brush', blendMode: 'multiply' } as never,
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 20, height: 20 },
+    };
+
+    const converted = convert(
+      [{ id: 'multiply-brush', actionName: NEW_LAYER_ACTION, layerId: 'brush', layerSource: source }],
+      registry
+    );
+    const operation = converted.document.history[0]?.operation;
+
+    expect(operation?.kind).toBe('create-layer');
+    if (operation?.kind === 'create-layer') expect(operation.layer.blendMode).toBe('multiply');
     registry.shutdown();
   });
 });
@@ -1395,7 +1475,7 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
 
     expect(converted.diagnostics).toEqual([]);
     // `replayHistory` `continue`s on a named-but-absent anchor
-    // (`history-replay.ts:127`), so the shadow records no entry at all. The
+    // (`history-replay.ts:148`), so the shadow records no entry at all. The
     // tolerated alternative would be a fabricated move to index 0, which the
     // document never performs.
     expect(converted.document.history.map((entry) => entry.id)).toEqual(['new-b', 'new-c']);

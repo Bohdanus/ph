@@ -1,16 +1,9 @@
 import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
+import { containFit, type ContainDimensions } from '../util/contain-fit.ts';
 import type { Point, Pos, Size } from '../contexts/general-types.ts';
 
-export type ContainDimensions = {
-  innerWidth: number; // inner image
-  innerHeight: number;
-  outerWidth: number; // container
-  outerHeight: number;
-  offsetX: number; // gap between image and container
-  offsetY: number;
-  scale: number; // how much is image scaled to be contained
-};
+export type { ContainDimensions } from '../util/contain-fit.ts';
 
 /**
  * The `data-*` attributes this hook publishes on its container, and what each one is.
@@ -57,6 +50,8 @@ export function usePointerPosition<T extends HTMLElement>(
 ) {
   const containerRectRef = useRef<Pos | null>(null);
   const activePointerId = useRef<number | null>(null);
+  /** The element the capture was taken on, so a release without an event can name it. */
+  const captureTargetRef = useRef<{ releasePointerCapture?: (id: number) => void } | null>(null);
   const isMouseDown = useRef(false);
 
   // coordinates of the contained image within container
@@ -138,27 +133,8 @@ export function usePointerPosition<T extends HTMLElement>(
       if (!rect) return;
 
       const { width: outerWidth, height: outerHeight } = rect;
-      const { width: imageWidth, height: imageHeight } = imageSize;
 
-      const scaleX = outerWidth / imageWidth;
-      const scaleY = outerHeight / imageHeight;
-
-      const scale = Math.min(scaleX, scaleY);
-
-      const innerWidth = imageWidth * scale;
-      const innerHeight = imageHeight * scale;
-      const offsetX = (outerWidth - innerWidth) / 2;
-      const offsetY = (outerHeight - innerHeight) / 2;
-
-      dimensionsRef.current = {
-        innerWidth,
-        innerHeight,
-        outerWidth,
-        outerHeight,
-        offsetX,
-        offsetY,
-        scale,
-      };
+      dimensionsRef.current = containFit({ width: outerWidth, height: outerHeight }, imageSize);
 
       publishFit(dimensionsRef.current, rect, imageSize);
       onResizeRef.current?.(dimensionsRef.current);
@@ -174,14 +150,27 @@ export function usePointerPosition<T extends HTMLElement>(
     calculateDimensions(rect);
   });
 
-  function clearEvent(e: React.PointerEvent<T>) {
+  /**
+   * Drop the tracked pointer, releasing the capture if it is still held.
+   *
+   * `target` is the element the capture was taken ON, which is `e.currentTarget` and not
+   * necessarily `ref.current`: `useRect` and the tool areas put their handlers on their own
+   * element while `ref` is the container. Release has to name the capturing element, so
+   * `captureTarget` records it at press time.
+   *
+   * Passing no target uses the recorded one, which is what lets an abort route call this
+   * without holding an event.
+   */
+  function clearEvent(target?: { releasePointerCapture?: (id: number) => void } | null) {
+    const captureTarget = target ?? captureTargetRef.current;
+
     // Safe even if capture was already lost
     try {
       // Only the `null` sentinel means "no active pointer" -- a truthiness test also
       // reads a pointer numbered 0 as absent, because Pointer Events reserves only `-1`
       // and a UA may number from 0. Defensive rather than a fix for a reported engine.
-      if (activePointerId.current !== null) {
-        e.currentTarget.releasePointerCapture(activePointerId.current);
+      if (activePointerId.current !== null && typeof captureTarget?.releasePointerCapture === 'function') {
+        captureTarget.releasePointerCapture(activePointerId.current);
       }
     } catch {
       // ignore
@@ -189,6 +178,7 @@ export function usePointerPosition<T extends HTMLElement>(
 
     isMouseDown.current = false;
     activePointerId.current = null;
+    captureTargetRef.current = null;
   }
 
   const isPointerDownValid = (e: React.PointerEvent<T>) => {
@@ -199,10 +189,27 @@ export function usePointerPosition<T extends HTMLElement>(
 
     isMouseDown.current = true;
     activePointerId.current = e.pointerId;
+    captureTargetRef.current = e.currentTarget as unknown as { releasePointerCapture?: (id: number) => void };
     e.currentTarget.setPointerCapture(e.pointerId);
 
     return true;
   };
+
+  /**
+   * Give up the captured pointer when no release event will arrive.
+   *
+   * `clearEvent` used to be reachable only from `isPointerUpValid`, so a gesture that ended
+   * any OTHER way -- the pointer leaving the element, `pointercancel`, a caller abandoning
+   * the drag -- left `activePointerId` set. While the capture is held the browser delivers
+   * `pointerup` to the capture target even when the pointer was released elsewhere, so the
+   * hook's ref survived and every later `isPointerDownValid` returned `false` at the
+   * first-pointer-wins check: the element stopped responding to presses until it unmounted.
+   * Every abort route must therefore call this, which is why it is exposed rather than left
+   * inside the up path.
+   */
+  const releasePointer = useCallback(() => {
+    clearEvent();
+  }, []);
 
   const isPointerMoveValid = (e: React.PointerEvent<T>) => {
     if (activePointerId.current !== e.pointerId) return false;
@@ -222,7 +229,7 @@ export function usePointerPosition<T extends HTMLElement>(
 
     if (activePointerId.current !== e.pointerId) return false;
 
-    clearEvent(e);
+    clearEvent(e.currentTarget as unknown as { releasePointerCapture?: (id: number) => void });
 
     return true;
   };
@@ -230,8 +237,7 @@ export function usePointerPosition<T extends HTMLElement>(
   // in theory its managed internally by this hook, so not exposed outside
   const onPointerCancel = useCallback((e: PointerEvent) => {
     if (activePointerId.current === e.pointerId) {
-      activePointerId.current = null;
-      isMouseDown.current = false;
+      clearEvent();
     }
   }, []);
 
@@ -266,6 +272,7 @@ export function usePointerPosition<T extends HTMLElement>(
     dimensionsRef,
     getLocalCoords,
     isMouseDown,
+    releasePointer,
     isPointerDownValid, // tells if the event was captured (therefore should be handled)
     isPointerMoveValid, // tells if the event was captured (therefore should be handled)
     isPointerUpValid, // tells if the event was captured (therefore should be handled)
