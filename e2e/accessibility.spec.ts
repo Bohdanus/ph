@@ -139,7 +139,7 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *   and `resolveScope` cannot catch that on its own; the audited-node count is what
  *   distinguishes a clean region from an empty audit. The measured counts, from the run
  *   that added the fourth scan, are 59 nodes for the New Image dialog, 25 for the
- *   unsaved-changes prompt, 33 for the options bar and 437 for the shell — the options
+ *   unsaved-changes prompt, 33 for the options bar and 465 for the shell — the options
  *   bar and the shell have both moved as the app grew, which is the same drift this line
  *   exists to make visible.
  *
