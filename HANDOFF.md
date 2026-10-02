@@ -2192,8 +2192,9 @@ of a lost logical edit.
   and `operations` is durable. The publication is refused, and a no-op is reported as an invariant
   violation.
 
-**It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx:48` calls
-`tempUpdateLayer` and nothing else; the options bar has no commit gesture. The commit is
+**It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx:80` calls
+`tempUpdateLayer` and nothing else; the option bar's own commit is the `change` event at
+`Transform.tsx:54-69`, which is a separate listener. The commit is
 `commitDirtyTool(true)` at `src/contexts/useLayer.ts:443`, reached from `goToTool`, a new layer,
 or `mergeAllLayers` — the options bar's Apply link, which used to be the fourth caller, was
 removed by `c424469a`. So the operation is **staged** by the slider and only meets the
