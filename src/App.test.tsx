@@ -247,11 +247,12 @@ describe('App shell layout', () => {
     render(<App />);
     const before = screen.getByText('Main');
 
-    // `useStore` is called once per App render, so its call count is the render count. The
-    // node-identity checks below are only worth anything if a crossing RE-RENDERS: identity is
-    // trivially preserved when nothing happened at all, so a `setViewportWidth` that stopped
-    // delivering its `change` event, or a shell that stopped subscribing, would leave all five
-    // of these assertions green while the boundary stopped doing anything.
+    // `useStore` is a hook of the store tree, so its call count is a lower bound on the
+    // renders that reached it. The node-identity checks below are only worth anything if a
+    // crossing RE-RENDERS: identity is trivially preserved when nothing happened at all,
+    // so a `setViewportWidth` that stopped delivering its `change` event, or a shell
+    // that stopped subscribing, would leave all five of these assertions green while
+    // the boundary stopped doing anything.
     const renders = () => useStoreMock.mock.calls.length;
 
     const step = (width: number, rerendered: boolean) => {
@@ -267,11 +268,16 @@ describe('App shell layout', () => {
     step(500, true);
     step(1600, true);
 
-    // Also through the tablet band, in both directions. 900 is deliberately INERT: `App`
-    // subscribes to the mobile boundary alone and the tablet band is restyled by the
-    // stylesheet, so no React work happens there. Asserted, because it is what makes the four
-    // steps above mean "the boundary was crossed" rather than "the helper re-renders" — and
-    // because a shell that started subscribing to the tablet band would add a render to every
+    // Also through the tablet band, in both directions. 900 is deliberately INERT, but
+    // not because nothing happens there: `RightPanelVisibilityProvider` is not mocked
+    // and subscribes to `TABLET_MEDIA_QUERY`, so crossing into the band re-renders it.
+    // What costs nothing is the canvas tree — `<AppContainer />` is the SAME element
+    // reference across the crossing (App.tsx:145), so React reconciles the provider's
+    // children without rendering them, and `useStore` is not reached again.
+    //
+    // Asserted, because it is what makes the four steps above mean "the boundary was
+    // crossed" rather than "the helper re-renders", and because a provider that stopped
+    // bailing out — or a context consumer added below it — would add a render to every
     // width change, which is the cost the unconditional mount exists to avoid.
     step(900, false);
     step(500, true);
