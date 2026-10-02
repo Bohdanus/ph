@@ -36,7 +36,7 @@ wrong.
 ### D1 — The display canvas _was_ the export canvas — FIXED
 
 `DesktopHeader.tsx:252` used to pass `canvasRef.current` to `useFile.tsx:125` → `saveImageToDisk`.
-That canvas's backing store is set at `layer-renderer.ts:119` to `documentFrameSize(documentFrame)`
+That canvas's backing store is set at `layer-renderer.ts:161` to `documentFrameSize(documentFrame)`
 — **document pixels** — so the surface that determined on-screen sharpness was the same surface
 that determined exported file dimensions, and raising display resolution would have raised export
 resolution with it, silently.
@@ -44,12 +44,12 @@ resolution with it, silently.
 The invariant was never the defect; the absence of a second surface was. `export-canvas.ts` exports
 `renderExportCanvas(layers, size, frame?)`, which creates a detached canvas and hands it to
 `drawLayersToCanvas` with `getSortedLayersArray(layers)` and the document frame. The compositor
-sizes it at `documentFrameSize` (`layer-renderer.ts:119`, `:136`), which is why the export extent is
+sizes it at `documentFrameSize` (`layer-renderer.ts:133`, resized at `:161`), which is why the extent is
 unchanged by construction rather than by coincidence. `ImageSaveInput` has no `canvas` field, and
-the three call sites — `DesktopHeader.tsx:251`, `MobileHeader.tsx:72`, `MobileMenuDrawer.tsx:73` —
+the three call sites — `DesktopHeader.tsx:279`, `MobileHeader.tsx:72`, `MobileMenuDrawer.tsx:73` —
 pass `layers`, `size` and `documentFrame` only. A frame is checked with `isValidDocumentFrame` and
 falls back to `documentFrameFromSize(size)`, which is stricter than `savePsd`, whose frame is a
-defaulted parameter (`psd-utils.ts:208`); an unrenderable surface throws onto the save dialog's
+defaulted parameter (`psd-utils.ts:212`); an unrenderable surface throws onto the save dialog's
 existing failure path (`useFile.tsx:142-152`) rather than being encoded. The module comment carries
 the rationale.
 
@@ -76,10 +76,10 @@ resolution simply is not there.
 
 | Surface                 | Store                                                              | CSS box                           | Status                      |
 | ----------------------- | ------------------------------------------------------------------ | --------------------------------- | --------------------------- |
-| workspace canvas        | document px (`layer-renderer.ts:119`)                              | `object-contain` (`Main.tsx:255`) | 1× — **Phase 4, unblocked** |
-| tool overlay            | document px (`Main.tsx:141`)                                       | `Main.tsx:261`                    | 1× — **Phase 4, unblocked** |
-| rect overlay            | document px (`Main.tsx:149`)                                       | `Main.tsx:301`                    | 1× — **Phase 4, unblocked** |
-| selection ants overlay  | document px (`Main.tsx:154`)                                       | `Main.tsx:314`                    | 1× — **Phase 4, unblocked** |
+| workspace canvas        | document px (`layer-renderer.ts:161`)                              | `object-contain` (`Main.tsx:293`) | 1× — **Phase 4, unblocked** |
+| tool overlay            | document px (`Main.tsx:153`)                                       | `Main.tsx:299`                    | 1× — **Phase 4, unblocked** |
+| rect overlay            | document px (`Main.tsx:180`)                                       | `Main.tsx:340`                    | 1× — **Phase 4, unblocked** |
+| selection ants overlay  | document px (`Main.tsx:188`)                                       | `Main.tsx:353`                    | 1× — **Phase 4, unblocked** |
 | 3 option-bar thumbnails | `96 × 48 × dpr` (`Draw.tsx:228`, `Shape.tsx:308`, `Paint.tsx:231`) | `h-12 w-24`, fixed                | **D2a fixed**               |
 
 The thumbnails were the most user-visible, and the only canvases whose bitmap was actively
