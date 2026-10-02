@@ -99,8 +99,22 @@ async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): P
   await expect(page.locator('#rotate-slider')).toBeVisible();
 }
 
-async function applyTransform(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
-  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+/**
+ * Commits the pending transform preview by switching tools.
+ *
+ * The options bar carries no Commit/Apply button any more — the two extra text buttons
+ * were what made the horizontal bar overflow — so the tool switch is the commit route
+ * these specs drive. It is a real route rather than a test-only one: `goToTool` calls
+ * `commitDirtyTool()` on every tool change (`src/hooks/useApp.ts:167`), which bakes the
+ * preview into the layer and writes the one history entry the tests below assert on.
+ *
+ * The wait on the transform sliders going away is what makes the commit observable rather
+ * than assumed: the click resolves as soon as the button is dispatched, and every
+ * screenshot taken straight afterwards would otherwise race the commit.
+ */
+async function commitTransform(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
+  await clickToolButton(page, 'draw');
+  await expect(page.locator('#trapezoid-slider')).toHaveCount(0);
 }
 
 test.describe('Transform tool', () => {
@@ -112,7 +126,7 @@ test.describe('Transform tool', () => {
   // ambiguity instead of leaving it to be rediscovered as a flaky failure.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
-  test('rotates a drawn layer 90 degrees and keeps the rotation after Apply', async ({ page }, testInfo) => {
+  test('rotates a drawn layer 90 degrees and keeps the rotation after the commit', async ({ page }, testInfo) => {
     await page.goto('/');
     const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
     expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
@@ -171,13 +185,13 @@ test.describe('Transform tool', () => {
       'a rotation must not move the layer vertically'
     ).toBeLessThan(0.03);
 
-    await applyTransform(page);
+    await commitTransform(page);
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
     const committed = await getDarkPixelBounds(
       await takeLineScreenshot(page, box, 'rotate-applied', testInfo, wholeCanvas)
     );
     expect(committed, 'the committed layer should still be dark').not.toBeNull();
-    expect(committed!.height / committed!.width, 'Apply must not drop the rotation').toBeGreaterThan(3);
+    expect(committed!.height / committed!.width, 'the commit must not drop the rotation').toBeGreaterThan(3);
   });
 
   /**
@@ -225,7 +239,7 @@ test.describe('Transform tool', () => {
     await openTransformTool(page);
     await page.getByTitle('Rotate 90° Right').click();
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
-    await applyTransform(page);
+    await commitTransform(page);
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const committed = await getDarkPixelBounds(
@@ -236,7 +250,7 @@ test.describe('Transform tool', () => {
       committed!.height / committed!.width,
       'the committed layer is the rotated bar, so the rotation is on the timeline'
     ).toBeGreaterThan(3);
-    await expect(page.getByTestId('undo-button'), 'Apply committed a history entry').toBeEnabled();
+    await expect(page.getByTestId('undo-button'), 'the tool switch committed a history entry').toBeEnabled();
 
     // ONE UNDO, and the bar is the horizontal one again — the original pixels, not merely
     // something dark.
@@ -264,7 +278,7 @@ test.describe('Transform tool', () => {
     ).toBeLessThan(0.15);
   });
 
-  test('tapers a layer so the bottom narrows and the top does not, and keeps it after Apply', async ({
+  test('tapers a layer so the bottom narrows and the top does not, and keeps it after the commit', async ({
     page,
   }, testInfo) => {
     await page.goto('/');
@@ -336,12 +350,12 @@ test.describe('Transform tool', () => {
     const imageWidth = bottomAfter!.imageWidth;
     expect(Math.abs(bottomCentre - imageWidth / 2) / imageWidth, 'the narrowed bar stays centred').toBeLessThan(0.1);
 
-    await applyTransform(page);
+    await commitTransform(page);
     await waitForCanvasRedraw(page, box, { clip: clip.bottom });
     const committedBottom = await getDarkPixelBounds(
       await takeLineScreenshot(page, box, 'taper-bottom-applied', testInfo, clip.bottom)
     );
     expect(committedBottom, 'the committed layer should still be dark').not.toBeNull();
-    expect(committedBottom!.width / bottomBefore!.width, 'Apply must not drop the taper').toBeLessThan(0.5);
+    expect(committedBottom!.width / bottomBefore!.width, 'the commit must not drop the taper').toBeLessThan(0.5);
   });
 });

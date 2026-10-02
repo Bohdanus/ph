@@ -524,8 +524,8 @@ menu path.
 | X                                            | Numeric text box for the horizontal position of the transform reference point               | missing |                                                            |
 | Y                                            | Numeric text box for the vertical position of that same reference point                     | missing |                                                            |
 | Relative Positioning                         | Button that makes X and Y a displacement from the current position rather than a coordinate | missing |                                                            |
-| Commit                                       | The checkmark; Adobe also prints Enter, and the single-mode bar prints `Done`               | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:303` |
-| Cancel                                       | The cancel button; also Esc                                                                 | present | `src/components/ToolbarsRight/Transform/Transform.tsx:306` |
+| Commit                                       | The checkmark; Adobe also prints Enter, and the single-mode bar prints `Done`               | missing |                                                            |
+| Cancel                                       | The cancel button; also Esc                                                                 | present | `src/components/ToolbarsRight/Transform/Transform.tsx:296` |
 
 **`Maintain Aspect Ratio` is now named by Peachpit as well as by the Adobe blog, and the "on by
 default since 21.0" reading survives.** Julieanne Kost's 2019 post is the source for the version —
@@ -634,20 +634,32 @@ click the **Commit button** in the Options bar") and from the glyphs Photoshop a
 have been a checkmark and a cancel cross since 22.0. The `Commit` and `Cancel` row names are kept,
 and `Commit`'s detail now says which routes are Adobe's and which is not.
 
-**The commit routes are Apply, tool switch and export — Escape is not one of them, and an earlier
+**The commit routes are tool switch and export — Escape is not one of them, and an earlier
 version of this file said it was.** The `Escape` handler at
 `src/components/ToolbarsRight/Transform/Transform.tsx:35-43` calls the same `cancel` the Cancel
 button calls (`:30-33`), and `cancel` runs `cancelLayerPreview?.()` and resets the panel args. It
 dispatches nothing: it deletes the pending preview, so what survives is the last committed state.
 That is the discard route, and it is the exact counterpart of the commit route —
 `commitDirtyTool` (`src/contexts/useLayer.ts:348`) is what bakes the preview into a layer plus one
-history entry, and its callers are the Apply button (`Transform.tsx:303`), `goToTool`
+history entry, and its callers are `goToTool`
 (`src/hooks/useApp.ts:167-169`, which is the tool-switch path every toolbar click and letter
 shortcut runs through) and the export handlers (`src/components/DesktopHeader/DesktopHeader.tsx:287`,
 `src/components/Mobile/MobileHeader.tsx:70`, `src/components/Mobile/MobileMenuDrawer.tsx:71`).
 (`DesktopHeader.tsx:281`, which an earlier version cited, is inside the export menu's own JSX; the
 call is at `:249`.) Enter and the click-outside-the-box route are both absent, and so is Adobe's
 in-transform `Edit > Undo`.
+
+**An earlier version of the app had three commit routes on the bar, and it now has none of them
+there.** The right-hand column used to be `Reset All`, `Apply` and `Cancel` stacked under the
+mirror toggles (`Transform.tsx:296-305` before the removal). All three were removed together
+because the options bar is a single horizontal row and three stacked text links were what made it
+overflow its grid area; `Cancel` and Escape stay because a discard route is worth keeping a control
+for, and a commit route is not — `goToTool` already commits, so the button was redundant work for
+the operator rather than a capability. `Reset All` was redundant in a second way: its handler was
+`cancel` verbatim (`Transform.tsx:151-153`), so it was a second name for the button below it. The
+`Commit` row above is `missing` for this reason, and the two `Transform.tsx` citations that used
+to point at the deleted buttons are gone rather than repointed, since there is nothing left to
+point at.
 
 **Implementation: partial.** The declared composite order is fixed — scale, then rotation, then
 skew, all about the untransformed layer center (`src/contexts/affine-transform.ts:212`, whose doc
