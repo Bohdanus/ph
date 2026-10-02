@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154 — deleted
+### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154, 161 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -4435,40 +4435,6 @@ narrative: state the three scanned regions, their node counts, that both themes 
 `e2e/accessibility.spec.ts:75-83`, `:94`, `:98`, `:122-128`, `:268`, `:429-480`,
 `e2e/fixtures/extended-test.ts` (`pinnedTheme`), `e2e/document-dialogs.spec.ts:1132`
 
----
-
-## 161. The crop cannot extend the canvas, and Photoshop's crop can — the `Fill` control is unimplemented and unoverridden
-
-**Problem.** Photoshop's crop grows the canvas: drag the crop box past the image edge and the document
-extends, with the `Fill` control deciding what goes in the new area. Adobe's own page says it —
-
-> "Just click and drag beyond the borders of an image with the Crop tool, and then fill the extended
-> canvas with new content that blends with the existing image."
-
-— and `src/tools/descriptions/type-crop.ts:230` quotes exactly that sentence while declaring the `Fill`
-control itself `status: 'missing'` at `:231`. The app cannot do this: `trimRect` clamps every crop
-edge into `[0, totalSize]` (`src/util/rect.ts:36-50`), so extending a crop is impossible by
-construction, which `:302` states in the tool's own `appNotes`.
-
-**Why this is filed rather than fixed.** `docs/OVERRIDES.md` is empty and is written by the operator
-by hand; per `AGENTS.md`, where the code and Adobe disagree with no entry, **the code is the defect**
-and the decision is not an agent's. Implementing the extension, and the `Fill` control's behaviour,
-would be implementing an unoverridden Photoshop deviation. That finding is the agent's job; the
-override is the operator's.
-
-**Reproduce.** Drag the Crop tool's box past any document edge and release. The document shrinks to
-the clamped intersection instead of growing.
-
-**Fix.** Two separable parts, and only the second is a judgement call. The mechanical half is to let
-the crop rect carry an out-of-bounds region instead of clamping it, so a frame can grow; the product
-half is what fills the added area, which is what `Fill` is for and which has no answer without the
-operator. Do not pin the current clamp with a test — the clamp is the absence of the feature, and a
-pin on it fires red the moment someone implements `Fill` or `Image > Canvas Size`. The clamp is
-already covered as behaviour of `trimRect` at `src/util/__tests__/rect.test.ts:41-65`, and crop-to-frame
-at `src/contexts/__tests__/useLayer.lifecycle.test.tsx:702-730`.
-
-**Files.** `src/tools/descriptions/type-crop.ts:230-231,302`, `src/util/rect.ts:36-50`,
-`src/contexts/useLayer.ts:719`, `docs/OVERRIDES.md`
 ---
 
 ## 162. A failed export tells the user nothing, and `SaveDialog` has nowhere to tell them

@@ -29,7 +29,8 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  *
  * - The canvas element is `h-full w-full` of its grid area, so the document is letterboxed INSIDE
  *   it and centred. The letterbox grows and shrinks with the viewport and WITH THE DOCUMENT.
- * - A crop commits a smaller document, which re-fits into the same unchanged element. So a
+ * - A crop commits a new document frame, SMALLER where the rect lies inside the document and
+ *   LARGER where it leaves it, and either way it re-fits into the same unchanged element. So a
  *   gesture written as "62% down the element" names a different document point after every crop,
  *   and a drag placed that way can land outside the document entirely and draw nothing.
  * - `canvas-helpers.ts` says this in its own words for the export baselines: "A gesture specified
@@ -75,11 +76,19 @@ const BAR_RIGHT_FRACTION = 0.85;
 /**
  * The crop rectangle, in DOCUMENT pixels on the opening document.
  *
- * Integers, and wholly inside the document, for two reasons. `documentFrameSize` ceils, so a
- * fractional edge would make the committed width one pixel more than the arithmetic here
- * predicts. And `trimRect` clamps to the document, so an edge past the boundary would make the
- * committed frame depend on the clamp rather than on the rectangle — which is a second thing to
- * re-derive, and this file already has enough of them.
+ * Integers, and that is unchanged: `sortRoundRect` rounds each edge once and `documentFrameSize`
+ * ceils the extent, so a fractional edge would commit a width the arithmetic below does not
+ * predict.
+ *
+ * Wholly inside the document, and that is a CHOICE now rather than a requirement.
+ * `applyDocumentCrop` (`src/contexts/useLayer.ts`) normalises the gesture rect with
+ * `sortRoundRect` (`src/util/rect.ts`), which sorts and rounds with NO clamp — the `trimRect` this
+ * paragraph used to name is gone from the commit path — so an edge past the boundary no longer
+ * makes the committed frame depend on a clamp: it commits the rectangle exactly, growing the
+ * document. The three tests that use these four constants are the SHRINK case, and the first two
+ * are built around a bar the crop keeps and a bar it discards, so their every claim is about the
+ * frame moving INWARD. The growing rectangles therefore have their own constants below, which is
+ * where an overhang belongs now, and no test in this file has to re-derive what one commits.
  */
 const CROP_LEFT_X = 80;
 const CROP_TOP_Y = 270;
@@ -106,6 +115,38 @@ const BRUSH_SIZE = 24;
 
 /** Foreground for every bar. Distinct from the document's white and from the store's initial black. */
 const INK = '#000000';
+
+/**
+ * The three rectangles that leave the document, in DOCUMENT pixels on the opening 800x600 one.
+ *
+ * Their own constants, and not `CROP_LEFT_X` and its three neighbours, because those are the
+ * existing tests' rectangle and this file states in the comment above them that they are wholly
+ * INSIDE the document: an out-of-bounds value among them would silently change what the three
+ * committed crops commit, and the suite would still be green.
+ *
+ * Every edge here is an integer, for the reason the existing rectangle gives — `sortRoundRect`
+ * rounds each edge once and `documentFrameSize` ceils the extent, so a fractional edge makes the
+ * committed size a number the arithmetic below does not predict. The released page point is
+ * `documentPoint(fit, …)` and is re-derived from the app's own fit, so the fraction the double
+ * arithmetic introduces lands a millionth of a pixel from an integer rather than a half of one.
+ */
+const GROW_FROM = { x: 20, y: 20 };
+/** Past the document's right edge (800) by 120 and its bottom edge (600) by 60. */
+const GROW_TO = { x: 920, y: 660 };
+/** The frame the rectangle above commits: 800 + 100 wide, 600 + 40 tall, origin unmoved. */
+const GROW_WIDTH = GROW_TO.x - GROW_FROM.x;
+const GROW_HEIGHT = GROW_TO.y - GROW_FROM.y;
+
+/** Dragged UP AND LEFT, so the rectangle is inverted as dragged and `sortRect` has to sort it. */
+const ORIGIN_FROM = { x: 700, y: 400 };
+/** Past the document's left edge (0) by 24 and its top edge (0) by 40. */
+const ORIGIN_TO = { x: -24, y: -40 };
+/**
+ * `ORIGIN_TO.x - ORIGIN_FROM.x` and the other way round, because the edges arrive the other way
+ * round: 700 - (-24) = 724 and 400 - (-40) = 440.
+ */
+const ORIGIN_WIDTH = ORIGIN_FROM.x - ORIGIN_TO.x;
+const ORIGIN_HEIGHT = ORIGIN_FROM.y - ORIGIN_TO.y;
 
 interface PagePoint {
   readonly x: number;
@@ -286,6 +327,92 @@ async function applyCrop(page: Page): Promise<void> {
 }
 
 /**
+ * That a release really did leave the document, on the edge it claims to have left by.
+ *
+ * The one assertion an out-of-bounds drag cannot do without. Every other number below is
+ * arithmetic on a page point, so nothing else in the test would notice if the letterbox had
+ * shrunk and the drag had quietly become an ordinary inside crop — the committed size would
+ * still be the size the arithmetic predicts for the rectangle that was dragged, and the test
+ * would go on asserting growth it never performed. So the release is measured against the
+ * document's own edge ON THE PAGE, which is where the two numbers have to be compared.
+ */
+function expectReleasePastDocumentEdge(fit: Fit, release: PagePoint, edge: string, what: string): void {
+  const left = fit.rectX + fit.offsetX;
+  const top = fit.rectY + fit.offsetY;
+  const documentEdge = {
+    left,
+    right: left + fit.documentWidth * fit.scale,
+    top,
+    bottom: top + fit.documentHeight * fit.scale,
+  }[edge];
+  if (documentEdge === undefined) throw new Error(`no document edge is named ${edge}`);
+
+  const onPage = edge === 'left' || edge === 'right' ? release.x : release.y;
+  const message =
+    `${what}: the release is at ${onPage.toFixed(2)} on the page and the document's ${edge} edge is at ` +
+    `${documentEdge.toFixed(2)} there, so this drag does not leave the document on that edge and the test ` +
+    `would be asserting growth it never performed. The app published scale ${fit.scale} at offsets ` +
+    `(${fit.offsetX}, ${fit.offsetY}) for a ${fit.documentWidth}x${fit.documentHeight} document.`;
+
+  if (edge === 'left' || edge === 'top') expect(onPage, message).toBeLessThan(documentEdge);
+  else expect(onPage, message).toBeGreaterThan(documentEdge);
+}
+
+/**
+ * That the harness can deliver the release at all, measured against the WINDOW.
+ *
+ * `useRect` takes pointer capture at the press (`src/hooks/usePointerPosition.ts:193`), and while
+ * the capture is held the browser retargets the move and the release to the gesture surface
+ * wherever the pointer is — so a page point outside the workspace CONTAINER is delivered, and
+ * this file's three growing crops are built on that. A page point outside the WINDOW is a
+ * different matter: it is not a point the harness can express, and a release that never arrives
+ * leaves `toolArgs.rect` on the last move the tool did see, which commits a SMALLER frame and
+ * reports here three steps later as a size the rectangle did not ask for. So the two numbers
+ * that decide it are compared before the gesture, with both of them in the message.
+ */
+async function expectDeliverableRelease(page: Page, fit: Fit, release: PagePoint, what: string): Promise<void> {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error('the page has no viewport');
+  const message =
+    `${what}: the release lands on page (${release.x.toFixed(2)}, ${release.y.toFixed(2)}) and the window ` +
+    `is the rectangle [0, 0] ${viewport.width}x${viewport.height}, so a point outside it is not a page point ` +
+    `the harness can hand to page.mouse. The workspace container is [${fit.rectX}, ${fit.rectY}] ` +
+    `${fit.rectWidth}x${fit.rectHeight}, so the gesture surface — an \`absolute inset-0\` over that container — ` +
+    `is reachable from the capture rather than from the pointer, and only the window is the real bound.`;
+
+  expect(release.x, message).toBeGreaterThanOrEqual(0);
+  expect(release.x, message).toBeLessThanOrEqual(viewport.width);
+  expect(release.y, message).toBeGreaterThanOrEqual(0);
+  expect(release.y, message).toBeLessThanOrEqual(viewport.height);
+}
+
+/**
+ * The half of the same precondition the LETTERBOX holds on its own, measured against the
+ * container rather than the window.
+ *
+ * Only the vertical axis, and only because of the arithmetic of a contain fit: `scale` is
+ * `min(outerWidth / imageWidth, outerHeight / imageHeight)`, so the document touches the
+ * container on whichever axis is the limiting one and the offset is 0 there. At this window the
+ * workspace is 1294x1063 — narrower than the opening document's 4:3 — so the fit is WIDTH
+ * limited, `data-fit-offset-x` is 0, and a reach past the left or right edge cannot be inside the
+ * container at any viewport this layout can produce. The vertical axis is the one with letterbox,
+ * so the bottom and top reaches below are asserted inside the container rather than merely inside
+ * the window, which is the stronger of the two claims and the one that keeps holding if the panels
+ * or the window change.
+ */
+function expectVerticalReachInsideContainer(fit: Fit, release: PagePoint, what: string): void {
+  const containerBottom = fit.rectY + fit.rectHeight;
+  expect(
+    release.y,
+    `${what}: the release is at y=${release.y.toFixed(2)} and the workspace container's bottom edge is at ` +
+      `y=${containerBottom} (${fit.rectY} + ${fit.rectHeight}). The fit published offsetY=${fit.offsetY} at ` +
+      `scale ${fit.scale}, so the letterbox below the document holds ` +
+      `${(fit.offsetY / fit.scale).toFixed(1)} document px of reach; a reach past that leaves the gesture ` +
+      `surface's own box and depends on the pointer capture alone.`
+  ).toBeLessThanOrEqual(containerBottom);
+}
+
+/**
  * Draws one horizontal bar at a DOCUMENT y on whichever document the current fit describes, and
  * reports the strip it landed in.
  */
@@ -343,9 +470,10 @@ test.describe('Crop history', () => {
     await commitCrop(page);
 
     // FRAME FIRST, AND EXACTLY. A crop whose geometry missed reports here, naming the number it
-    // committed, rather than as a band that disagrees about where the ink is. `documentFrameSize`
-    // ceils and this rectangle is integral and wholly inside the document, so the committed frame
-    // is the rectangle's own size and not the clamp's.
+    // committed, rather than as a band that disagrees about where the ink is. `sortRoundRect`
+    // rounds each edge once and `documentFrameSize` ceils the extent, this rectangle is integral,
+    // and the commit normalises the rect with NO clamp, so the committed frame is the rectangle's
+    // own size with nothing left over for the arithmetic to be wrong about.
     const cropped = await documentSize(page);
     expect(cropped, 'the crop commits the dragged rectangle as the new document frame').toEqual({
       width: COMMITTED_WIDTH,
@@ -523,5 +651,193 @@ test.describe('Crop history', () => {
       page.getByTestId('undo-button'),
       'and that commit is the first entry the document ever had'
     ).toBeEnabled();
+  });
+
+  /**
+   * The three crops below GROW the document, and they are in their own describe because the
+   * geometry that makes a growth reachable is a property of the WINDOW rather than of the tool.
+   *
+   * A crop release has to leave the document to grow it, and the only place on screen that lies
+   * outside the document is the contain fit's letterbox — the band between the document and the
+   * edge of the element that holds it. `scale` is `min(outerWidth / imageWidth, outerHeight /
+   * imageHeight)`, so that band is non-empty on the axis that is NOT limiting and exactly zero on
+   * the one that is: the document always touches the container on one pair of edges. At 1600x1200
+   * the workspace is 1294x1063, which is narrower than the opening document's 4:3, so the fit is
+   * width limited, `data-fit-offset-x` is 0, and the only letterbox is above and below — 46.25 CSS
+   * px, which is 28.6 DOCUMENT px. That is enough to reach past an edge but not enough to reach
+   * far, and it is a measurement rather than a constant: the panel widths and the options bar
+   * decide it, and the options bar changes with the tool.
+   *
+   * So this window is taller, and every fit is re-read immediately before the gesture that uses
+   * it (`openCropTool` reads one per crop, which is also what `e2e/OPEN_PROBLEMS.md`'s P2 entry
+   * about a cached canvas box requires). At 1600x1400 the workspace is 1294x1263 and the
+   * letterbox is 146.25 CSS px — 90.4 document px, measured with the crop tool's own options bar
+   * up — which is what the bottom and top reaches below are asserted against.
+   *
+   * The HORIZONTAL reach is the half no window in this layout can letterbox, and it is reached
+   * through the pointer capture instead: `useRect` captures at the press, so the release is
+   * delivered to the gesture surface from outside the container. `expectDeliverableRelease`
+   * asserts what that does depend on — that the point is inside the window — before the drag,
+   * so a layout change that pushed it off the window fails as a precondition naming both numbers
+   * rather than as a committed size the rectangle never asked for.
+   */
+  test.describe('with letterbox to release into', () => {
+    test.use({ viewport: { width: 1600, height: 1400 } });
+
+    test('a crop released past the right and bottom edges commits a LARGER frame, not a clamped one', async ({
+      page,
+    }) => {
+      await openDocument(page);
+      const opening = await documentSize(page);
+
+      const fit = await openCropTool(page);
+      expect(
+        { width: fit.documentWidth, height: fit.documentHeight },
+        'the app fitted the opening document, so every coordinate below is an opening-document one'
+      ).toEqual(opening);
+
+      // The preconditions, before the gesture. Each names the two numbers it compares, because the
+      // alternative is a size assertion three steps later reporting a drag that never happened.
+      const release = documentPoint(fit, GROW_TO.x, GROW_TO.y);
+      expectReleasePastDocumentEdge(fit, release, 'right', 'the growth release');
+      expectReleasePastDocumentEdge(fit, release, 'bottom', 'the growth release');
+      expectVerticalReachInsideContainer(fit, release, 'the growth release');
+      await expectDeliverableRelease(page, fit, release, 'the growth release');
+
+      await dragOnCanvas(page, fit, GROW_FROM, GROW_TO);
+      await applyCrop(page);
+
+      // SURFACE ONE: the committed canvas ELEMENT's own backing store, the same read the three
+      // tests above use. The width is `GROW_TO.x - GROW_FROM.x` and the height is
+      // `GROW_TO.y - GROW_FROM.y`, so 920 - 20 = 900 and 660 - 20 = 640 — the rectangle as
+      // dragged, with no clamp in it, which is the whole difference from the three tests above:
+      // `trimRect` would have stopped both far edges at the document's own 800 and 600.
+      const grown = await documentSize(page);
+      expect(grown, 'the crop commits the dragged rectangle unclamped: 920 - 20 wide, 660 - 20 tall').toEqual({
+        width: GROW_WIDTH,
+        height: GROW_HEIGHT,
+      });
+      // The same fact in the units the requirement is phrased in, so the assertion above cannot be
+      // satisfied by a frame that merely MOVED: a clamped crop would report 800 - 20 and
+      // 600 - 20, which is smaller on both axes and fails here first.
+      expect(
+        { wider: grown.width - opening.width, taller: grown.height - opening.height },
+        'the committed frame is LARGER than the opening one by exactly what the rectangle asked for'
+      ).toEqual({ wider: 100, taller: 40 });
+
+      // SURFACE TWO: `data-fit-document-width`/`height`, the size the app's own POINTER MAPPING is
+      // fitting, read through `usePointerPosition`'s publish rather than off the canvas. It is a
+      // separate read because the first one does not name what resized: `e2e/OPEN_PROBLEMS.md`
+      // (P2, `e2e/document-dialogs.spec.ts`) records that `useApp` resizes that same canvas
+      // element at two sites and `layer-renderer.ts` at a third, so a backing-store read alone
+      // proves the READ and not which resize site ran. This one starts from `totalSize` on the far
+      // side of the commit, through a hook that resizes nothing.
+      const container = page.getByTestId('workspace-container');
+      await expect(
+        container,
+        'the pointer mapping must be fitting the GROWN document, not the one the drag started from'
+      ).toHaveAttribute('data-fit-document-width', String(GROW_WIDTH));
+      await expect(container, 'and on its height, which is the axis the bottom reach moved').toHaveAttribute(
+        'data-fit-document-height',
+        String(GROW_HEIGHT)
+      );
+    });
+
+    test('a crop released past the left and top edges commits a frame with a NEGATIVE origin', async ({ page }) => {
+      await openDocument(page);
+      const opening = await documentSize(page);
+
+      const fit = await openCropTool(page);
+      expect(
+        { width: fit.documentWidth, height: fit.documentHeight },
+        'the app fitted the opening document, so every coordinate below is an opening-document one'
+      ).toEqual(opening);
+
+      const release = documentPoint(fit, ORIGIN_TO.x, ORIGIN_TO.y);
+      expectReleasePastDocumentEdge(fit, release, 'left', 'the negative-origin release');
+      expectReleasePastDocumentEdge(fit, release, 'top', 'the negative-origin release');
+      expectVerticalReachInsideContainer(fit, release, 'the negative-origin release');
+      await expectDeliverableRelease(page, fit, release, 'the negative-origin release');
+
+      // Dragged UP AND LEFT from inside, so the rectangle arrives inverted and `sortRect` is what
+      // makes it a rectangle at all: the committed edges are ORIGIN_TO's, and the extent runs back
+      // to ORIGIN_FROM's.
+      await dragOnCanvas(page, fit, ORIGIN_FROM, ORIGIN_TO);
+      await applyCrop(page);
+
+      // 700 - (-24) = 724 and 400 - (-40) = 440. The size is also the proof of the ORIGIN, which
+      // the canvas cannot report: a frame at x = 0 spanning the same far edges would have
+      // committed 700, and one at y = 0 would have committed 400, so neither of the two readings a
+      // non-negative origin can produce equals the number asserted here.
+      const committed = await documentSize(page);
+      expect(
+        committed,
+        'the crop commits 700 - (-24) wide and 400 - (-40) tall, so the origin is negative on both axes'
+      ).toEqual({ width: ORIGIN_WIDTH, height: ORIGIN_HEIGHT });
+
+      // The second surface, as above: the document the app is fitting, which is a different read
+      // from the canvas element's backing store and is what says the STORE took the frame rather
+      // than only the canvas being repainted at a new size.
+      const container = page.getByTestId('workspace-container');
+      await expect(
+        container,
+        'the pointer mapping must be fitting the NEGATIVE-ORIGIN document, not the opening one'
+      ).toHaveAttribute('data-fit-document-width', String(ORIGIN_WIDTH));
+      await expect(container, 'and on its height, which is the axis the top reach moved').toHaveAttribute(
+        'data-fit-document-height',
+        String(ORIGIN_HEIGHT)
+      );
+    });
+
+    test('an extending crop is ONE history entry, and one undo puts the opening frame back', async ({ page }) => {
+      await openDocument(page);
+      const opening = await documentSize(page);
+      expect(opening, 'a fresh document is the store default').toEqual({
+        width: DEFAULT_DOCUMENT_WIDTH,
+        height: DEFAULT_DOCUMENT_HEIGHT,
+      });
+
+      const fit = await openCropTool(page);
+      const release = documentPoint(fit, GROW_TO.x, GROW_TO.y);
+      expectReleasePastDocumentEdge(fit, release, 'right', 'the undo growth release');
+      expectReleasePastDocumentEdge(fit, release, 'bottom', 'the undo growth release');
+      expectVerticalReachInsideContainer(fit, release, 'the undo growth release');
+      await expectDeliverableRelease(page, fit, release, 'the undo growth release');
+
+      await dragOnCanvas(page, fit, GROW_FROM, GROW_TO);
+      await applyCrop(page);
+      expect(
+        await documentSize(page),
+        'the extending crop committed the grown frame, so the undo below has something to take back'
+      ).toEqual({ width: GROW_WIDTH, height: GROW_HEIGHT });
+
+      // ONE UNDO, and the SIZE is the assertion — to the opening frame exactly, not to something
+      // that merely shrank. A growth written as a frame commit plus a fill would be two entries,
+      // and one undo would leave the larger frame behind and fail on this line.
+      await page.getByTestId('undo-button').click();
+      expect(
+        await documentSize(page),
+        'one undo must put the whole opening frame back, band included, not merely shrink it'
+      ).toEqual(opening);
+      const container = page.getByTestId('workspace-container');
+      await expect(container, 'and the app is fitting the opening document again, on the width').toHaveAttribute(
+        'data-fit-document-width',
+        String(opening.width)
+      );
+      await expect(container, 'and on the height').toHaveAttribute('data-fit-document-height', String(opening.height));
+
+      // AND THE GROWTH WAS ONE ENTRY, which on THIS document the disabled state is the proof of —
+      // and which is the form the first test in this file cannot use for the reason its own
+      // comment gives: that document also carries a stroke below its crop, so one undo lands on
+      // the stroke and leaves undo enabled. Nothing is below this crop but the document's own
+      // opening entry, so one undo reaches the start of the timeline, which is the state
+      // `Escape abandons a pending crop` above pins on a fresh document: the entry is on the
+      // timeline, and there is nothing before it to undo.
+      await expect(
+        page.getByTestId('undo-button'),
+        'the timeline is the opening entry and this one crop, so one undo reaching the start is the ' +
+          'growth being a single entry rather than a frame commit plus a fill'
+      ).toBeDisabled();
+    });
   });
 });

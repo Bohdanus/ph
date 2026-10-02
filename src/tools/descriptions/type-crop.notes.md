@@ -341,10 +341,17 @@ census tables above and in `type-crop.ts`. Where they moved, and by how much:
 | `useLayer.ts:349`                                  | `useLayer.ts:447`                          | the `toolName === 'text'` branch                 |
 | `CropToolArea.tsx:21`                              | `CropToolArea.tsx:61`                      | the `useRect` call, after the key listener       |
 
-The crop `implementationRefs` are all correct as they stand (`toolProcessors.ts:157`,
-`CropToolArea.tsx:40,61`, `useRect.ts:156,223,342,454`, `rect.ts:36`, `useLayer.ts:783`,
-`settings.ts:70`, `toolbar-mapping.ts:66`, `crop.ts:26`), and so are the text ones except
-`Text.tsx:92`, which is `applyText` and is the right function for the commit row.
+The text `implementationRefs` are correct as they stand, and so is `Text.tsx:92`, which is
+`applyText` and is the right function for the commit row. **The crop's no longer are, and the
+table above is the reason this paragraph cannot simply say they still are.** Extending the crop
+moved nine of them: the commit path is no longer `useLayer.ts:783`, `CropToolArea.tsx:40,61` is
+now `:199` (the `applyDocumentCrop` call) and `:235` (the `useRect` call),
+`useRect.ts:156,223,342,454` is now `:173,250,371,483`, `rect.ts:36` is now `:49` and the
+unclamped normaliser it replaced is `:84`, and the frame-size cap is a new citation at
+`useLayer.ts:177`. `toolProcessors.ts:157`, `Crop.tsx:61`, `settings.ts:70` (crop),
+`util/settings.ts:39` and `toolbar-mapping.ts:66` did not move. Every one of the new numbers was
+opened and confirmed to be the thing it claims; a bound check cannot catch a wrong line, which is
+the failure `crop.ts` shipped twice before.
 
 Why each verdict:
 
@@ -847,8 +854,8 @@ Fifteen controls. `present` 0 · `partial` 4 · `inert` 0 · `missing` 11.
 | 9   | Delete Cropped Pixels           | `missing` | —                                               |
 | 10  | Use Classic Mode                | `missing` | —                                               |
 | 11  | Auto Center Preview             | `missing` | —                                               |
-| 12  | Show Cropped Area               | `partial` | `src/hooks/useRect.ts:223`                      |
-| 13  | Enable Crop Shield              | `partial` | `src/hooks/useRect.ts:223`                      |
+| 12  | Show Cropped Area               | `partial` | `src/hooks/useRect.ts:250`                      |
+| 13  | Enable Crop Shield              | `partial` | `src/hooks/useRect.ts:250`                      |
 | 14  | Fill (incl. Content-Aware Fill) | `missing` | —                                               |
 | 15  | Done / Cancel                   | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:79` |
 
@@ -871,8 +878,27 @@ fourteen to fifteen and the middle of it was reordered:
   counting five loose bar positions has nothing to count.
 
 The two `appRef` numbers the crop rows share are both the fixed 0.7 dim in `drawMask`
-(`useRect.ts:223` is the `hideBlend` guard, `:226` the fill itself), which is the finding
+(`useRect.ts:250` is the `hideBlend` guard, `:253` the fill itself), which is the finding
 rather than a duplicate citation — see the argument below.
+
+**The `Fill` row is `missing`, and that verdict did NOT move when the crop started growing the
+canvas — what moved is what the row claimed the dropdown was for.** It is the one row in this
+census whose app-side story had to be rewritten without its status changing, and the trap was the
+direction of the error. `type-crop.ts` said that choosing Content-Aware Fill "is what lets the crop
+box extend past the image edge", which made the control a **prerequisite** for extension.
+**It is not one.** The crop extends the canvas with no Fill value chosen at all, because
+`applyDocumentCrop` (`src/contexts/useLayer.ts:816`) normalises the gesture rect through
+`sortRoundRect` (`src/util/rect.ts:84`), which sorts and rounds each edge once without the clamp
+`trimRect` applies, so there is nothing for the control to gate. The clause is **deleted** rather
+than corrected in place, because the control's Photoshop-side job is unchanged by that and only the
+false app-side causal claim was wrong. **The row's Photoshop half is now narrower than either
+value list**, and the narrowing is `Unverified` item 17: it carries Adobe's one sentence about the
+dropdown, the one value Adobe names in it, and the statement that Adobe does not publish the list.
+
+The app's own answer to "what fills the band" is **OVR-1 in `docs/OVERRIDES.md`**, decided by the
+operator's hand, and this file neither restates it nor edits it; the two absent Fill values are
+recorded exactly once, in `docs/TOOLS-TOO-HARD.md`, and this file points there instead of
+duplicating them.
 
 **Two rows were added and one was rewritten by the pass before this one, and the count line
 above was wrong before any of that.** It said "Twelve controls · `partial` 3 · `missing` 9"
@@ -892,8 +918,12 @@ three things the current bar does not have:
   it belongs to CC 2015.5 through the CC-era walkthroughs, which is where the old row's
   confidence came from.
 - **`Curve` and `Default` appear in no source at all** — not an Adobe page, not a third
-  party. `Curve` is the shape the separate **Perspective Crop tool** covers, and `Default`
-  is the unmarked state the tool is in before you touch the bar.
+  party. The bar's carrying neither is now **resolved and recorded in
+  `docs/TOOLS-TOO-HARD.md`**: Adobe's own enumeration of the crop bar is the _Crop tool
+  options_ page, which lists the aspect-ratio values and the five gear settings and no Curve,
+  and the Curve Photoshop documents is the separate **Curves** adjustment. `Default` is the
+  unmarked state the tool is in before you touch the bar, and the adjustable corner form is the
+  separate **Perspective Crop tool** rather than a Curve row.
 - The old row also claimed that holding Ctrl (Windows) or Command (Mac OS) "reaches
   Straighten without visiting the bar". No source in this pass supports it, and the app's own
   reading of those two keys is the opposite operation (aspect-ratio lock), so the clause is
@@ -943,7 +973,7 @@ Why the four `partial` verdicts:
   `W × H × Resolution`, `Front Image`, `New Crop Preset` and `Delete Crop Preset` are all
   absent**, and `3:4` and `9:16` are entries Photoshop does not have.
 - **Enable Crop Shield — `partial`,** on the one line of code that draws the shield
-  (`useRect.ts:223`, with the fixed fill at `:226`): it is always on, its opacity is fixed at
+  (`useRect.ts:250`, with the fixed fill at `:253`): it is always on, its opacity is fixed at
   0.7 rather than the adjustable figure Adobe documents, and its color is not configurable.
 - **Show Cropped Area — `partial`,** on that same line and for the reasons in the next
   paragraph, which is the long version of this bullet rather than a separate argument.
@@ -956,9 +986,9 @@ finding, not a double-count.** Both attempts to file them separately were wrong 
 directions. The first pass cited `useRect.ts:167` under both names, which made the app look two
 controls deep where it draws one overlay. A later pass therefore denied one of them, and wrote that
 "Photoshop's Show Cropped Area shades the discarded image inside the box, and nothing in the app
-draws that" — false twice over. The app does draw a dim: the mask at `useRect.ts:223-231` fills the
+draws that" — false twice over. The app does draw a dim: the mask at `useRect.ts:250-261` fills the
 whole canvas with `rgba(0, 0, 0, 0.7)` and then clears the crop rect, and `CropToolArea` passes no
-`hideBlend`, which is the only flag `drawMask` consults (`useRect.ts:223`), so that branch runs whenever
+`hideBlend`, which is the only flag `drawMask` consults (`useRect.ts:250`), so that branch runs whenever
 there is a rect to draw. And the dimmed region is the one _outside_ the box, so "inside" was wrong about the
 app's own drawing whatever Photoshop does. It is also wrong about Photoshop: Adobe's own sentence for
 the control is "Displays the cropped-out area as a shaded overlay", with no region attached, and
@@ -978,20 +1008,20 @@ behaviour, not the control.
 **No `inert` control here either, also checked rather than assumed.** `CropToolArgs` has
 three keys — `rect`, `preRatioRect`, `aspectRatio` — plus the seed in
 `src/tools/settings.ts:70`. All three are read and written: `preRatioRect` by
-`Crop.tsx:40,48` and cleared on both write paths, `aspectRatio` by `CropToolArea.tsx:21`
+`Crop.tsx:40,48` and cleared on both write paths, `aspectRatio` by `CropToolArea.tsx:180`
 and passed into `useRect`, `rect` by every writer. The `preRatioRect` field is a
 regression-repair field, not a user-facing control, so it has no Photoshop counterpart to be
 `inert` about.
 
 ### Is the app's crop destructive?
 
-**It is not — and the previous pass said the opposite.** `src/contexts/useLayer.ts:783`
-(`applyDocumentCrop`) trims the rect to the canvas, converts it to the next `documentFrame`
-via `canvasRectToDocumentFrame`, and dispatches `COMMIT_DOCUMENT_EDIT` with a
-`SET_DOCUMENT_FRAME_ACTION` history entry carrying both the previous and next frame. The
-document shrinks immediately; the frame origin is subtracted in
-`src/contexts/presentation-evaluator.ts:163` and the canvas is sized from the frame at
-`layer-renderer.ts:174`, so anything outside it stops rendering.
+**It is not — and the previous pass said the opposite.** `src/contexts/useLayer.ts:790`
+(`applyDocumentCrop`) takes the rect **unclamped** now, converts it to the next `documentFrame`
+via `canvasRectToDocumentFrame` (`:812`), and dispatches `COMMIT_DOCUMENT_EDIT` with a
+`SET_DOCUMENT_FRAME_ACTION` history entry carrying both the previous and next frame. The frame
+changes immediately, **smaller or larger**; the frame origin is subtracted in
+`src/contexts/presentation-evaluator.ts:277-278` and the canvas is sized from the frame at
+`layer-renderer.ts:193`, so anything outside it stops rendering.
 
 But nothing is destroyed. Layer positions and sources are untouched, so the bitmaps still hold
 the pixels, and the history entry carries `previousFrame`, so undo puts the frame back. That
@@ -1039,16 +1069,26 @@ Neither entry changes a claim in `type-crop.ts`, and neither is a live crop defe
 
 ### Five interaction divergences
 
-- **Dragging inside the box moves the box, not the image.** `useRect.ts:342-350` translates
-  the rect by the drag delta for its `inside` edge, and the branch at `useRect.ts:454-461`
+- **Dragging inside the box moves the box, not the image.** `useRect.ts:371-379` translates
+  the rect by the drag delta for its `inside` edge, and the branch at `useRect.ts:483-490`
   that would instead adopt the layer under the pointer never runs, because
-  `CropToolArea.tsx:61-81` passes `useRect`'s handlers straight through without a
+  `CropToolArea.tsx:235-274` passes `useRect`'s handlers straight through without a
   `layerUnderPointer`. Photoshop's contract is the opposite way round.
-- **Extending the crop cannot add canvas.** `usePointerPosition.getLocalCoords` does not
-  clamp, so the rect can be dragged past the image edge — but `trimRect`
-  (`src/util/rect.ts:36-60`) clamps every edge to the document, so the extra area is simply
-  cut off. In Photoshop, dragging a handle outward past the photo grows the canvas, and what
-  fills it is what the `Fill` control selects.
+- **Extending the crop DOES add canvas — this bullet used to assert the opposite, and that
+  sentence was the defect this pass reverses.** `usePointerPosition.getLocalCoords` never
+  clamped, so the rect could always be dragged past the image edge; what used to throw the
+  overhang away was `trimRect` (`src/util/rect.ts:49-66`) on the commit path, and it no longer
+  is. `applyDocumentCrop` (`src/contexts/useLayer.ts:790`) normalises the rect with
+  `sortRoundRect` (`src/util/rect.ts:84`) — the same sort and the same round-each-edge-once, with
+  **no clamp** — so a rect reaching past an edge commits a **larger** `documentFrame` and a rect
+  reaching before the origin anchors the frame **negatively**. Photoshop hands back an empty
+  canvas for a rect that overlaps nothing, and this app accepts that too. The band the growth
+  adds is covered by no layer and stays transparent whatever the bottom layer is: **OVR-1** in
+  `docs/OVERRIDES.md`, by the operator's hand. So the divergence that survives is neither the
+  growth nor the transparency — it is that Photoshop can synthesise into the band, Content-Aware
+  Fill from the Fill dropdown on the Options bar and Generative Expand from the Contextual Task
+  Bar, and this app's bar renders no Fill control at all, with both recorded once in
+  `docs/TOOLS-TOO-HARD.md`.
 - **The pending rect is DISCARDED by a tool switch, not written through.** The previous pass
   claimed the draft "survives a tool switch", and the file's own comment said the opposite in
   as many words. The crop arm of `saveLastSettings` (`src/util/settings.ts:39`) persists
@@ -1060,8 +1100,8 @@ Neither entry changes a claim in `type-crop.ts`, and neither is a live crop defe
   therefore throws the draft away. Of Photoshop's two behaviours this is much closer to
   cancel-on-Escape than to commit-on-switch, and the aspect ratio _is_ sticky, which is
   probably what the earlier reading mistook for a surviving draft.
-- **Shift is honoured on any modifier.** `useRect.ts:156` locks the aspect ratio when
-  `ctrlKey || metaKey || shiftKey` is set, and reads the lock at `useRect.ts:337`. So the
+- **Shift is honoured on any modifier.** `useRect.ts:173` locks the aspect ratio when
+  `ctrlKey || metaKey || shiftKey` is set, and reads the lock at `useRect.ts:366`. So the
   `Shift` row of the `modifiers` array is `present` in substance but over-broad in binding,
   and there is no Alt from-center drag anywhere — which is why the `Alt` and `Alt+Shift` rows
   of that array are aspirational and are described as Photoshop's rather than the app's.
@@ -1079,7 +1119,7 @@ The `useKeyDownShortcut` table is the one given for the type tool above —
 `AppKeyboardShortcuts.tsx` (letters only: `b c e g i j l m o p s t u v w y z`, plus shift and mod
 variants), the two lasso tool areas and the font popup, and those are every call site of that
 hook in `src/`. **It is not the whole of the app's key handling**, and for the crop specifically
-it is the wrong place to look: `CropToolArea.tsx:51-59` attaches its own `window` `keydown`
+it is the wrong place to look: `CropToolArea.tsx:210-218` attaches its own `window` `keydown`
 listener and handles `Enter` and `Escape` there, with the reason written out at `:23-34` —
 `Main` mounts the area only while the crop tool owns the gesture surface, so the binding is
 scoped to the tool by construction and needs no table entry. The commit it fires is
@@ -1087,16 +1127,16 @@ scoped to the tool by construction and needs no table entry. The commit it fires
 this section concluded from `CropToolArea` calling no `useKeyDownShortcut` that Enter and Esc
 were unbound, which is the table's absence being read as the app's.
 
-| Photoshop key        | What the app actually does                                                                                                                                                                                                                                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:66`), and the `c` registration passes no `shift` (`AppKeyboardShortcuts.tsx:383-388`), so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all.                             |
-| `Enter` / `Return`   | **Works, outside the table.** `CropToolArea.tsx:53` commits the pending rect and clears `rect`/`preRatioRect`; `PolygonClickToolArea.tsx:931` and `FeatherMagneticLassoToolArea.tsx:552` own the table registrations, for the lasso tools.                                                                         |
-| `Esc`                | **Works, outside the table.** `CropToolArea.tsx:54` drops the draft rect and restores the previous framing. `Escape` is also registered in the two lasso areas and in the font popup (`FontSelect.tsx:54`), and handled raw by the transform box (`Transform.tsx:37`), the two dialogs and the layer-rename field. |
-| `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:457-462` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn', 'sponge']` (`tonalGroup` at `:52`, the non-shift fallback at `:206`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.         |
-| `Shift+O`            | Same handler with `shift: true` (`:464-470`), so it also leaves the crop — it cycles the tonal group.                                                                                                                                                                                                              |
-| `X`                  | Unbound. There is no `x` registration anywhere in `src/`; `matchesShortcut` is case-insensitive (`useKeyboardEvents.tsx:29`), so this is not a capitalisation miss.                                                                                                                                                |
-| `Backspace`/`Delete` | Bound only in the two lasso tool areas (`PolygonClickToolArea.tsx:945,953`, `FeatherMagneticLassoToolArea.tsx:566,574`), and only to remove the last draft anchor.                                                                                                                                                 |
-| `Ctrl`/`⌘` + drag    | `useRect.ts:156` reads Ctrl and Command to **lock the current aspect ratio** — the behaviour the `Shift` modifier row already describes. It never reaches a Straighten tool; there is none.                                                                                                                        |
+| Photoshop key        | What the app actually does                                                                                                                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:66`), and the `c` registration passes no `shift` (`AppKeyboardShortcuts.tsx:383-388`), so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all.                              |
+| `Enter` / `Return`   | **Works, outside the table.** `CropToolArea.tsx:212` commits the pending rect and clears `rect`/`preRatioRect`; `PolygonClickToolArea.tsx:931` and `FeatherMagneticLassoToolArea.tsx:552` own the table registrations, for the lasso tools.                                                                         |
+| `Esc`                | **Works, outside the table.** `CropToolArea.tsx:213` drops the draft rect and restores the previous framing. `Escape` is also registered in the two lasso areas and in the font popup (`FontSelect.tsx:54`), and handled raw by the transform box (`Transform.tsx:37`), the two dialogs and the layer-rename field. |
+| `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:457-462` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn', 'sponge']` (`tonalGroup` at `:52`, the non-shift fallback at `:206`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.          |
+| `Shift+O`            | Same handler with `shift: true` (`:464-470`), so it also leaves the crop — it cycles the tonal group.                                                                                                                                                                                                               |
+| `X`                  | Unbound. There is no `x` registration anywhere in `src/`; `matchesShortcut` is case-insensitive (`useKeyboardEvents.tsx:29`), so this is not a capitalisation miss.                                                                                                                                                 |
+| `Backspace`/`Delete` | Bound only in the two lasso tool areas (`PolygonClickToolArea.tsx:945,953`, `FeatherMagneticLassoToolArea.tsx:566,574`), and only to remove the last draft anchor.                                                                                                                                                  |
+| `Ctrl`/`⌘` + drag    | `useRect.ts:173` reads Ctrl and Command to **lock the current aspect ratio** — the behaviour the `Shift` modifier row already describes. It never reaches a Straighten tool; there is none.                                                                                                                         |
 
 So the data file's `shortcuts` array now carries eight rows — `C`, `Shift+C`, `Enter`, `Esc`,
 `X`, `O`, `Shift+O` and `Backspace` — each naming what the app does instead, rather than
@@ -1124,14 +1164,14 @@ Adobe official help:
 Adobe product marketing:
 
 - https://www.adobe.com/products/photoshop/crop-image.html — the Rule of Thirds overlay, the Ratio / W x H x Resolution names, the drag-inside-to-move behaviour, and the `Clear` button: "press 'clear' to remove any constraints applied to your crop preset"
-- https://www.adobe.com/products/photoshop/generative-fill.html — Generative Extend's own Crop-tool sentence: "Just click and drag beyond the borders of an image with the Crop tool, and then fill the extended canvas with new content that blends with the existing image"
+- https://www.adobe.com/products/photoshop/generative-fill.html — Generative Extend's own Crop-tool sentence, re-verified this pass: it is **Adobe's own wording and it is on this product page — not on any page under `.../crop-straighten/`**, which does not carry it. It is also about **Generative Expand the feature**, not about a value in the Fill dropdown, which is why the row no longer quotes it. This file cited it correctly; the data file was the half that promoted it into a Fill-value claim.
 
 Third party, labelled as such:
 
 - https://www.photoshopessentials.com/basics/photoshop-crop-tool-tips-and-tricks — the Shift / Alt / Shift+Alt constraint set and the `X` swap
 - https://creativepro.com/essential-tips-for-cropping-images-photoshop — `Shift+C` flyout, `O` overlay cycling, Alt from center, Enter commits and Esc cancels
 - https://design.tutsplus.com/tutorials/10-things-you-should-know-about-the-crop-tool--psd-34592 — the six-entry overlay set, and the Classic Mode behaviour (the crop rectangle moves while the image stays put)
-- https://shotkit.com/extend-background-photoshop-generative-fill — the current `Fill` dropdown as read off the bar: **Transparent**, Content-Aware and **Generative Expand**; also the one left-to-right reading of the bar reached in this pass ("options for Straighten, Grid, settings, Delete Cropped Pixels, and Fill dropdown")
+- https://shotkit.com/extend-background-photoshop-generative-fill — its `Fill` reading is **third-party and no longer asserted in the data file**: Transparent, Content-Aware and Generative Expand, off a screenshot, with no Adobe page behind any of the three. It is kept here because it is the origin of the value list, and `Unverified` item 17 is where the question now lives. Also the one left-to-right reading of the bar reached in this pass ("options for Straighten, Grid, settings, Delete Cropped Pixels, and Fill dropdown")
 
 ---
 
@@ -1276,7 +1316,7 @@ Reveal All` route back, and the file growth are third-party throughout; Adobe's 
 16. **That Ctrl (Windows) / Command (Mac OS) reaches Straighten without visiting the bar, and
     the two rotate-time modifiers beside it.** The previous `Straighten / Curve / Content-Aware
 / Default` row asserted the Ctrl clause, no source in this pass supports it, and the app
-    reads those two keys for the opposite operation (aspect-ratio lock, `useRect.ts:156`).
+    reads those two keys for the opposite operation (aspect-ratio lock, `useRect.ts:173`).
     **The inherited pass put the clause back** into the `modifiers` array — as "held on its own
     it invokes the Straighten tool without visiting the bar", extended with "Shift while
     rotating → 15-degree increments" and "Ctrl while rotating → prevents the crop box from
@@ -1286,14 +1326,49 @@ Reveal All` route back, and the file growth are third-party throughout; Adobe's 
     already in `sources`, and because `modifiers` documents Photoshop rather than the app; but
     **none of the three was re-opened on this pass**, so treat them as unverified rather than
     settled. Either find the table or delete the rows — do not leave them half-asserted.
-17. **The `Fill` dropdown's complete value list.** No Adobe page enumerates it. The
-    Transparent / Content-Aware / Generative Expand set in the data file is a third-party
-    reading of the current bar; the CC-era list the row used to give (None, Content-Aware
-    Fill, Background, Foreground Color, Black, 50% Gray, White) is third-party, undated in
-    this file, and predates Generative Expand. The data file now says which is which rather
-    than presenting either as the menu's contents. Adobe's own text establishes only that
-    Content-Aware Fill is a value in it and that Generative Expand is what the crop flow is
-    built around.
+17. **The `Fill` dropdown's complete value list — still open, and the row now asserts none of
+    it.** Re-crawled this pass. `apply-content-aware-fill-while-cropping-images.html` (Adobe,
+    last updated 23 Feb 2026) says, verbatim: "Go to the Fill dropdown in the Options bar and
+    select Content-Aware Fill", and its Note reads "To use Content-Aware Fill on Crop, ensure Use
+    Classic Mode is turned off". That establishes the dropdown and **one** value. It is still the
+    only value any Adobe page names. `crop-tool-options.html` — Adobe's own enumeration of this
+    bar, last updated the same day — tables the aspect-ratio values and the five gear settings
+    and **does not list a Fill dropdown at all**, so it is not a source for the control's contents
+    either. Adobe publishes no enumeration of the menu.
+    - **Both lists that were in the data file are out of it.** Transparent / Content-Aware /
+      Generative Expand is a third-party screenshot reading (`shotkit.com`, kept in the sources
+      list under that label); the CC-era list the row carried before that (None, Content-Aware
+      Fill, Background, Foreground Color, Black, 50% Gray, White) was third-party, undated here,
+      and predates Generative Expand. The row's hedge — "what a current walkthrough of the bar
+      reads is…" — did not repair this, because `options[].detail` is a **What Photoshop does**
+      statement and a named third-party list is not one however it is labelled. What the row
+      carries instead: the dropdown exists, Content-Aware Fill is a value in it, Adobe does not
+      publish the list.
+    - **The quote the row hung on Generative Expand is Adobe's, and it is still not a Fill
+      claim.** "Just click and drag beyond the borders of an image with the Crop tool, and then
+      fill the extended canvas with new content that blends with the existing image" is Adobe's
+      own wording on `www.adobe.com/products/photoshop/generative-fill.html` — a **product page**,
+      not one of the `.../crop-straighten/` help pages, which do not carry it. It is about
+      Generative Expand the feature. Removed from the row, recorded here.
+    - **What Adobe's current help does say about Generative Expand contradicts the third-party
+      list's placement of it.** `explore-beyond-the-canvas-with-generative-expand.html` (Adobe,
+      last updated 23 Feb 2026) puts it in the **Contextual Task Bar**: "From the Tools panel,
+      select Crop tool and drag the crop handles outward to expand the canvas. Select Generative
+      Expand from the Contextual Task Bar." Nothing on that page, and nothing else reached, calls
+      it a value in the Fill dropdown — yet `docs/OVERRIDES.md` (OVR-1) and
+      `docs/TOOLS-TOO-HARD.md` both call it "the other two values" of that dropdown, and
+      `type-crop.ts`'s `appNotes` still says "Photoshop's two synthesising values". Those three
+      are **not this file's to edit** (two are operator- or other-agent-owned, and the third would
+      contradict them), so the disagreement is reported and left; whoever reconciles it should
+      start from the Contextual Task Bar sentence. This file asserts no value list either way.
+    - **What the crop's extension closed is the app-side half, and the data file had it wrong.**
+      The `Fill` row claimed that choosing Content-Aware Fill is what lets the crop box extend
+      past the image edge. That causal claim is deleted: the crop extends the canvas with **no**
+      Fill value chosen, and the control is not rendered at all — the bar carries an Aspect
+      Ratio select and two buttons, nothing else
+      (`src/components/ToolbarsRight/Crop/Crop.tsx:52-98`). The app's answer to what fills the
+      added band is **OVR-1** in `docs/OVERRIDES.md`, recorded by hand, and both absent
+      synthesis paths are recorded once in `docs/TOOLS-TOO-HARD.md`. That half is settled.
 18. **Which of the two an inside drag moves.** `tool-techniques/crop-tool.html` is
     unambiguous — "Select inside the crop border and drag to reposition the image" — and is
     what the data file uses. `crop-image.html` covers the same region with "click inside the
