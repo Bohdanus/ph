@@ -128,17 +128,26 @@ status` and `git diff` before staging.
   work, 1,835 lines — and **not one of them was a conflict**, so the merge was
   clean and the revert was invisible in the diff. The tell is a file that gained
   or lost lines for no reason the branch explains.
-  **The check, by computation rather than by reading the merge diff:**
-  ```sh
-  comm -13 \
-    <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
-    <(git diff --name-only main..HEAD | sort)
-  ```
-  Anything that set difference is main content the merge had no business
-  touching. The legitimate exception is the files the merge deliberately edits;
-  anything else gets restored from main with `git checkout main -- <path>` before
-  the merge lands. Run it _before_ the review, because a reviewer only catches
-  the files its brief happened to mention.
+  **Now enforced, not merely written down.** `scripts/merge-takeover-guard.mjs` runs from
+  `pre-commit` (when `MERGE_HEAD` is set, which is a conflicted merge being completed) and
+  from `pre-merge-commit` (a clean `git merge` that commits itself), and it refuses the merge
+  rather than reporting it. A reviewer only catches the files its brief happened to mention;
+  this catches every path the merge resolved by copying one whole side's content. Two
+  shapes, neither of which produces a conflict marker: the result is the pre-divergence
+  content (the `-A` case above), or it is the incoming side's file verbatim
+  (`checkout --theirs <path>`, or `git merge -X theirs`).
+
+  **Its limit, because a gate that claims more than it has is the failure it replaces:** git
+  runs no hook for a **fast-forward**, so that landing shape is uncovered — safe by
+  construction, since the branch tip contains main as an ancestor, but uncovered. And
+  `--no-verify` bypasses it, as it bypasses every gate here.
+
+  The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
+  reported hundreds of innocent paths when run at the only moment it could act (before the
+  merge, `main..HEAD` measures the un-merged tree), and it missed the recorded 17-file
+  incident, because a file the branch never _changed_ is invisible to a check built on what
+  the branch touched. Run the guard, not the recipe.
+
 - **A red `tsc` in the main worktree may be someone else's work in progress, not
   a broken `main`.** The main worktree is shared, so it is routinely holding an
   agent's half-written change: tests that import a symbol their branch has not

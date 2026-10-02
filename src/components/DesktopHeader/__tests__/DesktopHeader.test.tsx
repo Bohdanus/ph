@@ -679,12 +679,15 @@ describe('DesktopHeader File > Save', () => {
 
     expect(layers.commitDirtyTool).toHaveBeenCalledTimes(1);
     expect(file.openSaveImageDialog).toHaveBeenCalledExactlyOnceWith({
-      canvas: storeState.canvasRef.current,
       fileName: 'test.png',
       layers: committedLayers,
       size: { width: 800, height: 600 },
       documentFrame: { x: 5, y: 6, width: 800, height: 600 },
     });
+    // The payload deliberately carries NO canvas. Export renders its own document-
+    // resolution surface from `layers` + `documentFrame`, so handing it the display
+    // canvas would be the coupling `src/contexts/export-canvas.ts` exists to remove.
+    expect(file.openSaveImageDialog.mock.calls[0][0]).not.toHaveProperty('canvas');
     expect(app.handleImageSave).toHaveBeenCalledExactlyOnceWith(response);
     expect(screen.queryByTestId('header-file-save-button')).toBeNull();
   });
@@ -722,15 +725,22 @@ describe('DesktopHeader File > Save', () => {
     expect(app.handleImageSave).not.toHaveBeenCalled();
   });
 
-  it('does nothing when the canvas ref has not been attached yet', async () => {
+  it('exports with no canvas ref attached, because the export surface is rendered independently', async () => {
+    // This test USED TO read "does nothing when the canvas ref has not been attached yet",
+    // pinning the opposite: that a null `canvasRef.current` suppressed the export
+    // entirely. That was the coupling — export encoded whatever the visible canvas held —
+    // and it is what `src/contexts/export-canvas.ts` removes. `hasImage` remains the guard
+    // for "there is no document to export" and is pinned by the test above.
     storeState.canvasRef = { current: null };
     file.openSaveImageDialog.mockResolvedValue({ fileName: 'test (copy)', format: 'image/png' });
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
-    expect(layers.commitDirtyTool).not.toHaveBeenCalled();
-    expect(file.openSaveImageDialog).not.toHaveBeenCalled();
+    expect(layers.commitDirtyTool).toHaveBeenCalledTimes(1);
+    expect(file.openSaveImageDialog).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ fileName: 'test.png', layers: committedLayers })
+    );
   });
 
   it('logs when the save dialog rejects', async () => {

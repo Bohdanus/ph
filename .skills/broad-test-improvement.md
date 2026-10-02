@@ -79,7 +79,8 @@ in `.husky/pre-commit` and refuses a commit made from it; the one override is
 `git add -A` in a worktree whose root checkout is dirty: the root is a different checkout at a
 different `HEAD`, so `-A` commits a silent reverting of whatever main has since done, with no
 conflict marker, and this repository has shipped 17 of those. Stage explicit paths, and run the
-`comm -13` set difference in `docs/ORCHESTRATION.md` before integrating.
+`scripts/merge-takeover-guard.mjs` before integrating — it refuses the merge and is wired
+into `pre-commit` and `pre-merge-commit`; `docs/ORCHESTRATION.md` is its one home.
 
 ---
 

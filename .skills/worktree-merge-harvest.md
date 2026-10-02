@@ -402,12 +402,10 @@ git commit -m "wip(salvage): <what the uncommitted work is>"
 git fetch origin main 2>/dev/null || true
 git merge main        # resolve HERE, in this worktree, reviewed
 
-# 3. Did the merge silently revert anything? Compute it, do not read for it.
-comm -13 \
-  <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
-  <(git diff --name-only main..HEAD | sort)
-#    Anything in that set is main content the merge had no business touching.
-#    Restore it: git checkout main -- <path>
+# 3. Did the merge silently revert anything? It is checked for you, not by you reading.
+#    scripts/merge-takeover-guard.mjs runs from pre-commit and pre-merge-commit and refuses
+#    the merge. The one home for the mechanism and its limits is docs/ORCHESTRATION.md;
+#    the `comm -13` recipe that used to be here is retired because it missed this shape.
 
 # 4. Re-verify after the merge. Composition is where silent reverts live.
 npm run tsc && npm run build && npm run test
@@ -518,8 +516,9 @@ skipped its own safety steps.
   on the next run, and a hand-edited `prunable: true` is a licence to delete.
 - **`git add -A` in a worktree whose root checkout is dirty.** This is the more
   expensive of the two `-A` traps and the one that ships reverts: 17 of them, none
-  a conflict. Stage the paths `git status` named, and run the `comm -13`
-  computation before the review.
+  a conflict. Stage the paths `git status` named. `scripts/merge-takeover-guard.mjs` checks this for
+  you and refuses the merge; the recipe that used to sit here is retired, see
+  `docs/ORCHESTRATION.md`.
 - **`git add -A` in the main checkout.** Stage only your own paths, after
   re-reading `git status`.
 - **Land a branch without bringing `main` into it first.** A merge that skips this

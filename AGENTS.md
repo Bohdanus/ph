@@ -115,6 +115,15 @@ npm run probe:console   # playwright, HEADLESS - one page load, reports console 
 
 ## Worktrees and dev servers
 
+**A merge may not silently delete the other side's work.** `scripts/merge-takeover-guard.mjs`
+runs from `pre-commit` (a conflicted merge being committed) and `pre-merge-commit` (a clean
+merge that commits itself), and **refuses** the merge. It catches the shape `tsc` and `build`
+cannot: a path the merge resolved by copying one whole side's content, which is a perfectly
+good file and compiles. One merge here shipped 17 such reverts and 1,835 lines, none of them
+a conflict. `docs/ORCHESTRATION.md` is the one home. Two limits: a **fast-forward fires no
+hook at all** (safe by construction — the branch tip contains main as an ancestor), and
+`--no-verify` bypasses it, as it bypasses every gate here.
+
 The three traps that follow from having one, each a consequence of a second checkout of
 the same repository:
 
