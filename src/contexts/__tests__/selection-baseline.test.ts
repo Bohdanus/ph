@@ -238,11 +238,13 @@ describe('deriveSelectionBaseline', () => {
     //
     // - `deriveSelectionBaseline(history)` takes the timeline and nothing else
     //   (`selection-baseline.ts:56`), and so does `convert`, because
-    //   `legacyHistoryToDurable` hands its own `history` argument straight
-    //   through (`history-adapter.ts:465`). Neither call site has a cursor to
-    //   pass, so neither can fail by being bounded at a replay target: bounding
-    //   the lookup means changing those signatures, and these two assertions are
-    //   tripwires on the signatures, not on cursor behaviour.
+    //   `legacyHistoryToDurable` takes `history: readonly HistoryItem[]` as its
+    //   first parameter (`history-adapter.ts:538`) and hands that straight to
+    //   `deriveSelectionBaseline(legacyHistory)` (`history-adapter.ts:559`).
+    //   Neither call site has a cursor to pass, so neither can fail by being
+    //   bounded at a replay target: bounding the lookup means changing those
+    //   signatures, and these two assertions are tripwires on the signatures,
+    //   not on cursor behaviour.
     // - `replayHistory(history, 1, …)` is the only cursor-sensitive call here. It
     //   seeds from the FULL timeline (`history-replay.ts:68`) and then replays
     //   entries 0 and 1, so a lookup bounded at the target would seed an empty

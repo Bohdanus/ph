@@ -127,25 +127,24 @@ describe('FileProvider PSD integration', () => {
   });
 
   /**
-   * SKIPPED BY DECLARATION, not fixed. Intermittent: one failure in five full
-   * `src/contexts` runs, never in isolation and never on a re-run of the same
-   * tree, and the captured assertion is a Save File As dialog that was OPEN when
-   * it must not be — after the save had already resolved one line above it. See
-   * TEST-FLAKES.md \u00a77, which holds the capture and the narrowed hunt.
+   * The `waitFor` around the dialog-close read is the fix for the flake this test
+   * used to carry as `it.skip`, and no assertion was widened to get here.
    *
-   * The skip is a gate decision, not a waiver, on the same grounds as
-   * `e2e/viewport-drawing.spec.ts`: a default run is contracted to zero failures,
-   * and a test red one run in five makes unrelated merges look broken, which
-   * trains the response of ignoring the gate. Nothing about the defect is waived
-   * — \u00a77 stays open, the hunt stays un-done, and this is one line to remove.
+   * `handleImageSave` in `useFile.tsx` resolves the caller's promise from inside
+   * its own `try` block and only reaches `setShowSaveDialog(false)` in the
+   * `finally` that follows, so the promise settles while the dialog close is
+   * still merely SCHEDULED. `await waitFor(...)` above returns on the tick
+   * `saveImageToDisk` is called — before that scheduled close has been committed
+   * — so the DOM read that followed ran a React 18 auto-batching commit early and
+   * saw a dialog that was already logically closed. That is the "one run in five,
+   * never in isolation" signature it had: whether the read lands before or after
+   * the commit depends on when the surrounding suite yields the event loop.
    *
-   * Do not "fix" it by loosening an assertion. The save resolves and the details
-   * are right; the only thing that failed is a dialog that should not have been
-   * open, so there is no bound here to widen.
-   *
-   * Operator decision, 2026-09-29.
+   * Waiting for the dialog to actually leave the DOM is the async flush the read
+   * was missing. It is not a loosened bound — a dialog that never closes still
+   * fails, now by timing out rather than by an intermittent red.
    */
-  it.skip('passes JPEG quality through to raster encoding and resolves the save details', async () => {
+  it('passes JPEG quality through to raster encoding and resolves the save details', async () => {
     vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
     render(
       <FileProvider>
@@ -177,7 +176,10 @@ describe('FileProvider PSD integration', () => {
       )
     );
     expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 });
-    expect(screen.queryByText('Save File As...')).toBeNull();
+    // The dialog close is scheduled by the `finally` that runs AFTER the promise
+    // above settles, so it is a separate commit from the resolution the
+    // `waitFor` observed.
+    await waitFor(() => expect(screen.queryByText('Save File As...')).toBeNull());
   });
 
   it('resolves PSD load failure with null, no document, and a logged error', async () => {
