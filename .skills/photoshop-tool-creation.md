@@ -2061,8 +2061,14 @@ And constraint 1, which the durable path makes concrete: runtime layer state is 
 only by dispatching a typed action through the store reducer. If your tool needs to publish
 derived presentation state, it needs document-scoped presentation ownership or a new typed
 presentation action — not a mutation from a callback or an async continuation.
-`AGENTS.md`'s Architecture status section adds the standing warning: do not start a single-writer cutover while
-`saveLayerCanvas()` can still promote cached canvases outside reducer publication.
+`AGENTS.md`'s Architecture status section is the one home for why the presentation boundary holds, and
+the part of it that decides where your commit goes is narrow: a promoted cache reaches a published
+layer only at `src/contexts/StoreContext.tsx:657`, inside the reducer's `PROMOTE_LAYER_PRESENTATIONS`
+arm, and the dispatcher that queues that action re-checks `isSamePresentationCanvas` first
+(`src/contexts/StoreContext.tsx:955`). So hand your canvas to `promoteLayerPresentation`, which
+dispatches it (`src/contexts/StoreContext.tsx:1362`), and never assign to a published layer's
+`tmpCanvas`. Do not restate that here if you extend this file: `docs/DOCUMENTATION.md`'s single-home
+rule makes `AGENTS.md` the only place the architecture status is written down.
 
 ---
 
