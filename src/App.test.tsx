@@ -247,19 +247,35 @@ describe('App shell layout', () => {
     render(<App />);
     const before = screen.getByText('Main');
 
-    setViewportWidth(500);
-    expect(screen.getByText('Main')).toBe(before);
+    // `useStore` is called once per App render, so its call count is the render count. The
+    // node-identity checks below are only worth anything if a crossing RE-RENDERS: identity is
+    // trivially preserved when nothing happened at all, so a `setViewportWidth` that stopped
+    // delivering its `change` event, or a shell that stopped subscribing, would leave all five
+    // of these assertions green while the boundary stopped doing anything.
+    const renders = () => useStoreMock.mock.calls.length;
 
-    setViewportWidth(1600);
-    expect(screen.getByText('Main')).toBe(before);
+    const step = (width: number, rerendered: boolean) => {
+      const beforeCrossing = renders();
+      act(() => {
+        setViewportWidth(width);
+      });
+      expect({ width, rerendered: renders() > beforeCrossing }).toEqual({ width, rerendered });
+      // Whatever the render count did, the canvas is the same DOM node throughout.
+      expect(screen.getByText('Main')).toBe(before);
+    };
 
-    // Also through the tablet band, in both directions.
-    setViewportWidth(900);
-    expect(screen.getByText('Main')).toBe(before);
-    setViewportWidth(500);
-    expect(screen.getByText('Main')).toBe(before);
-    setViewportWidth(1280);
-    expect(screen.getByText('Main')).toBe(before);
+    step(500, true);
+    step(1600, true);
+
+    // Also through the tablet band, in both directions. 900 is deliberately INERT: `App`
+    // subscribes to the mobile boundary alone and the tablet band is restyled by the
+    // stylesheet, so no React work happens there. Asserted, because it is what makes the four
+    // steps above mean "the boundary was crossed" rather than "the helper re-renders" — and
+    // because a shell that started subscribing to the tablet band would add a render to every
+    // width change, which is the cost the unconditional mount exists to avoid.
+    step(900, false);
+    step(500, true);
+    step(1280, true);
   });
 
   it('renders the same region set at every width, because hiding is not unmounting', () => {
