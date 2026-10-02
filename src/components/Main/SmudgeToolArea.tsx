@@ -50,8 +50,8 @@ type smudgeToolAreaProps = {
  * the same args and not an accumulation of them.
  *
  * `points` arrives in DOCUMENT space (`usePaintStroke` converts through the document frame,
- * which is the crop origin), and the processor does not speak that space: `tempUpdateLayer`
- * hands it the layer's OWN raster with `size: layer.pos` (`src/contexts/useLayer.ts:544`), so
+ * which is the crop origin), and the processor does not speak that space: it is handed
+ * the layer's OWN raster in that layer's space (`src/contexts/useLayer.ts:730-734`), so
  * the frame it addresses is layer-local and carries no document origin. Every stroke is
  * therefore rebased onto the active layer at the callback boundary, which is the last point
  * where this component still knows which layer it is editing; `src/util/layer-space.ts`
