@@ -295,7 +295,7 @@ const staleRetiredSymbols = (markdown) =>
     .map(([name, reason]) => `${name} — ${reason}`);
 
 /**
- * The section numbers `HANDOFF.md` currently has, read from its own headings.
+ * The sections `HANDOFF.md` currently has, read from its own headings.
  *
  * `## 15a.` and `## 32.` both match because the suffixed form is a live entry in its own right —
  * `HANDOFF.md` §77 is the entry about the suffixed-retirement bug, so a parser that dropped the
@@ -324,10 +324,9 @@ const SECTION_REF = /§(\d+[a-z]?)\b/g;
  * A DELETED number is the worse case and is reported as its own failure, because the two need
  * different fixes and reading them as one is how the original defect survived: a number that was
  * deleted looks exactly like a number that was never written, so both get called "stale" and the
- * reader is left to guess whether repointing it is possible. It is not — `HANDOFF.md` forbids
- * prose tombstones (`HANDOFF.md:11-17` calls one "the tombstone the lifecycle rule forbids"), and
- * the numbers-only deleted list is the only record that exists. So a deleted reference is
- * removed, never repointed.
+ * reader is left to guess whether repointing it is possible. It is not — `HANDOFF.md` calls a
+ * prose stand-in "the tombstone the lifecycle rule forbids", and the numbers-only deleted list is
+ * the only record that exists. So a deleted reference is removed, never repointed.
  *
  * `deadNumbers` is imported rather than re-derived: it is the same parser the board uses to keep
  * a retired number from being re-filed as new work (`handoff-import.mjs` `deadNumbers`), and a
@@ -347,6 +346,78 @@ const staleHandoffRefs = (markdown, handoff) => {
           `not list it as deleted.`
     );
 };
+
+/**
+ * A `file.ext:NNN` citation: a line number in a document.
+ *
+ * The extension list is the one that makes this safe against the text it will meet. Requiring a
+ * known extension followed by COLON and DIGITS is what keeps `node:fs`, `node:path` and
+ * `http://localhost:5173` out — the three shapes a looser `\w+:\d+` would report, and the first
+ * two of which appear in this very repository's import lines. `.md` is IN the list on purpose:
+ * `docs/README.md` citing `HANDOFF.md:99` drifts exactly as much as `HANDOFF.md:99` does, and
+ * excluding prose targets would exempt the documents with the most citations in them.
+ *
+ * A RANGE (`file.ts:12-20`) and a comma list are caught by the same match, because the pattern
+ * only needs the first number; the reported string stops there, which is enough to name the line
+ * for a human to go and look at.
+ */
+const LINE_NUMBER_CITATION =
+  /[\w./@-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml|html|svg|wasm|avif|webp|jpg|png):\d+/g;
+
+/**
+ * The distinct numbered citations in a string, deduplicated.
+ *
+ * A named function rather than a `.test()` on the global pattern, and that is a correctness point
+ * rather than a style one: `/g` makes `test()` stateful through `lastIndex`, so a `.test()` loop
+ * over several documents skips every second match and reports a corpus that is half clean without
+ * anything looking wrong.
+ */
+const lineNumberCitationsIn = (text) => [...new Set([...text.matchAll(LINE_NUMBER_CITATION)].map((m) => m[0]))];
+
+/**
+ * The documents whose numbered citations are forbidden, and the rule behind the list.
+ *
+ * Coverage is BY DOCUMENT and it only grows, which is the whole design. The alternative — a
+ * per-occurrence exemption list, or a corpus of everything with the outstanding numbers excused —
+ * is the shape this file's own `ALLOWED_WITHOUT_SOURCE` comment warns about at one level down: an
+ * entry nobody can falsify, which reads as checked and is not. Here the exempt side is a PATH,
+ * and a path is checkable in a way an occurrence is not: a reader can run
+ * `rg '\.\w+:\d+' <path>` and see the residue, or count the paths still missing from this map
+ * and see exactly what the migration has left. Adding a document is the visible, reviewed act of
+ * migrating it.
+ *
+ * The assertion below pins the property that makes the growth honest: every document NOT in this
+ * map that still carries a numbered citation is reported, so the remainder cannot go unrecorded,
+ * and no document can be dropped from the map to make the count smaller.
+ */
+const LINE_NUMBER_GATED = new Set(['AGENTS.md', 'docs/DOCUMENTATION.md', 'docs/README.md']);
+
+/**
+ * Every numbered citation in the gated documents, prefixed by the document that made it.
+ *
+ * Deduplicated per document, because a document that opens a finding with the same mistake twenty
+ * times should read as one thing to fix rather than twenty findings to triage.
+ */
+const lineNumberCitationsByDocument = (documents) =>
+  documents
+    .filter(({ path }) => LINE_NUMBER_GATED.has(path))
+    .flatMap(({ path, text }) => {
+      const found = new Set([...text.matchAll(LINE_NUMBER_CITATION)].map((match) => match[0]));
+      return [...found].map((citation) => `${path}: ${citation}`);
+    });
+
+/**
+ * The maintained documents that still carry a numbered citation, and are therefore not gated yet.
+ *
+ * Reported rather than merely counted, so the migration's remainder is a list in a failing
+ * assertion instead of a number in a comment that goes stale. This is the answer to "is the
+ * migration done", and it is an answer that can only be true.
+ */
+const ungatedDocumentsWithLineNumbers = (documents) =>
+  documents
+    .filter(({ path }) => !LINE_NUMBER_GATED.has(path))
+    .filter(({ text }) => lineNumberCitationsIn(text).length > 0)
+    .map(({ path }) => path);
 
 describe("AGENTS.md's architecture claims resolve against the program", () => {
   it('cites no backticked call that the program does not contain', () => {
@@ -464,5 +535,64 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
     const absent = staleHandoffRefs('see §9999', handoff);
     expect(absent).toHaveLength(1);
     expect(absent[0]).toContain('no such section');
+  });
+
+  it('cites no line number in a gated document', () => {
+    expect(lineNumberCitationsByDocument(readMaintainedDocuments())).toEqual([]);
+  });
+
+  it('detects a line-number citation, and not the shapes that only look like one', () => {
+    // The guard on the guard, for the leg above. Each pair is one thing that must be caught and
+    // one neighbour that must not, because a detector for this leg is easy to write so that it
+    // either misses prose targets or reports the repository's own import lines.
+    //
+    // Caught: the three forms documents actually use. A range and a comma list are caught by the
+    // first number, which is the whole of what is needed to name the line to a human.
+    expect(lineNumberCitationsIn('at `history-adapter.ts:172`')).toEqual(['history-adapter.ts:172']);
+    expect(lineNumberCitationsIn('`materialization.ts:316-323`')).toEqual(['materialization.ts:316']);
+    expect(lineNumberCitationsIn('`reducer.ts:88`, then `reducer.ts:91`')).toEqual(['reducer.ts:88', 'reducer.ts:91']);
+    // A prose target is a citation too. `docs/README.md` citing `HANDOFF.md:99` drifts exactly as
+    // much as `HANDOFF.md:99` does.
+    expect(lineNumberCitationsIn('HANDOFF.md:99')).toEqual(['HANDOFF.md:99']);
+
+    // Not caught: the shapes that carry a colon and a number without citing a line. `node:fs` and
+    // `node:path` are this repository's own import specifiers, and a URL's port is not a line.
+    expect(lineNumberCitationsIn("import { readFileSync } from 'node:fs'")).toEqual([]);
+    expect(lineNumberCitationsIn('see http://localhost:5173/ for the dev server')).toEqual([]);
+    // A version, a timestamp and a specifier all carry a dot and a colon and are not citations.
+    expect(lineNumberCitationsIn('vite 7.0:1 shipped at 20:00')).toEqual([]);
+    // A deduplicated repeat is one thing to fix, not five.
+    expect(lineNumberCitationsIn('a.ts:1 and again a.ts:1 and again a.ts:1')).toEqual(['a.ts:1']);
+  });
+
+  it('reports the gated documents that still carry a numbered citation', () => {
+    // The migration's remainder, as a failing assertion rather than a number in a comment. This
+    // test is EXPECTED to fail for as long as documents are unmigrated, which is stated here
+    // rather than left to be discovered: it is the to-do list, and it shrinks by migration.
+    expect(ungatedDocumentsWithLineNumbers(readMaintainedDocuments())).toEqual([]);
+  });
+
+  it('gates a real document, and the gated set is every path it claims to be', () => {
+    // The scope of this leg is the thing that can rot silently, because the leg above passes on an
+    // EMPTY gated set: a map from document to rule that no document is in enforces nothing at all
+    // and reports green. So the set is asserted to be non-empty, to name real tracked documents,
+    // and to contain the two documents that state the rule itself.
+    const tracked = new Set(trackedMarkdown());
+    const gated = [...LINE_NUMBER_GATED];
+    expect(gated.length).toBeGreaterThan(0);
+    expect(gated.filter((path) => !tracked.has(path))).toEqual([]);
+    expect(gated).toContain('AGENTS.md');
+    expect(gated).toContain('docs/DOCUMENTATION.md');
+    // The spec is gated, which is the property that makes the rule's own table an enforcement
+    // problem instead of a special case: `docs/DOCUMENTATION.md` writes the banned form with a
+    // placeholder for exactly this reason.
+    expect(lineNumberCitationsIn(readFileSync(resolve(REPO_ROOT, 'docs/DOCUMENTATION.md'), 'utf8'))).toEqual([]);
+    // And the leg reads the gated set, not the whole corpus: a document outside it is reported by
+    // the migration test above instead, which is the difference between "not migrated yet" and
+    // "clean".
+    expect(lineNumberCitationsByDocument([{ path: 'HANDOFF.md', text: '`useHistory.ts:141`' }])).toEqual([]);
+    expect(lineNumberCitationsByDocument([{ path: 'AGENTS.md', text: '`useHistory.ts:141`' }])).toEqual([
+      'AGENTS.md: useHistory.ts:141',
+    ]);
   });
 });

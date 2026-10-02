@@ -203,13 +203,52 @@ because `scripts/lib/worktree-inventory/curated.mjs` keys on their paths.
 ## Citations
 
 **A citation is a claim about the tree you are standing in.** Re-derive it from the
-sentence that needs it. Never copy one forward from a document you just read, and
-never regenerate it mechanically: a `file.ts:NNN` off by three is a review finding,
-but an audit of the citations in this repository found 60 resolving to the wrong
-code and 30 to a blank line, a comment, a closing brace or an import — uniformly,
-in whole clusters, which is exactly what copying does.
+sentence that needs it. Never copy one forward from a document you just read.
 
-Cite a file path, and a line only when you have just read the line.
+**Cite the unit, never the line.** A line number is a position in a file that
+everything above it moves. An audit of `HANDOFF.md` found 36% of its hand-checked
+`file.ts:NNN` citations pointing at the wrong code — mostly off by one or two, some
+by 146 — and a 42-minute session once burned chasing nothing but that drift, one
+reviewer finding a stale citation per round. So the format is banned in tracked
+documents, and what replaces it is a name that can be re-derived onto the code:
+
+| Instead of                                                  | Write                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------ |
+| `` `history-adapter.ts:‹line›` ``                           | `` `history-adapter.ts` — `durableLayerForSource()` `` |
+| `` `materialization.ts:‹lines›` ``                          | `` `materialization.ts` — `materializeDocument()` ``   |
+| `` `durable-compositor.refusal.test.ts:‹line›` ``           | the `it('...')` title, in backticks                    |
+| `` `PUBLISH_RUNTIME_PRESENTATION` at `reducer.ts:‹line›` `` | `` `PUBLISH_RUNTIME_PRESENTATION` ``                   |
+
+The left column is written with a `‹line›` placeholder rather than a real number, so
+this document obeys the rule it states and the check below reads it.
+
+**The order of preference**, first that resolves:
+
+1. A **declared identifier**, called in the call form: `` `materializeDocument()` ``.
+2. A **string literal the program dispatches on** — an action type, a source kind,
+   a commit kind. `'legacy-tool'` is a real anchor; it is a value, not a place.
+3. A **`it('...')` title** for a test, which is stable while the file's line count
+   is not.
+4. The **file alone**, when the claim is about the file as a whole.
+
+A range names **one** enclosing unit, not two endpoints. A claim too vague to name a
+unit has not been located yet, and citing a line number is how that was hidden.
+
+**Why a name and not a number.** A number cannot be checked: a test that fails on a
+number having moved trains people to regenerate citations instead of re-deriving
+them, which is what produced the clusters. A name can be checked, and this
+repository checks it — `scripts/__tests__/agents-citations.test.mjs` reads every
+maintained tracked document and fails on a backticked call the program does not
+contain, a retired symbol named in any of them, a `§N` that is not a live
+`HANDOFF.md` heading, and a `file.ext:‹line›` citation in any document the check
+covers. Coverage is by document and only grows: migrating a document is what puts
+it under the check, so no commit in the migration is red.
+
+**The escape hatch** is a numbered citation in a document the check does not
+cover — a point-in-time report ([`README.md`](README.md) names those, and every
+line number in them was true of the tree they measured) or a document still queued
+for migration. There is no per-occurrence exemption, because an exemption is a
+number that gets refreshed and then outlives its reason.
 
 **A description without a source is a rumour.** That covers Adobe claims and this
 project's own claims equally. `docs/TOOLS.md` fails its test on an empty
