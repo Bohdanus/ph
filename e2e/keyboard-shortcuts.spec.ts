@@ -140,17 +140,17 @@ test.describe('Keyboard shortcuts', () => {
      * The tile is RESOLVED rather than addressed, which is the whole difference between this
      * test and the version from before the rail learned to fold itself away. TWO of these four
      * tools are rows of the three-dots tile's flyout at the suite's viewport and have no tile
-     * of their own to address: Text and Clone Stamp, the fifteenth and ninth of the sixteen
+     * of their own to address: Text and Clone Stamp, the fourteenth and eighth of the fifteen
      * groups in `toolbar-mapping.ts`. The other two are among the seven rows the rail keeps at
      * 1280x720 — Move is the first group and Crop the sixth — so they are addressed directly
      * whatever the window. Crop used to be folded at this viewport; the rail now fills its
-     * whole slot with whole rows (`TOOLBAR_HEIGHT_BUDGET = 1`, `toolbar-overflow.ts:43`) and
-     * keeps seven of the sixteen groups here, which is why the count moved from three to two.
+     * whole slot with whole rows (`TOOLBAR_HEIGHT_BUDGET = 1`, `toolbar-overflow.ts:52`) and
+     * keeps seven of the fifteen groups here, which is why the count moved from three to two.
      * Resolution keeps the question identical at every window because the app answers it
      * identically at every window: the three-dots tile paints its lit state from the same
      * `group.some(...)` predicate over the collapsed set, which is the channel
      * `expectToolSelected` reads for a tool with no tile of its own. (It deliberately renders
-     * NO `aria-pressed` — `SidebarLeft.tsx:653`, which is why that helper reads the class and
+     * NO `aria-pressed` — `SidebarLeft.tsx:658`, which is why that helper reads the class and
      * not the attribute; the sentence here used to say the attribute, and named a mechanism
      * the tile does not have.) The addressed version did not fail HERE —
      * `getByTestId` reports zero elements rather than failing — so the absence surfaced one

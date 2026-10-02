@@ -399,7 +399,7 @@ test.describe('Single row and single column marquee', () => {
   //    NOT `clickToolButton`, and the reason is a layout fact rather than a preference. That
   //    helper resolves a tool through a tile of its OWN name and, failing that, through the
   //    three-dots overflow (`toolbar-helpers.ts:189-217`). Neither route reaches a member of a
-  //    group that still has a tile: the marquee group is the second of sixteen
+  //    group that still has a tile: the marquee group is the second of fifteen
   //    (`toolbar-mapping.ts:41`), the collapse is a SUFFIX, and at the suite's 1280x720 window
   //    the rail keeps the marquee tile as `tool-button-rectangular-selection` — so the two
   //    1-pixel tools have no tile of their own AND are not among the collapsed tools. The

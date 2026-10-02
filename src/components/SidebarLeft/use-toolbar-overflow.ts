@@ -29,12 +29,12 @@ export type ToolbarOverflow = {
  * NOT FAILED YET.** React subscribes to an external store in a PASSIVE effect, so a ref callback
  * that measures during commit has nobody to notify, and `setSlots` — a layout effect, so still
  * inside the commit — publishes into the same empty listener set. The committed tree therefore
- * holds the plan from BEFORE the measurement, and an unmeasured rail shows every tool: sixteen
- * tiles in a slot that fits eight at 720, corrected on the next commit.
+ * holds the plan from BEFORE the measurement, and an unmeasured rail shows every tool: fifteen
+ * tiles in a slot that fits seven at 720, corrected on the next commit.
  *
  * That next commit has been arriving before the browser paints. A `MutationObserver` installed
  * before the app's own script, whose callbacks are microtasks and therefore run before the paint
- * the mutation enables, recorded the FIRST rail it ever saw as already fitted — eight tiles at
+ * the mutation enables, recorded the FIRST rail it ever saw as already fitted — seven tiles at
  * 720 — with no code doing anything about it. Chrome flushes React's passive effects inside the
  * mounting task, so this is what happens in practice rather than what React promises.
  *

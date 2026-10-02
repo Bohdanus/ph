@@ -691,7 +691,7 @@ again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it 
 
 `src/tools/fill.ts:38-44` declares `size: Size` on `FillToolArgs`,
 with the comment that a fill needs its layer geometry in the committed args. The seeded defaults are
-`{ width: 1, height: 1 }` (`src/tools/settings.ts:196,205`), and the two fill processors take the real
+`{ width: 1, height: 1 }` (`src/tools/settings.ts:205,205`), and the two fill processors take the real
 size from the curried `ProcessorToolParams` — `fillLayer` destructures `params.size` (`:102`) and never
 reads `args.size`. `pos` is genuinely required, because a durable `apply-raster-processor` op replays
 from the stored args alone (`src/contexts/materialization.ts:282`); `size` is not, because the same
@@ -705,7 +705,7 @@ the repository that carries a size — every other tool learns it from `params`.
 `args.size` and assert in `src/tools/__tests__/fill.test.ts` that a `pos`/`size` pair in the args
 governs the raster, so the field cannot be write-only. Do not leave it as it is.
 
-**Files.** `src/tools/fill.ts:38-44`, `src/tools/settings.ts:196,205` (the two
+**Files.** `src/tools/fill.ts:38-44`, `src/tools/settings.ts:205,205` (the two
 `size: { width: 1, height: 1 }`
 defaults)
 
@@ -877,7 +877,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1108-1123,1125-1140,1143-1150`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1138-1153,1125-1140,1143-1150`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -897,7 +897,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1108-1123,1125-1140,1143-1150`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1138-1153,1125-1140,1143-1150`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -915,7 +915,7 @@ so a single unconvertible layer voids the entire document rather than itself.
 `legacy-tool` route.** The second thing a user does in a session is draw a stroke, so this is not a
 latent shape of the cutover — it is what the cutover would do.
 
-The irony worth recording: `toolProcessors.draw` at `toolProcessors.ts:152-158` is a genuine `creator: true`, so a
+The irony worth recording: `toolProcessors.draw` at `toolProcessors.ts:153-159` is a genuine `creator: true`, so a
 deterministic creator for exactly this exists and is simply unreachable, because the adapter never
 routes to it.
 
@@ -933,7 +933,7 @@ yield `source.kind === 'legacy-tool'`. And `materializeDocument` over a replay c
 layer plus two good layers must resolve with the good layers present.
 
 **Files.** `src/contexts/history-adapter.ts:144-185`, `src/contexts/materialization.ts:156,347-350`,
-`src/contexts/useLayer.ts:287`, `src/tools/toolProcessors.ts:152-158`
+`src/contexts/useLayer.ts:287`, `src/tools/toolProcessors.ts:153-159`
 
 ---
 
@@ -941,7 +941,7 @@ layer plus two good layers must resolve with the good layers present.
 
 **Problem.** `materializeLayer` trusts the `creator` flag as its only gate
 (`materialization.ts:174`). **Five** `commit: 'selection'` entries claim it — `polygonal-lasso`
-(`toolProcessors.ts:177-183`), `freehand-lasso` (`:184-190`), `rectangular-selection` (`:203-209`),
+(`toolProcessors.ts:178-184`), `freehand-lasso` (`:185-191`), `rectangular-selection` (`:204-210`),
 and, added after this entry was first written, `elliptical-selection` (`:216-222`) and
 `quick-selection` (`:223-229`). All five processors are pass-throughs over a `bitmap` that is
 `undefined` on a creator call:
@@ -973,14 +973,14 @@ flag is a sound determinism signal wherever it is honestly set.
 `width`/`height` ≥ 1. Fails today for all five, and for none of the honest creators.
 
 **Three pins assert the current roster, and each is a tripwire by its own admission.**
-`tool-processors.test.ts:262-284` hard-codes the 13-name creator roster including all five and
+`tool-processors.test.ts:265-289` hard-codes the 13-name creator roster including all five and
 asserts `expect(['source', 'selection']).toContain(commit)`, so it passes on the lie rather than
 catching it; `:985-999` records it in prose — "Both lasso tools are flagged creators, yet
 `selection` reads `bitmap` … The behaviour is pinned here so the registry/param-type mismatch stays
 visible"; and `:367-368` names the two newer offenders. Delete or re-point all three in the same
 change as the fix.
 
-**Files.** `src/tools/toolProcessors.ts:177-229`, `src/tools/selection.ts:15-19`,
+**Files.** `src/tools/toolProcessors.ts:178-249`, `src/tools/selection.ts:15-19`,
 `src/tools/rectangularSelection.ts:9-13`, `src/tools/ellipticalSelection.ts:20-24`,
 `src/tools/quickSelection.ts:24`, `src/contexts/materialization.ts:173-179`
 
@@ -1011,21 +1011,21 @@ call site**: take the ref, and any state flag, only when the claim succeeds — 
 ## 62. The error boundary's fallback loses the region's own sizing and grid cell
 
 `ErrorBoundary`'s fallback renders a bare `div` with no `grid-area` (`ErrorBoundary.tsx:52-56`),
-while the regions it replaces are `[grid-area:main]` (`Main.tsx:358`) and `[grid-area:right]`
+while the regions it replaces are `[grid-area:main]` (`Main.tsx:375`) and `[grid-area:right]`
 (`SidebarRight.tsx:321`). Its props are a human-readable `label` and the `children` it has already
 replaced (`ErrorBoundary.tsx:5-13`), so it does not know which region it wrapped.
 
 **The auto-placement half of the original claim is wrong, and the consequence is different.** The
 grid template at `App.tsx:82` names `header`, `toolbar`, `left`, `main`, `right` and `footer`, but
-`header` and `toolbar` are claimed by `DesktopHeader.tsx:172` and `ToolbarHorizontal.tsx:5`, both
+`header` and `toolbar` are claimed by `DesktopHeader.tsx:302` and `ToolbarHorizontal.tsx:5`, both
 rendered by `Menu.tsx:7-8` **before** the boundaries in document order — so auto-placement does not
-start at the toolbar row. With `left` claimed by `SidebarLeft.tsx:1026`, the first free cell in
+start at the toolbar row. With `left` claimed by `SidebarLeft.tsx:1056`, the first free cell in
 document order is row 3 col 2, which is exactly the canvas's own cell; the second boundary's
 fallback then takes `right`. On mobile the template collapses to `'header'`/`'main'`/`'bottom'` with
 `main` again the first free cell. Both messages land in the right cells.
 
 **What genuinely remains** is the sizing: the fallback also drops the region's own
-`relative overflow-y-auto` (`Main.tsx:358`), so the canvas's message renders content-height instead
+`relative overflow-y-auto` (`Main.tsx:375`), so the canvas's message renders content-height instead
 of filling the cell.
 
 **Fix.** A new optional `gridArea` prop **plus** the two `App.tsx` call sites (`:92`, `:96`), and the
@@ -1033,7 +1033,7 @@ sizing class alongside it. Do not add the prop without them — an always-`undef
 than the current auto-placement, which at least lands in the right cell.
 
 **Files.** `src/components/Common/ErrorBoundary.tsx:5-13,52-56`, `src/App.tsx:82,92,96`,
-`src/components/Main/Main.tsx:358`, `src/components/SidebarRight/SidebarRight.tsx:321`
+`src/components/Main/Main.tsx:375`, `src/components/SidebarRight/SidebarRight.tsx:321`
 
 ## 63. The presentation scope's liveness set assumes an invariant it does not enforce
 
@@ -1101,7 +1101,7 @@ component — `shape` at `:63`, and `rectangle`, `ellipse`, `triangle`, `polygon
 `:154-158` — while `src/tools/settings.ts` gives each of those five its own `toolName` in its
 default args: `:276`, `:283`, `:290`, `:297`, `:304`. The guard therefore returns for every one of
 them, and their args stay frozen on the hardcoded `color: '#000000'`. Only `shape` itself, whose
-default is `toolName: 'shape'` at `src/tools/settings.ts:80`, passes. Moving the foreground swatch
+default is `toolName: 'shape'` at `src/tools/settings.ts:82`, passes. Moving the foreground swatch
 therefore changes the toolbar preview for `shape` and nothing at all for the other five, and the
 committed layer is black in all five cases.
 
@@ -1123,8 +1123,8 @@ The second half is a product decision, not a bug fix — the operator has alread
 fill should follow Photoshop's model, which is a dedicated Fill swatch, so this item reduces to
 implementing that and then widening the guard.
 
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34`, `src/tools/toolsMap.ts:63,154-158`,
-`src/tools/settings.ts:80,276,283,290,297,304`, `src/tools/shape.ts:144-145`,
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34`, `src/tools/toolsMap.ts:65,154-158`,
+`src/tools/settings.ts:82,276,283,290,297,304`, `src/tools/shape.ts:144-145`,
 `src/contexts/StoreContext.tsx:325`
 
 ---
@@ -1298,13 +1298,17 @@ default panel or sitting in Extra Tools.
 
 **`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
 than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx:130` does `toolbarMap.flat()`, which discards the
+deleted, not kept.** Separately: `SidebarLeft.tsx:153` does `toolbarMap.flat()`, which discards the
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
-**Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands; their
-processors are reused unchanged, so this is a **routing** change, not a processing change, and the
-history and durable paths are untouched. `shape` dissolves into the five figure `ToolName`s that
+**Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands, and their
+processors are reused unchanged — but this is **not** the pure routing change with "the history and
+durable paths untouched" that this line used to claim, and the claim was refuted before it shipped:
+`'color' | 'levels'` are a **durable schema type** (`src/contexts/history-model.ts:75`,
+`src/contexts/layer-types.ts:28`), so every already-committed operation of either crosses the durable
+boundary whether or not the surface it was minted from moves. `shape` dissolves into the five figure
+`ToolName`s that
 already have processors and are already dispatched. `draw` is last and is the expensive one: it is
 the suite's default way to make a mark, **25 call sites across 14 e2e specs**, and
 `e2e/pen-types.spec.ts` is specifically about it and dies with the tool. Its engine does not die —
@@ -1337,11 +1341,11 @@ other eight steps safe.
 **What this costs in tests, before a single tool is added.** The hand-copied lists are the expense,
 and they are already drifted: `src/util/__tests__/constants.test.ts:106-136` holds a hand-copied
 29-name list that is **12 short of the real 41** and passes only because its assertion is
-`toContain`. `toolIcons.test.tsx:25-72` holds a 46-name union by hand; `tool-processors.test.ts`
+`toContain`. `toolIcons.test.tsx:25-75` holds a 46-name union by hand; `tool-processors.test.ts`
 carries four separate 41-name and 10-name rosters; `SidebarLeft.rendering.test.tsx:123-140` pins
 the exact 16-tile order by name; and `toolbar-mapping.test.ts:101-103` compares a hand-copied
 expected shape flyout with `toEqual`, so **an added key on any shape entry breaks it**.
-`AppKeyboardShortcuts.tsx:9-16` asserts in prose that its cycle groups match the mapping's groups;
+`AppKeyboardShortcuts.tsx:10-17` asserts in prose that its cycle groups match the mapping's groups;
 **three of its seven do not** — the Pen tile is six wide and its cycle is three, the shape tile is
 six wide and its `Shift+U` cycle is four, and `Shift+U` from the Triangle or Polygon does not skip
 them but **restarts** at the rectangle. Nothing tests that claim. And `availableTools` /
@@ -1394,10 +1398,10 @@ namespace and left an unguarded regex in the test. Half-finished is worse than f
 **The loss, measured.** `NUMBERED = /^(?:item\s+)?#?(\d+)\b/i` cannot match a letter suffix —
 there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-anchored reorder …')`
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
-`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:442` is a **level-2**
+`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:324` is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
 `## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
-`HANDOFF.md:443-456` is **876 raw characters**, or **874** once the span's leading and
+`HANDOFF.md:325-338` is **876 raw characters**, or **874** once the span's leading and
 trailing blank lines are trimmed — 874 is the trimmed count, and the raw count is the one
 that includes them. Line 455 is a `---` rule, which `bodyOf` drops as layout, so the prose the
 parser actually strands is lines 443-454. All of it is unreachable from any item title or body.
@@ -1468,10 +1472,10 @@ documentation, 2026-09-29.** §74 carries the inventory; these are the _mechanic
 and each is a one-line fix.
 
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
-`toolbar-mapping.ts:96` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
-`toolbar-mapping.ts:72` gives the Brush. The badge is rendered from the map
-(`SidebarLeft.tsx:837`), so the user is told the Draw Tool answers to `B`; and
-`AppKeyboardShortcuts.tsx:19` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
+`toolbar-mapping.ts:102` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
+`toolbar-mapping.ts:73` gives the Brush. The badge is rendered from the map
+(`SidebarLeft.tsx:860`), so the user is told the Draw Tool answers to `B`; and
+`AppKeyboardShortcuts.tsx:20` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
 so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
 is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
 
@@ -1822,9 +1826,9 @@ borders are drawn that way — not one.** `useMarchingAnts`
 "marching ants on a rectangle" is the Move tool's layer outline.
 
 **Three selection borders still sit still, not one.** A polygon selection animates
-(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx:40`'s
+(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx:42`'s
 `POLYGON_SELECTION_MODES`. The elliptical and quick selection tools are deliberately absent from it
-and map to their own `interactionMode`s (`Main.tsx:104,106`), so their borders stay the static
+and map to their own `interactionMode`s (`Main.tsx:114,106`), so their borders stay the static
 `drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
 (`createCommittedPolygonSelection`, `src/util/selection.ts:29`, whose `geometry: 'polygon'` is at `:51`), so nothing about the selection's
 own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
@@ -1855,7 +1859,7 @@ borders, and the entry above says which is which — pick the scope deliberately
   end up on different canvases or the scrim will wipe the ants mid-drag.
 - Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
   three: add `'elliptical-selection'` and `'quick-selection'` to `POLYGON_SELECTION_MODES`
-  (`Main.tsx:40`) and stop those two tool areas calling `drawSelectionOutline`
+  (`Main.tsx:42`) and stop those two tool areas calling `drawSelectionOutline`
   (`EllipticalSelectionToolArea.tsx:112`, `QuickSelectionToolArea.tsx:104`). This one is not only a
   mode list, because both commit `sourceTool: 'magic-wand'`
   (`ellipticalSelection.ts:48`, `quickSelection.ts:43`) — the constant each borrows from the wand —
@@ -2104,7 +2108,7 @@ real array-valued arg.)
 **Not latent, and the earlier version of this entry said otherwise for the wrong reason.** It claimed
 "No `ToolArgs` field is an array", which is false — `DrawToolArgs.points?: Point[]` and
 `lineDash?: null | number[]` (`src/tools/draw.ts:13-14`), `EraserToolArgs.points` (`eraser.ts:66`),
-`DodgeBurnToolArgs.points` (`dodgeBurn.ts:31`), `CloneStampToolArgs.points` (`cloneStamp.ts:18`),
+`DodgeBurnToolArgs.points` (`dodgeBurn.ts:26`), `CloneStampToolArgs.points` (`cloneStamp.ts:18`),
 `ColorReplacementToolArgs.points?` (`colorReplacement.ts:97`), plus the polygonal-lasso,
 feather-magnetic-lasso, quick-selection and elliptical-selection args — and production really does
 write them into history verbatim: `BurnToolArea.tsx:88-94` commits
@@ -2127,7 +2131,7 @@ holes today. That is right about a true **hole** (`.map` skips it) and wrong abo
 
 **Files.** `src/contexts/history-adapter.ts:101-120,165,495,516,546,648,800-802,868-876`,
 `src/contexts/useLayer.ts:376-386`, `src/tools/draw.ts:13-14`, `src/tools/eraser.ts:66`,
-`src/tools/dodgeBurn.ts:31`, `src/tools/cloneStamp.ts:18`, `src/tools/colorReplacement.ts:97`
+`src/tools/dodgeBurn.ts:26`, `src/tools/cloneStamp.ts:18`, `src/tools/colorReplacement.ts:97`
 
 ---
 
@@ -2267,7 +2271,7 @@ e2e/viewport-drawing.spec.ts:228:   * that drift is a filed defect (`e2e/OPEN-PR
 ```
 
 `docs/LAYERS-PANEL.md:826-834` reports it as "written in **only two files, five lines**:
-`AGENTS.md:15`, `:165`, `:172` and `TEST-FLAKES.md:391`, `:657`". Every one of those five citations
+`AGENTS.md:15`, `:161`, `:172` and `TEST-FLAKES.md:391`, `:657`". Every one of those five citations
 is stale, and two of the four files it names (`AGENTS.md`) no longer hold the typo at all — the
 routing table rewrite replaced them with the underscore form. Its supporting premise is stale the
 same way: `AGENTS.md` no longer carries the route-by-scope rule that the item argues from, and that
@@ -2288,7 +2292,7 @@ asserts neither a five-line census nor the `AGENTS.md` premise. Re-derive the re
 from the prose at the time of the fix: `AGENTS.md` is the file every agent reads first, so a citation
 into it silently rots, and its own rule says as much.
 
-**Files.** `docs/LAYERS-PANEL.md:824-834`, `TEST-FLAKES.md:722`,
+**Files.** `docs/LAYERS-PANEL.md:825`, `TEST-FLAKES.md:722`,
 `e2e/viewport-drawing.spec.ts:228`, `docs/DOCUMENTATION.md:103-117`
 
 ---
@@ -2333,7 +2337,7 @@ error or page error. What remains true here is narrower — those four paths are
 in a browser, so nothing there could produce a message for it to catch.)
 
 **Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
-`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:183,355,369`,
+`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:195,355,369`,
 `src/components/DesktopHeader/DesktopHeader.tsx` (File > Save handler),
 `src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
 `src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
@@ -2395,18 +2399,18 @@ PROBE hasUnsavedChanges = true
 
 Consequence: a document the user just created from scratch is named after a file that had nothing to
 do with it. The stale name reaches the export path through three hops — the store's `fileName` into
-`openSaveImageDialog` (`src/components/DesktopHeader/DesktopHeader.tsx:253`), into `setFileInput`
+`openSaveImageDialog` (`src/components/DesktopHeader/DesktopHeader.tsx:390`), into `setFileInput`
 (`src/contexts/useFile.tsx:110`), and out as `SaveDialog`'s `proposedName`
 (`src/contexts/useFile.tsx:174`) — so the save dialog is pre-filled from the old file. On mobile the
 staleness is also on screen, in the two components that render it (`MobileHeader.tsx:107`,
 `MobileMenuDrawer.tsx:110`); on desktop nothing displays it, so there the stale name is invisible until
 a save. `hasUnsavedChanges` is not rendered anywhere, so there is no dirty-marker reading either way —
-its only consumers are the two `confirm()` guards at `DesktopHeader.tsx:200` and `:225`.
+its only consumers are the two `confirm()` guards at `DesktopHeader.tsx:340` and `:365`.
 
 **Fix.** Add `fileName` to the `updates` block in `_addLayer`'s `newDocument` branch
 (`src/contexts/useLayer.ts:199`). A new document's name is a product decision, not a derivation — the
 PSD arm sets the imported name, so the blank arm needs the untitled one (`BlankImageParams` at
-`src/contexts/tool-types.ts:107` carries no name field, so either a constant is introduced or the
+`src/contexts/tool-types.ts:117` carries no name field, so either a constant is introduced or the
 value arrives from the caller alongside `size`; `src/App.tsx:21`'s `DEFAULT_BLANK_IMAGE` is the
 existing precedent for a caller-supplied default). `src/hooks/__tests__/useApp.document-reset.test.tsx`
 is the place to pin it, and its `expectOutgoingDocumentKilled` helper deliberately asserts nothing
@@ -2415,7 +2419,7 @@ same change.
 
 **Files.** `src/contexts/useLayer.ts:199-212`, `src/contexts/StoreContext.tsx:574`,
 `src/hooks/useApp.ts:128`, `:164`, `src/contexts/useFile.tsx:110`, `:174`,
-`src/components/DesktopHeader/DesktopHeader.tsx:253`, `src/components/Mobile/MobileHeader.tsx:107`
+`src/components/DesktopHeader/DesktopHeader.tsx:390`, `src/components/Mobile/MobileHeader.tsx:107`
 
 ---
 
@@ -2577,7 +2581,7 @@ moved since. The four worst instances are confirmed stale today:
 - **`:3137`**, **`:3553`**, **`:3766`**, **`:4328`** say the pass/skip count lives in
   `e2e/OPEN_PROBLEMS.md:41-42`. `:41` is blank and `:42` is the `## Observed failures` heading;
   `grep -c '97 pass\|skipped by declaration' e2e/OPEN_PROBLEMS.md` returns **0**. The count moved
-  to `AGENTS.md:129` and nothing in the file says so.
+  to `AGENTS.md:125` and nothing in the file says so.
 - **`:3207-3208`** cites `e2e/README.md:243-263` for `testInfo.snapshotDir`, which is at `:395`; and
   **`:3770-3772`** cites `e2e/OPEN_PROBLEMS.md:13-17` for a passage that starts at `:19`.
 
@@ -2636,14 +2640,14 @@ git grep -nE "import .*\bLasso\b.* from" -- src e2e   # zero hits
 git grep -n "Lasso/Lasso.tsx" -- src e2e             # zero hits
 ```
 
-`src/tools/toolsMap.ts:65-79` wires the three lasso keys to `PolygonalLasso`, `FreehandLasso`
+`src/tools/toolsMap.ts:67-81` wires the three lasso keys to `PolygonalLasso`, `FreehandLasso`
 and `FeatherMagneticLasso`. The component's only consumer is its own test,
 `Lasso/__tests__/Lasso.test.tsx`, which renders a component the app can never reach.
 
 **It is nevertheless the only place `lineWidth` and `alpha` are editable**, and both are
 persisted defaults for two live keys:
 
-- `src/tools/settings.ts:96-111` — `'polygonal-lasso'` and `'freehand-lasso'` each declare
+- `src/tools/settings.ts:98-113` — `'polygonal-lasso'` and `'freehand-lasso'` each declare
   `{ alpha: 1, lineWidth: 3, color: '#FF0000', fill: false, points: [] } satisfies LassoToolArgs`.
 - `src/tools/polygonSelection.ts` types all of them, and `PolygonSelectionToolSettings` is
   `Omit<LassoToolArgs, 'points'>` — so they survive a reload.
@@ -2654,7 +2658,7 @@ at all, and a settings bucket that round-trips values a user can no longer chang
 defect is the missing options bar.** `src/tools/descriptions/selection.notes.md:92` already
 records what Photoshop's Polygonal Lasso bar carries — the four combination modes, `Feather`,
 `Style` and `Anti-alias` — and marks them absent here, while `FeatherMagneticLasso` ships
-`featherRadius` / `magneticWidth` / `edgeContrast` / `frequency` (`settings.ts:112-116`).
+`featherRadius` / `magneticWidth` / `edgeContrast` / `frequency` (`settings.ts:122-126`).
 
 The component is also wrong if reconnected: `Lasso.tsx:22` hardcodes
 `toolName: 'polygonal-lasso'` into every `setToolArgs`, so wiring it to the freehand key would
@@ -2669,7 +2673,7 @@ are behaviour the live panels do not document, so carry them across too.
 **Files.** `src/components/ToolbarsRight/Lasso/Lasso.tsx`,
 `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx`,
 `src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
-`src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts:96-111`
+`src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts:98-113`
 
 ## 112. Freeform Pen and Curvature Pen render the standard Pen's chip list, and a test documents the wrong config as expected
 
@@ -2681,13 +2685,13 @@ pen:             ['Tool Mode', 'Fill', 'Stroke', 'Make Selection', 'Path Operati
 'curvature-pen': ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
 ```
 
-but `src/tools/toolsMap.ts:132` and `:137` point all three at the **`pen`** key, so
+but `src/tools/toolsMap.ts:153` and `:158` point all three at the **`pen`** key, so
 `freeform-pen` and `curvature-pen` render the standard Pen's seven chips. **Magnetic and Curve
 Fit are the two controls that are the entire reason those two tools exist** — a Freeform Pen
 tool without Magnetic, and a Curvature Pen without Curve Fit, are the Pen under another name
-(`src/tools/descriptions/pen.notes.md`, `docs/TOOLS.md:1656`, `:1716`).
+(`src/tools/descriptions/pen.notes.md`, `docs/TOOLS.md:1811`, `:1871`).
 
-`ToolbarPlaceholder.test.tsx:163-172` asserts the resulting dead config is
+`ToolbarPlaceholder.test.tsx:164-173` asserts the resulting dead config is
 `expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle'])` and the
 comment is explicit that the list is _meant_ to be short. So this test is **half a pin**: it is
 doing its stated job against a growing pile, and it will fail the moment the wiring is fixed.
@@ -2700,9 +2704,9 @@ registry id the rail never names (see §114), so it renders the real `Shape` bar
 `placeholderTool(...)` calls in `toolsMap.ts`, and update the expected array in the same
 change.
 
-**Files.** `src/tools/toolsMap.ts:129-138`,
+**Files.** `src/tools/toolsMap.ts:150-159`,
 `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24-25`,
-`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:163-172`
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:164-173`
 
 ## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
 
@@ -2712,10 +2716,10 @@ change.
 > Photoshop grouping and naming are the specification, and the stub bar is the debt."
 
 `grep -rn "grouping and naming are the specification" --include='*.md'` returns exactly two
-hits — `docs/TOOLS-TOO-HARD.md:215` and `docs/PHOTOSHOP-UX.md:65`. `AGENTS.md` is 158 lines
+hits — `docs/TOOLS-TOO-HARD.md:218` and `docs/PHOTOSHOP-UX.md:107`. `AGENTS.md` is 158 lines
 with no match for _placeholder_, _specification_, _grouping_ or _stub bar_.
 
-The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md:62-66` — _"A tool the
+The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md:104-108` — _"A tool the
 app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
 because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
 — the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
@@ -2726,13 +2730,13 @@ deletion this week and every one came back "keep" **because of that policy**. An
 reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
 conclusion from a missing policy is that no policy was ever written down.
 
-**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md:62-66` in that one sentence.
+**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md:104-108` in that one sentence.
 
-**Files.** `docs/TOOLS-TOO-HARD.md:214-215`, `docs/PHOTOSHOP-UX.md:62-66`
+**Files.** `docs/TOOLS-TOO-HARD.md:214-215`, `docs/PHOTOSHOP-UX.md:104-108`
 
 ## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
 
-`toolbar-mapping.ts:110-114` (repo root) gives the toolbox entries
+`toolbar-mapping.ts:115-119` (repo root) gives the toolbox entries
 `name: 'shape'` plus a `figure`, never the key:
 
 ```ts
@@ -2743,23 +2747,23 @@ conclusion from a missing policy is that no policy was ever written down.
 { label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
 ```
 
-All four activation surfaces translate — `SidebarLeft.tsx:580-583`,
-`Mobile/mobile-tools.ts:77-85`, `DesktopHeader.tsx:112-117`,
-`AppKeyboardShortcuts.tsx:109-136` — and `useApp.ts:196` is the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx:67-76` records that dispatching the
+All four activation surfaces translate — `SidebarLeft.tsx:603-606`,
+`Mobile/mobile-tools.ts:77-85`, `DesktopHeader.tsx:248-254`,
+`AppKeyboardShortcuts.tsx:130-157` — and `useApp.ts:196` is the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. `DesktopHeader.tsx:110-123` records that dispatching the
 key directly was a **bug they fixed**: it mounted the Shape panel where the
 `toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the colour publish, so the well said
 red and the shape committed black.
 
 So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
-(`src/contexts/tool-types.ts:65-77`), a per-figure settings bucket (`src/tools/settings.ts:278-312`),
+(`src/contexts/tool-types.ts:75-87`), a per-figure settings bucket (`src/tools/settings.ts:301-335`),
 a description record (`src/tools/descriptions/shape.ts:290,318,345,387,423`) and doc sections.
-`docs/PHOTOSHOP-UX.md:46-54` names them as _"registry ids the rail never names"_ and frames the
+`docs/PHOTOSHOP-UX.md:88-96` names them as _"registry ids the rail never names"_ and frames the
 rail-naming decision around them.
 
 **What is not stated anywhere is whether they are forward-scaffolding or residue**, and one fact
 would settle it: **can a durable document or a replayed history item carry
-`toolName: 'rectangle'`?** `src/tools/toolProcessors.ts:326-330` registers all five as
+`toolName: 'rectangle'`?** `src/tools/toolProcessors.ts:359-363` registers all five as
 `{ creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape }`,
 so a committed shape carries its tool name into history. The dispatch path is closed in the
 running app, but document import and the durable `ToolArgs` deserialiser were **not** audited
@@ -2770,17 +2774,17 @@ and the `ToolArgs` union is carrying five variants nothing constructs.
 **Fix.** Audit the import and durable-replay path for a persisted figure-key `toolName`, then
 either state in `docs/PHOTOSHOP-UX.md` that the five ids exist to keep historical documents
 replayable, or delete them together with their `ToolArgs` variants, settings buckets and
-descriptions. Whichever it is, `ToolbarPlaceholder.test.tsx:172`'s `rectangle` entry in the
+descriptions. Whichever it is, `ToolbarPlaceholder.test.tsx:173`'s `rectangle` entry in the
 unreachable-config list changes and that test moves with it.
 
-**Files.** `toolbar-mapping.ts:110-114`, `src/tools/toolsMap.ts:154-159`,
-`src/tools/toolProcessors.ts:326-330`, `src/contexts/tool-types.ts:65-77`,
-`src/tools/settings.ts:278-312`, `docs/PHOTOSHOP-UX.md:46-54`,
-`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:163-172`
+**Files.** `toolbar-mapping.ts:115-119`, `src/tools/toolsMap.ts:175-180`,
+`src/tools/toolProcessors.ts:359-363`, `src/contexts/tool-types.ts:75-87`,
+`src/tools/settings.ts:301-335`, `docs/PHOTOSHOP-UX.md:88-96`,
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:164-173`
 
 ## 115. The rectangular marquee ships no options bar at all, while the elliptical marquee beside it ships four controls
 
-`src/tools/settings.ts:130` declares
+`src/tools/settings.ts:132` declares
 `'rectangular-selection': { toolName: 'rectangular-selection' }` — **no settings whatsoever** —
 while `:220-226` gives `elliptical-selection` `style`, `fixedRatio`, `fixedWidth` and
 `fixedHeight`, implemented in full at `src/tools/ellipticalSelection.ts:9,51-67` down to the
@@ -2791,7 +2795,7 @@ while `:220-226` gives `elliptical-selection` `style`, `fixedRatio`, `fixedWidth
 
 Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
 `Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md:92` already records them
-as absent. Since `docs/PHOTOSHOP-UX.md:62-66` makes the rendered bar the contract, this is debt
+as absent. Since `docs/PHOTOSHOP-UX.md:104-108` makes the rendered bar the contract, this is debt
 on a **shipped, working, reachable** tool — the rectangular marquee is a rail tile
 (`toolbar-mapping.ts:41`) with the `M` shortcut.
 
@@ -2799,208 +2803,49 @@ on a **shipped, working, reachable** tool — the rectangular marquee is a rail 
 extract `ellipticalSelection.ts:121-131`'s `applyRatio` as a shared ratio helper, and render
 the four controls.
 
-**Files.** `src/tools/settings.ts:130`, `src/tools/rectangularSelection.ts:4-7`,
+**Files.** `src/tools/settings.ts:132`, `src/tools/rectangularSelection.ts:4-7`,
 `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:36-48`,
 `src/tools/descriptions/selection.notes.md:92`
 
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
 
-`AppKeyboardShortcuts.tsx:33` binds `penGroup = ['pen', 'freeform-pen', 'curvature-pen']`, so
+`AppKeyboardShortcuts.tsx:53` binds `penGroup = ['pen', 'freeform-pen', 'curvature-pen']`, so
 `P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
-`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx:56-58` lists
-only the three pens. `AppKeyboardShortcuts.tsx:109-137` is the only `DEFAULT_KEYBOARD_SHORTCUTS`
+`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx:99-101` lists
+only the three pens. `AppKeyboardShortcuts.tsx:130-158` is the only `DEFAULT_KEYBOARD_SHORTCUTS`
 consumer and `useApp.ts:196` the only `SET_TOOL_NAME` dispatch, so the enumeration is complete.
 
 **Both other halves of the earlier version of this heading are wrong, and the rail never needed
-them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx:75-79` gives `freeform-pen` its
-own `FreeformPenIcon`, and `toolbar-mapping.ts:135-147` gives each of the six its own label. The
+them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx:81-85` gives `freeform-pen` its
+own `FreeformPenIcon`, and `toolbar-mapping.ts:106-111` gives each of the six its own label. The
 Tools-menu absence is Adobe's own doing — Adobe's keyboard-shortcut reference (Adobe, primary, and
-the source `docs/PHOTOSHOP-UX.md:191` cites for its own shortcut list) lists **no** shortcut for
+the source `docs/PHOTOSHOP-UX.md:233` cites for its own shortcut list) lists **no** shortcut for
 `Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, so a menu row for them would be a
 departure rather than a fix, and `docs/OVERRIDES.md` has no entry authorising one. What
-`docs/TOOLS.md:1755`, `:1787`, `:1823` record is only that the shortcuts do not exist, which is what
+`docs/TOOLS.md:1910`, `:1942`, `:1978` record is only that the shortcuts do not exist, which is what
 this entry says.
 
-**The rail half does not survive either.** `docs/PHOTOSHOP-UX.md:110` states the six Pen-family
+**The rail half does not survive either.** `docs/PHOTOSHOP-UX.md:119` states the six Pen-family
 tools "currently render a `PlaceholderTool` chip bar instead", and its open-violations section
 (`:30-56`) lists only `draw`, `color`, `levels` and `transform` as invented entries — **not** the
 pen family. So the "incomplete hiding" framing has no premise: nothing was hidden, and
 `docs/PHOTOSHOP-UX.md` is the document that owns the answer if the family is ever implemented. **Do
 not add a shortcut here without asking.** What remains is a record, not a defect.
 
-**Files.** `src/components/Common/AppKeyboardShortcuts.tsx:33,109-137`,
-`src/components/DesktopHeader/DesktopHeader.tsx:56-58`,
-`src/components/SidebarLeft/toolbar-mapping.ts:135-147`,
-`src/components/SidebarLeft/toolIcons.tsx:75-79`, `docs/TOOLS.md:1755,1787,1823`,
-`docs/PHOTOSHOP-UX.md:30-56,110,191`
+**Files.** `src/components/Common/AppKeyboardShortcuts.tsx:53,109-137`,
+`src/components/DesktopHeader/DesktopHeader.tsx:99-101`,
+`src/components/SidebarLeft/SidebarLeft.tsx:158-170`,
+`src/components/SidebarLeft/toolIcons.tsx:81-85`, `docs/TOOLS.md:1910,1787,1823`,
+`docs/PHOTOSHOP-UX.md:30-98,110,191`
 
-## 117. The operator's rail decision on `color`, `levels` and `transform`, and what an implementation still owes
-
-**The requirement and the rail violation are `docs/PHOTOSHOP-UX.md`'s** (§"Adjustments are not
-tools", `:39-56`), which now states them accurately and points here for the decision. This entry
-does not restate them: the three are live tiles at `toolbar-mapping.ts:62-64`, `extraTools`
-(`:164`) has no production reader, and `draw` is live at `:97` behind a real rasteriser at
-`toolProcessors.ts:96-102`. What follows is the decision and what is left to settle, which is what
-`docs/PHOTOSHOP-UX.md` defers to.
-
-### The operator has decided: delete the three
-
-**2026-10-01. The operator's decision, in their words: "I decide to remove them."** `color`,
-`levels` and `transform` come **out of the rail**. Not relabelled, not moved to a menu, not
-kept alongside — removed. This settles the question the Fix paragraph above left open, and it
-resolves it the way `docs/PHOTOSHOP-UX.md:32-45` already required.
-
-**This is not an override**, and `docs/OVERRIDES.md` must not gain an entry for it. That file's
-own definition (`:11-18`) is a decision that this app deliberately does **not** replicate
-Photoshop's behaviour. Removing three ids Adobe's Tools panel does not contain moves this app
-**toward** Adobe, so the precedence ladder in `docs/DOCUMENTATION.md:11-23` already decides it
-and the operator is ratifying the documented requirement rather than departing from it.
-
-**What the implementation has to settle, which the decision does not:**
-
-- **The destination already exists, under the wrong name.** There is no `Image` menu — the app's
-  four menus are File, Tools, Edit, Window (`src/components/DesktopHeader/DesktopHeader.tsx:185`,
-  `:283`, `:309`, `:390`) — **but `Edit` is already an `Image ▸ Adjustments` host**: it carries
-  hard-coded items for `color`, `blur`, `levels`, `transform`, `draw` and `text`
-  (`DesktopHeader.tsx:319`, `:329`, `:339`, `:349`, `:359`, `:369`, dispatching through
-  `handleToolSelection` at `:121`-`:127`). So "extracting these three means building a real menu
-  bar first" is **wrong** — the menu exists, the items exist, and they call the same
-  `handleToolSelection` the rail calls. What is missing is that the menu is called `Edit` where
-  Adobe says `Image ▸ Adjustments`, and that `blur`/`draw`/`text` are real Tools-panel tools
-  sitting in a menu. **The rail removal and the menu relabelling are the same three-id change in
-  two hand-written lists**, not a menu build. This correction supersedes the earlier claim in
-  this entry that no menu exists to receive the three.
-- **The `imageProcessor` for two of the three is DEAD CODE.** `color` and `levels` are
-  `commit: 'layer-operation'`, and `useLayer.ts:576` returns before the `imageProcessor` call at
-  `useLayer.ts:603`. The visible effect comes from a CSS string assigned to the canvas —
-  `layer-renderer.ts:15-16` and `:17-18` build `buildColorsFilter` / `buildLevelsFilter` results,
-  applied by `ctx.filter = getLayerFilter(layer.operations)` at `layer-renderer.ts:77` — and
-  `functions.ts:60-62` is literally `grayscale(%) sepia(%) saturate(%)`. Their only callers are
-  `image-processors.test.ts`. `transform` is split: its affine path is bypassed
-  (`useLayer.ts:550-566`), its trapezoid path is live. **A restructure that moves these to a
-  menu should move the CSS-filter path, not the OffscreenCanvas path** — the latter is what a
-  reader would assume is the implementation, and it is not the one that paints.
-- **`levels` is a misnamed Brightness/Contrast, confirmed in code.**
-  `LevelsToolArgs = { brightness: number; contrast: number; toolName: 'levels' }`
-  (`src/tools/levels.ts:4`), and `functions.ts:66-70` emits `brightness(...) contrast(...)`.
-  Adobe's Levels is a three-point piecewise-linear remap with a channel selector and a histogram;
-  this is two global sliders. **The app has no Levels.** Note the consequence: renaming the
-  capability rather than moving it is a decision — the bar renders Brightness/Contrast controls
-  under a "Levels" label, so a menu called `Image ▸ Adjustments` with an item labelled `Levels`
-  would be a _new_ falsehood, and the honest item is `Brightness/Contrast`.
-- **They are in a second surface already, and the IDs are load-bearing beyond the UI.**
-  `src/components/DesktopHeader/DesktopHeader.tsx:27-32` holds a `TOOL_MENU_ITEMS` list including
-  all three, under a header comment (`:20-21`) saying "a tool missing from the Tools menu is a
-  visible inconsistency"; the same component hard-codes them as `Edit` items at `:319`-`:349`.
-  The claim that extraction is "routing only, with the history and durable paths untouched" is
-  **refuted**: `'color' | 'levels'` are a **durable schema type** at
-  `src/contexts/history-model.ts:74` (`DurableFilter`) and `src/contexts/layer-types.ts:28`
-  (`LayerOperationArgs`). 53 non-test lines across `src/`, 250 test lines, and **five e2e spec
-  files** that select one of the three **through the rail flyout** — `adjustments.spec.ts`,
-  `filter-tools.spec.ts`, `levels.spec.ts`, `sidebar-flyout.spec.ts` and
-  `responsive-shell.spec.ts` — so all five break. Zero keyboard shortcuts are bound to any of the
-  three, so that part is free.
-- **`extraTools` is inert either way.** `toolbar-mapping.ts:164` exports it; its only reader is
-  `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:97-99`, which checks it is
-  disjoint from `shape`. Deleting the three makes the flag mean what its name says for the first
-  time, or makes it dead code to remove.
-
-### The premise was falsified: adjustments DO reach Photoshop's Tools panel
-
-Research on 2026-10-01, after the decision above was recorded, established that the **justification
-was wrong even though the decision survives**. `docs/OVERRIDES.md` was correctly _not_ used, but
-the reasoning it was given does not hold:
-
-- **The Adjustment Brush Tool is a real Tools-panel entry.** Beta in Photoshop 25.9 (Feb 2024),
-  GA in **25.11 (July 2024)**, with its own toolbar slot in the Retouching & Painting Tools
-  group — deliberately promoted out of the Brush flyout because nesting broke the `B` cycle. It
-  has **no single-letter shortcut**; the widely-quoted `K` is the CS3-era Targeted Adjustment
-  Tool, a different and removed tool. Adobe: it is "non-destructive, as they generate a new
-  adjustment layer with a layer mask", created on mouse-release, painted area = mask.
-- **The Selection Brush Tool is also real**, GA in the same 25.11, in the **Lasso group**, reached
-  by cycling `L` then `Shift`+`L`. It only makes selections.
-- **So "adjustments are not tools" is false as a general statement.** Adobe ships a tool whose
-  output is an adjustment, not pixels. (Two other non-pixel tool outputs exist: Type, and the
-  shape tools, which create shape/fill layers.)
-- **The decision still stands**, because the narrow claim survives: `color` and `levels` here are
-  **whole-image adjustments with no mask**, and the Adjustment Brush can only apply an adjustment
-  where you paint. It cannot do what these two do. `transform` is untouched by any of this.
-- **The recorded justification must not stand as written.** This is the concrete harm: the entry
-  asserted a general claim that Adobe's own documentation contradicts, and a later session
-  auditing rail compliance against it would find the Adjustment Brush and conclude the app is
-  right and the doc is wrong — the exact inversion §117 exists to prevent.
-
-**What this changes for a restructure — see the section after this one for the operator's later
-signal, which supersedes two of these recommendations.** The honest target is not "move three things
-to a menu". It is: rename the `Edit` host to `Image ▸ Adjustments`, relabel `levels` to
-`Brightness/Contrast` because that is what it computes, keep `color`'s three CSS filters under a name
-that says what they are (`grayscale`/`sepia`/`saturate` is neither Black & White nor plain
-desaturation — there is no per-hue weighting anywhere), and treat **real Levels, real Curves and
-adjustment layers as unbuilt work.** The app has no adjustment-layer machinery at all:
-`psd-utils.ts:88-106` refuses `adjustment`, `mask` and `clipping` on import. What exists is a
-retained per-layer operation stack (`layer.operations[]` → `apply-filter`), which retains but
-cannot re-edit, and has no properties panel.
-
-- **The tool sources survive; two of the three are dead on the edit path.**
-  `src/tools/colors.ts`, `src/tools/levels.ts` and `src/tools/transform.ts` ship real processors,
-  but for `color` and `levels` those processors are **dead code** — `commit: 'layer-operation'`
-  returns at `useLayer.ts:576` before the `imageProcessor` call at `:603`, and what paints is
-  `ctx.filter = getLayerFilter(layer.operations)` (`layer-renderer.ts:77`). `transform` is the
-  geometry path and does run. `docs/TOOLS-TOO-HARD.md` records the extraction as a routing change
-  with the history and durable paths untouched, so deleting the tool names is cheap — but the
-  operations, not the processors, are what a surviving surface would have to own, and there is
-  currently none.
-- **What is NOT decided here.** `draw` is a separate id in the same section
-  (`docs/PHOTOSHOP-UX.md:32-37`) with its own history — it is the suite's default way to make a
-  mark, in every `e2e/*.spec.ts` that strokes (`grep -rc "clickToolButton([^)]*'draw'" e2e
---include="*.spec.ts"` re-derives it), and `e2e/pen-types.spec.ts` exists specifically to test
-  it and dies with the tool. The operator's decision covers the three adjustment ids only, and
-  `docs/PHOTOSHOP-UX.md` sequences `draw` last. `HANDOFF.md` §74 remains the open entry for it.
-
-### The capability is coming back as real Photoshop commands, and the requirements are not written down
-
-**2026-10-01, after the decision above: the operator signalled that Levels, Colors and the other
-`Image ▸ Adjustments` commands "will be implemented".** This does not reopen the rail decision — the
-three ids still leave the rail, because Adobe's Tools panel has no such entries and that was decided
-for a reason that has not changed. What it changes is the paragraph above.
-
-**Read those two claims as superseded, and this is why they are not silently rewritten:**
-
-- _"relabel `levels` to `Brightness/Contrast` because that is what it computes"_ was advice about
-  what to do with the existing two-slider stand-in when it moves. If real Levels is built, that
-  question dissolves: the menu item is `Levels` and it computes Levels. **Do not relabel and do not
-  build the stand-in into the menu** — a relabelled stand-in is the falsehood, made more permanent
-  by being menu-launched.
-- _"treat real Levels, real Curves and adjustment layers as unbuilt work"_ was a routing judgement
-  about where those gaps belong. They now have a destination, and `docs/TOOLS-TOO-HARD.md` records
-  that signal: its "nobody re-audits it, nobody estimates it" policy is **suspended for the
-  `Image ▸ Adjustments` family**. That file's Black-and-White entry is the one to delete first when
-  the work starts — its "why it is too hard" describes the CSS-filter mechanism being replaced, not
-  a constraint on the replacement.
-
-**What is NOT settled by this signal, and an agent must not assume any of it:**
-
-- **No requirements document exists.** Nothing here says what the Levels dialog contains, whether it
-  is a menu command or a panel, whether it produces a baked raster or an adjustment layer, or how it
-  round-trips. `docs/DOCUMENTATION.md`'s ladder means Adobe's pages are the requirement and this
-  sentence is not — but building "Levels" without the Adobe spec produces exactly the
-  stand-in-under-a-Adobe-name that the operator's own signal is trying to end.
-- **The adjustment-layer question is untouched and is the load-bearing one.** `psd-utils.ts:88-106`
-  refuses `adjustment`, `mask` and `clipping` on import, and `layer.operations[]` retains without
-  re-editing. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers changes the
-  durable schema, not just the UI, so it is an architecture decision the operator has not made.
-- **`transform` is not in this family.** `Image ▸ Transform` in Adobe is Free Transform; this app's
-  `transform` is the trapezoid/affine geometry path. Whether it is restyled, relabelled or left
-  alone is a separate question this signal does not answer.
-
-**So the work is real and unblocked; the spec is missing.** The next session to touch this should
-ask for the requirements rather than derive them, and should not start from
-`src/tools/levels.ts`, whose `{ brightness, contrast }` is the thing being replaced.
-
-**This entry is a decision record, not a changelog.** It stays until the three are gone from
-`toolbar-mapping.ts`, at which point the fix **deletes** it rather than rewording it
-(`docs/DOCUMENTATION.md:145-158`). Nothing in the codebase is changed on the strength of this
-entry alone.
+<!-- §117 DELETED, not merged. Its own closing sentence made deletion the exit condition:
+     "This entry stays until the three are gone from `toolbar-mapping.ts`, at which point the fix
+     DELETES it rather than rewording it." They are gone — `extraTools` is now disjoint from
+     `toolbarMap` and `toolbar-mapping.test.ts` pins it in both directions. What it decided is
+     carried forward: the rail half is in `docs/PHOTOSHOP-UX.md`'s open-violations bullet, the
+     operator's later "will be implemented" signal and the unanswered adjustment-layer question
+     are in `docs/TOOLS-TOO-HARD.md` and `docs/PHOTOSHOP-UX.md`, the unanswered
+     adjustment-layer question is §172, and the open label question is §170. -->
 
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
@@ -3047,16 +2892,21 @@ does not delete the rule** — so a rule with no home is a defect in itself.
 boundary rule of the same kind, and it is currently only readable by whoever opens a branch that
 was never merged.
 
-**Files.** `src/tools/toolProcessors.ts:96`, `:259-262`, `:267-275`,
+**Files.** `src/tools/toolProcessors.ts:97`, `:292-295`, `:300-308`,
 `src/tools/brush.ts:143-154`, `AGENTS.md` §Architecture status, `docs/PHOTOSHOP-UX.md:32-37`
 
 ## 119. The Draw tile and the Brush tile both advertise `B`, and no keypress selects the Draw tool
 
 **Problem.** Two tiles print the same key. `toolbar-mapping.ts:73` declares the Brush with
-`shortcut: 'B'` and `toolbar-mapping.ts:97` declares the Draw tile with `shortcut: 'B'`, so the rail
+`shortcut: 'B'` and `toolbar-mapping.ts:102` declares the Draw tile with `shortcut: 'B'`, so the rail
 renders `B` on both.
 
-The key answers to the Brush. `AppKeyboardShortcuts.tsx:348-360` registers `b` and `shift+b` against
+```
+ 66: { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
+ 90: [{ label: 'Draw Tool',   name: 'draw',   shortcut: 'B' }],
+```
+
+The key answers to the Brush. `AppKeyboardShortcuts.tsx:369-381` registers `b` and `shift+b` against
 `selectBrushTool` and registers nothing for `draw`, so the Draw tool cannot be reached by the key its
 own tile prints. That is worse than a tile printing no key: the reader has been told a shortcut
 exists, and pressing it goes somewhere else.
@@ -3077,12 +2927,13 @@ than the other way round, and add a rail-wide uniqueness assertion over `toolbar
 declaration of a key cannot land again. The assertion is the part that outlives the decision: it
 fails on any duplicate, whichever tile the duplicate is on.
 
-**Files.** `toolbar-mapping.ts:73`, `:97`, `src/components/Common/AppKeyboardShortcuts.tsx:348-360`,
+**Files.** `toolbar-mapping.ts:73`, `:102`, `src/components/Common/AppKeyboardShortcuts.tsx:20`,
+`:348-360`, `src/components/SidebarLeft/SidebarLeft.tsx:620`, `:644`,
 `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts`
 
 ## 120. The Move tool has nine documented missing controls and no entry tracking them as work
 
-`docs/TOOLS.md:2006-2028` gives `reposition` a written `partial` verdict and enumerates what is
+`docs/TOOLS.md:2161-2183` gives `reposition` a written `partial` verdict and enumerates what is
 absent: Tool Preset Picker, Auto-Select, Auto-Select: Group, Auto-Select: Layer, Show Transform
 Controls, Align, Distribute, Align to, Width, Height — plus Alt-drag, Shift-constrain,
 Shift-extend and arrow-key nudge. It records Auto-Select as welded on with no control to turn it
@@ -3104,7 +2955,7 @@ tracked work is how a half-built tool becomes permanently half-built.
 **Fix.** Add one `HANDOFF.md` entry carrying the nine controls and the four modifiers as named
 work, referencing the existing verdict rather than restating it.
 
-**Files.** `docs/TOOLS.md:2006-2028`, `src/components/ToolbarsRight/Reposition/Reposition.tsx:21`,
+**Files.** `docs/TOOLS.md:2161-2183`, `src/components/ToolbarsRight/Reposition/Reposition.tsx:21`,
 `src/components/Main/MoveToolArea.tsx`
 
 ## 121. The worktree sweep is structurally blind to every branch that has no worktree, and one of those branches is the upstream reference implementation
@@ -3338,7 +3189,7 @@ a hardcoded literal rather than the foreground swatch:
 
 - `src/components/ToolbarsRight/Figures/Shape.tsx:32` mirrors the swatch behind an
   `args.toolName !== 'shape'` guard, and one options-bar component serves all six of `toolsMap.ts`
-- `src/tools/settings.ts:278-306` gives each of those five a hardcoded `color: '#000000'`
+- `src/tools/settings.ts:301-329` gives each of those five a hardcoded `color: '#000000'`
 - `src/components/Main/ShapeToolArea.tsx` contains **zero** occurrences of `color` — it reads
   `args.color` and nothing sets it
 
@@ -3362,7 +3213,7 @@ a half-fixed shape tool strokes in the swatch while still filling in the default
 false on main, which built a real options panel at `src/components/ToolbarsRight/Paint/Paint.tsx:63-66`.
 Only this rider survives.
 
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:32`, `src/tools/settings.ts:278-306`,
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:32`, `src/tools/settings.ts:301-329`,
 `src/components/Main/ShapeToolArea.tsx`
 
 ## 128. `scripts/lib/agent-board/db.mjs` carries two raw NUL bytes, at 90 KB in
@@ -3478,7 +3329,7 @@ deliberate rather than an oversight.
 **Do not "fix" this by dropping either conversion.**
 
 **The tripwire this names is not on `main`, and two documents claim it is.** An earlier revision of
-this entry said a test already pinned the cancellation, and `docs/ARCHITECTURE.md:332` repeats that
+this entry said a test already pinned the cancellation, and `docs/ARCHITECTURE.md:333` repeats that
 claim. Both are false: `grep -rn "cancels the commit's" src/ e2e/` returns nothing, and the four
 `ShapeToolArea.test.tsx` cases naming a `documentFrame` are about the `currentFrame === null`
 fallback (`:1064`), not about the offset cancelling. The nearest analogue lives on the unlanded
@@ -3492,7 +3343,7 @@ checks between preview and commit, extended to the renderer's subtraction.
 
 **Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-309`,
 `src/contexts/layer-renderer.ts:78-79`, `src/contexts/document-frame.ts:40-47`,
-`docs/ARCHITECTURE.md:332`
+`docs/ARCHITECTURE.md:333`
 
 ## 133. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
 
@@ -3621,8 +3472,8 @@ type="range">` whose `value` is out of its own `min`/`max` pins the thumb to the
 > reporting the raw value, so the readout and the thumb disagree.
 
 The reasoning is sound and the clamping is correct. **The premise is false.** `saveLastSettings`
-(`src/contexts/useCurrentTool.tsx:62`) writes to `src/tools/settings.ts:343`, a module-level
-singleton, seeded from `defaultSettings` (`src/tools/settings.ts:51-314`). Grepping `localStorage`
+(`src/contexts/useCurrentTool.tsx:62`) writes to `src/tools/settings.ts:367`, a module-level
+singleton, seeded from `defaultSettings` (`src/tools/settings.ts:53-337`). Grepping `localStorage`
 across `src/` returns exactly two keys — `panelLayout` (`src/contexts/PanelLayout.tsx:229`, `:304`)
 and `theme` (`src/contexts/ThemeContext.tsx:14`, `:28`). Nothing reaches the disk.
 
@@ -3641,7 +3492,7 @@ cleanup; pick deliberately.
 
 **Files.** `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:111-112`,
 `src/components/ToolbarsRight/Smudge/Smudge.tsx:114`, `src/contexts/useCurrentTool.tsx:62`,
-`src/util/settings.ts:22-155`, `src/tools/settings.ts:343`
+`src/util/settings.ts:22-166`, `src/tools/settings.ts:367`
 
 ---
 
@@ -3739,7 +3590,8 @@ if (wt.isPrimary) {
 `STATUS.UNMERGED_WORK`-with-`uncommitted` arm that produces `SALVAGE` → `AT_RISK` (`:294-299`) is
 downstream and never reached for the main checkout.
 
-**Observed, not inferred.** While correcting the §117 decision record, `npm run test` failed with:
+**Observed, not inferred.** While correcting the `color`/`levels`/`transform` rail-removal decision
+record, `npm run test` failed with:
 
 ```
 ph (curated: NONE): ahead=0 onMain=true dirty=3 untracked=0
@@ -3777,7 +3629,7 @@ main and running `npx vitest run scripts/__tests__/worktree-inventory.test.mjs`.
 
     docs(handoff): the AVIF timeout is a symlink artefact, and main's entry is correct
 
-    Two audits disagreed about e2e/OPEN_PROBLEMS.md:704. The second measured the AVIF
+    Two audits disagreed about e2e/OPEN_PROBLEMS.md:705. The second measured the AVIF
     pair failing on a detached worktree of committed main and concluded the entry was
     falsified. The measurement was made through a symlinked node_modules, so Vite
     refused to serve the @jsquash avif_enc.wasm - the run's own [WebServer] log says so
@@ -3799,7 +3651,7 @@ form of the same trap: they not only work, they work on the wrong files.
 ## 143. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
 
 **Problem.** Two audits of this sweep disagreed about the same thing, and the second one was wrong.
-Main's `e2e/OPEN_PROBLEMS.md:704` records the AVIF download timeout and states that **both specs pass
+Main's `e2e/OPEN_PROBLEMS.md:705` records the AVIF download timeout and states that **both specs pass
 on `main`**, calling load "an explanation rather than a measurement". One audit measured the AVIF pair
 failing on a detached worktree of committed `main` and concluded that entry was falsified. That
 conclusion is wrong, and acting on it would replace a correct entry with a wrong one.
@@ -3837,7 +3689,7 @@ rm -rf /tmp/avif-check/node_modules          # or simply do NOT symlink it
 whether the reproduction was itself broken — and the run's own `[WebServer]` log usually says so in one
 line. **The entry at `:704` stands.** Do not edit it, and do not add a second AVIF entry.
 
-**Files.** `e2e/OPEN_PROBLEMS.md:704`, `e2e/export/helpers.ts:408`,
+**Files.** `e2e/OPEN_PROBLEMS.md:705`, `e2e/export/helpers.ts:408`,
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
 
 ---
@@ -3931,7 +3783,7 @@ is the durable fix, because the field is the reason this could not be caught mec
 ## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
 
 **Problem.** The Sponge shipped with `mode: 'desaturate'` and `vibrance: true`
-(`src/tools/settings.ts:269`). **Neither is an Adobe default, because Adobe documents neither.** A
+(`src/tools/settings.ts:292`). **Neither is an Adobe default, because Adobe documents neither.** A
 dedicated search of Adobe's desktop Sponge page, its tool-techniques page, the CS4 manual and the
 CS2 Bible found no statement of which `Mode` the bar opens on and no statement of whether `Vibrance`
 ships checked. The app's two seeds rest on arguments, recorded at `SPONGE_MODE_DEFAULT`
@@ -3952,13 +3804,13 @@ Photoshop. If `Vibrance` is really unchecked, the tool's Saturate direction clip
 `Vibrance` was on precisely to protect; if `Mode` really opens on Saturate, a first stroke out of the
 box can clip.
 
-**Fix.** Confirm both against a live Photoshop and change `src/tools/settings.ts:269` if either is
+**Fix.** Confirm both against a live Photoshop and change `src/tools/settings.ts:292` if either is
 inverted. Nothing else needs to move — both are single values, both are already isolated as named
 constants, and both are already the subject of pinned unit tests. If the defaults cannot be
 confirmed, the alternative is to stop asserting either: render the `Mode` select unseeded and refuse
 the commit until the user chooses, which is worse and is not recommended.
 
-**Files.** `src/tools/settings.ts:269`; `src/tools/sponge.ts:60`, `:87`;
+**Files.** `src/tools/settings.ts:292`; `src/tools/sponge.ts:60`, `:87`;
 `src/tools/descriptions/focus.ts` §sponge `appNotes`;
 `src/tools/descriptions/focus.notes.md` §Sponge Tool and items 15-16
 
@@ -4006,7 +3858,7 @@ rail from a ref callback, which runs during commit. React subscribes to an exter
 **passive** effect, so at that moment there is no listener to notify, and the `setSlots` layout
 effect publishes into the same empty set. The committed tree therefore holds the plan from _before_
 the measurement, and `planToolbarOverflow`'s own answer to an unmeasurable rail is
-`everythingVisible` — so the first committed rail is **every tool on screen**, sixteen tiles in a
+`everythingVisible` — so the first committed rail is **every tool on screen**, fifteen tiles in a
 slot that fits eight at 1280x720, corrected on a later commit. `SidebarLeft` returns above the
 `<aside>` when there is no document while this hook sits above that check, so the hook survives and
 the sequence repeats on **every document close and open**, not only on the first page load.
@@ -4038,7 +3890,7 @@ never paints the unrefitted tree here. `e2e/toolbar-fit.spec.ts` deliberately ha
 this, and that absence is the honest state — if one is added it must be able to go red when the
 scheduling changes, or it is a tripwire for a defect that cannot occur.
 
-**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`, `src/components/SidebarLeft/SidebarLeft.tsx:1010`,
+**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`, `src/components/SidebarLeft/SidebarLeft.tsx:1040`,
 `react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
 runs on a concurrent render that yielded — neither is a pre-paint refit).
 
@@ -4047,13 +3899,13 @@ runs on a concurrent render that yielded — neither is a pre-paint refit).
 ## 149. The three-dots flyout reopens itself after the window crosses the edge where nothing collapses
 
 **Problem.** `openGroup` is reset when its tile is swallowed by a collapse, but only against
-`collapsedGroups` (`src/components/SidebarLeft/SidebarLeft.tsx:388`), and that set can only ever
+`collapsedGroups` (`src/components/SidebarLeft/SidebarLeft.tsx:411`), and that set can only ever
 contain GROUP keys — `0-0`, `two-column-N`. The three-dots tile is keyed `OVERFLOW_GROUP_KEY`, the
 string `'overflow'` (`:133`), which no group key can equal. So `collapsedGroups.has('overflow')` is
 always false, the reset never fires for that tile, and `openGroup` outlives the unmount.
 
 **Reproduced.** Open the three-dots menu at 1280x700, grow the window to 1400 — the tile unmounts,
-because at 1400 all sixteen groups fit and nothing collapses — then shrink back to 700. The tile
+because at 1400 all fifteen groups fit and nothing collapses — then shrink back to 700. The tile
 remounts with the flyout **already open**, and nothing was clicked in between:
 
 ```
@@ -4071,22 +3923,22 @@ collapse↔no-collapse crossing belongs to a third condition that nothing checks
 from `showOverflowTile: true` to `false` while `openGroup` is `'overflow'`.
 
 **Reachability moved with the fit's budget, which is why it is filed now.** Nothing collapses from a
-1094px window up, where before the budget change nothing collapsed from about 1300. The window has to
-be dragged 206px less far to reach the state, and the drag is the natural gesture a user performs
+1037px window up, where before the budget change nothing collapsed from about 1300. The window has to
+be dragged 263px less far to reach the state, and the drag is the natural gesture a user performs
 while looking at an open flyout — to give the rail more room.
 
 **What would close it.** Reset `openGroup` when `overflowPlan.showOverflowTile` goes false, the same
 way the `lg` crossing does: derived from the state that changed, adjusted during render rather than
 in an effect. A test belongs with it — open the menu, resize past the edge, resize back, and assert
 the menu is not there — and **the height has to come from the rail's own arithmetic** (or from the
-edge `e2e/toolbar-fit.spec.ts` already pins at 1094/1093), not from a hardcoded window, or the next
+edge `e2e/toolbar-fit.spec.ts` already pins at 1037/1036), not from a hardcoded window, or the next
 tile to be added moves it.
 
 **Do not fix it by clearing `openGroup` on every `ResizeObserver` publication.** The store publishes
 on plan changes only, and that is the point of the throttle; a subscriber that reset state on every
 version bump would re-open the same class of problem as the one the throttle closed.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:133,211,383-391,1227,1236`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:156,211,383-391,1227,1236`,
 `src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
 `e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).
 
@@ -4782,3 +4634,344 @@ the frame a non-zero origin and an extent that disagrees with `size`.
 **Files.** `src/contexts/export-canvas.ts:44,61-66`, `src/contexts/psd-utils.ts:209-213,243`,
 `src/contexts/useFile.tsx:122`,
 `src/contexts/StoreContext.tsx:419,455-456,588-600,1197-1198,1243-1244,1288,1379-1384`
+
+`e2e/toolbar-fit.spec.ts:254-261` (the 1037/1036 edge).
+
+## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
+
+**Problem.** `Edit` carries exactly one item, `Free Transform`
+(`src/components/DesktopHeader/DesktopHeader.tsx:523-532`), because that is where Adobe puts it at
+the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt, and it is
+where a user who knows Photoshop looks for eleven commands. Adobe's own page enumerates them —
+"You can find these commands under `Edit > Transform`" —
+<https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html>
+(fetched 200 on 2026-10-01 with a default `curl` User-Agent; it 403s a browser-shaped one):
+
+| Adobe's item    | Adobe's description                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------- |
+| Scale           | "Resizes the selected content horizontally, vertically, or both."                              |
+| Rotate          | "Rotates the selection around a reference point."                                              |
+| Skew            | "Slants the content vertically or horizontally by moving its sides."                           |
+| Distort         | "Stretches or compresses content freely by moving individual corners or edges."                |
+| Perspective     | "Applies perspective by moving one corner, causing the opposite corner to move symmetrically." |
+| Warp            | "Bends and reshapes content using a customizable grid or preset warp styles."                  |
+| Rotate 180°     | "Rotates the object by 180 degrees."                                                           |
+| Rotate 90° CW   | "Rotates the object 90 degrees clockwise."                                                     |
+| Rotate 90° CCW  | "Rotates the object 90 degrees counterclockwise."                                              |
+| Flip Horizontal | "Flips the selection along the vertical axis."                                                 |
+| Flip Vertical   | "Flips the selection along the horizontal axis."                                               |
+
+A twelfth, **`Again`** — Adobe's repeat-the-last-transform command — belongs in the same submenu and is
+**attested rather than page-confirmed**: Adobe's current helpx page does not list it, and the source
+that does is Adobe's own Photoshop user manual ("Repeat a transformation": "Choose `Edit > Transform >
+Again`"). Re-derive the membership before building the item; do not add it because this entry says so.
+
+**Two constraints, and the first one blocks every item including the ones that already exist here.**
+
+1. **`patchToolArgs` alone does not update the canvas.** It is the only setter a menu item can reach
+   from outside a tool bar, and it is pure state: `patchToolArgs` is
+   `src/contexts/useCurrentTool.tsx:75-81`, and all it does is call `_setToolArgs` (`:56-66`), which
+   writes the `currentArgs` ref, saves `lastSavedSettings` and publishes React state. Nothing in that
+   chain touches a layer. **The pixels move only when `tempUpdateLayer` runs**
+   (`src/contexts/useLayer.ts:565`), which the options bar calls explicitly on **every** control
+   change, immediately before `setToolArgs`:
+
+   ```ts
+   const throttledOnChange = (newArgs: TransformToolArgs) => {
+     // This is a transient preview. History is created only when the dirty
+     // layer is committed, so applying the latest value synchronously cannot
+     // create one history entry per slider frame.
+     tempUpdateLayer({ toolArgs: newArgs });
+     setToolArgs(newArgs);
+   };
+   ```
+
+   `src/components/ToolbarsRight/Transform/Transform.tsx:44-50`. So a `Scale` menu item that presets
+   args and stops there moves the options bar and nothing else — and every item is the same "preset the
+   args" operation, so this is not one item's problem. **`Warp` is a second, separate gap**: it is a
+   grid deformation, and `TransformToolArgs` has no warp member at all. `resetArgs`
+   (`Transform.tsx:18-28`) is `rotate` / `mirrorH` / `mirrorV` / `skewX` / `skewY` / `trapezoid` /
+   `resizeX` / `resizeY` and nothing more.
+
+2. **`Rotate 180°` is outside the rotate slider's range.** The slider is `min={-90}` `max={90}`
+   (`Transform.tsx:183-190`). The bar's own `180°` button does not go through the slider — it writes
+   `rotate: (rotate + 180) % 360` (`Transform.tsx:168`) — so a value the slider cannot represent is
+   already reachable, and a menu item that presets `rotate: 180` lands the options bar in a state its
+   own control cannot display. `Scale` has the mirror problem: `resizeX`/`resizeY` are percentages, so
+   Adobe's absolute Width/Height percentages need a document-size read the menu does not currently do.
+
+**Fix.** Solve both, in that order, and only then add items. Constraint 1 is load-bearing: either a menu
+item reaches `tempUpdateLayer` the way the bar does, or the args-preset path grows a preview step — and
+that decision collides with the transient-preview contract in the comment at `Transform.tsx:45-47`, which
+is what keeps a slider drag from writing one history entry per frame. Constraint 2 is a control question,
+not a computation one: reconcile the slider's range with the `±90` button pair at
+`Transform.tsx:95-105`, which already wraps through 360.
+
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:503-535`,
+`src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:168`, `:183-190`,
+`src/contexts/useCurrentTool.tsx:56-81`, `src/contexts/useLayer.ts:565`
+
+## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
+
+**Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
+(`DesktopHeader.tsx:194`), and selecting it shows the `color` command's options bar, which renders
+three sliders — **Grayscale**, **Sepia**, **Saturation**
+(`src/components/ToolbarsRight/Colors/Color.tsx:126-180`) — wired to `buildColorsFilter`
+(`src/tools/functions.ts:60-63`), which emits `grayscale(%) sepia(%) saturate(%)`.
+
+Adobe's Photo Filter is a hue adjustment applied "from a preset filter or a custom color filter", with
+a **Density** slider and a **Preserve Luminosity** option, reachable at `Image > Adjustments > Photo
+Filter`.
+<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html> (200 on 2026-10-01).
+Two of the app's three controls are defensible against that: **`sepia` picks a fixed warm tone**, which
+is what Adobe's colour choice is for — its colour-conversion presets are "Warming Filter (85)" /
+"Cooling Filter (80)" and its light-balancing presets "Warming Filter (81)" / "Cooling Filter (82)"
+(<https://helpx.adobe.com/photoshop-elements/desktop/guided-edits-effects-and-filters/adjustment-filters.html>,
+Adobe's Photo **Elements** page, which is where Adobe still enumerates those preset names) — and
+**`saturation` is the trim that Preserve Luminosity performs**, in a form Adobe does not expose as a
+slider. **`grayscale` has no counterpart in Photo Filter at all**: it is a conversion to luminance, not
+a hue adjustment, and it is the one control on the bar that the menu's own name does not cover. The item
+is enabled under a name that promises a capability its bar does not have, in the one menu a user opens
+precisely to find out what the app can do.
+
+**The control cannot simply be deleted without a decision, and that is the operator's call.** This bar
+is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (`DesktopHeader.tsx:200`) is
+**disabled**, because no second command owns desaturation. `Black and White` is disabled too (`:154`) —
+it needs per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
+
+**Exactly two honest answers, and this entry does not pick between them:**
+
+- **Drop the `grayscale` control.** The bar becomes Sepia + Saturation, which is Adobe's colour choice
+  plus its Density and Preserve Luminosity behaviour under different names — a defensible
+  `Photo Filter`. The cost is that desaturating a whole image, which the app does today, becomes
+  unreachable from any menu, because nothing else hosts it.
+- **Move it to `Desaturate`.** Enable `Image ▸ Adjustments ▸ Desaturate` on the `color` id and accept
+  that its bar's three controls do not match Adobe's Photo Filter. That is the same bounded divergence
+  already accepted for the `Black and White` naming decision, and `docs/OVERRIDES.md` is where a
+  deliberate Photoshop deviation belongs — **this entry does not add one and does not ask for one.**
+
+**Do not** give `Photo Filter` Adobe's Density and Preserve Luminosity while it computes
+`grayscale(%) sepia(%) saturate(%)`. That is a fake control dressed in Adobe's words, which is the one
+thing this repo's policy refuses, and doing it in a menu is worse than doing it in a rail.
+
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:169-175`, `:186-209`,
+`src/components/ToolbarsRight/Colors/Color.tsx:121-180`, `src/tools/functions.ts:60-63`,
+`src/tools/colors.ts`
+
+## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
+
+**Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
+(`DesktopHeader.tsx:322`, `:423`, `:452`, `:525`, `:559`). Adobe's is eleven: File, Edit, Image, Layer,
+Type, Select, Filter, 3D, View, Window, Help. Two of the five that exist are nearly empty: `Edit` holds
+one item, and `Image` holds one submenu.
+
+The gap is not cosmetic. A user who knows Photoshop reaches for `Select > Deselect`,
+`Select > Modify > Feather`, `Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds
+nothing. Worse, several of those are **unreachable entirely**, not merely unreachable from a menu: the
+app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a selection
+(`src/util/selection.ts` exports no such function), and no adjustment layers at all
+(`src/contexts/psd-utils.ts:88-106` warns `adjustment`, `mask` and `clipping` are unsupported and not
+preserved on import).
+
+**The documentation consequence is the part to fix first.** `docs/TOOLS-TOO-HARD.md` files the Select
+gaps as capability absences and justifies them with a menu that does not exist — "There is no menu
+surface that could host them". There **is** a menu bar now; there is no `Select` menu on it. Adding that
+menu is separable work from the selection-model work, and conflating the two is how a menu gap got filed
+as an algorithm gap in the first place.
+
+**Fix.** Add the missing top-level menus in Adobe's order, each carrying the commands the app can
+already do and a **disabled** item for each it cannot — the shape `Image ▸ Adjustments` already uses
+(`DesktopHeader.tsx:147-150`, `:488`), where an item is enabled by having a `toolName` and nothing else.
+Start with **`Select`**: its honest contents are the smallest, because Select All and Deselect are
+trivial and Feather / Grow / Modify / Inverse are `disabled` items until the model work lands. Then
+**`Layer`**, almost all of it disabled while adjustment layers do not exist. **`View`** and **`Filter`**
+follow the same rule. **`Type`** last of the plausible ones; **`3D`** is a candidate for never shipping
+at all, and should be decided rather than deferred.
+
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:313-570`, `:147-150`, `:186-209`,
+`src/util/selection.ts`, `src/contexts/psd-utils.ts:88-106`,
+`docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
+
+## 170. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
+
+**Problem.** `ADJUSTMENTS_ITEMS` enables exactly two items
+(`src/components/DesktopHeader/DesktopHeader.tsx:186-209`), and both name a capability the app does
+not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args really are
+`{ brightness, contrast }` and whose processor really does emit `brightness(…) contrast(…)` — so that
+label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
+selects the `color` stand-in and is **a partial match**: sepia IS Photo Filter's Warming preset and
+saturation is nearest its Density slider, but the third control is a `grayscale` slider, and Photo
+Filter performs no luminance conversion. §168 records the narrower version of that.
+
+**This is a question, not a defect, and it is here because two branches implemented opposite answers
+to it.** A branch carried the extraction and enabled both items on the reasoning that a bounded,
+documented partial match beats a wrong name. `main` carries the operator's later signal and argues
+the opposite: "**do not relabel and do not build the stand-in into the menu** — a relabelled stand-in
+is the falsehood, made more permanent by being menu-launched." Both are defensible and **the tree
+cannot settle it**, which is what makes it a question. There is no Adobe page that says which to do,
+because the question is not about Photoshop.
+
+**Evidence, and what it does not settle.** The operator's signal is 2026-10-01, in their words: "some
+tools from photoshop menu will be implemented, like levels, colors, etc (this reqs are very vague yet),
+but letting you know." It is explicitly vague and it does not reopen the rail decision. Read strictly
+it says the real commands are coming and the spec is not written down. Read as direction about the
+interim it also says not to ship a relabelled stand-in from a menu. The first decision's own words
+cut the other way — "the capability is to be restructured, **not dropped**" — and disabling both items
+leaves `color` reachable from nowhere, which is a capability drop. Nothing in the tree decides which
+of those two consequences the operator prefers.
+
+**What was searched before asking.** Adobe's `Image ▸ Adjustments` reference, for an item whose
+definition the three filters satisfy (none exists — this is why `Black and White` and `Desaturate`
+were both rejected); `docs/OVERRIDES.md`, for an entry authorising the divergence (there is none, and
+an agent must not add one); `HANDOFF.md` and the session record, for a later decision superseding
+either (none found — the signal above is the latest). The tree answers every sub-question and is
+silent on this one.
+
+**Needed by:** before the real `Image ▸ Adjustments` work starts, and before anything is built on the
+assumption that these two items are permanent.
+
+**RESOLVED — 2026-10-01. The operator: "use naming that photoshop has."** Both items stay enabled under
+Adobe's own names, which is what the merge had already taken as its default. Read strictly, that answer
+is also a rejection of the one reading `main`'s note offered — that a relabelled stand-in must not be
+menu-launched at all — because `Brightness/Contrast` and `Photo Filter` are both Adobe's names, not
+app-invented ones. The alternative this entry was written to choose between is therefore closed:
+`color` stays reachable.
+
+What the answer does **not** settle, and what the merge is carrying: `Photo Filter` remains a partial
+match (two of three controls fit; `grayscale` is not one of them), and the real `Black and White` and
+real `Levels` remain unbuilt and disabled. Those are the §168 capability question, not this naming
+question, and building the real commands is what dissolves them.
+
+**What the naming rule now binds.** A future adjustment command takes Adobe's name, and takes it only if
+it computes that command. An item whose computation does not match its Adobe name is a new falsehood
+and does not get enabled — which is why `Levels` and `Black and White` are `disabled` items rather
+than relabelled ones. An app-invented name (`Colors`) is not available as a fallback: it is the defect
+the rail removal fixed.
+
+**Answer (operator writes this line and nothing else):** use naming that Photoshop has.
+
+**Default if unanswered — KEEP BOTH ENABLED, and the divergence stays documented in the code.** The
+merge takes this option so the rail removal — which both sides and the operator agree on — is not
+held hostage to a naming question, and because a `disabled`-only menu is a strictly smaller surface
+than a menu that works. It is recorded as an assumption by the merging agent on 2026-10-01 and can be
+overturned by writing one line above. The cost of taking it is that a user can reach a control under
+an Adobe name that Adobe's dialog does not have; the cost of the alternative is that `color` is
+unreachable until real Black and White is built, which is a larger loss than a documented partial.
+
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:147-150`, `:186-209`,
+`src/components/DesktopHeader/__tests__/DesktopHeader.test.tsx`, `src/tools/colors.ts`,
+`src/tools/functions.ts:60-63`, `docs/TOOLS-TOO-HARD.md` (the enabled-items entry and Black and
+White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
+
+## 171. `color`'s and `levels`'s `imageProcessor` may be unreachable, and the claim that they are is UNPROVEN in both directions
+
+**Problem.** `src/tools/colors.ts` and `src/tools/levels.ts` export only an `imageProcessor`; the
+tool definitions declare `commit: 'layer-operation'` (`src/tools/toolProcessors.ts:137`, `:143`). For
+a `layer-operation` tool, `src/contexts/useLayer.ts:620` returns `true` **before** the
+`processor.imageProcessor(...)` call at `:655`, so the editing path never reaches either processor.
+A prior pass asserted flatly that both are "DEAD CODE" whose "only callers are
+`image-processors.test.ts`". **That assertion is not carried forward as fact, because it does not
+follow from the one call site it was derived from.** There are five other `imageProcessor` call sites
+in `src` — `useHistory.ts:96`, `materialization.ts:177` and `:288`, `layer-utils.ts:225`,
+`layer-renderer.ts:80` — and whether any of them can be reached with a `color` or `levels` tool name
+has not been traced. `layer-renderer.ts:80` is guarded to vector sources only, so it is excluded;
+`materialization.ts:288` iterates retained operations and is the one that matters.
+
+**Why it matters anyway.** If the processors really are unreachable, then the CSS-filter string
+(`buildColorsFilter` / `buildLevelsFilter`, `src/tools/functions.ts:60-70`) is the whole of the
+capability, and the `OffscreenCanvas` work in both files is maintenance on a path nothing runs. That
+is worth knowing before real Levels and real Black and White are built on top of either. If they are
+reachable, the "dead code" claim is itself a doc defect that has now appeared in three documents.
+
+**Fix.** Trace `materialization.ts:288` and `useHistory.ts:96` for the `color` and `levels` tool
+names — specifically whether a retained `FilterLayerOperation` for either id is ever resolved back
+through `findToolProcessor` into a processor call. Then either delete the two processors and their
+`imageProcessor` entries, or record in `docs/TOOLS-TOO-HARD.md` that the retained-operation path is
+the one that runs. Do not delete them on the strength of the `useLayer` early return alone; that is
+the mistake that produced the current disagreement.
+
+**Files.** `src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/toolProcessors.ts:137`, `:143`,
+`src/contexts/useLayer.ts:620`, `:655`, `src/contexts/materialization.ts:288`,
+`src/contexts/useHistory.ts:96`, `docs/TOOLS-TOO-HARD.md`
+
+## 172. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers is unanswered, and it changes the durable schema
+
+**Problem.** The operator signalled on 2026-10-01 that Levels, Colors and the other
+`Image ▸ Adjustments` commands "will be implemented", and named this as the load-bearing question
+before any of that work starts. **It is still unanswered, and it is an architecture decision rather
+than a UI one.** The two answers are not the same amount of work and they do not produce the same
+document:
+
+- **Baked pixels.** `Image ▸ Adjustments` applies a retained filter operation to the active layer.
+  The machinery exists — `layer.operations[]` re-rendered as a CSS filter string by `getLayerFilter`
+  (`src/contexts/layer-renderer.ts:32`, applied at `:99`). The gap is only that the operations cannot
+  be re-edited and there is no Properties panel.
+- **Real adjustment layers.** Each adjustment becomes its own layer with its own settings and a mask.
+  This needs a layer kind, a settings payload that survives serialization, a mask, and a Properties
+  panel that can write back settings no tool owns — plus a history story, because an adjustment's
+  parameters change without changing pixels and the linear history model has no entry for that.
+
+**Why it is a question and not a defect.** Nothing is broken; something is undecided, and the
+undecided thing is which document model the app has. `src/contexts/psd-utils.ts:88-106` refuses
+`adjustment`, `mask` and `clipping` on import, so a PSD written by Photoshop with any of them loses
+them on the way in today. Choosing baked pixels leaves that refusal in place for a feature that is
+one Photoshop adjustment; choosing adjustment layers makes it the first thing to fix. **This cannot
+be derived from the tree**, because both answers are implementable and Adobe does not choose between
+them for you — Photoshop has both, and which one a clone offers is a product decision.
+
+**Needed by:** before the first real adjustment is built. Building `Levels` against the wrong answer
+means re-doing the durable path, and `AGENTS.md`'s architecture-status note is explicit that the
+legacy `HistoryItem[]` path is the production replay authority while the durable document is still a
+shadow projection — a second schema change on top of an in-flight cutover is how that work gets
+harder to finish, not easier.
+
+**Answer (operator writes this line and nothing else):**
+
+**Default if unanswered — baked pixels on the active layer, and the adjustment-layer refusal in
+`psd-utils.ts` stays.** It is the smaller change, it is the only one the existing operation stack can
+support, and it is reversible later because a baked adjustment can be re-expressed as a layer while
+the reverse is lossy. Recorded as an assumption by the merging agent on 2026-10-01. Note what the
+default does NOT settle: it does not make the adjustment re-editable, and it does not make the
+Properties panel exist, so either answer still leaves `docs/TOOLS-TOO-HARD.md`'s adjustment-layers
+entry open.
+
+**Files.** `src/contexts/psd-utils.ts:88-106`, `src/contexts/layer-types.ts:31-46`,
+`src/contexts/layer-renderer.ts:32`, `src/contexts/history-model.ts`, `AGENTS.md` §Architecture
+status, `docs/TOOLS-TOO-HARD.md` (the adjustment-layers entry), `docs/FEATURES.md`
+
+## 173. `color`, `levels` and `transform` are unreachable below 768px, because the rail is not the only thing `toolbarMap` drives
+
+**Problem.** The rail removal deleted one three-wide group from `toolbarMap`, and `toolbarMap` is also
+the source for the **mobile** tool bar and tool sheet: `src/components/Mobile/mobile-tools.ts` derives
+`mobileToolGroups` from it (`:50`), consumed by `MobileBottomBar.tsx:33` and `MobileToolSheet.tsx:24`.
+So the three left mobile as a side effect of a decision that was about the rail.
+
+Their only new host is `Image ▸ Adjustments` and `Edit ▸ Free Transform` in
+`src/components/DesktopHeader/DesktopHeader.tsx`, and the header is `max-md:hidden` (`:302`). The
+mobile drawer (`MobileMenuDrawer.tsx`) carries New / Open / Save / Theme and nothing else. The
+breakpoint is pinned at `md` = 768px (`src/index.scss:37`, `src/hooks/useMediaQuery.ts:14`), so
+**at every viewport width under 768px there is no UI path to any of the three.** Before this change
+they were in the mobile tool sheet (`git show 9a99fe2a:toolbar-mapping.ts` lines 62-64), so this is a
+capability regression, not a pre-existing gap.
+
+This contradicts the decision's own terms — `docs/PHOTOSHOP-UX.md`'s rail bullet records "the
+capability is to be restructured, **not dropped**" — and the tablet band (768-1023px) is unaffected
+because the header is visible from 768 up.
+
+**Why it is filed and not fixed.** The operator's 2026-10-01 instruction: file it, do not fix it.
+Mobile parity is a separate piece of work from the rail removal, and every fix trades against a
+regression the operator should choose between.
+
+**Fix — three options, none free.** (a) Have `mobileToolGroups` append a command group built from
+`extraTools`; it needs labels re-authored, because `extraTools` is a bare `readonly ToolName[]`, and
+it lengthens a bar already measured overflowing its own width by 542px at 744px. (b) Add
+`Image ▸ Adjustments` and `Edit ▸ Free Transform` to `MobileMenuDrawer` — most faithful to Photoshop
+and keeps mobile a command surface, but needs `ADJUSTMENTS_ITEMS` extracted out of
+`DesktopHeader.tsx` into a module both hosts import, plus a two-level submenu inside a modal drawer
+that closes on every action. (c) Split the rail's view of `toolbarMap` from the mobile view across
+four read sites in `SidebarLeft.tsx`; cheapest, and it re-creates the two-lists divergence this
+change closed.
+
+**Files.** `toolbar-mapping.ts`, `src/components/Mobile/mobile-tools.ts:50`,
+`src/components/Mobile/MobileBottomBar.tsx:33`, `src/components/Mobile/MobileToolSheet.tsx:24`,
+`src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx:302`

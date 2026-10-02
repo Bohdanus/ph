@@ -9,6 +9,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { slugifyToolLabel } from '../../../toolbar-mapping.ts';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
@@ -24,12 +25,20 @@ import type { FigureType } from '../../tools/shape.ts';
  * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
  * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
  *
- * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly three
- * tools.** Add Anchor Point, Delete Anchor Point and Convert Point are absent because they
- * are absent from Photoshop's own Tools panel too — they modify a path rather than paint, and
- * Photoshop reaches them from the Pen's context menu and the path-modification commands, not
- * from the Tools panel or the Tools menu. They are in `availableTools` because they are
- * selectable tools; they are not in this menu because they are not menu items.
+ * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly six
+ * tools, for two separate reasons.**
+ *
+ * Add Anchor Point, Delete Anchor Point and Convert Point are absent because they are absent
+ * from Photoshop's own Tools panel too — they modify a path rather than paint, and Photoshop
+ * reaches them from the Pen's context menu and the path-modification commands, not from the
+ * Tools panel or the Tools menu. `color`, `levels` and `transform` are absent for the other
+ * reason: they are `Image ▸ Adjustments` and `Edit ▸ Free Transform` COMMANDS, which are the
+ * same defect one level up from a missing tool — a command is not a tool, and a Tools-panel
+ * entry for one is a falsehood in the list whose own header calls a missing tool "a visible
+ * inconsistency the user has to notice and work around." They are in `ADJUSTMENTS_ITEMS` and
+ * in the `Edit` menu below instead, and `toolbar-mapping.ts`'s `extraTools` names them as the
+ * registered tool ids with no rail entry. All six are in `availableTools` because they are
+ * selectable tools; none of them is a Tools-menu item.
  *
  * Every OTHER `availableTools` name must produce a row. That was not true until the test
  * below was derived from the registry: the assertion was a hand-written list of 24 names that
@@ -37,17 +46,29 @@ import type { FigureType } from '../../tools/shape.ts';
  * Sponge shipped with no Tools-menu entry and the test stayed green.
  */
 /**
- * The registered tools this menu deliberately does not list. See the note on
- * `TOOL_MENU_ITEMS` above: these three are not Tools-panel entries in Photoshop either.
+ * The registered tools this menu deliberately does not list, and the ONLY ids allowed to be
+ * missing from it — every other `availableTools` name must produce a row, which is what
+ * `DesktopHeader.test.tsx` enforces by walking the registry.
+ *
+ * Two groups, two mechanisms, and they are not interchangeable. The three pen point-tools
+ * modify a path, which Photoshop reaches from the Pen's context menu rather than from a
+ * Tools panel. The three adjustment commands are not tools at all: they left the rail in the
+ * same change that added `MENUS_EXCLUDE`, and they are hosted by `Image ▸ Adjustments` and
+ * `Edit ▸ Free Transform`. See the note on `TOOL_MENU_ITEMS` above, which is the authority for
+ * both.
  */
-export const MENUS_EXCLUDE: readonly ToolName[] = ['add-anchor-point', 'delete-anchor-point', 'convert-point'];
+export const MENUS_EXCLUDE: readonly ToolName[] = [
+  'add-anchor-point',
+  'delete-anchor-point',
+  'convert-point',
+  'color',
+  'levels',
+  'transform',
+];
 
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
-  { toolName: 'color', label: 'Colors' },
   { toolName: 'blur', label: 'Blur' },
-  { toolName: 'levels', label: 'Levels' },
-  { toolName: 'transform', label: 'Transform' },
   { toolName: 'crop', label: 'Crop' },
   { toolName: 'draw', label: 'Draw' },
   { toolName: 'shape', label: 'Shape' },
@@ -108,6 +129,85 @@ const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
   line: 'line',
 };
 
+/**
+ * One item of a menu host.
+ *
+ * **`toolName` is absent on an item the app cannot do, and that renders it `disabled`.** A
+ * disabled item is a capability recorded as unbuilt, not a fake one. The rule this file is
+ * shaped by is `docs/TOOLS-TOO-HARD.md`'s: a capability the app cannot do is neither
+ * shipped half-versioned nor quietly absent. Adobe's menu carries the entry, it is spelled
+ * Adobe's way, and it cannot be activated — so the gap is visible where a user looks for
+ * it instead of only in a document. Photoshop greys out most of `Image ▸ Adjustments`
+ * itself whenever the active document cannot take the command.
+ *
+ * The distinction is structural rather than a flag, so the two cases cannot drift: an item
+ * becomes enabled by having a `toolName` and nothing else. Removing a disabled item needs
+ * the capability to land, not a decision.
+ */
+type MenuHostItem = {
+  label: string;
+  toolName?: ToolName;
+};
+
+/**
+ * `Image ▸ Adjustments`, in Adobe's own order.
+ *
+ * Membership is Adobe-confirmed item by item; the ORDER is not, because Adobe publishes
+ * no page that enumerates the submenu top to bottom — it is reconstructed from the order
+ * Adobe's own pages present the commands in plus the create-new-adjustment-layer list.
+ * Treat it as a good hypothesis, the same provenance rule
+ * `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section applies to the rail.
+ *
+ * Two items are enabled, and each is enabled because its computation is the Adobe command
+ * it is named for:
+ *
+ * - **`Brightness/Contrast` → the `levels` id.** `LevelsToolArgs` is
+ *   `{ brightness, contrast }` (`src/tools/levels.ts`) and the processor emits one
+ *   `brightness(…) contrast(…)` filter, which is Adobe's Brightness/Contrast and not
+ *   Adobe's Levels. Naming it `Levels` under a menu that is supposed to be a clone is the
+ *   falsehood this rename removes.
+ * - **`Photo Filter` → the `color` id.** Its three controls are grayscale, sepia and
+ *   saturation (`src/tools/functions.ts`'s `buildColorsFilter`). Adobe's Photo Filter is a
+ *   lens filter with a Density slider and a Preserve Luminosity option, and sepia IS its
+ *   Warming preset, but **two of the three controls are a partial match and `grayscale`
+ *   has no counterpart in it.** It is a bounded divergence, recorded here rather than
+ *   papered over, and it is strictly better than the alternative: `Black and White` needs
+ *   per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
+ *
+ * **`Levels`, `Curves`, `Exposure`, `Black and White`, `Hue/Saturation`, `Vibrance`,
+ * `Color Balance`, `Channel Mixer`, `Selective Color`, `Desaturate`, `Invert`,
+ * `Posterize`, `Threshold`, `Gradient Map`, `Equalize`, `Shadows/Highlights`, `HDR Toning`,
+ * `Match Color`, `Replace Color` and `Color Lookup` are all disabled**, which is the
+ * accurate state of this app: it has no adjustment layers at all, and
+ * `src/contexts/psd-utils.ts` reports `adjustment` as unsupported on import. What exists
+ * instead is a retained per-layer operation stack, which keeps an adjustment but cannot
+ * re-edit it and has no properties panel.
+ */
+const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
+  { label: 'Brightness/Contrast', toolName: 'levels' },
+  { label: 'Exposure' },
+  { label: 'Vibrance' },
+  { label: 'Hue/Saturation' },
+  { label: 'Curves' },
+  { label: 'Color Balance' },
+  { label: 'Black and White' },
+  { label: 'Photo Filter', toolName: 'color' },
+  { label: 'Channel Mixer' },
+  { label: 'Color Lookup' },
+  { label: 'Selective Color' },
+  { label: 'Shadows/Highlights' },
+  { label: 'HDR Toning' },
+  { label: 'Desaturate' },
+  { label: 'Match Color' },
+  { label: 'Replace Color' },
+  { label: 'Invert' },
+  { label: 'Equalize' },
+  { label: 'Gradient Map' },
+  { label: 'Posterize' },
+  { label: 'Threshold' },
+  { label: 'Levels' },
+];
+
 const DesktopHeader = () => {
   const [{ currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
@@ -117,18 +217,32 @@ const DesktopHeader = () => {
 
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  // Which submenu is expanded inside the open host. Keyed by the host, so switching from
+  // `image` to `edit` cannot leave a stale submenu expanded — and it is deliberately not
+  // two booleans, because a single value cannot disagree with itself.
+  const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
   const fileMenuRef = useRef<HTMLLIElement>(null);
   const toolsMenuRef = useRef<HTMLLIElement>(null);
+  const imageMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
   const windowMenuRef = useRef<HTMLLIElement>(null);
+
+  // One toggle for both hosts, so the click that opens a menu is also the click that
+  // collapses whatever submenu it had expanded.
+  const toggleMenu = (id: string) => {
+    setOpenMenu((current) => (current === id ? null : id));
+    setOpenSubmenu(null);
+  };
+
+  const toggleSubmenu = (id: string) => setOpenSubmenu((current) => (current === id ? null : id));
 
   const handleToolSelection = (toolName: ToolName) => {
     const figure = FIGURE_TOOLS[toolName];
     // Select first, then patch — deliberately *not* the order
     // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
-    // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the
+    // OUTGOING tool (`useApp.ts:167`), and `patchToolArgs` writes straight into the
     // live `currentArgsRef` (`useCurrentTool.tsx:61`). Patching first would leave the
-    // text branch at `useLayer.ts:329` reading shape args — no `.text`, no `.rect` —
+    // text branch at `useLayer.ts:394` reading shape args — no `.text`, no `.rect` —
     // so it early-returns and an unapplied text layer is dropped with nothing to undo.
     // Selecting first lets that commit read the text args it is meant to read.
     if (figure !== undefined) {
@@ -138,19 +252,10 @@ const DesktopHeader = () => {
       goToTool(toolName);
     }
     setOpenMenu(null);
+    setOpenSubmenu(null);
   };
 
-  const handleColors = () => handleToolSelection('color');
-
-  const handleBlur = () => handleToolSelection('blur');
-
-  const handleLevels = () => handleToolSelection('levels');
-
-  const handleTransform = () => handleToolSelection('transform');
-
-  const handleDraw = () => handleToolSelection('draw');
-
-  const handleText = () => handleToolSelection('text');
+  const handleFreeTransform = () => handleToolSelection('transform');
 
   const handleResetWorkspace = () => {
     resetWorkspace();
@@ -163,6 +268,9 @@ const DesktopHeader = () => {
         setOpenMenu(null);
       }
       if (openMenu === 'tools' && toolsMenuRef.current && !toolsMenuRef.current.contains(event.target as Node)) {
+        setOpenMenu(null);
+      }
+      if (openMenu === 'image' && imageMenuRef.current && !imageMenuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
       }
       if (openMenu === 'edit' && editMenuRef.current && !editMenuRef.current.contains(event.target as Node)) {
@@ -203,13 +311,16 @@ const DesktopHeader = () => {
           <button
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
-            onClick={() => setOpenMenu(openMenu === 'file' ? null : 'file')}
+            onClick={() => toggleMenu('file')}
             data-testid="header-file-menu-button"
           >
             File
           </button>
           {openMenu === 'file' && (
-            <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
+            <ul
+              className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
+              data-testid="header-file-menu"
+            >
               <li>
                 <button
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
@@ -300,13 +411,16 @@ const DesktopHeader = () => {
           <button
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
-            onClick={() => setOpenMenu(openMenu === 'tools' ? null : 'tools')}
+            onClick={() => toggleMenu('tools')}
             data-testid="header-tools-menu-button"
           >
             Tools
           </button>
           {openMenu === 'tools' && (
-            <ul className="absolute left-0 top-full z-10 m-0 min-w-[200px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
+            <ul
+              className="absolute left-0 top-full z-10 m-0 min-w-[200px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
+              data-testid="header-tools-menu"
+            >
               {TOOL_MENU_ITEMS.map(({ toolName, label }) => (
                 <li key={toolName}>
                   <button
@@ -322,75 +436,101 @@ const DesktopHeader = () => {
             </ul>
           )}
         </li>
+        <li className="relative" ref={imageMenuRef}>
+          <button
+            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
+            type="button"
+            onClick={() => toggleMenu('image')}
+            data-testid="header-image-menu-button"
+          >
+            Image
+          </button>
+          {openMenu === 'image' && (
+            <ul
+              className="absolute left-0 top-full z-10 m-0 min-w-[180px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
+              data-testid="header-image-menu"
+            >
+              <li className="relative">
+                {/* A real `<button>` that owns the submenu, not a hover-only `<span>`: a
+                    hover affordance would put every item in this submenu out of reach of a
+                    keyboard, which is the one input that cannot recover from a missing
+                    `:hover`. `aria-expanded` is what tells a screen reader the same thing. */}
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  aria-haspopup="true"
+                  aria-expanded={openSubmenu === 'image-adjustments'}
+                  onClick={() => toggleSubmenu('image-adjustments')}
+                  data-testid="image-menu-adjustments-button"
+                >
+                  Adjustments
+                </button>
+                {openSubmenu === 'image-adjustments' && (
+                  <ul
+                    className="absolute left-full top-0 z-20 m-0 min-w-[220px] list-none rounded border border-gray-300 bg-white py-2 shadow-lg dark:border-gray-600 dark:bg-gray-800"
+                    data-testid="image-menu-adjustments"
+                  >
+                    {ADJUSTMENTS_ITEMS.map((item) => {
+                      const slug = slugifyToolLabel(item.label);
+                      // Bound to a `const` before the closure so the check is one read and
+                      // the handler carries no narrowing of its own.
+                      const toolName = item.toolName;
+                      return (
+                        <li key={slug}>
+                          <button
+                            className={MENU_ITEM_BUTTON}
+                            type="button"
+                            disabled={toolName === undefined}
+                            onClick={() => toolName !== undefined && handleToolSelection(toolName)}
+                            data-testid={`image-menu-adjustments-${slug}-button`}
+                          >
+                            {item.label}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            </ul>
+          )}
+        </li>
         <li className="relative" ref={editMenuRef}>
           <button
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
-            onClick={() => setOpenMenu(openMenu === 'edit' ? null : 'edit')}
+            onClick={() => toggleMenu('edit')}
             data-testid="header-edit-menu-button"
           >
             Edit
           </button>
+          {/* Adobe's `Edit` menu holds `Free Transform` at the top level rather than inside the
+              `Transform` submenu, and the submenu is a separate command besides — the same Adobe
+              page documents both (https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html).
+              So this host is one item and not a bag of tool switches. `blur`, `draw` and
+              `text` used to live here; all three are Tools-panel tools, so a menu is the
+              wrong surface for each of them and they stay in the rail and the Tools menu
+              above.
+
+              Only `Free Transform` ships. The rest of Adobe's submenu — `Scale`, `Rotate`,
+              `Skew`, `Distort`, `Perspective`, `Warp`, `Rotate 180°`, `Rotate 90° Clockwise`,
+              `Rotate 90° Counter Clockwise`, `Flip Horizontal`, `Flip Vertical` — needs each
+              item to preset that tool's args AND repaint, and `HANDOFF.md` §167 records why
+              that is not a one-liner. Nine items that all select the same tool and repaint
+              nothing is the falsehood this host exists to prevent. */}
           {openMenu === 'edit' && (
-            <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
+            <ul
+              className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
+              data-testid="header-edit-menu"
+            >
               <li>
                 <button
                   className={MENU_ITEM_BUTTON}
                   type="button"
-                  onClick={handleColors}
-                  data-testid="edit-menu-colors-button"
+                  onClick={handleFreeTransform}
+                  data-testid="edit-menu-free-transform-button"
                 >
-                  Colors
-                </button>
-              </li>
-              <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleBlur}
-                  data-testid="edit-menu-blur-button"
-                >
-                  Blur
-                </button>
-              </li>
-              <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleLevels}
-                  data-testid="edit-menu-levels-button"
-                >
-                  Levels
-                </button>
-              </li>
-              <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleTransform}
-                  data-testid="edit-menu-transform-button"
-                >
-                  Transform
-                </button>
-              </li>
-              <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleDraw}
-                  data-testid="edit-menu-draw-button"
-                >
-                  Draw
-                </button>
-              </li>
-              <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleText}
-                  data-testid="edit-menu-text-button"
-                >
-                  Text
+                  Free Transform
                 </button>
               </li>
             </ul>
@@ -407,13 +547,16 @@ const DesktopHeader = () => {
           <button
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
-            onClick={() => setOpenMenu(openMenu === 'window' ? null : 'window')}
+            onClick={() => toggleMenu('window')}
             data-testid="header-window-menu-button"
           >
             Window
           </button>
           {openMenu === 'window' && (
-            <ul className="absolute left-0 top-full z-10 min-w-[180px] list-none rounded border border-gray-600 bg-[#2b2f33] p-1 shadow-lg">
+            <ul
+              className="absolute left-0 top-full z-10 min-w-[180px] list-none rounded border border-gray-600 bg-[#2b2f33] p-1 shadow-lg"
+              data-testid="header-window-menu"
+            >
               <li>
                 <button
                   className={MENU_ITEM_BUTTON}

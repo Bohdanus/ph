@@ -426,10 +426,10 @@ async function expectLevelWithin(
  *
  * Two paths, and which one runs is a LAYOUT fact that changes with the window, not a property
  * of the group. A one-column rail fits SEVEN tiles in a 720px window — the rail now spends its
- * whole slot on whole rows rather than holding a fifth back — which reaches the Color/Levels
- * group and stops there, so the Focus and Dodge/Burn groups, the TENTH and twelfth of the
- * sixteen in `toolbarMap`, are folded into the three-dots tile and have no tile of their own
- * at all. The old version threw `No sidebar tile found for group blur/sharpen/smudge` in that
+ * whole slot on whole rows rather than holding a fifth back — which reaches the Brush group and
+ * stops there, so the Focus and Dodge/Burn groups, the NINTH and eleventh of the fifteen in
+ * `toolbarMap`, are folded into the three-dots tile and have no tile of their own at all.
+ * The old version threw `No sidebar tile found for group blur/sharpen/smudge` in that
  * case, which reads as "the product has lost the Sharpen tool" rather than as "the window is
  * short", and it is why every Sharpen, Smudge, Dodge and Burn case in this file failed at
  * 1280x720 before it ever reached a canvas.
@@ -689,13 +689,16 @@ test.describe('Paint tools', () => {
       test(`the ${tool.key} tool is reachable by keyboard alone`, async ({ page }) => {
         // `ownTile` is a property of the MAP — the group holds one tool, so it has no flyout of
         // its own — and it is NOT a statement that the rail is currently showing a tile for it.
-        // One column fits seven tiles at 1280x720, which reaches the Color/Levels group and
-        // stops there, and the Clone Stamp is the NINTH of the sixteen groups: its tile is
-        // folded into the three-dots tile together with the Brush above it and the seven groups
-        // below it, so the old `tool-button-${key}` locator reported zero elements there. That
-        // locator is the failure this branch guards — a single-tool group has no flyout to
-        // open, so "reachable by keyboard alone" is only "does Enter reach it", and Enter has to
-        // be pressed on whichever tile stands for the tool at this window.
+        // One column fits seven tiles at 1280x720, which reaches the Brush group and stops
+        // there, and the Clone Stamp is the EIGHTH of the fifteen groups: its tile is folded
+        // into the three-dots tile along with the seven groups below it, so the old
+        // `tool-button-${key}` locator reported zero elements there. That locator is the failure
+        // this branch guards — a single-tool group has no flyout to open, so "reachable by
+        // keyboard alone" is only "does Enter reach it", and Enter has to be pressed on
+        // whichever tile stands for the tool at this window. Nothing here encodes that ordinal:
+        // `ownTile` says the GROUP has no flyout, and `hasOwnToolTile` asks the rail, so the
+        // `else` below is simply the path `clone-stamp` takes at this viewport, folded all the
+        // same as it was when the column reached one group further.
         if (tool.ownTile && (await hasOwnToolTile(page, tool.key))) {
           const tile = await resolveToolTile(page, tool.key);
           await tile.focus();

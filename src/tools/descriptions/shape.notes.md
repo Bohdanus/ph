@@ -31,7 +31,7 @@ map, each verified by printing the line:
 | `src/tools/shape.ts:71` / `:79`        | **:93** / **:103** | `normalizeShapeGeometry` and its `if (shiftKey)` arm       |
 | `src/tools/settings.ts:271…306`        | **:278…313**       | the six figure blocks, each 7 lines lower                  |
 | `src/components/Main/Main.tsx:74`      | **:82**            | `toolName === 'shape' \|\|`, first arm of the dispatch     |
-| `toolbar-mapping.ts:109-114`           | **:110-115**       | the six fly-out entries                                    |
+| `toolbar-mapping.ts:109-114`           | **:103-108**       | the six fly-out entries                                    |
 | `AppKeyboardShortcuts.tsx:76-78`       | **:116-118**       | `orderedFigures` and the index arithmetic                  |
 | `AppKeyboardShortcuts.tsx:89-95`       | **:129-135**       | the `U` handler: keep, else force `rectangle`              |
 
@@ -70,7 +70,7 @@ sentence on the snap being right and its last on the thing that is actually miss
 which is what holds the verdict at `partial`.
 
 **"No bracket key is bound anywhere in the app" was false.** `[` and `]` _are_ bound —
-`AppKeyboardShortcuts.tsx:518` and `:526` — and they are a repeat-enabled scrub. They are gated on
+`AppKeyboardShortcuts.tsx:539` and `:547` — and they are a repeat-enabled scrub. They are gated on
 `tipSizeTool(toolName) !== null`, and `tipSizeField` (`:43-52`) lists exactly eight tools: brush,
 pencil, eraser, color-replacement, smudge, dodge, burn, clone-stamp. No shape figure is in it. The
 `polygon` `appNotes` now says the bracket keys "reach only the eight tools that carry a tip Size",
@@ -80,7 +80,7 @@ about one family.
 **`Pixels mode is byte-identical to Shape mode` was both too kind and too vague.** It is literally
 true of the raster — `drawShape` branches only on `figure`, and `toolMode` is read in exactly one
 place, `src/tools/shape.ts:196` — but it hides the divergence that matters: the processor row is
-`commit: 'source'` with `creator: true` (`toolProcessors.ts:159`), so the app allocates a **new
+`commit: 'source'` with `creator: true` (`toolProcessors.ts:160`), so the app allocates a **new
 layer** in Pixels mode, where Photoshop paints into the active layer and adds nothing to the Layers
 panel. The `shape` and `ellipse` `appNotes` now say that.
 
@@ -328,14 +328,14 @@ Photoshop does not have at that level, and it is rendered for the line figure on
 **The two "too hard" items in the brief, and what the bar actually offers for each.**
 
 - _Per-shape Fill and Stroke swatches with Gradient and Pattern._ Recorded at
-  `docs/TOOLS-TOO-HARD.md:395` under that heading. The bar offers **one `Filled` checkbox**
+  `docs/TOOLS-TOO-HARD.md:409` under that heading. The bar offers **one `Filled` checkbox**
   (`Figures/Shape.tsx:212`) over the app's single foreground/background pair: `setShapeCtx` writes
   `ctx.strokeStyle = color` and `ctx.fillStyle = backgroundColor` (`src/tools/shape.ts:167-169`),
   so there is no second paint source to configure, let alone four choices per swatch. `partial` on
   both rows is therefore the right reading, and the _detail_ is the Photoshop side — "a swatch
   offering None, Solid Color, Gradient or Pattern" — which is exactly the control the policy file
   says is out of reach.
-- _Path Type = Path for the shape tools._ Recorded at `docs/TOOLS-TOO-HARD.md:372`. The bar offers
+- _Path Type = Path for the shape tools._ Recorded at `docs/TOOLS-TOO-HARD.md:380`. The bar offers
   the three-button **Mode** group — `Figures/Shape.tsx:136-146`, a `<select>` with `shape` / `path`
   / `pixels` — and nothing else that could be a path type. What Path mode does in this app is the
   single line `src/tools/shape.ts:196`, `const hasFill = args.toolMode !== 'path' && args.hasFill`,
@@ -406,7 +406,7 @@ Pixels mode is identical to Shape mode, there is no separate Fill/Stroke swatch 
 app's fly-out is six entries where Photoshop's group is seven.
 
 **The missing Star tool is the app's gap, and it is recorded in `shape`'s `appNotes` rather than
-left to be inferred.** The app's fly-out is `toolbar-mapping.ts:110-115` — Rectangle, Ellipse,
+left to be inferred.** The app's fly-out is `toolbar-mapping.ts:114-121` — Rectangle, Ellipse,
 Line, Triangle, Polygon, Custom Shape — and there is no `star` `ToolName`, no `FigureType` for it
 (`src/tools/shape.ts:5`), and no gear menu in which its points and radii could be set. The
 `polygon` `appNotes` used to read "the star is not this tool's to draw in the current release, so
@@ -722,7 +722,7 @@ behaviour is not lost — it is in the `purpose` and in this paragraph.
 
 **`[` and `]` are gone from the data file for a stronger reason than "not bound".** They are Photoshop
 polygon shortcuts, and **the bracket keys are not unbound — the earlier version of this file said they
-were, which was false.** `AppKeyboardShortcuts.tsx:518` and `:526` register them, with
+were, which was false.** `AppKeyboardShortcuts.tsx:539` and `:547` register them, with
 `repeat: true` so that holding one scrubs. They are gated on `tipSizeTool(toolName) !== null`, and
 `tipSizeField` (`:43-52`) names exactly eight tools: brush, pencil, eraser, color-replacement, smudge,
 dodge, burn, clone-stamp. No shape figure is in that map, so for this family the keys are **inert,
@@ -738,7 +738,7 @@ so there is nothing here to compare a star Ratio against", which put a missing c
 voice of a Photoshop statement — a reader could take it for a claim that 26.10 moved the control and
 not for a note that this app cannot draw a star at all. It now says the app has no Star tool. The
 absence is recorded on the `shape` entry as well, because that is where the group's membership lives
-(`toolbar-mapping.ts:110-115`, six entries against Photoshop's seven); see the `shape` section above.
+(`toolbar-mapping.ts:114-121`, six entries against Photoshop's seven); see the `shape` section above.
 
 App verdict: **partial**. The drag-defined model is right; the side count and the rotation are not
 there, and the app has no Star tool to compare a star Radius against.
@@ -756,10 +756,10 @@ Sources:
 
 ## `custom-shape` — Custom Shape Tool
 
-**A placeholder, stated as a fact rather than hidden.** `src/tools/toolProcessors.ts:331-335` is
+**A placeholder, stated as a fact rather than hidden.** `src/tools/toolProcessors.ts:364-368` is
 `commit: 'unimplemented'` with the shared `unimplemented` rasterizer (declared at
-`toolProcessors.ts:110`, not `:109`, which is a blank line); `src/tools/toolsMap.ts:159-163`
-renders `PlaceholderTool` with a TODO badge; `src/tools/settings.ts:313` persists nothing but the
+`toolProcessors.ts:110`, not `:110`, which is a blank line); `src/tools/toolsMap.ts:180-184`
+renders `PlaceholderTool` with a TODO badge; `src/tools/settings.ts:336` persists nothing but the
 tool name. The panel that does render is a chip list, and the chips are Photoshop's real control
 names rather than filler — `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:37` reads
 `['Tool Mode', 'Fill', 'Stroke', 'W/H', 'Shape Picker', 'Path Operations']`.
@@ -822,7 +822,7 @@ now reads `{ ...fillControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS }` like
 `Stroke` and `Shape W&H` neighbours, which produces the same four keys and the same values.
 
 **The chip list is not the only reason the shape bar does not render.** The canvas dispatch
-`src/components/Main/Main.tsx:82-88` names `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and
+`src/components/Main/Main.tsx:84-90` names `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and
 `line` and **not** `custom-shape`, so this tool matches no branch: `interactionMode` stays `'zoom'` and
 the canvas area is `DummyToolArea`, a `display: none` div
 (`src/components/Main/DummyToolArea.tsx:15`). That is why every `appRef` in the nine rows above points
@@ -909,13 +909,13 @@ Sources:
 
 | Keys      | Photoshop                                                                | App                                                                                                                       | App site                           |
 | --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`               | `AppKeyboardShortcuts.tsx:129-135` |
-| `Shift+U` | cycle through the whole group                                            | cycles only `rectangle → oval → line → custom-shape`; `triangle` and `polygon` index to `-1` and restart at the rectangle | `AppKeyboardShortcuts.tsx:116-118` |
-| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                                      | `AppKeyboardShortcuts.tsx:518`     |
+| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`               | `AppKeyboardShortcuts.tsx:150-156` |
+| `Shift+U` | cycle through the whole group                                            | cycles only `rectangle → oval → line → custom-shape`; `triangle` and `polygon` index to `-1` and restart at the rectangle | `AppKeyboardShortcuts.tsx:137-139` |
+| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                                      | `AppKeyboardShortcuts.tsx:539`     |
 | `Space`   | reposition while drawing                                                 | implemented                                                                                                               | `ShapeToolArea.tsx:52`             |
 
 The `Shift+U` cycle is the gap: `triangle` and `polygon` are absent from the ordered list at
-`src/components/Common/AppKeyboardShortcuts.tsx:116`, so `Shift+U` never advances to them even though
+`src/components/Common/AppKeyboardShortcuts.tsx:137`, so `Shift+U` never advances to them even though
 both are registered `ToolName`s with their own entries in the tools map. **The failure mode is a
 restart, not a freeze**, and the distinction is load-bearing for the row's wording: the branch is
 `orderedFigures[(currentIndex + 1) % orderedFigures.length]` with `currentIndex = indexOf(currentFigure)`,
@@ -924,9 +924,9 @@ Shift+U from the Triangle or the Polygon "restarts at the rectangle instead of a
 
 **Plain `U` is not "always jumps to the rectangle" either, and that was the other half of the same
 mistake.** The five geometric figures in the rail all carry `name: 'shape'` and differ only by
-`figure` (`toolbar-mapping.ts:110-114`, applied at `SidebarLeft.tsx:567-582`), so
-`toolName === 'shape'` for all five and the early return at `AppKeyboardShortcuts.tsx:129-131` keeps the
-figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-mapping.ts:115`), so
+`figure` (`toolbar-mapping.ts:115-119`, applied at `SidebarLeft.tsx:590-605`), so
+`toolName === 'shape'` for all five and the early return at `AppKeyboardShortcuts.tsx:150-152` keeps the
+figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-mapping.ts:120`), so
 `U` from there is the one case that does force the rectangle. Both halves are now in the row rather
 than only in this table.
 

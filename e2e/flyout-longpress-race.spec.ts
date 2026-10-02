@@ -73,8 +73,8 @@ const POLL_BUDGET_AFTER_DUE_MS = 1500;
  *
  * This list used to be typed in — `['brush', 'shape', 'pen', 'freehand-lasso', 'color']` — and
  * that is a list of TOOLS, not of tiles, so it went stale the moment the rail learned to
- * collapse. At the suite's 1280x720 the rail shows seven of its sixteen groups plus a three-dots
- * tile, and Brush, the Clone Stamp, the Blur group, Gradient, Dodge, Draw, Pen, Type and Shape are
+ * collapse. At the suite's 1280x720 the rail shows seven of its fifteen groups plus a three-dots
+ * tile, and the Clone Stamp, the Blur group, Gradient, Dodge, Draw, Pen, Type and Shape are
  * all inside that tile: `openToolFlyout` for any of them takes its collapse branch, opens the
  * three-dots flyout instead of the requested tile's, and the test passes while exercising the
  * wrong menu. Reading the tiles back is the fix: the subject is "every flyout tile on the rail",

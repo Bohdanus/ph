@@ -52,7 +52,7 @@ platform limit.
 | Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only         |
 | History           | `have`      | Linear, unbounded, with a History panel                                        |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
-| Menu bar          | `divergent` | Four menus; the Edit menu is six tool switches                                 |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
 | View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
 | Keyboard          | `partial`   | 41 bindings against Photoshop's ~200                                           |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
@@ -135,7 +135,7 @@ refines, saves to and loads from a named channel, and is viewed in a Channels pa
 
 **This app:** a selection is **a polygon point list with a bounding box**, not a
 pixel channel — `src/contexts/general-types.ts:61-70`. Seven selection tools write
-it (`src/contexts/tool-types.ts:38-44`). Marching ants read the points
+it (`src/contexts/tool-types.ts:40-48`). Marching ants read the points
 (`src/hooks/useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`). An alpha
 mask does exist, but only as a derived copy for clipboard and copy-to-layer
 (`src/util/selection.ts:705`), reached from `copySelectionToCanvas` (`:822`) and
@@ -161,7 +161,7 @@ masks, clipping masks and Blend If.
 
 **This app:** `LayerSource` has three discriminants — `blank`, `image`, `tool`
 (`src/contexts/layer-types.ts:9-26`). Both Type and a shape commit as a source
-(`src/tools/toolProcessors.ts:159-160`, `commit: 'source'` on each), but only the six
+(`src/tools/toolProcessors.ts:160-161`, `commit: 'source'` on each), but only the six
 tools in `vectorToolNames` (`src/contexts/layer-renderer.ts:32`) are re-rendered from
 their args at draw time; Type is not among them, so `getLayerBitmap` falls through to
 the layer's own bitmap (`layer-renderer.ts:53`), which replay materialises
@@ -211,15 +211,15 @@ Actions, Measurement Log — dockable, with panel groups.
 (`src/contexts/PanelLayout.tsx:89`). They dock, drag-reorder, resize, collapse to
 icons and roll up (`src/contexts/PanelLayout.tsx:330-344`,
 `src/components/SidebarRight/PanelGroup.tsx`), and Window has Reset Workspace
-(`src/components/DesktopHeader/DesktopHeader.tsx:403`).
+(`src/components/DesktopHeader/DesktopHeader.tsx:566`).
 
 **Status:** `partial`
 
 **Gap:** No Properties, Adjustments, Channels, Paths, Character, Paragraph, Brush
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
-(`src/components/SidebarLeft/SidebarLeft.tsx:1227-1261`); the closest analogues to
-Color and Character are the Colors tool's three sliders and the Type options bar,
+(`src/components/SidebarLeft/SidebarLeft.tsx:1258-1292`); the closest analogues to
+Color and Character are the Photo Filter command's three sliders and the Type options bar,
 which are options bars, not panels.
 
 ## Menu bar
@@ -227,23 +227,26 @@ which are options bars, not panels.
 **Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, 3D, View, Window,
 Help.
 
-**This app:** four menus — `file`, `tools`, `edit`, `window`
-(`src/components/DesktopHeader/DesktopHeader.tsx:140-151`). File has New, Open,
-Save. Tools lists every tool. Edit holds six entries — Colors, Blur, Levels,
-Transform, Draw, Text — which are tool switches, not Edit commands. Window has
-Reset Workspace.
+**This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
+(`src/components/DesktopHeader/DesktopHeader.tsx:313-570`). File has New, Open,
+Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
+twenty **disabled** (`DesktopHeader.tsx:186-209`); a disabled item records a capability
+the app does not have rather than faking it. Edit holds one item, `Free Transform`,
+which is where Adobe puts it (`DesktopHeader.tsx:518-534`). Window has Reset Workspace.
 
 **Status:** `divergent`
 
-**Gap:** The Image, Layer, Type, Select, Filter, 3D, View and Help menus do not
-exist. So Undo, Cut, Copy, Paste, Image Size, Canvas Size, Layer Mask, Clipping
-Mask, Group, Merge, Select All, Deselect, Modify, the Filter gallery, Zoom, Fit
-Screen, Rulers, Guides and Print are unreachable from the menu bar — several are
-unreachable entirely.
+**Gap:** The Layer, Type, Select, Filter, 3D, View and Help menus do not exist, and
+Image and Edit are each a stub — Image has no Mode, Image Size, Canvas Size, Crop,
+Trim or Canvas Rotation, and Edit has nothing but Free Transform. So Undo, Cut, Copy,
+Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask, Group, Merge, Select All,
+Deselect, Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
+unreachable from the menu bar — several are unreachable entirely.
 
 Undo and Redo exist as buttons (`src/components/HistoryControls/HistoryControls.tsx:43-62`)
 and are bound to `Ctrl+Z` / `Shift+Ctrl+Z`
-(`src/components/Common/AppKeyboardShortcuts.tsx:238`, `:250`); they are missing
+(`src/components/Common/AppKeyboardShortcuts.tsx:259`, `:271`); they are missing
 from the menu, not from the app.
 
 ## View and navigation
@@ -255,9 +258,9 @@ screen-mode switching.
 **This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
 scaleY)` with centring offsets (`src/hooks/usePointerPosition.ts:135`,
 `src/util/contain-fit.ts:33-51`). The
-zoom transform is commented out (`src/components/Main/Main.tsx:270`) and so is
+zoom transform is commented out (`src/components/Main/Main.tsx:286`) and so is
 the store's zoom state (`src/contexts/StoreContext.tsx:142-143`, `:1171-1174`).
-There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-118`).
+There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-170`).
 
 **Status:** `absent`
 
@@ -357,20 +360,21 @@ Content-Aware Fill, Neural Filters.
 explicit warning (`src/contexts/psd-utils.ts:109`), and there is no `LayerSource`
 arm for one. No adjustment layers. No generative, content-aware or neural code in
 `src/`. The Pen family and Custom Shape are unimplemented placeholders
-(`src/tools/toolProcessors.ts:300-335`), so there are no path layers either.
+(`src/tools/toolProcessors.ts:343-375`), so there are no path layers either.
 
 **What it does have** is a genuine, if narrow, non-destructive mechanism: a
 per-layer retained operation stack — `FilterLayerOperation | AffineLayerOperation`
 (`src/contexts/layer-types.ts:31-46`) — re-rendered as a CSS `ctx.filter` string on
-every draw (`src/contexts/layer-renderer.ts:22-30`, `:77`). A layer can be
-re-blurred, re-levelled or re-coloured without rasterising.
+every draw (`getLayerFilter` at `src/contexts/layer-renderer.ts:32`, assigned at
+`:99`). A layer can be re-blurred, re-levelled or re-coloured without rasterising.
 
 **Status:** `divergent`
 
 ### Platform limits on filters
 
 **Capability:** Blur, Colors and Levels — every adjustment this app mints by
-re-rendering a `CanvasRenderingContext2D.filter` string.
+re-rendering a `CanvasRenderingContext2D.filter` string. The first is a tool; the
+other two are `Image ▸ Adjustments` commands.
 
 `CanvasRenderingContext2D.filter` is **not Baseline**. caniuse records Safari
 `3.1 - 17.6: Not supported`, and MDN's own page states that the feature "is not
@@ -384,9 +388,9 @@ bitmap as if it were the edit, and no replay could reproduce those pixels.
 Photoshop applies a real kernel on every platform, so the divergence is visible,
 not silent.
 
-**Status:** `platform` for the Safari half. Everywhere else these three tools
-behave as Photoshop does, and the absence of a CPU-side implementation is not
-recorded here — that is a backlog item, not a limit.
+**Status:** `platform` for the Safari half. Everywhere else these three behave as
+Photoshop does, and the absence of a CPU-side implementation is not recorded here —
+that is a backlog item, not a limit.
 
 ## What is not a platform limit
 

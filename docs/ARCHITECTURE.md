@@ -94,7 +94,7 @@ Traced through Smudge, a `usePaintStroke` consumer:
    `PROMOTE_LAYER_PRESENTATIONS` (`:1113-1140`).
 
 The args object is `ToolArgs`, a `toolName`-discriminated union
-(`src/contexts/tool-types.ts:28-85`). **This is why commits are pure functions of
+(`src/contexts/tool-types.ts:30-95`). **This is why commits are pure functions of
 their args**: the durable replay has nothing else to replay from.
 
 **Not every tool takes this path.** The Eraser — the example its own JSDoc cites —
@@ -237,11 +237,11 @@ pixels`, where `params` carries the layer's raster and size and `args` the strok
 
 `toolbar-mapping.ts` (repository root) maps toolbar tiles to tools. Each **nested
 array is one flyout tile** (`:33`), and the first item in a group is that tile's
-default (`SidebarLeft.tsx:588`, `toolbar-mapping.ts:69-70`); the two-column rail
+default (`SidebarLeft.tsx:611`, `toolbar-mapping.ts:69-70`); the two-column rail
 is derived from that order (`:35`). Selecting a tile that carries a `figure`
 patches the shape tool's args before switching
-(`src/components/SidebarLeft/SidebarLeft.tsx:580-583`). The flyout opens on a
-250 ms sustained press (`SidebarLeft.tsx:101`) and not on hover, deliberately
+(`src/components/SidebarLeft/SidebarLeft.tsx:603-606`). The flyout opens on a
+250 ms sustained press (`SidebarLeft.tsx:124`) and not on hover, deliberately
 (`:587-595`).
 
 ## Options bars
@@ -254,9 +254,9 @@ live args from `useCurrentTool()` (`src/contexts/useCurrentTool.tsx:11-16`), whi
 is why it re-renders at slider rate without touching the store.
 
 Settings persist through `saveLastSettings` (`src/contexts/useCurrentTool.tsx:62`)
-into a **module-level singleton** (`src/tools/settings.ts:343`), seeded from
+into a **module-level singleton** (`src/tools/settings.ts:367`), seeded from
 `defaultSettings` (`:51-314`), with per-tool geometry stripped and an
-`exhaustiveness` trap at the end (`src/util/settings.ts:152-153`).
+`exhaustiveness` trap at the end (`src/util/settings.ts:163-164`).
 
 **Two comments in the tree contradict that and are wrong**:
 `ToolbarsRight/Sharpen/Sharpen.tsx:112` and `ToolbarsRight/Smudge/Smudge.tsx:114`
