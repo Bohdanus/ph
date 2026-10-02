@@ -2,7 +2,16 @@ import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { savedArgsPerFigure } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
-import { shape, type ShapeLineCap, type ShapeToolArgs, type ShapeToolMode } from '../../../tools/shape.ts';
+import {
+  shape,
+  DEFAULT_POLYGON_SIDES,
+  MAX_POLYGON_SIDES,
+  MIN_POLYGON_SIDES,
+  polygonSides,
+  type ShapeLineCap,
+  type ShapeToolArgs,
+  type ShapeToolMode,
+} from '../../../tools/shape.ts';
 import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
@@ -42,6 +51,7 @@ const Shape: React.FC = () => {
       lineDash: newArgs.lineDash,
       lineCap: newArgs.lineCap,
       cornerRadius: newArgs.cornerRadius,
+      sides: newArgs.sides,
       toolMode: newArgs.toolMode,
     };
     setToolArgs(newArgs);
@@ -93,6 +103,17 @@ const Shape: React.FC = () => {
     handleChange({ ...args, cornerRadius: Number(event.target.value) });
   };
 
+  const handleSidesChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const raw = event.target.value;
+    // The empty case is read off the RAW string, not off the coercion: an emptied
+    // number input reports '', and `Number('')` is 0, which floors to 3 and turns a
+    // pentagon into a triangle the instant the field is cleared. Everything else
+    // goes through `polygonSides`, so a value that reaches the store by any other
+    // route is bounded too.
+    const sides = raw.trim() === '' ? DEFAULT_POLYGON_SIDES : polygonSides(Number(raw));
+    handleChange({ ...args, sides });
+  };
+
   const handleCapChange = (event: ChangeEvent<HTMLSelectElement>) => {
     handleChange({ ...args, lineCap: event.target.value as ShapeLineCap });
   };
@@ -114,6 +135,7 @@ const Shape: React.FC = () => {
     figure,
     lineDash,
     cornerRadius = 0,
+    sides = DEFAULT_POLYGON_SIDES,
     lineCap = 'butt',
     toolMode = 'shape',
   } = args;
@@ -205,6 +227,37 @@ const Shape: React.FC = () => {
             value={cornerRadius}
             onChange={handleRadiusChange}
             className="h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          />
+        </div>
+      )}
+
+      {/*
+        Sides is a number, not a slider, and deliberately so. A range input
+        cannot express "any integer from 3 to 100" without becoming unusable —
+        97 steps across a 28px track — and Photoshop's own field is a text entry
+        that commits a typed count. `type="number"` with an explicit step of 1 and
+        min/max in the attributes is that control, and the attributes are also
+        what the browser uses to reject out-of-range entry before this handler
+        sees it.
+      */}
+      {figure === 'polygon' && (
+        <div className="flex flex-col">
+          <label
+            htmlFor="polygon-sides-input"
+            className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          >
+            Sides <span className="font-bold text-gray-900 dark:text-gray-200">{sides}</span>
+          </label>
+          <input
+            id="polygon-sides-input"
+            aria-label="Sides"
+            type="number"
+            min={MIN_POLYGON_SIDES}
+            max={MAX_POLYGON_SIDES}
+            step={1}
+            value={sides}
+            onChange={handleSidesChange}
+            className="h-7 w-20 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
           />
         </div>
       )}

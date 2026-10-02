@@ -45,6 +45,16 @@ vi.mock('../../../tools/draw.ts', () => ({
 }));
 
 vi.mock('../../../tools/shape.ts', () => ({
+  // The Sides constants and the normalizer are named by the Shape bar at module
+  // scope, so a mock that omits them fails the whole file at import rather than
+  // one assertion: the named import resolves to undefined and the JSX below never
+  // renders. Duplicated rather than spread from the real module so the preview
+  // still cannot draw.
+  DEFAULT_POLYGON_SIDES: 5,
+  MIN_POLYGON_SIDES: 3,
+  MAX_POLYGON_SIDES: 100,
+  polygonSides: (sides: number | undefined) =>
+    typeof sides === 'number' && Number.isFinite(sides) ? Math.max(3, Math.min(100, Math.round(sides))) : 5,
   shape:
     ({ size }: { size: { width: number; height: number } }) =>
     (args: any) => {

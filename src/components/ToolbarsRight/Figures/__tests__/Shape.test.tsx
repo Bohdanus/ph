@@ -560,4 +560,72 @@ describe('Shape toolbar', () => {
       expect(screen.queryByRole('slider', { name: 'Radius' })).toBeNull();
     });
   });
+
+  describe('polygon sides', () => {
+    beforeEach(() => {
+      baseToolArgs.figure = 'polygon';
+    });
+
+    afterEach(() => {
+      baseToolArgs.figure = 'rectangle';
+    });
+
+    it('offers Sides on a polygon figure only, seeded at 5', () => {
+      const view = render(<Shape />);
+
+      const sides = screen.getByRole('spinbutton', { name: 'Sides' }) as HTMLInputElement;
+      // `sides` is absent from these args, so this is the destructuring default
+      // rather than a value the fixture happened to carry.
+      expect(sides).toHaveValue(5);
+      // The attributes are not decoration: they are what bounds the field, and
+      // they must say Adobe's 3, not 0 or 1.
+      expect(sides).toHaveAttribute('min', '3');
+      expect(sides).toHaveAttribute('max', '100');
+      expect(sides).toHaveAttribute('step', '1');
+      view.unmount();
+
+      baseToolArgs.figure = 'triangle';
+      const triangle = render(<Shape />);
+      expect(screen.queryByRole('spinbutton', { name: 'Sides' })).toBeNull();
+      triangle.unmount();
+
+      baseToolArgs.figure = 'polygon';
+      const again = render(<Shape />);
+      expect(screen.getByRole('spinbutton', { name: 'Sides' })).toBeInTheDocument();
+      again.unmount();
+    });
+
+    it('publishes the typed count and remembers it for the polygon figure', () => {
+      render(<Shape />);
+
+      fireEvent.change(screen.getByRole('spinbutton', { name: 'Sides' }), { target: { value: '7' } });
+
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 7 });
+      // The persistence half is the one a reviewer cannot see from the render:
+      // `handleChange` writes an EXPLICIT key list, so a `sides` missing from it
+      // renders correctly and then evaporates on the next figure switch.
+      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 7 });
+    });
+
+    it('refuses a count below the floor rather than storing it', () => {
+      render(<Shape />);
+
+      fireEvent.change(screen.getByRole('spinbutton', { name: 'Sides' }), { target: { value: '1' } });
+
+      // Normalized at the handler, so the store never holds a value the renderer
+      // would have to defend against a second time.
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 3 });
+      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 3 });
+    });
+
+    it('falls back to 5 when the field is emptied, not to a zero-sided polygon', () => {
+      render(<Shape />);
+
+      // An emptied number input reports '', and Number('') is 0 — which without
+      // the normalizer would floor to 3 and silently draw a triangle.
+      fireEvent.change(screen.getByRole('spinbutton', { name: 'Sides' }), { target: { value: '' } });
+
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 5 });
+    });
+  });
 });

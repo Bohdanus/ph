@@ -450,7 +450,11 @@ export const shapeDescriptions: Record<
         control: 'Sides',
         detail:
           'Number of sides the drag produces, default 5. The star’s indent control is not on this tool’s bar in the current release: Adobe lists a separate Star tool in the same group, and carries the point count and the inner and outer radii there.',
-        status: 'missing',
+        status: 'present',
+        // Required by toolDescriptions.test.ts for every status but `missing`, and it is
+        // the point of the field: the gate that keeps it off the other four figures is
+        // the line above this one, and the input itself is the control.
+        appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:252',
       },
       missingRadiusControl,
     ],
@@ -466,14 +470,18 @@ export const shapeDescriptions: Record<
     shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:329',
-      'src/tools/shape.ts:205',
-      'src/tools/shape.ts:210',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:182',
-      'src/tools/settings.ts:299',
+      // Re-derived from the sentences, not shifted: `toolProcessors.ts:329` was the
+      // ERASER entry's `commit: 'raster'`, and `shape.ts:205`/`:210` pointed at
+      // `if (figure === 'line')` and the `} else if` that follows it. Nothing
+      // checked the line's content, so every one of them still read plausibly.
+      'src/tools/toolProcessors.ts:372',
+      'src/tools/shape.ts:216',
+      'src/tools/shape.ts:245',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:250',
+      'src/tools/settings.ts:58',
     ],
     appNotes:
-      "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Everything after that is missing. The side count is a hardcoded two-branch ternary — const sides = figure === 'triangle' ? 3 : 5, a literal at `src/tools/shape.ts:210` — so there is no Sides field and no way to draw a hexagon; and the app has no Star tool of its own to draw one, so a star Ratio has nothing here to compare against. That same hardcoding is why the `[` and `]` rows Photoshop gives this tool are gone from the table above: they change a side count that does not exist at runtime, and the app's bracket keys reach only the eight tools that carry a tip Size, so there is nothing for them to act on here. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and the renderer would ignore every one of them here regardless, because the side count is the hardcoded literal above and no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.",
+      "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct, and the side count is a real setting seeded at 5, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Sides is on the bar for this figure, takes the integers 3 through 100 — Adobe's own floor and ceiling — and persists per figure. What is still missing is the Star tool the same group carries, so a star Ratio has nothing here to compare against. The `[` and `]` rows Photoshop gives this tool are still absent from the table above, but the reason has changed and the old one would now be a falsehood: the side count does exist at runtime, and the gap is that the app's bracket keys reach only the eight tools that carry a tip Size, so they have nothing to act on. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it: the dialog commits the bar's current Sides rather than taking one of its own. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and of those the renderer reads only Number of Sides, from the bar rather than from the dialog, because no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.",
     sources: [
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/',

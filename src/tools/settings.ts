@@ -8,6 +8,7 @@ import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
+import { DEFAULT_POLYGON_SIDES } from './shape.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
@@ -48,7 +49,15 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   rectangle: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   oval: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   triangle: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
-  polygon: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
+  polygon: {
+    alpha: 1,
+    lineWidth: 5,
+    // Adobe's Polygon tool seeds Sides at 5. Seeding it here rather than defaulting at the
+    // call site means the options bar has something to show on first open, which is the same
+    // reason the eraser seeds `mode` and `size` here.
+    sides: DEFAULT_POLYGON_SIDES,
+    toolMode: 'shape',
+  },
 };
 
 export const defaultSettings = {
