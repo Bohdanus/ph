@@ -20,6 +20,7 @@ import {
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import {
   fillSaveDialog,
   INTEGRATION_TEST_TIMEOUT_MS,
@@ -205,19 +206,27 @@ async function requireDominantRed(capture: Buffer, label: string) {
  * optional:
  *
  * - `openLoadImageDialog` stores a resolver and THEN clicks the hidden input
- *   (src/contexts/useFile.tsx:102-108). The input's `change` handler resolves that
+ *   (src/contexts/useFile.tsx:101-107). The input's `change` handler resolves that
  *   promise (src/contexts/useFile.tsx:78-81), and it is the promise's consumer that
- *   calls `setImageFromUpload` (src/components/DesktopHeader/DesktopHeader.tsx:182-183).
+ *   calls `setImageFromUpload` (src/components/DesktopHeader/DesktopHeader.tsx:250-251).
  *   Setting the input's files with nobody waiting therefore loads the file and throws
  *   the result away, so the button click is part of the mechanism, not a convenience.
- * - The button asks `confirm()` before discarding a document, and `src/App.tsx:32`
+ * - The menu item asks before discarding the current document, and `src/App.tsx:38`
  *   seeds a blank document on boot, so the prompt is shown on the very first click of
- *   a fresh page. Playwright auto-dismisses an unhandled dialog, which reads as
- *   "declined" and returns before the picker is ever opened. `once` scopes the
- *   handler to that one prompt: a global accept in a fixture would keep answering every
- *   dialog raised after it, so an unexpected `confirm()` or `prompt()` from some other
- *   path would be accepted instead of surfacing, and the run would continue past a guard
- *   it never reached.
+ *   a fresh page — and on the click after the `page.reload()` below, for the same
+ *   reason. It is answered with `acceptDiscardPrompt`, which WAITS for the prompt
+ *   before answering it. The `page.once('dialog')` this used to install was not
+ *   equivalent: Playwright auto-dismisses a dialog nobody is listening for, so a
+ *   handler that never fired and a guard that declined looked identical to the line
+ *   after it, and this file's claims all sit downstream of that.
+ *
+ * The answer lands BEFORE the file chooser is awaited, and that ordering is the
+ * mechanism: `openLoadImageDialog` is only reached once the guard resolves
+ * (`confirmDiscard` at src/components/DesktopHeader/DesktopHeader.tsx:249), so the
+ * `filechooser` event registered first is the one the discard releases. Nothing is
+ * listening to a native dialog any more, which is why `page.reload()` still needs no
+ * handler for the app's `beforeunload` guard — Playwright dismisses an unregistered
+ * `beforeunload` prompt and the navigation proceeds.
  *
  * The file then arrives through Playwright's `filechooser` event, which is what the
  * programmatic `.click()` on a `display:none` input raises. Verified on this host: the
@@ -225,11 +234,9 @@ async function requireDominantRed(capture: Buffer, label: string) {
  */
 async function openDocumentViaFileMenu(page: Page, filePath: string): Promise<void> {
   const chooser = page.waitForEvent('filechooser');
-  page.once('dialog', (dialog) => {
-    void dialog.accept();
-  });
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-open-button').click();
+  await acceptDiscardPrompt(page);
   const fileChooser = await chooser;
   await fileChooser.setFiles(filePath);
 }
@@ -317,6 +324,10 @@ test.describe('File round trip', () => {
 
     // The control: reloading really does discard the document, so the pixels that
     // appear below came from the file and not from a canvas that was never cleared.
+    // No dialog handler belongs here: this is the app's `beforeunload` guard, which the
+    // browser owns, and Playwright dismisses an unregistered one — which is exactly the
+    // discard this line is asserting. The in-app prompt is a different event and does
+    // need an answer, which is what `openDocumentViaFileMenu` gives it below.
     await page.reload();
     await expect(getWorkspaceCanvas(page)).toBeVisible();
     const reloadedCapture = await captureCanvasScreenshot(page, box, testInfo, 'file-roundtrip-after-reload');

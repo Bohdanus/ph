@@ -4782,3 +4782,45 @@ the frame a non-zero origin and an extent that disagrees with `size`.
 **Files.** `src/contexts/export-canvas.ts:44,61-66`, `src/contexts/psd-utils.ts:209-213,243`,
 `src/contexts/useFile.tsx:122`,
 `src/contexts/StoreContext.tsx:419,455-456,588-600,1197-1198,1243-1244,1288,1379-1384`
+
+---
+
+## 167. The discard prompt has no Save option, and adding one is a product decision
+
+**Problem.** `ConfirmDialog` (`src/components/ConfirmDialog/ConfirmDialog.tsx`) is the app's
+replacement for the six native `window.confirm()` guards, and its footer is Discard / Cancel.
+Photoshop's prompt before a modified document is replaced carries a third button, and which
+buttons it carries is the part that has not been decided here rather than the part that was
+implemented around.
+
+**Why it is not simply "add a Save button".** The app's only save is Save As to a NEW file:
+`openSaveImageDialog` always proposes `"<name> (copy)"`
+(`src/contexts/useFile.tsx:190`) and `SaveDialog`'s own title is `Save File As...`
+(`src/components/SaveDialog/SaveDialog.tsx:54`). There is no path that writes back to the file
+the document was opened from, and no save point to return to — `hasUnsavedChanges` is a boolean
+with no `savedRevision` to compare against, and undo always ends dirty
+(`src/contexts/StoreContext.tsx:426` hard-codes `true` in `projectPublishedTimeline`). So a Save
+button on the discard prompt would have to open Save As, and then RESUME the interrupted action —
+open the New Image dialog the user asked for, or continue the file open. Whether the user should be
+able to do that at all, or whether the interrupted action should simply be abandoned after a save,
+is a decision about product behaviour and belongs to the operator.
+
+**What is decided and does not need revisiting.** The guard itself is complete against the
+document's actual contents: `hasDiscardableWork` (`src/util/document-dirty.ts`) covers committed
+history, an unplaced text box in `currentArgs`, and an in-flight tool transaction in
+`previewLayers` — the last of which the store's `hasUnsavedChanges` cannot see, because a live
+tool drag dispatches nothing for the whole gesture. The prompt's wording is unchanged from the
+native `confirm()` calls it replaced, so the question being put to the user did not change with the
+widget.
+
+**Fix.** Decide whether the discard prompt should offer Save. If it should, the pieces it needs are
+a real save point first (a revision or history index to compare `hasUnsavedChanges` against, so
+undo can return to clean), then Save As, then a resume of the interrupted action — and the resume is
+the part with a user-visible choice in it, because the alternative is that saving abandons the New.
+If it should not, `docs/OVERRIDES.md` is where the deviation from Adobe belongs, and that file is
+the operator's to write.
+
+**Files.** `src/components/ConfirmDialog/ConfirmDialog.tsx`,
+`src/contexts/UnsavedChangesContext.tsx`, `src/contexts/useFile.tsx:190`,
+`src/components/SaveDialog/SaveDialog.tsx:54`, `src/contexts/StoreContext.tsx:426`,
+`docs/FEATURES.md`

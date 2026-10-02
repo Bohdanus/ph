@@ -7,7 +7,7 @@ import { useFile } from '../../contexts/useFile.tsx';
 import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
-import { hasPendingText } from '../../util/typeGuards.ts';
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
@@ -109,10 +109,11 @@ const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
 };
 
 const DesktopHeader = () => {
-  const [{ currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
+  const { confirmDiscard } = useUnsavedChanges();
   const { patchToolArgs } = useCurrentTool();
 
   const { theme, toggleTheme } = useTheme();
@@ -224,11 +225,7 @@ const DesktopHeader = () => {
                       // the mousedown that opened this state already fired inside
                       // `fileMenuRef`, so `!contains(target)` is false and it does not close.
                       setOpenMenu(null);
-                      if (
-                        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
-                        !confirm('Discard unsaved changes and start a new image?')
-                      )
-                        return;
+                      if (!(await confirmDiscard('new-document'))) return;
                       const data = await openNewImageDialog();
                       if (data) setBlankImage(data);
                     } catch (error) {
@@ -249,11 +246,7 @@ const DesktopHeader = () => {
                       // Same ordering rule as New above, and for the same reason: the decline
                       // path returns before the close used to run.
                       setOpenMenu(null);
-                      if (
-                        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
-                        !confirm('Discard unsaved changes and open another file?')
-                      )
-                        return;
+                      if (!(await confirmDiscard('open-document'))) return;
                       const data = await openLoadImageDialog();
                       if (data) await setImageFromUpload(data);
                     } catch (error) {

@@ -13,6 +13,7 @@ import {
   waitForCanvasRedraw,
 } from '../helpers/canvas-helpers';
 import { clickToolButton, toggleToolbarLayout } from '../helpers/toolbar-helpers';
+import { acceptDiscardPrompt } from '../helpers/discard-prompt';
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';
 
 export interface ExportFormat {
@@ -568,21 +569,30 @@ export const ICON_STROKE = { startX: 60, centerY: 128, endX: 196, steps: 10 } as
 export async function setupIcoTest(page: Page): Promise<string> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByTestId('header-file-menu-button').click();
-  // `File > New` in `src/components/DesktopHeader/DesktopHeader.tsx` asks
-  // `confirm()` before discarding a document that has unsaved changes, and
+  // `File > New` asks before discarding a document that has unsaved changes, and
   // `src/App.tsx` seeds a blank document on boot, so `hasUnsavedChanges` is
   // already true on a freshly loaded page and the prompt is shown from the very
-  // first click. Playwright auto-dismisses dialogs that have no handler, which
-  // the guard reads as "declined" — the New Image dialog would then never open
-  // and this helper would hang on the first input. Accept the single prompt this
-  // helper causes. `once` keeps the handler scoped to the one dialog: a global
-  // accept in a fixture or in `global-setup.ts` would silently swallow every
-  // unexpected `confirm`/`prompt` in the suite, and those surfacing is a
-  // load-bearing signal.
-  page.once('dialog', (dialog) => {
-    void dialog.accept();
-  });
+  // first click.
+  //
+  // That prompt used to be a native `confirm()` and needed `page.once('dialog', …)`
+  // here. It is now the app's own modal (`src/components/ConfirmDialog`), so answering
+  // it is an ordinary click — and a STRONGER pin than the handler was: `acceptDiscardPrompt`
+  // waits for the prompt to appear before answering it, so this helper cannot hang on the
+  // first fill because New was declined, and it fails with a message naming the prompt
+  // when the menu item itself is broken.
+  //
+  // No native dialog handler is installed here, deliberately. The scoping in the `once`
+  // this replaced existed so that an UNEXPECTED prompt would surface rather than be
+  // swallowed, and that intent is kept by not handling dialogs at all: Playwright
+  // auto-dismisses an unhandled `confirm()`, which the app reads as "declined", so a
+  // surprise native prompt on this path cannot be accepted away by anything and stops the
+  // flow at the very next step instead. A blanket `page.on('dialog', …)` in a fixture or
+  // in `global-setup.ts` is the thing that would swallow it, and it is still not done.
+  // (One native prompt does still exist — the PSD import-limitations question at
+  // `src/hooks/useApp.ts:87` — and no export spec reaches it, because `verifyPsdInPhotopea`
+  // hands its file to Photopea rather than to this app.)
   await page.getByTestId('header-file-new-button').click();
+  await acceptDiscardPrompt(page);
   await page.getByTestId('new-image-width-input').fill('256');
   await page.getByTestId('new-image-height-input').fill('256');
   await page.getByTestId('new-image-dialog-submit-button').click();

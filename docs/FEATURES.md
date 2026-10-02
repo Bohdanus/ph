@@ -79,6 +79,39 @@ background colour and opacity, and pixel dimensions clamped to 1–10000
 Canvas Size dialog. DPI is a one-shot conversion at New time and is never stored on
 the document (`NewImageDialog.tsx:12-20`).
 
+### Unsaved changes
+
+**Photoshop:** replacing or unloading a modified document asks first, and the prompt
+offers to save before discarding.
+
+**This app:** one predicate, `hasDiscardableWork`
+(`src/util/document-dirty.ts`), and one owner of it,
+`UnsavedChangesProvider` (`src/contexts/UnsavedChangesContext.tsx`). The predicate is
+three terms, because the store's own `hasUnsavedChanges` sees only one of them: what is
+already on the timeline; a text box typed into but not yet placed, which lives in
+`currentArgs` until a tool commit moves it; and an in-flight tool transaction, which
+lives in `previewLayers` and dispatches nothing at all for the whole gesture. Every
+replacement surface — File > New, File > Open, the mobile drawer, and the window file
+drop, the only one a bare gesture reaches on a populated document — calls
+`confirmDiscard(reason)`, which resolves `true` without a widget when there is nothing
+to discard and otherwise renders `ConfirmDialog`
+(`src/components/ConfirmDialog/ConfirmDialog.tsx`), the app's first generic two-button
+modal. Tab close, reload and navigation are the same predicate against a `beforeunload`
+handler.
+
+**Status:** `partial`
+
+**Gap:** Two, and the first is a product decision rather than a defect.
+
+- The prompt offers **Discard** and **Cancel**. There is no **Save**, because the app's
+  only save is Save As to a new file — it proposes `"<name> (copy)"`
+  (`src/contexts/useFile.tsx:190`) — so a Save button would have to open a file picker
+  and then resume a New or Open. Which of the two is right is a product call; see
+  `HANDOFF.md`.
+- The unload prompt's wording is the browser's, not the app's. `beforeunload` can only
+  ask for a prompt, not supply one; Chrome, Safari and Firefox each supply their own
+  text, and none of it is translatable from here.
+
 ## Import
 
 **Photoshop:** PSD and PSB, PDF, EPS/AI, camera RAW, HEIF/HEIC, BMP, DICOM, GIF,

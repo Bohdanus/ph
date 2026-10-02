@@ -8,6 +8,7 @@ import { MobileShell } from './components/Mobile/MobileShell.tsx';
 
 import { ThemeProvider } from './contexts/ThemeContext';
 import { StoreProvider, useStore } from './contexts/StoreContext.tsx';
+import { UnsavedChangesProvider } from './contexts/UnsavedChangesContext.tsx';
 import { CurrentToolProvider } from './contexts/useCurrentTool.tsx';
 import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
@@ -130,17 +131,23 @@ function App() {
     <FileProvider>
       <ThemeProvider>
         <StoreProvider>
-          <KeyboardEventsProvider>
-            <CurrentToolProvider>
-              {/* Above `RightPanelVisibilityProvider` and beside it: both are shell state, and
-                  neither reads the store. Order between them does not matter. */}
-              <PanelLayoutProvider>
-                <RightPanelVisibilityProvider>
-                  <AppContainer />
-                </RightPanelVisibilityProvider>
-              </PanelLayoutProvider>
-            </CurrentToolProvider>
-          </KeyboardEventsProvider>
+          {/* Directly inside the store, because it reads `hasUnsavedChanges`,
+              `currentArgs` and `previewLayers` from it. Above every component that can
+              replace the document — the desktop header, the mobile drawer, `Main`'s drop
+              handler — and below nothing that needs it. */}
+          <UnsavedChangesProvider>
+            <KeyboardEventsProvider>
+              <CurrentToolProvider>
+                {/* Above `RightPanelVisibilityProvider` and beside it: both are shell state, and
+                    neither reads the store. Order between them does not matter. */}
+                <PanelLayoutProvider>
+                  <RightPanelVisibilityProvider>
+                    <AppContainer />
+                  </RightPanelVisibilityProvider>
+                </PanelLayoutProvider>
+              </CurrentToolProvider>
+            </KeyboardEventsProvider>
+          </UnsavedChangesProvider>
         </StoreProvider>
       </ThemeProvider>
     </FileProvider>

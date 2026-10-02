@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Main from '../Main.tsx';
+import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
 
 /**
  * `Main`'s own no-image branch, and nothing else.
@@ -17,6 +18,12 @@ import Main from '../Main.tsx';
  * Every module below is mocked because `Main` calls it during render, not because any test
  * asserts on it: with no image open nothing here reaches a file dialog, a layer publish or a
  * tool area. The mocks keep the import graph out of the real providers.
+ *
+ * `UnsavedChangesProvider` is the ONE module here that is deliberately NOT mocked. `Main` calls
+ * `useUnsavedChanges()` on every drop, and the real provider reads `useStore` — which this file
+ * already mocks — so the genuine guard runs. It cannot prompt in this file: `hasImage` is false,
+ * `hasDiscardableWork` returns false on that alone, and `confirmDiscard` resolves `true` without a
+ * widget. That is what makes the empty-state assertions below hold unchanged.
  */
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
@@ -28,6 +35,10 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       hasImage: false,
       hasUnsavedChanges: false,
       currentArgs: { current: null },
+      // A REF, because `previewLayers` is read as `previewLayers.current` by
+      // `UnsavedChangesProvider`. A plain `{}` here would throw inside the guard's own
+      // predicate rather than describe the document, so the shape is the contract.
+      previewLayers: { current: {} },
       layers: {},
       selections: [],
       toolName: 'zoom',
@@ -54,7 +65,11 @@ vi.mock('../../../contexts/ThemeContext.tsx', () => ({
 
 describe('Main with no image open', () => {
   it('renders the document surface and keeps every part of it out of reach', () => {
-    const { container } = render(<Main />);
+    const { container } = render(
+      <UnsavedChangesProvider>
+        <Main />
+      </UnsavedChangesProvider>
+    );
     const stack = container.querySelector('main > div') as HTMLElement;
 
     // PRESENT, not absent — and that is the honest shape of the claim. `Main` returns the same
@@ -88,5 +103,13 @@ describe('Main with no image open', () => {
     expect(screen.getByRole('button', { name: 'blank image' })).toBeInTheDocument();
     expect(screen.getByTestId('main-open-file-button')).toBe(screen.getByRole('button', { name: 'Open File' }));
     expect(screen.getByTestId('main-blank-image-button')).toBe(screen.getByRole('button', { name: 'blank image' }));
+
+    // The discard prompt is a third kind of reachable content, and with no document there is
+    // nothing to discard: `hasDiscardableWork` is false on `hasImage` alone, so the provider
+    // mounts no dialog and no drop on this tree can ever raise one. It is asserted here as
+    // ABSENT rather than left unmentioned because the guard is real here — the provider is
+    // mounted, not mocked — and an empty-state prompt would be a modal with no possible answer
+    // but "yes", over a document that does not exist.
+    expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
   });
 });

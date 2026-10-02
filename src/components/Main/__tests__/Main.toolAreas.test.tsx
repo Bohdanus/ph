@@ -1,15 +1,34 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Main from '../Main.tsx';
 import { DummyToolArea } from '../DummyToolArea.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
+import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
 
 /**
  * Tool-area routing and drop handling. DummyToolArea is the real component so
  * the "no tool" branch is observable, every other tool area is replaced by a
  * marker component.
  */
+
+/**
+ * Every render of `Main` in this file goes through the REAL discard guard.
+ *
+ * `Main` calls `useUnsavedChanges()` on its drop handler, so the provider is mounted rather
+ * than the context mocked: it reads `useStore`, which this file already mocks, and the guard
+ * under test is then the production one — `hasDiscardableWork` over the store, the shared
+ * `ConfirmDialog`, and the real resolve-from-the-answer promise. The drop rows below drive the
+ * dialog itself instead of stubbing `window.confirm`, which no longer exists on this path.
+ *
+ * It renders no DOM of its own (a context provider, plus the dialog when one is open), so every
+ * `container.querySelectorAll('canvas')` count below is unaffected.
+ */
+const GuardedMain = () => (
+  <UnsavedChangesProvider>
+    <Main />
+  </UnsavedChangesProvider>
+);
 
 const setBlankImage = vi.hoisted(() => vi.fn());
 const setImageFromUpload = vi.hoisted(() => vi.fn());
@@ -29,6 +48,11 @@ const storeState = vi.hoisted(
       hasImage: true,
       hasUnsavedChanges: false,
       currentArgs: { current: { toolName: 'brush' } as ToolArgs },
+      // Read by `UnsavedChangesProvider` as `previewLayers.current`, so it has to be a REF like
+      // `currentArgs` above: the guard counts the keys of `.current`, and a plain `{}` would
+      // throw inside the predicate instead of describing the document. Empty means "no live tool
+      // transaction", which is the default state of a document at rest.
+      previewLayers: { current: {} },
       layers: {},
       selections: [],
       toolName: 'reposition' as ToolName,
@@ -127,6 +151,7 @@ beforeEach(() => {
   themeState.theme = 'light';
   storeState.hasImage = true;
   storeState.hasUnsavedChanges = false;
+  storeState.previewLayers = { current: {} };
   storeState.toolName = 'reposition';
   storeState.totalSize = { width: 640, height: 480 };
   storeState.documentFrame = { x: 0, y: 0, width: 640, height: 480 };
@@ -134,7 +159,6 @@ beforeEach(() => {
   loadDocumentFile.mockResolvedValue({ fileName: 'photo.png' });
   setImageFromUpload.mockResolvedValue(undefined);
   setBlankImage.mockImplementation(() => {});
-  vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -187,7 +211,7 @@ describe('Main tool-area routing', () => {
   ])('routes the %s tool to the %s tool area', (toolName, expected) => {
     storeState.toolName = toolName;
 
-    render(<Main />);
+    render(<GuardedMain />);
 
     expect(screen.getByTestId(`tool-area-${expected}`)).toBeTruthy();
   });
@@ -231,7 +255,7 @@ describe('Main tool-area routing', () => {
 
     for (const toolName of routed) {
       storeState.toolName = toolName;
-      const { container, unmount } = render(<Main />);
+      const { container, unmount } = render(<GuardedMain />);
 
       const mounted = TOOL_AREA_IDS.map((id) => container.querySelector(`[data-testid="tool-area-${id}"]`)).filter(
         (element) => element !== null
@@ -259,7 +283,7 @@ describe('Main tool-area routing', () => {
   ] as const)('falls back to the hidden dummy area for %s', (toolName) => {
     storeState.toolName = toolName;
 
-    render(<Main />);
+    render(<GuardedMain />);
 
     // The only assertion here that says anything. It reads the whole marker list, so a fall-through
     // that mounted SOME area rather than none would still be caught — which is the half of the
@@ -331,7 +355,7 @@ describe('Main tool-area routing', () => {
     storeState.hasImage = false;
     storeState.toolName = 'brush';
 
-    render(<Main />);
+    render(<GuardedMain />);
 
     expect(toolAreaTestId()).toBe(-1);
     expect(screen.getByRole('button', { name: 'Open File' })).toBeTruthy();
@@ -339,7 +363,7 @@ describe('Main tool-area routing', () => {
 
   it('hides the canvas stack while no image is open', () => {
     storeState.hasImage = false;
-    const { container } = render(<Main />);
+    const { container } = render(<GuardedMain />);
     const stack = container.querySelector('main > div') as HTMLElement;
 
     expect(stack.style.display).toBe('none');
@@ -347,14 +371,14 @@ describe('Main tool-area routing', () => {
 
   it('shows the tool overlay for interactive tools and hides it for zoom', () => {
     storeState.toolName = 'reposition';
-    const { container, rerender } = render(<Main />);
+    const { container, rerender } = render(<GuardedMain />);
     const [, toolOverlay, rectOverlay] = canvases(container);
 
     expect(toolOverlay.style.display).toBe('block');
     expect(rectOverlay.style.display).toBe('block');
 
     storeState.toolName = 'zoom';
-    rerender(<Main />);
+    rerender(<GuardedMain />);
 
     expect(canvases(container)[1].style.display).toBe('none');
     expect(canvases(container)[2].style.display).toBe('none');
@@ -362,7 +386,7 @@ describe('Main tool-area routing', () => {
 
   it('keeps the rect overlay hidden for every non reposition tool', () => {
     storeState.toolName = 'brush';
-    const { container } = render(<Main />);
+    const { container } = render(<GuardedMain />);
 
     expect(canvases(container)[1].style.display).toBe('block');
     expect(canvases(container)[2].style.display).toBe('none');
@@ -378,7 +402,7 @@ describe('Main tool-area routing', () => {
     // what kept the empty canvas stacked over the document. Listing it here again would
     // reintroduce the dead-looking tool.
     storeState.toolName = 'eraser';
-    const { container } = render(<Main />);
+    const { container } = render(<GuardedMain />);
 
     expect(canvases(container)[1].style.display).toBe('none');
   });
@@ -388,7 +412,7 @@ describe('Main tool-area routing', () => {
     // show — and showing it would leave a stale overlay from an earlier tool on the document.
     for (const toolName of ['paint-bucket', 'magic-eraser', 'eyedropper'] as const) {
       storeState.toolName = toolName;
-      const { container, unmount } = render(<Main />);
+      const { container, unmount } = render(<GuardedMain />);
 
       expect(canvases(container)[1].style.display).toBe('none');
       unmount();
@@ -407,7 +431,7 @@ describe('Main tool-area routing', () => {
     // happens not to write those attributes. So instead: the workspace canvas's backing store
     // must not follow the document size, and the overlays are asserted to have followed it, which
     // is what stops "unchanged" from passing merely because the sizing effect never ran.
-    const { rerender } = render(<Main />);
+    const { rerender } = render(<GuardedMain />);
     // The selection-ants canvas is appended LAST, so these three indices are unchanged by it —
     // which is the reason it is appended last, and this destructuring is where that is load-bearing.
     const [workspace, toolOverlay, rectOverlay] = canvases(document.body);
@@ -415,7 +439,7 @@ describe('Main tool-area routing', () => {
     const untouched = [workspace.width, workspace.height];
 
     storeState.totalSize = { width: 800, height: 600 };
-    rerender(<Main />);
+    rerender(<GuardedMain />);
 
     expect([workspace.width, workspace.height]).toEqual(untouched);
     expect([toolOverlay.width, toolOverlay.height]).toEqual([800, 600]);
@@ -428,14 +452,14 @@ describe('Main tool-area routing', () => {
 
   it('shows the selection ants overlay for every polygon selection tool and hides it otherwise', () => {
     storeState.toolName = 'polygonal-lasso';
-    const { container, rerender } = render(<Main />);
+    const { container, rerender } = render(<GuardedMain />);
     const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
 
     expect(ants().style.display).toBe('block');
 
     for (const toolName of ['freehand-lasso', 'feather-magnetic-lasso', 'magic-wand'] as const) {
       storeState.toolName = toolName;
-      rerender(<Main />);
+      rerender(<GuardedMain />);
 
       expect(ants().style.display).toBe('block');
     }
@@ -453,19 +477,19 @@ describe('Main tool-area routing', () => {
       'zoom',
     ] as const) {
       storeState.toolName = toolName;
-      rerender(<Main />);
+      rerender(<GuardedMain />);
 
       expect(ants().style.display).toBe('none');
     }
   });
 
   it('repaints every layer when the document frame changes', () => {
-    const { rerender } = render(<Main />);
+    const { rerender } = render(<GuardedMain />);
     drawAllLayers.mockClear();
     const previousFrame = storeState.documentFrame;
 
     storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
-    rerender(<Main />);
+    rerender(<GuardedMain />);
 
     expect(drawAllLayers).toHaveBeenCalled();
     storeState.documentFrame = previousFrame;
@@ -473,7 +497,7 @@ describe('Main tool-area routing', () => {
 
   it('applies the dark chessboard class for the dark theme', () => {
     themeState.theme = 'dark';
-    const { container } = render(<Main />);
+    const { container } = render(<GuardedMain />);
     const stack = container.querySelector('main > div') as HTMLElement;
 
     expect(stack.className).toContain('chessboard-dark');
@@ -488,7 +512,7 @@ describe('Main empty-document actions', () => {
   it('opens a file through the dialog and uploads it', async () => {
     const data = { fileName: 'photo.png' };
     openLoadImageDialog.mockResolvedValue(data);
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
     await vi.waitFor(() => expect(setImageFromUpload).toHaveBeenCalledExactlyOnceWith(data));
@@ -497,7 +521,7 @@ describe('Main empty-document actions', () => {
 
   it('does not upload when the file dialog is dismissed', async () => {
     openLoadImageDialog.mockResolvedValue(null);
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
     await vi.waitFor(() => expect(openLoadImageDialog).toHaveBeenCalled());
@@ -508,7 +532,7 @@ describe('Main empty-document actions', () => {
   it('reports the failure through console.error when the file dialog rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openLoadImageDialog.mockRejectedValue(new Error('no access'));
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
     // The dialog threw before it could name a file, so the upload must not have been attempted:
@@ -524,7 +548,7 @@ describe('Main empty-document actions', () => {
   it('passes a non-Error rejection through to the console unchanged', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openLoadImageDialog.mockRejectedValue({ code: 'EACCES' });
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
 
@@ -541,7 +565,7 @@ describe('Main empty-document actions', () => {
   it('creates a blank document from the new image dialog', async () => {
     const size = { width: 10, height: 10 };
     openNewImageDialog.mockResolvedValue(size);
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
     await vi.waitFor(() => expect(setBlankImage).toHaveBeenCalledExactlyOnceWith(size));
@@ -550,7 +574,7 @@ describe('Main empty-document actions', () => {
 
   it('does not create a document when the new image dialog is dismissed', async () => {
     openNewImageDialog.mockResolvedValue(null);
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
     await vi.waitFor(() => expect(openNewImageDialog).toHaveBeenCalled());
@@ -561,7 +585,7 @@ describe('Main empty-document actions', () => {
   it('reports the failure through console.error when the new image dialog rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openNewImageDialog.mockRejectedValue(new Error('canceled'));
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
     // A rejected dialog yields no size, so no blank document may be created from it — the
@@ -573,7 +597,7 @@ describe('Main empty-document actions', () => {
   it('passes a non-Error rejection from the new image dialog through unchanged', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     openNewImageDialog.mockRejectedValue('plain failure');
-    render(<Main />);
+    render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
 
@@ -599,7 +623,7 @@ describe('Main file drop', () => {
   });
 
   it('highlights the drop target only for file drags', () => {
-    const { container } = render(<Main />);
+    const { container } = render(<GuardedMain />);
     const main = container.querySelector('main') as HTMLElement;
 
     fireEvent.dragOver(main, { dataTransfer: { types: ['text/plain'], files: [] } });
@@ -613,18 +637,23 @@ describe('Main file drop', () => {
   });
 
   it('opens a dropped file', async () => {
-    render(<Main />);
+    render(<GuardedMain />);
     const main = screen.getByRole('main');
 
     dropOnMain(main);
 
-    await vi.waitFor(() => expect(setImageFromUpload).toHaveBeenCalledWith({ fileName: 'photo.png' }));
+    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalledWith({ fileName: 'photo.png' }));
     expect(loadDocumentFile).toHaveBeenCalledExactlyOnceWith(file);
     expect(main.className).not.toContain('border-dashed');
+    // A document at rest has nothing to discard, so `confirmDiscard` resolves `true` without
+    // ever mounting a widget. Asserted after the load rather than instead of it: the load is
+    // the claim, and this is what keeps a guard that prompted for an empty document from
+    // passing by resolving `true` anyway.
+    expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
   });
 
   it('ignores a drop that carries no files', () => {
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'), []);
 
@@ -633,7 +662,7 @@ describe('Main file drop', () => {
   });
 
   it('ignores a drop whose data transfer has no Files type', () => {
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'), [file], ['text/plain']);
 
@@ -642,75 +671,113 @@ describe('Main file drop', () => {
 
   it('asks for confirmation before discarding unsaved changes', async () => {
     storeState.hasUnsavedChanges = true;
-    vi.mocked(globalThis.confirm).mockReturnValue(false);
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'));
 
-    expect(globalThis.confirm).toHaveBeenCalledWith('Discard unsaved changes and open another file?');
+    // The prompt is an in-app modal now, so there is no `window.confirm` left to spy on and
+    // the claim has to be made against the widget the user actually sees: the drop reached the
+    // replacement guard and asked first. The copy is carried over verbatim, which is what lets
+    // the dialog's accessible description stand in for the old `toHaveBeenCalledWith` — the
+    // message paragraph is what `aria-describedby` points at, i.e. the text a screen reader
+    // announces with the dialog, so asserting through it pins the wording AND the wiring.
+    expect(await screen.findByTestId('confirm-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('confirm-dialog')).toHaveAccessibleDescription(
+      'Discard unsaved changes and open another file?'
+    );
+
+    // Declining is what the old `confirm` stub returning `false` expressed, and it is only
+    // observable through the answer: the dialog must come down AND the document must be
+    // untouched, so a handler that loaded before asking would fail on the second half.
+    fireEvent.click(screen.getByTestId('confirm-dialog-cancel-button'));
+    await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
+
     expect(loadDocumentFile).not.toHaveBeenCalled();
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 
   it('asks for confirmation when the text tool holds uncommitted text', async () => {
     storeState.currentArgs = { current: { toolName: 'text', text: 'hi', rect: { x: 0, y: 0, width: 5, height: 5 } } };
-    vi.mocked(globalThis.confirm).mockReturnValue(false);
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'));
 
-    expect(globalThis.confirm).toHaveBeenCalledTimes(1);
+    // `hasUnsavedChanges` is FALSE on this row, so the prompt can only have come from
+    // `hasPendingText` — which is the point of the row now that the predicate is shared with
+    // five other call sites. EXACTLY ONE dialog is the old `toHaveBeenCalledTimes(1)`: a guard
+    // that asked twice, or stacked a second prompt behind the first, would still pass a bare
+    // presence check, and only the count rules that out.
+    await screen.findByTestId('confirm-dialog');
+    expect(screen.getAllByTestId('confirm-dialog')).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('confirm-dialog-cancel-button'));
+    await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
 
-  it('does not confirm when the text tool holds text without a rectangle', async () => {
+  it('does not ask when the text tool holds text without a rectangle', async () => {
     storeState.currentArgs = { current: { toolName: 'text', text: 'hi', rect: null } };
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'));
 
-    expect(globalThis.confirm).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    // The old shape was `expect(globalThis.confirm).not.toHaveBeenCalled()`. With a widget there
+    // is nothing to spy on, so the claim becomes the observable one: the load went all the way
+    // through, and no prompt is mounted at the end of it. Checking only after the load is enough
+    // because nothing else dismisses that dialog — one that had appeared would still be up.
+    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
   });
 
   it('opens the file after the discard confirmation is accepted', async () => {
     storeState.hasUnsavedChanges = true;
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'));
 
-    expect(globalThis.confirm).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    // The load is blocked on the answer, so the affirmative button is the ONLY route to it —
+    // this is the old `confirm(...) === true` path, driven through the widget the product
+    // renders rather than through a stub that answered before anything was asked.
+    await screen.findByTestId('confirm-dialog');
+    expect(screen.getAllByTestId('confirm-dialog')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
   });
 
   it('reports the failure through console.error when a dropped file cannot be decoded', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     loadDocumentFile.mockRejectedValue(new Error('corrupt'));
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'));
 
     // The decode is the last thing the drop handler does before it publishes, so a rejection
     // leaves the open document exactly as it was — the assertion that matters now that the
-    // modal dialog is gone. The Error is the second argument, so the stack survives into the log.
-    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to open file:', expect.any(Error)));
+    // native dialog is gone. The Error is the second argument, so the stack survives into the log.
+    await waitFor(() => expect(consoleError).toHaveBeenCalledWith('Failed to open file:', expect.any(Error)));
     expect(setImageFromUpload).not.toHaveBeenCalled();
+    // The replacement prompt is raised in front of the decode, so reaching the decoder at all is
+    // also what shows the clean document was never asked about: no prompt is mounted on this path.
+    expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
   });
 
   it('passes a non-Error decode rejection through to the console unchanged', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     loadDocumentFile.mockRejectedValue({ code: 'ENODATA' });
-    render(<Main />);
+    render(<GuardedMain />);
 
     dropOnMain(screen.getByRole('main'));
 
     // A decoder that rejects with a reason object is the realistic shape here, and under the
     // interpolated log it read `Failed to open file: [object Object]`. The assertion names the
     // exact object, so it fails against that and passes only against the two-argument call.
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(consoleError).toHaveBeenCalledExactlyOnceWith('Failed to open file:', { code: 'ENODATA' })
     );
     expect(setImageFromUpload).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
   });
 });
 

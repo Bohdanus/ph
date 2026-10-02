@@ -33,7 +33,7 @@ import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
 import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
-import { hasPendingText } from '../../util/typeGuards.ts';
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
 
 // The tools that commit a polygon selection, and so the only modes with a border
@@ -43,23 +43,12 @@ const POLYGON_SELECTION_MODES: string[] = ['lasso', 'feather-magnetic-lasso', 'm
 
 const Main = () => {
   const [
-    {
-      canvasRef,
-      containerRef,
-      toolOverlayRef,
-      rectOverlayRef,
-      hasImage,
-      hasUnsavedChanges,
-      currentArgs,
-      layers,
-      toolName,
-      totalSize,
-      documentFrame,
-    },
+    { canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize, documentFrame },
   ] = useStore();
   const { theme } = useTheme();
   const { setBlankImage, setImageFromUpload } = useApp();
   const { openLoadImageDialog, openNewImageDialog } = useFile();
+  const { confirmDiscard } = useUnsavedChanges();
   const { drawAllLayers } = useLayers();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -206,12 +195,12 @@ const Main = () => {
       setIsDragging(false);
       const file = event.dataTransfer.files?.[0];
       if (!file) return;
-      if (
-        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
-        !confirm('Discard unsaved changes and open another file?')
-      )
-        return;
+      // The one destructive entry point a bare gesture reaches on a populated document:
+      // unlike the empty-state buttons below, the drop handler is not gated on `!hasImage`.
+      // Inside the `try`, so a rejection from the guard is reported through the same channel
+      // as a decode failure rather than escaping as an unhandled rejection.
       try {
+        if (!(await confirmDiscard('open-document'))) return;
         await setImageFromUpload(await loadDocumentFile(file));
       } catch (error) {
         console.error('Failed to open file:', error);
