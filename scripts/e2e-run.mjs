@@ -72,7 +72,10 @@
  *   `playwright show-report` and resolves `playwright-report`; a per-run folder
  *   would leave it with nothing to open.
  * - **The port is recorded**, not only printed, so a run that fails an hour later is
- *   diagnosed from the port that actually served it.
+ *   diagnosed from the port that actually served it. The destination is the
+ *   `runRecordPath` option and nothing else: a run started by any npm script records
+ *   where it always has, and a caller that has a file of its own — `runPlaywright` is
+ *   the same idea for the suite itself — can say so instead of writing the shared one.
  *
  * ## Environment
  *
@@ -690,9 +693,17 @@ export function runPlaywright(args, options = {}) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Where the run records its port, so a human or a later agent can find it after the
+ * Where a run records its port, so a human or a later agent can find it after the
  * fact. `.kilo/` is gitignored and machine-local, which is right for per-run state;
  * the same numbers are printed, and stdout is what a run's log actually contains.
+ *
+ * A constant, and the DEFAULT rather than the only choice: `run()` takes it as
+ * `options.runRecordPath`. This path is real machine state that `npm run test:e2e`
+ * overwrites on every run, and a second process on this worktree owns it — so anything
+ * that merely wants to exercise `run()` has to be able to point the record somewhere
+ * of its own, exactly as it passes its own `runPlaywright`. Without that, a test of
+ * this module either destroys a live run's record or races one, and neither failure
+ * is visible from the test that caused it.
  */
 const RUN_RECORD = path.join(REPO_ROOT, '.kilo', 'e2e-last-run.json');
 
@@ -722,6 +733,9 @@ export async function run(argv, options = {}) {
   const log = options.log ?? ((line) => console.log(line));
   const ci = Boolean(env.CI);
   const spawnSuite = options.runPlaywright ?? runPlaywright;
+  // `?? ` and not `||`: an explicitly empty string is a caller that wants nowhere,
+  // and it must not silently resolve to the shared path.
+  const runRecordPath = options.runRecordPath ?? RUN_RECORD;
 
   // `test` is the Playwright SUBCOMMAND, and npm appends a caller's arguments after
   // the script rather than inside it. The scripts that call this wrapper
@@ -827,8 +841,16 @@ export async function run(argv, options = {}) {
       queued,
       startedAt: new Date().toISOString(),
     };
-    writeRunRecord(runRecord);
-    log(`${PREFIX} port recorded in ${path.relative(REPO_ROOT, RUN_RECORD)}`);
+    writeRunRecord(runRecord, runRecordPath);
+    // The default is named relative to the repository, because that is the path a
+    // reader is told to look for. An injected one is printed as given: it is outside
+    // the repository by construction, and a `../..`-relative rendering of a temp
+    // directory would be noise in the one line that says where the run left evidence.
+    log(
+      `${PREFIX} port recorded in ${
+        runRecordPath === RUN_RECORD ? path.relative(REPO_ROOT, runRecordPath) : runRecordPath
+      }`
+    );
   }
 
   try {
@@ -838,7 +860,7 @@ export async function run(argv, options = {}) {
     // run that served an hour of tests leave byte-identical evidence except for the
     // wall-clock stamp, and the file exists to be read by someone debugging a failure
     // an hour later.
-    if (!ci) writeRunRecord({ ...runRecord, exitCode: code, finishedAt: new Date().toISOString() });
+    if (!ci) writeRunRecord({ ...runRecord, exitCode: code, finishedAt: new Date().toISOString() }, runRecordPath);
     return code;
   } finally {
     lock?.release();
@@ -866,11 +888,20 @@ function isHelpRequest(args) {
   return ['--help', '-h', '--version', '-v'].some((flag) => positional.includes(flag));
 }
 
-/** The last run's port and output directory, for whoever is diagnosing it later. */
-function writeRunRecord(record) {
+/**
+ * The last run's port and output directory, for whoever is diagnosing it later.
+ *
+ * `target` defaults to the shared `RUN_RECORD` so that every existing caller keeps
+ * the documented path; `run()` passes its own resolved destination through, and both
+ * of its writes — the start-write and the close-write — must go to the SAME file. A
+ * run that recorded its port in one place and its exit code in another would be
+ * indistinguishable from a run that died at startup, which is the whole reason the
+ * second write exists.
+ */
+function writeRunRecord(record, target = RUN_RECORD) {
   try {
-    mkdirSync(path.dirname(RUN_RECORD), { recursive: true });
-    writeFileSync(RUN_RECORD, `${JSON.stringify(record, null, 2)}\n`);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `${JSON.stringify(record, null, 2)}\n`);
   } catch (error) {
     // A record that could not be written must not stop the suite. The port is also
     // on stdout, and stdout is what a run's log actually contains.
