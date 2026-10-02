@@ -5107,7 +5107,7 @@ the paint bar lacks, so `draw` may be deleted later and this is the work for tha
 removal from `main` — do not resurrect `603356ac`, which is 583 commits behind its base and carries
 the mutant above.
 
-## 179. `fix/migration-review-sweep` cannot merge, and one of its hunks reopens a defect `main` closed
+## 179. `fix/migration-review-sweep` cannot merge, and one of its hunks reopens a blank-canvas defect
 
 **Problem.** `5d388e02` is 1 commit ahead and 135 behind, and 15 of its 24 files are dirty on both
 sides. It cannot be merged as a commit, and it must never be cherry-picked whole: one hunk narrows
