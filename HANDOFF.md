@@ -4315,13 +4315,13 @@ process rule, converting "rogue commits nobody can attribute" into "a dirty tree
 `scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
 `kilo.jsonc:31-69`, `AGENTS.md` (delegation section)
 
-## 156. `fix/overnight-test-red` restores an attribute a written prohibition forbids, and narrows a machine-wide gate to one worktree
+## 156. `fix/overnight-test-red` must not be merged: it restores an attribute a written prohibition forbids, and its one remaining change is a decision the operator has already refused
 
-The branch is 12 commits that fixed a genuinely red suite, and it should not be merged:
-two of its changes are decisions the operator has to make, and both are visible in the diff
-rather than hidden in it.
+The branch is 12 commits that fixed a genuinely red suite, and merging it is still wrong.
+Two of its changes block that, for different reasons, and one of those reasons has since
+stopped applying — which is the part worth re-deriving rather than trusting.
 
-**(a) It reverses `1dcc25cb`.** `renderToolGroup` in `SidebarLeft.tsx` changes
+**The blocker: it reverses `1dcc25cb`.** `renderToolGroup` in `SidebarLeft.tsx` changes
 
 ```
 -  aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
@@ -4334,55 +4334,74 @@ tile. `e2e/OPEN_PROBLEMS.md:699-701` forbids this in bold: restoring `aria-press
 "would announce a pressed toggle for whichever hidden tool happens to be selected, on a
 control whose only job is to open a menu — the exact defect `1dcc25cb` corrected." The same
 file, at `:695-697`, calls it a product change to be decided deliberately, with no
-`docs/OVERRIDES.md` entry. Per `AGENTS.md` the prohibition outranks the branch, and an agent
-may not add an override to settle it.
+`docs/OVERRIDES.md` entry. Per `AGENTS.md` the prohibition outranks the branch, an agent may
+not add an override to settle it, and the operator has now refused it explicitly.
 
-**(b) It narrows a gate from the machine to the pusher.** In
-`scripts/__tests__/worktree-inventory.test.mjs` the assertion `gives every non-primary
-worktree a curated entry, so none is undocumented` is replaced by `requires a curated entry
-for the worktree this suite runs from, if it holds work`. A machine-wide invariant becomes a
-statement about one directory. The branch's own comment is candid that the old form "made
-the push gate unpassable" because it reddened on other agents' worktrees, and it adds a
-synthetic-worktree block arguing the git-derived refusal covers the gap. The argument is
-plausible; narrowing a guard is still the operator's call and not a merge.
+**The second reason is stale, and merging on it would be regressive.** The branch replaces
+the assertion `gives every non-primary worktree a curated entry, so none is undocumented`
+with `requires a curated entry for the worktree this suite runs from, if it holds work`,
+narrowing a machine-wide invariant to one directory. That rule **no longer exists on
+`main`**: it was removed on purpose, and
+`scripts/__tests__/worktree-inventory.test.mjs:2038-2062` carries a header explaining why —
+it demanded a curated entry for every live in-repo worktree, which is what an in-flight task
+looks like for its whole life, so it was red from the first minute of every task in every
+OTHER checkout too, and it compared a COMMITTED file against LIVE machine state that nothing
+can make agree. The replacement asserts the RISK instead, over the real repository with the
+curated entry REMOVED, pinning that no curated field except `mustNotPrune` can move a verdict.
+Merging the branch would therefore not narrow that rule; it would **reintroduce a weaker
+version of a rule `main` deliberately deleted.**
 
-**Fix.** Do not merge the branch. Land the uncontested work as fresh commits on `main`:
-`index.html` (drops the GTM container, the Roboto stylesheet and two preconnects that put
-two third-party hosts on the `load` event the suite waits on), the `runRecordPath` option in
-`scripts/e2e-run.mjs` with its tests, the `toolbar-fit` 1→8 split, `setTypeColor` in
-`e2e/text-tool.spec.ts`, and the `TEST-FLAKES.md` renumber. Then re-derive (a) and (b) as
-their own commits, each with the decision recorded — and note that the branch's `AGENTS.md`
+**Fix.** Do not merge this branch, for either reason. Its landable parts were worth taking
+and were taken as fresh commits against `main` rather than as a merge: the GTM/font removal
+in `index.html`, the `runRecordPath` option in `scripts/e2e-run.mjs`, the `toolbar-fit`
+1→8 split. The rest is either already superseded by `main` in a stronger form
+(`e2e/text-tool.spec.ts`'s colour helper, the `type-crop` and Text-tool descriptions, which
+`8bf2cc7e` and `92d6a2f9` replaced with a fuller audit, and the `TEST-FLAKES.md` renumber) or
+refused. Two further changes are excluded and should stay excluded: the branch's `AGENTS.md`
 hunk rewrites the local-gate table to an OLDER shape than main's, dropping `test:e2e:unit`
-from `gate:verify` and removing `test:staged` from the commit hook, so it must not be
-merged for the docs either.
+from `gate:verify` and removing `test:staged` from the commit hook; and its
+`e2e/sidebar-flyout.spec.ts` hunk relaxes a `beforeEach` from `page.goto('/')` to
+`waitUntil: 'domcontentloaded'`, a readiness reduction nothing has reviewed. If the product
+does want `aria-pressed` on the three-dots tile, it goes into `docs/OVERRIDES.md` in the
+operator's hand — an agent records the finding and stops, which is what this entry is.
 
 **Files.** `fix/overnight-test-red:src/components/SidebarLeft/SidebarLeft.tsx` (`renderToolGroup`),
 `fix/overnight-test-red:scripts/__tests__/worktree-inventory.test.mjs:76,1877`,
+`scripts/__tests__/worktree-inventory.test.mjs:2038-2062`,
 `e2e/OPEN_PROBLEMS.md:695-701`, `AGENTS.md` (model policy, overrides)
 
 ## 157. A worktree directory git no longer tracks is unreachable by the disposal path, because disposal only accepts registered worktrees
 
-`.kilo/worktrees/stale-citations` is a 28K directory holding no source, no `.git` and no
+`.kilo/worktrees/stale-citations` was a 28K directory holding no source, no `.git` and no
 branch: `node_modules/.vite/vitest` (empty scratch) and `.kilo/e2e-last-run.json`, a run
 record naming `runId 2026-09-30T22-44-59-212Z-70299`, pid 70299, port 53969 — a dev server
-that died about 24h ago. The directory's birth time is 2026-10-01T00:44, matching the run
-record, so it was a real worktree that was pruned out of `git worktree list` while the
-directory itself stayed.
+that died about a day before it was found. The directory's birth time was 2026-10-01T00:44,
+matching the run record, so it was a real worktree that was pruned out of
+`git worktree list` while the directory itself stayed.
 
 `npm run dispose -- stale-citations` answers `no worktree "stale-citations"`, because it
 resolves its argument against the registered set. So the one class of leftover the sweep
-exists to remove is the one class it cannot name, and the directory stays forever holding a
-port number from a dead server.
+exists to remove is the one class it cannot name: the tool refused the only directory it
+could not prove was junk, and the directory stayed forever holding a port number from a dead
+server. This is now the WHOLE of the defect — the instance was removed by hand after both
+its files were checked against `isRegenerableIgnored()` and returned `REGENERABLE` for both
+(`.vite` and `.kilo` are both on the list), but **the path that let it accumulate is
+unfixed and will produce another one.**
 
 **Fix.** Give disposal a second resolution path: when the argument is not a registered
 worktree, fall back to `lstat` on the literal path and refuse only if it is missing, is not
 a directory, or is not under `.kilo/worktrees/`. Report what it found before removing it —
 a directory with tracked-looking content and no `.git` is a finding, not an obstacle, and
-the refusal message should say which of the three conditions matched. The
-`e2e-last-run.json` writer is `scripts/e2e-run.mjs:687`, keyed on `REPO_ROOT`, which is why
-a pruned worktree leaves one behind: nothing in the e2e runner cleans its own record.
+the refusal message should say which of the three conditions matched. `protectedContentOnDisk`
+and `isRegenerableIgnored` are already exported from the module and answer the
+"is there anything here worth keeping" half of the question, so the fallback can reuse them
+rather than re-deriving the judgement. The `e2e-last-run.json` writer is
+`scripts/e2e-run.mjs:708`, keyed on `REPO_ROOT`, which is why a pruned worktree leaves one
+behind: nothing in the e2e runner cleans its own record.
 
-**Files.** `scripts/dispose-worktree.mjs` (argument resolution), `scripts/e2e-run.mjs:687`
+**Files.** `scripts/dispose-worktree.mjs` (argument resolution, `locateInventory`),
+`scripts/dispose-worktree.mjs` (`isRegenerableIgnored`, `protectedContentOnDisk`),
+`scripts/e2e-run.mjs:708`
 
 ## 158. The worktree-inventory suite reads the shared main checkout, so its verdict depends on whether main happens to be clean
 
