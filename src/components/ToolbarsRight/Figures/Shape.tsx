@@ -1,4 +1,4 @@
-import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import React, { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { savedArgsPerFigure } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
@@ -103,15 +103,52 @@ const Shape: React.FC = () => {
     handleChange({ ...args, cornerRadius: Number(event.target.value) });
   };
 
-  const handleSidesChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const raw = event.target.value;
-    // The empty case is read off the RAW string, not off the coercion: an emptied
-    // number input reports '', and `Number('')` is 0, which floors to 3 and turns a
-    // pentagon into a triangle the instant the field is cleared. Everything else
-    // goes through `polygonSides`, so a value that reaches the store by any other
-    // route is bounded too.
-    const sides = raw.trim() === '' ? DEFAULT_POLYGON_SIDES : polygonSides(Number(raw));
+  /**
+   * The user's in-progress text, or `null` when they are not editing.
+   *
+   * `null` is load-bearing rather than a convenience: it is how the input knows to
+   * show the STORED count instead of a draft, so a figure switch or any other
+   * external change to `sides` repaints the field correctly, and how a commit is
+   * skipped entirely when there is nothing to commit.
+   */
+  const [sidesDraft, setSidesDraft] = useState<string | null>(null);
+
+  const handleSidesCommit = () => {
+    // Commit, not keystroke. Clamping on every `onChange` makes the field
+    // unusable for the number it exists to accept: the box reads 5, the user types
+    // `1`, `polygonSides(1)` is 3, the controlled value repaints as 3, and the next
+    // keystroke `2` lands in a field already showing 3 — so `12` produces a 32-gon
+    // and every two-digit count starting with 1 or 2 is unreachable. Nothing on
+    // screen says a keystroke was discarded, and the wrong count is what gets
+    // stored, persisted and drawn.
+    //
+    // So the draft is the user's string while they are typing and the stored value
+    // only once they commit, which is also how Photoshop's own field behaves: the
+    // count applies when you commit it, not as you cross a threshold on the way.
+    if (sidesDraft === null) return;
+    const trimmed = sidesDraft.trim();
+    const sides = trimmed === '' ? DEFAULT_POLYGON_SIDES : polygonSides(Number(trimmed));
+    setSidesDraft(null);
     handleChange({ ...args, sides });
+  };
+
+  const handleSidesChange = (event: ChangeEvent<HTMLInputElement>) => {
+    // RAW, unclamped, and that is the whole point — see `handleSidesCommit`. The
+    // empty string is kept as-is rather than resolved here, because resolving it
+    // here is what repaints the field out from under the cursor mid-edit.
+    setSidesDraft(event.target.value);
+  };
+
+  const handleSidesKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleSidesCommit();
+    } else if (event.key === 'Escape') {
+      // Abandon the edit and leave the stored count exactly as it was. This is
+      // also why the draft is local state and not an early `handleChange`.
+      event.preventDefault();
+      setSidesDraft(null);
+    }
   };
 
   const handleCapChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -235,10 +272,13 @@ const Shape: React.FC = () => {
         Sides is a number, not a slider, and deliberately so. A range input
         cannot express "any integer from 3 to 100" without becoming unusable —
         97 steps across a 28px track — and Photoshop's own field is a text entry
-        that commits a typed count. `type="number"` with an explicit step of 1 and
-        min/max in the attributes is that control, and the attributes are also
-        what the browser uses to reject out-of-range entry before this handler
-        sees it.
+        that commits a typed count. `type="number"` with step 1 and min/max is
+        that control.
+        *
+        * The attributes are NOT what bounds the value. On a `type="number"` they
+        * are constraint-validation metadata: the browser marks an out-of-range or
+        * off-step entry invalid and dispatches `onChange` anyway, which is why the
+        * bound lives in `polygonSides` at commit and is tested there.
       */}
       {figure === 'polygon' && (
         <div className="flex flex-col">
@@ -246,7 +286,10 @@ const Shape: React.FC = () => {
             htmlFor="polygon-sides-input"
             className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
           >
-            Sides <span className="font-bold text-gray-900 dark:text-gray-200">{sides}</span>
+            Sides{' '}
+            <span className="font-bold text-gray-900 dark:text-gray-200">
+              {sidesDraft === null ? sides : polygonSides(Number(sidesDraft)) || DEFAULT_POLYGON_SIDES}
+            </span>
           </label>
           <input
             id="polygon-sides-input"
@@ -255,8 +298,10 @@ const Shape: React.FC = () => {
             min={MIN_POLYGON_SIDES}
             max={MAX_POLYGON_SIDES}
             step={1}
-            value={sides}
+            value={sidesDraft ?? String(sides)}
             onChange={handleSidesChange}
+            onBlur={handleSidesCommit}
+            onKeyDown={handleSidesKeyDown}
             className="h-7 w-20 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
           />
         </div>

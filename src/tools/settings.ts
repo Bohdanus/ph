@@ -53,8 +53,9 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
     alpha: 1,
     lineWidth: 5,
     // Adobe's Polygon tool seeds Sides at 5. Seeding it here rather than defaulting at the
-    // call site means the options bar has something to show on first open, which is the same
-    // reason the eraser seeds `mode` and `size` here.
+    // call site means the options bar has something to show on first open, for the same reason
+    // the eraser seeds `mode` and its tip width a few hundred lines down: a settings object
+    // that arrives without the key is an object the bar has nothing to show.
     sides: DEFAULT_POLYGON_SIDES,
     toolMode: 'shape',
   },

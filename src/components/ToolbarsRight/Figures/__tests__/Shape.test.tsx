@@ -595,35 +595,137 @@ describe('Shape toolbar', () => {
       again.unmount();
     });
 
-    it('publishes the typed count and remembers it for the polygon figure', () => {
+    /**
+     * The field COMMITS, it does not stream. Three tests below used to assert the
+     * opposite — that a typed `1` immediately stored 3 — and that is exactly what
+     * made the control unable to do the one thing it exists for. They are rewritten
+     * here against what is now true, not deleted.
+     */
+    /**
+     * DIGIT BY DIGIT, which is the whole point.
+     *
+     * A single `fireEvent.change(input, {value: '12'})` hands the control a
+     * finished '12' in one go and cannot reproduce per-keystroke corruption: it is
+     * a paste, not a typist. The bug lived between two keystrokes, so this walks
+     * them the way a hand does — set '1', let React repaint, then set '12'.
+     */
+    const typeSidesDigitByDigit = (input: HTMLElement, digits: string) => {
+      for (let length = 1; length <= digits.length; length += 1) {
+        fireEvent.change(input, { target: { value: digits.slice(0, length) } });
+      }
+    };
+
+    /** A finished value in one event: a paste, or an assistive technology's fill. */
+    const pasteSides = (input: HTMLElement, value: string) => {
+      fireEvent.change(input, { target: { value } });
+    };
+
+    it('accepts a two-digit count, which clamping on every keystroke made unreachable', () => {
       render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
 
-      fireEvent.change(screen.getByRole('spinbutton', { name: 'Sides' }), { target: { value: '7' } });
+      // `12` and `10` are the counts the old handler could never produce: it stored
+      // 3 on the `1`, repainted the field as 3, and the `2` landed in a field
+      // showing 3, yielding 32. Both are ordinary values for this tool.
+      typeSidesDigitByDigit(input, '12');
+      expect(input).toHaveValue(12);
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 12 });
 
+      typeSidesDigitByDigit(input, '10');
+      expect(input).toHaveValue(10);
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 10 });
+
+      // And `1x` counts, because the field working only for values that were
+      // already valid on the first keystroke would be no field at all.
+      typeSidesDigitByDigit(input, '42');
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 42 });
+
+      // A pasted count commits the same way, which is the path a single `change`
+      // event actually models.
+      pasteSides(input, '7');
+      fireEvent.blur(input);
       expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 7 });
+    });
+
+    it('keeps the draft in the field while it is typed, and stores nothing until commit', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' }) as HTMLInputElement;
+
+      pasteSides(input, '9');
+      // The field shows the USER's text, not the stored count: this is the whole
+      // mechanism, and a control that repaints mid-keystroke cannot be typed into.
+      expect(input).toHaveValue(9);
+      // Nothing dispatched yet. A draft is not a tool argument.
+      expect(lastCallArgs(setToolArgsMock)).not.toMatchObject({ sides: 9 });
+
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 9 });
       // The persistence half is the one a reviewer cannot see from the render:
       // `handleChange` writes an EXPLICIT key list, so a `sides` missing from it
       // renders correctly and then evaporates on the next figure switch.
-      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 7 });
+      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 9 });
     });
 
-    it('refuses a count below the floor rather than storing it', () => {
+    it('commits on Enter, because blur alone is not reachable by keyboard alone', () => {
       render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
 
-      fireEvent.change(screen.getByRole('spinbutton', { name: 'Sides' }), { target: { value: '1' } });
+      pasteSides(input, '8');
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 8 });
+      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 8 });
+    });
 
-      // Normalized at the handler, so the store never holds a value the renderer
-      // would have to defend against a second time.
+    it('abandons the draft on Escape, leaving the stored count untouched', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' }) as HTMLInputElement;
+
+      pasteSides(input, '77');
+      fireEvent.keyDown(input, { key: 'Escape' });
+      // No dispatch, and the field is back to showing the stored 5 rather than the
+      // abandoned draft.
+      expect(lastCallArgs(setToolArgsMock)).not.toMatchObject({ sides: 77 });
+      expect(input).toHaveValue(5);
+      expect(savedArgsPerFigure.polygon).not.toMatchObject({ sides: 77 });
+    });
+
+    it('stores the floor rather than the typed value when the count is below it', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
+
+      pasteSides(input, '1');
+      fireEvent.blur(input);
+
+      // Normalized at COMMIT, not per keystroke, so the store never holds a value
+      // the renderer would have to defend against a second time.
       expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 3 });
       expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 3 });
     });
 
+    it('commits the ceiling rather than the typed value when the count is above it', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
+
+      pasteSides(input, '4000');
+      fireEvent.blur(input);
+
+      // `min`/`max` do not do this. They are constraint-validation metadata: the
+      // browser marks a `type="number"` out of range invalid and dispatches
+      // `onChange` anyway, so the normalizer at commit is the only bound.
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 100 });
+    });
+
     it('falls back to 5 when the field is emptied, not to a zero-sided polygon', () => {
       render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
 
-      // An emptied number input reports '', and Number('') is 0 — which without
-      // the normalizer would floor to 3 and silently draw a triangle.
-      fireEvent.change(screen.getByRole('spinbutton', { name: 'Sides' }), { target: { value: '' } });
+      // An emptied number input reports '', and Number('') is 0 — which floors to 3
+      // and would silently turn a pentagon into a triangle on commit.
+      pasteSides(input, '');
+      fireEvent.blur(input);
 
       expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 5 });
     });

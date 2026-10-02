@@ -34,9 +34,11 @@ export const MIN_POLYGON_SIDES = 3;
 /** Adobe's Polygon tool seeds `Sides` at 5, and 5 is the count this app hardcoded. */
 export const DEFAULT_POLYGON_SIDES = 5;
 /**
- * The ceiling is a renderer limit, not an Adobe one: the loop emits one
- * `lineTo` per side, and a field this permissive is a denial-of-service
- * wearing a number input. Adobe's own field is bounded too, at 100.
+ * Adobe's ceiling, and this app's: the Polygon tool's `Sides` field is documented
+ * as 3 to 100, so 100 is Adobe's number and not a judgement of ours. It is also
+ * the bound that keeps the draw loop cheap — it emits one `lineTo` per side — so a
+ * field without an upper bound would be a denial-of-service wearing a number
+ * input. Two reasons, and only one of them is ours.
  */
 export const MAX_POLYGON_SIDES = 100;
 
@@ -210,8 +212,8 @@ const roundedRectPath = (ctx: Ctx2D, x: number, y: number, width: number, height
  * value is persisted per figure and round-trips through the settings store, so
  * it can arrive from a document written before the field existed, from a
  * hand-edited store, or from the number input mid-edit. The loop divides by the
- * result and indexes an angle with it, so an unnormalized value is either a
- * wrong polygon, a NaN path, or an unbounded loop over a hostile number.
+ * result to space each angle, so an unnormalized value is either a wrong polygon,
+ * a NaN path, or an unbounded loop over a hostile number.
  */
 export const polygonSides = (sides: number | undefined): number => {
   if (typeof sides !== 'number' || !Number.isFinite(sides)) return DEFAULT_POLYGON_SIDES;
