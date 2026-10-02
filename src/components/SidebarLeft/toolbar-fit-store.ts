@@ -103,7 +103,7 @@ const length = (value: string): number => {
  * `rememberedSectionBreakHeight` is what it falls back on, and why it needs a fallback is
  * the whole of the defect `HANDOFF.md` recorded as §97. The separator is only visible in the DOM while
  * some section after the first still has a tile in it, so a layout that has collapsed
- * sections 1 through 4 cannot measure it — and a fit that then plans with `0` where the CSS
+ * sections 1 through 3 cannot measure it — and a fit that then plans with `0` where the CSS
  * charges `7` accepts a row the grid cannot render, which is the overflow that defect measured. The
  * fallback is not a fudge: the separator is a property of the class string, not of the
  * layout, so the last real reading of it stays true across every collapse the rail can make.

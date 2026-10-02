@@ -178,12 +178,14 @@ export const availableTools: readonly ToolName[] = [
  * `src/components/DesktopHeader/DesktopHeader.tsx` — `Image ▸ Adjustments` carries the
  * first two and `Edit ▸ Free Transform` the third.
  *
- * Before that extraction this export was a declaration with no consumer at all: the only
- * reader in the repository was its own test, which asserted it was disjoint from `shape`.
- * It is listed here because it now answers a question a reader of this file actually
- * has — "which registered tool is not a tile?" — and `toolbar-mapping.test.ts` pins that
- * every id in it really is absent from `toolbarMap`. Adding an id to this list without
- * removing its rail entry fails that test; removing a rail entry without adding it here
- * fails it the other way.
+ * Before that extraction this export was a declaration with no consumer at all, and it still
+ * has none: `toolbar-mapping.test.ts` is its only importer. What that test pins is the
+ * two-way relation with `toolbarMap` — nothing in `extraTools` may be a tile, and a rail
+ * entry dropped without being recorded here fails it the other way.
+ *
+ * It is NOT the answer to "which registered tool is not a tile", because five more ids are
+ * not tiles: `rectangle`, `ellipse`, `triangle`, `polygon` and `line`, reachable only as
+ * values of the `shape` tile's `figure`. The test carves those five out by name, so adding
+ * a sixth alias means adding it to that exemption too.
  */
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

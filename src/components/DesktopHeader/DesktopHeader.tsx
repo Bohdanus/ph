@@ -9,7 +9,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { slugifyToolLabel } from '../../../toolbar-mapping.ts';
+import { extraTools, slugifyToolLabel } from '../../../toolbar-mapping.ts';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
@@ -52,18 +52,22 @@ import type { FigureType } from '../../tools/shape.ts';
  *
  * Two groups, two mechanisms, and they are not interchangeable. The three pen point-tools
  * modify a path, which Photoshop reaches from the Pen's context menu rather than from a
- * Tools panel. The three adjustment commands are not tools at all: they left the rail in the
- * same change that added `MENUS_EXCLUDE`, and they are hosted by `Image ▸ Adjustments` and
- * `Edit ▸ Free Transform`. See the note on `TOOL_MENU_ITEMS` above, which is the authority for
- * both.
+ * Tools panel. The three adjustment commands are not tools at all: they left the rail in
+ * `4037463b`, which is also where they were added to this list — `MENUS_EXCLUDE` itself is
+ * older, introduced by `dd234bad` with the pen tools alone — and they are hosted by
+ * `Image ▸ Adjustments` and `Edit ▸ Free Transform`. See the note at the top of this file,
+ * which is the authority for both.
+ *
+ * The second group is SPREAD from `toolbar-mapping.ts`'s `extraTools` rather than written
+ * out, so the rail and this menu cannot disagree about which ids are commands: a fourth
+ * id that leaves the rail is added to that export, and `toolbar-mapping.test.ts` fails
+ * until it is.
  */
 export const MENUS_EXCLUDE: readonly ToolName[] = [
   'add-anchor-point',
   'delete-anchor-point',
   'convert-point',
-  'color',
-  'levels',
-  'transform',
+  ...extraTools,
 ];
 
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
@@ -150,13 +154,30 @@ type MenuHostItem = {
 };
 
 /**
- * `Image ▸ Adjustments`, in Adobe's own order.
+ * `Image ▸ Adjustments`, as close to Adobe's order as Adobe's own pages allow.
  *
- * Membership is Adobe-confirmed item by item; the ORDER is not, because Adobe publishes
- * no page that enumerates the submenu top to bottom — it is reconstructed from the order
- * Adobe's own pages present the commands in plus the create-new-adjustment-layer list.
- * Treat it as a good hypothesis, the same provenance rule
- * `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section applies to the rail.
+ * Membership is Adobe-confirmed item by item. The ORDER is reconstructed, and the
+ * reconstruction is not uniform across the list, so the confidence is not either:
+ *
+ * - **The tonal head is settled.** Adobe publishes no page that enumerates this submenu top
+ *   to bottom — `helpx.adobe.com/photoshop/using/adjusting-image-color.html` is a 404 and
+ *   `…/using/panels-menus.html` has an "Image adjustments" TOC entry with no body under it.
+ *   Two Adobe pages do order the tonal group identically, though neither calls it a menu:
+ *   `…/using/color-adjustments.html`'s command list runs `Levels · Curves · Exposure`, and
+ *   `…/desktop/create-manage-layers/color-adjustment-fill-layers/adjustment-layers-options.html`
+ *   (last updated 2026-02-23) runs `Brightness/Contrast · Levels · Curves · Exposure`. That is
+ *   why `Levels` is second here and `Curves` precedes `Exposure`; `Levels` used to be last,
+ *   which no source supports.
+ * - **Everything from `Vibrance` down is a hypothesis.** Those two pages disagree with each
+ *   other from `Vibrance` on — one puts `Photo Filter` immediately after `Vibrance`, the other
+ *   after `Black & White` — and neither orders `Shadows/Highlights`, `HDR Toning`, `Desaturate`,
+ *   `Match Color`, `Replace Color` or `Equalize` at all. No reputable third party transcribes
+ *   the submenu in order either. Treat the rest as a good guess under the same provenance rule
+ *   `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section applies to the rail, and
+ *   re-derive it if Adobe ever documents the menu itself.
+ * - Three near-misses are deliberately NOT here: `Auto Tone`, `Auto Contrast` and `Auto Color`
+ *   are `Image` items rather than submenu items (Adobe, `…/using/making-quick-tonal-adjustments.html`),
+ *   and `Color Blindness Simulation` is not in this menu at all.
  *
  * Two items are enabled, and each is enabled because its computation is the Adobe command
  * it is named for:
@@ -185,10 +206,11 @@ type MenuHostItem = {
  */
 const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
   { label: 'Brightness/Contrast', toolName: 'levels' },
+  { label: 'Levels' },
+  { label: 'Curves' },
   { label: 'Exposure' },
   { label: 'Vibrance' },
   { label: 'Hue/Saturation' },
-  { label: 'Curves' },
   { label: 'Color Balance' },
   { label: 'Black and White' },
   { label: 'Photo Filter', toolName: 'color' },
@@ -205,7 +227,6 @@ const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
   { label: 'Gradient Map' },
   { label: 'Posterize' },
   { label: 'Threshold' },
-  { label: 'Levels' },
 ];
 
 const DesktopHeader = () => {
@@ -236,6 +257,25 @@ const DesktopHeader = () => {
 
   const toggleSubmenu = (id: string) => setOpenSubmenu((current) => (current === id ? null : id));
 
+  // The five hosts, addressed by the same ids `openMenu` holds, so one close path can put
+  // focus back on whichever button opened what it just closed.
+  const menuHostRefs: Record<string, React.RefObject<HTMLLIElement | null>> = {
+    file: fileMenuRef,
+    tools: toolsMenuRef,
+    image: imageMenuRef,
+    edit: editMenuRef,
+    window: windowMenuRef,
+  };
+
+  // The item that was activated unmounts with its dropdown, and nothing else holds focus,
+  // so the browser drops it to `<body>` and the next Tab restarts at the top of the
+  // document. Focus belongs back on the host that opened the menu, which stays mounted.
+  const closeMenus = () => {
+    if (openMenu !== null) menuHostRefs[openMenu]?.current?.querySelector('button')?.focus();
+    setOpenMenu(null);
+    setOpenSubmenu(null);
+  };
+
   const handleToolSelection = (toolName: ToolName) => {
     const figure = FIGURE_TOOLS[toolName];
     // Select first, then patch — deliberately *not* the order
@@ -251,15 +291,14 @@ const DesktopHeader = () => {
     } else {
       goToTool(toolName);
     }
-    setOpenMenu(null);
-    setOpenSubmenu(null);
+    closeMenus();
   };
 
   const handleFreeTransform = () => handleToolSelection('transform');
 
   const handleResetWorkspace = () => {
     resetWorkspace();
-    setOpenMenu(null);
+    closeMenus();
   };
 
   const handleClickOutside = useCallback(
@@ -298,6 +337,25 @@ const DesktopHeader = () => {
     };
   }, [handleClickOutside]);
 
+  // Escape closes whatever is open, and the listener exists only while something is. With
+  // no menu open the key belongs to whoever else handles it — the Transform panel cancels a
+  // pending transform on Escape (`Transform.tsx:41`, on `window`) — so this must not consume
+  // it. It does consume it while a menu IS open, because `stopPropagation` on `document`
+  // stops the event reaching a `window` listener: the menu is the topmost thing open, so it
+  // takes the first press and the panel takes the second. The dropdowns had no keyboard
+  // dismissal at all before this, while the rail's flyout closes the same way
+  // (`SidebarLeft.tsx:554-564`).
+  useEffect(() => {
+    if (openMenu === null) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      closeMenus();
+      event.stopPropagation();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  });
+
   return (
     <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950">
       {/* The document's top-level heading, so a screen-reader user has something to
@@ -312,6 +370,8 @@ const DesktopHeader = () => {
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => toggleMenu('file')}
+            aria-haspopup="true"
+            aria-expanded={openMenu === 'file'}
             data-testid="header-file-menu-button"
           >
             File
@@ -412,6 +472,8 @@ const DesktopHeader = () => {
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => toggleMenu('tools')}
+            aria-haspopup="true"
+            aria-expanded={openMenu === 'tools'}
             data-testid="header-tools-menu-button"
           >
             Tools
@@ -441,6 +503,8 @@ const DesktopHeader = () => {
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => toggleMenu('image')}
+            aria-haspopup="true"
+            aria-expanded={openMenu === 'image'}
             data-testid="header-image-menu-button"
           >
             Image
@@ -500,6 +564,8 @@ const DesktopHeader = () => {
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => toggleMenu('edit')}
+            aria-haspopup="true"
+            aria-expanded={openMenu === 'edit'}
             data-testid="header-edit-menu-button"
           >
             Edit
@@ -548,6 +614,8 @@ const DesktopHeader = () => {
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => toggleMenu('window')}
+            aria-haspopup="true"
+            aria-expanded={openMenu === 'window'}
             data-testid="header-window-menu-button"
           >
             Window
