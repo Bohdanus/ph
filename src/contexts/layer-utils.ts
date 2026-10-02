@@ -198,7 +198,7 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     tmpCanvas: null,
   };
 
-  const { x, y, width, height } = pos;
+  const { width, height } = pos;
 
   if (kind === 'image') {
     layer.bitmap = source.bitmap;
@@ -211,7 +211,8 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
       if (source.opacity !== 1) {
         ctx.globalAlpha = source.opacity;
       }
-      ctx.fillRect(x, y, width, height);
+      // The bitmap is layer-local even when the layer itself has a document-space origin.
+      ctx.fillRect(0, 0, width, height);
     }
 
     layer.tmpCanvas = canvas;
