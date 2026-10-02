@@ -277,10 +277,12 @@ Perspective and Warp, a draggable reference point for the transform origin, Shif
 commit on Enter. <https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html>
 
 **What this app does.** A fixed-parameter panel. The options bar publishes a preview through
-`tempUpdateLayer` and nothing is committed until the user presses Apply —
-`src/components/ToolbarsRight/Transform/Transform.tsx:48` is the `tempUpdateLayer` call inside the
-throttled change handler, and the Apply button is at
-`src/components/ToolbarsRight/Transform/Transform.tsx:303-305`.
+`tempUpdateLayer` and nothing is committed until the tool is switched away or the document is
+exported — `src/components/ToolbarsRight/Transform/Transform.tsx:48` is the `tempUpdateLayer` call
+inside the throttled change handler, and `src/hooks/useApp.ts:167` is the `commitDirtyTool()` every
+tool switch runs through. The bar carries no commit control; the whole right-hand column is the two
+mirror toggles and the single Cancel button at
+`src/components/ToolbarsRight/Transform/Transform.tsx:296`, which discards the preview.
 
 **Why it is too hard.** The bounding box is a gesture surface that owns the pointer for its duration
 and resolves to an arbitrary affine or projective transform. This app's transform path is
@@ -288,8 +290,8 @@ parameter-driven and previewed as a layer, with Distort and Warp in particular n
 displacement field rather than a matrix. It is also a different commit discipline: one gesture, one
 result, committed on a keypress rather than a panel change.
 
-**What the app does instead.** Numeric fields and a Reset control. The preview is real and it is
-correct; it is just not draggable, so every transform is a round trip through the panel.
+**What the app does instead.** Numeric fields and a single Cancel control. The preview is real and it
+is correct; it is just not draggable, so every transform is a round trip through the panel.
 
 ### Crop: Straighten, Curve and Content-Aware
 

@@ -2194,8 +2194,9 @@ of a lost logical edit.
 
 **It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx:48` calls
 `tempUpdateLayer` and nothing else; the options bar has no commit gesture. The commit is
-`commitDirtyTool(true)` at `src/contexts/useLayer.ts:348`, reached from `goToTool`, the Apply link, a
-new layer, or `mergeAllLayers`. So the operation is **staged** by the slider and only meets the
+`commitDirtyTool(true)` at `src/contexts/useLayer.ts:443`, reached from `goToTool`, a new layer,
+or `mergeAllLayers` — the options bar's Apply link, which used to be the fourth caller, was
+removed by `c424469a`. So the operation is **staged** by the slider and only meets the
 publishing branch when one of those commits — and `useLayer.lifecycle.test.tsx:541` already pins
 that a staged identity preview is discarded. Do not write the test for this by moving a slider and
 releasing; nothing publishes.
@@ -4078,7 +4079,7 @@ one that is live, and it is the one an earlier version did not name.
    no stylus-versus-palm rejection and no pinch-zoom.
 2. **Slider hit areas.** There is no `src/components/Common/TouchSlider.tsx`, and the options-bar
    sliders are 4-6px tall — `h-1.5` in `Draw.tsx:151,157`, `Levels.tsx:111,116` and `Smudge.tsx:25`,
-   `h-1` in `Transform.tsx:184,189` and `:204,209`. The mobile tool sheet renders those same bars.
+   `h-1` in `Transform.tsx:185` and `:205`. The mobile tool sheet renders those same bars.
 
 **Why it is not a wiring bug.** Touch reordering needs a pointer-events drag with a gesture
 threshold, and the layers list has an existing HTML5 path with its own keyboard affordances to keep
@@ -4694,8 +4695,8 @@ Again`"). Re-derive the membership before building the item; do not add it becau
    `resizeX` / `resizeY` and nothing more.
 
 2. **`Rotate 180°` is outside the rotate slider's range.** The slider is `min={-90}` `max={90}`
-   (`Transform.tsx:183-190`). The bar's own `180°` button does not go through the slider — it writes
-   `rotate: (rotate + 180) % 360` (`Transform.tsx:168`) — so a value the slider cannot represent is
+   (`Transform.tsx:179-186`). The bar's own `180°` button does not go through the slider — it writes
+   `rotate: (rotate + 180) % 360` (`Transform.tsx:164`) — so a value the slider cannot represent is
    already reachable, and a menu item that presets `rotate: 180` lands the options bar in a state its
    own control cannot display. `Scale` has the mirror problem: `resizeX`/`resizeY` are percentages, so
    Adobe's absolute Width/Height percentages need a document-size read the menu does not currently do.
@@ -4708,7 +4709,7 @@ not a computation one: reconcile the slider's range with the `±90` button pair 
 `Transform.tsx:95-105`, which already wraps through 360.
 
 **Files.** `src/components/DesktopHeader/DesktopHeader.tsx:503-535`,
-`src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:168`, `:183-190`,
+`src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:164`, `:179-186`,
 `src/contexts/useCurrentTool.tsx:56-81`, `src/contexts/useLayer.ts:565`
 
 ## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have

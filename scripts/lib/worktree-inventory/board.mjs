@@ -99,9 +99,7 @@ function lockKey(path, agentId) {
  * different answers and only one of them is true.
  */
 function readLockIssueAttribution(db) {
-  const present = db
-    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'issue_locks'")
-    .get();
+  const present = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'issue_locks'").get();
   if (!present) return { available: false, byLock: new Map() };
   const byLock = new Map();
   // `created_at` then `issue_id` so the reported set is in a stable order: this
