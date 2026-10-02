@@ -3331,7 +3331,7 @@ is invariant across a commit.** The existing coverage reads the canvas box only 
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
 
-## 125. The crop cannot extend the canvas, and Photoshop's crop can — the `Fill` control is unimplemented and unoverridden
+## 161. The crop cannot extend the canvas, and Photoshop's crop can — the `Fill` control is unimplemented and unoverridden
 
 **Problem.** Photoshop's crop grows the canvas: drag the crop box past the image edge and the document
 extends, with the `Fill` control deciding what goes in the new area. Adobe's own page says it —
