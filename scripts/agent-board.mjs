@@ -41,6 +41,8 @@ import {
   BoardError,
   DEFAULT_LEASE_MS,
   NO_LIMIT,
+  SCOPES,
+  STATUSES,
   isImportedOrigin,
   parseDuration,
   priorityFromTitle,
@@ -48,6 +50,19 @@ import {
   resolveBoardDir,
 } from './lib/agent-board/db.mjs';
 import { resolveIdentity } from './lib/agent-board/identity.mjs';
+
+/**
+ * How a reader has to spell a command, in ONE place.
+ *
+ * There is no `swarm` binary: `package.json` has no `bin` entry, so `swarm
+ * doctor` — printed by the two commands an agent runs when its leases have gone
+ * stale, which are exactly the two where the printed instruction is the whole
+ * recovery — exits `command not found`. `npm run swarm --` is the only spelling
+ * that runs, and it was hand-typed at six sites that nothing kept in step. A
+ * printed command has to be PASTEABLE; an unpasteable one is worse than none,
+ * because it looks like help.
+ */
+const RUN = 'npm run swarm --';
 
 const USAGE = `swarm — live coordination for a swarm of agents on one repository
 
@@ -60,8 +75,8 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   agents were doing, was told the board was empty, and was holding 196 events.
   It is now \`npm run swarm\`, and there is no 'board' script left to confuse.
 
-  live state: swarm status      what is ready: swarm ready
-  the log:    swarm watch --follow
+  live state: ${RUN} status      what is ready: ${RUN} ready
+  the log:    ${RUN} watch --follow
 
   new <title>            file an issue          --body --scope --priority --files --dep --origin
                            (the title is everything BEFORE the first flag)
@@ -198,6 +213,20 @@ export function parseArgs(argv) {
       positional.push(...argv.slice(i + 1));
       break;
     }
+    if (token === '-h' || token === '-?') {
+      /**
+       * `-h`, not `--h`.
+       *
+       * The parser only recognised `--`, so a single-dash `-h` fell through to
+       * `positional` and BECAME THE COMMAND: `swarm -h` hit the unknown-command
+       * branch and answered the request for help with `unknown command: -h` and
+       * a usage dump, which is the opposite of help. `flags.h` in the dispatch
+       * below reads the field this writes, so `--h` keeps working unchanged.
+       */
+      flags.help = true;
+      i += 1;
+      continue;
+    }
     if (token.startsWith('--')) {
       // A GLOBAL flag before the command does not end the leading run: the help
       // lists --json, --agent and --dir as global, `board --json new "title"` is
@@ -312,6 +341,57 @@ const list = (value) => {
     .flatMap((entry) => entry.split(','))
     .map((entry) => entry.trim())
     .filter(Boolean);
+};
+
+/**
+ * A filter value out of a closed set, or an error naming the set.
+ *
+ * The WRITE paths already do this: `new --priority urgent` and `--lease soon`
+ * are refused with the allowed values (`db.mjs`, `unknown priority` /
+ * `not a duration`). The READ paths did not, and that asymmetry is the defect:
+ * `list --status opne` built a status set containing no real status, matched no
+ * row, printed an empty table and exited 0 — textually identical to a board
+ * with nothing on it, which is the one answer a reader cannot act on. The sets
+ * are IMPORTED from the library rather than copied, so a set that changes there
+ * cannot go stale here.
+ *
+ * The valueless flag is refused too, and that is not a hypothetical:
+ * `--status` on its own used to be the empty set, which SQLite accepts as
+ * "matches nothing" (`status IN ()`), so it produced the same empty table and
+ * the same exit 0.
+ */
+const filterValues = (name, value, allowed) => {
+  if (value === true || (typeof value === 'string' && value.trim() === '')) {
+    throw new BoardError(`--${name} needs a value, one of: ${allowed.join(', ')}`, { code: 1 });
+  }
+  const values = list(value);
+  for (const entry of values) {
+    if (!allowed.includes(entry)) {
+      throw new BoardError(`--${name}: ${entry} is not one of: ${allowed.join(', ')}`, { code: 1 });
+    }
+  }
+  if (values.length === 0) {
+    throw new BoardError(`--${name} needs a value, one of: ${allowed.join(', ')}`, { code: 1 });
+  }
+  return values;
+};
+
+/**
+ * A `--kind` filter is checked for SHAPE, not against a vocabulary.
+ *
+ * The event kinds are `addEvent` call sites spread across `db.mjs` and
+ * `handoff-import.mjs` with no registry to import, and a list copied here goes
+ * stale the next time one is added. A stale list REFUSES a kind that exists,
+ * which is the worse of the two errors: the reader typed something real and was
+ * told it does not exist. What is refused is the two shapes that cannot be a
+ * kind at all — the valueless flag and an empty value.
+ */
+const eventKind = (value) => {
+  if (value === undefined || value === null || value === false) return null;
+  if (value === true || String(value).trim() === '') {
+    throw new BoardError('--kind needs a value, for example: --kind lock.hold', { code: 1 });
+  }
+  return String(value);
 };
 
 function columns(rows, headers) {
@@ -554,8 +634,8 @@ export async function run(
 
       case 'list': {
         const issues = board.listIssues({
-          status: flags.status ? list(flags.status) : null,
-          scope: flags.scope ? list(flags.scope) : null,
+          status: flags.status ? filterValues('status', flags.status, STATUSES) : null,
+          scope: flags.scope ? filterValues('scope', flags.scope, SCOPES) : null,
           files: flags.files ? list(flags.files) : null,
           claimedBy: typeof flags.claimed_by === 'string' ? flags.claimed_by : null,
           limit: limitFlag(flags.limit, NO_LIMIT),
@@ -800,8 +880,42 @@ export async function run(
       case 'unlock': {
         const paths = args.length > 0 ? args : list(flags.files);
         const result = board.releaseFiles(paths, { force: Boolean(flags.force) });
-        emit(result, result.released.length ? `released ${result.released.join(', ')}` : 'nothing held by you there');
-        return 0;
+        /**
+         * The paths the board REFUSED to touch because another live agent holds
+         * them. Read defensively (`?? []`) so this command keeps working against
+         * a board that does not report the field yet — and, more to the point,
+         * so the two meanings of "released nothing" stay distinguishable instead
+         * of collapsing into one success line: you never held these paths, or
+         * somebody else holds them and you are not going to get them.
+         */
+        const blocked = result.blocked ?? [];
+        emit(
+          { ...result, blocked },
+          [
+            result.released.length ? `released ${result.released.join(', ')}` : null,
+            blocked.length
+              ? `not released, held by another agent: ${blocked
+                  .map((entry) => `${entry.path} by ${entry.agent_id}`)
+                  .join(', ')}`
+              : null,
+            result.released.length === 0 && blocked.length === 0
+              ? 'nothing held by you there: you held none of these paths, and nobody else does either'
+              : null,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        );
+        /**
+         * 4, the table's "file held by another agent", whenever anything is
+         * still held by somebody else — including the partial case, where this
+         * agent got its own paths and did not get the other one, because a
+         * caller gating on the code must not read a half-done release as done.
+         *
+         * Exit 0 here is what `scripts/e2e-run.mjs:404-407` records as having
+         * made a dead-holder reclaim look like it worked: it ran, matched no row,
+         * and reported success.
+         */
+        return blocked.length > 0 ? 4 : 0;
       }
 
       case 'check': {
@@ -936,7 +1050,7 @@ export async function run(
               .join(' · ')}`,
             `${report.ready} ready · ${report.blocked} blocked · ${report.agents} agents seen`,
             report.expiredClaims > 0
-              ? `${report.expiredClaims} expired claim(s) still recorded — run: swarm doctor`
+              ? `${report.expiredClaims} expired claim(s) still recorded — run: ${RUN} doctor`
               : null,
             '',
             report.myClaims.length
@@ -955,7 +1069,7 @@ export async function run(
             '',
             ...report.locks.map((lock) => `  ${lock.path} — ${lock.agent_id} · ${remaining(lock.expires_at)}`),
             '',
-            `last event #${report.lastSeq} — swarm watch --since ${report.lastSeq}`,
+            `last event #${report.lastSeq} — ${RUN} watch --since ${report.lastSeq}`,
           ]
             .filter((line) => line !== null)
             .join('\n')
@@ -970,7 +1084,11 @@ export async function run(
         // with more than 200 events it would print the first 200 forever and
         // never show anything new — which is the opposite of tailing a log.
         const PAGE = 200;
-        const kind = flags.kind ? String(flags.kind) : null;
+        // Shape-checked, not vocabulary-checked, like every other read filter:
+        // the event kinds are `addEvent` call sites with no registry, so a
+        // `--kind` with no value is refused while a real kind is never refused
+        // for being new.
+        const kind = eventKind(flags.kind);
         // Reading the log from the beginning was ALSO wrong, and it is the half
         // that cost two agents a session. A bare `watch` took `--since 0`, read
         // one page, and stopped: on a log longer than a page it printed a FIXED
@@ -1119,7 +1237,7 @@ export async function run(
             // Each of these is a measurement, not a nag: the point of the
             // command is that a reader does not have to hand-write the SQL, and
             // a number that is merely printed is one nobody compares.
-            report.claims.expired > 0 ? `${report.claims.expired} claim(s) expired — run: swarm doctor` : null,
+            report.claims.expired > 0 ? `${report.claims.expired} claim(s) expired — run: ${RUN} doctor` : null,
             report.idleLive.length > 0
               ? `${report.idleLive.length} live finding(s) idle over 6h, needing a home in the handoff docs:`
               : null,
@@ -1170,7 +1288,7 @@ export async function run(
             `${result.created.length} filed`,
             result.skipped.length ? `${result.skipped.length} already on the board` : null,
             result.drifted.length
-              ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (swarm show <id>)`
+              ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (${RUN} show <id>)`
               : null,
             result.dead.length ? `${result.dead.length} skipped as already closed in their document` : null,
           ]

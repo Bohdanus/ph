@@ -119,10 +119,20 @@ const DEFAULT_LOCK_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_LOCK_POLL_MS = 3_000;
 
 /**
- * How long a DEAD holder blocks the queue. A file lock is never renewed by the board
- * itself — `renewOwnClaims` touches only the `claims` table
- * (`db.mjs:1762-1780`) — so this is the crash window, and the renewal timer is what
- * stops it firing under a live holder.
+ * How long a DEAD holder blocks the queue — the crash window, for the case where
+ * the holder's WORKTREE is still on disk.
+ *
+ * The board does renew a file lock now: `renewOwnLocks` extends this run's own
+ * sentinel while its worktree exists, which is what keeps a LIVE holder's queue
+ * slot from being taken by the sweep. Nothing renews a DEAD run's lock, because
+ * nothing is running that identity, so this timer still reclaims it. And a run
+ * whose worktree has been deleted is reclaimed on that fact alone, by the
+ * `dead-worktree-lock` finding in `Board.doctor`.
+ *
+ * Which is why the reclaim below is not left to the timer. `isHolderAlive` reads
+ * the pid out of the identity and answers in seconds rather than in half an hour,
+ * and it is the only one of the three that does not need the filesystem to still
+ * be there.
  */
 const DEFAULT_LOCK_LEASE = '30m';
 

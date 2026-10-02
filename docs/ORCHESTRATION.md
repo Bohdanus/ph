@@ -203,10 +203,12 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     row the first still believes it holds. Every board call therefore passes
     `--agent e2e-run/<branch>/<pid>`, and `swarm status` shows that while a suite runs — the
     branch says which checkout, the pid says which process.
-  - **A file lock is never renewed by the board** (`renewOwnClaims` touches only `claims`), so the
-    wrapper renews on a timer, at a third of the lease and never more than every few minutes, and
-    a renewal that fails is a _message_. A lost queue costs a concurrent run, not correctness: both
-    runs have their own ports.
+  - **The wrapper renews on a timer, and so does the board.** `renewOwnLocks` extends a run's own
+    sentinel for as long as its worktree is on disk, so a live holder keeps its slot without this
+    wrapper asking; the timer here is belt and braces, at a third of the lease and never more than
+    every few minutes, and a renewal that fails is a _message_. Nothing renews a DEAD run's lock,
+    because nothing is running that identity. A lost queue costs a concurrent run, not correctness:
+    both runs have their own ports.
   - **Nothing here can fail a run.** Queue full, board unreachable, malformed lease: each logs and
     the run proceeds. Two earlier versions broke that: one exited 4 when it could not have the
     lock, which made an unenforceable mechanism into a hard block on a merge gate, and one threw
