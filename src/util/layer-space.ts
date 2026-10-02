@@ -11,8 +11,11 @@ import type { Point, Pos } from '../contexts/general-types.ts';
  * (`src/hooks/usePaintStroke.ts:166-167`) because a pointer is over the DOCUMENT, and it is
  * the space a `Layer['pos']` is expressed in.
  *
- * LAYER-LOCAL space is the processor's own raster, and it is what the processor is handed at
- * `src/contexts/useLayer.ts:544`: `processor.imageProcessor({ bitmap, size: layer.pos })`.
+ * LAYER-LOCAL space is the processor's own raster. A layer carrying a retained affine or filter
+ * is handed a buffer staged at its EVALUATED extent, not its raw one: the live path builds it at
+ * `src/contexts/useLayer.ts:730-734` (`transformedProcessorInput`) and replay builds it at
+ * `src/contexts/useHistory.ts:49-80` (`replayProcessorInput`). A layer with no retained operation
+ * is handed the raw raster with `size: layer.pos`.
  * Every raster tool allocates `new OffscreenCanvas(size.width, size.height)` from that, so
  * pixel (0, 0) is the LAYER's top-left and carries no document origin at all. A processor
  * cannot know where its layer sits — it receives one buffer and its extents, and a stroke
@@ -48,9 +51,11 @@ import type { Point, Pos } from '../contexts/general-types.ts';
  *   buffer.
  *
  * History then keeps the rebased numbers, which is correct rather than lossy: replay feeds a
- * stored `TOOL_ACTION`'s args back to the same processor with the same layer raster
- * (`src/contexts/useHistory.ts:98-108` supplies `size: layer.pos` too), so a stroke replays
- * against the frame it was recorded in.
+ * stored `TOOL_ACTION`'s args back to the same processor over the same evaluated buffer
+ * (`src/contexts/useHistory.ts:169`, staging at `:49-80`), so a stroke replays against the
+ * geometry the screen showed when it was recorded. Before that, replay read the raw raster with
+ * `size: layer.pos` while the live path evaluated, so a transformed layer undid to a place the
+ * screen never showed.
  */
 
 /**
