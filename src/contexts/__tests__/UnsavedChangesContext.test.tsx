@@ -155,6 +155,26 @@ describe('UnsavedChangesProvider: confirmDiscard', () => {
     expect(answers).toBe(1);
   });
 
+  it('declines a second request while the prompt is up, and still answers the first', async () => {
+    // The hang this pins: two callers, one prompt. Without the guard, the second
+    // `setPrompt` overwrites the resolver and the FIRST promise never settles, so the
+    // handler awaiting it waits forever on a dialog the user has already answered.
+    const api = mount(dirty);
+    const first = api.confirmDiscard('new-document');
+    await screen.findByTestId('confirm-dialog');
+
+    const second = api.confirmDiscard('open-document');
+    await expect(second).resolves.toBe(false);
+    // One dialog, and the first question is still the one on screen: the second caller's
+    // reason never overwrites the prompt the user is reading.
+    expect(screen.getAllByTestId('confirm-dialog')).toHaveLength(1);
+    expect(screen.getByTestId('confirm-dialog-message')).toHaveTextContent('start a new image');
+
+    fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
+    await expect(first).resolves.toBe(true);
+    await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
+  });
+
   it('prompts for a live tool preview, which stores no state to re-render on', async () => {
     // The term a captured-at-render predicate cannot see: `previewLayers` is a ref, and a
     // tool mid-drag writes it without dispatching anything at all.

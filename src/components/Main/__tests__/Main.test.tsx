@@ -104,12 +104,11 @@ describe('Main with no image open', () => {
     expect(screen.getByTestId('main-open-file-button')).toBe(screen.getByRole('button', { name: 'Open File' }));
     expect(screen.getByTestId('main-blank-image-button')).toBe(screen.getByRole('button', { name: 'blank image' }));
 
-    // The discard prompt is a third kind of reachable content, and with no document there is
-    // nothing to discard: `hasDiscardableWork` is false on `hasImage` alone, so the provider
-    // mounts no dialog and no drop on this tree can ever raise one. It is asserted here as
-    // ABSENT rather than left unmentioned because the guard is real here — the provider is
-    // mounted, not mocked — and an empty-state prompt would be a modal with no possible answer
-    // but "yes", over a document that does not exist.
-    expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
+    // The empty-state buttons carry NO guard of their own — there is no document for one to
+    // protect — and what that buys is pinned where it can be acted on rather than here:
+    // `Main.toolAreas.test.tsx` runs this tree's Open and blank-image buttons and reaches
+    // the file picker and the New Image dialog with no `confirm-dialog` ever in the tree.
+    // Asserting the absence of a dialog on a render that opened nothing would be true of
+    // any component at all.
   });
 });

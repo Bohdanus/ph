@@ -122,6 +122,13 @@ export const UnsavedChangesProvider = ({ children }: PropsWithChildren) => {
   const confirmDiscard = useCallback(
     (reason: DiscardReason) => {
       if (!isDocumentDirty()) return Promise.resolve(true);
+      // One question at a time. A second caller arriving while the prompt is up is NOT a
+      // second question — it is the same one, asked by a surface that has already closed
+      // itself behind the first (the File menu and the mobile drawer both do), and
+      // overwriting the resolver would strand the first caller on a promise nothing can
+      // ever settle, which hangs its handler forever. It is declined instead: the pending
+      // prompt already carries the decision, and the action it gates is the same one.
+      if (resolverRef.current) return Promise.resolve(false);
       return new Promise<boolean>((resolve) => {
         resolverRef.current = resolve;
         setPrompt(reason);
