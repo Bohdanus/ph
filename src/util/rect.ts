@@ -33,6 +33,19 @@ function clampEdge(value: number, imageLength: number): number {
   return Math.min(Math.max(0, value), imageLength);
 }
 
+// Round each edge once and derive the extent from the rounded edges, so
+// x + width === Math.round(x2) holds by construction for every consumer.
+// `trimRect` feeds it clamped edges, `sortRoundRect` feeds it unclamped ones:
+// the rounding is the same, the clamp is the caller's decision.
+function roundedPos(left: number, top: number, right: number, bottom: number): Pos {
+  const x = Math.round(left);
+  const y = Math.round(top);
+  const width = Math.round(right) - x;
+  const height = Math.round(bottom) - y;
+
+  return { x, y, width, height };
+}
+
 export function trimRect(rectSorted: RectXY, imageSize: Size): TrimmedRect {
   const { x1: rawX1, y1: rawY1, x2: rawX2, y2: rawY2 } = rectSorted;
   // Normalise before clamping, never after: `src/tools/crop.ts:17` is the one
@@ -49,14 +62,7 @@ export function trimRect(rectSorted: RectXY, imageSize: Size): TrimmedRect {
   const right = clampEdge(x2, imageWidth);
   const bottom = clampEdge(y2, imageHeight);
 
-  // Round each edge once and derive the extent from the rounded edges, so
-  // x + width === Math.round(x2) holds by construction for every consumer.
-  const x = Math.round(left);
-  const y = Math.round(top);
-  const width = Math.round(right) - x;
-  const height = Math.round(bottom) - y;
-
-  return { x, y, width, height, isTrimmed };
+  return { ...roundedPos(left, top, right, bottom), isTrimmed };
 }
 
 export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
@@ -70,6 +76,15 @@ export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
     x2: clampEdge(x2, imageWidth),
     y2: clampEdge(y2, imageHeight),
   };
+}
+
+// `trimRect` without the clamp: crop extends the canvas past the image edge, so the
+// rect this normalises is expected to leave it. That is why there is no `imageSize`
+// argument and no `isTrimmed` — a caller that needs the intersection clamps separately.
+export function sortRoundRect(rect: RectXY): Pos {
+  const { x1, y1, x2, y2 } = sortRect(rect);
+
+  return roundedPos(x1, y1, x2, y2);
 }
 
 export function sortedRectToPos(rectSorted: RectXYSorted): Pos {
