@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141 — deleted
+### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -4314,38 +4314,6 @@ process rule, converting "rogue commits nobody can attribute" into "a dirty tree
 **Files.** `scripts/main-worktree-guard.mjs:26-36,151`, `.husky/pre-commit:17`,
 `scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
 `kilo.jsonc:31-69`, `AGENTS.md` (delegation section)
-
-## 154. `.serena` is not in the disposal allowlist, so seven dead worktrees cannot be cleaned, and the obvious allowlist entry is wrong
-
-Seven worktrees — `audit-s69-eraser`, `audit-s70-71-settings`, `audit-s72-draw`,
-`audit-s73-colors`, `audit-s74-rail`, `audit-s75-stash`, `audit-s76-closure` — are dead by
-every signal available: each owner session is a finished root with no subagents, 12.3h old;
-each tree is clean, each branch is an ancestor of `main` with `git cherry main <branch>`
-empty. `npm run dispose -- <name>` refuses all seven on one ground: each tree holds exactly
-one gitignored path, `.serena/`, and `.serena` is absent from `REGENERABLE_IGNORED`.
-
-The contents are 20K of Serena MCP scaffolding and nothing else: a boilerplate
-`project.yml` whose only field of consequence is `project_name`, plus empty `cache/` and
-`memories/` directories. `find <wt>/.serena -type f` outside `project.yml` returns zero files
-in all seven.
-
-**The naive fix is a trap.** `coversPath` matches a prefix at a segment boundary anywhere
-in the path, so `{ prefix: '.serena', rebuild: ... }` would also cover
-`.serena/memories/*.md` — and Serena's `memories/` directory is exactly where an agent
-writes notes that exist in no commit and no reflog. The same reasoning that keeps `*.log`
-off this list keeps agent memory off it: a note is the record of what a dead session was
-thinking when it died.
-
-**Fix.** Allowlist the regenerable parts, not the tool: `{ prefix: '.serena/cache', … }` and
-`{ prefix: '.serena/project.yml', … }`, leaving `.serena/memories` counted as content. That
-keeps a worktree whose agent wrote Serena memories refused — correctly, since those notes
-are unrecoverable once the directory goes — while letting the seven empty ones through. A
-blanket `.serena` entry is a one-line change that makes a whole class of unrecoverable note
-sweepable, which is the failure this list exists to prevent.
-
-**Files.** `scripts/dispose-worktree.mjs:205-215` (`REGENERABLE_IGNORED`),
-`scripts/dispose-worktree.mjs:225-227` (`isRegenerableIgnored`),
-`scripts/dispose-worktree.mjs:241-250` (`coversPath`), `.gitignore:50`
 
 ## 155. The export branch validates the composited canvas against the document frame's WIDTH and never checks its HEIGHT
 
