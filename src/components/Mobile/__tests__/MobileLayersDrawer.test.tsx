@@ -30,6 +30,7 @@ const storeStateMock = vi.hoisted(() => ({
   history: [] as Array<Record<string, unknown>>,
   historyIndex: 0,
   totalSize: { width: 800, height: 600 },
+  documentFrame: { x: 120, y: 90, width: 800, height: 600 },
 }));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
@@ -366,7 +367,7 @@ describe('MobileLayersDrawer', () => {
     expect(setActiveLayerMock).not.toHaveBeenCalled();
   });
 
-  it('creates a blank layer at the document size', async () => {
+  it('creates an ordinary blank layer covering the document frame', async () => {
     const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
@@ -375,8 +376,7 @@ describe('MobileLayersDrawer', () => {
     expect(createBlankLayerMock).toHaveBeenCalledWith({
       color: '#ffffff',
       opacity: 1,
-      size: { width: 800, height: 600 },
-      isBedrock: true,
+      pos: { x: 120, y: 90, width: 800, height: 600 },
     });
   });
 

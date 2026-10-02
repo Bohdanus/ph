@@ -3952,7 +3952,6 @@ grayscale branch is a small consumer of it rather than the reason to build it.
 
 **Files.** `src/tools/sponge.ts:110`; `src/tools/colors.ts:5`, `:15`;
 `src/components/ToolbarsRight/Colors/Color.tsx:130`; `src/contexts/psd-utils.ts:80`
-=======
 
 ## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
 
@@ -4448,3 +4447,21 @@ it will read it as its own.
 
 **Files.** `scripts/__tests__/worktree-inventory.test.mjs:2268`,
 `scripts/lib/worktree-inventory/classify.mjs:209-212`
+---
+
+## 159. A paint stroke committed after a crop renders at the old frame coordinates
+
+**Problem.** `usePaintStroke.ts` records brush points in document coordinates, while the runtime
+compositor renders a cropped document with `layerCoordinate - documentFrame.origin`. After a crop,
+the stroke is therefore offset by the frame origin and can render outside the visible document.
+The defect reproduces in the crop/transform headless gate: a bar drawn after a crop is committed,
+but the visible canvas remains unchanged. Sweeping frame heights and raw canvas heights reproduced
+the same bounds before and after the stroke.
+
+**What would close it.** Convert the committed stroke points into the current layer/frame coordinate
+space before `usePaintStroke.ts` writes the history item, then add a crop-followed-by-stroke pixel
+assertion to `e2e/crop-history.spec.ts`. Do not weaken the existing crop history assertions or add
+an accepted console error; the issue is a coordinate transform defect in the paint writer.
+
+**Files.** `src/tools/usePaintStroke.ts`, `src/contexts/useLayer.ts`, `src/contexts/layer-renderer.ts`,
+`e2e/crop-history.spec.ts`.
