@@ -223,10 +223,14 @@ async function requireDominantRed(capture: Buffer, label: string) {
  * The answer lands BEFORE the file chooser is awaited, and that ordering is the
  * mechanism: `openLoadImageDialog` is only reached once the guard resolves
  * (`confirmDiscard` at src/components/DesktopHeader/DesktopHeader.tsx:249), so the
- * `filechooser` event registered first is the one the discard releases. Nothing is
- * listening to a native dialog any more, which is why `page.reload()` still needs no
- * handler for the app's `beforeunload` guard — Playwright dismisses an unregistered
- * `beforeunload` prompt and the navigation proceeds.
+ * `filechooser` event registered first is the one the discard releases. Nothing opens a
+ * native dialog on this path any more, which is why the `page.reload()` below needs no
+ * handler for the app's `beforeunload` guard: with no `dialog` listener registered,
+ * Playwright ACCEPTS a `beforeunload` dialog and dismisses every other type
+ * (`playwright-core/lib/coreBundle.js`, `DialogManager`'s no-listener branch), so the
+ * navigation proceeds. Installing a handler inverts that — `dismiss()` on a `beforeunload`
+ * is what refuses the navigation, which is the mechanism `document-dialogs.spec.ts` uses
+ * to prove the unload prompt fires at all.
  *
  * The file then arrives through Playwright's `filechooser` event, which is what the
  * programmatic `.click()` on a `display:none` input raises. Verified on this host: the
@@ -324,10 +328,13 @@ test.describe('File round trip', () => {
 
     // The control: reloading really does discard the document, so the pixels that
     // appear below came from the file and not from a canvas that was never cleared.
-    // No dialog handler belongs here: this is the app's `beforeunload` guard, which the
-    // browser owns, and Playwright dismisses an unregistered one — which is exactly the
-    // discard this line is asserting. The in-app prompt is a different event and does
-    // need an answer, which is what `openDocumentViaFileMenu` gives it below.
+    // Nothing has to answer an unload prompt here, because this document is CLEAN: the
+    // save above dispatched `hasUnsavedChanges: false` (`src/hooks/useApp.ts:70`), which is
+    // the one path that makes the `beforeunload` guard silent, and the same reason `File >
+    // New` would not prompt here. Were it dirty, this reload would still need no handler —
+    // an unregistered `beforeunload` is accepted, so the navigation proceeds. The in-app
+    // prompt is a different event and does need an answer, which is what
+    // `openDocumentViaFileMenu` gives it below.
     await page.reload();
     await expect(getWorkspaceCanvas(page)).toBeVisible();
     const reloadedCapture = await captureCanvasScreenshot(page, box, testInfo, 'file-roundtrip-after-reload');
