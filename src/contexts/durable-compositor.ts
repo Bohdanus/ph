@@ -12,6 +12,10 @@ export type DurableComposite = Readonly<{
   bitmap: BitmapSource;
   frame: DocumentFrame;
   layers: Readonly<Record<string, MaterializedLayer>>;
+  takeLayers: () => Readonly<{
+    layers: Readonly<Record<string, MaterializedLayer>>;
+    release: () => void;
+  }>;
   release: () => void;
 }>;
 
@@ -99,15 +103,26 @@ export async function composeDurableDocument(
   }
 
   let released = false;
+  let layersDetached = false;
+  let layersReleased = false;
+  const releaseLayers = () => {
+    if (layersReleased) return;
+    layersReleased = true;
+    materialized.release();
+  };
   return {
     bitmap,
     frame,
     layers: materialized.layers,
+    takeLayers: () => {
+      layersDetached = true;
+      return { layers: materialized.layers, release: releaseLayers };
+    },
     release: () => {
       if (released) return;
       released = true;
       closeOwnedBitmap(bitmap);
-      materialized.release();
+      if (!layersDetached) releaseLayers();
     },
   };
 }

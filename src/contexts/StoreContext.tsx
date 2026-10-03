@@ -45,7 +45,8 @@ import {
   durableAppendDiagnostic,
   type SourceBackedEntryContext,
 } from './history-append.ts';
-import { replayDurableDocument } from './durable-replay.ts';
+import { replayDurableAtCursor, replayDurableDocument } from './durable-replay.ts';
+import { composeDurableDocument } from './durable-compositor.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -103,6 +104,7 @@ type DurableProjection = {
   document: DurableDocument | null;
   status: DurableDocumentStatus;
   diagnostics: readonly MigrationDiagnostic[];
+  legacyCursorToDurableCursor?: readonly number[];
 };
 
 export type StoreData = {
@@ -829,6 +831,7 @@ function buildDurableDocument(
       status: converted.status,
       document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
       diagnostics: converted.diagnostics,
+      legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
     };
   } catch (error) {
     return {
@@ -841,6 +844,7 @@ function buildDurableDocument(
           message: error instanceof Error ? error.message : String(error),
         },
       ],
+      legacyCursorToDurableCursor: [],
     };
   }
 }
@@ -947,6 +951,63 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     latestStateRef.current = storeState;
   }, [storeState]);
+
+  const publishDurableNavigationPresentation = async (
+    state: StoreData,
+    document: DurableDocument,
+    durableCursor: number
+  ): Promise<void> => {
+    const replay = replayDurableAtCursor(document, durableCursor);
+    // Legacy-tool sources remain an explicitly unsupported durable source. Keep
+    // navigation on the legacy presentation until that source adapter exists.
+    if (Object.values(replay.layers).some(({ snapshot }) => snapshot.source.kind === 'legacy-tool')) return;
+
+    const registry = getAssetRegistry();
+    let composite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
+    let detached: ReturnType<NonNullable<typeof composite>['takeLayers']> | undefined;
+    try {
+      composite = await composeDurableDocument(replay, {
+        documentId: state.documentId,
+        baselineAssetGeneration: registry.getDocumentGeneration(state.documentId),
+        operationSetRevision: document.durableRevision,
+        assetRegistry: registry,
+      });
+      detached = composite.takeLayers();
+      const nextLayers = { ...state.layers };
+      for (const [layerId, materialized] of Object.entries(detached.layers)) {
+        const existing = nextLayers[layerId];
+        if (!existing) throw new Error(`Durable navigation layer ${layerId} is absent from legacy replay`);
+        nextLayers[layerId] = { ...existing, tmpCanvas: materialized.bitmap };
+      }
+
+      const latest = latestStateRef.current;
+      if (
+        latest.documentId !== state.documentId ||
+        latest.historyIndex !== state.historyIndex ||
+        latest.branchRevision !== state.branchRevision ||
+        !layersDifferOnlyByPresentation(latest.layers, nextLayers)
+      ) {
+        throw new Error('Durable navigation presentation became stale before publication');
+      }
+
+      for (const materialized of Object.values(detached.layers)) {
+        presentationScope.trackPublishedLease(state.documentId, materialized.bitmap, materialized.lease.release);
+      }
+      const action: Extract<InternalAction, { type: 'PUBLISH_RUNTIME_PRESENTATION' }> = {
+        type: 'PUBLISH_RUNTIME_PRESENTATION',
+        payload: { layers: nextLayers },
+      };
+      latestStateRef.current = reducer(latest, action);
+      rawDispatch(action);
+      retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      detached = undefined;
+    } catch {
+      detached?.release();
+    } finally {
+      composite?.release();
+    }
+  };
+
   const dispatchAction = (action: StoreAction) => {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
@@ -1287,6 +1348,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       });
+      if (converted.status === 'current' && converted.document) {
+        const durableCursor = converted.legacyCursorToDurableCursor?.[action.payload.timeline.cursor] ?? -1;
+        void publishDurableNavigationPresentation(nextState, converted.document, durableCursor);
+      }
       // Replay is the other way a cache leaves the record, and the identity case
       // is the common one: navigating back over a removal re-creates the layer
       // under the same id with no cache at all, or with a different one. The

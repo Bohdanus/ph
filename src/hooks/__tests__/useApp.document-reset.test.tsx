@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoreProvider, useStore } from '../../contexts/StoreContext.tsx';
@@ -428,6 +428,15 @@ afterEach(() => {
 });
 
 describe('the outgoing document fixture is one production could really have produced', () => {
+  it('publishes a durable presentation cache after navigation without changing logical layers', async () => {
+    const result = setup();
+    await seedOutgoingDocument(result);
+
+    await waitFor(() => expect(result.current.store.layers['old-1'].tmpCanvas).not.toBeNull());
+    expect(result.current.store.layers['old-1'].pos).toEqual({ x: 0, y: 0, width: 40, height: 20 });
+    expect(result.current.store.historyIndex).toBe(1);
+  });
+
   it('replays to every cursor with the same three layers, and starts with a live redo tail', async () => {
     const result = setup();
     await seedOutgoingDocument(result);

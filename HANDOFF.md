@@ -16,7 +16,7 @@ tombstone the lifecycle rule forbids, because it invites a reader to trust a cla
 re-deriving the code. So this is a list and nothing else; each number was deleted on verification,
 and the verification is `git log`, not this file.
 
-## 1. P0 — the durable replay path has no production caller
+## 1. P0 — the durable replay path is only mounted as a navigation presentation cache
 
 **Problem.** Four of the five modules the migration was built around are imported by nothing outside
 `src/contexts/__tests__/`:
@@ -28,8 +28,10 @@ and the verification is `git log`, not this file.
 | `src/contexts/replay-checkpoints.ts` | **0**                                                                 |
 | `src/contexts/durable-replay.ts`     | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
 
-Production still runs legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
-`useHistory.ts`) → runtime `Layer` → `layer-renderer.ts` → canvas. `durableDocument`,
+Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
+`useHistory.ts`) for logical navigation and runtime `Layer` state. `StoreContext.tsx` now composes
+the mapped durable cursor after that transition and publishes only presentation caches into those
+legacy layers. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
 inside that function. Two production components read the fields from `useStore()` —
@@ -44,9 +46,10 @@ case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — i
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
-**Why it matters.** Every correctness property the durable model was built to provide — validated
-conversion, diagnosable failure, deterministic asset ownership — currently protects no
-user-visible behaviour. The migration's deliverable is unwired.
+**Why it matters.** The navigation cache is the first user-visible durable projection, but render,
+export, and durable logical replay remain legacy-authoritative. Every additional surface must keep
+the same staged publication and lease ownership contract; the migration is not a full authority
+cutover yet.
 
 **Trap for whoever wires it.** Neither the affine composition nor the vector-argument rescale is
 duplicated, so the drift warning this entry used to carry is withdrawn — `materialization.ts` owns no
@@ -54,9 +57,9 @@ affine arithmetic of its own. `renderRetainedSegment()` hands the retained opera
 `evaluatePresentation()`, and `presentation-evaluator.ts` — `getPresentationAffine()` composes them
 through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 `presentation-evaluator.ts` — `scaleVectorArgs()`, which `materialization.ts` imports directly and
-`layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. What remains
-for the wiring itself is that `materializeLayer()` / `materializeDocument()` have zero callers, so
-the first wiring attempt is the first time that code executes against real state.
+`layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation is
+now the first real caller; the remaining surfaces still need independent parity gates before they
+are mounted.
 
 **Also wrong at the boundary.** The runtime path feeds an _untransformed_ bitmap — `layer.tmpCanvas
 ?? layer.bitmap` — straight into a pixel processor, and both live in `tempUpdateLayer` in
@@ -64,11 +67,9 @@ the first wiring attempt is the first time that code executes against real state
 `renderRetainedSegment`). Wiring the durable path without reconciling these changes pixel-tool
 results.
 
-**Fix.** Pick one rendering authority and make the other a projection. Minimum viable: route the
-render path through `materializeLayer()` for a single layer type and keep `layer-renderer.ts` for the
-rest — with `presentation-evaluator.ts` left as the single owner of both the affine composition and
-the vector rescale, so the two paths share them rather than each keeping one. Do not attempt all five
-consumers at once.
+**Fix.** Extend the navigation-only presentation mount to render and export only after each surface
+has a differential parity gate. Keep legacy logical state as the authority until those projections
+are staged, lease-safe, and failure-contained; do not mount all remaining consumers at once.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
