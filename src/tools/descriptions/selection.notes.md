@@ -46,13 +46,14 @@ a description that says only "this works" is less useful to the next reader than
 
 **Citation discipline.** Every `options[].appRef` and every `implementationRefs` entry was
 re-derived by reading the cited line in this worktree, not by trusting the prior pass. That
-moved 24 of them. The most consequential single drift: the notes had cited a bare line range in
-`src/util/selection.ts` for `copyPolygonSelectionToCanvas` and its "clips with no
-anti-aliasing" property; that range had drifted onto an unrelated error-class constructor, and
-`copyPolygonSelectionToCanvas()` is where both live now — the `ctx.clip()` inside it being what
-carries the claim. Every citation in the data file now resolves to a line that is the wiring, and
-none points at a blank line or a
-neighbouring statement.
+moved 24 of them. The one this pass had to correct about itself is the sentence that used to call
+the `copyPolygonSelectionToCanvas` range "the most consequential single drift": it said the range
+had drifted onto an unrelated error-class constructor. **It had not, and the citation was right
+where the sentence about it was wrong.** The range holds `copyPolygonSelectionToCanvas()` and the
+`ctx.clip()` that carries the "clips with no anti-aliasing" property, and the error class that
+sentence meant — `SelectionCanvasContextError` — is a separate declaration earlier in the same
+file, never inside it. Every citation in the data file now resolves to a line that is the wiring,
+and none points at a blank line or a neighbouring statement.
 
 Target version: **Photoshop 2025–2026**, with two controls named by their older labels where
 Adobe's own documentation is version-split (see the Quick Selection and Magic Wand entries).
@@ -364,17 +365,6 @@ the outline is visually a circle and is not one in the data. Worth stating becau
 that is a point path cannot be a true curve without this, and because the app's own hit test and
 outline renderer agree on the polygon. The bound, its measured reach and the cap that ends it are
 in the verdict section above, which is where the decision it drives is argued.
-
-**The shipped value is not this file's value yet.** The `elliptical-selection` entry in
-`tooltips.ts` still projects `implementation: 'partial'` for this tool: that file is generated from
-all eight families and is
-regenerated once, after every family lands (the message of `5909f5f` says so explicitly), and this
-pass may not run `npm run docs:tools`. So the browser currently shows `partial` for a record that
-says `implemented`, and the
-`it('writes the shipped tooltip projection exactly as the generator produces it')` case in
-`scripts/__tests__/tool-descriptions.test.mjs` fails on the projection until that regeneration
-runs. Anyone landing this family must run it, or the flip will look
-unlanded.
 
 ## Lasso Tool — `freehand-lasso`
 

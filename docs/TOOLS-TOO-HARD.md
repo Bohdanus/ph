@@ -706,8 +706,12 @@ because both names are a partial match and neither is a match.
 
 `ADJUSTMENTS_ITEMS` (`DesktopHeader.tsx`) carries Adobe's list in
 a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
-`toolName` and nothing else (`DesktopHeader.tsx` — the `MenuHostItem` type), so a disabled item is a
-recorded absence rather than a fake.
+`toolName` and nothing else, and the rule has two halves rather than one: the optional `toolName?` on
+the `MenuHostItem` type declares it (`DesktopHeader.tsx` — `MenuHostItem`), and the
+`disabled={toolName === undefined}` on each button of the `ADJUSTMENTS_ITEMS` submenu render enforces
+it (`DesktopHeader.tsx` — that submenu's `ADJUSTMENTS_ITEMS.map()`), so a disabled item is a
+recorded absence rather than a fake. The type alone does not enforce it — an optional field states no
+such rule — and the gate alone does not explain it, which is why the claim needs both.
 
 **`levels` is `Brightness/Contrast`, not Levels — and that is honest, not a dodge.**
 `LevelsToolArgs` is `{ brightness, contrast }` (`levels.ts` — `LevelsToolArgs`) and the processor

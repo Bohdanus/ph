@@ -34,7 +34,9 @@ violations on `main`.
   `draw` and `shape`, which are the two bullets that follow. Do not scope the
   work to `draw` and declare the requirement met.
   `draw` itself is a freehand-annotation layer tool; Photoshop's nearest is the
-  Brush, and the app already has a Brush. **It is to be deleted**, not relabelled.
+  Brush, and the app already has a Brush. **It is to be deleted**, not relabelled —
+  except that `draw` is the one tool this requirement does not reach, under the
+  operator's override recorded below.
 
 - **The operator has decided: the three come out of the rail.** 2026-10-01, in
   their words, "I decide to remove them." The **rail entries** go — Photoshop's
@@ -132,11 +134,22 @@ violations on `main`.
     in the same file asserts the two lists stay disjoint. Re-derive the count with
     `grep -c "placeholderTool(" src/tools/toolsMap.ts` and the `placeholderNames`
     list in that same test file; both answer seven.
-  - **`draw` is a live tile, and it is the last deletion.** The
+  - **`draw` is a live tile, and it is the last deletion.** **The deletion is
+    suspended: `OVR-2` in [`OVERRIDES.md`](OVERRIDES.md) keeps the `draw` tile in the
+    rail, labelled "Draw Tool", and rules that it carries no keyboard letter.** The
     `{ label: 'Draw Tool', name: 'draw' }` entry in `toolbarMap`
-    gives it its own tile at the end of the painting band, badged with Photoshop's own
-    `B`, so the invented tool is not hidden in a flyout — it is a visible,
-    keyboard-reachable tile. It is also the suite's default way to make a mark, which is
+    gives it its own tile at the end of the painting band, so the invented tool is not
+    hidden in a flyout — it is a visible tile. **It is not keyboard-reachable, and the
+    absence is deliberate rather than an oversight**, so there is no badge to read and
+    no false promise in one: the entry declares no `shortcut` because it previously
+    declared `shortcut: 'B'`, the Brush's own key, which made the rail render a `B`
+    badge on a tile whose key selects the Brush. `SidebarLeft` draws `tool.shortcut` as a
+    `<kbd>` only where one is declared, `AppKeyboardShortcuts.tsx` binds no key at all
+    to `draw`, and `HANDOFF.md` §119 records both halves. Three assertions in
+    `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` pin it, the
+    load-bearing one being
+    `it('gives the Draw tool no shortcut, because no key selects it')`. It is also the
+    suite's default way to make a mark, which is
     why `HANDOFF.md` §74 sequences it last: `clickToolButton(page, 'draw')` occurs in
     every `e2e/*.spec.ts` that makes a mark — count them with
     `grep -rc "clickToolButton([^)]*'draw'" e2e --include="*.spec.ts"`, which excludes

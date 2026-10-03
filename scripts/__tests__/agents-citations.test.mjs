@@ -520,7 +520,7 @@ const lineNumberCitationsByDocument = (documents) =>
 const ungatedDocumentsWithLineNumbers = (documents) =>
   documents
     .filter(({ path }) => !LINE_NUMBER_GATED.has(path))
-    .filter(({ text }) => lineNumberCitationsIn(text).length > 0)
+    .filter(({ text }) => bannedNumbersIn(text).length > 0)
     .map(({ path }) => path);
 
 describe("AGENTS.md's architecture claims resolve against the program", () => {
@@ -720,11 +720,33 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
     expect(lineNumberCitationsIn('```\nstill open\n`a.ts:1` after')).toEqual([]);
   });
 
-  it('reports the gated documents that still carry a numbered citation', () => {
+  it('reports the maintained documents that still carry a numbered citation', () => {
     // The migration's remainder, as a failing assertion rather than a number in a comment. This
     // test is EXPECTED to fail for as long as documents are unmigrated, which is stated here
     // rather than left to be discovered: it is the to-do list, and it shrinks by migration.
+    //
+    // It reads BOTH shapes, via `bannedNumbersIn`, which is what it stopped NOT doing once the last
+    // bare continuation in a maintained document was migrated. The bare form had a reason to be
+    // exempt here that no longer exists: it went red on `docs/OVERRIDES.md`, and that file is the
+    // operator's, so the fix had to be theirs before the widening could be honest. It also flags a
+    // TCP port as a coordinate — nothing in the syntax separates them — which is why
+    // `.skills/hard-merge.md` now says "port 5173" rather than quoting a bare `:5173`.
     expect(ungatedDocumentsWithLineNumbers(readMaintainedDocuments())).toEqual([]);
+  });
+
+  it('reports a bare continuation in an unGATED document too, not only a filename', () => {
+    // The guard on the guard for the widening above. Asserting the corpus is clean proves nothing
+    // on its own: if `bannedNumbersIn` stopped matching the bare form, this assertion would still
+    // pass for the wrong reason — which is exactly how the bare form survived a green gate for the
+    // whole life of the rule.
+    expect(ungatedDocumentsWithLineNumbers([{ path: 'docs/FEATURES.md', text: 'the guard at `:476` fails' }])).toEqual([
+      'docs/FEATURES.md',
+    ]);
+    expect(
+      ungatedDocumentsWithLineNumbers([{ path: 'docs/FEATURES.md', text: 'the guard at `settings.ts:476` fails' }])
+    ).toEqual(['docs/FEATURES.md']);
+    // A fenced one is still quotation, on this leg as on the gated one.
+    expect(ungatedDocumentsWithLineNumbers([{ path: 'docs/FEATURES.md', text: '```\n`:476`\n```\n' }])).toEqual([]);
   });
 
   it('gates a real document, and the gated set is every path it claims to be', () => {

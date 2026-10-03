@@ -683,10 +683,10 @@ and it is the ONLY caller of `cancel()` (in `Transform`,
 that same component: it runs `cancelLayerPreview?.()` and resets the panel args, and
 dispatches nothing, so what survives is the last committed state.
 
-**An earlier version of the app had four controls stacked in that column, and it now has two
-buttons and nothing else.** The column used to be `Reset All`, `Apply` and `Cancel` under the mirror
-toggles (all three since removed from `Transform.tsx`). All three were removed across two steps,
-`Cancel` last, which leaves the bar with no text control at all — no commit, no discard, no reset.
+**An earlier version of the app had four children stacked in that column — the mirror-toggle pair and
+three text links — and it now has two buttons and nothing else.** The column used to be `Reset All`,
+`Apply` and `Cancel` under the mirror toggles. All three were removed across two steps, `Cancel`
+last, which leaves the bar with no text control at all — no commit, no discard, no reset.
 
 **The reason was HEIGHT, and the first version of this entry said width, which is wrong in a way
 that sends the next session after a defect that does not exist.** The column is a `flex flex-col`

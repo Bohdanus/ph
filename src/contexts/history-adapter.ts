@@ -121,7 +121,7 @@ function plainValue(value: unknown, path: string, compaction?: ArrayCompaction):
     // sparse array rather than a defect. Treating it as one WAS the bug: a throw
     // here became an `error` diagnostic, and `convertLegacyHistorySafely`
     // withholds the WHOLE shadow on the first one, so one holey tool-arg array
-    // was enough to lose the document (`HANDOFF.md` §93).
+    // was enough to lose the document.
     //
     // The absence is PRESERVED rather than compacted away, because legacy replay
     // (`history-replay.ts`) hands the processor the original array and an index

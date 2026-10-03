@@ -11,30 +11,32 @@ Prose half of `src/tools/descriptions/shape.ts`. Seven keys: `shape`, `rectangle
 file, and the previous revision of this file was wrong about nearly all of them.** Its closing
 sentence claimed the positions had been re-derived; they had not, and they had drifted off the code
 they named. The correct map, each verified by reading the unit the citation pointed into — a position
-inside a file is gone, the unit it sat in is not:
+inside a file is gone, the unit it sat in is not. The third column is how far each anchor had moved
+when the map was built, **and those distances are history in the same way the map is**: they describe
+the pass that re-derived it, not the tree today, which has moved again:
 
-| What the previous revision cited              | The unit, and what is actually there                                                                            |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `Mode`                                        | `Figures/Shape.tsx` — `Shape()`: `<select aria-label="Tool mode">`                                              |
-| `Fill`, `Stroke`                              | `Figures/Shape.tsx` — `Shape()`: `id="filled-toggle"`                                                           |
-| `Stroke width`                                | `Figures/Shape.tsx` — `Shape()`: `id="thickness-slider"`                                                        |
-| `Stroke type`                                 | `Figures/Shape.tsx` — `Shape()`: `id="dash-toggle"`                                                             |
-| `Opacity`                                     | `Figures/Shape.tsx` — `Shape()`: `id="alpha-slider"`                                                            |
-| `Radius`                                      | `Figures/Shape.tsx` — `Shape()`'s `figure === 'rectangle'` gate: `aria-label="Radius"`                          |
-| `Cap`                                         | `Figures/Shape.tsx` — `Shape()`'s `figure === 'line'` gate: `aria-label="Line cap"`                             |
-| `cornerRadius` read by the renderer           | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch: `const radius = args.cornerRadius ?? 0` |
-| `hasFill` derived from `toolMode`             | `src/tools/shape.ts` — `drawShape()`: `const hasFill = args.toolMode !== 'path' && args.hasFill`                |
-| the shared triangle/polygon branch            | `src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' \|\| figure === 'polygon'` branch                 |
-| the side count                                | `src/tools/shape.ts` — that same branch: `const sides = figure === 'triangle' ? 3 : 5`                          |
-| the rectangle branch                          | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch                                          |
-| the oval branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'oval'` branch                                               |
-| the line branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'line'` branch                                               |
-| Shift geometry                                | `src/tools/shape.ts` — `normalizeShapeGeometry()` and its `if (shiftKey)` arm                                   |
-| the six figure blocks                         | `src/tools/settings.ts` — `defaultSettings`                                                                     |
-| the canvas dispatch                           | `src/components/Main/Main.tsx` — `Main()`: `toolName === 'shape' \|\|`, first arm of the dispatch               |
-| the six fly-out entries                       | `toolbar-mapping.ts` — `toolbarMap`'s shapes fly-out                                                            |
-| `orderedFigures` and the index arithmetic     | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                |
-| the `U` handler: keep, else force `rectangle` | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                |
+| What the previous revision cited              | The unit, and what is actually there                                                                            | What moved                                               |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `Mode`                                        | `Figures/Shape.tsx` — `Shape()`: `<select aria-label="Tool mode">`                                              | 8 lines lower                                            |
+| `Fill`, `Stroke`                              | `Figures/Shape.tsx` — `Shape()`: `id="filled-toggle"`                                                           | 8 lines lower                                            |
+| `Stroke width`                                | `Figures/Shape.tsx` — `Shape()`: `id="thickness-slider"`                                                        | 8 lines lower                                            |
+| `Stroke type`                                 | `Figures/Shape.tsx` — `Shape()`: `id="dash-toggle"`                                                             | 8 lines lower                                            |
+| `Opacity`                                     | `Figures/Shape.tsx` — `Shape()`: `id="alpha-slider"`                                                            | 8 lines lower                                            |
+| `Radius`                                      | `Figures/Shape.tsx` — `Shape()`'s `figure === 'rectangle'` gate: `aria-label="Radius"`                          | 17 — the furthest that file moved                        |
+| `Cap`                                         | `Figures/Shape.tsx` — `Shape()`'s `figure === 'line'` gate: `aria-label="Line cap"`                             | 11                                                       |
+| `cornerRadius` read by the renderer           | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch: `const radius = args.cornerRadius ?? 0` | 24 — `drawShape()` grew above it                         |
+| `hasFill` derived from `toolMode`             | `src/tools/shape.ts` — `drawShape()`: `const hasFill = args.toolMode !== 'path' && args.hasFill`                | 24                                                       |
+| the shared triangle/polygon branch            | `src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' \|\| figure === 'polygon'` branch                 | 24                                                       |
+| the side count                                | `src/tools/shape.ts` — that same branch: `const sides = figure === 'triangle' ? 3 : 5`                          | 24                                                       |
+| the rectangle branch                          | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch                                          | 24                                                       |
+| the oval branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'oval'` branch                                               | 24                                                       |
+| the line branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'line'` branch                                               | 24                                                       |
+| Shift geometry                                | `src/tools/shape.ts` — `normalizeShapeGeometry()` and its `if (shiftKey)` arm                                   | 22 and 24                                                |
+| the six figure blocks                         | `src/tools/settings.ts` — `defaultSettings`                                                                     | 7 each                                                   |
+| the canvas dispatch                           | `src/components/Main/Main.tsx` — `Main()`: `toolName === 'shape' \|\|`, first arm of the dispatch               | 8                                                        |
+| the six fly-out entries                       | `toolbar-mapping.ts` — `toolbarMap`'s shapes fly-out                                                            | **6 higher** — the only one here that went the other way |
+| `orderedFigures` and the index arithmetic     | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                | 40 — the furthest in the family                          |
+| the `U` handler: keep, else force `rectangle` | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                | 40, the same move                                        |
 
 Two of those were not drift but **a real position in the wrong unit**: the two citations that named
 `Figures/Shape.tsx` landed on `figureLabel` — its closing brace and its declaration — so the entries
