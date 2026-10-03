@@ -140,9 +140,14 @@ const Text: React.FC<{}> = () => {
     if (appliedArgsRef.current === toolArgs) return;
     const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
     const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
-    if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
-      const localPos = sortedRectToPos(sortRect(measuredRect));
-      const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+    const localPos = sortedRectToPos(sortRect(measuredRect));
+    const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+    const editsActiveLayer =
+      activeLayer?.source?.kind === 'tool' &&
+      activeLayer.source.args.toolName === 'text' &&
+      pos.x === activeLayer.pos.x &&
+      pos.y === activeLayer.pos.y;
+    if (editsActiveLayer && activeLayer) {
       replaceLayerSource(activeLayer.id, { kind: 'tool', args: { ...toolArgs, rect: measuredRect }, pos });
     } else {
       // The re-entrancy guard is armed AFTER the create, not before it. Armed before, a throw from

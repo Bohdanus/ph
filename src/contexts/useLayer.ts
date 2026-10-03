@@ -465,17 +465,22 @@ export const useLayers = () => {
       const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
         const measuredRect = calculateNewRect(args, canvasRef, totalSize) ?? args.rect;
-        const source: ToolLayerSource = {
-          kind: 'tool',
-          args: { ...args, rect: measuredRect },
-          pos: canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame),
-        };
-        const replaced = replaceLayerSource(activeLayer.id, source);
-        if (replaced) {
-          const cleared = { ...args, text: '', rect: null };
-          if (setToolArgs) setToolArgs(cleared);
-          else currentArgsRef.current = cleared;
-          return { ...layers, [activeLayer.id]: replaced };
+        const pos = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
+        // A new drag on a different origin creates a new text layer. Selection hydration
+        // preserves the active layer's origin, which is the explicit in-place-edit signal.
+        if (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y) {
+          const source: ToolLayerSource = {
+            kind: 'tool',
+            args: { ...args, rect: measuredRect },
+            pos,
+          };
+          const replaced = replaceLayerSource(activeLayer.id, source);
+          if (replaced) {
+            const cleared = { ...args, text: '', rect: null };
+            if (setToolArgs) setToolArgs(cleared);
+            else currentArgsRef.current = cleared;
+            return { ...layers, [activeLayer.id]: replaced };
+          }
         }
       }
 

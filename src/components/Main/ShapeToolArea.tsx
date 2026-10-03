@@ -234,7 +234,12 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       pos: pos,
     };
     const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
-    if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'shape') {
+    const editsActiveLayer =
+      activeLayer?.source?.kind === 'tool' &&
+      activeLayer.source.args.toolName === 'shape' &&
+      pos.x === activeLayer.pos.x &&
+      pos.y === activeLayer.pos.y;
+    if (editsActiveLayer && activeLayer) {
       replaceLayerSource(activeLayer.id, { kind: 'tool', args: newArgs, pos });
     } else {
       createLayerFromTool(fullArgs);
