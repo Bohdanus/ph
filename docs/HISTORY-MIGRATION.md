@@ -114,8 +114,8 @@ a separate source-replacement requirement.
 2. Close the current migration boundary defects and keep every currently
    appendable durable operation replayable without changing production
    authority. The runtime retained-operation boundary and supported raster
-   append path are closed; Brush/Pencil remain the separate `HANDOFF.md` §198
-   step until their processor contract is durable-safe.
+   append path are closed; remaining work is coordinator wiring and the
+   explicitly deferred authority transfer.
 3. Verify source-edit history and source rehydration together for text and
    shape correction. Keep independent legacy/durable parity for creation, edit,
    undo, redo, and navigation.

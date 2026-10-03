@@ -6112,24 +6112,6 @@ stack.
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
 
-## 198. Brush and Pencil raster edits have no durable retained form
-
-**Problem.** The runtime/replay presentation boundary now stages retained operations once and
-publishes the baked bounds. The durable append boundary records the supported raster processors as
-asset-free `apply-raster-processor` operations, but Brush and Pencil create a fresh canvas from
-their stroke instead of compositing onto the layer input. Replaying either operation would discard
-the base pixels, so the boundary correctly refuses those two tools rather than publishing a hole.
-
-**What is needed.** Either make Brush and Pencil processors composite onto their input bitmap, with
-legacy/durable parity for transformed layers, undo/redo, document-space coordinates, and asset
-release, or add a separate source-backed raster result operation with an explicit ownership
-contract. Keep the current refusal until one of those representations is proven.
-
-**Files.** `src/tools/toolProcessors.ts` — the input-compositing contract;
-`src/contexts/history-append.ts` — raster translation and boundary diagnostics;
-`src/contexts/history-adapter.ts` — `operationForTool()`; `src/contexts/materialization.ts` —
-raster replay; and the corresponding StoreContext, legacy replay, export, and durable parity tests.
-
 ## 199. Replay budget runner is dormant until the coordinator owns it
 
 **Problem.** `defineReplayBudget()` and `runReplayUnderBudget()` now provide a pure cooperative
