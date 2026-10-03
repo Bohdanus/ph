@@ -549,10 +549,14 @@ the `test-results/results.json` written in CI are all readable without a window.
 
 ### Local vs CI behaviour
 
-`npm run test:e2e` sets **no** `CI=true`. Setting it would flip `forbidOnly` on (a
-stray `test.only` becomes a hard error), enable `retries: 2`, switch the reporter
-to `github`, and default `workers` to full parallelism. Locally you get
+`npm run test:e2e` sets **no** `CI=true`. Setting it would enable `retries: 2`, switch
+the reporter to `github`, and default `workers` to full parallelism. Locally you get
 `workers: 1` and a `list`/`html` reporter, which keeps a debug run readable.
+
+`forbidOnly` is **not** one of the differences, and never was a safe one to make
+conditional. It is unconditional, so a stray `test.only` is a hard error on every
+run rather than a silent scope reduction on the local runs where it is least
+visible.
 
 The one thing `CI` does change in the wrapper is that it skips the swarm lock and
 keeps the default :5173 and the shared `test-results/`, because a CI job owns its

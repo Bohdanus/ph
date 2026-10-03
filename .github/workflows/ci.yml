@@ -183,10 +183,11 @@ jobs:
     # sidebar keyboard flyout race. All three of those groups are fixed in this
     # repository, and are recorded as fixed in `e2e/OPEN_PROBLEMS.md` ("Observed
     # failures") and in `e2e/README.md`. The specs declare no `test.fail`, no
-    # `test.fixme` and no `describe.skip`; the only two skips are unconditional
-    # `test.skip` declarations in `e2e/export/photopea.spec.ts` and
-    # `e2e/sidebar-flyout.spec.ts`. Nothing in the tree marks a test as failing, so
-    # the stated justification had stopped describing the suite, and the job went on
+    # `test.fixme` and no `describe.skip`; the only three skips are unconditional
+    # `test.skip` declarations in `e2e/export/photopea.spec.ts`,
+    # `e2e/sidebar-flyout.spec.ts` and `e2e/viewport-drawing.spec.ts`. Nothing in
+    # the tree marks a test as failing, so the stated justification had stopped
+    # describing the suite, and the job went on
     # reporting a state the suite no longer had. The comment kept its number alive
     # long after the failures behind it were gone.
     #

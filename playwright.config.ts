@@ -31,7 +31,25 @@ export default defineConfig({
     timeout: 5_000,
   },
   fullyParallel: true,
-  forbidOnly: !!process.env.CI,
+  // UNCONDITIONAL, and deliberately not `!!process.env.CI`.
+  //
+  // A committed `test.only` is not a CI problem, it is a SILENT SCOPE REDUCTION on
+  // every local run: the suite collects one test, prints it green, and the operator
+  // reads a green run as coverage. The old `!!process.env.CI` guard therefore made
+  // the failure mode worst exactly where it is least visible — a local run reports
+  // one passing test where there should be hundreds, and nothing says so.
+  //
+  // `forbidOnly` costs a developer nothing: a `test.only` in a working tree is a
+  // deliberate act, and the fix is to delete it or commit it as `test.skip`, which
+  // states the intent in a form that survives review.
+  //
+  // This is a STRUCTURAL refusal, like the `headless` default below: it holds for
+  // every invocation whatever started it, and nothing but a reviewable edit to this
+  // file can turn it off. Pinned by the `it('refuses a committed `test.only` on every
+  // run, not only under CI')` guard in src/__tests__/harness-integrity.test.ts, which
+  // reads the config with `CI` deleted AND set, because one reading does not
+  // discriminate — `!!process.env.CI` is already `true` under CI.
+  forbidOnly: true,
   retries: process.env.CI ? 2 : 0,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
