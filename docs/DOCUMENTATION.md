@@ -127,15 +127,27 @@ note that the fix is expensive.
 
 Three documents mark things, and they were written independently, so their markers do not match.
 
-| Document                             | Its markers                                                                |
-| ------------------------------------ | -------------------------------------------------------------------------- |
-| [`FEATURES.md`](FEATURES.md)         | `have` · `partial` · `divergent` · `absent` · `platform` · `decision`      |
-| [`LAYERS-PANEL.md`](LAYERS-PANEL.md) | `HAVE` · `PARTIAL` · `GAP` · `OUT` · `SCOPE` · `UNVERIFIED`                |
-| [`TOOLS.md`](TOOLS.md)               | `present` · `partial` · `missing` · `placeholder` — per control, generated |
+| Document                             | Its markers                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------ |
+| [`FEATURES.md`](FEATURES.md)         | `have` · `partial` · `divergent` · `absent` · `platform` · `decision`    |
+| [`LAYERS-PANEL.md`](LAYERS-PANEL.md) | `HAVE` · `PARTIAL` · `GAP` · `OUT` · `SCOPE` · `UNVERIFIED`              |
+| [`TOOLS.md`](TOOLS.md)               | `present` · `partial` · `inert` · `missing` — per **control**, generated |
 
 `partial` and `PARTIAL` mean the same thing and differ only in case. The rest are not aliases:
 `GAP` is `absent`, `OUT` is `decision`, `SCOPE` is a routing marker, `UNVERIFIED` is an unknown, and
 `platform` is a claim this repository can justify against the platform.
+
+**`TOOLS.md` uses two vocabularies, and they answer different questions.** Its per-control statuses
+are `ToolControlStatus` in `src/tools/descriptions/types.ts` — `present`, `partial`, `inert`,
+`missing` — and `scripts/generate-tool-docs.mjs` prints exactly those four into the "In this app"
+column. Its per-tool verdicts are `ToolImplementationStatus`, also in that file — `implemented`,
+`partial`, `placeholder` — and `placeholder` is an **implementation** status, never a control status:
+a tool is `placeholder` when it is selectable and commits nothing (`commit: 'unimplemented'`, an
+`imageProcessor` returning `null`). A control has no such value, because a control that renders
+nothing behind itself is `inert` or `missing`, and a control that renders and works is `present`.
+Confusing the two is what produces "the app already has it" claims that a screenshot contradicts:
+the type comment at `src/tools/descriptions/types.ts` records that confusion being made, and records
+why each value exists.
 
 **Each set is scoped to the document that owns the capability, and that document is the only one
 that may use its markers.** Where two documents both mark the same capability, the one whose scope

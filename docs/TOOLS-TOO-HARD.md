@@ -277,10 +277,14 @@ Perspective and Warp, a draggable reference point for the transform origin, Shif
 commit on Enter. <https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html>
 
 **What this app does.** A fixed-parameter panel. The options bar publishes a preview through
-`tempUpdateLayer` and nothing is committed until the user presses Apply —
-`src/components/ToolbarsRight/Transform/Transform.tsx:48` is the `tempUpdateLayer` call inside the
-throttled change handler, and the Apply button is at
-`src/components/ToolbarsRight/Transform/Transform.tsx:303-305`.
+`tempUpdateLayer`, and the geometry is committed when the gesture ends: a drag previews until the
+pointer is released and then lands as one history entry, bound to the browser's native `change`
+event rather than to React's `onChange`, which is the per-frame `input` event
+(`src/components/ToolbarsRight/Transform/Transform.tsx:54-69` and `:80`). Switching tool
+(`src/hooks/useApp.ts:167`) and exporting still commit too. The bar carries no commit control and no
+discard control; the whole right-hand column is the two mirror toggles, centered in the slack the
+removed links left behind (`:314`), and Escape — handled at `:31-39` — is the only route that
+discards a preview.
 
 **Why it is too hard.** The bounding box is a gesture surface that owns the pointer for its duration
 and resolves to an arbitrary affine or projective transform. This app's transform path is
@@ -288,37 +292,76 @@ parameter-driven and previewed as a layer, with Distort and Warp in particular n
 displacement field rather than a matrix. It is also a different commit discipline: one gesture, one
 result, committed on a keypress rather than a panel change.
 
-**What the app does instead.** Numeric fields and a Reset control. The preview is real and it is
-correct; it is just not draggable, so every transform is a round trip through the panel.
+**What the app does instead.** Numeric fields and a gesture that commits when you let go. The
+preview is real and it is correct; it is just not draggable, so every transform is a round trip
+through the panel.
 
-### Crop: Straighten, Curve and Content-Aware
+### Crop: Straighten, Content-Aware and Generative Expand
 
-**What Photoshop does.** The Crop tool's options bar carries Straighten and Curve, which rotate the
-image inside a stationary crop box, and Content-Aware Fill, which synthesises canvas beyond the image
-edge when the crop goes past it. <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten-photos.html>
+**What Photoshop does.** The Crop tool's options bar carries **Straighten** — "Select the Straighten
+tool from the Options bar, then drag a line along an edge in the tilted image" — which rotates the
+image behind a stationary crop box.
+<https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/straighten-tilted-photos.html>
 
-**What this app does.** The crop processor trims a rect and returns the trimmed raster
-(`src/tools/crop.ts:26-39`):
+A **Fill** dropdown on the same bar decides what fills the canvas a crop adds outside the image edge —
+"Go to the Fill dropdown in the Options bar and select Content-Aware Fill" — with Generative Expand the
+cloud value described below.
+<https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/apply-content-aware-fill-while-cropping-images.html>
+
+**The bar carries no Curve, and Adobe does not claim that it does.** Adobe's own enumeration of the
+bar's controls is the _Crop tool options_ page, last updated 23 Feb 2026: it lists the aspect-ratio
+values, and in the gear menu Delete Cropped Pixels, Use Classic Mode, Auto Center Preview, Show Cropped
+Area and Enable Crop Shield — no Curve among them. Straighten and Fill are documented on sibling pages,
+and the Curve Photoshop documents is the separate Curves adjustment, recorded under
+[Curves — a spline over the tonal range](#curves--a-spline-over-the-tonal-range) below.
+<https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html>
+
+**Generative Expand** is the value that flow is built around: "From the Tools panel, select Crop tool
+and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and select
+Generate to let Photoshop extend the image" and "Choose a variation from the Properties panel". The
+model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in the added band
+are computed by a cloud service and arrive on a layer of their own.
+<https://helpx.adobe.com/photoshop/desktop/create-open-import-images/create-images/explore-beyond-the-canvas-with-generative-expand.html>
+
+**What this app does.** The frame grows and nothing is filled. `applyDocumentCrop` takes the gesture
+rect **unclamped** — `sortRoundRect` (`src/util/rect.ts:84`) sorts it and rounds each edge once, with
+no clamp to the document — so a rect dragged past an edge produces a larger `documentFrame`
+(`src/contexts/useLayer.ts:839`, the next frame computed at `:840` and compared against the current
+one):
 
 ```ts
-export const crop =
-  ({ bitmap, size }: ProcessorToolParams) =>
-  ({ rect }: CropToolArgs) => {
-    const canvas = new OffscreenCanvas(size.width, size.height);
-
-    const { x, y, width, height } = trimRect(rect!, size);
-    ...
+const { x, y, width, height } = sortRoundRect(rect);
 ```
 
-There is no rotation in the processor and no synthesis. Straighten and Curve would rotate the source
-under a fixed box; Content-Aware is a generative fill over regions outside the image.
+The crop is registered as a `document-operation` (`src/tools/toolProcessors.ts:157-162`), so the
+commit is a frame edit and not a raster: it dispatches no fill of any kind, and the band the growth
+adds is covered by no layer and left transparent whatever the bottom layer is — the operator's
+decision, recorded as OVR-1 in [`OVERRIDES.md`](./OVERRIDES.md).
+
+The **Fill** control is not rendered at all: the bar carries an `Aspect Ratio` select and two buttons,
+`Apply` and `Clear` (`src/components/ToolbarsRight/Crop/Crop.tsx:55-95`), and the only file under
+`src/` naming Content-Aware or Generative is the generated tool description
+(`src/tools/descriptions/type-crop.ts:241-245`), which is documentation data rather than code.
 
 **Why it is too hard.** Straighten alone is a rotation, which the app has elsewhere, but it is the
-gesture and the box relationship that is the feature, and Content-Aware is a patch-based synthesis
-model with no analogue in this codebase at all.
+gesture and the box relationship that is the feature. Content-Aware is a patch-based synthesis model
+with no analogue in this codebase at all, and Generative Expand is a cloud generative feature: a model
+server answers with three variations that land on a new generative layer. Neither is a gap in the crop
+processor — it is a gap in what the app is. The app has no network surface anywhere under `src/`, and
+a tool commit is a synchronous call returning `[BitmapSource, Partial<Pos>?]`
+(`src/tools/toolProcessors.ts:37`, the processor signature at `:75`), which is the shape a server round
+trip and three returned variations cannot take.
 
-**What the app does instead.** An axis-aligned rect, with a ratio lock and a straightening rotation
-applied as a separate step. The processor is honest about what it takes — a rect and a bitmap.
+**What the app does instead.** An axis-aligned rect with a ratio lock, which may be dragged past the
+image edge: the canvas grows and the added band is transparent. The commit path is honest about what
+it takes — a rect, the current frame, and one document edit — and it says so by writing no fill.
+
+**The frame growth is not this entry's capability, so the growth deletes nothing here.** What this
+entry records is Straighten, Content-Aware and Generative Expand. Growing the canvas is a fourth thing,
+and the cheapest of Adobe's Fill values, decided by the operator rather than synthesised. Patch-based
+synthesis and a cloud generative call are not landing, so this entry stays open under the lifecycle
+rule in the preamble, and what survives the growth is Adobe's behaviour, which a transparent band does
+not change.
 
 ### Black and White as a hue-sextant weighted mix
 

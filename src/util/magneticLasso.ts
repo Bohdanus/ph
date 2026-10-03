@@ -144,7 +144,12 @@ export function createEdgeMapFromCanvas(canvas: HTMLCanvasElement | null): EdgeM
 
   try {
     return createEdgeMapFromImageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
-  } catch {
+  } catch (error) {
+    // As in `magicWand.ts`: `getImageData` throws on a tainted or zero-area
+    // canvas, and `null` here is read by the caller as an empty edge map, so the
+    // lasso silently traces nothing. Reported per HANDOFF.md §98, one line per
+    // gesture.
+    console.error(error);
     return null;
   }
 }

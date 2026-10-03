@@ -46,8 +46,8 @@ type BurnToolAreaProps = {
  * `onCommit`.
  *
  * The coordinate conversion is the other half. `usePaintStroke` yields document-space
- * points; `tempUpdateLayer` hands the processor the layer's OWN raster with
- * `size: layer.pos` (`src/contexts/useLayer.ts:544`), so the frame the processor addresses
+ * points; the processor is handed the layer's OWN raster in that layer's space
+ * (`src/contexts/useLayer.ts:730-734`), so the frame the processor addresses
  * starts at `activeLayer.pos` and a document point has to become
  * `point - activeLayer.pos` before it is used as a pixel address.
  * `src/util/layer-space.ts` states the two spaces; `DodgeToolArea.tsx` carries the

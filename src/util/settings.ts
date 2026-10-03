@@ -28,7 +28,7 @@ export function saveLastSettings(args: ToolArgs) {
   if (toolName === 'draw') {
     lastSavedSettings.draw = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'text') {
-    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect'));
+    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect', 'kind'));
   } else if (toolName === 'shape') {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {

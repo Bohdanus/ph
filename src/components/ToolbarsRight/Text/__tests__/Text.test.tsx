@@ -29,6 +29,14 @@ const toolArgs = vi.hoisted(() => ({
   // `defaultSettings.text` carries a colour (src/tools/settings.ts:82-94), so the fixture must too:
   // the swatch renders `toolArgs.color` directly, and a missing one leaves the input valueless.
   color: '#000000',
+  // The five optional character attributes, present at their defaults so a toggle test can start
+  // from a known-off state. `dropOptionalStyleFields()` below removes them for the test that
+  // needs them genuinely absent, which is a different document (see its comment).
+  allCaps: false,
+  smallCaps: false,
+  underline: false,
+  strikethrough: false,
+  tracking: 0,
 }));
 
 const mockCreateLayerFromTool = vi.hoisted(() => vi.fn());
@@ -74,9 +82,50 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
     fontFamily: 'Arial',
     align: 'left',
     color: '#000000',
+    allCaps: false,
+    smallCaps: false,
+    underline: false,
+    strikethrough: false,
+    tracking: 0,
     ...overrides,
   });
 }
+
+/**
+ * Removes the five optional character attributes outright rather than setting them to `undefined`.
+ *
+ * `saveLastSettings` persists the record verbatim, so a settings object written before a field
+ * existed has NO key for it — not `false`, not `0`, not `undefined`. Those three are different
+ * documents and only the missing key is the one an older build leaves on disk, so this is the
+ * only honest way to render the persisted-settings-precedes-the-field case.
+ */
+function dropOptionalStyleFields() {
+  for (const field of ['allCaps', 'smallCaps', 'underline', 'strikethrough', 'tracking'] as const) {
+    delete (toolArgs as Record<string, unknown>)[field];
+  }
+}
+
+/**
+ * The args the toolbar last published. Every assertion about a change reads the publish rather
+ * than the DOM: the mocked store hands back the same object until something republishes it, so a
+ * test that re-read `toolArgs` would be reading back its own fixture.
+ */
+const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
+
+/**
+ * A range input does not move under an arrow key in jsdom, so the value is stepped by hand and
+ * an `input` event is dispatched to stand in for the keystroke. React's value tracker is what
+ * turns that into a `change`, which is why the event type has to match the control: `input` for
+ * the two sliders, and a real `change` for the number field and the colour swatch.
+ */
+const pressArrowOnRange = (range: HTMLInputElement, key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => {
+  if (key === 'ArrowUp' || key === 'ArrowRight') {
+    range.stepUp();
+  } else {
+    range.stepDown();
+  }
+  fireEvent.input(range);
+};
 
 const renderWithProvider = (ui: React.ReactElement) => {
   return render(<KeyboardEventsProvider>{ui}</KeyboardEventsProvider>);
@@ -93,10 +142,14 @@ describe('Text toolbar', () => {
   it('renders text input and controls', () => {
     renderWithProvider(<Text />);
 
+    // Every labelled control the bar is supposed to carry, by its visible name. A control that
+    // loses its `htmlFor` silently stops appearing here, which is the only place that catches it.
     expect(screen.getByLabelText('Text')).toBeInTheDocument();
     expect(screen.getByLabelText('Font')).toBeInTheDocument();
     expect(screen.getByLabelText(/Font Size/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Line Height/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Tracking/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Color')).toBeInTheDocument();
     expect(screen.getByLabelText('Align')).toBeInTheDocument();
   });
 
@@ -107,19 +160,23 @@ describe('Text toolbar', () => {
     expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
   });
 
-  it('has Bold and Italic toggle buttons', () => {
+  it('names the style toggles for assistive technology, not by their glyph', () => {
     renderWithProvider(<Text />);
 
-    expect(screen.getByRole('button', { name: 'B' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'I' })).toBeInTheDocument();
+    // The accessible name used to be the glyph — "B", "I" — which tells a screen-reader user
+    // nothing about a control whose entire function is to say whether the text is bold. These six
+    // are the six names Adobe uses for the same six attributes.
+    for (const name of ['Bold', 'Italic', 'All Caps', 'Small Caps', 'Underline', 'Strikethrough']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
   });
 
   it('starts from the bold and italic state carried by the tool args', () => {
     resetToolArgs({ bold: true, italic: true });
     renderWithProvider(<Text />);
 
-    const boldButton = screen.getByRole('button', { name: 'B' });
-    const italicButton = screen.getByRole('button', { name: 'I' });
+    const boldButton = screen.getByRole('button', { name: 'Bold' });
+    const italicButton = screen.getByRole('button', { name: 'Italic' });
 
     expect(boldButton.className).toContain('bg-blue-600');
     expect(italicButton.className).toContain('bg-blue-600');
@@ -129,11 +186,194 @@ describe('Text toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ bold: false, italic: true }));
   });
 
-  it.fails('exposes the bold and italic toggle state through aria-pressed (Text.tsx:189-206)', () => {
+  it('exposes the bold and italic toggle state through aria-pressed', () => {
+    // This was `it.fails` while the bar had no `aria-pressed` at all: a tripwire declaring that a
+    // stateful toggle announced itself as a plain button. The affordance exists now, so the
+    // tripwire had to become a real assertion in the same change that added the attribute.
+    const { unmount } = renderWithProvider(<Text />);
+
+    const boldButton = screen.getByRole('button', { name: 'Bold' });
+    const italicButton = screen.getByRole('button', { name: 'Italic' });
+
+    // `false`, not a missing attribute: absent and `"false"` are different states to assistive
+    // technology, and React drops the attribute entirely for `undefined`.
+    expect(boldButton).toHaveAttribute('aria-pressed', 'false');
+    expect(italicButton).toHaveAttribute('aria-pressed', 'false');
+
+    // And the attribute tracks the args rather than being decoration: a second render handed
+    // `bold: true` announces exactly one button as pressed. A constant `aria-pressed` passes the
+    // half of this test above and fails here.
+    unmount();
+    resetToolArgs({ bold: true });
     renderWithProvider(<Text />);
 
-    expect(screen.getByRole('button', { name: 'B' })).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByRole('button', { name: 'I' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Bold' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Italic' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  describe('the four style toggles', () => {
+    // Each toggle below asserts the same three things, because each of the three is a way a
+    // toggle can be broken without any of the others noticing:
+    //   1. it starts from the state the tool args carry, not from a hardcoded default;
+    //   2. clicking publishes the INVERSE — a toggle that published a constant would leave the
+    //      second click doing nothing, and only the second click can tell the two apart;
+    //   3. it exposes that state twice, `aria-pressed` for assistive technology and the blue fill
+    //      for the eye. Asserting one of the two proves nothing about the other.
+    it('All Caps starts off from the args, publishes true, and reads back on from a seeded arg', () => {
+      const { unmount } = renderWithProvider(<Text />);
+
+      const toggle = screen.getByRole('button', { name: 'All Caps' });
+      expect(toggle).toHaveAttribute('id', 'text-all-caps');
+      expect(toggle).toHaveAttribute('aria-pressed', 'false');
+      expect(toggle.className).not.toContain('bg-blue-600');
+
+      fireEvent.click(toggle);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ allCaps: true }));
+
+      unmount();
+      mockSetToolArgs.mockClear();
+      resetToolArgs({ allCaps: true });
+      renderWithProvider(<Text />);
+
+      const on = screen.getByRole('button', { name: 'All Caps' });
+      expect(on).toHaveAttribute('aria-pressed', 'true');
+      expect(on.className).toContain('bg-blue-600');
+
+      fireEvent.click(on);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ allCaps: false }));
+    });
+
+    it('Small Caps starts off from the args, publishes true, and reads back on from a seeded arg', () => {
+      // Small Caps is a SEPARATE boolean from All Caps, not a mode of it: Adobe's rule is that
+      // small caps "generates faux small caps" for the lowercase only, leaving characters typed
+      // as capitals at full size. A control that derived one from the other would break that, and
+      // a render that mixed the two keys up would pass every other test in this file.
+      const { unmount } = renderWithProvider(<Text />);
+
+      const toggle = screen.getByRole('button', { name: 'Small Caps' });
+      expect(toggle).toHaveAttribute('id', 'text-small-caps');
+      expect(toggle).toHaveAttribute('aria-pressed', 'false');
+      expect(toggle.className).not.toContain('bg-blue-600');
+
+      fireEvent.click(toggle);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ smallCaps: true }));
+
+      unmount();
+      mockSetToolArgs.mockClear();
+      resetToolArgs({ smallCaps: true });
+      renderWithProvider(<Text />);
+
+      const on = screen.getByRole('button', { name: 'Small Caps' });
+      expect(on).toHaveAttribute('aria-pressed', 'true');
+      expect(on.className).toContain('bg-blue-600');
+
+      fireEvent.click(on);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ smallCaps: false }));
+    });
+
+    it('Underline starts off from the args, publishes true, and reads back on from a seeded arg', () => {
+      const { unmount } = renderWithProvider(<Text />);
+
+      const toggle = screen.getByRole('button', { name: 'Underline' });
+      expect(toggle).toHaveAttribute('id', 'text-underline');
+      expect(toggle).toHaveAttribute('aria-pressed', 'false');
+      expect(toggle.className).not.toContain('bg-blue-600');
+      // The glyph carries the decoration, so the control still reads as underlined with the
+      // screen-reader name and the attribute swapped in.
+      expect(toggle.querySelector('.underline')).not.toBeNull();
+
+      fireEvent.click(toggle);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ underline: true }));
+
+      unmount();
+      mockSetToolArgs.mockClear();
+      resetToolArgs({ underline: true });
+      renderWithProvider(<Text />);
+
+      const on = screen.getByRole('button', { name: 'Underline' });
+      expect(on).toHaveAttribute('aria-pressed', 'true');
+      expect(on.className).toContain('bg-blue-600');
+
+      fireEvent.click(on);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ underline: false }));
+    });
+
+    it('Strikethrough starts off from the args, publishes true, and reads back on from a seeded arg', () => {
+      const { unmount } = renderWithProvider(<Text />);
+
+      const toggle = screen.getByRole('button', { name: 'Strikethrough' });
+      expect(toggle).toHaveAttribute('id', 'text-strikethrough');
+      expect(toggle).toHaveAttribute('aria-pressed', 'false');
+      expect(toggle.className).not.toContain('bg-blue-600');
+      expect(toggle.querySelector('.line-through')).not.toBeNull();
+
+      fireEvent.click(toggle);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ strikethrough: true }));
+
+      unmount();
+      mockSetToolArgs.mockClear();
+      resetToolArgs({ strikethrough: true });
+      renderWithProvider(<Text />);
+
+      const on = screen.getByRole('button', { name: 'Strikethrough' });
+      expect(on).toHaveAttribute('aria-pressed', 'true');
+      expect(on.className).toContain('bg-blue-600');
+
+      fireEvent.click(on);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ strikethrough: false }));
+    });
+  });
+
+  it('recomputes the rect for a change of metrics and leaves it alone for a change of decoration', () => {
+    // This is the whole of `publishStyle`'s split (Text.tsx:45-48). Bold changes the advance width
+    // of every glyph, and a box measured against the previous weight is a box one metric out of
+    // date. Underline and strikethrough draw in the type colour inside the box the glyphs already
+    // occupy, so recomputing them would move a rectangle that was already right.
+    //
+    // The box here is deliberately TALLER than one 64px/1.1 line needs, so a recompute produces
+    // the same four numbers and cannot be caught by value. Only identity catches it:
+    // `calculateNewRect` ends in `trimRect2`, which always allocates, so a published `rect` that
+    // is the very object the fixture holds is proof that nothing measured.
+    resetToolArgs({ rect: { x1: 0, y1: 0, x2: 100, y2: 200 } });
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bold: true }));
+    expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    expect(lastToolArgs().rect).toEqual({ x1: 0, y1: 0, x2: 100, y2: 200 });
+
+    mockSetToolArgs.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Underline' }));
+
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ underline: true }));
+    expect(lastToolArgs().rect).toBe(toolArgs.rect);
+  });
+
+  it('renders every optional style field as its default when the persisted record predates it', () => {
+    // `resolveTextStyle` exists so that "what happens when a settings object predates a field" is
+    // answered in exactly one place. Without it the bar reads `toolArgs` directly, and two of the
+    // five fail silently rather than loudly: React drops `aria-pressed` for `undefined`, and the
+    // Tracking range goes uncontrolled on its first render with no `value` at all. Nothing here
+    // throws until someone loads a settings object saved by an older build.
+    dropOptionalStyleFields();
+    renderWithProvider(<Text />);
+
+    const tracking = screen.getByLabelText(/Tracking/) as HTMLInputElement;
+    expect(tracking.value).toBe('0');
+    // The readout follows the field rather than going blank with it.
+    expect(screen.getByText('Tracking')).toHaveTextContent(/^Tracking0$/);
+
+    for (const name of ['All Caps', 'Small Caps', 'Underline', 'Strikethrough']) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false');
+    }
+
+    // And the toggle still publishes the inverse of what it RENDERED rather than the inverse of
+    // a key that was not there — `!undefined` and `!false` agree today, but only one of them is
+    // reading through the resolver.
+    fireEvent.click(screen.getByRole('button', { name: 'All Caps' }));
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ allCaps: true }));
   });
 
   it('renders null when toolArgs is not text tool', () => {
@@ -218,8 +458,6 @@ describe('Text toolbar', () => {
   });
 
   describe('font family', () => {
-    const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
-
     it('opens the font list from the toolbar trigger', () => {
       renderWithProvider(<Text />);
 
@@ -230,7 +468,7 @@ describe('Text toolbar', () => {
       expect(screen.getByRole('button', { name: 'Impact' })).toBeInTheDocument();
     });
 
-    it('publishes the chosen family and recomputes the text rect (Text.tsx:58-62)', () => {
+    it('publishes the chosen family and recomputes the text rect (Text.tsx:45-48)', () => {
       renderWithProvider(<Text />);
 
       fireEvent.click(screen.getByLabelText('Font'));
@@ -238,7 +476,7 @@ describe('Text toolbar', () => {
 
       expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
       expect(lastToolArgs()).toMatchObject({ fontFamily: 'Impact', text: 'Hello', fontSize: 64, lineHeight: 1.1 });
-      // `handleFontFamilyChange` recomputes the rect through `calculateNewRect` instead of
+      // A family change goes through `publishStyle`, which recomputes the rect instead of
       // publishing the args unchanged, otherwise the layer would keep the old metrics.
       // `canvasRef.current` is null here, so the width-widening branch cannot run and only
       // the height branch does: the fixture's 50px-tall box becomes tall enough for one
@@ -281,8 +519,6 @@ describe('Text toolbar', () => {
   });
 
   describe('text colour', () => {
-    const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
-
     it('renders a Color swatch bound to the tool args colour', () => {
       resetToolArgs({ color: '#3366ff' });
       renderWithProvider(<Text />);
@@ -325,7 +561,7 @@ describe('Text toolbar', () => {
   });
 
   describe('apply idempotency', () => {
-    it('commits the same tool args only once, however often Apply is activated (Text.tsx:84)', () => {
+    it('commits the same tool args only once, however often Apply is activated (Text.tsx:89-96)', () => {
       renderWithProvider(<Text />);
 
       const applyButton = screen.getByRole('button', { name: 'Apply' });
@@ -353,87 +589,132 @@ describe('Text toolbar', () => {
     });
   });
 
+  describe('tracking', () => {
+    it('shows the seeded value in the field and in the readout, in 1/1000 em', () => {
+      resetToolArgs({ tracking: 250 });
+      renderWithProvider(<Text />);
+
+      const tracking = screen.getByLabelText(/Tracking/) as HTMLInputElement;
+      expect(tracking.type).toBe('range');
+      // Adobe's field is -1000..1000 (https://helpx.adobe.com/photoshop/using/line-character-spacing.html),
+      // and the unit is the field's own: 250 at a 64px size is 16 CSS px, which `trackingPx` is
+      // the one place allowed to compute. A readout in pixels would be a number the user cannot
+      // type back into the field.
+      expect(tracking.min).toBe('-1000');
+      expect(tracking.max).toBe('1000');
+      expect(tracking.step).toBe('1');
+      expect(tracking.value).toBe('250');
+      expect(screen.getByText('Tracking')).toHaveTextContent(/^Tracking250$/);
+    });
+
+    it('steps the field by one unit per arrow key', () => {
+      renderWithProvider(<Text />);
+      const tracking = screen.getByLabelText(/Tracking/) as HTMLInputElement;
+
+      tracking.focus();
+      expect(tracking).toHaveFocus();
+      expect(tracking.value).toBe('0');
+
+      pressArrowOnRange(tracking, 'ArrowUp');
+      expect(lastToolArgs().tracking).toBe(1);
+
+      pressArrowOnRange(tracking, 'ArrowDown');
+      expect(lastToolArgs().tracking).toBe(-1);
+    });
+
+    it('publishes tracking and the rect it implies in ONE setToolArgs call', () => {
+      renderWithProvider(<Text />);
+      const tracking = screen.getByLabelText(/Tracking/) as HTMLInputElement;
+
+      fireEvent.change(tracking, { target: { value: '-400' } });
+
+      // One call, not two. Tracking is 1/1000 em added to every character, so it moves the text's
+      // advance width; a change published without its rect would commit a box measured against
+      // the previous tracking, and a two-call implementation would also leave one frame and one
+      // history entry where the bar shows a tracking the document does not have.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ tracking: -400 }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+      // `canvasRef.current` is null, so only the height branch of `calculateNewRect` can run:
+      // the fixture's 50px-tall box grows to one 64px/1.1 line plus 5px padding either side.
+      expect(lastToolArgs().rect).toEqual({ x1: 0, y1: 0, x2: 100, y2: expect.closeTo(64 * 1.1 + 2 * 5, 10) });
+    });
+  });
+
   describe('keyboard navigation', () => {
-    const pressArrowOnRange = (range: HTMLInputElement, key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => {
-      if (key === 'ArrowUp' || key === 'ArrowRight') {
-        range.stepUp();
-      } else {
-        range.stepDown();
-      }
-      fireEvent.input(range);
-    };
-
-    const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
-
-    it('allows tab navigation through all focusable elements', async () => {
+    it('walks the bar left to right, with the style toggles between Italic and Apply', async () => {
       renderWithProvider(<Text />);
       const user = userEvent.setup();
 
-      const textInput = screen.getByLabelText('Text');
-      const fontSelect = screen.getByLabelText('Font');
-      const fontSizeSlider = screen.getByLabelText(/Font Size/);
-      const lineHeightSlider = screen.getByLabelText(/Line Height/);
-      const colorSwatch = screen.getByLabelText('Color');
-      const alignSelect = screen.getByLabelText('Align');
-      const boldButton = screen.getByRole('button', { name: 'B' });
-      const italicButton = screen.getByRole('button', { name: 'I' });
-      const applyButton = screen.getByRole('button', { name: 'Apply' });
-      const clearButton = screen.getByRole('button', { name: 'Clear' });
+      // Every stop is resolved BEFORE the first Tab. Reading the DOM from inside the loop would
+      // make this an assertion about whatever happened to be focused, which is the whole thing
+      // under test.
+      const stops = [
+        screen.getByLabelText('Text'),
+        screen.getByLabelText('Font'),
+        screen.getByRole('spinbutton', { name: /Font Size/ }),
+        screen.getByLabelText(/Line Height/),
+        screen.getByRole('slider', { name: /Tracking/ }),
+        screen.getByLabelText('Color'),
+        screen.getByLabelText('Align'),
+        screen.getByRole('button', { name: 'Bold' }),
+        screen.getByRole('button', { name: 'Italic' }),
+        screen.getByRole('button', { name: 'All Caps' }),
+        screen.getByRole('button', { name: 'Small Caps' }),
+        screen.getByRole('button', { name: 'Underline' }),
+        screen.getByRole('button', { name: 'Strikethrough' }),
+        screen.getByRole('button', { name: 'Apply' }),
+        screen.getByRole('button', { name: 'Clear' }),
+      ];
 
-      textInput.focus();
-      expect(textInput).toHaveFocus();
+      stops[0].focus();
+      expect(stops[0]).toHaveFocus();
 
+      // The bar's own left-to-right order is the tab order: no positive `tabIndex` anywhere, so
+      // the sequence is the DOM sequence, and the tab stops a sighted user sees with the focus
+      // ring are the ones a keyboard user walks. It used to skip the four toggles that Adobe
+      // puts in the middle of this bar, and a control that exists but cannot be reached is not
+      // reachable.
+      for (const stop of stops.slice(1)) {
+        await user.tab();
+        expect(stop).toHaveFocus();
+      }
+
+      // One stop past the end, and back again from the other side, so a control inserted at
+      // either end of the bar cannot slip through this test.
       await user.tab();
-      expect(fontSelect).toHaveFocus();
-
-      await user.tab();
-      expect(fontSizeSlider).toHaveFocus();
-
-      await user.tab();
-      expect(lineHeightSlider).toHaveFocus();
-
-      // The colour swatch sits where Photoshop puts it, immediately after the size group and
-      // before the paragraph controls, so the tab order is the bar's own left-to-right order.
-      await user.tab();
-      expect(colorSwatch).toHaveFocus();
-
-      await user.tab();
-      expect(alignSelect).toHaveFocus();
-
-      await user.tab();
-      expect(boldButton).toHaveFocus();
-
-      await user.tab();
-      expect(italicButton).toHaveFocus();
-
-      await user.tab();
-      expect(applyButton).toHaveFocus();
-
-      await user.tab();
-      expect(clearButton).toHaveFocus();
+      expect(document.body).toHaveFocus();
 
       await user.tab({ shift: true });
-      expect(applyButton).toHaveFocus();
+      expect(stops[stops.length - 1]).toHaveFocus();
     });
 
-    it('allows arrow key navigation on font size slider', () => {
+    it('exposes font size as a number field over the whole 0.01..1296 range', () => {
       renderWithProvider(<Text />);
-      const fontSizeSlider = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+      const fontSizeField = screen.getByLabelText(/Font Size/) as HTMLInputElement;
 
-      fontSizeSlider.focus();
-      expect(fontSizeSlider).toHaveFocus();
-      expect(fontSizeSlider.type).toBe('range');
-      expect(fontSizeSlider.min).toBe('8');
-      expect(fontSizeSlider.max).toBe('500');
+      // Adobe's Character-panel Size field is a number field with a 1296-wide span. As a range
+      // input, one point occupied about a hundredth of a pixel of track, so the top of the range
+      // was unreachable in practice; the number field is the control that can actually be typed
+      // to. Pinned by `type` because the whole affordance depends on it.
+      fontSizeField.focus();
+      expect(fontSizeField).toHaveFocus();
+      expect(fontSizeField.type).toBe('number');
+      expect(fontSizeField.min).toBe('0.01');
+      expect(fontSizeField.max).toBe('1296');
+      expect(fontSizeField.step).toBe('1');
+      expect(fontSizeField.value).toBe('64');
 
-      const initialSize = Number(fontSizeSlider.value);
-      expect(initialSize).toBe(64);
+      fireEvent.change(fontSizeField, { target: { value: '48' } });
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 48 }));
 
-      pressArrowOnRange(fontSizeSlider, 'ArrowRight');
-      expect(lastToolArgs().fontSize).toBe(initialSize + 1);
-
-      pressArrowOnRange(fontSizeSlider, 'ArrowLeft');
-      expect(lastToolArgs().fontSize).toBe(initialSize - 1);
+      // The label is still `Font Size` and it is still a real `<label for>`, so clicking the
+      // label focuses the field. Its readout is the FIELD's range, not the current size: with a
+      // 1296-wide span, a per-value readout beside the label is the one number that says nothing
+      // about what the control accepts.
+      const fontSizeLabel = screen.getByText('Font Size');
+      expect(fontSizeLabel.tagName).toBe('LABEL');
+      expect(fontSizeLabel).toHaveAttribute('for', 'font-size-input');
+      expect(fontSizeLabel).toHaveTextContent('0.01–1296');
     });
 
     it('allows arrow key navigation on line height slider', () => {
@@ -478,8 +759,8 @@ describe('Text toolbar', () => {
     it('allows enter/space to toggle bold and italic buttons', async () => {
       renderWithProvider(<Text />);
       const user = userEvent.setup();
-      const boldButton = screen.getByRole('button', { name: 'B' });
-      const italicButton = screen.getByRole('button', { name: 'I' });
+      const boldButton = screen.getByRole('button', { name: 'Bold' });
+      const italicButton = screen.getByRole('button', { name: 'Italic' });
 
       boldButton.focus();
       await user.keyboard('{Enter}');
@@ -531,11 +812,11 @@ describe('Text toolbar', () => {
     it('escape key does not close anything (no popovers)', async () => {
       renderWithProvider(<Text />);
       const user = userEvent.setup();
-      const fontSizeSlider = screen.getByLabelText(/Font Size/);
+      const fontSizeField = screen.getByLabelText(/Font Size/);
 
-      fontSizeSlider.focus();
+      fontSizeField.focus();
       await user.keyboard('{Escape}');
-      expect(fontSizeSlider).toHaveFocus();
+      expect(fontSizeField).toHaveFocus();
       expect(screen.queryByRole('button', { name: 'Georgia' })).not.toBeInTheDocument();
     });
   });

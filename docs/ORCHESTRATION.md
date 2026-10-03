@@ -624,6 +624,30 @@ heartbeat` still exists and is still correct — it is the only thing that can
   somebody else holds it, so a shell can gate on it. `swarm claim --files a.ts b.ts`
   takes both, and gives back **only the ones it took** if the claim is then
   refused.
+- **`check` answers TWO questions, and reading only the first is how three agents
+  end up in one file.** `free` means no live **LOCK**. It does not mean nobody's
+  business. The line then names **every open issue that references the path**,
+  including the ones that reserve nothing — an issue imported from a handoff
+  document, or filed with `--files` by an agent whose lease has since run out.
+  Read both halves; `held by <agent>` is exit 1, and an issue that is open, claimed
+  or deferred is not.
+- **A reference NEVER moves that exit code, and that is deliberate rather than
+  incidental.** A gate that failed on every file any handoff document has ever
+  mentioned would fail on nearly every path in the repository and train every
+  agent to pass `--force`. Whether a reference should ever block is the operator's
+  call, not a side effect of a query.
+- **`issue_files` is the index that makes that answerable, and it is durable.**
+  It is written by `new` and by `holdFiles` whether or not a lease is taken, and
+  rebuilt from the event log by the v2 → v3 migration, so a board on disk gains
+  it without re-importing (the import is idempotent by `origin` and would file
+  nothing). Before it, only an issue that reserved **nothing** kept its files solely
+  inside an event's `data` JSON; an issue that took a lease was queryable, through
+  `issue_locks`, by the agent who held it.
+- **`swarm list --files` asks about the PATH, not about the caller.** It used to
+  join `file_locks` and require the row to belong to whoever ran it, so the one
+  command an agent runs before opening a file could only answer "which of my own
+  locks is on this path" — and returned an empty set for every unlocked file,
+  which is indistinguishable from a file nobody cares about.
 - **The fixer's claim is not its verification.** `swarm resolve` needs the live
   claim; `swarm close` refuses the agent that resolved the issue. Exit code 5 is
   that refusal. **There is no `--verified-by`**, and that is the point: a flag

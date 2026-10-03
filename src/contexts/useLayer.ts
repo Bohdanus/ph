@@ -27,7 +27,7 @@ import {
   type ToolResult,
 } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
-import { reduceRect, sortRect, sortedRectToPos, trimRect } from '../util/rect.ts';
+import { reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
   type ActionType,
@@ -169,6 +169,27 @@ function transformedProcessorInput(layer: Layer, bitmap: BitmapSource): { bitmap
   }
   return { bitmap: surface as BitmapSource, size: evaluation.bounds };
 }
+
+// A frame allocates SIX surfaces at its own size — the staging canvas `drawLayersToCanvas`
+// composites into (`layer-renderer.ts:195`), the visible canvas it resizes to (`:238`), the
+// snapshot it restores from (`:136`, `:236`), and the tool, rect and selection-ant overlays
+// (`Main.tsx:142,169,177`) — so the ceiling that matters is the LOWEST any target browser
+// imposes, not the highest. That is 2^24, iOS Safari's maximum canvas AREA, and it fails
+// SILENTLY there: `getContext('2d')` still returns a context and every draw becomes a no-op, so
+// an over-area document renders blank with nothing to catch. This app ships mobile surfaces.
+// At 4 bytes per RGBA pixel 2^24 is 64MiB per surface and 384MiB for the six; Chrome's 2^28
+// would have been 1GiB each, 6GiB for one commit.
+//
+// SIDE is sqrt(AREA) rather than a browser constant, because an area ceiling bounds how many
+// PIXELS a surface holds and says nothing about its longest edge, and a crop rect can be dragged
+// arbitrarily far past an edge at low zoom. Since 4096 * 4096 IS the area ceiling, SIDE subsumes
+// AREA: the area arm can never refuse what the side arm would not. It is kept as the statement
+// of the budget and the arm that names the pixel count in the warning.
+//
+// Crop-local, and NOT a document-size limit: nothing else in the stack caps a frame, so a PSD
+// open or a canvas resize bypasses both ceilings here entirely.
+const MAX_DOCUMENT_FRAME_SIDE = 4096;
+const MAX_DOCUMENT_FRAME_AREA = 16777216;
 
 export const useLayers = () => {
   const [
@@ -781,8 +802,27 @@ export const useLayers = () => {
   }, [canvasRef, documentFrame, layers, previewLayersRef]);
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
-    const { x, y, width, height } = trimRect(sortRect(rect), totalSize);
+    // Unclamped on purpose, and that is the whole feature: Photoshop's crop box may be dragged
+    // past the image edge, which extends the canvas. `sortRoundRect` sorts, rounds each edge once
+    // and derives the extent from the rounded edges, so a rect reaching past an edge grows the
+    // frame and a rect reaching before the origin anchors the frame negatively. A rect that
+    // overlaps nothing is accepted too — Photoshop hands back an empty canvas, and undo restores
+    // this one because a crop here keeps the pixels instead of discarding them.
+    const { x, y, width, height } = sortRoundRect(rect);
     if (width <= 0 || height <= 0) return false;
+    if (
+      width > MAX_DOCUMENT_FRAME_SIDE ||
+      height > MAX_DOCUMENT_FRAME_SIDE ||
+      width * height > MAX_DOCUMENT_FRAME_AREA
+    ) {
+      // Refused silently this would read as a crop that did nothing, which is indistinguishable
+      // from a broken tool; the refusal names the size and the pixel count that were refused, and
+      // the ceiling it is measured against, rather than claiming a single canvas gave up.
+      console.warn(
+        `applyDocumentCrop refused ${width}x${height} (${width * height}px): past the ${MAX_DOCUMENT_FRAME_SIDE}px per-side or ${MAX_DOCUMENT_FRAME_AREA}px area frame ceiling, and a frame allocates six canvas surfaces at that size`
+      );
+      return false;
+    }
 
     const nextFrame = canvasRectToDocumentFrame({ x, y, width, height }, documentFrame);
     if (!isValidDocumentFrame(nextFrame) || documentFrameEquals(documentFrame, nextFrame)) return false;

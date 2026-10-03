@@ -12,9 +12,16 @@ const doubleDigits = (digits: string): string =>
 
 /**
  * Rounds a channel to the nearest 0-255 integer and formats it as a hex pair.
- * Rounding is the tolerance: a computed value that is correct but expressed in
- * another unit (`color(srgb 1 0 0)`, a percentage, a sub-1/255 float) still
- * lands on the same pair as the colour that was asked for.
+ *
+ * Rounding IS the whole comparison tolerance, and it is a wide one: half of an 8-bit step,
+ * in each direction. Anything up to 0.5 of a step off is folded onto the integer the caller
+ * asked for and verifies, so a computed value that is correct but expressed in another unit
+ * — `color(srgb 1 0 0)`, `rgb(100% 0% 0%)`, a percentage landing between two integers —
+ * lands on the same pair. Anything past 0.5 lands on the neighbouring integer and is
+ * REJECTED, which is what stops a whole 8-bit step of real colour error from passing. The
+ * two edges of that band are pinned by `__tests__/color-helpers.unit.test.ts`; the band is
+ * stated here as half a step rather than as a "sub-1/255 float", which understated it by
+ * two orders of magnitude.
  */
 const toHexPair = (channel: number): string => Math.round(channel).toString(16).padStart(2, '0');
 

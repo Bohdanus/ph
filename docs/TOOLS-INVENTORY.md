@@ -190,9 +190,9 @@ name and expensive to build.
 | **Vertical Type Mask**   | Type — the type **mask** flyout            | the type letter, cycled                                | as above                                                                      | Same third-party PDF. Options not researched against Adobe.                                                                                                                                                                                                           |
 
 **All three are candidates for a different reason than the others.** This app's `text` tool is
-raster-at-birth: it is registered `commit: 'source'`, so a text layer is pixels from the
-moment it is created, and Photoshop type layers are live editable objects
-(`.kilo/plans/ps-research/00-tool-inventory.md` §Structural notes). Adding the three missing
+raster-at-birth: it is registered `commit: 'source'` (`src/tools/toolProcessors.ts:160-166`), so a
+text layer is pixels from the moment it is created, and Photoshop type layers are live editable
+objects (`.kilo/plans/ps-research/00-tool-inventory.md` §Structural notes). Adding the three missing
 type tools without fixing that adds three ways to create pixels that Photoshop would have
 kept editable.
 

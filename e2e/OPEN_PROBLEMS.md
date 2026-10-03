@@ -199,70 +199,6 @@ What is left is a rule for new code: a spec that mixes `boundingBox()` with a CD
 capture must not assume the two agree, and must not introduce a second conversion
 somewhere that already has one.
 
-## P2 — an empty CDP capture is reported as a successful capture
-
-`e2e/helpers/cdp-helpers.ts:71`
-
-`Buffer.from(data, 'base64')` is never length-checked, so a response whose `data`
-is `''` decodes to a zero-byte buffer that the helper writes to
-`<outputDir>/<name>.png`, attaches to the report, and returns as the capture. The
-caller is told the capture succeeded and the report carries a file that is not an
-image. The failure surfaces later and somewhere else: whatever reads the artifact
-(`loadImageData`) raises a decode error naming the file, so the message points at
-the consumer rather than at the capture that produced nothing.
-
-Fix: reject a decoded payload of length 0 with an error naming
-`captureCanvasScreenshot`, before the write and before the attach, so the capture
-failure is the one the caller sees. Test the decoded length, not just the field:
-`{ data: '' }` is a present, correctly-typed response that decodes to nothing, so
-a `typeof data === 'string'` guard alone still lets it through.
-
-Pinned by `reports success for an empty capture, writing and attaching a zero-byte
-file` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:403`. A fix removes that
-pin in the same change.
-
-## P2 — a failing detach replaces the capture error and destroys the cause
-
-`e2e/helpers/cdp-helpers.ts:75-77`
-
-`finally { await cdp.detach() }` runs on the way out whether or not the capture
-threw, and a rejection from it becomes the rejection the caller sees. When the
-capture fails and the detach also fails — the likely pairing, because a capture
-fails most often when the page or the target is already gone — the reported error
-is the detach's, and the real cause is never reported at all. The one thing this
-helper's error path has to do is name what went wrong.
-
-Fix: keep the in-flight failure and let the detach replace it only when there is
-none. Hold the capture's error (or nest the capture in its own `try`/`catch`) and
-run the detach inside a `catch` that attaches the detach error as `cause` when
-something is already failing. Do not swallow a detach failure on the success path:
-a session that cannot be closed is the leak this helper exists to avoid.
-
-Pinned by `reports a detach failure in place of the capture failure when both fail`
-in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:434`. A fix removes that pin in
-the same change.
-
-## P2 — a CDP response without `data` surfaces as a raw `TypeError` from `Buffer`
-
-`e2e/helpers/cdp-helpers.ts:67, 71`
-
-A `Page.captureScreenshot` response that omits `data` reaches
-`Buffer.from(undefined, 'base64')`, which throws `The first argument must be of
-type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like
-Object. Received undefined` (Node 24). The message names neither CDP, nor this
-helper, nor the test, so the reader has to find the call site before they can tell
-what failed. The sibling helper in the same directory checks its inputs and names
-itself (`canvas-helpers.ts:392-395`); this one does not.
-
-Fix: validate the response before decoding — `typeof data === 'string'`, and
-non-empty — with an error that names `captureCanvasScreenshot` and the CDP request
-it came from. Merge this with the length check above rather than adding a second
-guard on the same two lines.
-
-Pinned by `rejects with a raw TypeError when the CDP response omits data, and
-detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:385`. A fix removes that
-pin in the same change.
-
 ## P3 — zero-sized image yields `NaN` edges
 
 `screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:31`) and
@@ -285,6 +221,68 @@ answer a yes/no question where one nearly-invisible pixel is the same as one
 opaque one. The other half of the file, `getDarkPixelBounds` (`:602`) and
 `getSelectionBounds` (`:661`), filters on `a !== 0` instead — a different question
 asked with a boolean rather than a weight.
+
+## P2 — the letterbox is still read as ink by two predicates and by two of the four cell colours
+
+`e2e/helpers/canvas-helpers.ts:637-663` (`hasDarkPixels`, `getDarkPixelBounds`) and
+`e2e/helpers/canvas-helpers.ts:1182-1224` (`isLetterboxCell`)
+
+The workspace canvas sits on a 20px checkerboard chosen from the resolved theme:
+`#f3f3f3` over `#fff` for light and `#121212` over `#000` for dark
+(`src/index.scss:139-163`, switched at `src/components/Main/Main.tsx:279`). The
+document is contained inside it with a centred letterbox, so a clip that is not
+derived from the contain fit can straddle that checkerboard.
+
+`isLetterboxCell` excludes the two exact RGB triples `LETTERBOX_LIGHT_CELL` and
+`LETTERBOX_DARK_CELL`, and it is applied inside `getStrokeAnalysis` only. Two things
+remain:
+
+1. **The exclusion is two colours, and the checkerboard is four.** `#000` gaps and the
+   anti-aliased cell edges between the two cells are still classified as ink, so a
+   `getStrokeAnalysis` clip straddling the dark letterbox can still report segments and
+   a vertical spread it did not draw.
+2. **`hasDarkPixels` and `getDarkPixelBounds` are not letterbox-aware at all.** Under
+   the dark theme their threshold is satisfied by `#121212` and `#000` alone, so a wait
+   on either can be satisfied by a clip containing no stroke.
+
+**This is LATENT today, and one declaration is the only thing making it so.**
+`playwright.config.ts:133` pins `colorScheme: 'light'`, and that value is Playwright's
+own default, so every currently-green test relies on a precondition this file states
+and nothing enforces. Remove that line, or write a spec that pins
+`colorScheme: 'dark'` for itself, and the wrong-pass returns with no other file
+noticing.
+
+Pinned by the `#000`-wash case in
+`e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:420`, which asserts that a
+full black capture classifies as `{type: 'spray'}` on purpose. A fix removes that pin
+in the same change.
+
+Fix: apply the same cell-colour exclusion inside `hasDarkPixels` and
+`getDarkPixelBounds` that `getStrokeAnalysis` already applies, and widen it from two
+exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps are
+covered too. Add a dark-theme case that pins the direction this depends on, so the
+latent wrong-pass has a tripwire of its own rather than resting on a config default.
+
+## Every document load requests a favicon that does not exist
+
+Chrome requests `/favicon.ico` unprompted on every page load, and it always 404s:
+there is no `public/` directory in the repository, and `index.html:5` has the
+`<link rel="icon" type="image/svg+xml" href="/todo.svg" />` line commented out, so
+there is no icon for the request to resolve to. The 404 is real, it is per-load, and
+`ACCEPTED_CONSOLE_ERRORS` in `e2e/helpers/console-police.ts` carries an entry whose
+reason is this fact, narrowed by `urlPattern: /^\/favicon\.ico$/` so that no other
+404 inherits it.
+
+Nothing trips on it: the entry accepts the message, the spec passes, and the run
+reports green. The cost is that every e2e page load carries a failed request that a
+test would otherwise see, and the allowlist entry outlives the moment it was written
+for.
+
+Fix: add `public/favicon.svg`, uncomment `index.html:5`, and delete the favicon entry
+from `ACCEPTED_CONSOLE_ERRORS` in the same change — with the icon in place there is
+no 404 to account for, and per the lifecycle rule in `docs/DOCUMENTATION.md` the
+entry goes with it. Verify with `npm run test:e2e` and by confirming no 404 remains
+in the `console-police.json` report attachment.
 
 ## P3 — 10 orphaned committed baselines (2.1 MB)
 
@@ -668,12 +666,11 @@ over the WHOLE collapsed set (`:636`). So `expectToolSelected(page, 'eraser')` i
 SOME collapsed tool selected", not by "is the eraser selected".
 
 **Measured at 1280x720, where it bites.** The tiles on the rail are `reposition`,
-`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper`, `crop` and `brush` — the
-first seven of the fifteen groups, the rail filling its slot with whole rows, and the fold
-beginning at `clone-stamp`. The tool the app opens with (`brush` in `src/tools/settings.ts`) is one
-of the seven, so the three-dots tile is not lit from page load; it is lit from the moment any member
-of the collapsed set is selected, and stays lit for every member. An assertion naming any collapsed
-tool therefore passes as soon as that tile is lit at all, with the wrong tool selected.
+`rectangular-selection`, `freehand-lasso`, `magic-wand`, `eyedropper`, `crop` and `color` — the
+first seven of the sixteen groups, the rail filling its slot with whole rows. The tool the app
+opens with (`brush` in `src/tools/settings.ts`) is not among them, so it is in the collapsed set:
+the three-dots tile is lit FROM PAGE LOAD and stays lit for every member. An assertion naming any
+collapsed tool therefore passes before anything is selected.
 
 **This is not a regression from the `aria-pressed` conversion, and that distinction is the whole
 point.** `:635` and `:636` are the same `group.some(...)` call on the same tile, so the removed
@@ -903,9 +900,9 @@ can say which, so this entry stays open rather than being deleted on a green run
 `src/components/Mobile/MobileBottomBar.tsx`, `e2e/no-document-overflow.spec.ts`
 
 `nav[data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
-`mobileToolGroups` entry in one row — 17 focusable tiles, 15 groups plus Options and
-Layers, separated by 4 dividers. Measured, it overflows its own width by **542px** at a
-744×1133 viewport and by **896px** at 390×844, which is the reference phone size the rest
+`mobileToolGroups` entry in one row — 18 focusable tiles, 16 groups plus Options and
+Layers, separated by 5 dividers. Measured, it overflows its own width by **615px** at a
+744×1133 viewport and by **969px** at 390×844, which is the reference phone size the rest
 of the mobile suite already uses. It now carries `scrollbar-none`, so the only cue that
 most of those tiles are off-screen is gone. A user with a mouse and no trackpad has
 nothing left to drag: the bar is `position: fixed`, so the document behind it does not
@@ -914,18 +911,18 @@ scroll either.
 This is the same trade the left tool rail makes, and the rail's version was deliberate and
 pinned — the rail scrolls and stays reachable by wheel, arrows and touch. The difference
 is magnitude, and it is now starker than it was: **the rail no longer overflows at either
-size at all** — 0px at iPad 10.2" portrait (810×1080), whose slot is 834px against a 15-row
-grid of 765px, and 0px at iPad mini landscape (1133×744) — where it used to overflow by 71px
+size at all** — 0px at iPad 10.2" portrait (810×1080), whose slot is 834px against a 16-row
+grid of 822px, and 0px at iPad mini landscape (1133×744) — where it used to overflow by 71px
 and 5px respectively, before the fit stopped reserving a fifth of the slot it measures.
-This bar overflows by 542px at the same width and by 896px on a phone. A 5px overflow hides a
-cue for something already within reach of a scroll; a 896px one hides most of the tool list.
+This bar overflows by 615px at the same width and by 969px on a phone. A 5px overflow hides a
+cue for something already within reach of a scroll; a 969px one hides most of the tool list.
 
 **The CSS is pinned; the overflow is not.** `no-document-overflow.spec.ts` asserts this
 bar is a scroll container with `scrollbar-width: none`, which is a statement about the
 stylesheet and would still pass if the group list grew or shrank by a factor of ten. No
 test reads the bar's `scrollWidth` against its `clientWidth`.
 
-The open question is a product one, not a defect report: a tool bar with 896px of hidden
+The open question is a product one, not a defect report: a tool bar with 969px of hidden
 overflow needs either a visible scroll affordance or a different layout — the tool sheet
 already exists as `MobileToolSheet`, and wrapping is the other obvious answer. What keeps
 it undecided is coverage, recorded in the `P3 — no mobile or HiDPI project, and no touch

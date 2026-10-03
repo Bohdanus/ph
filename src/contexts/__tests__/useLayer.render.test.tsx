@@ -7,7 +7,12 @@ import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts'
 import type { Layer, LayersRecord } from '../layer-types.ts';
 
 // drawAllLayers owns the composition contract only: the renderer stages and
-// publishes. Assert the delegation instead of re-testing drawLayersToCanvas.
+// publishes. Assert the delegation instead of re-testing drawLayersToCanvas —
+// and note what the return value is NOT: `useLayer` discards it, so a refused
+// publication is invisible from here. The refusal itself is decided inside
+// `layer-renderer.ts`, which keeps the visible canvas intact when it returns
+// `false`; what is pinned below is that the refusal reaches no caller of
+// `useLayers` at all.
 type DrawLayersToCanvas = (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => boolean;
 
 const drawLayersToCanvas = vi.hoisted(() => vi.fn<DrawLayersToCanvas>(() => true));
@@ -176,6 +181,48 @@ describe('useLayers drawAllLayers', () => {
     });
 
     expect(drawLayersToCanvas).not.toHaveBeenCalled();
+  });
+
+  it('swallows a refused publication: one attempt, no throw, no retry, no result', () => {
+    // The record of what `useLayers` does with a `false`, established rather than
+    // assumed. `drawAllLayers` calls `drawLayersToCanvas` and drops the boolean
+    // (`useLayer.ts:773`: the call is a statement, not an assignment), so a
+    // refusal never reaches a caller: there is no throw, no retry, and
+    // `drawAllLayers` returns `undefined` on success and on refusal alike. The one
+    // channel a refusal DOES have is `console.error` — `useLayer.ts:774` reports
+    // `'Unable to publish runtime layer presentation'`, and the sibling test below
+    // is what asserts it. A future caller reading that boolean has to change this
+    // file, and this is the assertion that will then be wrong.
+    const { result } = setup({ layers: { edited: makeLayer('edited', 1) } });
+    drawLayersToCanvas.mockReturnValueOnce(false);
+
+    let returned: unknown = 'unset';
+    act(() => {
+      expect(() => {
+        returned = result.current.layers.drawAllLayers();
+      }).not.toThrow();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(1);
+    expect(returned).toBeUndefined();
+  });
+
+  it('refuses a publication only once per call, so a later draw still runs', () => {
+    // The control for the case above: the `false` was consumed by the single
+    // call, so a second draw reaches the renderer again. Without this, "swallows
+    // a refused publication" would also be satisfied by a stub stuck on `false`
+    // or by an implementation that stopped drawing after one refusal.
+    const { result } = setup({ layers: { edited: makeLayer('edited', 1) } });
+    drawLayersToCanvas.mockReturnValueOnce(false);
+
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(2);
   });
 
   it('reports a renderer publish failure without throwing through the pointer-move path', () => {

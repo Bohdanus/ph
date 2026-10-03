@@ -2,11 +2,13 @@ import { cloneDeep } from 'lodash-es';
 
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
+import { AUTO_LEADING } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
 import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
+import { DEFAULT_POLYGON_SIDES } from './shape.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
@@ -47,7 +49,16 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   rectangle: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   oval: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   triangle: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
-  polygon: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
+  polygon: {
+    alpha: 1,
+    lineWidth: 5,
+    // Adobe's Polygon tool seeds Sides at 5. Seeding it here rather than defaulting at the
+    // call site means the options bar has something to show on first open, for the same reason
+    // the eraser seeds `mode` and its tip width a few hundred lines down: a settings object
+    // that arrives without the key is an object the bar has nothing to show.
+    sides: DEFAULT_POLYGON_SIDES,
+    toolMode: 'shape',
+  },
 };
 
 export const defaultSettings = {
@@ -84,13 +95,19 @@ export const defaultSettings = {
   text: {
     text: '',
     fontSize: 64,
-    lineHeight: 1.1,
+    lineHeight: AUTO_LEADING,
     fontFamily: 'Arial',
     color: '#000000',
     rect: null,
     align: 'left',
     bold: false,
     italic: false,
+    allCaps: false,
+    smallCaps: false,
+    strikethrough: false,
+    tracking: 0,
+    underline: false,
+    kind: 'point',
 
     toolName: 'text',
   } satisfies TextToolArgs,

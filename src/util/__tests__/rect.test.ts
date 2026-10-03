@@ -2,6 +2,7 @@ import type { RefObject } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   sortRect,
+  sortRoundRect,
   trimRect,
   trimRect2,
   sortedRectToPos,
@@ -12,6 +13,7 @@ import {
 } from '../rect.ts';
 import type { RectXY, RectXYSorted, Pos, Size } from '../../contexts/general-types.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
+import { TEXT_PADDING } from '../constants.ts';
 
 describe('sortRect', () => {
   it('returns the rect unchanged when already sorted', () => {
@@ -129,6 +131,43 @@ describe('trimRect2', () => {
   });
 });
 
+describe('sortRoundRect', () => {
+  it('sorts an inverted rect into a positive-extent pos', () => {
+    const rect: RectXY = { x1: 50, y1: 60, x2: 10, y2: 20 };
+    expect(sortRoundRect(rect)).toEqual({ x: 10, y: 20, width: 40, height: 40 });
+  });
+
+  it('allows an edge past the image size, because it is never given one', () => {
+    // The crop rectangle may extend the canvas past the image, which is the whole point of
+    // this function: `trimRect` clamps the same input to `{x: 0, y: 100, width: 100, height: 400}`.
+    const rect: RectXY = { x1: -60, y1: 100, x2: 740, y2: 500 };
+    expect(sortRoundRect(rect)).toEqual({ x: -60, y: 100, width: 800, height: 400 });
+  });
+
+  it('derives the extent from the rounded edges, not the unrounded span', () => {
+    const rect: RectXY = { x1: -10.4, y1: 0.2, x2: 100.6, y2: 50.5 };
+    const result = sortRoundRect(rect);
+    expect(result.x).toBe(-10);
+    expect(result.y).toBe(0);
+    expect(result.width).toBe(111);
+    expect(result.height).toBe(51);
+    expect(result.x + result.width).toBe(Math.round(100.6));
+    expect(result.y + result.height).toBe(Math.round(50.5));
+  });
+
+  it('returns a zero extent for a degenerate rect, so emptiness guards keep working', () => {
+    const rect: RectXY = { x1: 30, y1: 30, x2: 30, y2: 30 };
+    expect(sortRoundRect(rect)).toEqual({ x: 30, y: 30, width: 0, height: 0 });
+  });
+
+  it('does not mutate its argument', () => {
+    const rect: RectXY = { x1: 50.4, y1: 60.6, x2: 10.4, y2: 20.6 };
+    const frozen = Object.freeze({ ...rect });
+    sortRoundRect(frozen);
+    expect(frozen).toEqual(rect);
+  });
+});
+
 describe('sortedRectToPos', () => {
   it('converts a sorted rect to a pos', () => {
     const rect: RectXYSorted = { x1: 10, y1: 20, x2: 30, y2: 60 };
@@ -200,6 +239,12 @@ describe('calculateNewRect', () => {
   function makeCanvasRef(measureWidth: number) {
     const ctx = {
       measureText: vi.fn(() => ({ width: measureWidth })),
+      // `getTextWidth` brackets its `applyTextStyle` in save/restore because it is handed the live
+      // tool overlay by `calculateNewRect` and would otherwise leave that context wearing the Type
+      // tool's typography. These are `vi.fn()`s and so are not real state, but they have to be
+      // present for the bracket to be callable at all.
+      save: vi.fn(),
+      restore: vi.fn(),
     };
     return { current: { getContext: vi.fn(() => ctx) } } as unknown as RefObject<HTMLCanvasElement | null>;
   }
@@ -329,5 +374,168 @@ describe('calculateNewRect', () => {
       imageSize
     );
     expect(result).toBeNull();
+  });
+
+  // `makeCanvasRef`'s `measureText` answers the SAME width for every string, whatever it is asked
+  // to measure, so a paragraph box's wrap count is a function of that constant and of the token
+  // count rather than of the string's length: a line fits iff `measureWidth <= wrapWidth`, and
+  // once it does not fit, `wrapLine` breaks at every space — N space-separated tokens lay out as
+  // N lines. A token that cannot fit is never broken, so a single word is always one line however
+  // wide it is. Every wrap count below is derived from that, not guessed.
+  const FONT_SIZE = 16;
+  const LINE_HEIGHT = 1.2;
+  const LINE_STEP = FONT_SIZE * LINE_HEIGHT;
+
+  it('leaves a paragraph box the width the user dragged, however much wider the text is', () => {
+    const rect = { x1: 100, y1: 200, x2: 200, y2: 260 };
+    // 1000 does not fit the 90px of wrap width a 100px box offers, so the text really does
+    // outgrow the box and the three tokens lay out as three lines.
+    const canvasRef = makeCanvasRef(1000);
+
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'aaaa bbbb cccc',
+        fontSize: FONT_SIZE,
+        lineHeight: LINE_HEIGHT,
+        rect,
+        align: 'left',
+        kind: 'paragraph',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x1).toBe(100);
+    expect(result!.x2).toBe(200);
+    // The height moved, so the width above is a decision and not a paragraph branch that did
+    // nothing at all.
+    expect(result!.y2 - result!.y1).toBeCloseTo(3 * LINE_STEP + 2 * TEXT_PADDING);
+  });
+
+  it('sizes a paragraph box by the WRAPPED line count, not by the hard-break count', () => {
+    const wrappedLines = 4;
+    // One hard line and four tokens, at 500 against the 190px a 200px box offers to its text:
+    // the whole line does not fit, so all three spaces break and the draft is four lines tall.
+    const canvasRef = makeCanvasRef(500);
+
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'alpha beta gamma delta',
+        fontSize: FONT_SIZE,
+        lineHeight: LINE_HEIGHT,
+        rect: { x1: 0, y1: 100, x2: 200, y2: 100 },
+        align: 'left',
+        kind: 'paragraph',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.y2 - result!.y1).toBeCloseTo(wrappedLines * LINE_STEP + 2 * TEXT_PADDING);
+    // `text.split('\n').length` is 1 here, and that is the count the point-type arm sizes from.
+    expect(result!.y2 - result!.y1).not.toBeCloseTo(1 * LINE_STEP + 2 * TEXT_PADDING);
+  });
+
+  it('never re-places a paragraph box for align, where point type moves centre and right', () => {
+    const rect = { x1: 100, y1: 0, x2: 200, y2: 300 };
+    // 1000 is wider than the box on both the ink measure and the wrap measure, so point type's
+    // width arm fires for every one of the three values.
+    const canvasRef = makeCanvasRef(1000);
+
+    const committed = (['left', 'center', 'right'] as const).map((align) => {
+      const result = calculateNewRect(
+        {
+          ...baseArgs,
+          text: 'aaaa bbbb cccc',
+          fontSize: FONT_SIZE,
+          lineHeight: LINE_HEIGHT,
+          rect,
+          align,
+          kind: 'paragraph',
+        } as TextToolArgs,
+        canvasRef,
+        imageSize
+      );
+      return { align, x1: result!.x1, x2: result!.x2 };
+    });
+
+    expect(committed).toEqual([
+      { align: 'left', x1: 100, x2: 200 },
+      { align: 'center', x1: 100, x2: 200 },
+      { align: 'right', x1: 100, x2: 200 },
+    ]);
+  });
+
+  it('leaves a paragraph box that is already tall enough for its wrapped lines exactly as dragged', () => {
+    const rect = { x1: 100, y1: 200, x2: 200, y2: 300 };
+    // 100px of height for the 67.6px three wrapped lines need, so the requirement is met and the
+    // guard that grows the height does not fire. The height is never trimmed down to the content
+    // either, which is what a dragged box is.
+    const canvasRef = makeCanvasRef(1000);
+
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'aaaa bbbb cccc',
+        fontSize: FONT_SIZE,
+        lineHeight: LINE_HEIGHT,
+        rect,
+        align: 'left',
+        kind: 'paragraph',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.y2 - result!.y1).toBe(100);
+    expect(result).toEqual(rect);
+  });
+
+  it('wraps a paragraph box at the CLAMPED width, so a box dragged past the right edge lays out as one already at the edge', () => {
+    const size: Size = { width: 400, height: 1000 };
+    // 500 does not fit the 390px a 400px-wide box offers and does fit the 690px of the unclamped
+    // 700px box, so measure-then-clamp and clamp-then-measure disagree about the line count and
+    // this test separates them.
+    const canvasRef = makeCanvasRef(500);
+    const base = {
+      ...baseArgs,
+      text: 'alpha beta gamma',
+      fontSize: FONT_SIZE,
+      lineHeight: LINE_HEIGHT,
+      align: 'left',
+      kind: 'paragraph',
+    } as TextToolArgs;
+
+    const inside = calculateNewRect({ ...base, rect: { x1: 0, y1: 0, x2: 400, y2: 30 } }, canvasRef, size)!;
+    const overhang = calculateNewRect({ ...base, rect: { x1: 0, y1: 0, x2: 700, y2: 30 } }, canvasRef, size)!;
+
+    // The committed width is the clamped one, and the layout is the one the clamped width gives.
+    expect(overhang.x2).toBe(400);
+    expect(overhang.y2 - overhang.y1).toBeCloseTo(inside.y2 - inside.y1);
+    expect(overhang.y2 - overhang.y1).toBeCloseTo(3 * LINE_STEP + 2 * TEXT_PADDING);
+  });
+
+  it('keeps growing a record that carries no kind key at all, which is what every pre-kind document holds', () => {
+    const args = {
+      ...baseArgs,
+      text: 'hello',
+      fontSize: FONT_SIZE,
+      lineHeight: LINE_HEIGHT,
+      rect: { x1: 100, y1: 0, x2: 200, y2: 300 },
+      align: 'left',
+    } as TextToolArgs;
+    // The key is ABSENT, which is the case `saveLastSettings` and every document written before
+    // the field existed are in. Setting it to 'point' explicitly would test a different record.
+    expect('kind' in args).toBe(false);
+
+    const result = calculateNewRect(args, makeCanvasRef(300), imageSize)!;
+
+    // 300 of ink plus the padding on both sides grows a 100px box, which is the point-type arm's
+    // move and the one a paragraph box of this width would refuse. A `resolveTextKind` default of
+    // 'paragraph' would have left both edges at 100 and 200.
+    expect(result.x1).toBe(100);
+    expect(result.x2).toBe(100 + 300 + 2 * TEXT_PADDING);
   });
 });

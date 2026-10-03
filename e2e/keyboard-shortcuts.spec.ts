@@ -11,6 +11,7 @@ import {
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
@@ -350,11 +351,18 @@ test.describe('Keyboard shortcuts', () => {
         'the Draw tool is the one selected, not merely some collapsed tool'
       ).toBeVisible();
 
-      // A `confirm()` before the dialog only exists while the document has unsaved
-      // changes; accepting it makes the test say nothing about whether it appeared.
-      page.on('dialog', (dialog) => void dialog.accept());
+      // Reaching the New Image dialog at all takes two answers, and both are asserted
+      // rather than assumed. The guard in front of it — the app's own modal now, at
+      // `src/components/ConfirmDialog` — only appears while the document has unsaved
+      // changes, and the app boots with one, so `acceptDiscardPrompt` WAITS for the
+      // prompt before clicking Discard. The `page.on('dialog', …)` that used to be here
+      // made this test say nothing about whether it appeared, because it accepted any
+      // dialog it was shown and Playwright auto-dismisses one it is not; answering the
+      // prompt is what makes "the New Image dialog is on screen" mean "the menu item and
+      // the guard both work", rather than "nothing was asked and nothing blocked it".
       await page.getByTestId('header-file-menu-button').click();
       await page.getByTestId('header-file-new-button').click();
+      await acceptDiscardPrompt(page);
 
       const width = page.getByTestId('new-image-width-input');
       await expect(width).toBeVisible();

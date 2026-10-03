@@ -111,7 +111,12 @@ const transformArgs: TransformToolArgs = {
   resizeY: 85,
 };
 
-const cases: ReadonlyArray<{ name: string; history: readonly HistoryItem[] }> = [
+const cases: ReadonlyArray<{
+  name: string;
+  history: readonly HistoryItem[];
+  /** The frame BOTH models must report at the last cursor. Absent means "parity only". */
+  expectedTipFrame?: DocumentFrame;
+}> = [
   {
     name: 'layer properties',
     history: [
@@ -167,6 +172,39 @@ const cases: ReadonlyArray<{ name: string; history: readonly HistoryItem[] }> = 
         nextFrame: { x: 10, y: 20, width: 200, height: 150 },
       }),
     ],
+  },
+  {
+    name: 'document frame grow',
+    history: [
+      baseline(),
+      item('grow', SET_DOCUMENT_FRAME_ACTION, 'document', {
+        previousFrame: frame,
+        nextFrame: { x: 0, y: 0, width: 560, height: 420 },
+      }),
+    ],
+    expectedTipFrame: { x: 0, y: 0, width: 560, height: 420 },
+  },
+  {
+    name: 'document frame negative origin',
+    history: [
+      baseline(),
+      item('negative-origin', SET_DOCUMENT_FRAME_ACTION, 'document', {
+        previousFrame: frame,
+        nextFrame: { x: -60, y: -45, width: 340, height: 260 },
+      }),
+    ],
+    expectedTipFrame: { x: -60, y: -45, width: 340, height: 260 },
+  },
+  {
+    name: 'document frame grow with negative origin',
+    history: [
+      baseline(),
+      item('grow-negative-origin', SET_DOCUMENT_FRAME_ACTION, 'document', {
+        previousFrame: frame,
+        nextFrame: { x: -60, y: -45, width: 520, height: 390 },
+      }),
+    ],
+    expectedTipFrame: { x: -60, y: -45, width: 520, height: 390 },
   },
   {
     name: 'merge',
@@ -307,7 +345,7 @@ describe('legacy/durable logical replay parity', () => {
   beforeAll(() => overrideCanvasFilterSupport(true));
   afterAll(() => overrideCanvasFilterSupport(null));
 
-  it.each(cases)('matches at every reachable cursor: $name', ({ name, history }) => {
+  it.each(cases)('matches at every reachable cursor: $name', ({ name, history, expectedTipFrame }) => {
     const converted = convert(history, name);
     expect(converted.diagnostics).toEqual([]);
 
@@ -317,6 +355,19 @@ describe('legacy/durable logical replay parity', () => {
       expect(durableCursor, `${name} legacy cursor ${cursor} must map`).toEqual(expect.any(Number));
       const durable = replayDurableDocument(converted.document, durableCursor);
       expect(normalizeDurable(durable), `${name} at cursor ${cursor}`).toEqual(normalizeLegacy(legacy));
+
+      // Parity alone cannot see an origin clamp: a model that floored the frame at 0 would
+      // still agree with the other one, and the extent of these cases would not show it
+      // either. So a case that declares a tip frame is held to that frame on BOTH sides,
+      // sign included, at the only cursor that applied it.
+      if (expectedTipFrame && cursor === history.length - 1) {
+        expect(legacy.documentFrame, `${name} legacy frame at the tip`).toEqual(expectedTipFrame);
+        expect(durable.frame, `${name} durable frame at the tip`).toEqual(expectedTipFrame);
+        expect(Math.sign(legacy.documentFrame.x), `${name} legacy origin x sign`).toBe(Math.sign(expectedTipFrame.x));
+        expect(Math.sign(durable.frame.x), `${name} durable origin x sign`).toBe(Math.sign(expectedTipFrame.x));
+        expect(Math.sign(legacy.documentFrame.y), `${name} legacy origin y sign`).toBe(Math.sign(expectedTipFrame.y));
+        expect(Math.sign(durable.frame.y), `${name} durable origin y sign`).toBe(Math.sign(expectedTipFrame.y));
+      }
     }
   });
 

@@ -5,6 +5,13 @@ import {
   CANVAS_REDRAW_CLIP,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
   CANVAS_REDRAW_TIMEOUT_MS,
+  DEFAULT_DOCUMENT_HEIGHT,
+  DEFAULT_DOCUMENT_WIDTH,
+  LINE_END_X,
+  LINE_END_Y,
+  LINE_START_X,
+  LINE_START_Y,
+  containFit,
   hasDarkPixels,
   waitForCanvasRedraw,
   type BoundingBox,
@@ -451,18 +458,34 @@ describe('canvasRedrawClip', () => {
     expect(canvasRedrawClip(BOX)).toEqual({ x: 140, y: 115, width: 300, height: 100 });
   });
 
-  it('follows CANVAS_REDRAW_CLIP for both the offset and the size', () => {
+  it('follows CANVAS_REDRAW_CLIP for the size, and the box origin plus the clamp for the position', () => {
+    // The SIZE is the constant's, unchanged by anything. The ORIGIN is the box plus the larger
+    // of the constant and the letterbox the document sits inside — see the containment block
+    // below for why the second half of that is there at all.
+    const { offsetX, offsetY } = containFit(BOX);
     expect(canvasRedrawClip(BOX)).toEqual({
-      x: BOX.x + CANVAS_REDRAW_CLIP.x,
-      y: BOX.y + CANVAS_REDRAW_CLIP.y,
+      x: BOX.x + Math.max(CANVAS_REDRAW_CLIP.x, offsetX),
+      y: BOX.y + Math.max(CANVAS_REDRAW_CLIP.y, offsetY),
       width: CANVAS_REDRAW_CLIP.width,
       height: CANVAS_REDRAW_CLIP.height,
     });
   });
 
-  it('keeps the region size independent of the box size', () => {
-    expect(canvasRedrawClip({ x: BOX.x, y: BOX.y, width: 4, height: 4 })).toEqual(BOX_CLIP);
-    expect(canvasRedrawClip({ x: BOX.x, y: BOX.y, width: 5_000, height: 4_000 })).toEqual(BOX_CLIP);
+  it('keeps the region SIZE independent of the box size', () => {
+    // Only the size, and deliberately not the position any more: the position IS a function of
+    // the box, because a fixed box-relative origin photographs the letterbox on the tall boxes
+    // and the containment block below is the case that used to fail silently. The old pin here
+    // asserted the position too, and that assertion is what the clamp removed.
+    for (const box of [
+      { x: BOX.x, y: BOX.y, width: 4, height: 4 },
+      { x: BOX.x, y: BOX.y, width: 5_000, height: 4_000 },
+      { x: 0, y: 0, width: 974, height: 583 },
+      { x: 0, y: 0, width: 974, height: 963 },
+    ]) {
+      const clip = canvasRedrawClip(box);
+      expect(clip.width, `width for ${box.width}x${box.height}`).toBe(300);
+      expect(clip.height, `height for ${box.width}x${box.height}`).toBe(100);
+    }
   });
 
   it('returns the full region for a degenerate zero-size box instead of throwing', () => {
@@ -473,6 +496,8 @@ describe('canvasRedrawClip', () => {
   });
 
   it('keeps a negative origin arithmetic rather than clamping it', () => {
+    // A negative box origin is arithmetic, not a letterbox: the clamp is on the offset WITHIN
+    // the box, so the origin still adds rather than being discarded.
     expect(canvasRedrawClip({ x: -50, y: -20, width: 200, height: 200 })).toEqual({
       x: 50,
       y: 80,
@@ -488,6 +513,218 @@ describe('canvasRedrawClip', () => {
 
     expect(canvasRedrawClip(BOX)).toEqual(BOX_CLIP);
     expect(CANVAS_REDRAW_CLIP).toEqual({ x: 100, y: 100, width: 300, height: 100 });
+  });
+});
+
+/**
+ * THE STANDARD CLIP LIES INSIDE THE LETTERBOXED DOCUMENT.
+ *
+ * The document is `object-fit: contain` inside the canvas element, so a fixed box-relative
+ * region is photographing the letterbox as soon as the letterbox reaches it — and it does.
+ * At the suite's 1280x720 the element is 974x583, the fit is height-limited at 0.9717, and the
+ * horizontal letterbox is 98.33px, so `CANVAS_REDRAW_CLIP.x = 100` starts 1.67 CSS px inside
+ * the document: a margin, not a containment. At the 1280x1100 `document-dialogs.spec.ts` uses,
+ * the element is 974x963, the fit is WIDTH-limited at 1.2175 and the VERTICAL letterbox is
+ * 116.25px, so the first 16.25 px of the clip are bare checkerboard TODAY.
+ *
+ * Harmless, and that is the shape worth naming: `#f3f3f3` is neither dark nor red, so
+ * `hasDarkPixels` still finds the stroke and the assertion still passes. Nothing fails when the
+ * region stops being the document — the region is simply still a region. `getStrokeAnalysis` is
+ * the predicate that does NOT tolerate it, which is why F1 and this are the same defect seen
+ * from two ends.
+ *
+ * So containment is asserted, for the boxes the suite actually measures. `canvasRedrawClip`
+ * clamps its origin to `max(CANVAS_REDRAW_CLIP, letterboxOrigin)`; the size is untouched, and
+ * that is safe for a reason worth stating: nothing can be painted outside the document rect, so
+ * moving the region off the letterbox cannot move it off a stroke any spec drew.
+ */
+describe('canvasRedrawClip containment in the letterboxed document', () => {
+  /**
+   * The boxes the suite MEASURES, and the condition they share: the standard test line, at
+   * box-relative (150,150)-(350,150), is itself inside the letterboxed document. That is what
+   * makes containment and "contains the line" the same requirement here rather than two
+   * competing ones — see the trade-off block below for the boxes where they are not.
+   */
+  const MEASURED_BOXES: { name: string; box: BoundingBox }[] = [
+    // The suite default, from `devices['Desktop Chrome']` at 1280x720 with a 56px rail.
+    { name: '1280x720 (the suite default)', box: { x: 56, y: 100, width: 974, height: 583 } },
+    // `document-dialogs.spec.ts`'s `test.use({ viewport: 1280x1100 })`.
+    { name: '1280x1100 (document-dialogs)', box: { x: 56, y: 100, width: 974, height: 963 } },
+    // The overflowing layout the export baselines were recorded against.
+    { name: 'the export baseline layout', box: { x: 56, y: 100, width: 974, height: 840 } },
+    // The height that overflowed a desktop window before it was fixed.
+    { name: 'the pre-fix overflow height', box: { x: 56, y: 100, width: 974, height: 890 } },
+  ];
+
+  /** The document rect inside `box`, in BOX-relative coordinates, as the app renders it. */
+  const documentRectOf = (box: BoundingBox) => {
+    const { scale, offsetX, offsetY } = containFit(box);
+    return { x: offsetX, y: offsetY, width: DEFAULT_DOCUMENT_WIDTH * scale, height: DEFAULT_DOCUMENT_HEIGHT * scale };
+  };
+
+  const STANDARD_LINE = { x: LINE_START_X, y: LINE_START_Y, right: LINE_END_X, bottom: LINE_END_Y };
+
+  it.each(MEASURED_BOXES)('keeps the clip inside the document at $name', ({ box }) => {
+    const documentRect = documentRectOf(box);
+    const clip = canvasRedrawClip(box);
+    // Box-relative on both sides, so the box origin cancels and the numbers are the ones the
+    // stylesheet's contain fit produces.
+    const left = clip.x - box.x;
+    const top = clip.y - box.y;
+
+    expect(left).toBeGreaterThanOrEqual(documentRect.x);
+    expect(top).toBeGreaterThanOrEqual(documentRect.y);
+    expect(left + clip.width).toBeLessThanOrEqual(documentRect.x + documentRect.width);
+    expect(top + clip.height).toBeLessThanOrEqual(documentRect.y + documentRect.height);
+  });
+
+  it.each(MEASURED_BOXES)('still contains the standard line the clip exists for, at $name', ({ box }) => {
+    // Containment alone would be satisfied by a clip that had slid off the line and onto the
+    // middle of the document, so the original purpose is asserted beside it — and the
+    // precondition is checked first, because it is the thing that makes both hold at once.
+    const clip = canvasRedrawClip(box);
+    const left = clip.x - box.x;
+    const top = clip.y - box.y;
+
+    expect(STANDARD_LINE.x, 'the line is inside the document, so a contained clip can hold it').toBeGreaterThanOrEqual(
+      documentRectOf(box).x
+    );
+    expect(STANDARD_LINE.y).toBeGreaterThanOrEqual(documentRectOf(box).y);
+    expect(left).toBeLessThanOrEqual(STANDARD_LINE.x);
+    expect(top).toBeLessThanOrEqual(STANDARD_LINE.y);
+    expect(left + clip.width).toBeGreaterThanOrEqual(STANDARD_LINE.right);
+    expect(top + clip.height).toBeGreaterThanOrEqual(STANDARD_LINE.bottom);
+  });
+
+  it('leaves the default viewport byte-identical to the unclamped constant', () => {
+    // WHO IS SUBJECT TO THIS CLAMP, because naming the wrong specs here is what made this
+    // comment false once already. The default-clip users are the specs that reach
+    // `CANVAS_REDRAW_CLIP` without passing a clip of their own: the six that call
+    // `canvasRedrawClip(box)` — `file-roundtrip`, `keyboard-shortcuts`, `document-dialogs`,
+    // `history-panel`, `paint-tool-pixels`, `layers-panel` — plus every caller of
+    // `waitForCanvasRedraw(page, box)`, which reaches the same default through the wrapper.
+    //
+    // The four that are NOT subject to it, and were wrongly named as its users, are
+    // `adjustments`, `levels`, `filter-tools` and `color`: each deliberately waits on its own
+    // contain-fit-derived `documentClipInBox(box)` instead. Derive the set with
+    //   grep -rn "canvasRedrawClip(" e2e/ --include="*.ts"
+    //   grep -rn "waitForCanvasRedraw(page, box" e2e/ --include="*.ts"
+    // and read it rather than trusting a list in a comment, which is the whole reason this
+    // paragraph now names the two greps instead of a roster.
+    //
+    // Of the default-clip users, only `document-dialogs` is measured at a box where the clamp
+    // engages (974x963 — see the table below); the rest run at 1280x720, where it is a no-op.
+    expect(canvasRedrawClip({ x: 56, y: 100, width: 974, height: 583 })).toEqual({
+      x: 56 + 100,
+      y: 100 + 100,
+      width: 300,
+      height: 100,
+    });
+    // And the margin it has to spare, recomputed rather than typed: the letterbox the clamp is
+    // measured against. 1.67px is the whole reason this was latent and not live.
+    const letterbox = containFit({ width: 974, height: 583 }).offsetX;
+    expect(letterbox).toBeCloseTo(98.333, 2);
+    expect(letterbox).toBeLessThan(CANVAS_REDRAW_CLIP.x);
+  });
+
+  it.each([
+    // The slack each measured box leaves, and therefore whether the clamp engages. The numbers
+    // are stated rather than recomputed because the margin between the two engaged states is
+    // 1.67 CSS px at 1280x720 and 16.25 px at 1280x1100, and those two margins are the entire
+    // reason the clip photographed the letterbox in one viewport and nearly did in the other.
+    //
+    // The condition, for anyone who wants it in one sentence: the clamp engages when the slack
+    // on an axis exceeds twice `CANVAS_REDRAW_CLIP` — `boxWidth - documentWidth > 200`. It is
+    // NOT a single formula in box terms, and that is worth knowing: the letterbox exists on an
+    // axis only when that axis is the SLACK axis, so 974x583 is 98.33px of horizontal slack
+    // and zero vertical, while 974x963 is exactly the reverse.
+    {
+      name: '1280x720',
+      box: { width: 974, height: 583 },
+      offsetX: 98.333,
+      offsetY: 0,
+      engaged: false,
+    },
+    {
+      name: '1280x1100 (document-dialogs)',
+      box: { width: 974, height: 963 },
+      offsetX: 0,
+      offsetY: 116.25,
+      engaged: true,
+    },
+    {
+      name: 'the export baseline layout',
+      box: { width: 974, height: 840 },
+      offsetX: 0,
+      offsetY: 54.75,
+      engaged: false,
+    },
+    {
+      name: 'the pre-fix overflow height',
+      box: { width: 974, height: 890 },
+      offsetX: 0,
+      offsetY: 79.75,
+      engaged: false,
+    },
+    {
+      name: 'a very wide, short box',
+      box: { width: 1_600, height: 500 },
+      offsetX: 466.667,
+      offsetY: 0,
+      engaged: true,
+    },
+    {
+      name: 'a very tall, narrow box',
+      box: { width: 500, height: 1_600 },
+      offsetX: 0,
+      offsetY: 612.5,
+      engaged: true,
+    },
+  ])('measures $name slack as $offsetX x $offsetY, clamp engaged: $engaged', ({ box, offsetX, offsetY, engaged }) => {
+    const fit = containFit(box);
+
+    expect(fit.offsetX).toBeCloseTo(offsetX, 2);
+    expect(fit.offsetY).toBeCloseTo(offsetY, 2);
+
+    const clip = canvasRedrawClip({ x: 0, y: 0, ...box });
+    const hasMoved = clip.x !== CANVAS_REDRAW_CLIP.x || clip.y !== CANVAS_REDRAW_CLIP.y;
+
+    expect(hasMoved).toBe(engaged);
+  });
+});
+
+/**
+ * WHERE CONTAINMENT AND "CONTAINS THE LINE" ARE MUTUALLY UNSATISFIABLE.
+ *
+ * Past a point the letterbox swallows the standard test line itself, and no clip can then be
+ * both inside the document and over the line — the line would be at a box-relative coordinate
+ * where no stroke can be painted, because painting happens in the document. The clamp resolves
+ * that by keeping containment, which is the only one of the two that can be satisfied.
+ *
+ * The two boxes are extreme on purpose and are NOT the suite's: a 1600x500 canvas box is one
+ * no viewport produces, and a 500x1600 one is a portrait window. They are here to state the
+ * trade-off rather than leave it to be discovered, because the alternative — a clip that tracks
+ * the line wherever the line is — is precisely the unclamped behaviour that photographs the
+ * letterbox.
+ */
+describe('canvasRedrawClip where the letterbox swallows the standard line', () => {
+  it.each([
+    { name: 'a very wide, short box', box: { x: 0, y: 0, width: 1_600, height: 500 } },
+    { name: 'a very tall, narrow box', box: { x: 0, y: 0, width: 500, height: 1_600 } },
+  ])('keeps containment and gives up the line on $name', ({ box }) => {
+    const { scale, offsetX, offsetY } = containFit(box);
+    const clip = canvasRedrawClip(box);
+
+    // The precondition: the line really is outside the document here, on whichever axis the
+    // slack falls — 1600x500 is wide, so it is the horizontal letterbox; 500x1600 is tall, so
+    // it is the vertical one. Asserting both axes would fail on each box for the wrong reason.
+    const lineIsOutside = LINE_START_X < offsetX || LINE_START_Y < offsetY;
+    expect(lineIsOutside).toBe(true);
+    expect(clip.x - box.x).toBeGreaterThanOrEqual(offsetX);
+    // And containment still holds, which is the half that survived.
+    expect(clip.x - box.x + clip.width).toBeLessThanOrEqual(offsetX + DEFAULT_DOCUMENT_WIDTH * scale);
+    expect(clip.y - box.y).toBeGreaterThanOrEqual(offsetY);
+    expect(clip.y - box.y + clip.height).toBeLessThanOrEqual(offsetY + DEFAULT_DOCUMENT_HEIGHT * scale);
   });
 });
 

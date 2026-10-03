@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154 — deleted
+### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154, 161 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2192,10 +2192,12 @@ of a lost logical edit.
   and `operations` is durable. The publication is refused, and a no-op is reported as an invariant
   violation.
 
-**It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx:48` calls
-`tempUpdateLayer` and nothing else; the options bar has no commit gesture. The commit is
-`commitDirtyTool(true)` at `src/contexts/useLayer.ts:348`, reached from `goToTool`, the Apply link, a
-new layer, or `mergeAllLayers`. So the operation is **staged** by the slider and only meets the
+**It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx:80` calls
+`tempUpdateLayer` and nothing else; the option bar's own commit is the `change` event at
+`Transform.tsx:54-69`, which is a separate listener. The commit is
+`commitDirtyTool(true)` at `src/contexts/useLayer.ts:443`, reached from `goToTool`, a new layer,
+or `mergeAllLayers` — the options bar's Apply link, which used to be the fourth caller, was
+removed by `c424469a`. So the operation is **staged** by the slider and only meets the
 publishing branch when one of those commits — and `useLayer.lifecycle.test.tsx:541` already pins
 that a staged identity preview is discarded. Do not write the test for this by moving a slider and
 releasing; nothing publishes.
@@ -4078,7 +4080,7 @@ one that is live, and it is the one an earlier version did not name.
    no stylus-versus-palm rejection and no pinch-zoom.
 2. **Slider hit areas.** There is no `src/components/Common/TouchSlider.tsx`, and the options-bar
    sliders are 4-6px tall — `h-1.5` in `Draw.tsx:151,157`, `Levels.tsx:111,116` and `Smudge.tsx:25`,
-   `h-1` in `Transform.tsx:184,189` and `:204,209`. The mobile tool sheet renders those same bars.
+   `h-1` in `Transform.tsx:185` and `:205`. The mobile tool sheet renders those same bars.
 
 **Why it is not a wiring bug.** Touch reordering needs a pointer-events drag with a gesture
 threshold, and the layers list has an existing HTML5 path with its own keyboard affordances to keep
@@ -4435,40 +4437,6 @@ narrative: state the three scanned regions, their node counts, that both themes 
 
 ---
 
-## 161. The crop cannot extend the canvas, and Photoshop's crop can — the `Fill` control is unimplemented and unoverridden
-
-**Problem.** Photoshop's crop grows the canvas: drag the crop box past the image edge and the document
-extends, with the `Fill` control deciding what goes in the new area. Adobe's own page says it —
-
-> "Just click and drag beyond the borders of an image with the Crop tool, and then fill the extended
-> canvas with new content that blends with the existing image."
-
-— and `src/tools/descriptions/type-crop.ts:230` quotes exactly that sentence while declaring the `Fill`
-control itself `status: 'missing'` at `:231`. The app cannot do this: `trimRect` clamps every crop
-edge into `[0, totalSize]` (`src/util/rect.ts:36-50`), so extending a crop is impossible by
-construction, which `:302` states in the tool's own `appNotes`.
-
-**Why this is filed rather than fixed.** `docs/OVERRIDES.md` is empty and is written by the operator
-by hand; per `AGENTS.md`, where the code and Adobe disagree with no entry, **the code is the defect**
-and the decision is not an agent's. Implementing the extension, and the `Fill` control's behaviour,
-would be implementing an unoverridden Photoshop deviation. That finding is the agent's job; the
-override is the operator's.
-
-**Reproduce.** Drag the Crop tool's box past any document edge and release. The document shrinks to
-the clamped intersection instead of growing.
-
-**Fix.** Two separable parts, and only the second is a judgement call. The mechanical half is to let
-the crop rect carry an out-of-bounds region instead of clamping it, so a frame can grow; the product
-half is what fills the added area, which is what `Fill` is for and which has no answer without the
-operator. Do not pin the current clamp with a test — the clamp is the absence of the feature, and a
-pin on it fires red the moment someone implements `Fill` or `Image > Canvas Size`. The clamp is
-already covered as behaviour of `trimRect` at `src/util/__tests__/rect.test.ts:41-65`, and crop-to-frame
-at `src/contexts/__tests__/useLayer.lifecycle.test.tsx:702-730`.
-
-**Files.** `src/tools/descriptions/type-crop.ts:230-231,302`, `src/util/rect.ts:36-50`,
-`src/contexts/useLayer.ts:719`, `docs/OVERRIDES.md`
----
-
 ## 162. A failed export tells the user nothing, and `SaveDialog` has nowhere to tell them
 
 `src/components/SaveDialog/SaveDialog.tsx:14-17`
@@ -4694,8 +4662,8 @@ Again`"). Re-derive the membership before building the item; do not add it becau
    `resizeX` / `resizeY` and nothing more.
 
 2. **`Rotate 180°` is outside the rotate slider's range.** The slider is `min={-90}` `max={90}`
-   (`Transform.tsx:183-190`). The bar's own `180°` button does not go through the slider — it writes
-   `rotate: (rotate + 180) % 360` (`Transform.tsx:168`) — so a value the slider cannot represent is
+   (`Transform.tsx:179-186`). The bar's own `180°` button does not go through the slider — it writes
+   `rotate: (rotate + 180) % 360` (`Transform.tsx:164`) — so a value the slider cannot represent is
    already reachable, and a menu item that presets `rotate: 180` lands the options bar in a state its
    own control cannot display. `Scale` has the mirror problem: `resizeX`/`resizeY` are percentages, so
    Adobe's absolute Width/Height percentages need a document-size read the menu does not currently do.
@@ -4708,7 +4676,7 @@ not a computation one: reconcile the slider's range with the `±90` button pair 
 `Transform.tsx:95-105`, which already wraps through 360.
 
 **Files.** `src/components/DesktopHeader/DesktopHeader.tsx:503-535`,
-`src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:168`, `:183-190`,
+`src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:164`, `:179-186`,
 `src/contexts/useCurrentTool.tsx:56-81`, `src/contexts/useLayer.ts:565`
 
 ## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
@@ -4988,3 +4956,278 @@ change closed.
 **Files.** `toolbar-mapping.ts`, `src/components/Mobile/mobile-tools.ts:50`,
 `src/components/Mobile/MobileBottomBar.tsx:33`, `src/components/Mobile/MobileToolSheet.tsx:24`,
 `src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx:302`
+
+---
+
+---
+
+## 174. The discard prompt has no Save option, and adding one is a product decision
+
+**Problem.** `ConfirmDialog` (`src/components/ConfirmDialog/ConfirmDialog.tsx`) is the app's
+replacement for the six native `window.confirm()` guards, and its footer is Discard / Cancel.
+Photoshop's prompt before a modified document is replaced carries a third button, and which
+buttons it carries is the part that has not been decided here rather than the part that was
+implemented around.
+
+**Why it is not simply "add a Save button".** The app's only save is Save As to a NEW file:
+`openSaveImageDialog` always proposes `"<name> (copy)"`
+(`src/contexts/useFile.tsx:190`) and `SaveDialog`'s own title is `Save File As...`
+(`src/components/SaveDialog/SaveDialog.tsx:54`). There is no path that writes back to the file
+the document was opened from, and no save point to return to — `hasUnsavedChanges` is a boolean
+with no `savedRevision` to compare against, and undo always ends dirty
+(`src/contexts/StoreContext.tsx:426` hard-codes `true` in `projectPublishedTimeline`). So a Save
+button on the discard prompt would have to open Save As, and then RESUME the interrupted action —
+open the New Image dialog the user asked for, or continue the file open. Whether the user should be
+able to do that at all, or whether the interrupted action should simply be abandoned after a save,
+is a decision about product behaviour and belongs to the operator.
+
+**What is decided and does not need revisiting.** The guard itself is complete against the
+document's actual contents: `hasDiscardableWork` (`src/util/document-dirty.ts`) covers committed
+history, an unplaced text box in `currentArgs`, and an in-flight tool transaction in
+`previewLayers` — the last of which the store's `hasUnsavedChanges` cannot see, because a live
+tool drag dispatches nothing for the whole gesture. The prompt's wording is unchanged from the
+native `confirm()` calls it replaced, so the question being put to the user did not change with the
+widget.
+
+**Fix.** Decide whether the discard prompt should offer Save. If it should, the pieces it needs are
+a real save point first (a revision or history index to compare `hasUnsavedChanges` against, so
+undo can return to clean), then Save As, then a resume of the interrupted action — and the resume is
+the part with a user-visible choice in it, because the alternative is that saving abandons the New.
+If it should not, `docs/OVERRIDES.md` is where the deviation from Adobe belongs, and that file is
+the operator's to write.
+
+**Files.** `src/components/ConfirmDialog/ConfirmDialog.tsx`,
+`src/contexts/UnsavedChangesContext.tsx`, `src/contexts/useFile.tsx:190`,
+`src/components/SaveDialog/SaveDialog.tsx:54`, `src/contexts/StoreContext.tsx:426`,
+`docs/FEATURES.md`
+
+## 175. Paste places a layer at a canvas-space position that the layer reader treats as document space
+
+**Problem.** `pasteSelectionClipboard` (`src/contexts/useSelectionClipboard.ts:70-75`) builds
+
+```ts
+x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2));
+```
+
+`totalSize` is the DOCUMENT size — `documentFrameSize(nextFrame)` at `src/contexts/StoreContext.tsx:419`
+and `:456` — so `(totalSize.width - width) / 2` is already the document-space offset that centres
+the pasted layer. Adding `documentFrame.x` converts it to canvas space, and the result is passed
+as `pos` to `createLayerFromBitmap` (`src/contexts/useSelectionClipboard.ts:76-80`), which reads
+`pos` as DOCUMENT space. On a cropped document the pasted layer therefore lands `documentFrame.x`
+pixels right and `documentFrame.y` pixels down of centre, by exactly the frame origin.
+
+**This is enshrined as correct by three passing tests**, which is what makes it a trap:
+`src/contexts/__tests__/useSelectionClipboard.test.tsx:213` asserts `pos {47, 37}` against a frame
+`{x: 12, y: 7, width: 100, height: 100}`, where the document-space centre is `{35, 30}` — the
+asserted value is `{35, 30}` plus the frame origin. The companions are at `:230` and `:246`. Those
+three assertions must be re-pointed in the same change that fixes the code; they are not evidence
+that the current behaviour is right.
+
+**The sibling path is correct**, which is why this reads as a copy/paste asymmetry rather than a
+shared convention: `layerViaCopy` (`src/contexts/useSelectionClipboard.ts:92` out, `:100` back) is
+a proven round-trip identity, pinned by
+`src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx:208`. The pin that used to sit
+there asserted the double-count this entry describes, and was deleted on that evidence — its stated
+mechanism (`documentToCanvasPos` at `:100`) named a call the line does not make.
+
+**Fix.** Drop `documentFrame.x` / `documentFrame.y` from the centring expression at `:71-72`, and
+re-point the three assertions above. No conversion is needed in the other direction: the reader
+already treats `pos` as document space.
+
+## 176. Copy clamps canvas-space points against the document size
+
+**Problem.** `layerViaCopy` converts the selection out of document space
+(`documentToCanvasPos` at `src/contexts/useSelectionClipboard.ts:92`) and then hands the
+canvas-space points to `copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize)` at
+`:93`. `totalSize` is the document size (see §175), and the copy path clamps against it —
+`getSelectionCanvasBounds` in `src/util/selection.ts:531-536` does
+`maxX = Math.min(imageSize.width, maxX)`. Canvas coordinates run as high as
+`frame.x + totalSize.width`, so the rightmost `frame.x` pixels and the bottom `frame.y` pixels of a
+cropped document are unclippable and a selection reaching them is silently truncated, while a
+selection one pixel left of the origin clamps to 0.
+
+**Fix.** Pass the canvas-space extent — `totalSize` offset by the frame origin, or the canvas's own
+`width`/`height` — as the clamp bound rather than the document size. `:45` is the same call in
+`copySelectionToCanvas`'s other caller and needs the same bound.
+
+## 177. G0 and G13 cannot both be satisfied, and the widened gate that proves it is committed red
+
+**Problem.** The plan's G0 forbids production source from importing the retired replay and
+materialization modules; G13 requires `materialization.ts` to have exactly one production importer.
+As written they are contradictory: the only way to satisfy G13 is for the durable compositor to
+exist and be wired, and the compositor's own import of `materialization.ts`
+(`src/contexts/durable-compositor.ts:4`) is exactly what G0 forbids. No state satisfies both.
+
+**Proof, and the gate that finds it.** The G0 assertion read ONE file — `../StoreContext.tsx`
+— so it could not see `durable-compositor.ts` at all, and passed. Widened to every tracked
+production module (excluding `__tests__`, `test`, `*.test.*`, `*.spec.*`, `*.stories.*` and
+ambient `*.d.ts`, the convention already established for this question at
+`src/contexts/__tests__/history-writer-census.test.ts:214-234`), it is RED by exactly one hit.
+The walk's roots are `src/` **and** `toolbar-mapping.ts`: `tsconfig.app.json:43` puts that file
+in the app's `include` beside `src` and four components import it, so a walk rooted only at
+`src/` reported a subset while implying the repository. The violation is:
+
+```
+{ "file": "src/contexts/durable-compositor.ts", "line": 4, "specifier": "./materialization.ts" }
+```
+
+The forbidden set is unchanged and correct — `replay-coordinator`, `materialization`,
+`replay-checkpoints` — and must stay that way: `presentation-evaluator.ts` is imported by production
+on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`, `materialization.ts:14`), and `durable-replay.ts`
+is read as a value at `StoreContext.tsx:41`, so adding either would make the gate red on correct code.
+A specifier is matched on its BASENAME, not by substring, so a helper named
+`materialization-utils.ts` is not a violation of a gate about `materialization.ts`.
+
+**The gate is LANDED, as a tripwire rather than a red run.** The property leg is `it.fails`
+(`src/contexts/__tests__/StoreContext.boundary-gates.test.ts`), so `main` is green while the
+contradiction stands and the leg goes RED the moment `durable-compositor.ts` stops importing
+`materialization.ts` — which is the moment G0 and G13 stop disagreeing and the leg must become a
+plain `it`. `it.fails` can only say "at least one violation exists", so a companion plain assertion
+beside it, `has no forbidden production import beyond the one §177 tracks`, turns red if a SECOND
+violation appears anywhere — including in `toolbar-mapping.ts`, which no earlier version of the gate
+could read.
+
+**What is needed.** An operator ruling on which of G0/G13 governs while the durable path is
+unwired: either the forbidden set gains an explicit exemption for the compositor pair, or the
+compositor is removed until it can be wired. That ruling is not the test's to make, and no entry in
+`docs/OVERRIDES.md` records one. When it comes, the property leg is deleted in the same change —
+it is a pin, and a pin that outlives its defect is a gate that stops meaning anything.
+
+## 178. `fix/rail-drop-draw` is parked on a premise OVR-2 voided
+
+**Problem.** The branch deletes the `draw` tool; OVR-2 in `docs/OVERRIDES.md` keeps the tile, so
+its premise is void. It is still a live ref at `603356ac` and carries a broken assertion —
+`e2e/history-panel.spec.ts:29-64` repoints the stroke filter to `/^brush/`, then still asserts
+`toContainText('draw')`.
+
+**Why it is parked.** Insurance only. OVR-2 marks Dashed Pen and Spray a temporary hold on controls
+the paint bar lacks, so `draw` may be deleted later and this is the work for that day.
+
+**What is needed.** Do not merge it; do not dispose of it. If `draw` is deleted, re-derive the
+removal from `main` — do not resurrect `603356ac`, which is 583 commits behind its base and carries
+the mutant above.
+
+## 179. `fix/migration-review-sweep` cannot merge, and one of its hunks reopens a blank-canvas defect
+
+**Problem.** `5d388e02` is 1 commit ahead and 135 behind, and 15 of its 24 files are dirty on both
+sides. It cannot be merged as a commit, and it must never be cherry-picked whole: one hunk narrows
+`drawLayersToCanvas`'s previous-pixel snapshot to resize-only, which is exactly the change `d5d8db65`
+made in the other direction. `main:src/contexts/layer-renderer.ts:231-246` snapshots in EVERY case and
+says why — `resizeCanvas` resets a resized canvas to transparent and `clearRect` empties one whose
+dimensions already matched, so a `drawImage` throwing between them left the document blank. The branch
+reinstates that window and pins the reinstatement in `layer-renderer.drawLayersToCanvas.test.ts:530`.
+
+Three of its production fixes also landed on `main` under different names, so a merge produces two
+taxonomies or a silent winner: `presentation-evaluator.ts`'s `PresentationFilterRefusal` against
+`main`'s `FilterArgumentUnrenderableError` (`src/util/canvas-filter.ts`) and `evaluatePresentationForDraw`;
+`history-append.ts`'s `hasAsset` against `main`'s `registryResolvesAsset` (4f8bdcbb); and
+`layer-renderer.filters.test.ts`, which re-points a `getLayerFilter` that `main:layer-renderer.ts:30`
+still exports, so merging it deletes a symbol main's own tests use.
+
+**What survives, and is worth re-applying.** `presentation-evaluator.parity.test.ts` (+783) —
+cross-checks `materializeLayer` against `drawLayerSource` on filter string, matrix, bounds and call
+order, two independent implementations against literal fixtures; the best test in the branch.
+`durable-compositor.refusal.test.ts`'s negative cases, `history-append.merge.test.ts`'s key-order
+reversal, and the `history-append.create.test.ts` cases that fix an `if (…) return;` that made a
+reader-throwing case vacuous. One case in the refusal file does not test what it claims:
+`durable-compositor.refusal.test.ts:418` builds its abort with `new AbortController().abort()`, which
+in jsdom is a real `DOMException`, so it stays green on the defect `isAbortError` exists to catch.
+
+**Three decisions this branch takes and cannot.** `.kilo/plans/history-migration-finalisation.md` §8
+`SD-8` records "per-layer refusal vs whole-document rejection in materialization" as
+_"taken in code, recorded nowhere… the ruling is still the operator's"_; this branch narrows the
+refusal and then hard-codes the narrowed taxonomy into ~10 test cases, which settles SD-8 by test
+rather than by ruling, and `docs/OVERRIDES.md` has no entry. Second, `presentation-evaluator.ts`'s
+`validateBounds: false` opt-out is guarded only by convention where `main` makes it a
+compiler-enforced rule. Third, grading `opacity` against the live record decides part of §92, whose
+own text says the decision comes before the edit.
+
+## 180. `docs/no-line-numbers` states enforcement it does not have, and its assertion is a to-do list
+
+**Problem.** `9b220f4b` rewrites the no-line-numbers rule and ships an assertion it describes as
+expected to fail for as long as documents are unmigrated. At that commit 27 maintained documents
+carry 2,830 citations and `HANDOFF.md` alone has 895. That is a migration plan wearing an
+assertion's clothes: it fails while the defect lives, which is the inverse of this repository's pin
+convention, and it blocks every commit and the `gate:push` suite.
+
+Three claims in the documents the commit rewrites are false about the code shipped beside them.
+`AGENTS.md` says the check "reads every tracked markdown document… so a document you add is covered
+the day it lands", against a `LINE_NUMBER_GATED` set of three paths. `docs/DOCUMENTATION.md` says
+"Everything else is migrated" over those 2,830 citations, and says the check reads "every tracked
+markdown document" for the call-form and `§N` legs, which read `AGENTS.md` alone. The fence
+exemption's justification — that §99, §106–§109 are entries whose subject is a drifted citation — is
+also wrong: those entries have zero in-fence citations, and the 8 that are fenced in `HANDOFF.md` sit
+in unrelated sections.
+
+**What is salvageable.** `816c5894` and `4dffad98` — the saveLayerCanvas citation corrections and the
+retired-symbol guard widened past `AGENTS.md` — are honest, falsifiable and can land as they are.
+`aac0094d`, `9b220f4b` and the 610-line `scripts/lib/citations/resolve.mjs` cannot: the resolver has
+two dead exports and a wholly untested `git ls-files` branch (the tell is the `fatal: not a git
+repository` it prints on stderr in every test), it imports a devDependency at module top level, its
+`LINE_NUMBER_CITATION` is case-sensitive, and the migration is a multi-session campaign.
+
+**What is needed.** Land `816c5894` + `4dffad98`. For the rest: turn the red assertion into a
+`HANDOFF.md` migration plan, correct the three claims above to what the code does, re-derive or drop
+the fence, and run the migration. Branch `docs/citation-anchors` and `fix/saveLayerCanvas-citations`
+are the same two commits at the same tree and are superseded by this one; they are still unmerged and
+nothing records that.
+
+## 181. A branch sweep under-reports unmerged work, and five hardening branches are unmerged because of it
+
+**Problem.** Ancestry alone is not a completeness test. `test/infra-suite-hardening` is not an ancestor
+of `main`, yet `git diff --stat main...test/infra-suite-hardening` is empty — it landed by cherry-pick
+roughly a hundred commits ago, and `git rev-list --count main..` still reports 2 ahead. A sweep that
+asks only "is this branch an ancestor of main" reports live work as pending.
+
+Running the per-file blob comparison instead found five branches whose unit-test work is genuinely
+absent from `main`: `docs/no-line-numbers` (5 ahead — carries a new `scripts/lib/citations/resolve.mjs`
+and its 220-line test, neither in `main`), `fix/migration-review-sweep` (see §179),
+`docs/luna-psd-currency` (+809 lines to the citation guard), and `docs/citation-anchors` +
+`fix/saveLayerCanvas-citations` (the same two commits, unmerged, superseded by `docs/no-line-numbers` —
+see §180). None has an entry in `.kilo/agent-manager.json` at all, which is why §121's structural
+blindness went unnoticed rather than being the only cause of it.
+
+**Also unaccounted for.** Eight `agent-manager.json` worktree entries point at directories that no
+longer exist and branches that exist in no ref, in no reflog entry and in no dangling commit:
+`fix-usehistory-tests`, `wip/fix-replay-coordinator-tests`, `wip/fix-history-adapter-safety-tests`,
+`wip/fix-useapp-psd-tests`, `wip/fix-userect-tests`, `wip/fix-layerstab-tests`, `audit-scripts-tests`,
+`audit-docs-claims`. Those sessions committed nothing and nothing is recoverable. And two commits sit
+on no branch at all: `0a2f7f2b` (board refusals get tests) and `f3811b65`, a `git stash` commit of
+`docs/no-line-numbers` whose content is already covered and which additionally carries placeholder
+table alignment that would trip the guard it introduces.
+
+**What is needed.** A sweep that compares blobs per test file, not just ancestry, before reporting a
+branch as landed. Recover `0a2f7f2b` or drop it deliberately. Do not recover `f3811b65`.
+
+## 182. A branch whose every commit is already on `main` is refused disposal, and a branch with nothing left in it is refused too
+
+**Problem.** `fix/vacuous-assertions` (4 commits) and `fix/blind-gates` (2 commits) are landed —
+every one of the six has a `git patch-id --stable` that matches a commit on `main`, and their content is
+on `main` as of `4c07778c`. `node scripts/dispose-worktree.mjs` refuses both anyway, with
+`The inventory says action: "at-risk", not "dispose"`. The generator counts commits with
+`git rev-list --count main..<branch>`, which is reachability, so a cherry-picked or rebased branch
+reads as "2 ahead of main" forever. This is the same under-reporting as §181 one layer down: there the
+lie was in a sweep's own logic, here it is in the field the whole disposal path gates on.
+
+`docs/ORCHESTRATION.md:390-394` says the only field in a curated entry that moves a verdict is
+`mustNotPrune`, and that it applies to "a branch git already calls disposable" — which these are not.
+`summary`, `note`, `issues` and `landed` are documentation. So there is no supported way to express
+"landed, but not by reachability", and `dispose-worktree.mjs` has no `--force` by design.
+
+**The harder half is `fix/unit-tests`.** Its two commits are genuinely not on `main`, and after the
+audit recorded in `4c07778c` there is nothing in them worth landing: the production fix is superseded
+by main's mark-and-sweep retirement, the still-valid test cases are now on `main`, and the rest is dead
+or vacuous. Its curated entry calls it "the only holder of the #16 and #17 fixes", which was true on
+2026-09-27 and is stale now — `HANDOFF.md` §16 and §17 both record their conversion halves fixed and
+verified, and name the tests on `main` that verify them. The one piece not on `main` is
+`history-append.ts` withholding `durableEntry` on an append-point violation, which is §17's _prescribed
+remaining work_ and is specified in more detail in §17 than the branch holds it. A branch that is
+provably superseded is therefore permanently `at-risk`, because "2 ahead" and "worth keeping" are the
+same signal to the generator.
+
+**What is needed.** Either the generator compares patch-ids rather than commit reachability, so a
+cherry-picked branch reads as landed; or a disposition an operator can state meaning "reviewed, keep
+nothing" that is not `mustNotPrune`, which is what all three branches need. Until one of those exists,
+`git branch -D` and `git worktree remove --force` are the only paths to them, both are gated in
+`kilo.jsonc`, and defeating that gate is not the answer — which leaves the operator as the only party
+who can retire them.

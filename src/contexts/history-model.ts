@@ -157,20 +157,47 @@ function collectLayerAsset(layer: DurableLayerSnapshot, assetIds: Set<AssetId>) 
 
 /**
  * Every asset referenced by a baseline or any replayable entry remains
- * reachable. Cursor position is intentionally ignored: undo must retain the
- * assets needed to redo without reconstructing a new baseline.
+ * reachable, so `reconcileDocumentAssets` never releases a live bitmap. Cursor
+ * position is intentionally ignored: undo must retain the assets needed to redo
+ * without reconstructing a new baseline.
+ *
+ * The `never` arm is load-bearing. Without it a kind added to `DurableOperation`
+ * compiles, and this switch — which is deliberately selective rather than
+ * exhaustive, because only two kinds carry a bitmap — falls off its end and skips
+ * the new kind. `reconcileDocumentAssets` then releases an asset the document
+ * still reaches, and the next `resolve` throws on a closed bitmap. Adding a kind
+ * without classifying it here is a typecheck error, which is the only moment the
+ * omission is cheap to fix.
  */
 export function collectDurableAssetIds(document: DurableDocument): ReadonlySet<AssetId> {
   const assetIds = new Set<AssetId>();
   for (const layer of document.baseline.layers) collectLayerAsset(layer, assetIds);
   for (const entry of document.history) {
-    switch (entry.operation.kind) {
+    const { kind } = entry.operation;
+    switch (kind) {
       case 'create-layer':
         collectLayerAsset(entry.operation.layer, assetIds);
         break;
       case 'merge-document':
         collectLayerAsset(entry.operation.result, assetIds);
         break;
+      // Every remaining kind holds no bitmap: each names layers by id, carries
+      // plain args, or writes the frame and the selection. They are named rather
+      // than lumped into the default so that the classification is a claim a
+      // reader can check, and so that adding a kind forces a decision here.
+      case 'remove-layer':
+      case 'set-layer-properties':
+      case 'reposition-layer':
+      case 'reorder-layers':
+      case 'apply-filter':
+      case 'apply-affine-transform':
+      case 'apply-raster-processor':
+      case 'set-document-frame':
+      case 'set-selection':
+        break;
+      default:
+        const _exhaustive: never = kind;
+        void _exhaustive;
     }
   }
   return assetIds;
