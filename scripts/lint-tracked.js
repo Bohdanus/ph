@@ -5,7 +5,7 @@
  * -------------------------------------------
  * Those two take the *filesystem* as their scope. In this repository that
  * includes 121 worktrees under `.kilo/`, plus whatever a previous build, test
- * or e2e run left on disk. They were skipped only incidentally: `.gitignore:34`
+ * or e2e run left on disk. They were skipped only incidentally: `.gitignore`
  * lists `.kilo` and Prettier 3's default `--ignore-path` is
  * `[.gitignore, .prettierignore]`, so nothing had to say it. That is a
  * hand-maintained ignore list implied by a prettier default, and

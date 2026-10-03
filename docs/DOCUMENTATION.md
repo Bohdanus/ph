@@ -195,8 +195,8 @@ not neutral — the next session spends a full investigation on a bug that is al
 gone — and a missing entry loses the only record of a real one.
 
 Point-in-time reports — an investigation of one tree on one date — are not
-maintained, so they do not belong in this directory. Six sit at the repository
-root and `docs/README.md` names them, with two more it holds here; when one can be
+maintained, so they do not belong in this directory. Some sit at the repository
+root and `docs/README.md` names them, with more it holds here; when one can be
 moved without breaking a lookup key, it goes. Moving them is a separate change,
 because `scripts/lib/worktree-inventory/curated.mjs` keys on their paths.
 

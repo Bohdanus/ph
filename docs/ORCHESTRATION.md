@@ -36,9 +36,10 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   whichever checkout the root chat happens to sit in.
 - **One task = one worktree and one branch**, created **before** the first edit.
   Lowercase prefix (`fix/`, `feat/`, `e2e/`, `cleanup/`, `audit/`), for example:
-  `git worktree add -b fix/task "$MAIN/.kilo/worktrees/task"`. Use the absolute path —
-  a relative one nests the worktree inside whichever checkout you are standing in. A
-  second worktree for the same task is a fork you reconcile by hand.
+  `git worktree add -b fix/task "$MAIN/.kilo/worktrees/task"`, where `$MAIN` is the main
+  checkout's absolute path as [`../AGENTS.md`](../AGENTS.md) under **Worktree FIRST** derives it.
+  Use the absolute path — a relative one nests the worktree inside whichever checkout you are
+  standing in. A second worktree for the same task is a fork you reconcile by hand.
 - **One writer per worktree; readers may share it.** A root-level agent is one a
   human started as a Kilo chat. Two of them never _write_ the same worktree, and
   one does not take over a worktree another is writing in. **Read-only agents may

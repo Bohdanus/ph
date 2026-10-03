@@ -166,8 +166,9 @@ drop.
 
 Two of the four hooks wrap a `package.json` script — `pre-commit` ends at
 `npm run gate:commit`, and `pre-push` at `npm run gate:push`. The other two run
-`scripts/*.mjs` directly; [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev
-servers** is their home.
+`scripts/*.mjs` directly — `pre-merge-commit` at `merge-takeover-guard.mjs`, `post-merge` at
+`merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev servers** is
+where the takeover guard is documented.
 
 The default headless e2e run must have **zero failures**; known failures are not
 allowed. Produce counts from the suite rather than storing them here. If a dead

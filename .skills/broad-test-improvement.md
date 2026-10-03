@@ -64,7 +64,8 @@ directory, so `src/foo.test.ts` is the same pattern in `main` and in a worktree.
 worktree and no session, so the order is fixed:
 
 ```bash
-git worktree add -b test/improve-<slug> "$MAIN/.kilo/worktrees/<name>"
+# $MAIN is the main checkout's absolute path, as AGENTS.md under "Worktree FIRST" derives it.
+git worktree add -b test/improve-<slug> "$MAIN/.kilo/worktrees/<name>" main
 ```
 
 Create it, **then** dispatch, then put the **absolute** worktree path in every brief — a subagent's
@@ -131,15 +132,20 @@ For each candidate file, score these criteria (1 point each):
 
 | File                     | Score | Classification | Why                                                                                                     |
 | ------------------------ | ----- | -------------- | ------------------------------------------------------------------------------------------------------- |
-| `psd-utils.test.ts`      | 8     | Gold           | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
+| `psd-utils.test.ts`      | 8     | Gold           | 34 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
 | `useAnts.test.tsx`       | 5     | Gold           | 5+ tests, canvas call assertions, verified accurate per source                                          |
 | `rect.test.ts`           | 5     | Gold           | 5+ tests, exact assertion matches `trimRect`                                                            |
 | `draw.test.ts`           | 5     | Gold           | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
-| `DesktopHeader.test.tsx` | 6     | Solid          | 52 tests, menu toggles, confirm dialogs, error paths                                                    |
+| `DesktopHeader.test.tsx` | 6     | Solid          | 67 tests, menu toggles, confirm dialogs, error paths                                                    |
 | `Draw.test.tsx`          | 5     | Gold           | 38 tests, controls and interaction paths                                                                |
-| `Transform.test.tsx`     | 5     | Gold           | 36 tests, controls and interaction paths                                                                |
-| `Levels.test.tsx`        | 5     | Gold           | 24 tests, controls and interaction paths                                                                |
+| `Transform.test.tsx`     | 5     | Gold           | 38 cases, 36 passing and 2 expected fail, controls and interaction paths                                |
+| `Levels.test.tsx`        | 5     | Gold           | 26 tests, controls and interaction paths                                                                |
 | `MagicWand.test.tsx`     | 5     | Gold           | 28 tests, controls and interaction paths                                                                |
+
+**Every score and count in this table and in **Gold-Standard Files** is a dated snapshot.**
+Re-derive with the rubric above — it is the only thing that classifies a file. `Draw`,
+`Transform`, `Levels` and `MagicWand` were reclassified from `Shallow` to `Gold` because the
+rubric scores them above 5, not because their coverage was judged better.
 
 ### GTD Enforcement
 
@@ -518,27 +524,27 @@ Constraints:
 
 ### Concrete Gaps from Repo Scan
 
-| File                          | Current Tests         | Missing Coverage                                                       | Priority |
-| ----------------------------- | --------------------- | ---------------------------------------------------------------------- | -------- |
-| Draw.test.tsx                 | 38 tests              | Additional edge cases as identified by the current implementation      | Medium   |
-| Transform.test.tsx            | 36 tests              | Additional edge cases as identified by the current implementation      | Medium   |
-| Levels.test.tsx               | 24 tests              | Additional edge cases as identified by the current implementation      | Medium   |
-| MagicWand.test.tsx            | 28 tests              | Additional edge cases as identified by the current implementation      | Medium   |
-| RectangularSelection.test.tsx | Happy path only       | Empty inputs, disabled controls, `!hasImage` early return              | Medium   |
-| FeatherMagneticLasso.test.tsx | Happy path only       | Empty inputs, disabled controls, `!hasImage` early return              | Medium   |
-| Text.test.tsx                 | Happy path only       | Font size change, text input, disabled state, `!hasImage` early return | Medium   |
-| SaveDialog.test.tsx           | Happy path + cancel   | Error paths, file name validation, empty name                          | Medium   |
-| NewImageDialog.test.tsx       | Happy path only       | Invalid dimensions, cancel flow, error paths                           | Medium   |
-| bmp-utils.test.tsx            | 1 test (round-trip)   | Invalid header, invalid dimensions, error paths                        | Medium   |
-| tiff-utils.test.tsx           | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
-| ico-utils.test.tsx            | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
-| gif-utils.test.tsx            | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
-| svg-utils.test.tsx            | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
-| avif-utils.test.tsx           | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
-| SidebarRight.test.tsx         | Structural + negative | Keyboard nav, focus management                                         | Low      |
-| ToolbarHorizontal.test.tsx    | Structural + negative | Keyboard nav, focus management                                         | Low      |
-| BottomToolbar.test.tsx        | Structural + negative | Keyboard nav, focus management                                         | Low      |
-| Footer.test.tsx               | Structural + negative | Keyboard nav, focus management                                         | Low      |
+| File                          | Current Tests                       | Missing Coverage                                                                           | Priority |
+| ----------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------ | -------- |
+| Draw.test.tsx                 | 38 tests                            | 38 tests against 38, `it.each` absent — strength is in the count alone; re-derive the gaps | Medium   |
+| Transform.test.tsx            | 38 cases (36 pass, 2 expected fail) | 2 `expected fail` cases — resolve or re-pin them before any change                         | Medium   |
+| Levels.test.tsx               | 26 tests                            | 26 tests against 38 before — confirm the drop is intentional                               | Medium   |
+| MagicWand.test.tsx            | 28 tests                            | Tolerance and smoothing bounds, dispatch on change, disabled state                         | Medium   |
+| RectangularSelection.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
+| FeatherMagneticLasso.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
+| Text.test.tsx                 | Happy path only                     | Font size change, text input, disabled state, `!hasImage` early return                     | Medium   |
+| SaveDialog.test.tsx           | Happy path + cancel                 | Error paths, file name validation, empty name                                              | Medium   |
+| NewImageDialog.test.tsx       | Happy path only                     | Invalid dimensions, cancel flow, error paths                                               | Medium   |
+| bmp-utils.test.tsx            | 1 test (round-trip)                 | Invalid header, invalid dimensions, error paths                                            | Medium   |
+| tiff-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| ico-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| gif-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| svg-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| avif-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| SidebarRight.test.tsx         | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| ToolbarHorizontal.test.tsx    | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| BottomToolbar.test.tsx        | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| Footer.test.tsx               | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
 
 ---
 
@@ -712,7 +718,7 @@ Patterns verified in actual test files (not speculative). GTD scores from the ru
 
 | File                 | GTD | Why Protected                                                                                           |
 | -------------------- | --- | ------------------------------------------------------------------------------------------------------- |
-| `psd-utils.test.ts`  | 8   | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
+| `psd-utils.test.ts`  | 8   | 34 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
 | `useAnts.test.tsx`   | 5   | 5+ tests, canvas call assertions, verified accurate per `useAnts.ts`                                    |
 | `rect.test.ts`       | 5   | 5+ tests, exact assertion matches `trimRect`                                                            |
 | `draw.test.ts`       | 5   | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |

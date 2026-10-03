@@ -148,8 +148,10 @@ quiet deletion.** It was the third member of this table's `O` toning flyout row,
 ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
 its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
 sources behind it. Deleting the row keeps this file's contract — every row here is absent from
-`src/contexts/tool-types.ts` — and the tables' rows are counted in the Unverified section rather
-than reconciled against the 30 here. **Two claims the deleted row carried were themselves
+`src/contexts/tool-types.ts` — and the six Adobe-group tables below hold **33 rows** in total
+(Selection 4, Retouch 7, Painting 5, Type 3, Navigation and measuring 11, Path 3), which is
+neither 29 nor the 30 this file attributes to `TOOLS-TOO-HARD.md`: the two lists are counted
+separately and are not reconciled here. **Two claims the deleted row carried were themselves
 wrong**, and they are the reason this note exists rather than a bare `git log` entry:
 
 - It cited "`docs/TOOLS.md` (Sponge section)" as evidence for the `O` cycle. **There was no Sponge
@@ -382,8 +384,8 @@ this file; the "not researched" cells in the tables above are the same fact at r
 
 **Open questions this file deliberately did not answer**
 
-- **The 30-vs-34 roster discrepancy.** Which entry is spurious, or whether the 70-tool target
-  should be 71. An operator's call.
+- **The 30-vs-34 roster discrepancy.** Which two entries are spurious, or whether the 70-tool
+  target should be 72. An operator's call.
 - **Note** and **Count** are the two entries most likely to be spurious: `HANDOFF.md` §74
   records their default-panel placement as unresolved.
 - Whether **Content-Aware Tracing** counts toward a Tools-panel roster at all, given that

@@ -57,7 +57,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                           |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery             |
 | [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds |
-| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the mandatory review subagent         |
+| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent              |
 | [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under               |
 | [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails              |
 | [`../DEPENDENCIES.md`](../DEPENDENCIES.md)             | The dependency licence policy, and the fact that nothing enforces it    |
@@ -74,7 +74,7 @@ fixture conventions note.
 ## Open problems
 
 Three homes for an open defect, split by what broke. A defect goes in one of them, not in two —
-`handoffs/` is not one of them; it is where a finished review is recorded.
+`handoffs/` is not one of them; it records a finished review.
 
 | Document                                             | Its one job                                                                |
 | ---------------------------------------------------- | -------------------------------------------------------------------------- |

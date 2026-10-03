@@ -3,7 +3,10 @@
 What this app can do, system-wide, measured against Photoshop.
 
 **This is not a per-tool document.** That is [`TOOLS.md`](TOOLS.md) — generated,
-44 sections, one per tool, with an options-bar table and Adobe citations. This
+44 sections, one per tool or per Adobe command the rail carries, with an options-bar
+table and Adobe citations. Four of the 44 are not Tools-panel tools — the Shape group
+placeholder, Free Transform, Levels and Black & White are named for what Adobe calls
+them. This
 page is the capability level: documents, formats, selection, layers, history,
 panels, menus, view, input, colour. A tool's status is one row of
 [`TOOLS.md`](TOOLS.md), not of this file.
@@ -54,7 +57,7 @@ platform limit.
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
 | Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
 | View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
-| Keyboard          | `partial`   | 43 bindings against Photoshop's ~200                                           |
+| Keyboard          | `partial`   | 44 bindings against Photoshop's ~200                                           |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                              |
 | Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all        |
@@ -327,10 +330,10 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 43. Thirty-five registrations in
-`AppKeyboardShortcuts.tsx` and eight in the two polygon tool areas
+**This app:** 44. Thirty-five registrations in
+`AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
-`useKeyDownShortcut` registrations each).
+`useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
 
 **Status:** `partial`
 
