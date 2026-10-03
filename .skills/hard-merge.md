@@ -145,7 +145,7 @@ another session's half-written change rather than a broken `main`; check the _co
 throwaway worktree before you touch a path you have not touched.
 
 **The gates and the board.** `npm run test:e2e` starts its own server on a port it picks, and
-`npm run test:e2e:raw` from a worktree attaches to whatever holds `:5173`. The cross-session channel
+`npm run test:e2e:raw` from a worktree attaches to whatever holds port 5173. The cross-session channel
 is `npm run swarm`, **not** Kilo's `board_read`/`board_post`: `board_read` reports `messages: []`
 outside a fan-out on purpose, `board_post` about a worktree usually returns `total: 0, active: 0`
 because it only reaches the sessions a fan-out spawned, and **a `board_read` that returns nothing

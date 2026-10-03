@@ -5739,34 +5739,3 @@ nothing" that is not `mustNotPrune`, which is what all three branches need. Unti
 `git branch -D` and `git worktree remove --force` are the only paths to them, both are gated in
 `kilo.jsonc`, and defeating that gate is not the answer — which leaves the operator as the only party
 who can retire them.
-
-## 183. `docs/OVERRIDES.md` carries two bare-continuation citations, and the gate cannot be widened to see them
-
-**Problem.** `docs/OVERRIDES.md`'s `draw` entry cites `docs/PHOTOSHOP-UX.md` by two bare line
-coordinates — `"No invented tools" at `:33``, and "`draw` is a live tile, and it is the last
-deletion" at `:131``. Both are the banned form, and the second has drifted since the phrase was
-written: `docs/PHOTOSHOP-UX.md` no longer badges `draw` with Photoshop's `B` at all, so the
-suspension's own wording names a state that document has moved past.
-
-**Why the gate cannot simply be widened.** `scripts/__tests__/agents-citations.test.mjs` now checks
-the BARE form, `` `:‹line›` ``, as well as the self-naming `file.ext:‹line›` — but only in the
-enforcement leg, over `LINE_NUMBER_GATED`. The remainder leg, which reports the migration's
-outstanding work, still matches the self-naming form only, and widening THAT is what turns the gate
-red on this file. `AGENTS.md` forbids an agent from editing `docs/OVERRIDES.md`, and forbids solving it
-with an exemption entry, so the limitation is recorded here rather than engineered around: a leg that
-reported this file would fail CI on a file no agent may change, and the exemption that made it green
-would be the assertion-nobody-can-falsify that the gate's own design comment rejects.
-
-**What is needed.** Two steps, in this order, because the first is the operator's and the second is
-only safe once it has happened:
-
-1. The operator rewrites those two citations as units — `docs/PHOTOSHOP-UX.md`'s "No invented tools"
-   and "the last deletion" wording, or the headings that carry them — and re-reads the `draw`
-   suspension against `docs/PHOTOSHOP-UX.md` as it stands now, since the `B` badge it cites was
-   deliberately removed as a falsehood (`toolbar-mapping.ts`'s own comment says so, and
-   `toolbar-mapping.test.mjs` pins that `draw` has no shortcut).
-2. Then widen the remainder leg to `bannedNumbersIn`, which is a one-line change, and the gate covers
-   both shapes across every maintained document. Until step 1 lands, that change fails on this file.
-
-The wider audit found no other maintained document carrying a bare continuation: the only other hit
-is `localhost:5173` in `.skills/hard-merge.md`, which is a port and not a citation.
