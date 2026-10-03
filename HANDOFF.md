@@ -5159,18 +5159,36 @@ exemption's justification — that §99, §106–§109 are entries whose subject
 also wrong: those entries have zero in-fence citations, and the 8 that are fenced in `HANDOFF.md` sit
 in unrelated sections.
 
-**What is salvageable.** `816c5894` and `4dffad98` — the saveLayerCanvas citation corrections and the
-retired-symbol guard widened past `AGENTS.md` — are honest, falsifiable and can land as they are.
-`aac0094d`, `9b220f4b` and the 610-line `scripts/lib/citations/resolve.mjs` cannot: the resolver has
-two dead exports and a wholly untested `git ls-files` branch (the tell is the `fatal: not a git
-repository` it prints on stderr in every test), it imports a devDependency at module top level, its
-`LINE_NUMBER_CITATION` is case-sensitive, and the migration is a multi-session campaign.
+**`816c5894` is landed. `4dffad98` must not be, and the reason is a defect in the guard's premise
+rather than in its code.** `816c5894` corrects the two residual `saveLayerCanvas` claims, and every
+citation in it was re-verified against `main` before landing: the symbol has zero occurrences under
+`src/`, `:657` is the only write of a promoted bitmap onto a published record and sits inside the
+`PROMOTE_LAYER_PRESENTATIONS` arm, `:955` is the dispatcher's `isSamePresentationCanvas` re-check,
+`:1362` is the dispatch, and `647-660` is that arm's extent. `AGENTS.md` was already corrected, so
+`main` was internally inconsistent until this landed.
 
-**What is needed.** Land `816c5894` + `4dffad98`. For the rest: turn the red assertion into a
-`HANDOFF.md` migration plan, correct the three claims above to what the code does, re-derive or drop
-the fence, and run the migration. Branch `docs/citation-anchors` and `fix/saveLayerCanvas-citations`
-are the same two commits at the same tree and are superseded by this one; they are still unmerged and
-nothing records that.
+`4dffad98` widens the retired-symbol leg from `AGENTS.md` alone to every tracked markdown document,
+and it goes red on `main` the moment it lands — on `HANDOFF.md`. The leg's premise is that ANY mention
+of a retired symbol is a claim that it exists, and it has no way to say otherwise: the only exclusions
+are whole documents. That premise is false for a defect ledger whose job is recording deletions. After
+`816c5894` the only occurrences in maintained documents are §180 and §181 _naming the correction_, so
+landing the guard would require either excluding `HANDOFF.md` — which the branch's own third test
+deliberately forbids, and correctly — or forbidding the ledger from recording that a deletion was
+documented. Point-in-time reports do not have this problem, which is why the branch's exclusion set
+handled `MIGRATION_NEXT_STEPS_SUNDAY.md` and `docs/next-target-useLayer.md` and not `HANDOFF.md`.
+
+So the widening needs a way to distinguish "claims it exists" from "records that it was deleted"
+before it is worth having, and that is a design question, not a patch. Everything else in the commit
+is sound and worth keeping when it is: `git ls-files` enumeration over a hand-written list, the
+fail-closed `docs/README.md` table reader, and the bidirectional set accounting
+(`checked + excluded === tracked`, every exclusion carrying a reason) rather than the length
+comparisons the middle test uses.
+
+**What is needed.** For the rest of the branch: turn the red assertion into a `HANDOFF.md` migration
+plan, correct the three claims above to what the code does, re-derive or drop the fence, and run the
+migration. `docs/citation-anchors` and `fix/saveLayerCanvas-citations` are `816c5894` + `4dffad98` at
+the same tree, so the first is landed by it and the second stays unmerged until the widening is
+redesigned.
 
 ## 181. A branch sweep under-reports unmerged work, and five hardening branches are unmerged because of it
 
