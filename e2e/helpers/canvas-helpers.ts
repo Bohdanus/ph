@@ -481,6 +481,27 @@ export const STROKE_ANALYSIS = {
   SELECTION_GREEN_MIN: 80, // For getSelectionBounds: green >= 80 (medium green)
   SELECTION_BLUE_MIN: 180, // For getSelectionBounds: blue >= 180 (high blue)
 
+  // Magnetic-lasso draft preview detection (FeatherMagneticLassoToolArea.tsx:106/:113).
+  //
+  // The tool paints its snapped preview path one of two colours and the colour IS the
+  // assertion: `preview.snap.usedMagnetic` selects rgba(0,170,90,0.95) against
+  // rgba(230,130,0,0.95). Both are painted at 0.95 over a light checkerboard, so these
+  // are one channel's slack around each documented value rather than exact triples — an
+  // exact match would be reading the alpha blend, not the colour, and would break on a
+  // host whose compositing rounds differently.
+  //
+  // The red bound is the discriminator that lets the two coexist with the tool's own blue
+  // guide (rgba(0,123,255), :99), which shares this path's geometry: green needs red well
+  // under blue, orange needs red well over it, and a pixel where the guide has blended
+  // towards green still reads red under 60. None of the document's own ink (black or red
+  // strokes) is in either set.
+  MAGNET_SNAP_RED_MAX: 60, // green preview: red <= 60 (separates it from the blue guide)
+  MAGNET_SNAP_GREEN_MIN: 120, // green preview: green >= 120
+  MAGNET_SNAP_BLUE_MAX: 160, // green preview: blue <= 160
+  MANUAL_SNAP_RED_MIN: 180, // Alt-suppressed preview: red >= 180
+  MANUAL_SNAP_GREEN_MIN: 90, // Alt-suppressed preview: green >= 90
+  MANUAL_SNAP_BLUE_MAX: 90, // Alt-suppressed preview: blue <= 90
+
   // Spray detection
   SPRAY_LUMINANCE_THRESHOLD: 200, // Luminance > 200 = bright spray
   SPRAY_SATURATION_THRESHOLD: 30, // Saturation < 30 = grayscale spray
@@ -779,6 +800,56 @@ export async function hasRedPixels(screenshot: Buffer | ImageDataResult): Promis
   }
   return false;
 }
+
+/**
+ * Whether the capture contains a pixel the magnetic lasso painted as its magnet-snapped
+ * preview path: rgba(0, 170, 90, 0.95) at `FeatherMagneticLassoToolArea.tsx:106`/`:113`.
+ *
+ * Takes the same `Buffer | ImageDataResult` union every other predicate here does, so it
+ * composes with `waitForCanvasPixels` (which hands it a Buffer) and can be negated to wait for
+ * the colour to DISAPPEAR — which is how the Escape case is written.
+ *
+ * Green is the tool reporting that its edge detector found an edge to snap to. It is the
+ * positive half of the Alt contract; `hasManualSnapPixels` is the negative half.
+ */
+export const hasMagnetSnapPixels = async (screenshot: Buffer | ImageDataResult): Promise<boolean> => {
+  const { data } = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index + 3] === 0) continue;
+    if (
+      data[index] <= STROKE_ANALYSIS.MAGNET_SNAP_RED_MAX &&
+      data[index + 1] >= STROKE_ANALYSIS.MAGNET_SNAP_GREEN_MIN &&
+      data[index + 2] <= STROKE_ANALYSIS.MAGNET_SNAP_BLUE_MAX
+    )
+      return true;
+  }
+  return false;
+};
+
+/**
+ * Whether the capture contains a pixel the magnetic lasso painted as its NON-magnetic
+ * preview path: rgba(230, 130, 0, 0.95), same two lines, other branch.
+ *
+ * The tool reports this when the magnet did not engage, which under a held Alt is the only
+ * possible reason (`createMagneticSegment` short-circuits `magneticEnabled: false` at
+ * `src/util/magneticLasso.ts:426` before the detector runs at all). So the pair
+ * `hasMagnetSnapPixels` / `hasManualSnapPixels` reads the modifier's effect as two DIFFERENT
+ * colours at one coordinate, rather than as the presence and absence of a thing that might
+ * never have been drawn.
+ */
+export const hasManualSnapPixels = async (screenshot: Buffer | ImageDataResult): Promise<boolean> => {
+  const { data } = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index + 3] === 0) continue;
+    if (
+      data[index] >= STROKE_ANALYSIS.MANUAL_SNAP_RED_MIN &&
+      data[index + 1] >= STROKE_ANALYSIS.MANUAL_SNAP_GREEN_MIN &&
+      data[index + 2] <= STROKE_ANALYSIS.MANUAL_SNAP_BLUE_MAX
+    )
+      return true;
+  }
+  return false;
+};
 
 export interface DrawLineOptions {
   /**

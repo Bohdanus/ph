@@ -4,7 +4,8 @@ import {
   type ClipOptions,
   getSelectionBounds,
   getWorkspaceCanvas,
-  loadImageData,
+  hasMagnetSnapPixels,
+  hasManualSnapPixels,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
@@ -52,18 +53,6 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * Alt. The outer legs exist to prove the route's own points are magnetic, which is what makes
  * the middle pair a measurement rather than an assumption.
  */
-
-/**
- * The magnet-snapped draft: rgba(0, 170, 90) painted at 0.95.
- *
- * The red bound is what excludes the blue guide (0, 123, 255), which shares this path's
- * geometry: a pixel where the guide has blended towards green still reads red under 60, so the
- * two cannot be confused.
- */
-const MAGNET_GREEN = { redMax: 60, greenMin: 120, blueMax: 160 };
-
-/** The Alt-suppressed draft: rgba(230, 130, 0). Blue is the channel that separates it from green. */
-const MANUAL_ORANGE = { redMin: 180, greenMin: 90, blueMax: 90 };
 
 /**
  * The viewport, pinned for the reason `selection-gestures.spec.ts` pins its own: the shell's
@@ -149,33 +138,26 @@ const fraction = (box: BoundingBox, point: { x: number; y: number }) => ({
   y: Math.round(box.height * point.y),
 });
 
-/** A colour this file asks about: each bound is one channel's slack around a documented value. */
-type PaintCriteria = { redMin?: number; redMax?: number; greenMin?: number; blueMax?: number };
-
 /**
- * Whether a capture contains a pixel matching `criteria`. An unsupplied bound is unconstrained.
+ * A colour this file asks about, as the shared predicate that answers it.
  *
- * A transparent pixel is SKIPPED rather than read as `0,0,0`. That guard is what makes a bound
- * of `redMax: 60` mean "a green pixel" instead of "a dark pixel, or the canvas's own absence of
- * ink" - without it the document's white checkerboard and every anti-aliased stroke fringe in
- * the clip would satisfy the loose bounds and the polls below would pass on the first frame.
+ * These bounds used to be a local `PaintCriteria` record and a local `matchesPaint` loop sitting
+ * in this file, which is the trap `select-move.spec.ts` documents at length: a per-spec copy of
+ * the colour constants is a second definition, so the before and after of one gesture get read
+ * under two of them and neither the thresholds nor the alpha guard is checked anywhere. They now
+ * live in `canvas-helpers.ts` beside every other colour predicate, and their discrimination —
+ * including the case that matters most, the tool's own blue guide drawn along the same segment —
+ * is pinned in `helpers/__tests__/canvas-stroke-analysis.unit.test.ts`.
+ *
+ * The four bounds are identical to the ones the local loop enforced: `redMin`/`redMax`/
+ * `greenMin` rejected a pixel and an unsupplied bound was unconstrained, which is exactly
+ * `>=`/`<=`/`>=`/`<=` respectively.
  */
-const matchesPaint = async (screenshot: Buffer, criteria: PaintCriteria): Promise<boolean> => {
-  const { data } = await loadImageData(screenshot);
-  for (let index = 0; index < data.length; index += 4) {
-    if (data[index + 3] === 0) continue;
-    if (criteria.redMin !== undefined && data[index] < criteria.redMin) continue;
-    if (criteria.redMax !== undefined && data[index] > criteria.redMax) continue;
-    if (criteria.greenMin !== undefined && data[index + 1] < criteria.greenMin) continue;
-    if (criteria.blueMax !== undefined && data[index + 2] > criteria.blueMax) continue;
-    return true;
-  }
-  return false;
-};
+type PaintPredicate = (screenshot: Buffer) => Promise<boolean>;
 
-/** Resolves once `criteria` is on the canvas. The suite's poll loop, not a sleep. */
-const waitForPaint = (page: Page, clip: Required<ClipOptions>, criteria: PaintCriteria, description: string) =>
-  waitForCanvasPixels(page, clip, async (screenshot) => matchesPaint(screenshot, criteria), { description });
+/** Resolves once the predicate accepts the canvas. The suite's poll loop, not a sleep. */
+const waitForPaint = (page: Page, clip: Required<ClipOptions>, accepts: PaintPredicate, description: string) =>
+  waitForCanvasPixels(page, clip, accepts, { description });
 
 /** Reads the app's own draft/selection outline, on the suite's pinned thresholds. */
 const draftOutline = async (screenshot: Buffer) => getSelectionBounds(screenshot);
@@ -277,13 +259,13 @@ test.describe('Magnetic Lasso', () => {
 
     // Leg 1 - magnetic at the inner hover.
     await hover(HOVER_MAGNETIC);
-    await waitForPaint(page, clip, MAGNET_GREEN, 'the magnet-snapped draft path in green');
+    await waitForPaint(page, clip, hasMagnetSnapPixels, 'the magnet-snapped draft path in green');
 
     // Leg 2 - the SAME point as leg 3, with Alt up. This is the control for leg 3: it proves
     // the coordinate is one the magnet holds, so the orange that follows is not the detector
     // failing to find an edge somewhere the magnet was never going to.
     await hover(HOVER_ALT);
-    await waitForPaint(page, clip, MAGNET_GREEN, 'the outer hover to be magnetic too, before Alt is involved');
+    await waitForPaint(page, clip, hasMagnetSnapPixels, 'the outer hover to be magnetic too, before Alt is involved');
 
     // Leg 3 - Alt down, and the cursor walked back to the inner hover first so the move out to
     // `HOVER_ALT` is a real gesture. A move under Alt rebuilds the segment with
@@ -295,14 +277,14 @@ test.describe('Magnetic Lasso', () => {
     await page.keyboard.down('Alt');
     await hover(HOVER_MAGNETIC);
     await hover(HOVER_ALT);
-    await waitForPaint(page, clip, MANUAL_ORANGE, 'the Alt-suppressed draft path in orange');
+    await waitForPaint(page, clip, hasManualSnapPixels, 'the Alt-suppressed draft path in orange');
     await page.keyboard.up('Alt');
 
     // Leg 4 - back to a magnetic hover: green must return. Without this the test would also pass
     // on a build whose magnet latched off permanently after the first Alt press.
     await hover(HOVER_ALT);
     await hover(HOVER_MAGNETIC);
-    await waitForPaint(page, clip, MAGNET_GREEN, 'the magnet to re-engage once Alt is released');
+    await waitForPaint(page, clip, hasMagnetSnapPixels, 'the magnet to re-engage once Alt is released');
   });
 
   /**

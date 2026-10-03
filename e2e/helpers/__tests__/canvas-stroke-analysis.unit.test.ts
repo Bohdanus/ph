@@ -9,6 +9,8 @@ import {
   getStrokeAnalysis,
   hasDarkPixels,
   hasRedPixels,
+  hasMagnetSnapPixels,
+  hasManualSnapPixels,
   type CaptureRegion,
   type ImageDataResult,
 } from '../canvas-helpers';
@@ -17,6 +19,7 @@ import {
   DARK_GRAY,
   RED,
   SPRAY_GRAY,
+  TRANSPARENT,
   WHITE,
   captureAtScale,
   captureRegionOf,
@@ -45,6 +48,12 @@ const CONSTANT_CONTRACT: [keyof typeof STROKE_ANALYSIS, number][] = [
   ['SELECTION_RED_MAX', 80],
   ['SELECTION_GREEN_MIN', 80],
   ['SELECTION_BLUE_MIN', 180],
+  ['MAGNET_SNAP_RED_MAX', 60],
+  ['MAGNET_SNAP_GREEN_MIN', 120],
+  ['MAGNET_SNAP_BLUE_MAX', 160],
+  ['MANUAL_SNAP_RED_MIN', 180],
+  ['MANUAL_SNAP_GREEN_MIN', 90],
+  ['MANUAL_SNAP_BLUE_MAX', 90],
   ['SPRAY_LUMINANCE_THRESHOLD', 200],
   ['SPRAY_SATURATION_THRESHOLD', 30],
   ['SPRAY_VERTICAL_SPREAD_THRESHOLD', 30],
@@ -729,4 +738,87 @@ describe('Buffer input dispatch', () => {
       expect(fromBuffer).toEqual(fromDecoded);
     }
   );
+});
+
+/**
+ * The magnetic lasso paints its snapped preview path one of two colours and the COLOUR is the
+ * assertion — it is how a spec reads whether the edge detector engaged. `e2e/README.md`'s
+ * "house rule" applies with extra force here: a bound loose enough to accept the other branch,
+ * or the tool's own blue guide, would make the Alt contract pass against a build that never
+ * switched, so the discrimination is pinned here rather than discovered in a browser.
+ *
+ * Every colour below is the tool's nominal rgba composited at 0.95 over the suite's pinned
+ * LIGHT backdrop, which is what a capture actually contains:
+ *
+ *   green  rgba(0,170,90,0.95)   -> (13, 174, 98)   over #fff
+ *   orange rgba(230,130,0,0.95)  -> (231, 136, 13)  over #fff
+ *   guide  rgba(0,123,255,0.95)  -> (13, 129, 255)  over #fff
+ *
+ * The guide is the case that matters most: it shares this path's GEOMETRY, so a green bound
+ * without a red ceiling would match the blue line the tool draws along the same segment.
+ */
+const MAGNET_COMPOSITE_GREEN: Color = { red: 13, green: 174, blue: 98 };
+const MAGNET_COMPOSITE_ORANGE: Color = { red: 231, green: 136, blue: 13 };
+const MAGNET_COMPOSITE_GUIDE_BLUE: Color = { red: 13, green: 129, blue: 255 };
+
+const MAGNET_DISCRIMINATION_CASES: { name: string; color: Color; green: boolean; orange: boolean }[] = [
+  { name: 'the magnet-snapped preview path', color: MAGNET_COMPOSITE_GREEN, green: true, orange: false },
+  { name: 'the Alt-suppressed preview path', color: MAGNET_COMPOSITE_ORANGE, green: false, orange: true },
+  // The tool's own guide line, drawn along the same segment as the preview.
+  { name: "the tool's blue magnetic guide", color: MAGNET_COMPOSITE_GUIDE_BLUE, green: false, orange: false },
+  { name: 'the committed selection path', color: { red: 13, green: 129, blue: 255 }, green: false, orange: false },
+  { name: 'a black document stroke', color: black, green: false, orange: false },
+  // A red stroke is the case an orange bound loose enough to say "warm ink" would swallow:
+  // `e2e/layers.spec.ts` really does paint #ff0000, so if this read as orange a spec drawing
+  // red could satisfy a wait for the Alt-suppressed preview without Alt doing anything.
+  { name: 'a red document stroke', color: RED, green: false, orange: false },
+  { name: 'the white backdrop', color: WHITE, green: false, orange: false },
+  // Grey is the trap a bound loose enough to match "some ink" would fall into, and the range
+  // between the two composite greens is where an anti-aliased stroke fringe lands.
+  { name: 'a mid grey', color: gray(150), green: false, orange: false },
+  { name: 'a dark grey', color: gray(100), green: false, orange: false },
+  { name: 'the nominal green, uncomposited', color: { red: 0, green: 170, blue: 90 }, green: true, orange: false },
+  { name: 'the nominal orange, uncomposited', color: { red: 230, green: 130, blue: 0 }, green: false, orange: true },
+];
+
+describe('magnetic lasso preview path discrimination', () => {
+  it.each(MAGNET_DISCRIMINATION_CASES)(
+    'reads $name as magnet=$green manual=$orange',
+    async ({ color, green, orange }) => {
+      const image = await createTestImageData(color, 12, 12);
+      expect(await hasMagnetSnapPixels(image)).toBe(green);
+      expect(await hasManualSnapPixels(image)).toBe(orange);
+    }
+  );
+
+  it('never reports either colour on an empty capture', async () => {
+    const blank = await createTestImageData(WHITE, 20, 20);
+    expect(await hasMagnetSnapPixels(blank)).toBe(false);
+    expect(await hasManualSnapPixels(blank)).toBe(false);
+  });
+
+  it('skips a transparent pixel rather than reading it as black', async () => {
+    // A capture with nothing but alpha 0 is the checkerboard's own absence of ink. Read as
+    // 0,0,0 it would satisfy a green bound with no upper blue ceiling, so both predicates
+    // must skip it — which is also what every other predicate in this file does.
+    const transparent = await createTestImageData(WHITE, 8, 8);
+    fillAll(transparent, WHITE, TRANSPARENT);
+    expect(await hasMagnetSnapPixels(transparent)).toBe(false);
+    expect(await hasManualSnapPixels(transparent)).toBe(false);
+  });
+
+  it('finds the colour among surrounding document ink', async () => {
+    // The predicates scan a whole clip that also contains the artwork, so a green pixel has
+    // to survive being surrounded by black and red rather than sitting alone on white.
+    const mixed = await createTestImageData(WHITE, 30, 30);
+    fillRect(mixed, { left: 0, top: 0, right: 29, bottom: 29 }, black);
+    fillRect(mixed, { left: 0, top: 0, right: 14, bottom: 14 }, RED);
+    setPixel(mixed, 20, 20, MAGNET_COMPOSITE_GREEN);
+    expect(await hasMagnetSnapPixels(mixed)).toBe(true);
+    expect(await hasManualSnapPixels(mixed)).toBe(false);
+
+    setPixel(mixed, 20, 20, MAGNET_COMPOSITE_ORANGE);
+    expect(await hasMagnetSnapPixels(mixed)).toBe(false);
+    expect(await hasManualSnapPixels(mixed)).toBe(true);
+  });
 });
