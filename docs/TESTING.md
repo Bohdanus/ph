@@ -164,8 +164,10 @@ drop.
 
 ### Local
 
-Two hooks, each a one-line wrapper over a `package.json` script, so the hook and
-the command a developer or CI can run by hand cannot drift:
+Two of the four hooks wrap a `package.json` script — `pre-commit` ends at
+`npm run gate:commit`, and `pre-push` at `npm run gate:push`. The other two run
+`scripts/*.mjs` directly; [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev
+servers** is their home.
 
 The default headless e2e run must have **zero failures**; known failures are not
 allowed. Produce counts from the suite rather than storing them here. If a dead
@@ -175,7 +177,8 @@ Hooks use a shared common-git entry rather than a per-worktree husky directory;
 `HUSKY=0 git commit` is the escape hatch.
 
 - `.husky/pre-commit` runs `npm run gate:commit`; `.husky/pre-push` runs
-  `npm run gate:push`. Keep each hook as a one-line wrapper over its package script.
+  `npm run gate:push`. Keep the gate line last in each of those two; `pre-commit`'s
+  first two steps are guards.
 
 - `test:e2e:unit` is a Node Vitest suite for e2e helpers, not a browser run or
   commit-gate step. It is the blocking `e2e-unit` CI job; run it when touching

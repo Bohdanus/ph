@@ -6,7 +6,7 @@ This skill performs comprehensive test suite improvements: fixing broken tests, 
 
 These files are **never** modified by this skill, under any circumstances:
 
-- `psd-utils.test.tsx` — gold-standard format-utils test; real `ag-psd` round-trips with pixel assertions
+- `psd-utils.test.ts` — gold-standard format-utils test; real `ag-psd` round-trips with pixel assertions
 - `useAnts.test.tsx` — verified accurate per `useAnts.ts`; the `[0, 6, -1, 5]` offset and `clearRect(9,19,32,32)` assertions are correct
 - `rect.test.ts` — the "fully outside" assertion matches `trimRect` exactly; it's a regression test for current behavior
 - `draw.test.ts` — exact `bezierCurveTo`/`quadraticCurveTo` arg assertions are correct; for these thin canvas wrappers the canvas-call sequence IS the observable behavior
@@ -44,12 +44,13 @@ These files are **never** modified by this skill, under any circumstances:
 
 ## Scope
 
-All test files in `src/**/__tests__/*.test.{ts,tsx}`. **The count is re-derived, never trusted** —
+All test files in `src`: `src/**/*.test.{ts,tsx}`, including `src/App.test.tsx`, which sits in
+neither an `__tests__` directory nor a family folder. **The count is re-derived, never trusted** —
 an earlier revision of this line said "currently 55 files, ~400 tests" against a tree that held 259
 test files, so a number written here outlived the tree it described:
 
 ```bash
-find src -type d -name __tests__ -exec find {} -name '*.test.ts*' \; | wc -l
+find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
 ```
 
 ---
@@ -63,7 +64,7 @@ directory, so `src/foo.test.ts` is the same pattern in `main` and in a worktree.
 worktree and no session, so the order is fixed:
 
 ```bash
-git worktree add -b test/improve-<slug> .kilo/worktrees/<name> main
+git worktree add -b test/improve-<slug> "$MAIN/.kilo/worktrees/<name>"
 ```
 
 Create it, **then** dispatch, then put the **absolute** worktree path in every brief — a subagent's
@@ -130,16 +131,15 @@ For each candidate file, score these criteria (1 point each):
 
 | File                     | Score | Classification | Why                                                                                                     |
 | ------------------------ | ----- | -------------- | ------------------------------------------------------------------------------------------------------- |
-| `psd-utils.test.tsx`     | 8     | Gold           | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
+| `psd-utils.test.ts`      | 8     | Gold           | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
 | `useAnts.test.tsx`       | 5     | Gold           | 5+ tests, canvas call assertions, verified accurate per source                                          |
 | `rect.test.ts`           | 5     | Gold           | 5+ tests, exact assertion matches `trimRect`                                                            |
 | `draw.test.ts`           | 5     | Gold           | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
-| `SidebarLeft.test.tsx`   | 7     | Gold           | 8 tests, keyboard nav, flyout interactions, aria-checked assertions                                     |
-| `DesktopHeader.test.tsx` | 6     | Solid          | 8 tests, menu toggles, confirm dialogs, error paths                                                     |
-| `Draw.test.tsx`          | 1     | Shallow        | 1 test, only renders controls                                                                           |
-| `Transform.test.tsx`     | 1     | Shallow        | 3 tests, only renders controls                                                                          |
-| `Levels.test.tsx`        | 1     | Shallow        | 2 tests, only renders controls                                                                          |
-| `MagicWand.test.tsx`     | 1     | Shallow        | 1 test, only renders controls                                                                           |
+| `DesktopHeader.test.tsx` | 6     | Solid          | 52 tests, menu toggles, confirm dialogs, error paths                                                    |
+| `Draw.test.tsx`          | 5     | Gold           | 38 tests, controls and interaction paths                                                                |
+| `Transform.test.tsx`     | 5     | Gold           | 36 tests, controls and interaction paths                                                                |
+| `Levels.test.tsx`        | 5     | Gold           | 24 tests, controls and interaction paths                                                                |
+| `MagicWand.test.tsx`     | 5     | Gold           | 28 tests, controls and interaction paths                                                                |
 
 ### GTD Enforcement
 
@@ -178,7 +178,7 @@ Return JSON with:
 ### 1B. Lint Check Subagent
 
 ```
-Run: npm run lint:check -- src/**/__tests__/
+Run: npm run lint:check
 Return JSON with:
 {
   "errors": [{"file": "path", "line": number, "rule": "string", "message": "string"}],
@@ -259,7 +259,7 @@ Aggregate findings from all 3 subagents. Group by file and severity.
 1. Reads the test file
 2. Applies the specific fix strategy
 3. Runs `npm test -- --run <file>` to verify
-4. Runs `npm run lint:check -- <file>` to verify
+4. Runs `npm run lint:check` to verify the whole tracked tree
 5. Returns `{file, fixed: true/false, changes: "diff summary", verification: "pass/fail"}`
 
 ### Fix Strategies by Pattern
@@ -499,12 +499,12 @@ Constraints:
 - Use getByRole/getByLabelText/getByText first
 - Add data-testid to SOURCE only if no accessible query works
 - Test both success and failure paths
-- Run: npm test -- --run <file> && npm run lint:check -- <file>
+- Run: npm test -- --run <file> && npm run lint:check
 ```
 
 ### Coverage Patterns from Gold-Standard Tests
 
-**psd-utils.test.tsx** (the repo's gold standard for format-utils tests):
+**psd-utils.test.ts** (the repo's gold standard for format-utils tests):
 
 - Real `ag-psd` encoding/decoding (not mocked codec)
 - Pixel-level assertions (`Array.from(layer.getContext('2d')!.getImageData(0,0,w,h).data)`)
@@ -518,28 +518,27 @@ Constraints:
 
 ### Concrete Gaps from Repo Scan
 
-| File                          | Current Tests                       | Missing Coverage                                                                           | Priority |
-| ----------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------ | -------- |
-| Draw.test.tsx                 | 1 test (renders controls)           | Pen type change, size slider change, opacity change, disabled state                        | Medium   |
-| Transform.test.tsx            | 3 tests (renders controls)          | Rotate button clicks, mirror toggle clicks, Reset All click, skew/trapezoid/resize changes | Medium   |
-| Levels.test.tsx               | 2 tests (renders controls)          | Brightness/contrast slider changes, Reset click, undo behavior                             | Medium   |
-| MagicWand.test.tsx            | 1 test (tolerance/smoothing change) | Tolerance bounds, smoothing bounds, dispatch on change, disabled state                     | Medium   |
-| RectangularSelection.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
-| FeatherMagneticLasso.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
-| Text.test.tsx                 | Happy path only                     | Font size change, text input, disabled state, `!hasImage` early return                     | Medium   |
-| SaveDialog.test.tsx           | Happy path + cancel                 | Error paths, file name validation, empty name                                              | Medium   |
-| NewImageDialog.test.tsx       | Happy path only                     | Invalid dimensions, cancel flow, error paths                                               | Medium   |
-| bmp-utils.test.tsx            | 1 test (round-trip)                 | Invalid header, invalid dimensions, error paths                                            | Medium   |
-| tiff-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| ico-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| gif-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| svg-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| avif-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
-| SidebarLeft.test.tsx          | 8 tests (comprehensive)             | Already good — focus management tested                                                     | Low      |
-| SidebarRight.test.tsx         | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
-| ToolbarHorizontal.test.tsx    | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
-| BottomToolbar.test.tsx        | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
-| Footer.test.tsx               | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| File                          | Current Tests         | Missing Coverage                                                       | Priority |
+| ----------------------------- | --------------------- | ---------------------------------------------------------------------- | -------- |
+| Draw.test.tsx                 | 38 tests              | Additional edge cases as identified by the current implementation      | Medium   |
+| Transform.test.tsx            | 36 tests              | Additional edge cases as identified by the current implementation      | Medium   |
+| Levels.test.tsx               | 24 tests              | Additional edge cases as identified by the current implementation      | Medium   |
+| MagicWand.test.tsx            | 28 tests              | Additional edge cases as identified by the current implementation      | Medium   |
+| RectangularSelection.test.tsx | Happy path only       | Empty inputs, disabled controls, `!hasImage` early return              | Medium   |
+| FeatherMagneticLasso.test.tsx | Happy path only       | Empty inputs, disabled controls, `!hasImage` early return              | Medium   |
+| Text.test.tsx                 | Happy path only       | Font size change, text input, disabled state, `!hasImage` early return | Medium   |
+| SaveDialog.test.tsx           | Happy path + cancel   | Error paths, file name validation, empty name                          | Medium   |
+| NewImageDialog.test.tsx       | Happy path only       | Invalid dimensions, cancel flow, error paths                           | Medium   |
+| bmp-utils.test.tsx            | 1 test (round-trip)   | Invalid header, invalid dimensions, error paths                        | Medium   |
+| tiff-utils.test.tsx           | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
+| ico-utils.test.tsx            | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
+| gif-utils.test.tsx            | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
+| svg-utils.test.tsx            | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
+| avif-utils.test.tsx           | Shallow               | Real round-trip with pixel assertions                                  | Medium   |
+| SidebarRight.test.tsx         | Structural + negative | Keyboard nav, focus management                                         | Low      |
+| ToolbarHorizontal.test.tsx    | Structural + negative | Keyboard nav, focus management                                         | Low      |
+| BottomToolbar.test.tsx        | Structural + negative | Keyboard nav, focus management                                         | Low      |
+| Footer.test.tsx               | Structural + negative | Keyboard nav, focus management                                         | Low      |
 
 ---
 
@@ -668,7 +667,7 @@ npm test -- --run <file>
 npm test -- --run <file>
 
 # 4. Confirm no lint regressions
-npm run lint:check -- <file>
+npm run lint:check
 
 # 5. Confirm no full-suite regressions
 npm test -- --run
@@ -702,26 +701,24 @@ Patterns verified in actual test files (not speculative). GTD scores from the ru
 | `getByTitle` used instead of accessible query                     | `Transform.test.tsx` — its `screen.getByTitle('Rotate 90° Left')` assertions                                             | Shallow (1)   | High     | `screen.getByTitle('Rotate 90° Left')` — not accessible |
 | `getByText(...).toBeTruthy()` instead of `toBeInTheDocument`      | `Transform.test.tsx`, `Levels.test.tsx`                                                                                  | Shallow (1)   | High     | Truthy assertion on DOM node                            |
 | `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | `Draw.test.tsx`, `Levels.test.tsx`                                                                                       | Shallow (1)   | High     | Truthy assertion on DOM node                            |
-| Single happy-path test only                                       | Draw.test.tsx (1 test), Transform.test.tsx (3 tests), Levels.test.tsx (2 tests), MagicWand.test.tsx (1 test)             | Shallow (0-1) | Medium   | No negative/error path coverage                         |
 | `vi.mock` inside describe block                                   | the `SidebarLeft` suites under `src/components/SidebarLeft/__tests__/`                                                   | Gold (7)      | Critical | Vitest 5 hoisting violation                             |
 | `useTheme` array mock (object return)                             | `DesktopHeader.test.tsx` — its `useTheme` mock (was fixed)                                                               | Solid (6)     | Critical | Already addressed in prior session                      |
 | `mockResolvedValue` without error path                            | `DesktopHeader.test.tsx` — its `openNewImageDialog` mock                                                                 | Solid (6)     | Medium   | Only success path tested                                |
-| Format-utils shallow (mocked codec)                               | bmp-utils.test.tsx, tiff-utils.test.tsx, ico-utils.test.tsx, gif-utils.test.tsx, svg-utils.test.tsx, avif-utils.test.tsx | Shallow (0-1) | Medium   | Real round-trip only in psd-utils.test.tsx              |
+| Format-utils shallow (mocked codec)                               | bmp-utils.test.tsx, tiff-utils.test.tsx, ico-utils.test.tsx, gif-utils.test.tsx, svg-utils.test.tsx, avif-utils.test.tsx | Shallow (0-1) | Medium   | Real round-trip only in psd-utils.test.ts               |
 | `vi.hoisted` used correctly                                       | `MagicWand.test.tsx` — its `dispatchMock` hoisted declaration                                                            | Shallow (1)   | Good     | Pattern to replicate                                    |
 | `vi.stubGlobal` + `vi.unstubAllGlobals`                           | `DesktopHeader.test.tsx`                                                                                                 | Solid (6)     | Good     | Pattern to replicate                                    |
 
 ### Gold-Standard Files (DO NOT TOUCH)
 
-| File                   | GTD | Why Protected                                                                                           |
-| ---------------------- | --- | ------------------------------------------------------------------------------------------------------- |
-| `psd-utils.test.tsx`   | 8   | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
-| `useAnts.test.tsx`     | 5   | 5+ tests, canvas call assertions, verified accurate per `useAnts.ts`                                    |
-| `rect.test.ts`         | 5   | 5+ tests, exact assertion matches `trimRect`                                                            |
-| `draw.test.ts`         | 5   | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
-| `SidebarLeft.test.tsx` | 7   | 8 tests, keyboard nav, flyout interactions, aria-checked assertions                                     |
-| `useHistory.test.ts`   | 5+  | Prior session determined concerns were overblown                                                        |
-| `useApp.psd.test.ts`   | 5+  | Prior session determined concerns were overblown                                                        |
-| `functions.test.ts`    | 5+  | Prior session determined concerns were overblown                                                        |
+| File                 | GTD | Why Protected                                                                                           |
+| -------------------- | --- | ------------------------------------------------------------------------------------------------------- |
+| `psd-utils.test.ts`  | 8   | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
+| `useAnts.test.tsx`   | 5   | 5+ tests, canvas call assertions, verified accurate per `useAnts.ts`                                    |
+| `rect.test.ts`       | 5   | 5+ tests, exact assertion matches `trimRect`                                                            |
+| `draw.test.ts`       | 5   | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
+| `useHistory.test.ts` | 5+  | Prior session determined concerns were overblown                                                        |
+| `useApp.psd.test.ts` | 5+  | Prior session determined concerns were overblown                                                        |
+| `functions.test.ts`  | 5+  | Prior session determined concerns were overblown                                                        |
 
 ---
 
@@ -734,8 +731,8 @@ npm test -- --run
 # Single file test
 npm test -- --run src/path/to/file.test.tsx
 
-# Lint test files only
-npm run lint:check -- src/**/__tests__/
+# Lint the whole tracked tree (`lint:check` takes no paths)
+npm run lint:check
 
 # Typecheck
 npm run tsc

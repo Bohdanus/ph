@@ -37,7 +37,8 @@ flyout, **Line before Star or Star before Line** in the Shape flyout, and whethe
 **Count** sit in the default panel or in Extra Tools.
 
 **This is a compilation, not fresh verification.** Everything here is drawn from research the
-repository already did — [`../.kilo/plans/ps-research/`](../.kilo/plans/ps-research/), the
+repository already did — `.kilo/plans/ps-research/` (gitignored; read it from the main checkout, as
+`TOOLS-RESEARCH-BRIEF.md` records), the
 `.notes.md` files beside `src/tools/descriptions/`, `docs/PHOTOSHOP-UX.md`, and
 `docs/TOOLS.md` — plus six web searches against Adobe's help pages for the tools the repo had
 nothing on. **No tool's option bar was opened and audited**, and the shortcuts are the
@@ -70,11 +71,11 @@ What makes it unresolvable from the documents alone:
 - The **34 is arithmetic, not an observation.** `HANDOFF.md` §74 states the shape as
   "41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete", and
   `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available.
-  **That 41 is §74's own historical figure, not today's count** — the registry carries 42 now,
-  since the Sponge was added to it. The quotation is left as §74 states it rather than
+  **That 41 is §74's own historical figure, not today's count** — the registry carries 44 now,
+  since the Sponge and the two 1-pixel marquees were added to it. The quotation is left as §74 states it rather than
   silently re-derived, because §74 is a record of an exercise and not a live total. So 34 is forced by
-  the **70-tool target**, not counted off a roster. A combined list of 35 means either the
-  target is 71 or one entry does not belong.
+  the **70-tool target**, not counted off a roster. A combined list of 36 means either the
+  target is 72 or two entries do not belong.
 - Three combined-list entries are **documented as unsettled**, so any of them could be the
   spurious one. **Note** and **Count** may sit in Extra Tools rather than the default panel
   (`HANDOFF.md` §74, fourth unresolved placement). **Content-Aware Tracing** is gated behind
@@ -147,9 +148,8 @@ quiet deletion.** It was the third member of this table's `O` toning flyout row,
 ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
 its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
 sources behind it. Deleting the row keeps this file's contract — every row here is absent from
-`src/contexts/tool-types.ts` — and it is the reason this file's tables now show 29 of the 30 absent
-tools this file attributes to `TOOLS-TOO-HARD.md`: 35 rows across the six Adobe groups, less the six
-that group names at the top as coming from `HANDOFF.md` §74 instead. **Two claims the deleted row carried were themselves
+`src/contexts/tool-types.ts` — and the tables' rows are counted in the Unverified section rather
+than reconciled against the 30 here. **Two claims the deleted row carried were themselves
 wrong**, and they are the reason this note exists rather than a bare `git log` entry:
 
 - It cited "`docs/TOOLS.md` (Sponge section)" as evidence for the `O` cycle. **There was no Sponge
@@ -300,7 +300,7 @@ the Adobe page named in that row and on nothing else in this repository.
 **This repository**
 
 - `.kilo/plans/ps-research/00-tool-inventory.md` — the registered-tool audit. **Its line 15
-  reads "all 29 in `availableTools`" and that is stale: the registry now carries 42**
+  reads "all 29 in `availableTools`" and that is stale: the registry now carries 44**
   (`src/contexts/tool-types.ts`, counted at the `ToolArgsByName` block). Its **Note A**
   (`color` has no determinate Photoshop identity) and **Note B** (`levels` is actually
   Brightness/Contrast) describe tools this app _has_, so they do not bear on this roster, and

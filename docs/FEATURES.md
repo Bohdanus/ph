@@ -3,7 +3,7 @@
 What this app can do, system-wide, measured against Photoshop.
 
 **This is not a per-tool document.** That is [`TOOLS.md`](TOOLS.md) — generated,
-41 sections, one per tool, with an options-bar table and Adobe citations. This
+44 sections, one per tool, with an options-bar table and Adobe citations. This
 page is the capability level: documents, formats, selection, layers, history,
 panels, menus, view, input, colour. A tool's status is one row of
 [`TOOLS.md`](TOOLS.md), not of this file.
@@ -54,7 +54,7 @@ platform limit.
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
 | Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
 | View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
-| Keyboard          | `partial`   | 41 bindings against Photoshop's ~200                                           |
+| Keyboard          | `partial`   | 43 bindings against Photoshop's ~200                                           |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                              |
 | Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all        |
@@ -327,7 +327,7 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 41. Thirty-three registrations in
+**This app:** 43. Thirty-five registrations in
 `AppKeyboardShortcuts.tsx` and eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
 `useKeyDownShortcut` registrations each).
@@ -336,10 +336,13 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 
 **Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
 `Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`; `[` and `]` for brush size; `0` and `1`
-for opacity.
+for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
+Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
+and the Burn, so the Sponge must be the active tool.
 
-**Gap:** `A`, `H`, `Z`, `X` and `D` are unbound — Automatic Select, Hand, Zoom,
-Swap Colours and Default Colours. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
+**Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
+Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
+the Sponge is active. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
 `Ctrl+Shift+I` — Select All, Deselect, Invert — are unbound, which follows from the
 selection model above rather than from the keyboard layer. `Tab`, `F`,
 `Ctrl++`, `Ctrl+-` and `Ctrl+0` are unbound, and Space does not pan.

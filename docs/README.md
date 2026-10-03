@@ -73,7 +73,8 @@ fixture conventions note.
 
 ## Open problems
 
-Three homes, split by what broke. A defect goes in one of them, not in two.
+Three homes for an open defect, split by what broke. A defect goes in one of them, not in two —
+`handoffs/` is not one of them; it is where a finished review is recorded.
 
 | Document                                             | Its one job                                                                |
 | ---------------------------------------------------- | -------------------------------------------------------------------------- |
