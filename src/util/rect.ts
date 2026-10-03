@@ -233,8 +233,14 @@ export const calculateNewRect = (
       // shorter than the ink whenever the leading is under the font's own ascent — so the box
       // cropped its own first line and the committed layer went out without it.
       const style = resolveTextStyle(newArgs);
-      const layout = layoutText(ctx2d as Ctx2D, style, text, wrapWidth(newRect, isParagraph));
-      const requiredHeight = requiredHeightForLines(ctx2d as Ctx2D, style, layout.lines.length);
+      // Both halves style their own context now, which is the fix `e2e/text-tool.spec.ts` has been
+      // holding red for. The workspace canvas carries `10px sans-serif` for the whole session, so an
+      // unstyled measure wrapped this paragraph at a fraction of its real width: measured on this
+      // host a 1042px string at `64px Arial` reads as 163px unstyled, the line count came back as
+      // one, and the box grew to hold one line while the renderer drew three — into a canvas that IS
+      // the box, so two bands were cropped out of the committed layer rather than merely mislaid.
+      const lineCount = layoutText(ctx2d as Ctx2D, style, text, wrapWidth(newRect, isParagraph)).lines.length;
+      const requiredHeight = requiredHeightForLines(ctx2d as Ctx2D, style, lineCount);
       if (requiredHeight > newRect.y2 - newRect.y1) {
         newRect = { ...newRect, y2: newRect.y1 + requiredHeight };
       }
@@ -326,5 +332,9 @@ function wrapWidth(rect: RectXYSorted, isParagraph: boolean): number {
  * arms from drifting: they answer the same question and now answer it in one place.
  */
 function hardBreakHeight(ctx: Ctx2D | undefined | null, args: TextToolArgs, text: string): number {
+  // No context at all is not a reason to report zero lines of height: `requiredHeightForLines`
+  // degrades to the line step on its own, and the line step is the honest answer when there is no
+  // measurer — `Text.tsx` hands `calculateNewRect` the tool overlay, which is null on the first
+  // render and in every test that mounts no canvas.
   return requiredHeightForLines(ctx, resolveTextStyle(args), text.split('\n').length);
 }

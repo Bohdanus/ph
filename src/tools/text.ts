@@ -608,8 +608,13 @@ export function layoutText(
   // and the measurement is the expensive half. Point type therefore skips it entirely and the
   // caller's single measurement per line stands.
   const hardBroken = text.split('\n');
+  // Styled here rather than left to the caller, because this is the layout AUTHORITY and it
+  // measures: `wrapLine` calls `measureText`, and a context still wearing the workspace canvas's
+  // `10px sans-serif` wraps a 1042px line at 163px. `withTextStyle` brackets, so a caller that has
+  // already styled — `renderText` draws in the draft's face and `getTextWidth` measures in it — gets
+  // its own styling back rather than this function's.
   const wrapped = Number.isFinite(wrapWidth)
-    ? hardBroken.flatMap((line) => wrapLine(ctx, line, wrapWidth, spacing))
+    ? withTextStyle(ctx, style, () => hardBroken.flatMap((line) => wrapLine(ctx, line, wrapWidth, spacing)))
     : null;
   const lines = wrapped ? wrapped.flatMap((result) => result.lines) : hardBroken;
 
@@ -651,7 +656,10 @@ export function requiredHeightForLines(
   lineCount: number
 ): number {
   const lineStep = style.fontSize * style.lineHeight;
-  return Math.max(lineCount * lineStep, inkHeight(ctx, style)) + TEXT_PADDING * 2;
+  // Styled for the same reason `layoutText` is: the ink term is the font's own ascent, so measuring
+  // it on an unstyled context returns the ascent of whatever face that context happens to wear.
+  const ink = ctx ? withTextStyle(ctx, style, () => inkHeight(ctx, style)) : 0;
+  return Math.max(lineCount * lineStep, ink) + TEXT_PADDING * 2;
 }
 
 /**
@@ -826,10 +834,7 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
   // (`TextToolArea.tsx` hands the same ref to both), so an unbracketed version would leave the
   // overlay wearing the Type tool's typography every time a box was recomputed. This is the same
   // leak `resetOverlayAlpha` exists for, and unlike that helper it was not closed.
-  ctx.save();
-  try {
-    applyTextStyle(ctx as Ctx2D, style);
-
+  return withTextStyle(ctx as Ctx2D, style, () => {
     const spacing = trackingPx(style);
     // The widest WRAPPED line for a paragraph box, and the widest explicit line for a point box —
     // which is the same number as before this revision, because an infinite wrap width leaves the
@@ -838,6 +843,37 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
     const { lines } = layoutText(ctx as Ctx2D, style, args.text ?? '', wrapWidth);
 
     return lines.reduce((widest, line) => Math.max(widest, inkWidth(ctx as Ctx2D, line, spacing)), 0);
+  });
+}
+
+/**
+ * Measure something in the face and tracking the args carry, on a context that may be carrying
+ * something else entirely.
+ *
+ * **Every measurement in a 2D canvas reads `ctx.font`, and `measureText` reads it at the moment of
+ * the call.** A context that has not been styled measures in whatever face it was left wearing — and
+ * the workspace canvas is left wearing `10px sans-serif` for the whole session. Measured on this
+ * host, a 1042px string at `64px Arial` reads as 163px at `10px sans-serif`, so a paragraph box
+ * sized from an unstyled measure wraps its line count at the wrong width and grows to hold one line
+ * instead of three, while the renderer — which does style its context — draws all three. The box is
+ * the committed layer's canvas, so the extra lines are cropped out of the file rather than merely
+ * mislaid on the overlay.
+ *
+ * `getTextWidth` applied the style itself for exactly this reason and `getTextLineCount` did not,
+ * which is why one of the two was right about a paragraph box's WIDTH and the other wrong about its
+ * HEIGHT. This helper is the one rule both go through now, and `calculateNewRect` — which measures
+ * on the workspace context `Text.tsx` hands it — goes through it too.
+ *
+ * Bracketed, because it is handed the caller's context and `applyTextStyle` writes `font`,
+ * `textBaseline`, `textAlign`, `letterSpacing` and `fontVariantCaps` onto it. `applyTextStyle` runs
+ * inside the bracket, so the caller's own styling survives: `renderText` styles, then measures, then
+ * draws, and the draw still happens in the draft's face.
+ */
+export function withTextStyle<T>(ctx: Ctx2D, style: ResolvedTextStyle, measure: () => T): T {
+  ctx.save();
+  try {
+    applyTextStyle(ctx, style);
+    return measure();
   } finally {
     ctx.restore();
   }

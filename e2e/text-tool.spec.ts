@@ -1101,10 +1101,10 @@ test.describe('Text tool', () => {
     await input.fill('Hi');
     await apply.click();
 
-    // The commit empties the draft (`Text.tsx:86`). That is what makes the pixel read
+    // The commit empties the draft. That is what makes the pixel read
     // below a statement about the document rather than about the live preview: while the
     // draft is non-empty the tool overlay repaints the same glyphs on every keystroke
-    // (`TextToolArea.tsx:45-49` -> `redrawText` at `:51` -> `renderText`), so red pixels on screen
+    // (`TextToolArea`'s `onRepaint` -> its `redrawText` -> `renderText`), so red pixels on screen
     // would not yet prove anything reached the layer. With the draft gone the overlay
     // draws nothing, and the only red on the canvas is the committed layer.
     await expect(input).toHaveValue('');
@@ -1644,19 +1644,33 @@ test.describe('Text tool', () => {
     // 1296, which is the value `toolArgs.fontSize` now holds.
     await size.fill('5000');
     await expect(size, 'a size above the Adobe maximum was not clamped').toHaveValue('1296');
-    // The lower bound, from both directions. A cleared field reads as 0, and a negative one is
-    // equally outside the range, so the handler's `Math.max` is what both of these land on.
-    // Its other half — `if (!Number.isFinite(requested)) return` — is what keeps a cleared
-    // field from becoming a 0px font, and it is not reachable through `fill`, which cannot
-    // produce a value the number input will not accept.
+    // The lower bound, from both directions: a zero and a negative size are both outside the range,
+    // so the handler's `Math.max` is what each of these lands on.
     await size.fill('0');
     await expect(size, 'a zero size was not clamped up to the Adobe minimum').toHaveValue('0.01');
     await size.fill('-40');
     await expect(size, 'a negative size was not clamped up to the Adobe minimum').toHaveValue('0.01');
+
     // And a value inside the range is taken, so the field is not simply refusing everything:
     // this is what the commits below are measured at.
     await size.fill('32');
     await expect(size, 'a size inside the range was not taken').toHaveValue('32');
+
+    // An EMPTIED field, and this comment used to claim it was unreachable. It is reachable — and
+    // the old reasoning was wrong by one operator: `Number('')` is `0`, not `NaN`, so the handler's
+    // `Number.isFinite` guard ADMITTED it and the clamp turned a size the user was halfway through
+    // retyping into 0.01. `fill` cannot produce that state on its own; pressing BACKSPACE can, and a
+    // two-digit size cannot be typed from scratch without passing through empty.
+    //
+    // The field publishes nothing while empty. It is a CONTROLLED input, so the assertion is that
+    // the last good value is still standing — not that the field shows nothing, which no controlled
+    // input can do — and the value it must keep is 32, set immediately above. Under the old guard
+    // this read 0.01.
+    await size.fill('');
+    await expect(size, 'a cleared field published a size instead of keeping the last one').toHaveValue('32');
+    // And the blur restore is a second line of defence for a draft left empty, not the only one.
+    await size.blur();
+    await expect(size, 'the last good size was not restored on blur').toHaveValue('32');
 
     // Half the size is half the ink, which is the pixel statement that the clamped value above
     // is the one the renderer drew with rather than a number sitting in a field. Measured at
@@ -1743,17 +1757,17 @@ test.describe('Text tool', () => {
    * Adobe's own words for the pair are the spec: `PARAGRAPHTEXT` is "Text that wraps within a
    * bounding box" and `POINTTEXT` is "Text that does not wrap"
    * (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/textitem). The app
-   * decides between them on the gesture alone — `isClick = w <= 3 && h <= 3`
-   * (`TextToolArea.tsx:37`), so a 400x120 press is a drag on both axes and the box it produces
-   * is a paragraph box whatever else is true.
+   * decides between them on the gesture alone: a press whose POINTER travels more than
+   * `POINT_TYPE_MAX_DRAG_PX` on either axis is a drag, so a 400x120 press is a drag on both
+   * axes and the box it produces is a paragraph box whatever else is true.
    *
    * Three assertions, and each one fails on a specific way the wrapping could be absent:
    *
    *   1. the ink is TALLER THAN ONE LINE BOX — which is what "wrapped" means, stated in the
-   *      renderer's own units (`lineStepOnScreen` is the baseline step, `text.ts:519`), so it is
+   *      renderer's own units (`lineStepOnScreen` is the baseline step), so it is
    *      a comparison of two measured figures rather than a constant;
    *   2. the ink stays inside the dragged WIDTH — the wrap width is the box less the padding on
-   *      both sides (`textWrapWidth`, `text.ts:374-376`), so the widest line must end short of
+   *      both sides (`textWrapWidth`), so the widest line must end short of
    *      the right edge, and the four comparisons on the width are what say it did;
    *   3. the BOX kept that width — which is the load-bearing half, and the one a point-type
    *      growth cannot satisfy. `calculateNewRect` grows a paragraph box only in height
@@ -1840,23 +1854,16 @@ test.describe('Text tool', () => {
     // The complement, and it is the other half of `calculateNewRect`'s paragraph branch: the box
     // grew in HEIGHT, because three lines do not fit in the 120 rows that were dragged.
     //
-    // RED AGAINST THE CURRENT TREE, and it is a defect rather than a mis-stated expectation, so
-    // it is left asserting what the code is written to do:
+    // This assertion was RED until the measuring functions started styling the context they measure
+    // on. `getTextWidth` applied the style and `getTextLineCount` did not, so a paragraph box's WIDTH
+    // came out right and its HEIGHT did not — and the workspace canvas it was handed carries
+    // `10px sans-serif` for the whole session: read off the live page in that run, it measured this
+    // string at 162.9px where the tool overlay measured 1042.4px at `64px Arial`. The wrapped line
+    // count came back as 1, the box never grew, and the committed layer carried ONE band of ink
+    // instead of three, because the layer's own canvas is the box the type was laid out in.
     //
-    //   `getTextLineCount` (`src/tools/text.ts:572-576`) is the only measuring function in
-    //   `text.ts` that does not `applyTextStyle` the context it measures with — `getTextWidth`
-    //   brackets its own `measureText` with save/restore and the style inside it, at `:551-566`.
-    //   It is handed the WORKSPACE canvas's context (`Text.tsx:41` passes `canvasRef`), and that
-    //   context carries `10px sans-serif`: read off the live page in this run, the workspace
-    //   canvas measured this string at 162.9px in `10px sans-serif` while the tool overlay
-    //   measured it at 1042.4px in `64px Arial`. So the wrapped line count comes back as 1, the
-    //   required height as one line's 86.8 document px, and the box never grows — while
-    //   `renderText`, which does style its context, draws all three lines.
-    //
-    //   The visible consequence, measured by committing the same three lines in this run: the
-    //   committed layer carries ONE band of ink (document rows 217..273 of the capture) instead
-    //   of three, because the layer's own canvas is the one-line box the type was laid out in and
-    //   `renderText` clips to it.
+    // It is stated as a property — the box is TALLER than what was dragged — so it fails if the wrap
+    // is measured in the wrong face again, and does not care how many lines the string takes.
     expect(
       spanHeight(draft.frame),
       'the paragraph box did not grow downward to hold its wrapped lines'
@@ -1866,8 +1873,8 @@ test.describe('Text tool', () => {
   /**
    * A click places POINT type: nothing wraps, and the box grows sideways to hold the whole line.
    *
-   * The same gesture, the other side of `isClick = w <= 3 && h <= 3`
-   * (`TextToolArea.tsx:37`): a press that travels no more than 3 CSS px on EITHER axis collapses
+   * The same gesture, the other side of the threshold: a press whose pointer travels no more than
+   * `POINT_TYPE_MAX_DRAG_PX` on EITHER axis collapses
    * its rect to a point and is laid out as point type, for which the renderer offers its text an
    * infinite width (`renderText`, `src/tools/text.ts:533`) and the box grows to the measured
    * string (`src/util/rect.ts:162-181`). Both halves of that are asserted here, and they are

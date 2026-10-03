@@ -1072,14 +1072,19 @@ describe('renderText', () => {
       // save/restore — an unbracketed `strokeStyle` would leave the shared overlay wearing it for
       // the next tool, and the order is what proves the bracket rather than a trailing restore.
       //
-      // Two brackets, not one, and both are load-bearing. The INNER pair is this function's own; the
-      // OUTER one is `renderText`'s, which every context-touching function in this file now has
-      // because `applyTextStyle` writes the draft's `font`, `textAlign`, `letterSpacing` and
-      // `fontVariantCaps` onto the caller's context and `renderText` is handed the LIVE tool
-      // overlay. The nesting is the assertion: a stroke outside both brackets, or a bracket opened
-      // and not closed, would both change this sequence.
+      // The BRACKET is the assertion, not a particular number of them, so it is stated as one:
+      // the stroke happens at a non-zero save depth, and every save is matched by a restore. An exact
+      // sequence would be over-specified — `renderText`, `layoutText` and `requiredHeightForLines`
+      // each open a bracket now, because each of them MEASURES and a context measures in whatever
+      // face it is wearing — so pinning the count would break on the next honest bracket rather
+      // than on a defect.
       expect(styleAtStroke).toBe('#ff0000');
-      expect(order).toEqual(['save', 'save', 'stroke', 'restore', 'restore']);
+      const depthBefore = order.slice(0, order.indexOf('stroke')).filter((op) => op === 'save').length;
+      expect(depthBefore).toBeGreaterThan(0);
+      const saves = order.filter((op) => op === 'save').length;
+      const restores = order.filter((op) => op === 'restore').length;
+      expect({ saves, restores }).toEqual({ saves: restores, restores });
+      expect(order.lastIndexOf('restore')).toBeGreaterThan(order.indexOf('stroke'));
     });
 
     it('draws no indicator on the default call, even for text that overflows', () => {
@@ -1219,16 +1224,19 @@ describe('renderText', () => {
 
       renderText(ctx, { ...baseArgs, italic: true, bold: true, allCaps: true });
 
-      // TWO writes, and the second is the point as much as the first. The first is the renderer
-      // applying the style, and `fontAtAssignment` proves the ORDER the whole feature hangs on. The
-      // second is the renderer's own restore putting the context back — and `fontAtAssignment` is
-      // the seed there, which is the other half of the bracket: the font is restored before the
-      // caps value is, so the overlay is left with the face it started the draft with rather than
-      // the draft's.
-      expect(assignments).toEqual([
-        { value: 'all-small-caps', fontAtAssignment: 'italic bold 20px Arial' },
-        { value: 'normal', fontAtAssignment: '10px sans-serif' },
-      ]);
+      // ORDER, and RESTORE — both as properties rather than as a sequence, because the number of
+      // style applications is not fixed: `layoutText` and `requiredHeightForLines` each measure and
+      // so each style the context inside its own bracket.
+      //
+      // The order is the point the whole caps feature hangs on: EVERY write of the caps value must
+      // see the styled font, or a caps assignment made before the font would be reset by it.
+      const applied = assignments.filter((entry) => entry.value === 'all-small-caps');
+      expect(applied.length).toBeGreaterThan(0);
+      expect(applied.every((entry) => entry.fontAtAssignment === 'italic bold 20px Arial')).toBe(true);
+      // And the last write restores the context, with the seed font already back in place — which
+      // is the other half of the bracket, and the reason the overlay is not left wearing the draft's
+      // caps variant after the user leaves the tool.
+      expect(assignments.at(-1)).toEqual({ value: 'normal', fontAtAssignment: '10px sans-serif' });
     });
 
     it('never creates a fontVariantCaps property on a context that lacks one', () => {
