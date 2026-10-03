@@ -176,33 +176,26 @@ describe('durable document refusal and composition', () => {
     registry.shutdown();
   });
 
-  it('composes successful layers in order while skipping refused and hidden layers', async () => {
+  it('refuses composition when a visible layer cannot materialize, without publishing a partial bitmap', async () => {
     overrideCanvasFilterSupport(false);
     vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
     vi.stubGlobal('createImageBitmap', undefined);
     const registry = new AssetRegistry();
-    const result = await composeDurableDocument(
-      replay({
-        'layer-hidden': layer('layer-hidden', 0, { visible: false }),
-        'layer-screen': layer('layer-screen', 1, {
-          opacity: 0.75,
-          blendMode: 'screen',
-          pos: { x: 10, y: 12, width: 30, height: 18 },
+    await expect(
+      composeDurableDocument(
+        replay({
+          'layer-hidden': layer('layer-hidden', 0, { visible: false }),
+          'layer-screen': layer('layer-screen', 1, {
+            opacity: 0.75,
+            blendMode: 'screen',
+            pos: { x: 10, y: 12, width: 30, height: 18 },
+          }),
+          'layer-multiply': layer('layer-multiply', 2, { opacity: 0.5, blendMode: 'multiply' }),
+          'layer-bad': layer('layer-bad', 3, { operations: [refusedFilter('layer-bad')] }),
         }),
-        'layer-multiply': layer('layer-multiply', 2, { opacity: 0.5, blendMode: 'multiply' }),
-        'layer-bad': layer('layer-bad', 3, { operations: [refusedFilter('layer-bad')] }),
-      }),
-      request(registry)
-    );
-
-    const output = recordingContexts.at(-1);
-    expect(output).toBeDefined();
-    expect(output?.drawImage).toHaveBeenCalledTimes(2);
-    expect(output?.alphaValues).toEqual([0.75, 0.5]);
-    expect(output?.compositeValues).toEqual(['screen', 'multiply']);
-    expect(result.layers).toHaveProperty('layer-hidden');
-    expect(result.layers).not.toHaveProperty('layer-bad');
-    result.release();
+        request(registry)
+      )
+    ).rejects.toThrow('Unable to compose durable layer layer-bad');
     registry.shutdown();
   });
 });

@@ -119,20 +119,6 @@ Latent only while nothing schedules replays (item 1), but it is a required input
 
 ---
 
-## 11. `materialization.ts` does not apply `blendMode`
-
-**Problem.** `sourceBitmap` in `materialization.ts` sets `ctx.globalAlpha = source.opacity`, but
-there is no `blendMode` / `globalCompositeOperation` anywhere in `materialization.ts` or
-`durable-replay.ts`. Only the legacy renderer's `drawLayer` applies it (`layer-renderer.ts`).
-
-So the moment `materialization.ts` becomes the render path (item 1), every layer with a non-normal
-blend mode renders incorrectly. The durable snapshot carries the field; the pipeline drops it.
-
-**Fix.** Apply `snapshot.blendMode` in `materialization.ts` alongside the existing `globalAlpha`,
-and add a test that a multiply-blended layer materializes differently from a normal one.
-
-**Files.** `src/contexts/materialization.ts`, `src/contexts/history-model.ts`
-
 ---
 
 ## 15. `reorder-layers` is published; a self-anchored move is a real converter defect
@@ -898,40 +884,35 @@ for mobile rather than copied across.
 
 ---
 
-## 58. A single brush stroke makes the durable document un-materializable, and it voids the whole document
+## 58. Brush/Pencil source layers remain un-materializable in the durable compositor
 
 **Problem.** `convertSource` (`history-adapter.ts` — `convertSource()`) routes a layer source's
-`args.toolName`
-to `text` or `vector` for exactly two cases — `'text'`, and the six shape names — and to
-`legacy-tool` for everything else. `materialization.ts` — `sourceBitmap()` throws on `legacy-tool`
-**unconditionally**, and `materializeDocument` releases every taken lease and rethrows (both in
-`materialization.ts` — `materializeDocument()`'s `catch`),
-so a single unconvertible layer voids the entire document rather than itself.
+`args.toolName` to `text` or `vector` for exactly two cases — `'text'`, and the six shape names —
+and to `legacy-tool` for everything else. `materialization.ts` — `sourceBitmap()` throws on
+`legacy-tool`, and `materializeDocument` records the refusal while omitting that layer. The durable
+compositor now refuses a visible missing layer rather than publishing a partial bitmap, so the
+remaining defect is an explicit unavailable surface rather than silent pixel loss.
 
 `useLayer.ts` — `createLayerFromTool()` writes `args: { ...args }` from the concrete tool, so
-`args.toolName` is
-`'brush' | 'pencil' | 'color-replacement'`, never `'draw'`. **All three painting tools take the
-`legacy-tool` route.** The second thing a user does in a session is draw a stroke, so this is not a
-latent shape of the cutover — it is what the cutover would do.
+`args.toolName` is `'brush' | 'pencil'` for the Draw tool's created painting layers. The active-layer
+Color Replacement path does not use `createLayerFromTool()`.
 
 The irony worth recording: `toolProcessors.draw` in `toolProcessors.ts` — the `draw` entry of
 `toolProcessors` — is a genuine `creator: true`, so a
 deterministic creator for exactly this exists and is simply unreachable, because the adapter never
 routes to it.
 
-**Latent today** — `materializeLayer`/`materializeDocument` have no production caller (item 1). That is
-the only reason this is P1 rather than P0, and it is the same reason item 1 should not be treated as
-one wiring step.
+**Latent today** — `materializeLayer`/`materializeDocument` have no production caller outside the
+isolated compositor. That is the only reason this is P1 rather than P0, and it is the same reason
+the first durable surface must not be treated as one wiring step.
 
-**Fix.** Either route those three tools to a typed source via the existing `draw` creator, or make
-`materializeDocument` isolate per-layer failure — materialize the rest, record the failed layer — so
-one unconvertible layer cannot void a document. The second is worth doing regardless: the
-whole-document rethrow in `materialization.ts` — `materializeDocument()`'s `catch` is what turns any
-per-layer defect into a total one.
+**Fix.** Route Brush/Pencil source layers to a typed source via the existing `draw` creator, or add
+an explicit durable source adapter. Keep the compositor's fail-closed visible-layer check; a partial
+document must never be published as a successful durable presentation.
 
 **Test that fails without the fix.** A brush history item through `legacyHistoryToDurable` must not
-yield `source.kind === 'legacy-tool'`. And `materializeDocument` over a replay containing a brush
-layer plus two good layers must resolve with the good layers present.
+yield `source.kind === 'legacy-tool'`. And `composeDurableDocument` over a replay containing a
+visible brush layer plus two good layers must refuse rather than publish a partial composite.
 
 **Files.** `src/contexts/history-adapter.ts` — `convertSource()`,
 `src/contexts/materialization.ts` — `sourceBitmap()` and `materializeDocument()`,
@@ -2076,44 +2057,6 @@ compare against the legacy timeline as well. Pinned as a KNOWN LIMIT pin as the
 `history-adapter.diagnostics.test.ts`; the fix must delete or re-point it.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.diagnostics.test.ts`
-
----
-
-## 90. A disabled FIRST history entry is adopted as the durable baseline
-
-**Problem.** `replayHistory` skips a disabled item before it does anything else
-(`history-replay.ts` — `replayHistory()`, at its `if (!item || item.disabled) continue`), so the
-document it produces for a timeline whose first entry is disabled
-is empty. The converter takes that **same entry** as the durable baseline
-(`history-adapter.ts` — the baseline branch of `legacyHistoryToDurable()`) without ever consulting
-`isEntryEnabled()`, and maps it to
-cursor `-1` as though it were the pre-history state.
-
-**User-visible failure, and this one is REACHABLE.** Disable the first History row and the canvas
-blanks while the durable shadow still describes a full document — the layers, the frame and the
-selection of an edit the user just turned off. The two models disagree about the same timeline with
-no diagnostic, and nothing downstream reconciles them.
-
-**How the toggle is exposed.** The History tab renders one eye button per row, including the first:
-the row's `onClick` in `HistoryTab.tsx` — `HistoryTab` — calls `handleToggleDisabled`, whose `title`
-reads "Disable history item"
-→ `toggleDisabled(itemId)` (`HistoryTab.tsx` — inside `handleToggleDisabled`) → `useHistory.ts` —
-`toggleDisabled()` → `updateHistoryTimeline`'s
-`toggle-disabled` command, which flips `disabled` on the addressed entry
-(`history-timeline.ts` — the `toggle-disabled` arm of `updateHistoryTimeline()`). `sortedHistory` is
-`[...history].reverse()` (`HistoryTab.tsx` — the `sortedHistory` binding),
-so the first entry is the **last** row — the one closest to the panel's footer, not a row anyone
-treats as special. The mobile drawer exposes the same control
-(`MobileLayersDrawer.tsx` — its `handleToggleDisabled`).
-
-**Fix.** Make the baseline branch adopt an entry only when `isEntryEnabled` agrees that the entry
-would have applied — and say what a timeline whose baseline is disabled should convert to, because
-"an empty baseline" and "a baseline derived from the first **enabled** entry" are two different
-answers and only one of them is the document `replayHistory` produces. Pinned as a KNOWN-DIVERGENCE
-pin as the `it('a disabled first entry replays as the empty state legacy replays')` title in
-`history-adapter.branches.test.ts`; the fix must re-point it.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.branches.test.ts`
 
 ---
 

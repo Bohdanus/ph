@@ -72,7 +72,10 @@ export async function composeDurableDocument(
     for (const layerId of orderedLayers(replay)) {
       const replayLayer = replay.layers[layerId];
       const layer = materialized.layers[layerId];
-      if (!replayLayer || !layer || !replayLayer.snapshot.visible) continue;
+      if (!replayLayer || !replayLayer.snapshot.visible) continue;
+      if (!layer) {
+        throw new Error(`Unable to compose durable layer ${layerId}: materialization was refused`);
+      }
 
       context.save();
       try {
