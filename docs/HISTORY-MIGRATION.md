@@ -7,9 +7,10 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 
 ## Authority
 
-The production authority is still the legacy `HistoryItem[]` timeline. It
-replays through `replayHistory()`, renders runtime `Layer` objects, and feeds
-export. `durableDocument` is a shadow projection. The migration is not complete
+The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
+now stages a durable-composed presentation cache into those legacy layers;
+render, export, and logical undo/redo remain legacy-authoritative. `durableDocument`
+is still a shadow projection for logical state. The migration is not complete
 until one replay/materialization authority feeds undo, redo, navigation, render,
 and export without a second logical state writer.
 
@@ -75,8 +76,9 @@ is not.
 The retired coordination gate forbids production imports of
 `replay-coordinator.ts` and `replay-checkpoints.ts`. A separate plain assertion
 allows exactly one production importer for `materialization.ts`,
-`durable-compositor.ts`, while that compositor remains unwired. This staged
-boundary stays fail-closed until the first durable production surface is chosen.
+`durable-compositor.ts`. The compositor is mounted for navigation presentation
+only; the remaining surfaces stay fail-closed until their differential and
+ownership gates pass.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 
@@ -113,9 +115,9 @@ a separate source-replacement requirement.
    the tracked architecture map.
 2. Close the current migration boundary defects and keep every currently
    appendable durable operation replayable without changing production
-   authority. The runtime retained-operation boundary and supported raster
-   append path are closed; remaining work is selecting and mounting the first
-   durable production surface, then the authority transfer.
+   authority. The runtime retained-operation boundary, supported raster append
+   path, and navigation presentation mount are closed; remaining work is the
+   render/export surfaces and final authority transfer.
 3. Verify source-edit history and source rehydration together for text and
    shape correction. Keep independent legacy/durable parity for creation, edit,
    undo, redo, and navigation.
@@ -123,9 +125,9 @@ a separate source-replacement requirement.
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Wire one durable materialization/compositor boundary for render, export, and
-   navigation. Stage successfully before publication and delete the old
-   authority only after the differential and failure-contract gates pass.
+6. Extend the durable materialization/compositor boundary to render and export.
+   Stage successfully before publication and delete the old authority only
+   after the differential and failure-contract gates pass.
 
 ## Operator rulings
 
@@ -137,9 +139,9 @@ decisions, not Photoshop overrides, and are intentionally not encoded in
   lossless text and shape post-editing. Its legacy consumer, durable replay,
   and options-bar rehydration must land as one behavior slice.
 - **Authority gate:** durable materialization is the eventual single production
-  authority. Legacy replay remains the temporary authority during differential
-  parity; retired coordination modules stay fail-closed until a production
-  surface is explicitly mounted.
+  authority. Legacy replay remains the logical authority during differential
+  parity; navigation presentation is the first mounted surface, while retired
+  coordination modules stay fail-closed.
 - **Bedrock UX:** use an explicit Photoshop-faithful Layer-from-Background or
   equivalent conversion action. Keep the bedrock refusal, do not auto-flatten,
   and do not silently relax the gate.
