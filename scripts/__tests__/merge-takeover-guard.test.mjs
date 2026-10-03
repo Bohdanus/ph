@@ -58,13 +58,13 @@ const sha = () => git(['rev-parse', 'HEAD']);
  * across this: comparing after the commit compares the merge against itself, which reads
  * as a clean merge every time.
  */
-function mergeAndInspect(ref, { resolve } = {}) {
+function mergeAndInspect(ref, { resolve, args = [] } = {}) {
   // BEFORE the merge, and this is load-bearing: a merge with no conflicts commits itself,
   // so reading HEAD afterwards gives the merge commit rather than the side being merged
   // INTO. Comparing against that makes "main changed nothing" read as "main changed
   // everything", which silently turns every false-positive test into a vacuous pass.
   const headBefore = sha();
-  gitOk(['merge', '--no-edit', ref]); // a conflict is the expected shape, not an error
+  gitOk(['merge', '--no-edit', ...args, ref]); // a conflict is the expected shape, not an error
   if (resolve) resolve();
   const findings = findTakeovers({
     cwd: dir,
@@ -358,6 +358,252 @@ describe('the shapes it must NOT report', () => {
     // main had no version of either file to lose.
     expect(seen.takeovers).toEqual([]);
     expect(git(['show', ':0:added-by-branch.txt'])).toContain('branch only');
+  });
+});
+
+describe('the shape the original scan set could not reach', () => {
+  // Everything in this block is about ONE structural gap, and it is the mirror of the two
+  // shapes above. Those are both "the result is not HEAD's file", so scanning
+  // `diff HEAD result` finds them by construction. A `-X ours` merge produces a result that
+  // IS HEAD's file, so that scan set is empty and the shape was invisible rather than
+  // merely unfixed.
+  //
+  // Measured with raw git before the second scan was written: `git merge -X ours` on a
+  // contested path reported `clean — 0 path(s) moved by the merge, none taken over
+  // wholesale` and exited 0, having silently deleted the branch's line. Nothing in the
+  // merge looked like a conflict, and `tsc`/`build` pass on the result.
+  function contestedPath() {
+    write('f.txt', 'alpha\nbeta\ngamma\n');
+    write('other.txt', 'keep\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbeta\ngamma\nBRANCH\n');
+    commit('branch adds a line');
+
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nbeta\ngamma\nMAIN\n');
+    commit('main adds a line to the same file');
+  }
+
+  it("reports a `-X ours` merge that deleted the branch's committed line", () => {
+    contestedPath();
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.conflicted).toBe(false);
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].kind).toBe('discarded-incoming-change');
+    expect(seen.takeovers[0].deleted).toBeGreaterThan(0);
+    expect(seen.takeovers[0].reason).toMatch(/kept this side/);
+    // The whole point, asserted rather than described: the line is really gone.
+    expect(git(['show', ':0:f.txt'])).not.toContain('BRANCH');
+    expect(git(['show', ':0:f.txt'])).toContain('MAIN');
+  });
+
+  it('reports a `-s ours` merge, which is the documented idiom and the worse case', () => {
+    // `git merge -s ours <ref>` records that the branch was merged and takes none of its
+    // content. It is a real command people run on purpose, and it is how a whole payload
+    // disappears while the merge reports success.
+    contestedPath();
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].kind).toBe('discarded-incoming-change');
+    expect(git(['show', ':0:f.txt'])).not.toContain('BRANCH');
+  });
+
+  it('exits 1 on a `-s ours` merge, so the hook actually refuses it', () => {
+    // The finding existing is not the same as the hook acting on it. Without this, a
+    // detector that reported the shape and returned 0 would satisfy every test above.
+    //
+    // `--no-commit` is what reproduces the hook's precondition rather than a convenient
+    // one. `git merge -s ours` is CLEAN by construction, so it auto-commits: asking the
+    // guard afterwards means asking about a merge already recorded, which is the single
+    // question this program documents that it cannot answer. Verified with raw git —
+    // `--no-commit -s ours` leaves MERGE_HEAD written and HEAD on the pre-merge tip, which
+    // is exactly what `pre-merge-commit` sees, and it is confirmed end to end against a
+    // real `git merge -s ours` with the hook installed.
+    contestedPath();
+    gitOk(['merge', '--no-commit', '-s', 'ours', 'feat']);
+
+    expect(existsSync(join(dir, '.git', 'MERGE_HEAD'))).toBe(true);
+    expect(sha()).not.toBe(git(['rev-parse', 'feat']));
+    expect(main([], { cwd: dir })).toBe(1);
+  });
+
+  it('is blind once such a merge is committed, which is the documented boundary', () => {
+    // Pinned on purpose, and it is a boundary rather than a defect: the comparison this
+    // program makes is unrecoverable after the commit, because HEAD has already moved onto
+    // the result and `merge-base` then resolves to the incoming tip. An earlier draft of
+    // this test asserted exit 1 here and failed for exactly that reason, which is why the
+    // shape above uses `--no-commit`.
+    contestedPath();
+    gitOk(['merge', '-s', 'ours', '--no-edit', 'feat']);
+
+    // With the merge recorded and the ref named, it reports clean — the branch's line is
+    // gone from HEAD and nothing here can say so any more.
+    const previous = process.env.GIT_REFLOG_ACTION;
+    try {
+      process.env.GIT_REFLOG_ACTION = 'merge feat';
+      expect(main([], { cwd: dir })).toBe(0);
+      expect(git(['show', 'HEAD:f.txt'])).not.toContain('BRANCH');
+
+      // With nothing to identify the merge by, it refuses instead of passing. So the blind
+      // window is reachable only by a caller that already knows the ref — which is what
+      // `--manual` is, and never what a hook is.
+      process.env.GIT_REFLOG_ACTION = '';
+      expect(main([], { cwd: dir })).toBe(2);
+    } finally {
+      restoreAction(previous);
+    }
+  });
+
+  it('stays silent on `-X ours` where the branch had only DELETED a line', () => {
+    // The false-positive half. Nothing of the branch's own survives in the result to be
+    // lost — main's version is a superset of it — so reporting here would fire on a
+    // resolution that is merely un-applied rather than lossy, and the first agent to hit it
+    // would reach for --no-verify.
+    write('f.txt', 'alpha\nkeep\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\n');
+    commit('branch deletes a line');
+
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nkeep\nMAIN\n');
+    commit('main adds a line');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.takeovers).toEqual([]);
+    expect(git(['show', ':0:f.txt'])).toContain('keep');
+  });
+
+  it('stays silent on `-X ours` where this side is already a strict SUPERSET', () => {
+    // The mirror of the superset case the existing suite already pins for `--theirs`, and
+    // the reason the discriminator asks what the LOSING side lost rather than whether the
+    // result happened to match HEAD. The branch's own line is in main already.
+    write('f.txt', 'alpha\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbranch-line\n');
+    commit('branch adds a line');
+
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nbranch-line\nMAIN-ADDED-LATER\n');
+    commit('main carries the branch line and adds its own');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.takeovers).toEqual([]);
+    expect(git(['show', ':0:f.txt'])).toContain('branch-line');
+  });
+
+  it('stays silent on `-X ours` where the two sides touched DIFFERENT files', () => {
+    // No contested path at all, so there is nothing to discard. This is the ordinary shape
+    // of every `-X ours` merge someone runs deliberately, and it is why the new scan is
+    // gated on both sides having moved the path rather than on the strategy.
+    write('f.txt', 'alpha\n');
+    write('other.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nBRANCH\n');
+    commit('branch edits f');
+
+    git(['checkout', '-q', 'main']);
+    write('other.txt', 'main\n');
+    commit('main edits other');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.takeovers).toEqual([]);
+  });
+
+  it('reports each lost path of a `-X ours` merge, not only the first', () => {
+    write('a.txt', 'base\n');
+    write('b.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('a.txt', 'branch\n');
+    write('b.txt', 'branch\n');
+    commit('branch edits both');
+
+    git(['checkout', '-q', 'main']);
+    write('a.txt', 'main\n');
+    write('b.txt', 'main\n');
+    commit('main edits both');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['a.txt', 'b.txt']);
+  });
+
+  it('stays silent on a resolution that is NEITHER side but still drops a branch line', () => {
+    // The boundary, pinned so a later reader does not "fix" it into an over-reporting gate.
+    // Measured as reachable with raw git: a contested path whose result is neither side's
+    // content verbatim, and which deletes a line the incoming side had.
+    //
+    // It stays silent deliberately. Every shape this program reports is a WHOLE-FILE
+    // one-sided decision — git copied one side's blob for the whole path. That is the class
+    // that produces no conflict marker, which is the only reason a gate is needed here: a
+    // merge that DID conflict was visibly unmerged until somebody staged it, and that
+    // resolution is a human decision made in the open. Reporting lossy hand-resolutions too
+    // would fire on ordinary conflict resolution, and the first agent to hit that would
+    // reach for --no-verify — which is how the two shapes above were nearly lost once already
+    // (see the superset case in 'the shapes it must NOT report').
+    write('f.txt', 'a\nb\nc\nd\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'a\nb\nc\nd\nFEAT-KEPT\n');
+    commit('branch adds a line');
+
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'a\nb\nc\nd\nMAIN\n');
+    commit('main adds a different line');
+
+    const seen = mergeAndInspect('feat', {
+      resolve: () => {
+        // Neither side verbatim: main's line kept, an extra line added, the branch's gone.
+        write('f.txt', 'a\nb\nc\nd\nMAIN\nEXTRA\n');
+        git(['add', '-A']);
+      },
+    });
+
+    expect(seen.conflicted).toBe(true);
+    // The precondition is real, so this is a boundary rather than a vacuous pass: the branch's
+    // line really was dropped from the result.
+    expect(git(['show', ':0:f.txt'])).not.toContain('FEAT-KEPT');
+    expect(git(['show', ':0:f.txt'])).toContain('EXTRA');
+    expect(seen.takeovers).toEqual([]);
+  });
+
+  it('still reports `-X theirs` — the new scan must not have displaced the old shapes', () => {
+    // The regression this whole block could have caused: a symmetric rewrite that quietly
+    // narrowed the original scan set would keep A and B passing and lose C.
+    contestedPath();
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'theirs'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].kind).toBe('whole-file-takeover');
+  });
+
+  it('counts every path either pass could judge, so the clean line is not misleading', () => {
+    // `scanned` is what the clean-merge message interpolates. If it still counted only
+    // `movedByMerge`, every `-X ours` merge would print "0 path(s) moved" beside a refusal
+    // it actually made — or, once the finding is absent, claim it examined nothing.
+    contestedPath();
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.scanned).toBeGreaterThan(0);
   });
 });
 

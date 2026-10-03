@@ -133,15 +133,31 @@ status` and `git diff` before staging.
   `pre-commit` (when `MERGE_HEAD` is set, which is a conflicted merge being completed) and
   from `pre-merge-commit` (a clean `git merge` that commits itself), and it refuses the merge
   rather than reporting it. A reviewer only catches the files its brief happened to mention;
-  this catches every path the merge resolved by copying one whole side's content. Two
-  shapes, neither of which produces a conflict marker: the result is the pre-divergence
-  content (the `-A` case above), or it is the incoming side's file verbatim
-  (`checkout --theirs <path>`, or `git merge -X theirs`).
+  this catches every path the merge resolved by copying one whole side's content. Three
+  shapes, none of which produces a conflict marker: the result is the pre-divergence
+  content (the `-A` case above), it is the incoming side's file verbatim
+  (`checkout --theirs <path>`, or `git merge -X theirs`), or it is THIS side's file
+  verbatim having dropped the incoming side's lines (`git merge -X ours`, or `-s ours`).
+  The third was a hole rather than a decision: it is the one shape whose result is HEAD's
+  own file, so the guard's scan set — paths the merge moved relative to HEAD — was empty by
+  construction and `git merge -s ours` reported `clean — 0 path(s) moved by the merge`
+  while deleting the branch's commit. `docs/DOCUMENTATION.md`'s one-home rule is why the
+  asymmetry survived: `-X theirs` was documented and its inverse was simply never written
+  down, so there was nothing to contradict. It now finds that shape through a second scan
+  over paths BOTH sides changed, asking the mirror question.
 
-  **Its limit, because a gate that claims more than it has is the failure it replaces:** git
-  runs no hook for a **fast-forward**, so that landing shape is uncovered — safe by
+  **Its limits, because a gate that claims more than it has is the failure it replaces:**
+  git runs no hook for a **fast-forward**, so that landing shape is uncovered — safe by
   construction, since the branch tip contains main as an ancestor, but uncovered. And
   `--no-verify` bypasses it, as it bypasses every gate here.
+
+  **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
+  conflict runs no hook at all, so an operation left open is invisible to it — which is how
+  `integration/sweep-land` sat for a day holding a resolved, compiling, silently-reverting
+  merge that this guard would have refused the moment anyone ran `git commit`. Nothing else
+  detects that state either: `scripts/worktree-inventory.mjs` has no notion of an operation
+  in progress, and no hook, script or CI job regenerates its output. The guard is the floor
+  under the rule, not a substitute for noticing.
 
   The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
   reported hundreds of innocent paths when run at the only moment it could act (before the

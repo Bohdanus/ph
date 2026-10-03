@@ -24,20 +24,36 @@
  * merging a stale branch that never touched a file is SAFE — git's three-way merge keeps
  * `main`'s version, because only one side changed it. So the recipe flags the harmless case.
  *
- * The defect is narrower, and it has two shapes, neither of which produces a conflict
- * marker. Both are the same thing: git decided a whole file by COPYING one side's content,
- * on a file `main` had a committed change to.
+ * The defect is narrower, and it has three shapes, none of which produces a conflict
+ * marker. All three are the same thing: git decided a whole file by COPYING one side's
+ * content, on a file the other side had a committed change to.
  *
  *   1. The result is the pre-divergence content (`add -A` in a worktree holding another
  *      HEAD's files). This is the recorded 17-file / 1,835-line incident in this repo.
  *   2. The result is the incoming side's file verbatim (`checkout --theirs` on a path).
+ *   3. The result is HEAD's file verbatim, having dropped the INCOMING side's lines
+ *      (`-X ours`, or `-s ours` on the whole merge).
  *
  * Shape 1 is the one the recipe MISSES and the one that actually happened. An earlier draft
  * of this program required BOTH sides to have changed the path, on the theory that an
  * untouched file has nothing to lose — and that theory is what makes `add -A` invisible:
  * the branch did not change the file, it merely committed it, and committing the old
  * content is itself the change. The condition is therefore "main changed it", never "both
- * changed it".
+ * changed it" — which is why shape 3 is found by a SECOND scan inside `findTakeovers()`
+ * rather than by narrowing this one.
+ *
+ * SHAPE 3, AND WHY IT NEEDED ITS OWN SCAN. Shapes 1 and 2 are both "the result is not
+ * HEAD's file", so the original scan set — paths the merge MOVED relative to HEAD, that
+ * HEAD had also changed — finds them by construction. Shape 3 is the one shape whose result
+ * IS HEAD's file, so that set is empty and the shape was structurally invisible: measured
+ * before this change, `git merge -X ours` on a contested path reported `clean — 0 path(s)
+ * moved by the merge` while silently deleting the branch's line. `-s ours` is worse, because
+ * it is the documented idiom for recording a merge and discards the whole payload.
+ *
+ * The asymmetry was an accident, not a decision: `docs/ORCHESTRATION.md` documented
+ * coverage of `checkout --theirs` and `-X theirs` and never said the inverse is invisible.
+ * Both directions now report, and both measure the same way — a shape is only reported when
+ * the result actually DELETES a line the losing side had (see `countDeleted`).
  *
  * SYMMETRY. HEAD is the side being merged INTO, whatever repository it is, so this is
  * uniform: it protects a feature branch from losing its own work when it merges `main` in
@@ -54,11 +70,22 @@
  *   ancestor, so the result IS the branch tree and every difference from main is a change
  *   the branch made on purpose. Verified, not assumed.
  * - `--no-verify`, which bypasses every hook in the repository, this one included.
- * - a takeover that happens to produce a file identical to main's, which discarded
- *   nothing.
+ * - a merge whose result equals HEAD's file where the INCOMING side had nothing of its
+ *   own there to lose — `-X ours` against a branch whose only change was a deletion, or
+ *   against a file main already holds as a superset. Measured and asserted: those stay
+ *   silent, because shape 3 asks whether the incoming side lost a line, not merely whether
+ *   the result happened to match HEAD.
  * - a REVERT the branch made deliberately and early, where main never had the change to
  *   lose. That is one of the two sides having `result == branch`, with `main` untouched,
  *   and it is not reported by design: an intentional revert is somebody's decision.
+ * - a resolution that is NEITHER side's blob and still drops a line the losing side had.
+ *   Measured reachable, and left unreported on purpose. Every shape here is a WHOLE-FILE
+ *   one-sided decision — git copied one side's content for the entire path — and that is
+ *   precisely the class that raises no conflict marker. A merge that DID conflict was
+ *   visibly unmerged until somebody staged it, so its resolution is a human decision made
+ *   in the open. Widening the gate to lossy hand-resolutions would fire on ordinary conflict
+ *   resolution, and the first agent to meet that would reach for `--no-verify`, which is
+ *   how the two original shapes were nearly lost once already.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -159,10 +186,13 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
   // `-m` diffs merge-base against each side, so this is precisely "what each side changed
   // since they diverged" and needs no parent arithmetic.
   const toHead = tryGit(['diff', '--name-only', '-z', '-m', base, headRef], { cwd }) ?? '';
+  const toIncoming = tryGit(['diff', '--name-only', '-z', '-m', base, incomingRef], { cwd }) ?? '';
   const resultVsHead = tryGit(['diff', '--name-only', '-z', headRef, result], { cwd }) ?? '';
 
   const changedByHead = new Set(splitZ(toHead));
+  const changedByIncoming = new Set(splitZ(toIncoming));
   const movedByMerge = splitZ(resultVsHead);
+  const moved = new Set(movedByMerge);
 
   const takeovers = [];
   for (const path of movedByMerge) {
@@ -216,8 +246,47 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     }
   }
 
+  // Shape 3, and the scan the original set could not express. `movedByMerge` is empty for a
+  // `-X ours` / `-s ours` merge because the result IS HEAD's tree, so this pass walks the
+  // paths BOTH sides changed instead and asks the mirror question of shapes 1 and 2.
+  for (const path of changedByHead) {
+    // Already judged by the pass above whenever the merge moved it at all: shape 3 requires
+    // the result to equal HEAD, and a moved path cannot have that.
+    if (moved.has(path)) continue;
+    if (!changedByIncoming.has(path)) continue;
+
+    const headBlob = blobAt(headRef, path, cwd);
+    const incomingBlob = blobAt(incomingRef, path, cwd);
+    const resultBlob = blobAt(result, path, cwd);
+    if (!headBlob || !incomingBlob || !resultBlob) continue;
+    if (incomingBlob === headBlob) continue;
+    // Not "the result is HEAD's content" but "the merge kept HEAD and dropped the incoming
+    // side's lines". A `-X ours` merge where the branch only DELETED lines, or where main
+    // already held a superset, deletes nothing here and is not a takeover.
+    if (resultBlob !== headBlob) continue;
+
+    const dropped = countDeleted(incomingRef, result, path, cwd);
+    if (dropped > 0) {
+      takeovers.push({
+        path,
+        kind: 'discarded-incoming-change',
+        deleted: dropped,
+        reason:
+          `the result kept this side's ${truncate(headRef)} verbatim and drops ${dropped} line(s) the incoming side had, ` +
+          'so that commit landed as a no-op and reported success',
+      });
+    }
+  }
+
   takeovers.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { takeovers, scanned: movedByMerge.length, incoming: incomingRef, base, head: headRef };
+  return {
+    takeovers,
+    // The union, so the clean-merge line counts every path either pass could have judged.
+    scanned: new Set([...movedByMerge, ...changedByHead]).size,
+    incoming: incomingRef,
+    base,
+    head: headRef,
+  };
 }
 
 function splitZ(text) {
@@ -233,14 +302,18 @@ function blobAt(treeish, path, cwd) {
 }
 
 /**
- * How many lines the result REMOVES relative to the protected side.
+ * How many lines `toTree` REMOVES relative to `fromTree`, for one path.
  *
- * This is the discriminator between a real loss and a whole-file copy that lost nothing.
- * `--numstat` reports added and deleted counts, and a result that only ever adds is a
- * superset: every line the protected side had is still present, whatever the file's overall
- * shape. `git diff` alone cannot be read this way — a two-line file rewritten as one
- * different line shows as one change, and a file reformatted wholesale shows as hundreds
- * of deletions that are really just reflowed text.
+ * This is the discriminator between a real loss and a whole-file copy that lost nothing, and
+ * it is asked of whichever side is losing. `--numstat` reports added and deleted counts, and
+ * a result that only ever adds is a superset: every line the losing side had is still
+ * present, whatever the file's overall shape. `git diff` alone cannot be read this way — a
+ * two-line file rewritten as one different line shows as one change, and a file reformatted
+ * wholesale shows as hundreds of deletions that are really just reflowed text.
+ *
+ * Reading it from the losing side's point of view is what keeps `git merge -X ours`
+ * honest in both directions: against a branch that only deleted lines, or against a file
+ * this side already holds as a superset, the count is 0 and nothing is reported.
  */
 function countDeleted(fromTree, toTree, path, cwd) {
   const line = tryGit(['diff', '--numstat', fromTree, toTree, '--', path], { cwd });
@@ -270,6 +343,13 @@ function report({ takeovers, scanned, incoming, base, head }) {
   lines.push('  failure this guard exists for. Resolve each path as a UNION of both sides — a file');
   lines.push('  can usually hold both edits — or, if a side is genuinely obsolete here, rebase');
   lines.push('  the incoming branch onto main and let git carry the conflict to you visibly.');
+  if (takeovers.some((t) => t.kind === 'discarded-incoming-change')) {
+    lines.push('');
+    lines.push("  `discarded-incoming-change` means the merge kept this side and dropped the branch's,");
+    lines.push('  which is what `git merge -X ours` and `git merge -s ours` do. `-s ours` is the');
+    lines.push('  documented idiom for recording a merge without taking its content; if that is');
+    lines.push('  what you meant, `--no-verify` below is the way to say so.');
+  }
   lines.push('');
   lines.push("  To see one side's version while deciding:");
   lines.push('      git show :2:' + takeovers[0].path + '   # the side being merged INTO');
