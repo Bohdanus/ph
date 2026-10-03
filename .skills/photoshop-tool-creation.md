@@ -192,7 +192,7 @@ The trap is that this _mostly works_: Node walks up to the ancestor checkout, so
 
 ### 0.5 The Playwright port
 
-Every worktree's dev server wants `:5173`, so a bare `npx playwright test` used to attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache. **That can no longer happen at all.** Reuse is not off by default here; it is _unreachable_:
+Every worktree's dev server wants `5173`, so a bare `npx playwright test` used to attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache. **That can no longer happen at all.** Reuse is not off by default here; it is _unreachable_:
 
 ```ts
 // playwright.config.ts — the `port` binding
@@ -1299,21 +1299,21 @@ Photoshop's display label, the control type, Photoshop's default and range, and 
 verdict for **this** app. This table is the one to read before promising a control to
 anyone.
 
-| Control             | Type                    | PS default  | PS range                          | Status here                                                                     | Evidence                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------- | ----------------------- | ----------- | --------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Brush Preset picker | thumbnail popup         | last used   | n/a                               | `absent-in-ph`                                                                  | named as a placeholder string only, `toolbarPlaceholderConfig.ts:2`; no preset registry in `src/tools/`                                                                                                                                                                                                                                                                                        |
-| Size                | slider, integer px      | 30 px       | 1-5000                            | `plumbed` (ceiling 500)                                                         | `src/tools/draw.ts:54` `ctx.lineWidth = lineWidth`; spray radius `src/util/draw.ts:155`; bar `Draw.tsx:134-152` uses 0.5-500                                                                                                                                                                                                                                                                   |
-| Mode                | dropdown of blend modes | Normal      | 27 modes                          | `needs-engine`                                                                  | `Layer.blendMode` exists and is honoured at `src/contexts/layer-renderer.ts:101`, but `createLayerSource` hardcodes `'source-over'` (`src/contexts/layer-utils.ts:173`) and no tool arg carries a blend field                                                                                                                                                                                  |
-| Opacity             | slider, percent         | 100%        | 0-100                             | `plumbed`                                                                       | `src/tools/draw.ts:57` `ctx.globalAlpha = alpha`; spray stop `src/util/draw.ts:153`; bars `Draw.tsx:196-214`, `Levels.tsx:100-117`                                                                                                                                                                                                                                                             |
-| Flow                | slider, percent         | 100%        | 1-100                             | `needs-engine`                                                                  | `setupDrawCtx` sets `globalAlpha` once per stroke (`src/tools/draw.ts:42-63`, called at `:71`); per-dab accumulation needs a stamp loop                                                                                                                                                                                                                                                        |
-| Feather             | slider, px              | 0 px        | 0-250                             | `plumbed` for `feather-magnetic-lasso`                                          | `featherRadius` default 12 (`src/tools/settings.ts:113`) → `src/util/selection.ts:449-450` `featheredBoundsPadding(antiAlias, featherRadius)`                                                                                                                                                                                                                                                  |
-| Tolerance           | slider, integer         | 32          | 0-255                             | `plumbed` for `magic-wand`                                                      | `src/components/Main/MagicWandToolArea.tsx:58,77` → `src/util/magicWand.ts:202` `getToleranceDistance(options.tolerance ?? 0)`                                                                                                                                                                                                                                                                 |
-| Anti-alias          | checkbox                | on          | on/off                            | `plumbed` for `feather-magnetic-lasso`                                          | `antiAlias: true` (`src/tools/settings.ts:119`) → `src/util/selection.ts:449,726`                                                                                                                                                                                                                                                                                                              |
-| Smoothing           | slider, percent         | 10% (brush) | 0-100                             | `plumbed` for `magic-wand` / `feather-magnetic-lasso`; `absent-in-ph` for brush | magic-wand as `Smooth` px (`MagicWand.tsx:71-86` → `src/util/magicWand.ts:220` `simplifyClosedPath`); lasso as px (`src/components/Main/FeatherMagneticLassoToolArea.tsx:384`); `DrawToolArgs` already declares optional `smoothing?: number` and `blendMode?: PaintBlendMode` (`src/tools/draw.ts:38,43`), so a paint stroke's smoothing is a matter of plumbing the control, not a new field |
-| Style / Ratio       | dropdown + W/H fields   | Normal      | Normal / Fixed Ratio / Fixed Size | `plumbed` for `crop` only                                                       | `CropToolArgs.aspectRatio` default `null` (`src/tools/settings.ts:67`); `RectangularSelectionToolArgs` is `{ rect?, toolName }` only (`src/tools/rectangularSelection.ts:4-7`) and its bar has no style control                                                                                                                                                                                |
-| Dodge / Exposure    | slider, stops           | 0.00        | ±20.00                            | `plumbed`                                                                       | `dodge` and `burn` are registered (`src/contexts/tool-types.ts:47-48`) and share one `Tonal` options panel (`src/tools/toolsMap.ts:104-105`); the `exposure` bounds come from the tool module (`src/tools/dodgeBurn.ts`) and the tip bounds from the brush engine, per `Tonal/__tests__/Tonal.test.tsx:174`                                                                                    |
-| Spacing             | slider, percent         | 25%         | 1-200                             | `needs-engine`                                                                  | `drawPen` issues one `beginPath` + one `stroke()` per stroke (`src/util/draw.ts:132-145`); point density along a single path is not a spacing interval                                                                                                                                                                                                                                         |
-| Hardness            | slider, percent         | 100%        | 0-100                             | `needs-engine`                                                                  | the edge is whatever `ctx.stroke()` produces; `setupDrawCtx` sets no gradient or shadow (`src/tools/draw.ts:42-63`)                                                                                                                                                                                                                                                                            |
+| Control             | Type                    | PS default  | PS range                          | Status here                                                                     | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------- | ----------------------- | ----------- | --------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Brush Preset picker | thumbnail popup         | last used   | n/a                               | `absent-in-ph`                                                                  | named as a placeholder string only, `toolbarPlaceholderConfig.ts` — `placeholderToolGroups`; no preset registry in `src/tools/`                                                                                                                                                                                                                                                                                                                                                                                    |
+| Size                | slider, integer px      | 30 px       | 1-5000                            | `plumbed` (ceiling 500)                                                         | `setupDrawCtx()` — `ctx.lineWidth = lineWidth`; spray radius `src/util/draw.ts` — `drawSpray()`; bar `Draw.tsx` — the `Size` row uses 0.5-500                                                                                                                                                                                                                                                                                                                                                                      |
+| Mode                | dropdown of blend modes | Normal      | 27 modes                          | `needs-engine`                                                                  | `Layer.blendMode` exists and is honoured at `src/contexts/layer-renderer.ts` — the `ctx.globalCompositeOperation = layer.blendMode` write, but `createLayerSource` hardcodes `'source-over'` (`src/contexts/layer-utils.ts` — `createLayerSource()`'s hardcoded `blendMode: 'source-over'`) and no tool arg carries a blend field                                                                                                                                                                                  |
+| Opacity             | slider, percent         | 100%        | 0-100                             | `plumbed`                                                                       | `setupDrawCtx()` — `ctx.globalAlpha = alpha`; spray stop `src/util/draw.ts` — `drawSpray()`; bars `Draw.tsx` — the `Opacity` row, `Levels.tsx` — the `Brightness` row                                                                                                                                                                                                                                                                                                                                              |
+| Flow                | slider, percent         | 100%        | 1-100                             | `needs-engine`                                                                  | `setupDrawCtx` sets `globalAlpha` once per stroke (`src/tools/draw.ts` — `setupDrawCtx()`, which `draw()` calls); per-dab accumulation needs a stamp loop                                                                                                                                                                                                                                                                                                                                                          |
+| Feather             | slider, px              | 0 px        | 0-250                             | `plumbed` for `feather-magnetic-lasso`                                          | `featherRadius` default 12 (`src/tools/settings.ts` — the `feather-magnetic-lasso` default) → `featheredBoundsPadding(antiAlias, featherRadius)` in `src/util/selection.ts`                                                                                                                                                                                                                                                                                                                                        |
+| Tolerance           | slider, integer         | 32          | 0-255                             | `plumbed` for `magic-wand`                                                      | `src/components/Main/MagicWandToolArea.tsx` — its two `getMagicWandOptions` calls carrying `tolerance` — reach `getToleranceDistance(options.tolerance ?? 0)` in `src/util/magicWand.ts`                                                                                                                                                                                                                                                                                                                           |
+| Anti-alias          | checkbox                | on          | on/off                            | `plumbed` for `feather-magnetic-lasso`                                          | `antiAlias: true` (`src/tools/settings.ts` — the `feather-magnetic-lasso` default) → `featheredBoundsPadding()` and `alphaFromSignedDistance()` in `src/util/selection.ts`                                                                                                                                                                                                                                                                                                                                         |
+| Smoothing           | slider, percent         | 10% (brush) | 0-100                             | `plumbed` for `magic-wand` / `feather-magnetic-lasso`; `absent-in-ph` for brush | magic-wand as `Smooth` px (`MagicWand.tsx` — the `Smooth` row, reaching `simplifyClosedPath()` in `src/util/magicWand.ts`); lasso as px (`src/components/Main/FeatherMagneticLassoToolArea.tsx` — the `simplifyPath(rawPoints, args.smoothing)` call); `DrawToolArgs` already declares optional `smoothing?: number` and `blendMode?: PaintBlendMode` (`src/tools/draw.ts` — its optional `smoothing` and `blendMode` members), so a paint stroke's smoothing is a matter of plumbing the control, not a new field |
+| Style / Ratio       | dropdown + W/H fields   | Normal      | Normal / Fixed Ratio / Fixed Size | `plumbed` for `crop` only                                                       | `CropToolArgs.aspectRatio` default `null` (`src/tools/settings.ts` — the `crop` default (`aspectRatio: null`)); `RectangularSelectionToolArgs` is `{ rect?, toolName }` only (`src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`) and its bar has no style control                                                                                                                                                                                                                               |
+| Dodge / Exposure    | slider, stops           | 0.00        | ±20.00                            | `plumbed`                                                                       | `dodge` and `burn` are registered (`src/contexts/tool-types.ts` — `ToolArgsByName`'s `dodge` and `burn` members) and share one `Tonal` options panel (`src/tools/toolsMap.ts` — the `dodge` and `burn` entries); the `exposure` bounds come from the tool module (`src/tools/dodgeBurn.ts`) and the tip bounds from the brush engine, per `Tonal.test.tsx` — the `it('takes the exposure bounds from the tool module and the tip bounds from the brush engine')` title                                             |
+| Spacing             | slider, percent         | 25%         | 1-200                             | `needs-engine`                                                                  | `drawPen` issues one `beginPath` + one `stroke()` per stroke (`src/util/draw.ts` — `drawPen()`); point density along a single path is not a spacing interval                                                                                                                                                                                                                                                                                                                                                       |
+| Hardness            | slider, percent         | 100%        | 0-100                             | `needs-engine`                                                                  | the edge is whatever `ctx.stroke()` produces; `setupDrawCtx` sets no gradient or shadow (`src/tools/draw.ts` — `setupDrawCtx()`)                                                                                                                                                                                                                                                                                                                                                                                   |
 
 Read the `needs-engine` rows as work, not as blockers. `Mode` is the cheapest of the
 three: the field, the renderer and the guard all exist, and only the plumbing from a
@@ -1349,16 +1349,16 @@ fact about state, never a hardcoded `true`:
 ```
 
 `hasLivePreview` is derived from the store's `previewLayers` and is the exact
-predicate for "this panel's discard has something to discard" (`Levels.tsx:52-60`
+predicate for "this panel's discard has something to discard" (`Levels.tsx` — `hasLivePreview`
 explains the read). `disabled:opacity-50` is on the button class because
 `SECONDARY_BUTTON` alone does not dim
-(`src/components/ToolbarsRight/buttonStyles.ts:25-26`) — a disabled control that
+(`src/components/ToolbarsRight/buttonStyles.ts` — `SECONDARY_BUTTON`) — a disabled control that
 _looks_ enabled is a third state, and it is the worst one. The same shape appears in
-`MagicWand.tsx:89-101`, where Copy, Paste and Clear each gate on a distinct fact.
+`MagicWand.tsx` — the Copy / Paste / Clear button row, where Copy, Paste and Clear each gate on a distinct fact.
 
 **Hidden is a different answer, and sometimes the right one.** The Shape bar _hides_
-the Dash and Gap sliders unless the Dashed checkbox is on (`Shape.tsx:232-236`), pinned
-by `src/components/ToolbarsRight/Figures/__tests__/Shape.test.tsx:257`: a dash pattern
+the Dash and Gap sliders unless the Dashed checkbox is on (`Shape.tsx` — the Dashed-conditional Dash and Gap sliders), pinned
+by `Shape.test.tsx` — the `it('shows dash and gap sliders when dashed is enabled')` title: a dash pattern
 is meaningless for a solid stroke, and a live slider for it would be the lie. So: part
 of the tool and not honoured → **disabled**, with a `title` saying why; meaningless in
 the current mode → **hidden**; part of the tool and honoured → **live**, the only
@@ -1366,42 +1366,42 @@ third option, and the reason the rule exists.
 
 ### Flyout and toolbar placement
 
-`toolbarMap` is data, at the **repo root**: `toolbar-mapping.ts:37-95`, terminated
-`as const satisfies readonly (readonly ToolbarToolGroup[])[]` (`:84`). Shape is
+`toolbarMap` is data, at the **repo root**: `toolbar-mapping.ts` — `toolbarMap`, terminated
+`as const satisfies readonly (readonly ToolbarToolGroup[])[]` (`toolbarMap`'s `satisfies` clause). Shape is
 `sections → flyout groups → tools`; each nested array is one flyout, and **the first
-entry is the tile's identity** (`src/components/SidebarLeft/SidebarLeft.tsx:153`).
+entry is the tile's identity** (`src/components/SidebarLeft/SidebarLeft.tsx` — `renderToolGroup()`'s `primaryTool = group[0]`).
 Adding a tool takes two edits here and nothing else: append a
 `{ label, name, shortcut? }` entry to the flyout group that owns the slot, and append
-the same `name` to `availableTools` (`:86-116`).
+the same `name` to `availableTools` (`toolbar-mapping.ts` — `availableTools`).
 
 Choose the section by Photoshop's own grouping. The canonical 20 slots are in
 `.kilo/plans/ps-research/03-ui-chrome-spec.md` §1.1: Move/Marquee/Lasso/Quick
 Selection, Crop, Eyedropper, Healing, **Brush/Pencil/Color Replacement**, Clone Stamp,
 History Brush, Eraser, Paint Bucket, Blur, **Dodge/Burn/Sponge**, Pen, Type, Path
 Selection, Shape, Hand, Zoom. A new paint tool goes in the Brush section
-(`toolbar-mapping.ts:59-75`); a new tonal tool goes where slot 14 would sit, which
+(`toolbar-mapping.ts` — the Brush flyout group in `toolbarMap`); a new tonal tool goes where slot 14 would sit, which
 `toolbarMap` lacks — see the trap below before you add a section.
 
 **Two traps here are load-bearing.** **Flyout test ids are positional**:
-`tool-flyout-${groupIndex}` (`SidebarLeft.tsx:276`) and
-`tool-flyout-item-${name}-${slug}` (`:299`), where the group index is
-`${sectionIndex}-${groupIndex}` in one-column mode (`:353`) and
-`two-column-${groupIndex}` in two-column mode (`:358`). Inserting a group anywhere in
+`tool-flyout-${groupIndex}` (`SidebarLeft.tsx` — `renderToolGroup()`'s `tool-flyout-${groupIndex}` testid) and
+`tool-flyout-item-${name}-${slug}` (`renderToolGroup()`'s `tool-flyout-item-${name}-${slug}` testid), where the group index is
+`${sectionIndex}-${groupIndex}` in one-column mode (`SidebarLeft.tsx` — `oneColumnGroupKey()`) and
+`two-column-${groupIndex}` in two-column mode (`SidebarLeft.tsx` — `twoColumnGroupKey()`). Inserting a group anywhere in
 `toolbarMap` renumbers every later section and silently invalidates any spec that
 hard-codes a flyout id, so append inside the last section when you can. And **the
-primary tile is `group[0]`** (`:153`), so reordering a group's first item also changes
+primary tile is `group[0]`** (`SidebarLeft.tsx` — `renderToolGroup()`'s `primaryTool = group[0]`), so reordering a group's first item also changes
 what a plain click selects.
 
-`slugifyToolLabel` (`toolbar-mapping.ts:28`) is deliberately duplicated as
+`slugifyToolLabel` (`toolbar-mapping.ts` — `slugifyToolLabel`) is deliberately duplicated as
 `generateSlug` in the e2e helper and compared by a unit test. Do not tidy one side into
 an import of the other — the duplication is the test. `shortcut` is **display-only**:
-it reaches the tooltip (`SidebarLeft.tsx:165`) and the `<kbd>` chip (`:303`) and binds
+it reaches the tooltip (`SidebarLeft.tsx` — the tile's `shortcut` prop) and the `<kbd>` chip (`SidebarLeft.tsx` — `renderToolGroup()`'s `<kbd>` chip) and binds
 nothing; the real binding is a separate `useKeyDownShortcut` call.
 
 #### The figure-name convention
 
 The five shape entries are the clearest existing example of a naming rule you will need
-again. `toolbar-mapping.ts:86-93` gives all five the **same** `name: 'shape'` and
+again. `toolbar-mapping.ts` — the five figure entries in `toolbarMap` gives all five the **same** `name: 'shape'` and
 distinguishes them by a `figure` field:
 
 ```ts
@@ -1416,26 +1416,26 @@ distinguishes them by a `figure` field:
 ```
 
 The toolbar therefore selects `shape` and patches the figure
-(`SidebarLeft.tsx:137-140`: `if (tool.figure) patchToolArgs('shape', { figure: tool.figure })`),
-and selection is read back through both (`SidebarLeft.tsx:134-135`).
+(`SidebarLeft.tsx` — the `patchToolArgs('shape', { figure })` click handler: `if (tool.figure) patchToolArgs('shape', { figure: tool.figure })`),
+and selection is read back through both (`SidebarLeft.tsx` — the `patchToolArgs('shape', …)` click handler).
 
 Yet `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are still real
-`ToolName`s, with entries in `availableTools` (`toolbar-mapping.ts:107-111`),
-`toolsMap` (`src/tools/toolsMap.ts:123-127`), `defaultSettings`
-(`src/tools/settings.ts:278-312`) and `saveLastSettings`
-(`src/util/settings.ts:82-86`). **The `Record<ToolName, …>` types are what force
+`ToolName`s, with entries in `availableTools` (`toolbar-mapping.ts` — the five figure names in `availableTools`),
+`toolsMap` (`src/tools/toolsMap.ts` — the five figure entries), `defaultSettings`
+(`src/tools/settings.ts` — the five figure entries in `defaultSettings`) and `saveLastSettings`
+(`src/util/settings.ts` — `saveLastSettings()`). **The `Record<ToolName, …>` types are what force
 them to exist.** `ToolName = keyof ToolArgsByName`, and `ToolArgsByName` declares each
-one with a narrowed figure (`src/contexts/tool-types.ts:48-61`, e.g.
+one with a narrowed figure (`src/contexts/tool-types.ts` — `ToolArgsByName`'s narrowed-figure members, e.g.
 `figure: Extract<FigureType, 'rectangle'>`). From there the requirement cascades
 through `toolProcessors: Record<ToolName, ToolProcessorDefinition>`
-(`src/tools/toolProcessors.ts:105`), `toolsMap: ToolsMap` (`toolsMap.ts:47`),
-`defaultSettings … satisfies ToolArgsByName` (`settings.ts:51,314`) and the `never`
-sentinel in `saveLastSettings` (`src/util/settings.ts:97`). Add a member to
+(`src/tools/toolProcessors.ts` — the `toolProcessors` registry), `toolsMap: ToolsMap` (`src/tools/toolsMap.ts` — the `ToolsMap` type),
+`defaultSettings … satisfies ToolArgsByName` (`src/tools/settings.ts` — `defaultSettings` and its `satisfies ToolArgsByName` clause) and the `never`
+sentinel in `saveLastSettings` (`src/util/settings.ts` — `saveLastSettings()`'s `never` sentinel). Add a member to
 `ToolArgsByName` and every one of those fails to compile until it is handled.
 
 They are **registry-only names**: no `toolbarMap` entry selects one, and the shape
 test pins that the mapping never mentions `circle` or `square` at all
-(`src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts:112-124`). They exist
+(`toolbar-mapping.test.ts` — the `it('has no dedicated Circle or Square tools')` case). They exist
 because the durable document and the history replay address a source by tool name,
 and a Rectangle drag must replay as a rectangle. Use this pattern when your new tool
 is a variant of an existing one and Adobe exposes it as a separate button: the
@@ -1452,13 +1452,13 @@ lettering; provide light and dark variants.** The chrome spec labels its own 20�
 figure an approximation, so treat the number as a convention, not a measurement.
 
 The repo does not use 20×20. Every icon goes through one shell,
-`src/components/SidebarLeft/icons/IconShell.tsx:11-23`, which hard-codes
+`src/components/SidebarLeft/icons/IconShell.tsx` — `IconShell`, which hard-codes
 `viewBox="0 0 32 32"`, `className="h-7 w-7 overflow-visible"`, `fill="none"`,
-`aria-hidden="true"`, and exports `STROKE = 'currentColor'` (`:4`). A new icon written
+`aria-hidden="true"`, and exports `STROKE = 'currentColor'` (`IconShell.tsx` — `STROKE`). A new icon written
 on 32×32 coordinates is correct **for this repo**; a 20×20 icon authored against
 Adobe's published number and dropped into this shell is squashed to 56% and will look
 it. A new icon is three edits, not one — the component, the `ToolIconName` union member
-(`src/components/SidebarLeft/types.ts:3-41`), and the registry entry:
+(`src/components/SidebarLeft/types.ts` — `ToolIconName`), and the registry entry:
 
 ```tsx
 // src/components/SidebarLeft/icons/DodgeIcon.tsx
@@ -1486,30 +1486,30 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
 ```
 
 Two things that will fail you if you skip them. The union is **hand-copied into the
-test** at `src/components/SidebarLeft/__tests__/toolIcons.test.tsx:25-64` — extend
+test** at `toolIcons.test.tsx` — the hand-copied `toolIconNames` array — extend
 that copy too, or the test fails on a union the typecheck accepts. And the
-`icon: string` field on each `toolsMap` entry (`toolsMap.ts:50`) is a separate string
+`icon: string` field on each `toolsMap` entry (`src/tools/toolsMap.ts` — the `ToolsMap` type's `icon: string` field) is a separate string
 that **no production code reads**; `SidebarLeft` resolves the glyph through
-`toolIcons[tool.name]` (`SidebarLeft.tsx:550`) with an unchecked index that typechecks
+`toolIcons[tool.name]` (`SidebarLeft.tsx` — the `toolIcons[tool.name]` lookup) with an unchecked index that typechecks
 only because `ToolName ⊂ ToolIconName` today. Set both, or neither. Selected / hover
 states are **not** the icon's job either: they are the tile's class constants —
 `TOOL_BUTTON_BASE_CLASS`, `TOOL_BUTTON_ACTIVE_CLASS`, `TOOL_BUTTON_INACTIVE_CLASS`
-(`SidebarLeft.tsx:9-16`), applied at `:171`. An icon that hard-codes its own hover
+(`SidebarLeft.tsx` — the `TOOL_BUTTON_BASE_CLASS` / `TOOL_BUTTON_ACTIVE_CLASS` / `TOOL_BUTTON_INACTIVE_CLASS` constants), applied at `SidebarLeft.tsx` — `renderToolGroup()`'s tile className. An icon that hard-codes its own hover
 colour fights them.
 
 ### Cursor
 
 **There is no cursor registry.** Each tool area hard-codes a class on its own root
-div, and `Main.scss:12-38` holds the whole set: `.cursor-draw` and `.cursor-crop`
+div, and `Main.scss` — the `.cursor-*` classes holds the whole set: `.cursor-draw` and `.cursor-crop`
 (crosshair), `.cursor-text`, `.cursor-move` (pointer), `.cursor-grab` /
-`.cursor-grabbing` (`!important`, mirrored globally in `src/index.scss:57-59`),
+`.cursor-grabbing` (`!important`, mirrored globally in `src/index.scss` — the global `.cursor-grabbing *` rule),
 `.cursor-pointer`. Several areas use Tailwind's `cursor-crosshair` directly instead
-(`MagicWandToolArea.tsx:118`, `RectangularSelectionToolArea.tsx:173`,
-`PolygonClickToolArea.tsx:991`, `FeatherMagneticLassoToolArea.tsx:605`). Resize handles
-are imperative via `CURSOR_MAP` (`src/util/constants.ts:5-15`).
+(`src/components/Main/MagicWandToolArea.tsx` — its `cursor-crosshair` root, `src/components/Main/RectangularSelectionToolArea.tsx` — its `cursor-crosshair` root,
+`src/components/Main/PolygonClickToolArea.tsx` — its `cursor-crosshair` root, `src/components/Main/FeatherMagneticLassoToolArea.tsx` — its `cursor-crosshair` root). Resize handles
+are imperative via `CURSOR_MAP` (`src/util/constants.ts` — `CURSOR_MAP`).
 
 **There is no brush-size cursor overlay on the canvas.** The only size preview is the
-fixed 96×48 canvas in the options bar (`Draw.tsx:216-222`). Photoshop's Normal Brush
+fixed 96×48 canvas in the options bar (`src/components/ToolbarsRight/Draw/Draw.tsx` — the 96×48 preview `<canvas>`). Photoshop's Normal Brush
 Tip is a live circle at the tip diameter, so a crosshair on the artboard is a real
 fidelity gap — a **new feature**, not a wiring job.
 
@@ -1526,11 +1526,11 @@ Persistence is **in-memory only**. A reload resets every slider; the only
 `localStorage` in `src/` is the theme. What you are building is therefore a
 **tool-switch** contract, not a reload contract: a control must survive switching away
 and back within the session. The four pieces are the per-tool defaults
-(`src/tools/settings.ts:51-314`, closed by `satisfies ToolArgsByName` at `:314`), the
-live record `lastSavedSettings = cloneDeep(defaultSettings)` (`:343`), the write
-`saveLastSettings` (`src/util/settings.ts:22-99`, called from `useCurrentTool.tsx:71`
+(`src/tools/settings.ts` — `defaultSettings`, closed by its `satisfies ToolArgsByName` clause), the
+live record `lastSavedSettings = cloneDeep(defaultSettings)` (`src/tools/settings.ts` — `lastSavedSettings`), the write
+`saveLastSettings` (`src/util/settings.ts` — `saveLastSettings()`, called from `src/contexts/useCurrentTool.tsx` — `_setToolArgs()`
 on **every** `setToolArgs`), and the read `cloneSavedToolArgs`
-(`useCurrentTool.tsx:33-35`). Because the write runs on the same tick as the slider's
+(`src/contexts/useCurrentTool.tsx` — `cloneSavedToolArgs()`). Because the write runs on the same tick as the slider's
 own `onChange`, the defect below is possible.
 
 #### The defect class that bit a real build
@@ -1551,27 +1551,27 @@ every paint tool's args to a bare name:
 That arm is correct for the seven pen-family tools, whose commit kind is
 `'unimplemented'` and whose args really are `{ toolName }`. It is **wrong** for
 `brush`, `pencil` and `color-replacement`, which have full `PaintToolArgs`
-(`src/tools/draw.ts:36-38`). The sequence: the bar writes `lineWidth: 24` via
+(`src/tools/draw.ts` — `PaintToolArgs`). The sequence: the bar writes `lineWidth: 24` via
 `patchToolArgs`; `_setToolArgs` calls `saveLastSettings` on the same tick
-(`useCurrentTool.tsx:71`) and the arm above throws the value away; switching tools
-replaces the provider's in-memory args (`useCurrentTool.tsx:33`); and switching back
+(`src/contexts/useCurrentTool.tsx` — `_setToolArgs()`) and the arm above throws the value away; switching tools
+replaces the provider's in-memory args (`src/contexts/useCurrentTool.tsx` — `cloneSavedToolArgs()`); and switching back
 reads `lastSavedSettings.brush`, which is `{ toolName: 'brush' }` — no `lineWidth`, no
 `alpha`, no `color`. The sliders appear to work and reset themselves the moment the
 user looks away.
 
 **The test that let it through asserted the wrong thing.**
-`src/tools/__tests__/tool-settings.test.ts:263-276`
+`src/tools/__tests__/tool-settings.test.ts`
 (`persists every registered tool name, so the chain cannot drop one`) deletes each key,
 calls `saveLastSettings`, and asserts the key came back. A bare `{ toolName }`
 recreates the key perfectly; the test was green the whole time every value was being
-discarded. Worse, `:228-234` (`collapses tools without a settings UI down to their tool
+discarded. Worse, `tool-settings.test.ts` (`collapses tools without a settings UI down to their tool
 name`) now _pins_ the collapse for the tools that are correct, and the arm is shared
 with them — so deleting the defect means splitting the arm, not loosening the test.
 
 **The rule: assert the VALUES survive a tool switch, not the key.** The shape that
-catches it is in `src/util/__tests__/settings.test.ts:42-46` — a `switchToTool` helper
+catches it is in `src/util/__tests__/settings.test.ts` — the `switchToTool` helper — a `switchToTool` helper
 that mirrors the provider's deep clone of `lastSavedSettings[toolName]` — used by the
-`saveLastSettings across a tool switch` block (`:301-354`). A new tool gets one case
+`saveLastSettings across a tool switch` block (`settings.test.ts`). A new tool gets one case
 in that block, and the test name is the assertion:
 
 ```ts
@@ -1591,7 +1591,7 @@ it('keeps every color-replacement setting when another tool is edited between th
 ```
 
 The fix in `src/util/settings.ts` is to split the arm and save the real args, with
-`points` emptied the way `draw` empties it (`:27`):
+`points` emptied the way `draw` empties it (`src/util/settings.ts` — `saveLastSettings()`'s `draw` arm):
 
 ```ts
 } else if (toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement') {
@@ -1616,12 +1616,12 @@ The fix in `src/util/settings.ts` is to split the arm and save the real args, wi
 
 `src/tools/__tests__/tool-settings.test.ts` pins all of these, and a new tool's entry
 has to satisfy every one on the same commit: no shared object references between
-entries (`:57-65`); every number finite, no `NaN` or `Infinity` (`:320-328`); every
-`alpha` inside 0..1 (`:330-340`); every non-null colour matching
-`/^#[0-9A-Fa-f]{6}$/` (`:342-351`); a `commit: 'unimplemented'` tool's default exactly
-`{ toolName }` (`:362-368`); each entry stamped with its own key as `toolName` (`:51-55`)
-and the key set matching `toolProcessors` (`:47-49`); mutable collections seeded empty
-(`:67-76`). The `'unimplemented'` rule is what makes the settings arm above
+entries (`it('does not share object references between entries')`); every number finite, no `NaN` or `Infinity` (`it('seeds every number with a finite value, so no filter or geometry can be poisoned at the source')`); every
+`alpha` inside 0..1 (`it('keeps every declared alpha inside the 0..1 range a canvas globalAlpha accepts')`); every non-null colour matching
+`/^#[0-9A-Fa-f]{6}$/` (`it('seeds every non-null colour as a six-digit hex string')`); a `commit: 'unimplemented'` tool's default exactly
+`{ toolName }` (`it('reduces every unimplemented tool to a bare tool name, matching its null result')`); each entry stamped with its own key as `toolName` (`it('stamps each entry with its own key as toolName')`)
+and the key set matching `toolProcessors` (`it('declares an entry for every tool, and a processor or a pixel-free declaration for each')`); mutable collections seeded empty
+(`it('seeds mutable collections empty so a fresh document has no stale geometry')`). The `'unimplemented'` rule is what makes the settings arm above
 non-negotiable: give a paint tool full args and you must also have moved it off
 `'unimplemented'`.
 
@@ -1642,7 +1642,7 @@ which is the same defect with a different trigger.
 
 ## Phase 3 — strip the undoable requirement
 
-Every `file:line` below was read in `main` on 2026-09-28. Re-read them before you edit:
+Every `file` and unit name below was read in `main` on 2026-09-28. Re-read them before you edit:
 `AGENTS.md` says of handoff docs "Verify against the tree."
 
 ---
@@ -1662,21 +1662,21 @@ they do not want their tool to be the reason that file grows.
 Both halves are load-bearing, and the second is the one agents skip.
 
 **The first half** is a lookup table, derived in `### The decision table` below from
-`src/contexts/history-adapter.ts:349-427` (`operationForTool`) and
+`src/contexts/history-adapter.ts` — `operationForTool()` and
 `src/contexts/materialization.ts`. One commit kind — `raster` — is provably
 name-agnostic: no allowlist exists anywhere between the tool's own name and the
 materializer. That is your escape hatch, and it is free.
 
 **The second half** is why the reference implementation worked. A history item holds no
 pixels; legacy undo recomputes them by re-running the processor with the stored `args`
-(`src/contexts/useHistory.ts:98-112`, the `applyRasterTool` arm, which reads
+(`src/contexts/useHistory.ts` — the `applyRasterTool` arm, the `applyRasterTool` arm, which reads
 `layer.tmpCanvas ?? layer.bitmap`, calls `toolProcessors[args.toolName].imageProcessor`,
 and writes the result back to `tmpCanvas`). So the legacy contract for a raster tool is
 exactly two properties, and you check both yourself: **`imageProcessor` is
 deterministic** — same args, same bitmap, same pixels, which is what
-`replay.deterministic` declares (`src/tools/toolProcessors.ts:55-58`) — and **`args` is
+`replay.deterministic` declares (`src/tools/toolProcessors.ts` — `ToolProcessorDefinition`'s `replay.deterministic`) — and **`args` is
 plain JSON**, because the durable conversion runs them through `plainObject`
-(`src/contexts/history-adapter.ts:100-125`), which throws on any non-plain value, a
+(`src/contexts/history-adapter.ts` — `plainObject()`), which throws on any non-plain value, a
 non-finite number, or a non-`Object.prototype` object. There is no canvas snapshot, no
 `ImageData`, no diffing, no migration. That is the cost.
 
@@ -1690,32 +1690,32 @@ document. Say so in the PR.
 
 | Symbol                    | Meaning                                                                                                                                                                                                                           |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ToolCommitKind`          | the eight-value union at `src/tools/toolProcessors.ts:40-48`; a tool's declared answer to "how does my result become state?"                                                                                                      |
+| `ToolCommitKind`          | the eight-value union at `src/tools/toolProcessors.ts` — `ToolCommitKind`; a tool's declared answer to "how does my result become state?"                                                                                         |
 | `ToolProcessorDefinition` | the registry entry type in `src/tools/toolProcessors.ts`: `creator?`, `commit`, `replay`, `imageProcessor`. The registry is keyed by `PixelToolName`, **not** `ToolName`, so a pixel-free tool goes in `PIXEL_FREE_TOOLS` instead |
-| `replay`                  | the frozen descriptor at `src/tools/toolProcessors.ts:54-59` — `{ kind, deterministic, version, requiresRaster }`, built by the `replay()` factory at `:69-70`                                                                    |
-| `DurableOperation`        | the durable operation union at `src/contexts/history-model.ts:93-115` — the eleven shapes a durable history entry can hold                                                                                                        |
-| `DurableHistoryEntry`     | `{ id, schemaVersion, enabled, operation }`, `src/contexts/history-model.ts:120-125`                                                                                                                                              |
-| `operationForTool`        | `src/contexts/history-adapter.ts:349-427` — **the whole decision point.** Maps one legacy `TOOL_ACTION` entry to one `DurableOperation`, or `null`, or throws                                                                     |
+| `replay`                  | the frozen descriptor at `src/tools/toolProcessors.ts` — `ToolProcessorDefinition.replay` — `{ kind, deterministic, version, requiresRaster }`, built by the `replay()` factory                                                   |
+| `DurableOperation`        | the durable operation union at `src/contexts/history-model.ts` — `DurableOperation` — the eleven shapes a durable history entry can hold                                                                                          |
+| `DurableHistoryEntry`     | `{ id, schemaVersion, enabled, operation }`, `src/contexts/history-model.ts` — `DurableHistoryEntry`                                                                                                                              |
+| `operationForTool`        | `src/contexts/history-adapter.ts` — `operationForTool()` — **the whole decision point.** Maps one legacy `TOOL_ACTION` entry to one `DurableOperation`, or `null`, or throws                                                      |
 | `imageProcessor`          | `(params) => (args) => [BitmapSource, Partial<Pos>?]`; called with `{ bitmap, size }` on replay, `{ size }` for a creator, `{ bitmap, size }` in materialization                                                                  |
-| `ToolArgs`                | the closed per-tool args union, `src/contexts/tool-types.ts:28-79`; every settings field you add is an optional member of your tool's entry                                                                                       |
+| `ToolArgs`                | the closed per-tool args union, `src/contexts/tool-types.ts` — `ToolArgsByName`; every settings field you add is an optional member of your tool's entry                                                                          |
 
 ---
 
 ### The decision table
 
-`ToolCommitKind` has eight members (`src/tools/toolProcessors.ts:40-48`). One row each,
+`ToolCommitKind` has eight members (`src/tools/toolProcessors.ts` — `ToolCommitKind`). One row each,
 derived from `operationForTool` and the two consumers of its output.
 
-| `commit` kind        | What it means                                                                 | Durable op it becomes                                                                                                                                                                                                                                                                                                             | Name-agnostic?                                                                                                                                                                                                                                                                                                                          | What it costs                                                                                            | VERDICT                                                                                                                                                  |
-| -------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `raster`             | My output is a new raster for the layer.                                      | `apply-raster-processor` with `processorId: args.toolName`, `src/contexts/history-adapter.ts:416-424`                                                                                                                                                                                                                             | **YES.** No allowlist; `args.toolName` becomes the `processorId` and the materializer resolves it by lookup: `toolProcessors[operation.processorId]` at `src/contexts/materialization.ts:277`                                                                                                                                           | zero edits to the history files                                                                          | **ESCAPE HATCH — tier 1. Use this.**                                                                                                                     |
-| `geometry`           | I only move and/or resize the layer's `pos`.                                  | `reposition-layer` carrying `move` and/or `resize`, `src/contexts/history-adapter.ts:403-415`                                                                                                                                                                                                                                     | **YES.** The arm reads only `args.move` / `args.resize`; it never reads `args.toolName`. Replay applies it by patching `pos`, `src/contexts/durable-replay.ts:96-106`                                                                                                                                                                   | zero edits to the history files                                                                          | **ESCAPE HATCH — tier 1**, for pure move/resize only                                                                                                     |
-| `source`             | I _create_ a layer; my args **are** the layer source.                         | `create-layer`, `src/contexts/history-adapter.ts:504` — reached from the `NEW_LAYER_ACTION \|\| (TOOL_ACTION && source)` arm at `:500`, **not** from `operationForTool`                                                                                                                                                           | **YES for the create path.** The op carries no tool name; the name lives on `DurableLayerSource.toolName`, a free `string` (`src/contexts/history-model.ts:31`, `:44`)                                                                                                                                                                  | zero edits to the history files                                                                          | **ESCAPE HATCH for a creator only.** See the trap below                                                                                                  |
-| `layer-operation`    | I am a non-destructive filter: append a retained op, do not touch pixels now. | `apply-filter` carrying a `DurableFilter`, `src/contexts/history-adapter.ts:391-402`                                                                                                                                                                                                                                              | **NO.** Allowlist `['blur', 'color', 'levels']` at `src/contexts/history-adapter.ts:393`; closed union `DurableFilter['toolName']` at `src/contexts/history-model.ts:81`; a `switch` with **no `default` arm** at `src/contexts/materialization.ts:73-89`; a second throw at `src/contexts/materialization.ts:100-102`                  | four hardcoded sites across three files                                                                  | **NOT an escape hatch — tier 2**                                                                                                                         |
-| `selection`          | I produce selection state.                                                    | **`null`.** `src/contexts/history-adapter.ts:503` returns `null` for `selection` and `document-operation` alike. Selection state enters the durable timeline as a `set-selection` op derived from the `SELECTION_ACTION` entry's args by `deriveSetSelectionEntry` (`src/contexts/history-adapter.ts:311-328`, arm at `:556-599`) | the **op** is generic; the **representation** is not — `SelectionGeometry` (`src/contexts/general-types.ts:19`) and `SelectionSourceTool` (`:17-18`) are closed unions                                                                                                                                                                  | a new geometry widens both unions                                                                        | **NOT an escape hatch — tier 2**                                                                                                                         |
-| `affine-operation`   | I retain an affine transform.                                                 | `apply-affine-transform`, `src/contexts/history-adapter.ts:384-388`                                                                                                                                                                                                                                                               | **NO — the commit kind is never consulted.** The affine arm sits behind `if (args.toolName === 'transform')` at `src/contexts/history-adapter.ts:357`, which returns or throws from inside its own block. A new tool declaring `commit: 'affine-operation'` falls past every `processor.commit === …` test and hits the throw at `:426` | the `toolName` gate at `:357`, the trapezoid arm at `:362-373`, `src/contexts/history-replay.ts:182-208` | **NOT an escape hatch.** The _op_ is generic; the _kind_ is a name-keyed special case                                                                    |
-| `document-operation` | I own the document frame, not a layer.                                        | **`null`**, `src/contexts/history-adapter.ts:503`. Legacy replay `continue`s: `if (processor.commit === 'document-operation') continue;` at `src/contexts/history-replay.ts:215`                                                                                                                                                  | n/a                                                                                                                                                                                                                                                                                                                                     | none — but the op is discarded by **both** systems                                                       | **NOT an escape hatch.** This is crop's declaration, and it silently loses the operation in legacy replay too                                            |
-| `unimplemented`      | I do not exist yet.                                                           | **throws** `UnsupportedHistoryFeatureError` at `src/contexts/history-adapter.ts:504`                                                                                                                                                                                                                                              | n/a                                                                                                                                                                                                                                                                                                                                     | none                                                                                                     | **NOT an escape hatch.** The processor is also a no-op: `unimplemented = () => () => [null as never] as ToolResult` at `src/tools/toolProcessors.ts:110` |
+| `commit` kind        | What it means                                                                 | Durable op it becomes                                                                                                                                                                                                                                                                                                                                                                                                   | Name-agnostic?                                                                                                                                                                                                                                                                                                                                                                                                                                             | What it costs                                                                                                                                        | VERDICT                                                                                                                                                                |
+| -------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `raster`             | My output is a new raster for the layer.                                      | `apply-raster-processor` with `processorId: args.toolName`, `src/contexts/history-adapter.ts` — `operationForTool()`'s `raster` arm                                                                                                                                                                                                                                                                                     | **YES.** No allowlist; `args.toolName` becomes the `processorId` and the materializer resolves it by lookup: `toolProcessors[operation.processorId]` at `src/contexts/materialization.ts` — the `toolProcessors[operation.processorId]` lookup                                                                                                                                                                                                             | zero edits to the history files                                                                                                                      | **ESCAPE HATCH — tier 1. Use this.**                                                                                                                                   |
+| `geometry`           | I only move and/or resize the layer's `pos`.                                  | `reposition-layer` carrying `move` and/or `resize`, `src/contexts/history-adapter.ts` — `operationForTool()`'s `geometry` arm                                                                                                                                                                                                                                                                                           | **YES.** The arm reads only `args.move` / `args.resize`; it never reads `args.toolName`. Replay applies it by patching `pos`, `src/contexts/durable-replay.ts` — the `'reposition-layer'` case                                                                                                                                                                                                                                                             | zero edits to the history files                                                                                                                      | **ESCAPE HATCH — tier 1**, for pure move/resize only                                                                                                                   |
+| `source`             | I _create_ a layer; my args **are** the layer source.                         | `create-layer`, `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`, in its `NEW_LAYER_ACTION \|\| (TOOL_ACTION && source)` arm, **not** from `operationForTool`                                                                                                                                                                                                                                             | **YES for the create path.** The op carries no tool name; the name lives on `DurableLayerSource.toolName`, a free `string` (`src/contexts/history-model.ts` — the free `toolName: string` on the `vector` and `text` members of `DurableLayerSource`)                                                                                                                                                                                                      | zero edits to the history files                                                                                                                      | **ESCAPE HATCH for a creator only.** See the trap below                                                                                                                |
+| `layer-operation`    | I am a non-destructive filter: append a retained op, do not touch pixels now. | `apply-filter` carrying a `DurableFilter`, `src/contexts/history-adapter.ts` — `operationForTool()`'s `layer-operation` arm                                                                                                                                                                                                                                                                                             | **NO.** Allowlist `['blur', 'color', 'levels']` at `src/contexts/history-adapter.ts` — `operationForTool()`'s filter allowlist; closed union `DurableFilter['toolName']` at `src/contexts/history-model.ts` — `DurableFilter['toolName']`; a `switch` with **no `default` arm** at `src/contexts/materialization.ts` — `presentationOperations()`; a second throw at `src/contexts/materialization.ts` — `presentationOperations()`'s filter version check | four hardcoded sites across three files                                                                                                              | **NOT an escape hatch — tier 2**                                                                                                                                       |
+| `selection`          | I produce selection state.                                                    | **`null`.** `src/contexts/history-adapter.ts` — `operationForTool()` returns `null` for `selection` and `document-operation` alike. Selection state enters the durable timeline as a `set-selection` op derived from the `SELECTION_ACTION` entry's args by `deriveSetSelectionEntry` (`src/contexts/history-adapter.ts` — `deriveSetSelectionEntry()`), carried on `legacyHistoryToDurable()`'s `SELECTION_ACTION` arm | the **op** is generic; the **representation** is not — `SelectionGeometry` (`src/contexts/general-types.ts` — `SelectionGeometry`) and `SelectionSourceTool` (`general-types.ts` — `SelectionSourceTool`) are closed unions                                                                                                                                                                                                                                | a new geometry widens both unions                                                                                                                    | **NOT an escape hatch — tier 2**                                                                                                                                       |
+| `affine-operation`   | I retain an affine transform.                                                 | `apply-affine-transform`, `src/contexts/history-adapter.ts` — `operationForTool()`'s `apply-affine-transform` return                                                                                                                                                                                                                                                                                                    | **NO — the commit kind is never consulted.** The affine arm sits behind `if (args.toolName === 'transform')` in `operationForTool()`, which returns or throws from inside its own block. A new tool declaring `commit: 'affine-operation'` falls past every `processor.commit === …` test and hits `operationForTool()`'s closing `UnsupportedHistoryFeatureError` throw                                                                                   | the `toolName` gate and the trapezoid arm inside `operationForTool()`, `src/contexts/history-replay.ts` — `replayHistory()`'s `affine-operation` arm | **NOT an escape hatch.** The _op_ is generic; the _kind_ is a name-keyed special case                                                                                  |
+| `document-operation` | I own the document frame, not a layer.                                        | **`null`**, `src/contexts/history-adapter.ts` — `operationForTool()`'s `return null`. Legacy replay `continue`s: `if (processor.commit === 'document-operation') continue;` at `src/contexts/history-replay.ts` — `replayHistory()`'s `document-operation` continue                                                                                                                                                     | n/a                                                                                                                                                                                                                                                                                                                                                                                                                                                        | none — but the op is discarded by **both** systems                                                                                                   | **NOT an escape hatch.** This is crop's declaration, and it silently loses the operation in legacy replay too                                                          |
+| `unimplemented`      | I do not exist yet.                                                           | **throws** `UnsupportedHistoryFeatureError` at `src/contexts/history-adapter.ts` — `operationForTool()`'s closing throw                                                                                                                                                                                                                                                                                                 | n/a                                                                                                                                                                                                                                                                                                                                                                                                                                                        | none                                                                                                                                                 | **NOT an escape hatch.** The processor is also a no-op: `unimplemented = () => () => [null as never] as ToolResult` at `src/tools/toolProcessors.ts` — `unimplemented` |
 
 #### Three traps the table exposes
 
@@ -1723,27 +1723,27 @@ derived from `operationForTool` and the two consumers of its output.
 reading of `ToolCommitKind` is "`apply-affine-transform` is a generic op, so
 `commit: 'affine-operation'` is the generic way to reach it." The code disagrees. The
 order of tests in `operationForTool` is: `if (args.toolName === 'transform')` at
-`src/contexts/history-adapter.ts:357`, which **returns or throws from inside its own
-block**; then `processor.commit === 'layer-operation'` (`:391`), `=== 'geometry'` (`:403`),
-`=== 'raster'` (`:416`), and `=== 'document-operation' || === 'selection'` returning `null`
-(`:425`); then `throw new UnsupportedHistoryFeatureError(...)` at `:426`. A tool named
-`warp` with `commit: 'affine-operation'` reaches `:426` and throws. Legacy replay survives
-it (`src/contexts/history-replay.ts:182-208` handles the kind for any tool name), so the
+`src/contexts/history-adapter.ts` — `operationForTool()`'s `if (args.toolName === 'transform')` gate, which **returns or throws from inside its own
+block**; then `processor.commit === 'layer-operation'` (inside `operationForTool()`), `=== 'geometry'`,
+`=== 'raster'` (all inside `operationForTool()`), and `=== 'document-operation' || === 'selection'` returning `null`
+(also in `operationForTool()`); then `throw new UnsupportedHistoryFeatureError(...)` at `operationForTool()`'s closing throw. A tool named
+`warp` with `commit: 'affine-operation'` reaches `operationForTool()`'s closing throw and throws. Legacy replay survives
+it (`src/contexts/history-replay.ts` — `replayHistory()`'s `affine-operation` arm handles the kind for any tool name), so the
 failure is **durable-only** and silent until the shadow is exercised.
 
 **`source` — only an escape hatch in its creator role.** `operationForTool` has no
 `commit === 'source'` arm at all, so a `source` tool dispatched as a `TOOL_ACTION` against
-an **existing** layer (no `layerSource`) falls past every arm to the throw at `:426`, while
+an **existing** layer (no `layerSource`) falls past every arm to the throw at `operationForTool()`'s closing throw, while
 legacy replay rasterizes it through its own default arm
-(`src/contexts/history-replay.ts:216`). `draw`, `shape`, `text`, `rectangle`, `ellipse`,
+(`src/contexts/history-replay.ts` — `replayHistory()`'s default `applyRasterTool` arm). `draw`, `shape`, `text`, `rectangle`, `ellipse`,
 `triangle`, `polygon` and `line` all declare `commit: 'source'` and are all marked
-`creator: true` (`src/tools/toolProcessors.ts:145-159`, `:220-224`); keep that pairing.
+`creator: true` (`src/tools/toolProcessors.ts` — the `commit: 'source'`, `creator: true` entries); keep that pairing.
 
 **`layer-operation` — looks generic and is not.** Sharpen, Noise Reduction and Vibrance
 are the natural next tools and all three are filters. They work perfectly in legacy replay
-(`src/contexts/history-replay.ts:172-181` appends a retained operation for **any**
+(`src/contexts/history-replay.ts` — `replayHistory()`'s `layer-operation` arm appends a retained operation for **any**
 `layer-operation` tool, no name check) and fail **only** the shadow, with an
-`Unsupported filter ${args.toolName}` throw (`src/contexts/history-adapter.ts:394`) that
+`Unsupported filter ${args.toolName}` throw (`src/contexts/history-adapter.ts` — the `Unsupported filter` throw) that
 voids the whole durable document.
 
 ---
@@ -1765,18 +1765,18 @@ replay from the first commit, and undo/redo come with the tool because the args 
 carry everything replay needs.
 
 The durable raster path is generic end to end. The conversion arm
-(`src/contexts/history-adapter.ts:416-424`) builds `{ kind: 'apply-raster-processor',
+(`src/contexts/history-adapter.ts` — `operationForTool()`'s `raster` arm) builds `{ kind: 'apply-raster-processor',
 layerId, processorId: args.toolName, version: processor.replay.version, args:
 plainObject(args, …) }` — note what is absent: any allowlist, any name test, any `default`
 case. The materializer then resolves it **by lookup, not by a table**
-(`src/contexts/materialization.ts:277-284`: `toolProcessors[operation.processorId as keyof typeof toolProcessors]`,
+(`src/contexts/materialization.ts` — the `toolProcessors[operation.processorId]` lookup and its two throws: `toolProcessors[operation.processorId as keyof typeof toolProcessors]`,
 an unknown-name throw, a `replay.version` mismatch throw, then
 `processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs)`). `processorId`
 **is** your tool's own name; nothing else has to learn that you exist.
 
 And durable **replay** does not even discriminate: `apply-filter`,
 `apply-affine-transform` and `apply-raster-processor` are one collapsed arm
-(`src/contexts/durable-replay.ts:115-121`) that appends the operation to the layer's
+(`src/contexts/durable-replay.ts` — the collapsed `apply-filter` / `apply-affine-transform` / `apply-raster-processor` case) that appends the operation to the layer's
 retained list. The name only matters at materialization, and only the _filter_
 materializer is name-closed.
 
@@ -1786,21 +1786,21 @@ The exact hardcoded sites. Enumerate them from the tree, not from memory. A new
 `layer-operation` filter tool (Sharpen, Vibrance, Noise Reduction) touches five; a tool
 that retains an affine transform touches three:
 
-| #   | Site                                                  | What is hardcoded                                                                     | Compiler?                                                                      |
-| --- | ----------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 1   | `src/contexts/history-adapter.ts:393`                 | `if (!['blur', 'color', 'levels'].includes(args.toolName)) throw …`                   | no                                                                             |
-| 2   | `src/contexts/history-model.ts:80-84`                 | `DurableFilter.toolName: 'blur' \| 'color' \| 'levels'`                               | yes, at the cast on `history-adapter.ts:397`                                   |
-| 3   | `src/contexts/materialization.ts:73-89`               | `filterForOperation` — a `switch` over three names with **no `default` arm**          | yes: declared return `string` + closed-union argument make a new member TS2364 |
-| 4   | `src/contexts/materialization.ts:100-102`             | `operationFilter` re-derives the processor by name and throws on a `version` mismatch | no                                                                             |
-| 5   | `src/tools/__tests__/tool-processors.test.ts:114-128` | the `requiresRaster` tool list is asserted exhaustively                               | yes                                                                            |
-| 6   | `src/contexts/history-adapter.ts:357`                 | `if (args.toolName === 'transform')` — the whole affine arm                           | no                                                                             |
-| 7   | `src/contexts/history-adapter.ts:362-373`             | the trapezoid raster boundary, keyed on `trapezoid` and `transform` args              | no                                                                             |
-| 8   | `src/contexts/history-replay.ts:183-184`              | `toolArgs.toolName === 'transform' ? … : 0`                                           | no                                                                             |
+| #   | Site                                                                                                 | What is hardcoded                                                                     | Compiler?                                                                      |
+| --- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1   | `src/contexts/history-adapter.ts` — `operationForTool()`'s filter allowlist                          | `if (!['blur', 'color', 'levels'].includes(args.toolName)) throw …`                   | no                                                                             |
+| 2   | `src/contexts/history-model.ts` — `DurableFilter`                                                    | `DurableFilter.toolName: 'blur' \| 'color' \| 'levels'`                               | yes, at the cast on `history-adapter.ts` — the `DurableFilter` cast            |
+| 3   | `src/contexts/materialization.ts` — `presentationOperations()`                                       | `filterForOperation` — a `switch` over three names with **no `default` arm**          | yes: declared return `string` + closed-union argument make a new member TS2364 |
+| 4   | `src/contexts/materialization.ts` — `presentationOperations()`'s filter version check                | `operationFilter` re-derives the processor by name and throws on a `version` mismatch | no                                                                             |
+| 5   | `tool-processors.test.ts` — the `it('marks only raster-producing tools as requiring raster')` case   | the `requiresRaster` tool list is asserted exhaustively                               | yes                                                                            |
+| 6   | `src/contexts/history-adapter.ts` — `operationForTool()`'s `if (args.toolName === 'transform')` gate | `if (args.toolName === 'transform')` — the whole affine arm                           | no                                                                             |
+| 7   | `src/contexts/history-adapter.ts` — `operationForTool()`'s trapezoid arm                             | the trapezoid raster boundary, keyed on `trapezoid` and `transform` args              | no                                                                             |
+| 8   | `src/contexts/history-replay.ts` — the `toolArgs.toolName === 'transform'` trapezoid read            | `toolArgs.toolName === 'transform' ? … : 0`                                           | no                                                                             |
 
 Touching any of these is a **history-migration task, not a tool task**: it changes what an
 existing durable document means, and `DURABLE_SCHEMA_VERSION` is `1`
-(`src/contexts/history-model.ts:148`), checked in exactly one place,
-`src/contexts/history-append.ts:316`. If your tool fits none of the existing generic ops
+(`src/contexts/history-model.ts` — `DURABLE_SCHEMA_VERSION`), checked in exactly one place,
+`src/contexts/history-append.ts` — `validatePlannedDurableEntry()`. If your tool fits none of the existing generic ops
 and you would have to widen one of these, that is a `HANDOFF.md` entry, and you ship the
 tool on `commit: 'raster'`. **To add a selection tool**, see the next section.
 
@@ -1810,26 +1810,26 @@ If your tool's semantics fit none of `create-layer`, `remove-layer`,
 `set-layer-properties`, `reposition-layer`, `reorder-layers`, `apply-filter`,
 `apply-affine-transform`, `apply-raster-processor`, `set-document-frame`,
 `merge-document` or `set-selection`
-(`src/contexts/history-model.ts:93-115`), the answer is a `HANDOFF.md` entry and the tool
+(`src/contexts/history-model.ts` — `DurableOperation`), the answer is a `HANDOFF.md` entry and the tool
 ships on `commit: 'raster'`. This is a boundary, not a judgement call. Here is the bill,
 and note the enforcement column — sites 1, 2 and 11 are the only ones the compiler holds
 you to:
 
-| #   | Site                                                                                       | Enforced by the compiler?                 |
-| --- | ------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| 1   | `src/contexts/history-model.ts:93-115` — the union                                         | —                                         |
-| 2   | `src/contexts/history-model.ts:254-304` `cloneOperation`                                   | **yes** (TS2366, no `default`)            |
-| 3   | `src/contexts/history-model.ts:163-177` `collectDurableAssetIds`                           | no (partial switch)                       |
-| 4   | `src/contexts/durable-replay.ts:68-143` `replayDurableDocument`                            | **no — a missing case is a silent no-op** |
-| 5   | `src/contexts/history-adapter.ts:349-427` `operationForTool`                               | no                                        |
-| 6   | `src/contexts/history-adapter.ts:444-638` `legacyHistoryToDurable`                         | no                                        |
-| 7   | `src/contexts/history-append.ts:117-158` `translate`                                       | no                                        |
-| 8   | `src/contexts/history-append.ts:315-356` `validatePlannedDurableEntry`                     | no                                        |
-| 9   | `src/contexts/materialization.ts:259-291` pixel application order                          | no                                        |
-| 10  | `src/contexts/materialization.ts:91-107` `operationFilter` — unknown kinds are **dropped** | no                                        |
-| 11  | `src/tools/toolProcessors.ts:40-61,77` the tool's `commit` + `replay.version`              | **yes**                                   |
+| #   | Site                                                                                                             | Enforced by the compiler?                 |
+| --- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 1   | `src/contexts/history-model.ts` — `DurableOperation` — the union                                                 | —                                         |
+| 2   | `src/contexts/history-model.ts` — `cloneOperation()` `cloneOperation`                                            | **yes** (TS2366, no `default`)            |
+| 3   | `src/contexts/history-model.ts` — `collectDurableAssetIds()` `collectDurableAssetIds`                            | no (partial switch)                       |
+| 4   | `src/contexts/durable-replay.ts` — `replayDurableDocument()`'s operation switch `replayDurableDocument`          | **no — a missing case is a silent no-op** |
+| 5   | `src/contexts/history-adapter.ts` — `operationForTool()` `operationForTool`                                      | no                                        |
+| 6   | `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()` `legacyHistoryToDurable`                          | no                                        |
+| 7   | `src/contexts/history-append.ts` — `translate()` `translate`                                                     | no                                        |
+| 8   | `src/contexts/history-append.ts` — `validatePlannedDurableEntry()` `validatePlannedDurableEntry`                 | no                                        |
+| 9   | `src/contexts/materialization.ts` — the pixel-application loop pixel application order                           | no                                        |
+| 10  | `src/contexts/materialization.ts` — `presentationOperations()` `operationFilter` — unknown kinds are **dropped** | no                                        |
+| 11  | `src/tools/toolProcessors.ts` — the tool's `commit` + `replay.version`                                           | **yes**                                   |
 
-`tsconfig.app.json:30-36` sets `strict`, `noUnusedLocals`, `noUnusedParameters`,
+`tsconfig.app.json` — the "Linting" `compilerOptions` block sets `strict`, `noUnusedLocals`, `noUnusedParameters`,
 `noFallthroughCasesInSwitch` — and **not** `noImplicitReturns`. Sites 3 and 4 are
 statement-position switches, so `tsc` stays green on a missing case. A new operation kind
 with a missing replay arm is a silent no-op in production: the durable document replays
@@ -1838,16 +1838,16 @@ without it, disagrees with legacy replay, and nothing reports the disagreement.
 **What "decline" actually costs, and the asymmetry you must not get wrong.** Two decline
 postures exist in the tree, with different severities. The **append boundary** declines
 per-entry and _warns_: `unavailable()` returns `durableEntry: null` with
-`severity: 'warning'` (`src/contexts/history-append.ts:78-92`, the severity at `:86`), the
-terminal arm is `:153-158`, `decideDurableAppend` then returns
-`outcome: 'preconditions'` (`src/contexts/history-append.ts:358-366`), and the store falls
-back to `buildDurableDocument` (`src/contexts/StoreContext.tsx:744-758`, defined at
-`:573-603`) for a full O(history) re-conversion — **a performance cliff on a shadow, not a
+`severity: 'warning'` (`src/contexts/history-append.ts` — `unavailable()`, whose diagnostic carries `severity: 'warning'`), the
+terminal arm is `translate()`'s terminal `unavailable()` arm, `decideDurableAppend` then returns
+`outcome: 'preconditions'` (`src/contexts/history-append.ts` — `decideDurableAppend()`), and the store falls
+back to `buildDurableDocument` (`src/contexts/StoreContext.tsx` —
+`buildDurableDocument()`) for a full O(history) re-conversion — **a performance cliff on a shadow, not a
 correctness loss.** The **shadow conversion** is **fail-closed for the whole document**:
 one unsupported entry throws inside the per-item loop, the loop catches it into an
-`error`-severity diagnostic (`src/contexts/history-adapter.ts:621-623`), and
+`error`-severity diagnostic (`src/contexts/history-adapter.ts` — `diagnosticFromError()`), and
 `convertLegacyHistorySafely` rolls the asset transaction back and returns
-`{ status: 'unavailable', document: null }` (`:657-665`) — **the shadow is absent, not
+`{ status: 'unavailable', document: null }` (`convertLegacyHistorySafely()`'s `status: 'unavailable'` return) — **the shadow is absent, not
 degraded.** A tool durable conversion cannot translate therefore costs the _whole_ durable
 document, not just its own entry. That is designed behaviour, and `AGENTS.md`'s Architecture status section says
 the durable document is a shadow, so nothing user-visible breaks — but it is a consequence
@@ -1864,22 +1864,22 @@ an agent should be able to explain rather than discover.
 The durable filter path is name-closed in **four** places, and a tool that misses any one
 of them fails in a different way.
 
-1. **Conversion refuses it.** `src/contexts/history-adapter.ts:393-395` throws
+1. **Conversion refuses it.** `src/contexts/history-adapter.ts` — `operationForTool()`'s filter allowlist throws
    `UnsupportedHistoryFeatureError('Unsupported filter …')` for any name outside
    `['blur', 'color', 'levels']`. This fires first, and its throw voids the entire durable
-   document (`src/contexts/history-adapter.ts:657-665`).
+   document (`src/contexts/history-adapter.ts` — `convertLegacyHistorySafely()`).
 2. **The type forbids it.** `DurableFilter.toolName` is the literal union
-   `'blur' | 'color' | 'levels'` (`src/contexts/history-model.ts:81`). The cast at
-   `src/contexts/history-adapter.ts:397` is a cast precisely because the compiler cannot
+   `'blur' | 'color' | 'levels'` (`src/contexts/history-model.ts` — `DurableFilter['toolName']`). The cast at
+   `src/contexts/history-adapter.ts` — the `DurableFilter` cast is a cast precisely because the compiler cannot
    check it.
 3. **Materialization cannot render it.** `filterForOperation`
-   (`src/contexts/materialization.ts:73-89`) is a `switch` over the three names with
+   (`src/contexts/materialization.ts` — `presentationOperations()`) is a `switch` over the three names with
    **no `default` arm**, so an unlisted member is a compile error, not a fallback.
 4. **Version drift is refused.** `operationFilter`
-   (`src/contexts/materialization.ts:100-102`) re-derives the processor from
+   (`src/contexts/materialization.ts` — `presentationOperations()`'s filter version check) re-derives the processor from
    `operation.filter.toolName` and throws on a `replay.version` mismatch.
 
-The legacy side has none of this: `src/contexts/history-replay.ts:172-181` appends a
+The legacy side has none of this: `src/contexts/history-replay.ts` — `replayHistory()`'s `layer-operation` arm appends a
 retained operation for **any** `layer-operation` tool, no name check. So a new filter tool
 is legacy-good and durable-fatal, and the failure is invisible until the shadow runs. The
 honest move in a stripped task: declare `commit: 'raster'`, accept that the shadow no
@@ -1889,41 +1889,41 @@ sites. Do not widen the allowlist in a tool task.
 #### `selection` — a new selection tool needs no new durable op, and a new selection _geometry_ does
 
 **The op is already generic.** `operationForTool` returns `null` for `selection`
-(`src/contexts/history-adapter.ts:503`) — a selection tool is not a layer operation and
+(`src/contexts/history-adapter.ts` — `operationForTool()`'s `return null`) — a selection tool is not a layer operation and
 correctly produces no `DurableOperation` from the tool arm. Selection state enters the
 durable timeline through a separate route: the `SELECTION_ACTION` history entry's
 `previousSelectionState` / `nextSelectionState` args
-(`src/contexts/selection-baseline.ts:11-15`), converted to a `set-selection` op by
-`deriveSetSelectionEntry` (`src/contexts/history-adapter.ts:311-328`) and carried on the
-`SELECTION_ACTION` arm at `:556-599`. A new selection tool that emits the same entry shape
+(`src/contexts/selection-baseline.ts` — `SelectionHistoryArgs`), converted to a `set-selection` op by
+`deriveSetSelectionEntry` (`src/contexts/history-adapter.ts` — `deriveSetSelectionEntry()`) and carried on the
+`legacyHistoryToDurable()`'s `SELECTION_ACTION` arm. A new selection tool that emits the same entry shape
 needs **no** new durable op. Confirmed: the two `SELECTION_ACTION` writers are
-`appendSelectionClear` (`src/contexts/useSelectionHistory.ts:118`) and the per-gesture
-writer at `:270`, and neither names a tool.
+`appendSelectionClear` (`src/contexts/useSelectionHistory.ts` — `appendSelectionClear()`) and the per-gesture
+writer at its per-gesture `appendSelectionClear()` call, and neither names a tool.
 
 **The representation is a closed union.** This is where it stops being free.
 
-- `SelectionGeometry = 'polygon' | 'rectangle'` — `src/contexts/general-types.ts:19`. A
+- `SelectionGeometry = 'polygon' | 'rectangle'` — `src/contexts/general-types.ts` — `SelectionGeometry`. A
   new geometry (an ellipse marquee, a single-row marquee) widens this, and it is read by
   the renderer, not only by the durable model.
 - `SelectionSourceTool = 'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand' | 'rectangular-selection'`
-  — `src/contexts/general-types.ts:17-18`. It is a **string literal union**, not a derived
-  type: nothing ties it to `ToolName` (`src/contexts/tool-types.ts:81`), so adding the tool
+  — `src/contexts/general-types.ts` — `SelectionSourceTool`. It is a **string literal union**, not a derived
+  type: nothing ties it to `ToolName` (`src/contexts/tool-types.ts` — `ToolName`), so adding the tool
   to `ToolArgsByName` does not add it here, and TypeScript will not tell you which of the two
   you forgot. **Check what the two newest tools did before you widen it** — `elliptical-selection`
   and `quick-selection` are registered and fully wired, yet both deliberately **borrow**
-  `'magic-wand'` (`src/tools/ellipticalSelection.ts:48`, `src/tools/quickSelection.ts:43`)
+  `'magic-wand'` (`src/tools/ellipticalSelection.ts` — `ELLIPTICAL_SELECTION_SOURCE_TOOL`, `src/tools/quickSelection.ts` — `QUICK_SELECTION_SOURCE_TOOL`)
   rather than adding their own member, because the region each commits is a traced mask
   rather than a marquee. Widening this union is a real decision with a real cost, not a
   checkbox; the borrowed value is a documented choice, not an oversight to correct.
-- `Selection.geometry` and `Selection.sourceTool` — `src/contexts/general-types.ts:67-68`.
-- `SelectionDraftState.sourceTool` — `src/contexts/general-types.ts:24`.
-- `SelectionMetadata` — `src/contexts/general-types.ts:33-59` — is the per-tool settings
+- `Selection.geometry` and `Selection.sourceTool` — `src/contexts/general-types.ts` — `Selection.geometry` and `Selection.sourceTool`.
+- `SelectionDraftState.sourceTool` — `src/contexts/general-types.ts` — `ActiveSelectionDraftState.sourceTool`.
+- `SelectionMetadata` — `src/contexts/general-types.ts` — `SelectionMetadata` — is the per-tool settings
   bag (`magneticLasso`, `magicWand`, `featherRadius`, …). A new tool with settings needs a
   member here, and this object is what the durable `set-selection` op deep-copies
-  (`src/contexts/history-model.ts:192`).
+  (`src/contexts/history-model.ts` — the `case 'set-selection'` arm).
 
 **And selections are outside durable replay authority at the cutover.** The tree says so
-twice. `src/contexts/StoreContext.tsx:63-65`: "A selection can therefore only enter the
+twice. `src/contexts/StoreContext.tsx` — the header comment on what can enter the durable document: "A selection can therefore only enter the
 document through a `SELECTION_ACTION` history entry, and a layer operation only through a
 history entry. This holds whichever rule seeds the baseline, because both read the
 timeline." That half is durable — it survives the pending change below, because both
@@ -1931,18 +1931,18 @@ consumers keep reading the timeline either way.
 
 **The baseline lookup is currently unbounded, and that is a known pending change, not
 settled design.** `deriveSelectionBaseline`
-(`src/contexts/selection-baseline.ts:56-59`) takes the whole timeline and no cursor, and
-`src/contexts/selection-baseline.ts:46-55` still carries the rationale for it: a selection
+(`src/contexts/selection-baseline.ts` — `deriveSelectionBaseline()`) takes the whole timeline and no cursor, and
+`src/contexts/selection-baseline.ts` — the doc comment above `deriveSelectionBaseline()` still carries the rationale for it: a selection
 is created by a gesture that writes no history entry, so the tool-switch clear's
 `previousSelectionState` is the only record that the selection ever existed. **Do not
-cite that comment as the design.** `src/contexts/history-adapter.ts:538-542` carries the same
+cite that comment as the design.** `src/contexts/history-adapter.ts` — the comment above `legacyHistoryToDurable()`'s `deriveSelectionBaseline()` call carries the same
 stale rationale in the caller's own voice, and §31 requires **both** to be rewritten in the
 same change — rewriting only the first leaves the rule's owner corrected while its caller
 still advertises why it must not be bounded. `HANDOFF.md` §31 records that the premise is now
 false — every selection-creating gesture records its own entry, which is exactly the two
 `SELECTION_ACTION` writers named above — so the bound is safe to make, and the entry is
 actionable. Bounding it needs a cursor argument threaded through **both** consumers
-(`src/contexts/history-replay.ts:68` and `src/contexts/history-adapter.ts:543`); bounding
+(`src/contexts/history-replay.ts` — `replayHistory()`'s `deriveSelectionBaseline(history)` call and `history-adapter.ts` — `legacyHistoryToDurable()`'s `deriveSelectionBaseline()` call); bounding
 one and not the other re-opens the parity divergence `selection-baseline.ts` exists to
 close.
 
@@ -1954,9 +1954,9 @@ it — not delete them to make the bound pass.
 
 Two consequences that hold either way. `deriveSetSelectionEntry` returns `null` for a
 missing or structurally unusable `nextSelectionState`
-(`src/contexts/history-adapter.ts:319`) — the conversion **reports instead of inventing**
+(`src/contexts/history-adapter.ts` — `deriveSetSelectionEntry()`'s null return) — the conversion **reports instead of inventing**
 a cleared selection; do not "fix" that by defaulting. And because durable replay applies
-only each operation's `after` (`src/contexts/durable-replay.ts:140-142`), a selection that
+only each operation's `after` (`src/contexts/durable-replay.ts` — the `'set-selection'` case), a selection that
 never produced a `SELECTION_ACTION` entry is invisible to the durable document. Ship a new
 selection tool with its union widenings in the same change; do not treat the durable op as
 covering the representation.
@@ -1964,15 +1964,15 @@ covering the representation.
 #### The rest, briefly
 
 - **`affine-operation`** — see the trap above. Generic op, name-gated kind.
-- **`document-operation`** — `src/contexts/history-adapter.ts:503` returns `null` and
-  `src/contexts/history-replay.ts:215` `continue`s, so the operation is discarded by
+- **`document-operation`** — `src/contexts/history-adapter.ts` — `operationForTool()`'s `return null` returns `null` and
+  `src/contexts/history-replay.ts` — `replayHistory()`'s `document-operation` continue `continue`s, so the operation is discarded by
   **both** systems. It is crop's declaration, not a way to skip work.
-- **`unimplemented`** — `src/contexts/history-adapter.ts:504` throws, which voids the
+- **`unimplemented`** — `src/contexts/history-adapter.ts` — `operationForTool()`'s closing throw throws, which voids the
   whole durable document, and the processor is
-  `() => () => [null as never] as ToolResult` (`src/tools/toolProcessors.ts:110`) so it
+  `() => () => [null as never] as ToolResult` (`src/tools/toolProcessors.ts` — `unimplemented`) so it
   produces nothing. If you mark an `unimplemented` processor `creator: true` and dispatch
   it as a tool-layer source, `createLayerSource` assigns the `null` to `layer.tmpCanvas`
-  with no throw (`src/contexts/layer-utils.ts:204-216`) — a layer that exists, is visible,
+  with no throw (`src/contexts/layer-utils.ts` — `createLayerSource()`) — a layer that exists, is visible,
   is undoable, and is empty. That is the worst of both systems.
 
 ---
@@ -2007,11 +2007,11 @@ it inconsistent), then `npm run tsc`. Never gate on `npx tsc --noEmit`: the root
 
 Stripping the migration work does not license an undeclared contract. These four are
 non-negotiable in a stripped task, and three are quoted verbatim from
-`.kilo/plans/ps-research/RESEARCH-BRIEF.md` (189 lines, constraints at `:51-81`) — the
+`.kilo/plans/ps-research/RESEARCH-BRIEF.md` (189 lines, constraints at the "Architecture constraints your recommendations MUST respect" section of `RESEARCH-BRIEF.md`) — the
 hard-won decisions list the tool research sessions had to respect.
 
 **1. An honest `replay` contract.** `replay` is part of the processor contract
-(`src/tools/toolProcessors.ts:50-61`). `RESEARCH-BRIEF.md` constraint 2, verbatim:
+(`src/tools/toolProcessors.ts` — `ToolProcessorDefinition`). `RESEARCH-BRIEF.md` constraint 2, verbatim:
 
 > **Durable replay.** Every tool must have a declared `replay` contract in
 > `toolProcessors.ts`. A tool whose pixel output cannot be reproduced deterministically
@@ -2023,29 +2023,29 @@ hard-won decisions list the tool research sessions had to respect.
 samples a random seed, reads the wall clock, depends on a network font, or composites
 against the base layer is `deterministic: false`. Two unit tests hold you to it, both
 exhaustive over `toolNames` so a new tool is covered the moment it is registered:
-`src/tools/__tests__/tool-processors.test.ts:787-797` asserts `replay.kind` tracks
+`tool-processors.test.ts` — the `it('commits every raster processor as a raster-processor replay')` case asserts `replay.kind` tracks
 `commit` (`'raster'` → `'raster-processor'`, `'unimplemented'` → `'unimplemented'` as the
-two special cases), and `:714-718` asserts
+two special cases), and `tool-processors.test.ts` — the `it('marks only raster-producing tools as requiring raster')` case asserts
 `replay.requiresRaster === (commit === 'raster' || (commit === 'selection' && !creator))`.
 So `commit: 'raster'` **forces** `requiresRaster: true`; you do not get to declare
 otherwise. The descriptor must stay frozen and versioned —
-`src/tools/toolProcessors.ts:97-98` builds
+`src/tools/toolProcessors.ts` — the `replay()` factory builds
 `Object.freeze({ kind, deterministic, version: 1, requiresRaster })`, and
-`src/tools/__tests__/tool-processors.test.ts:805-814` asserts the frozen object, the exact
+`tool-processors.test.ts` — the `it('gives each tool a distinct replay descriptor that toolsMap reuses by reference')` case asserts the frozen object, the exact
 key set, and that `toolsMap` reuses it **by reference**. **Bump `version` when the pixel
 output of an existing processor changes for the same args** —
-`src/contexts/materialization.ts:279-281` rejects an unknown `processorId`/`version` pair,
-and so does `src/contexts/materialization.ts:100-102` for filters.
+`src/contexts/materialization.ts` — the unknown-processor and version-mismatch throws rejects an unknown `processorId`/`version` pair,
+and so does `src/contexts/materialization.ts` — `presentationOperations()`'s filter version check for filters.
 
 **2. The `commit` kind**, from the table above, with its tier stated. If the answer is
 tier 1, say "tier 1, zero history-file edits" in the PR — that sentence is the whole
 deliverable of this phase.
 
 **3. The settings shape in `defaultSettings`.** `defaultSettings` is
-`src/tools/settings.ts:51-314`; `DefaultSettings` is its inferred type (`:316`) and
-`lastSavedSettings` clones it into the per-tool store (`:343`). Every control you ship
+`src/tools/settings.ts` — `defaultSettings`; `DefaultSettings` is its inferred type and
+`lastSavedSettings` clones it into the per-tool store. Every control you ship
 needs an entry there, `satisfies`-checked against your tool's args type — the existing
-shape, for the two paint tools, is `src/tools/settings.ts:131-164` (`alpha`, `color`,
+shape, for the two paint tools, is `src/tools/settings.ts` — the `brush` and `pencil` entries in `defaultSettings` (`alpha`, `color`,
 `penType`, `lineWidth`, `points`, `toolName`). If a control is not in `defaultSettings` and
 not in a real component under `src/components/ToolbarsRight/`, it does not exist; a setting
 with no `defaultSettings` entry is a setting the next tool switch erases.
@@ -2058,11 +2058,11 @@ branch.** `RESEARCH-BRIEF.md` constraint 3, verbatim:
 
 This is the one an agent is most tempted to bend, because rejecting is slower to ship than
 faking. The tree already does it correctly in three places; copy them rather than invent a
-fourth: `src/contexts/history-adapter.ts:456` throws `UnsupportedHistoryFeatureError` for
-an unhandled commit kind rather than a fake op; `:472` throws `Unsupported filter …` for a
-filter outside the allowlist rather than a generic `apply-filter`; and `:319` is
+fourth: `src/contexts/history-adapter.ts` — `operationForTool()`'s closing throw throws `UnsupportedHistoryFeatureError` for
+an unhandled commit kind rather than a fake op; `operationForTool()`'s `Unsupported filter` throw throws `Unsupported filter …` for a
+filter outside the allowlist rather than a generic `apply-filter`; and `deriveSetSelectionEntry()`'s null return is
 `if (!isValidSelectionSnapshot(next)) return null;` in `deriveSetSelectionEntry`, whose doc
-comment (`:288-310`) spells out why — "Returning `null` makes the caller report instead of
+comment (the doc comment above `deriveSetSelectionEntry()`) spells out why — "Returning `null` makes the caller report instead of
 inventing state."
 
 The anti-pattern to refuse, in your own words: declaring `commit: 'raster'` for a tool
@@ -2083,10 +2083,10 @@ derived presentation state, it needs document-scoped presentation ownership or a
 presentation action — not a mutation from a callback or an async continuation.
 `AGENTS.md`'s Architecture status section is the one home for why the presentation boundary holds, and
 the part of it that decides where your commit goes is narrow: a promoted cache reaches a published
-layer only at `src/contexts/StoreContext.tsx:657`, inside the reducer's `PROMOTE_LAYER_PRESENTATIONS`
+layer only at `src/contexts/StoreContext.tsx` — the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm
 arm, and the dispatcher that queues that action re-checks `isSamePresentationCanvas` first
-(`src/contexts/StoreContext.tsx:955`). So hand your canvas to `promoteLayerPresentation`, which
-dispatches it (`src/contexts/StoreContext.tsx:1362`), and never assign to a published layer's
+(`src/contexts/StoreContext.tsx` — the dispatcher's `isSamePresentationCanvas` re-check). So hand your canvas to `promoteLayerPresentation`, which
+dispatches it (`src/contexts/StoreContext.tsx` — `promoteLayerPresentation()`), and never assign to a published layer's
 `tmpCanvas`. Do not restate that here if you extend this file: `docs/DOCUMENTATION.md`'s single-home
 rule makes `AGENTS.md` the only place the architecture status is written down.
 
@@ -2126,17 +2126,17 @@ export type PaintToolArgs = Omit<DrawToolArgs, 'toolName' | 'smoothing' | 'blend
 
 The asymmetry is the point. Optional on the base type so nothing that predates the setting
 has to change; **required** on the paint type, via `Omit` + intersection with
-`PaintSettings` (`brush-toolbar:src/tools/brush.ts:81-86`), so the options bar can read it
+`PaintSettings` (`brush-toolbar`'s `PaintSettings`), so the options bar can read it
 without a guard and a `draw`-era args object can never satisfy the paint type by omission.
 That is how "optional in the args channel, mandatory in the new tool" is expressed without
 a runtime check. And because the legacy `draw` tool's per-pen presets
-(`src/tools/settings.ts:37-41,68-74`, `savedDrawPerPen`) predate the setting and keep rendering
+(`src/tools/settings.ts` — `savedDrawPerPen`, `savedDrawPerPen`) predate the setting and keep rendering
 exactly as they do today — **absent means absent** — the tool does not need to know whether
 a setting exists.
 
 #### Layer 2 — the runtime: the identity return
 
-`smoothStrokePoints` (`brush-toolbar:src/tools/brush.ts:101-119`) computes
+`smoothStrokePoints` (`brush-toolbar`'s `smoothStrokePoints()`) computes
 `pull = clampPercent(smoothing) / 100` and opens with
 `if (pull === 0 || points.length < 3) return points;` — returning `points` **itself**, not
 a copy. The doc comment states the reason in terms of the caller's identity comparison, and
@@ -2153,20 +2153,20 @@ expect(smoothStrokePoints(zigzagPath, 0)).toBe(zigzagPath);
 implementation started returning a fresh, equal, freshly-allocated array — exactly the
 refactor that silently changes what every unpinned stroke renders from. The same file pins
 the negative-smoothing, `NaN`, `±Infinity` and sub-three-sample cases with `toBe` too
-(`brush-toolbar:src/tools/__tests__/brush.test.ts:103`, `:116`, `:124`), because
+(`brush-toolbar`'s `brush.test.ts` — its `NaN`, `±Infinity` and sub-three-sample `toBe` pins), because
 `clampPercent` guards on `Number.isFinite` _before_ it clamps, so every non-finite input
 takes the `: 0` branch and is an identity.
 
 #### The real risk this defuses: the committed visual-regression baselines
 
 This is what makes the mechanism non-optional. The export visual-regression baselines are
-recorded **through the legacy `draw` tool**: `e2e/export/helpers.ts:108-109` in
+recorded **through the legacy `draw` tool**: `e2e/export/helpers.ts` — `setupExportTest()` in
 `setupExportTest` does `await clickToolButton(page, 'draw');` then
 `drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y)`, and that is the
 fixture for every export baseline. Seventeen committed PNGs live in
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`. They are compared, not
-regenerated: `e2e/export/visual-regression.spec.ts:88-99` re-records **only** under
-`--update-snapshots=all`, and the comment at `:88-93` documents that a bare truthiness
+regenerated: `e2e/export/visual-regression.spec.ts` — `BASELINE_RECORD_MODE` re-records **only** under
+`--update-snapshots=all`, and the comment at the doc comment above `BASELINE_RECORD_MODE` documents that a bare truthiness
 check used to rewrite the baseline on every run and make the oracle disposable.
 
 So **any change to the legacy raster path invalidates a committed oracle**, and `AGENTS.md`
@@ -2181,18 +2181,18 @@ oracle.
 **Caveat 1 — the identity branch it relies on is not on this base.** The branch's own
 justification is that "`drawLine` compares by identity to decide whether to reuse the
 caller's args or allocate a copy". There is no such
-comparison: `src/util/draw.ts:84-94` is `drawLine`, a three-branch `penType` dispatch with
-no identity test, and `drawPen` at `:96-104` calls `bezierSmoothedLine` unconditionally.
+comparison: `src/util/draw.ts` — `drawLine()` is `drawLine`, a three-branch `penType` dispatch with
+no identity test, and `drawPen` at `drawPen()` calls `bezierSmoothedLine` unconditionally.
 `git grep sampled -- src/util/draw.ts` returns nothing. The same is true of the branch's
-other internal citation, `src/contexts/history-adapter.ts:199` for the `create-layer`
-emission, which is at `src/contexts/history-adapter.ts:504` in this tree. Treat every
+other internal citation, `history-adapter.ts` — `legacyHistoryToDurable()`'s `create-layer` emission
+emission, which is at `history-adapter.ts` — `legacyHistoryToDurable()`'s `create-layer` emission in this tree. Treat every
 `file:line` **inside** `brush-toolbar:` as branch-local. If you port the mechanism you must
 re-establish the guarantee on your base: prove the absent value renders identically, or add
 the identity branch your caller needs.
 
 **Caveat 2 — the identity mechanism protects geometry, not every line you touch.** The
 same branch's diff also removes the `else ctx.setLineDash([])` guard from `setupDrawCtx`
-(`src/tools/draw.ts:42-67` on the base, a function the legacy `draw` tool calls). That is a
+(`src/tools/draw.ts` — `setupDrawCtx()` on the base, a function the legacy `draw` tool calls). That is a
 change to a shared legacy code path, and no amount of identity-return safety covers it: as
 written, a `pen-dashed` stroke that sets a dash and is followed by an undashed stroke would
 leave the dash in place on the shared overlay context. I have **not** run the suite to
@@ -2205,21 +2205,21 @@ not a licence to refactor a neighbour.
 
 `Mode` could not ride the stroke. It is a **layer** property, and the layer is created
 _before_ the stroke is rasterized — so it is resolved in `createLayerSource`
-(`brush-toolbar:src/contexts/layer-utils.ts:160-167`, `:241`) rather than while drawing.
+(`brush-toolbar`'s `createLayerSource()` and its blend-mode resolution) rather than while drawing.
 `toolLayerBlendMode(args)` returns `'source-over'` unless `args.toolName` is `brush`,
 `pencil` or `color-replacement` — the three `commit: 'raster'` tools at
-`src/tools/toolProcessors.ts:193-221` — and then returns
+`src/tools/toolProcessors.ts` — the `brush`, `pencil` and `color-replacement` entries — and then returns
 `isPaintBlendMode(args.blendMode) ? args.blendMode : 'source-over'`.
 
 Three things to copy. **It rides the args channel**, so replay re-enters the same function
 with the same history entry's args and undo, redo and the durable shadow cannot disagree —
 the `create-layer` op carries the whole args object (`DurableLayerSource.args`,
-`src/contexts/history-model.ts:32`), so both converters already carry it. **The gate is a
+`src/contexts/history-model.ts` — `DurableLayerSource`'s `args: PlainObject`), so both converters already carry it. **The gate is a
 hardcoded tool-name list**, so a fourth paint tool must be added there; same allowlist smell
 as `layer-operation`, but in a file that is _not_ part of the durable model — a good trade,
 and a reminder that the gate belongs as close as possible to the thing that knows the tool
 is a paint tool. **The value is a closed set with a Normal fallback** (`isPaintBlendMode`,
-`brush-toolbar:src/tools/brush.ts:51-52`), because
+`brush-toolbar`'s `isPaintBlendMode()`), because
 `ctx.globalCompositeOperation = 'dissolve'` is **silently ignored** by the browser rather
 than erroring, so a mode from a document written by a build that offered it degrades to
 Normal instead of reaching the canvas as a dead operation.
@@ -2262,7 +2262,7 @@ re-proposing it.>
 
 `**Why it is not a wiring bug.**` is what separates a real entry from a wish list, and it
 is the part to write first. Item 36 uses it to record that `buildDrawArgs`
-(`src/tools/toolProcessors.ts:89-95`) narrows `penType` to `'pen' | 'spray'` and both paint
+(`src/tools/toolProcessors.ts` — `buildDrawArgs()`) narrows `penType` to `'pen' | 'spray'` and both paint
 tools force `'pen'`, so the one per-point painter in the tree is deliberately unreachable
 from a brush or a pencil — "That is deliberate — it is the adapter that makes the tools
 hard-edged — not an oversight."
@@ -2277,7 +2277,7 @@ defensible:
 
 > **Fix — needs a call, not a patch.** Two honest options, and the choice is the
 > operator's. Either hide the six from `toolbarMap` until they work, or make
-> `unimplemented` throw a named error at `toolProcessors.ts:110` so selecting one
+> `unimplemented` throw a named error at `src/tools/toolProcessors.ts` — `unimplemented` so selecting one
 > fails loudly instead of silently doing nothing. Throwing is the smaller diff and
 > converts a silent no-op into a visible one, but it changes seven existing tools'
 > behaviour, which is a product decision rather than a cleanup.
@@ -2338,24 +2338,24 @@ const replay = (kind: ToolReplayKind, requiresRaster: boolean, deterministic = t
   Object.freeze({ kind, deterministic, version: 1, requiresRaster });
 ```
 
-Two-stage currying: the outer call takes `ProcessorToolParams = { size, bitmap }` or `CreatorToolParams = { size }` (`:17-24`), the inner
-takes the tool args, and the result is `ToolResult = [BitmapSource, Partial<Pos>?]` (`:26`). The registry is total, so adding a name to
-`ToolName` is a `tsc` error until the entry exists (`src/tools/toolProcessors.ts:105` `Record<ToolName, ToolProcessorDefinition>`).
+Two-stage currying: the outer call takes `ProcessorToolParams = { size, bitmap }` or `CreatorToolParams = { size }` (`src/tools/toolProcessors.ts` — `ProcessorToolParams` and `CreatorToolParams`), the inner
+takes the tool args, and the result is `ToolResult = [BitmapSource, Partial<Pos>?]` (`src/tools/toolProcessors.ts` — `ToolResult`). The registry is total, so adding a name to
+`ToolName` is a `tsc` error until the entry exists (`src/tools/toolProcessors.ts` — `toolProcessors` `Record<ToolName, ToolProcessorDefinition>`).
 
 **What each declaration obliges you to.**
 
 - `commit` — the durable-conversion tier. Use `'raster'` for a new drawing tool:
-  `src/contexts/useHistory.ts:98-113` then replays it for free. Never write a new
+  `src/contexts/useHistory.ts` — the `applyRasterTool` arm then replays it for free. Never write a new
   `DurableOperation` variant for a tool.
 - `replay` — mandatory, and reachable only through the frozen factory, so the four fields cannot
   be smuggled in ad hoc. Bump `version` when pixel output changes for the same args.
 - `imageProcessor` — copy an existing adapter's shape rather than aliasing a shared one; the
-  three paint adapters are the model (`src/tools/toolProcessors.ts:193-221`). A processor that
+  three paint adapters are the model (`src/tools/toolProcessors.ts` — the `brush`, `pencil` and `color-replacement` entries). A processor that
   narrows `ToolArgs` to its own name needs `// @ts-expect-error Each processor narrows ToolArgs
-to its own registered name.`, as `reposition` does at `:81-82`; an inline adapter already
+to its own registered name.`, as `reposition` does at `toolProcessors.ts` — `reposition`'s `// @ts-expect-error` comment; an inline adapter already
   taking the union does not.
 - `creator: true` — a **promise** the tool can run with `{ size }` and no bitmap.
-  `src/contexts/layer-utils.ts:206-216` calls `imageProcessor({ size: pos } as
+  `src/contexts/layer-utils.ts` — `createLayerSource()` calls `imageProcessor({ size: pos } as
 CreatorToolParams)(source.args)` and assigns the result to `layer.tmpCanvas`. Without the flag
   the tool cannot create its own layer.
 - There is a fifth field the old playbook warned about, `flattenRequired`, and **it no longer
@@ -2374,11 +2374,11 @@ it.each(toolNames)('derives the %s requiresRaster flag from its commit kind and 
 });
 ```
 
-The companion rule at `:702-712` maps `commit: 'raster'` to `replay.kind: 'raster-processor'`, `'unimplemented'` to `'unimplemented'`, and
+The companion rule at `it('commits every raster processor as a raster-processor replay')` maps `commit: 'raster'` to `replay.kind: 'raster-processor'`, `'unimplemented'` to `'unimplemented'`, and
 everything else to `replay.kind === commit`.
 
 A `layer-operation` tool therefore **cannot** declare `requiresRaster: true` without rewriting the test. Four literal rosters in the same
-file go red too: `requiresRaster` `:76-82`, non-deterministic `:84-98`, raster-committed `:114-121`, creators `:123-145`.
+file go red too: `requiresRaster` `it('marks only raster-producing tools as requiring raster')`, non-deterministic `it('marks only unimplemented tools as non-deterministic')`, raster-committed `it('commits every raster processor as a raster-processor replay')`, creators `it('only labels source-creating tools as creators, and each creator commits as a source')`.
 
 ### The file set, in dependency order
 
@@ -2387,40 +2387,40 @@ so they fail `npm run tsc` in sequence and the compiler walks you from the union
 _presentation_ registries — none total, all pinned by a test roster. Steps 10–13 are the new files. Out of order, you get a
 tree that typechecks halfway and renders nothing.
 
-| #   | File                                                                    | Purpose                                                       | Anchor that forces the edit                                                                                            |
-| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 1   | `src/contexts/tool-types.ts`                                            | the args type in `ToolArgsByName`                             | `:17-56`; `:58` derives `ToolName`                                                                                     |
-| 2   | `src/tools/<myTool>.ts` (new)                                           | args type + the curried processor                             | —                                                                                                                      |
-| 3   | `src/tools/toolProcessors.ts`                                           | `commit`, `replay(...)`, optional `creator`, `imageProcessor` | `:77` `Record<ToolName, …>`                                                                                            |
-| 4   | `src/tools/toolsMap.ts`                                                 | `{ ...toolProcessors.<myTool>, icon, toolboxComponent }`      | `:33-39` `ToolsMap`; `:41` the literal                                                                                 |
-| 5   | `src/tools/settings.ts`                                                 | `defaultSettings['<my-tool>']`                                | `:314` `satisfies ToolArgsByName`; `:343` `lastSavedSettings: ToolArgsByName`                                          |
-| 6   | `src/util/settings.ts`                                                  | the `saveLastSettings` arm                                    | `:20-83`; `:81` the `never` trap                                                                                       |
-| 7   | `SidebarLeft/types.ts` + `icons/<Name>Icon.tsx` (new) + `toolIcons.tsx` | the icon, three files                                         | `types.ts:3-37`; `toolIcons.tsx:29`                                                                                    |
-| 8   | `toolbar-mapping.ts`                                                    | the flyout entry and `availableTools`                         | `:37-84`; `:86-116`                                                                                                    |
-| 9   | `src/components/Main/Main.tsx`                                          | **four** edits, not one                                       | `:50-76` `interactionMode`; `:135-145` `ToolAreaComponent`; `:149-158` routing; `:184-197` overlay `display` allowlist |
-| 10  | `src/components/Main/<My>ToolArea.tsx` (new)                            | the gesture surface                                           | —                                                                                                                      |
-| 11  | `src/components/ToolbarsRight/<MyTool>/<MyTool>.tsx` (new)              | the options component                                         | —                                                                                                                      |
-| 12  | `src/components/Main/Main.scss`                                         | the cursor class                                              | `:12-38`                                                                                                               |
-| 13  | `src/components/Common/AppKeyboardShortcuts.tsx`                        | shortcut, registered **twice** (plain + `shift: true`)        | `:9-16` the group literals                                                                                             |
+| #   | File                                                                    | Purpose                                                       | Anchor that forces the edit                                                                                                      |
+| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `src/contexts/tool-types.ts`                                            | the args type in `ToolArgsByName`                             | `ToolArgsByName`; `ToolName` derives from it                                                                                     |
+| 2   | `src/tools/<myTool>.ts` (new)                                           | args type + the curried processor                             | —                                                                                                                                |
+| 3   | `src/tools/toolProcessors.ts`                                           | `commit`, `replay(...)`, optional `creator`, `imageProcessor` | the `toolProcessors` registry's key type `Record<ToolName, …>`                                                                   |
+| 4   | `src/tools/toolsMap.ts`                                                 | `{ ...toolProcessors.<myTool>, icon, toolboxComponent }`      | `ToolsMap`; `export const toolsMap` the literal                                                                                  |
+| 5   | `src/tools/settings.ts`                                                 | `defaultSettings['<my-tool>']`                                | `defaultSettings`'s `satisfies ToolArgsByName`; `lastSavedSettings: ToolArgsByName`                                              |
+| 6   | `src/util/settings.ts`                                                  | the `saveLastSettings` arm                                    | `saveLastSettings()`; inside it, the `never` trap                                                                                |
+| 7   | `SidebarLeft/types.ts` + `icons/<Name>Icon.tsx` (new) + `toolIcons.tsx` | the icon, three files                                         | `ToolIconName`; `toolIcons`                                                                                                      |
+| 8   | `toolbar-mapping.ts`                                                    | the flyout entry and `availableTools`                         | `toolbarMap`; `availableTools`                                                                                                   |
+| 9   | `src/components/Main/Main.tsx`                                          | **four** edits, not one                                       | the `interactionMode` chain; the `ToolAreaComponent` union; the `EventHandler` routing; the overlay canvas's `display` allowlist |
+| 10  | `src/components/Main/<My>ToolArea.tsx` (new)                            | the gesture surface                                           | —                                                                                                                                |
+| 11  | `src/components/ToolbarsRight/<MyTool>/<MyTool>.tsx` (new)              | the options component                                         | —                                                                                                                                |
+| 12  | `src/components/Main/Main.scss`                                         | the cursor class                                              | the `.cursor-*` classes                                                                                                          |
+| 13  | `src/components/Common/AppKeyboardShortcuts.tsx`                        | shortcut, registered **twice** (plain + `shift: true`)        | `AppKeyboardShortcuts.tsx` — the group-literal doc comment above `brushGroup` the group literals                                 |
 
 **Step 9 is the one that gets forgotten.** `interactionMode` is a second, unrelated
-hand-written chain (`src/components/Main/Main.tsx:68-132`). A new raster tool with a working `commit: 'raster'` processor missing from it
-falls through to `DummyToolArea` (`:147`, `:158`), which renders `style={{ display: 'none' }}`. The tool is selectable, the options bar
-renders, and nothing happens on the canvas with no warning. Worse, the overlay canvas `display` is a **separate** allowlist (`:184-197`),
+hand-written chain (`src/components/Main/Main.tsx` — the `interactionMode` chain). A new raster tool with a working `commit: 'raster'` processor missing from it
+falls through to `DummyToolArea` (the `EventHandler` default, the terminal `else`), which renders `style={{ display: 'none' }}`. The tool is selectable, the options bar
+renders, and nothing happens on the canvas with no warning. Worse, the overlay canvas `display` is a **separate** allowlist (`src/components/Main/Main.tsx` — the tool-overlay canvas's `display` allowlist),
 so a preview painted on `toolOverlayRef` stays invisible even when the handlers fire.
 
 **Every exhaustive surface over `ToolName`.** There is no `switch` over `ToolName` anywhere in
 `src/` — the exhaustive sites are registries plus two hand-written chains:
 
-- `Record<ToolName, …>`: `src/tools/toolProcessors.ts:105`, `src/tools/toolsMap.ts:47-48`.
-- `satisfies ToolArgsByName`: `src/tools/settings.ts:314`; total assignment `:51`.
-- `never` trap in a chain: `src/util/settings.ts:97`.
+- `Record<ToolName, …>`: `src/tools/toolProcessors.ts` — `toolProcessors`, `src/tools/toolsMap.ts` — the `ToolsMap` type and the `toolsMap` literal.
+- `satisfies ToolArgsByName`: `src/tools/settings.ts` — `defaultSettings`'s `satisfies ToolArgsByName`; total assignment `defaultSettings`.
+- `never` trap in a chain: `src/util/settings.ts` — `saveLastSettings()`'s `never` trap.
 - Hand-written chains, **not** compiler-checked, red at runtime instead:
-  `src/components/Main/Main.tsx:68-132`, `src/util/settings.ts:22-99`.
-- Near-total, checked only by a test: `toolbar-mapping.ts:97-127` `availableTools`.
-- Hand-copied unions the typecheck cannot see drift in: `src/components/SidebarLeft/types.ts:3-41`
+  `src/components/Main/Main.tsx` — the `interactionMode` chain, `src/util/settings.ts` — `saveLastSettings()`.
+- Near-total, checked only by a test: `toolbar-mapping.ts` — `availableTools`.
+- Hand-copied unions the typecheck cannot see drift in: `src/components/SidebarLeft/types.ts` — `ToolIconName`
   is **not** derived from `ToolName`, and the use site
-  `src/components/SidebarLeft/SidebarLeft.tsx:550` is an unchecked `toolIcons[tool.name]`, so it
+  `src/components/SidebarLeft/SidebarLeft.tsx` — the unchecked `toolIcons[tool.name]` lookup is an unchecked `toolIcons[tool.name]`, so it
   typechecks only because `ToolName ⊂ ToolIconName` today.
 
 **Single-owner files.** Steps 1, 3, 4, 5, 6, 7, 8, 9 and 13 are small registries every layer edits
@@ -2448,21 +2448,21 @@ deadlock, and an unclaimed path _looks_ free.
 
 ### The gesture contract
 
-The shared primitive is `usePointerPosition` (`src/hooks/usePointerPosition.ts`): `isPointerDownValid` `:122`, `isPointerMoveValid`
-`:135`, `isPointerUpValid` `:142`, `getLocalCoords` `:167`, `isMouseDown` ref `:33`. The first pointer wins and sets capture, so a second
-finger is not a second gesture.
+The shared primitive is `usePointerPosition` (`src/hooks/usePointerPosition.ts`) — `isPointerDownValid`,
+`isPointerMoveValid`, `isPointerUpValid`, `getLocalCoords`, and the `isMouseDown` ref. The first pointer wins and sets
+capture, so a second finger is not a second gesture.
 
-The reference lifecycle is `src/components/Main/DrawToolArea.tsx`: **pointerdown** `:46-57` (validate, `setupDrawCtx`, seed
-`pointsRef.current = [coords]` at `:54`, first paint at `:56`);
-**pointermove** `:59-66` (bail unless `isMouseDown.current`, push one point, repaint);
-**pointerup** `:68-91` — the **only** commit. There `:77` converts canvas points to document
-space, `:78` computes `pointsBoundingPos`, `:79` rebases points by `-pos`, `:82-85` builds the single `FullArgs`, `:87` makes exactly one
-`createLayerFromTool` call, and `:89-90` clears the ref and the overlay.
+The reference lifecycle is `src/components/Main/DrawToolArea.tsx`: **pointerdown** `handlePointerDown()` (validate,
+`setupDrawCtx`, seed `pointsRef.current = [coords]`, first paint);
+**pointermove** `handlePointerMove()` (bail unless `isMouseDown.current`, push one point, repaint);
+**pointerup** `handlePointerUp()` — the **only** commit. There the `canvasToDocumentPoint` conversion puts the points in document
+space, `pointsBoundingPos` computes `pos`, the points are rebased by `-pos.x` / `-pos.y`, the single `FullArgs` is built,
+exactly one `createLayerFromTool` call follows, and the ref and the overlay are cleared.
 
 **ONE HISTORY STATE PER USER ACTION. Commit on pointer-up, never per pointer-move.** The
-store splits preview from publication: `tempUpdateLayer` (`src/contexts/useLayer.ts:476`) writes a ref-backed preview and dispatches
-nothing; only `updateLayerByTool` (`:264-320`) or `commitDirtyTool` (`:323`) publishes a history entry. `updateLayerByTool` itself does
-this correctly — preview at `:304`, publish once at `:309-319` — so the rule is enforced by
+store splits preview from publication: `tempUpdateLayer` (`src/contexts/useLayer.ts`) writes a ref-backed preview and dispatches
+nothing; only `updateLayerByTool()` or `commitDirtyTool()` publishes a history entry. `updateLayerByTool` itself does
+this correctly — preview in its `tempUpdateLayer` call, publish once in its `commitDirtyTool` call — so the rule is enforced by
 _which function the tool area calls_, not by anything inside it. Call it on every pointer
 move and undo becomes useless.
 
@@ -2470,7 +2470,7 @@ move and undo becomes useless.
 **and nulls** the ref on pointer-up; a cancelled-but-live ref repaints a
 stale frame after the layer commits. Copy that shape.
 
-**Do not neutralise a shared-context defect.** `Main.tsx:323` hands every tool area the same 2D
+**Do not neutralise a shared-context defect.** `Main.tsx` — the `toolOverlayRef.current.getContext('2d')` write hands every tool area the same 2D
 context, so a painter must call `resetOverlayAlpha` and bracket in `save()` / `restore()`. Do
 **not** write `ctx.globalAlpha = 1` at the top of setup as a fix: the commit path runs on a fresh
 `OffscreenCanvas` at the slider's alpha, so forcing 1 on the overlay does nothing for the committed layer. A shared rect-drag hook already
@@ -2482,10 +2482,10 @@ pointer-up. Use it instead of writing a fourth rect gesture.
 Pre-existing properties that decide the _shape_ of new code. Read each before you touch the file it names.
 
 **1. The canvas is padded by the full `lineWidth` on every side and the stroke is committed as its own layer — so the
-layer's area scales with `lineWidth²`, not `lineWidth`.** `pointsBoundingPos` (`src/util/draw.ts:20-25`) returns `{ x: minX - lineWidth,
+layer's area scales with `lineWidth²`, not `lineWidth`.** `pointsBoundingPos` (`src/util/draw.ts` — `pointsBoundingPos()`) returns `{ x: minX - lineWidth,
 y: minY - lineWidth, width: maxX - minX + 2 * lineWidth, height: maxY - minY + 2 * lineWidth }`.
 
-`createLayerFromTool` (`src/contexts/useLayer.ts:219-262`) then makes that `pos` a fresh layer, so a 5000px tip allocates a 10000px square
+`createLayerFromTool` (`src/contexts/useLayer.ts` — `createLayerFromTool()`) then makes that `pos` a fresh layer, so a 5000px tip allocates a 10000px square
 for a single dot. This is why the shipped bar caps Size at 500 while Photoshop allows 5000:
 
 ```ts
@@ -2505,8 +2505,8 @@ _Defence:_ declare a `*_SIZE_MAX` beside the module's other constants, clamp eve
 through it, and pin the constant — a value arriving from anywhere else must be capped to the same ceiling the slider enforces.
 
 **2. The layer is created before the stroke is rasterized, so a blend mode has to be
-resolved at layer creation, not while drawing.** The literal at `src/contexts/layer-utils.ts:169-185` is built first (`:173` hard-codes
-`blendMode: 'source-over'`); only then does `:204-214` run the creator:
+resolved at layer creation, not while drawing.** The literal at `src/contexts/layer-utils.ts` — `createLayerSource()`'s layer literal — is built first (it hard-codes
+`blendMode: 'source-over'`); only then does `createLayerSource()`'s `kind === 'tool'` creator branch run the creator:
 
 ```ts
 // src/contexts/layer-utils.ts:204-217
@@ -2527,7 +2527,7 @@ cached anywhere else makes a second replay disagree with the first.
 
 **3. The legacy `draw` raster path must render byte-for-byte unchanged.** The export baselines in
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/` were recorded against the current single-path call pattern, and
-re-recording is gated on `testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts:94`). `drawPen` is the pattern
+re-recording is gated on `testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts` — the `testInfo.config.updateSnapshots === BASELINE_RECORD_MODE` guard). `drawPen` is the pattern
 they encode:
 
 ```ts
@@ -2540,7 +2540,7 @@ ctx.stroke();
 
 _Defence:_ implement any new stroke behaviour as a **point-space filter applied once at the
 seam**, not a stamp loop, and have the filter return its input array by identity at the neutral setting so the caller can skip
-reallocation. Pin the call counts (`src/tools/__tests__/paint-tools.test.ts:227-229`). Never widen a threshold or re-record a baseline to
+reallocation. Pin the call counts (`paint-tools.test.ts` — the `it.each(paintToolNames)('strokes %s with the pen renderer, whatever penType the args carry')` call-count assertions). Never widen a threshold or re-record a baseline to
 get green.
 
 ### The tripwire inventory
@@ -2549,16 +2549,16 @@ Find these **before** writing code. Procedure: (1) `git grep -n "Object.keys(def
 _derives_ its roster and updates itself; (2) classify each hard-coded roster below and record the decision in the commit body; (3) run
 `npm run test` with no behaviour change, so every failure is classified rather than discovered piecemeal.
 
-| Suite                                                                              | Line                                                       | What it pins                                                                                            |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `tool-processors.test.ts`                                                          | `:76-82`, `:84-98`, `:114-121`, `:123-145`                 | the `requiresRaster`, non-deterministic, raster-committed and creator rosters, each a literal `toEqual` |
-| same                                                                               | `:159-193`, `:406-426`, `:428-436`, `:438`                 | `toolName → commit` for all 29 tools, plus the identity tables                                          |
-| same                                                                               | `:363-384`, `:386-398`                                     | the placeholder list, and the TODO-badge test — see case (c)                                            |
-| same                                                                               | `:548-587` (coverage `:589`), `:742-772` (coverage `:782`) | the dispatch and icon tables                                                                            |
-| `src/components/Main/__tests__/Main.toolAreas.test.tsx`                            | `:107-133`                                                 | the `interactionMode` routing table                                                                     |
-| `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx`               | `:12-30`                                                   | `PLACEHOLDER_TOOLS`, mirrored by hand                                                                   |
-| `src/components/SidebarLeft/__tests__/harness.tsx`                                 | `:79-111`                                                  | `toolIcons` mocked with an explicit per-tool list                                                       |
-| `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`; `tool-settings.test.ts` | `:21-55`; `:255-268`                                       | a hand-copied `ToolIconName` union; every tool name survives `saveLastSettings`                         |
+| Suite                                                                              | Line                                                                                                                                                                                                                                                                                                                                                                | What it pins                                                                                            |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `tool-processors.test.ts`                                                          | `it('marks only raster-producing tools as requiring raster')`, `it('marks only unimplemented tools as non-deterministic')`, `it('commits every raster processor as a raster-processor replay')`, `it('only labels source-creating tools as creators, and each creator commits as a source')`                                                                        | the `requiresRaster`, non-deterministic, raster-committed and creator rosters, each a literal `toEqual` |
+| same                                                                               | `it('maps the full tool roster onto the declared commit kinds')`, the `describe('paint tool raster processors')` `run` helper and `stroke` fixture, `it('brush rasterizes a pen stroke at the requested line width')`, that case's single-`stroke()` assertion                                                                                                      | `toolName → commit` for all 29 tools, plus the identity tables                                          |
+| same                                                                               | `it('claims no tool for both the placeholder roster and the real options bars')`, `it('shows a TODO badge on the placeholder toolbox components')`                                                                                                                                                                                                                  | the placeholder list, and the TODO-badge test — see case (c)                                            |
+| same                                                                               | `it('mirrors every processor entry and adds an icon plus a toolbox component')` (coverage `it('spreads no processor into a pixel-free toolsMap entry')`), `it('never lets two different tools share the same non-unimplemented processor by accident')` (coverage `it('accepts one params argument on every registry entry except the shared unimplemented stub')`) | the dispatch and icon tables                                                                            |
+| `src/components/Main/__tests__/Main.toolAreas.test.tsx`                            | `Main.toolAreas.test.tsx` — the `describe('Main tool-area routing')` block                                                                                                                                                                                                                                                                                          | the `interactionMode` routing table                                                                     |
+| `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx`               | `ToolbarPlaceholder.test.tsx` — the hand-copied `PLACEHOLDER_TOOLS`                                                                                                                                                                                                                                                                                                 | `PLACEHOLDER_TOOLS`, mirrored by hand                                                                   |
+| `src/components/SidebarLeft/__tests__/harness.tsx`                                 | `harness.tsx` — the `vi.mock('../toolIcons.tsx', …)` factory                                                                                                                                                                                                                                                                                                        | `toolIcons` mocked with an explicit per-tool list                                                       |
+| `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`; `tool-settings.test.ts` | `toolIcons.test.tsx` — the hand-copied `toolIconNames` array; `tool-settings.test.ts` — the `it('persists every registered tool name, so the chain cannot drop one')` case                                                                                                                                                                                          | a hand-copied `ToolIconName` union; every tool name survives `saveLastSettings`                         |
 
 **Classify each red test into exactly one of three cases.**
 
@@ -2569,7 +2569,7 @@ _derives_ its roster and updates itself; (2) classify each hard-coded roster bel
 - **(c) Its only half disappears because you removed the last example of something.** Subtle, and
   it bit a real build.
 
-**Case (c), the worked example.** `tool-processors.test.ts:457-469` read:
+**Case (c), the worked example.** `tool-processors.test.ts` — the `it('shows a TODO badge on the placeholder toolbox components')` case read:
 
 ```ts
 it('shows a TODO badge on real placeholders and hides it where the tool is functional', () => {
@@ -2587,7 +2587,7 @@ have passed against a bar that rendered a TODO badge forever.
 `expect(true)`; **(2)** rename the test to what it now claims — the reference branch renamed it to `it('shows a TODO badge on the
 placeholder toolbox components')` and left a comment naming where the property moved; **(3)** re-assert the lost property where it is now
 true, in the new bar's own suite — the reference branch added `it('no longer renders the TODO placeholder it replaced')` to
-`brush-toolbar:src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx:147-160`, asserting both the absence of `TODO` and of every
+`brush-toolbar`'s `Paint.test.tsx` — its `it('no longer renders the TODO placeholder it replaced')` case, asserting both the absence of `TODO` and of every
 dead control name. A case-(c) test is not "a test to update" — it is a test whose coverage you are **relocating**. If you cannot name the
 new home for the lost property, you deleted a pin.
 
@@ -2793,7 +2793,7 @@ and the preview frozen, and the repo compiles with `babel-plugin-react-compiler`
 **The two canvas-mock traps that cost a real build two debug cycles.**
 
 1. `installCanvasContextStub` returns a **new mock context on every `getContext` call**
-   (`src/test/setup.ts:211-215`). A `last()`-style accessor therefore compares apples to
+   (`src/test/setup.ts` — `installCanvasContextStub()`). A `last()`-style accessor therefore compares apples to
    oranges the moment the component repaints: the second paint lands on a different object and
    your call count reads zero. Count across **all** captured contexts.
 2. The preview canvas's own context is **not** the last one allocated, because the draw path
@@ -2944,12 +2944,12 @@ Each has a failure mode a weaker version of the same test would miss.
 
 **1. The value survives a tool switch — not merely the key.** The key-survives test passed
 happily while every setting was being discarded on the same tick. `toolName in lastSavedSettings`
-(`src/tools/__tests__/tool-settings.test.ts:263-276`) is true for an arm that stores `{ toolName }` and nothing else, so the mandatory
+(`src/tools/__tests__/tool-settings.test.ts` — the `it('persists every registered tool name, so the chain cannot drop one')` case) is true for an arm that stores `{ toolName }` and nothing else, so the mandatory
 test writes the values, switches to another tool, edits that tool, and switches back:
 
 Editing another tool is what loses the value in production: it replaces the provider's in-memory args, so the switch back has to read
-`lastSavedSettings`. Use the existing `switchToTool` helper (`src/util/__tests__/settings.test.ts:42-46`), which models the real read path
-(`cloneSavedToolArgs`, `src/contexts/useCurrentTool.tsx:33`).
+`lastSavedSettings`. Use the existing `switchToTool` helper (`src/util/__tests__/settings.test.ts` — the `switchToTool` helper), which models the real read path
+(`cloneSavedToolArgs`, `src/contexts/useCurrentTool.tsx` — `cloneSavedToolArgs()`).
 
 **2. An absent or zero setting renders byte-identically to the legacy path.** Assert the identity
 result — `expect(smoothStrokePoints(zigzagPath, 0)).toBe(zigzagPath)` — never equality. The caller branches on `points === sampled` to
@@ -2957,7 +2957,7 @@ avoid allocating a new args object, so an equal-but-fresh array would silently a
 passes on it, and the legacy render is what breaks.
 
 **3. A call-count invariant.** `beginPath` once, `moveTo` to the first sample once, `stroke()`
-once (`src/tools/__tests__/paint-tools.test.ts:227-229`). A future stamp loop changes the render and the call counts together, so this is
+once (`paint-tools.test.ts` — the `it.each(paintToolNames)('strokes %s with the pen renderer, whatever penType the args carry')` call-count assertions). A future stamp loop changes the render and the call counts together, so this is
 the assertion that makes it fail loudly. Pin it on the real processor, not on a helper that re-derives it.
 
 **4. An unrecognised enum value falls back to a safe default rather than reaching the
@@ -2974,8 +2974,8 @@ and show `Custom` on a bar sitting on that tip.
 is what makes `requiresRaster` unchoosable.
 
 Two more that are cheap and load-bearing: assert the **absence** rather than the starting value for an early-bail branch
-(`expect(canvas.ctx.lineWidth).not.toBe(defaults.lineWidth)`, because `toBe(0)` passes for any input — `paint-tools.test.ts:237` is the positive form it inverts), and assert
-a degenerate input draws nothing while still returning a full-size canvas (`paint-tools.test.ts:108-110`).
+(`expect(canvas.ctx.lineWidth).not.toBe(defaults.lineWidth)`, because `toBe(0)` passes for any input — `paint-tools.test.ts` is the positive form it inverts), and assert
+a degenerate input draws nothing while still returning a full-size canvas (`paint-tools.test.ts` — the full-size-canvas assertions in its degenerate-input case).
 
 ### Prove each test fails without its fix
 
@@ -3011,7 +3011,7 @@ Mutation check:
 - git status --short empty before and after each revert
 ```
 
-This is the shape the repo already uses: `docs/handoffs/ps-transform-geometry-review-and-merge.md:101-103` records "Every new test was
+This is the shape the repo already uses: `docs/handoffs/ps-transform-geometry-review-and-merge.md` §"3.9 Test quality" records "Every new test was
 proven to **fail against the pre-fix code** (20 failures when the old `homography.ts` was restored; restored afterwards)." Two failures to
 refuse. A test that passes against the revert is not evidence — delete or strengthen it. A test that fails for the _wrong_ reason (a
 `TypeError` from the revert rather than an assertion) proves the revert was fatal, not that the test guards the behaviour; read the
@@ -3059,9 +3059,9 @@ from the device pixel ratio (which pass headless) against the CDP specs with an 
 `deviceScaleFactor: 2` (which pass headed). Both are fixed, and the fix was to remove the scale
 assertion rather than re-derive it, so the sets are now empty **by construction, not by
 observation** — the helper that read the device pixel ratio is gone, and
-`e2e/helpers/__tests__/cdp-helpers.unit.test.ts:145` and `:155` pin that it stays gone. If
+`cdp-helpers.unit.test.ts` — the `it('does not restate the deviceScaleFactor multiplication the sibling spec disproved')` and `it('states the mechanism the sibling spec measured instead')` cases pin that it stays gone. If
 something only reproduces visually, that is the operator's call — name the command and stop
-there. `docs/TESTING.md:25-28` is the authority for the rule.
+there. `docs/TESTING.md` — the "DO NOT "FIX" A FAILURE BY FLIPPING THE MODE" paragraph is the authority for the rule.
 
 Read a failure from disk, never a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing
 test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record
@@ -3226,7 +3226,7 @@ expect(rendered, 'the Mode select must expose exactly the blend modes the paint 
 **Never assert a hardcoded count** — a count drifts the first time someone adds an option, and the
 drift is invisible. The label/value pairing is copied from the source constant rather than imported,
 because nothing under `e2e/` may import from `src/` (`tsconfig.e2e.json` has no `paths` alias into
-the app; `e2e/README.md:197-200`). The duplication is deliberate: a mode added to the source list
+the app; `e2e/README.md` — the "No `paths` alias and no `jsx`" bullet). The duplication is deliberate: a mode added to the source list
 fails the equality assertion instead of silently going untested. Leave the bar on its default at the
 end.
 
@@ -3236,54 +3236,54 @@ regression back to the placeholder component. `ToolbarHorizontal` renders a
 one line a regression to a placeholder bar is silent.
 
 **The synchronisation rule.** Never a bare `waitForTimeout` after a draw. `waitForCanvasPixels`
-(`e2e/helpers/canvas-helpers.ts:369`) is the single poll loop — 10 s timeout, 100 ms interval
-(`:53-54`) — and every other wait in the file is a specialisation of it, so the timeout, the
+(`e2e/helpers/canvas-helpers.ts` — `waitForCanvasPixels()`) is the single poll loop — 10 s timeout, 100 ms interval
+(`CANVAS_REDRAW_TIMEOUT_MS` and `CANVAS_REDRAW_POLL_INTERVAL_MS`) — and every other wait in the file is a specialisation of it, so the timeout, the
 interval and the error wording can only be changed in one place. Pass a named `description`: the
 timeout error prints `Canvas did not render <description> within 10000ms`. `waitForCanvasRedraw`
-(`:393`) is the dark-pixel specialisation. Two refinements the shipped spec added: a low-opacity or
+(`waitForCanvasRedraw()`) is the dark-pixel specialisation. Two refinements the shipped spec added: a low-opacity or
 light stroke is **invisible to `hasDarkPixels`**, which times out on a stroke that landed — write a
 `CanvasPixelPredicate` polling for "no longer near-white" at the clip centre via
 `getColorAtPoint(..., { ignoreNearWhite: true })`; and **re-measure the canvas box after the panel
 opens, and re-take the pre-change reading through that same rect**, because opening an options bar
 reflows the workspace and a box measured before the switch describes a different region of the
 page — so two readings through two rects are not a comparison at all
-(`e2e/levels.spec.ts:106-124`).
+(`e2e/levels.spec.ts` — `readRedLine()`).
 
 **Clip and coordinate helpers.** `takeLineScreenshot(page, box, name, testInfo, clip?)`
-(`canvas-helpers.ts:191`) is the `page.screenshot` path; `captureCanvasScreenshot(page, box,
-testInfo, name, clip?)` (`e2e/helpers/cdp-helpers.ts:25`) is the CDP path. Pass a **bare filename**
+(`canvas-helpers.ts` — `takeLineScreenshot()`) is the `page.screenshot` path; `captureCanvasScreenshot(page, box,
+testInfo, name, clip?)` (`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`) is the CDP path. Pass a **bare filename**
 as `name`: only `outputDir` is created, so a name with a separator fails `ENOENT` and a traversing
-name resolves outside it (`e2e/OPEN_PROBLEMS.md:216-237`). **Never divide by `devicePixelRatio`** —
-and note that rule lives in a comment, not a guard (`cdp-helpers.ts:39-51`), so a future change can
+name resolves outside it (`e2e/OPEN_PROBLEMS.md` §"P3 — the artifact name is interpolated into a path unsanitised"). **Never divide by `devicePixelRatio`** —
+and note that rule lives in a comment, not a guard (`cdp-helpers.ts` — the "do not divide by devicePixelRatio" comment), so a future change can
 delete the reasoning without deleting anything that fails. Downstream code derives the scale from
-the decoded image dimensions instead, via `screenshotBoundsToCss` (`canvas-helpers.ts:31`) and
-`screenshot-scale.ts` (`imagePointToCss` `:36`, `cssPointToImage` `:49`, `imageBoundsToCss` `:56`).
+the decoded image dimensions instead, via `screenshotBoundsToCss` (`canvas-helpers.ts` — `screenshotBoundsToCss()`) and
+`screenshot-scale.ts` (`screenshot-scale.ts` — `imagePointToCss()`, `cssPointToImage()`, `imageBoundsToCss()`).
 
 ### Traps
 
 `e2e/OPEN_PROBLEMS.md` holds latent e2e defects — ones no current run trips but that a new spec can
 walk into. **Read it before investigating any e2e failure, and do not re-introduce a known defect**
-(`AGENTS.md`, "E2E failures"). On the default headless run nothing fails (`e2e/OPEN_PROBLEMS.md:41-42`), so a new
+(`AGENTS.md`, "E2E failures"). On the default headless run nothing fails (`e2e/OPEN_PROBLEMS.md` §"Observed failures"), so a new
 failure is a new defect, never a known one. Characterised, not listed:
 
-1. **Empty input flowing into arithmetic.** `screenshotBoundsToCss` (`canvas-helpers.ts:31`) and
+1. **Empty input flowing into arithmetic.** `screenshotBoundsToCss` (`canvas-helpers.ts` — `screenshotBoundsToCss()`) and
    `imagePointToCss` / `cssPointToImage` divide by the image or box dimension, so a zero-sized
    input yields `NaN` or `Infinity` instead of throwing — deliberately, so the modules stay
-   branch-free and total, and it is pinned (`e2e/OPEN_PROBLEMS.md:174-181`). A `NaN` coordinate
+   branch-free and total, and it is pinned (`e2e/OPEN_PROBLEMS.md` §"P3 — zero-sized image yields `NaN` edges"). A `NaN` coordinate
    reaching `page.mouse.click` is opaque. **Reject a null or empty bounds result before you
    measure**, and throw a named error rather than asserting on it. The same class hides in the CDP
    helper: an empty `data` decodes to a zero-byte buffer that is written, attached and returned as
-   a successful capture (`:110-130`), a response with no `data` surfaces as a raw `TypeError` from
-   `Buffer` (`:153-172`), and a failing `cdp.detach()` replaces the capture error and destroys the
-   cause (`:132-151`). Check the **decoded length**, not just the field.
+   a successful capture (`captureCanvasScreenshot()`'s "check the DECODED length" block), a response with no `data` surfaces as a raw `TypeError` from
+   `Buffer` (`captureCanvasScreenshot()`'s missing-`data` error), and a failing `cdp.detach()` replaces the capture error and destroys the
+   cause (`captureCanvasScreenshot()`'s `finally` / `cdp.detach()`). Check the **decoded length**, not just the field.
 
 2. **The positional canvas fallback.** `getWorkspaceCanvas` is `page.getByTestId('workspace-canvas')`
-   and nothing else (`canvas-helpers.ts:187`). The removed `.or(nth(1))` was never a priority —
+   and nothing else (`canvas-helpers.ts` — `getWorkspaceCanvas()`). The removed `.or(nth(1))` was never a priority —
    `.or()` returns a union, so with the test id present the locator resolved to 2 elements and every
    `boundingBox()` raised a strict-mode violation; and the index was wrong anyway, because the Draw
    toolbar mounts a preview canvas ahead of the workspace and unmounting it on a tool switch shifted
-   the index onto a hidden overlay (`canvas-helpers.ts:174-186`, `e2e/README.md:315-319`). That was
-   `e2e/levels.spec.ts:82,146` before the test id landed (`e2e/OPEN_PROBLEMS.md:48-52`).
+   the index onto a hidden overlay (`canvas-helpers.ts` — `getWorkspaceCanvas()`, `e2e/README.md` — the `getWorkspaceCanvas` single-selector paragraph). That was
+   `e2e/levels.spec.ts` — its `getWorkspaceCanvas()` lookups before the test id landed (`e2e/OPEN_PROBLEMS.md` — the `e2e/levels.spec.ts` row of the fixed-defects table ("canvas found by test id, not document order")).
    **`getWorkspaceCanvas` is deliberately a single-selector locator so it can only ever match one
    element.** A tool whose own bar mounts a preview canvas makes the same trap reachable through a
    _new_ path, which is why the brief names it explicitly.
@@ -3292,22 +3292,22 @@ failure is a new defect, never a known one. Characterised, not listed:
    capture size from `window.devicePixelRatio`, but the capture scale is neither a function of that
    value nor of the emulated ratio — it belongs to Chrome. The contract was **removed rather than
    re-derived** and replaced with assertions that hold everywhere: exact rect, one integral scale on
-   both axes, correct pixels, no rescaling of the helper's own output (`e2e/README.md:299-304`).
+   both axes, correct pixels, no rescaling of the helper's own output (`e2e/README.md` — the `captureCanvasScreenshot at an emulated deviceScaleFactor of 2` status row).
    Each was mutation-tested. A new CDP capture assertion must not name a scale.
 
 4. **The keyboard flyout race.** "The flyout closes asynchronously" was the reading this defect got
    stuck at. The real mechanism is a `requestAnimationFrame` focus handover — the app focuses the
    flyout's first item from a rAF in the tool button's keydown handler, not in the React commit that
    mounts the menu, so "the menu is visible" and "an item holds focus" are two moments one animation
-   frame apart (`e2e/OPEN_PROBLEMS.md:342-374`). Over 12 runs: 5 of 12 failures waiting on
+   frame apart (`e2e/OPEN_PROBLEMS.md` — the `e2e/sidebar-keyboard.spec.ts` row of the `Observed failures` table). Over 12 runs: 5 of 12 failures waiting on
    visibility, 0 of 12 waiting on the promised item's focus. **Use `openToolFlyoutViaKeyboard`
-   (`toolbar-helpers.ts:277`), never `waitForFlyout` (`:163`) alone** — the right-click path never
+   (`e2e/helpers/toolbar-helpers.ts` — the keyboard flyout opener, which the file does not export: it has only `openToolFlyout()` and `waitForFlyout()`), never `waitForFlyout()` alone** — the right-click path never
    focuses an item, so a shared assertion breaks it. And `ArrowUp` focuses the **last** item, so a
    single `.first()` assertion is simply wrong for that key. This entry is filed under
-   `## Fixed — Enter did not reliably close the flyout` (`:257`), not among the open latents.
+   `## Fixed — Enter did not reliably close the flyout` (a heading that is not in `e2e/OPEN_PROBLEMS.md` today), not among the open latents.
 
-5. **The port race, and what a run can silently attach to.** `playwright.config.ts:19-20` takes the
-   port from `PLAYWRIGHT_PORT`, defaulting to 5173, and `:111-137` makes `reuseExistingServer` an
+5. **The port race, and what a run can silently attach to.** `playwright.config.ts` — the `PLAYWRIGHT_PORT` read takes the
+   port from `PLAYWRIGHT_PORT`, defaulting to 5173, and `playwright.config.ts` — makes `reuseExistingServer` an
    unconditional `false` with `--strictPort` on the server command. `npm run test:e2e` allocates a
    port per run, verifies it, and records it, so even the bare `npx playwright test` now FAILS loudly
    on an occupied port instead of attaching. An older version of this file made reuse opt-**in**;
@@ -3324,9 +3324,9 @@ failure is a new defect, never a known one. Characterised, not listed:
    every worktree**, and put it in the brief so a subagent cannot forget.
 
 Two more latent entries: a nearly transparent pixel counts at full weight in `dominantRed`
-(`canvas-helpers.ts:220`) and `getColorAtPoint` (`:502`), so a light or translucent stroke makes a
-colour assertion worthless (`e2e/OPEN_PROBLEMS.md:183-195`); and a bare `name` passed to
-`captureCanvasScreenshot` is interpolated into a path unsanitised (`:216-237`). **Do not weaken a
+(`canvas-helpers.ts` — `dominantRed()`) and `getColorAtPoint` (`canvas-helpers.ts` — `getColorAtPoint()`), so a light or translucent stroke makes a
+colour assertion worthless (`e2e/OPEN_PROBLEMS.md` §"P3 — transparent pixels weighted as fully opaque (low confidence)"); and a bare `name` passed to
+`captureCanvasScreenshot` is interpolated into a path unsanitised (`e2e/OPEN_PROBLEMS.md` §"P3 — the artifact name is interpolated into a path unsanitised"). **Do not weaken a
 gate to get green:** no skips, no raised thresholds, no deleted assertions, no re-recorded visual
 baselines (`AGENTS.md`, "Gates" and "E2E failures").
 
@@ -3334,23 +3334,23 @@ baselines (`AGENTS.md`, "Gates" and "E2E failures").
 
 Baselines live in `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`, resolved
 through `testInfo.snapshotDir` rather than `snapshotPath()` so a baseline committed on one machine
-does not read as missing on another (`e2e/README.md:243-263`). The directory holds 17 committed
+does not read as missing on another (`e2e/README.md` — the `testInfo.snapshotDir` paragraph under "Baseline layout"). The directory holds 17 committed
 files; 7 are read, one per format with `comparePixels: true` (`drawing.png.png`, `.jpeg`, `.webp`,
 `.svg`, `.bmp`, `.gif`, `.avif`); the other 10 are orphans nothing references
-(`e2e/OPEN_PROBLEMS.md:197-215`). `.gitattributes:14` marks the snapshot tree `binary` so
+(`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes:14` marks the snapshot tree `binary` so
 line-ending normalisation can never rewrite the committed pixels.
 
 **A green run means the pixels matched** — only because the record-vs-compare branch is gated on
 `testInfo.config.updateSnapshots === 'all'`
-(`e2e/export/visual-regression.spec.ts:88-99`). It used to
+(`e2e/export/visual-regression.spec.ts` — the `testInfo.config.updateSnapshots === BASELINE_RECORD_MODE` guard). It used to
 be `if (testInfo.config.updateSnapshots)`, and Playwright's default for that option is the string
 `'missing'`, which is **truthy** — so every run re-recorded the committed baseline and returned
 before `compareScreenshots`, and the comparison below it was unreachable. The 7 formats were a
 no-op reporting success, invisible because re-encoding the same export produced byte-identical
-files (`visual-regression.spec.ts:88-99`, `e2e/MIGRATION-TODO.md:52-60`). Budgets are `threshold:
-0.01` and `maxDiffPixels: 100` at the call site (`:145-148`), defaulting to `DEFAULT_THRESHOLD = 0.2` /
+files (`visual-regression.spec.ts` — the same record-vs-compare guard, `e2e/MIGRATION-TODO.md` — the "Not asked for, and worth knowing — the visual-regression gate was void" paragraph). Budgets are `threshold:
+0.01` and `maxDiffPixels: 100` at the call site (the "100 pixels is a tripwire, not a tolerance" comment at the call site), defaulting to `DEFAULT_THRESHOLD = 0.2` /
 `DEFAULT_MAX_DIFF_PIXELS = 100` / `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01`
-(`e2e/helpers/image-comparison.ts:27-29`); read the call site rather than assuming a budget.
+(`e2e/helpers/image-comparison.ts` — `DEFAULT_THRESHOLD` / `DEFAULT_MAX_DIFF_PIXELS` / `DEFAULT_MAX_DIFF_PIXEL_RATIO`); read the call site rather than assuming a budget.
 
 **100 pixels is a tripwire, not a tolerance, and the argument is at the call site.** It is 0.021% of
 an 800x600 baseline, four of the seven compared formats are lossy (JPEG, WebP, GIF, AVIF), and the
@@ -3368,8 +3368,8 @@ declares the flag with `preset: 'changed'`, so the **bare** flag resolves to `'c
 re-records nothing — and `'changed'` could not help even if it did, because this spec reads its
 baseline with `readFile` rather than through a snapshot assertion. The script carried the bare
 flag for as long as this document did, and the two no-opped together
-(`visual-regression.spec.ts:105-113`). A missing baseline attaches the export and then throws on
-purpose: the comparison was never made (`visual-regression.spec.ts:101-112`).
+(`visual-regression.spec.ts` — the "A bare truthiness check on `updateSnapshots` was the first defect here" comment). A missing baseline attaches the export and then throws on
+purpose: the comparison was never made (`visual-regression.spec.ts` — the throw a missing baseline reaches).
 
 **The baselines were recorded through the legacy `draw` tool**, so any change to the legacy raster
 path invalidates them — the shipped brush handoff says so explicitly (`brush-toolbar:HANDOFF.md`
@@ -3567,7 +3567,7 @@ An adversarial review brief must contain:
 - **Named failure modes to check**, not vague ones. The recorded briefs asked questions whose
   answers mattered: does `getImageData` alias the backing store (which would make tests pass when
   they should fail); is `getImageData()` with no args handled; does making `filter` functional change
-  which path `src/util/selection.ts:579-581` now takes, given its "Fall through to CPU rasterization
+  which path `src/util/selection.ts` — the `ctx.clip()` comment and the non-zero-winding note now takes, given its "Fall through to CPU rasterization
   for tests" comment implies the mock deliberately omits `getImageData`.
 - **A scope-and-conventions audit as its own reviewer**, because scope creep is invisible to a
   correctness reviewer.
@@ -3681,9 +3681,9 @@ doc or a hook comment in this repo has gone stale. Decide from what each gate an
 
 ### 8.2 The typecheck trap
 
-**`npm run tsc` is the only trustworthy typecheck**, and the reason is in the tree: `tsconfig.json:1-14` is a `files: []` solution stub whose own comment says a bare `npx tsc` / `npx tsc --noEmit` "resolves zero input files and always exits 0 — that is the design, not a defect". `tsc -b` builds its three references, and only `tsconfig.e2e.json:44` includes `e2e/**/*.ts` — so nothing but `tsc -b` type-checks a Playwright spec or an e2e helper unit file.
+**`npm run tsc` is the only trustworthy typecheck**, and the reason is in the tree: `tsconfig.json` — the `files: []` solution stub, whose own comment says a bare `npx tsc` / `npx tsc --noEmit` "resolves zero input files and always exits 0 — that is the design, not a defect". `tsc -b` builds its three references, and only `tsconfig.e2e.json` — its `include` array includes `e2e/**/*.ts` — so nothing but `tsc -b` type-checks a Playwright spec or an e2e helper unit file.
 
-`--force` is **not** required: `tsconfig.app.json:3-8` states that with `noEmit: true` and no `composite`, `tsc -b` re-checks the project on every run, and `tsconfig.node.json:3-5` says the same for the node project. Note also `tsconfig.app.json:43` is `"include": ["src", "toolbar-mapping.ts"]` — the root-level file is listed explicitly because `src` does not match it and it would otherwise enter the program only through its importers. A new root-level `.ts` needs the same treatment, or CI's coverage assertion fails.
+`--force` is **not** required: `tsconfig.app.json` — the comment above `tsBuildInfoFile` states that with `noEmit: true` and no `composite`, `tsc -b` re-checks the project on every run, and `tsconfig.node.json` — the comment above `tsBuildInfoFile` says the same for the node project. Note also `tsconfig.app.json` — its `include` array is `"include": ["src", "toolbar-mapping.ts"]` — the root-level file is listed explicitly because `src` does not match it and it would otherwise enter the program only through its importers. A new root-level `.ts` needs the same treatment, or CI's coverage assertion fails.
 
 ### 8.3 What the hooks leave out
 
@@ -3717,7 +3717,7 @@ PLAYWRIGHT_PORT=5199 npm run test:e2e          # headless, last: slowest, most e
   count, restore. A test that passes either way consumes a maintainer's trust and is worse than no
   test.
 - **An e2e failure you cannot find in `e2e/OPEN_PROBLEMS.md`.** No pass/skip count is recorded in
-  `AGENTS.md` any more; the count lives in `e2e/OPEN_PROBLEMS.md:41-42`, and the skips are listed
+  `AGENTS.md` any more; the count lives in `e2e/OPEN_PROBLEMS.md` §"Observed failures", and the skips are listed
   in the same file.
 
 ### 8.5 CI jobs
@@ -3726,7 +3726,7 @@ Two things in `ci.yml` are not visible from the job list. The "every tracked `.t
 some project's `include`" step is a real constraint — a new file no project includes is
 type-checked by nothing, with no error anywhere. Scope it correctly, though: `tsc -b --listFiles`
 catches a file no project reaches but **not** one reachable only through its importers. And there
-are no coverage thresholds anywhere (`vitest.config.ts:19-32`, `vitest.e2e.config.ts:38-43`);
+are no coverage thresholds anywhere (`vitest.config.ts` — its `coverage` block, which declares no thresholds, `vitest.e2e.config.ts` — its `coverage` block);
 `--coverage` is for the report, not a percentage gate. The `dependency-review` job is gone, and the
 licence policy it read is written down in `DEPENDENCIES.md` and is not a gate — `npm audit` is the
 vulnerability half.
@@ -3735,10 +3735,10 @@ vulnerability half.
 
 **Never weaken a gate to get green**: no skips, no raised thresholds, no deleted assertions, no
 re-recorded visual baselines. The export baselines are genuinely compared now:
-`e2e/export/visual-regression.spec.ts:94` gates re-recording on
+`e2e/export/visual-regression.spec.ts` — the record-vs-compare guard gates re-recording on
 `testInfo.config.updateSnapshots === 'all'` — the exact string, because Playwright's default is the
 truthy string `'missing'` and the earlier truthiness check always re-recorded and returned before
-the comparison (`e2e/OPEN_PROBLEMS.md:396-405`). Re-record only with
+the comparison (`e2e/MIGRATION-TODO.md` §"Not asked for, and worth knowing — the visual-regression gate was void"). Re-record only with
 `npm run test:e2e:update-baselines`, which passes `--update-snapshots=all` — the bare flag
 resolves to `'changed'` and re-records nothing. It is an operator decision.
 
@@ -3832,16 +3832,16 @@ carried the four-part form plus the tripwire field:
 
 > **## 36. The Brush Settings panel has no representation in the renderer**
 >
-> **Problem.** `drawPen` (`src/util/draw.ts:142`) issues one `beginPath`, one `moveTo` and one
+> **Problem.** `drawPen` (`src/util/draw.ts`) issues one `beginPath`, one `moveTo` and one
 > `stroke()` for a whole stroke: the pen nib travels continuously along a path, and there is no dab
 > loop and no per-dab compositing to modulate. Every remaining Photoshop paint control is defined in
 > terms of a stamped tip, so none of them can be reached by wiring a field into the args — Hardness
 > needs a radial edge-falloff kernel, Spacing needs arc-length resampling between stamps, Flow needs
 > per-dab accumulation, and none of those exist on a single path.
 >
-> **Why it is not a wiring bug.** `buildDrawArgs` (`src/tools/toolProcessors.ts:96`) narrows
-> `penType` to `'pen' | 'spray'` and both paint tools force `'pen'` (`:260`, `:273`), so the one
-> per-point painter in the tree, `drawSpray` (`src/util/draw.ts:190`), is unreachable from a
+> **Why it is not a wiring bug.** `buildDrawArgs` (`src/tools/toolProcessors.ts` — `buildDrawArgs()`) narrows
+> `penType` to `'pen' | 'spray'` and both paint tools force `'pen'` (`src/tools/toolProcessors.ts` — the `brush` and `pencil` entries' `buildDrawArgs(args, 'pen', …)` calls), so the one
+> per-point painter in the tree, `drawSpray` (`src/util/draw.ts` — `drawSpray()`), is unreachable from a
 > brush or a pencil. That is deliberate — it is the adapter that makes the tools hard-edged — not an
 > oversight.
 >
@@ -3857,7 +3857,7 @@ carried the four-part form plus the tripwire field:
 > `e2e/export/visual-regression.spec.ts` baselines were recorded through the `draw` tool and are
 > unaffected as long as `draw` is left alone.
 >
-> **Files.** `src/util/draw.ts:85-213`, `src/tools/toolProcessors.ts:96,260,273`,
+> **Files.** `src/util/draw.ts` — the stroke renderers `drawLine()`, `drawPen()` and `drawSpray()`, `src/tools/toolProcessors.ts` — `buildDrawArgs()`,
 > `src/tools/__tests__/paint-tools.test.ts` (the three call-count pins)
 
 Item 41 carries the **needs-a-call** variant. Note what it does: it identifies the pin, says the
@@ -3868,7 +3868,7 @@ choice back without changing the pin or deleting the entry.
 >
 > **Problem.** `matchPaintPreset` compares all four settings with a `1e-9` epsilon and returns `''` —
 > rendered as `Custom` — unless all four match. The seeded brush is `alpha: 0.9, smoothing: 10,
-lineWidth: 10, blendMode: 'source-over'` (`src/tools/settings.ts:131-147`) and the closest preset,
+lineWidth: 10, blendMode: 'source-over'` (`src/tools/settings.ts` — the seeded `brush` default) and the closest preset,
 > `Hard Round`, is `alpha: 1, smoothing: 0` (`src/tools/brush.ts`). So a freshly selected brush
 > claims to be a hand-tuned combination, and `Hard Round` silently snaps opacity to 100% and
 > smoothing to 0 — two settings the user did not ask to change.
@@ -3879,7 +3879,7 @@ lineWidth: 10, blendMode: 'source-over'` (`src/tools/settings.ts:131-147`) and t
 > document's default stroke; the second changes nothing outside the bar.
 >
 > **Files.** `src/tools/brush.ts` (`PAINT_PRESETS`, `matchPaintPreset`),
-> `src/tools/settings.ts:131-147`, `src/tools/__tests__/paint-tools.test.ts` (the
+> `src/tools/settings.ts` — the seeded `brush` default, `src/tools/__tests__/paint-tools.test.ts` (the
 > `applies the default alpha and line width` case)
 
 The other four cover the range the same shape reaches: **37** the Pencil's `Auto Erase` does not
@@ -3901,7 +3901,7 @@ in files the agent just edited — precisely the set where the shift is largest.
 
 Procedure, in order:
 
-1. **Extract every `file:line`** in the entry, including bare ranges (`src/util/draw.ts:6-27`).
+1. **Extract every `file:line`** in the entry, including bare ranges (`src/util/draw.ts:‹lines›`).
 2. **`grep -n` each one** and read the actual line. Check the **substance**, not the arithmetic:
    confirm the line is still inside the construct you claim, not merely that a line exists there.
 3. **Re-derive the range from the code**, not from memory. Read the function; find its real first
@@ -3915,11 +3915,11 @@ Procedure, in order:
 
 A stale line number is not neutral: the next session spends a full investigation on a bug that is
 already gone, or worse "fixes" a line that has nothing to do with it (`AGENTS.md`,
-`:139`). The discipline the working `HANDOFF.md` states about itself, and that your entry
+`AGENTS.md` §"NO LINE NUMBERS IN PROSE — EVER"). The discipline the working `HANDOFF.md` states about itself, and that your entry
 inherits:
 
 > **Re-derive a citation from the sentence that contains it, never from the old number**, and
-> treat every citation in a file you have not just read as unverified. (`HANDOFF.md:10-18`,
+> treat every citation in a file you have not just read as unverified. (`HANDOFF.md` — the entry that names its own citation drift and counts the stale citations,
 > where that file names its own citation drift as a standing defect and quantifies it)
 
 **Dropped, not softened.** A claim that does not survive verification is deleted from the entry. It
@@ -3930,17 +3930,17 @@ does not become a hedged sentence.
 The rule is not scoped to `HANDOFF.md`. **A change that invalidates a count or a claim in another
 doc fixes it in the same commit.**
 
-- **A passing-test count is a real one that went stale.** `e2e/OPEN_PROBLEMS.md:41-42` reads "97 pass,
-  2 are skipped by declaration", and `e2e/README.md:401-407`
+- **A passing-test count is a real one that went stale.** `e2e/OPEN_PROBLEMS.md` §"Observed failures" reads "97 pass,
+  2 are skipped by declaration", and `e2e/README.md` — the export-baseline tree listing, which no longer carries the passing-test count
   still carries the justification the count was drawn from ("2–4 of the 97 tests failed for
   documented reasons"). Every one moves the moment a test is added — which is why
-  `e2e/README.md:280-288` points at the three commands instead of restating the numbers, and why
-  `e2e/OPEN_PROBLEMS.md:13-17` now says plainly: "The numbers this file used to open with — tests
+  `e2e/README.md` — the `e2e-unit` command block points at the three commands instead of restating the numbers, and why
+  `e2e/OPEN_PROBLEMS.md` — the preamble paragraph beginning "The numbers this file used to open with" now says plainly: "The numbers this file used to open with — tests
   passed, expected-fail pins, files, mode-specific failure sets — were each a snapshot of one tree,
   and each has been wrong since it was written while the number beside it stayed silent."
-- **A claim about a gate is a real one.** `e2e/README.md:401-411` still says the `e2e` job "is
+- **A claim about a gate is a real one.** `e2e/README.md` — the "It is a **blocking** gate" paragraph, which no longer says `continue-on-error: true` still says the `e2e` job "is
   still marked `continue-on-error: true`" and leaves "flipping `continue-on-error` to `false`" as
-  the thing left to do. It is not: the job was promoted, and `.github/workflows/ci.yml:205-232`
+  the thing left to do. It is not: the job was promoted, and `.github/workflows/ci.yml` — the `e2e` job's "It was `continue-on-error: true`" comment
   documents the promotion and why the old justification had stopped describing the suite.
   `AGENTS.md` already carries the new claim. **The README is the stale one** — fix it in the same
   commit that promotes the job, not three commits later.
@@ -3953,7 +3953,7 @@ doc fixes it in the same commit.**
 
 ## Phase 10 — integration
 
-Branches merge **leaf → integration line → `main`**, with `--no-ff`, and the full gate re-run after **each** merge, never batched (`08-merge-plan.md:67-73`).
+Branches merge **leaf → integration line → `main`**, with `--no-ff`, and the full gate re-run after **each** merge, never batched (`08-merge-plan.md` §"3. Merge order").
 
 ### 10.1 Before you stage
 
@@ -3976,7 +3976,7 @@ Conventional Commits with a scope and a body that explains the _why_ (`git log -
 
 ### 10.3 The pre-commit hook rewrites your files — re-verify after
 
-`lint-staged` runs `eslint --fix` then `prettier --write` on every staged `.ts`/`.tsx` (`package.json:38-41`). With `--fail-on-changes` the commit is **blocked** and the fix stays in the working tree:
+`lint-staged` runs `eslint --fix` then `prettier --write` on every staged `.ts`/`.tsx` (`package.json` — its `lint-staged` block). With `--fail-on-changes` the commit is **blocked** and the fix stays in the working tree:
 
 ```bash
 git add <paths>
@@ -3998,18 +3998,18 @@ npm run build
 PLAYWRIGHT_PORT=5199 npm run test:e2e
 ```
 
-Batching merges and then debugging four sets of failures at once is what `08-merge-plan.md:112-113` explicitly warns against; the full gate after each merge is what makes "which merge broke it" answerable. The model is `f534335`, "merge: 15 review branches from the untouched-code campaign": 15 `rev2/*` leaves into `rev2/integration`, then that line into `main` with a body listing the highlights, the gates run, and the pin delta. The handoff doc ships inside the merge.
+Batching merges and then debugging four sets of failures at once is what `08-merge-plan.md` §"5. Cross-cutting state at merge time" — the "Rebase onto current main BEFORE merging, one worktree at a time" bullet explicitly warns against; the full gate after each merge is what makes "which merge broke it" answerable. The model is `f534335`, "merge: 15 review branches from the untouched-code campaign": 15 `rev2/*` leaves into `rev2/integration`, then that line into `main` with a body listing the highlights, the gates run, and the pin delta. The handoff doc ships inside the merge.
 
 Integration lines here are `rev2/integration`, `history/integration` and `cleanup/integration` — check with `git branch --list '*integration*'` before assuming one exists. `ps-integration` is **not** one: it is a parked preservation branch. `HANDOFF.md` §17 lists it as holding unmerged commits and §17 records that merging `wip/ps-integration` as written would break the others, because it reads `process.env.E2E_PORT` where they all use `PLAYWRIGHT_PORT`. Review it; do not land it.
 
 ### 10.5 When two branches touch the same file
 
-The model is `08-merge-plan.md:9-16`: a `Worktree / branch | Phase | Owns` table with one line of owned files per session, written **before** the work starts. Four rules follow.
+The model is `08-merge-plan.md` §"1. Ownership map": a `Worktree / branch | Phase | Owns` table with one line of owned files per session, written **before** the work starts. Four rules follow.
 
 1. **One owner per file.** A file named in exactly one `Owns` cell is that session's to edit; a file named in none belongs to nobody — a plan defect, raise it before the work.
 2. **The spine is a single-owner file set.** The registries — `tool-types.ts`, `toolProcessors.ts`, `toolsMap.ts`, `settings.ts`, `util/settings.ts`, `toolbar-mapping.ts`, `Main.tsx` — are edited by every layer and are positionally coupled. Two agents editing them conflict; an agent editing `toolbar-mapping.ts` beside one editing the e2e flyout testids produces tests that pass locally and fail after merge. Assign the whole set to one agent.
-3. **A worker that needs a file it does not own stops and reports.** It does not reach. `08-merge-plan.md:44-49` records `ps-transform-geometry` being told to report needed changes in `layer-renderer.ts` / `useLayer.ts` / `materialization.ts` / `history-replay.ts` rather than edit them, and `docs/handoffs/ps-transform-geometry-review-and-merge.md:17` records that this boundary is _precisely why_ several defects it found still exist. State the boundary in the brief; do not assume it was read.
-4. **A collision recorded in advance is resolved at merge, not during the work.** The worked example is `08-merge-plan.md:20-32`: `ps-shape-geometry` will make `ShapeToolArea.test.tsx` fail, the file is owned by another session, so the merge applies the new expected geometry and splits the case out of the `it.each`.
+3. **A worker that needs a file it does not own stops and reports.** It does not reach. `08-merge-plan.md` §"2.4 Non-overlap that must stay non-overlapping" records `ps-transform-geometry` being told to report needed changes in `layer-renderer.ts` / `useLayer.ts` / `materialization.ts` / `history-replay.ts` rather than edit them, and `docs/handoffs/ps-transform-geometry-review-and-merge.md` — its own preamble records that this boundary is _precisely why_ several defects it found still exist. State the boundary in the brief; do not assume it was read.
+4. **A collision recorded in advance is resolved at merge, not during the work.** The worked example is `08-merge-plan.md` §"2.1 `ShapeToolArea.test.tsx` — real, expected": `ps-shape-geometry` will make `ShapeToolArea.test.tsx` fail, the file is owned by another session, so the merge applies the new expected geometry and splits the case out of the `it.each`.
 
 On an unpredicted conflict, do not resolve it by taking one side wholesale. Read both sides, then run the full gate — a green `tsc` on a mechanically-resolved conflict is not evidence.
 
@@ -4080,14 +4080,14 @@ Re-derive a row before you build it, exactly as [the rule above](#the-tool-backl
 
 On that tree:
 
-| Measure                                      | Count                                   | Where                                                                                                                                                         |
-| -------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Registered tools                             | **41**                                  | `src/tools/toolsMap.ts:55-164`; `ToolName` is `keyof ToolArgsByName` at `src/contexts/tool-types.ts:81`, and that type has the same 41 members at `:27-78`    |
-| Entries in `availableTools`                  | **41**                                  | `toolbar-mapping.ts:119-161`                                                                                                                                  |
-| Registrations with a `PlaceholderTool`       | **8**                                   | `toolsMap.ts:119,127,131,136,141,146,151,161`                                                                                                                 |
-| Registrations with a real options bar        | **33**, over **27 distinct components** | the other 33 rows; six of them (`shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`) all point at one `Shape` component — `toolsMap.ts:62,153-157` |
-| Registrations with `commit: 'unimplemented'` | **8**                                   | `toolProcessors.ts:300-335`; the shared no-op is `toolProcessors.ts:110`                                                                                      |
-| Toolbar tiles the app renders                | **40**                                  | `toolbar-mapping.ts:37-118`; Photoshop's 20-slot column is still FROM-MEMORY, so the slot-for-slot gap count is **not** re-derived here                       |
+| Measure                                      | Count                                   | Where                                                                                                                                                                |
+| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Registered tools                             | **41**                                  | `src/tools/toolsMap.ts` — `toolsMap`; `ToolName` is `keyof ToolArgsByName` at `src/contexts/tool-types.ts`, and that type has the same 41 members                    |
+| Entries in `availableTools`                  | **41**                                  | `toolbar-mapping.ts` — `availableTools`                                                                                                                              |
+| Registrations with a `PlaceholderTool`       | **8**                                   | `toolsMap.ts` — the eight `PlaceholderTool` rows                                                                                                                     |
+| Registrations with a real options bar        | **33**, over **27 distinct components** | the other 33 rows; six of them (`shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`) all point at one `Shape` component (`toolsMap.ts`'s six figure rows) |
+| Registrations with `commit: 'unimplemented'` | **8**                                   | `src/tools/toolProcessors.ts` — the `commit: 'unimplemented'` rows; the shared no-op is `src/tools/toolProcessors.ts` — `unimplemented`                              |
+| Toolbar tiles the app renders                | **40**                                  | `toolbar-mapping.ts` — `toolbarMap`; Photoshop's 20-slot column is still FROM-MEMORY, so the slot-for-slot gap count is **not** re-derived here                      |
 
 `availableTools` and `toolsMap` now agree at 41. The old 33-vs-29 divergence — the reason
 the inventory scoped itself to "registered tools (all of them in `availableTools`)" — is
@@ -4101,7 +4101,7 @@ paints. `brush` and `pencil` **left this set** — they now have real options ba
 
 **The structural finding — why an audit walking the registry cannot see a missing tool.**
 `toolsMap` is typed `Record<ToolName, Partial<ToolProcessorDefinition> & { icon; toolboxComponent }>`
-(`src/tools/toolsMap.ts:47-54`, declared at `:55`). The registry is still _total_ over `ToolName`
+(`src/tools/toolsMap.ts` — the `ToolsMap` type, declared at `export const toolsMap`). The registry is still _total_ over `ToolName`
 and still requires `icon` and `toolboxComponent` on every row, so it has no way to say "this
 Photoshop slot is empty", and no way to say "this row is a stub" — `PlaceholderTool` and `Pen`
 are the same `ToolbarRightComponent` to the type. Absence is invisible _from inside the
@@ -4110,7 +4110,7 @@ which look equally real. The two failure modes it cannot distinguish are both st
 **`Gradient` is named in the registry now** (the gap this section was written to expose has
 been filled), while `freeform-pen`, `curvature-pen`, `add-anchor-point`,
 `delete-anchor-point` and `convert-point` are rows that select, accept options, and produce
-nothing. The corpus's own `.kilo/plans/ps-research/00-tool-inventory.md:15` scopes itself to
+nothing. The corpus's own `00-tool-inventory.md` — its "Scope caveat: its universe" line scopes itself to
 "Registered tools (all 29 in `availableTools`)" — a count that is now itself stale — so a
 missing tool was outside its universe by construction, not by oversight.
 
@@ -4130,29 +4130,29 @@ right and its gap list empty.
 The deciding lines, all verified on that tree:
 
 - **Why `raster` is free.** `operationForTool`'s raster arm is fully generic:
-  `processorId: args.toolName` with **no allowlist** (`src/contexts/history-adapter.ts:416-424`).
+  `processorId: args.toolName` with **no allowlist** (`src/contexts/history-adapter.ts` — `operationForTool()`'s `raster` arm).
   `DurableOperation`'s variant types it `processorId: string` — an open string, not a union
-  (`src/contexts/history-model.ts:106-112`) — and the materializer resolves it by **lookup**,
+  (`src/contexts/history-model.ts` — `DurableOperation`'s `processorId: string`) — and the materializer resolves it by **lookup**,
   `toolProcessors[operation.processorId as keyof typeof toolProcessors]`, rejecting only an
-  unknown name or a version mismatch (`src/contexts/materialization.ts:277-281`). Name-agnostic
+  unknown name or a version mismatch (`src/contexts/materialization.ts` — the `toolProcessors[operation.processorId]` lookup). Name-agnostic
   end to end. A new `raster` tool is CHEAP by construction.
 - **Why `layer-operation` is not.** Three hard-coded name lists trip in sequence: the runtime
   allowlist `if (!['blur', 'color', 'levels'].includes(args.toolName)) throw`
-  (`history-adapter.ts:391-402`, list at `:393`); the 3-member type union
-  `DurableFilter.toolName: 'blur' | 'color' | 'levels'` (`history-model.ts:80-84`); and
+  (`history-adapter.ts` — `operationForTool()`'s `layer-operation` arm and its filter allowlist); the 3-member type union
+  `DurableFilter.toolName: 'blur' | 'color' | 'levels'` (`history-model.ts` — `DurableFilter`); and
   `filterForOperation`, a `switch` over those three names with **no `default` arm**
-  (`materialization.ts:73-89`) whose missing return becomes a compile error the moment the union
+  (`materialization.ts` — `presentationOperations()`) whose missing return becomes a compile error the moment the union
   grows. A fourth filter name is a three-file edit minimum.
 - **Why a commit kind with no arm is worse than either.** `operationForTool` **throws**
   `Tool ${args.toolName} cannot be replayed durably` for anything it does not handle
-  (`history-adapter.ts:504`), and `convertLegacyHistorySafely` is **fail-closed for the whole
+  (`history-adapter.ts` — `operationForTool()`'s closing throw), and `convertLegacyHistorySafely` is **fail-closed for the whole
   document** on any error-severity diagnostic — it rolls back the asset transaction and returns
-  `status: 'unavailable', document: null` (`history-adapter.ts:645-665`). One unhandled commit kind
+  `status: 'unavailable', document: null` (`history-adapter.ts` — `convertLegacyHistorySafely()`'s fail-closed `status: 'unavailable'` return). One unhandled commit kind
   in the timeline voids the entire durable shadow, not just its own entry.
 - **`source` is also generic.** A `commit: 'source'` `TOOL_ACTION` carrying a `layerSource` is
-  routed to `create-layer` at `history-adapter.ts:500-504`, which snapshots whatever source the
+  routed to `create-layer` by `legacyHistoryToDurable()`, which snapshots whatever source the
   tool produced.
-- **`selection` costs no durable work at all.** `history-adapter.ts:503` returns `null` for
+- **`selection` costs no durable work at all.** `history-adapter.ts` — `operationForTool()`'s `return null` for `selection` and `document-operation` returns `null` for
   `selection` and `document-operation` alike — both are excluded from the durable shadow, and
   `e2e/OPEN_PROBLEMS.md` plus the `durable-cutover` constraint confirm selection state is still
   sourced from legacy replay. So a selection tool's cost is its _representation_, never its
@@ -4165,42 +4165,42 @@ The deciding lines, all verified on that tree:
 Photoshop behaviour below is FROM-MEMORY unless a corpus file is named; the app-side column is
 always verified.
 
-| Tool                                                   | Photoshop behaviour (FROM-MEMORY)                                                                    | Status here                                                                                                                                                                        | COST                                                                                       | Deciding `file:line`                                                                                                                  | Effort                                      |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| **Eraser** (Eraser / Background Eraser / Magic Eraser) | Paints the backdrop through the alpha channel; Brush-based, with Erase-to-History and Airbrush modes | **SHIPPED on `main`** — `toolsMap.ts:122-123` (`80eb207`): `src/tools/eraser.ts`, `src/components/ToolbarsRight/Eraser/Eraser.tsx`                                                 | **CHEAP**                                                                                  | `history-adapter.ts:416-424` (generic raster arm)                                                                                     | S                                           |
-| **Clone Stamp** (+ Pattern Stamp)                      | Copies from a user-set source point, with Aligned and Sample-All-Layers                              | **SHIPPED** — `toolsMap.ts:96`, panel `ToolbarsRight/CloneStamp`                                                                                                                   | **CHEAP**                                                                                  | `history-adapter.ts:416-424`                                                                                                          | M (needs a source offset + alignment state) |
-| **Paint Bucket**                                       | Tolerance flood fill, contiguous / global, anti-aliased edge                                         | **SHIPPED on `main`** — `toolsMap.ts:124` (`80eb207`): `src/tools/fill.ts` over `src/util/floodFill.ts`                                                                            | **CHEAP**, but do not write it                                                             | `history-adapter.ts:416-424`; see `### Already in flight`                                                                             | S once the branch lands                     |
-| **Gradient**                                           | Linear / radial / angle / reflected / diamond along the drag; multi-stop, dither                     | **SHIPPED** — `toolsMap.ts:97`, panel `ToolbarsRight/Gradient`                                                                                                                     | **CHEAP** (`createLinearGradient` is universal)                                            | `history-adapter.ts:416-424`                                                                                                          | S                                           |
-| **Dodge / Burn / Sponge**                              | Per-pixel tonal or saturation remap inside the brush footprint, with Exposure and Range              | **ABSENT** — the `dodge`/`burn` hits are `'color dodge'` / `'color burn'` blend-mode names at `src/contexts/psd-utils.ts:23-24`                                                    | **CHEAP for history, EXPENSIVE in effect**                                                 | `history-adapter.ts:416-424` for the history; the cost is the JS kernel, because the `ctx.filter` route is the inert one — see Tier 3 | M                                           |
-| **Zoom / Hand / Rotate View**                          | Viewport transforms; commit nothing, record nothing                                                  | **ABSENT.** `zoom-container` is a bare class at `Main.tsx:245` with the transform commented out at `:248`, and `'zoom'` at `Main.tsx:68` is a dead sentinel meaning "no tool area" | **CHEAPEST** — view state, not document state, so no processor and no history entry at all | `Main.tsx:68,245,248`                                                                                                                 | S                                           |
-| **Eyedropper / Color Sampler**                         | Samples a pixel; commits nothing, records nothing                                                    | **SHIPPED on `main`** — `toolsMap.ts:127` (`80eb207`): `src/tools/eyedropper.ts`, which has no processor at all                                                                    | **CHEAPEST**                                                                               | `SidebarLeft.tsx:56-58` already dispatches `SET_COLOR`; a sampler reuses it                                                           | S                                           |
+| Tool                                                   | Photoshop behaviour (FROM-MEMORY)                                                                    | Status here                                                                                                                                                                                       | COST                                                                                       | Deciding `file:line`                                                                                                                                                      | Effort                                      |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| **Eraser** (Eraser / Background Eraser / Magic Eraser) | Paints the backdrop through the alpha channel; Brush-based, with Erase-to-History and Airbrush modes | **SHIPPED on `main`** — `toolsMap.ts` — the `eraser` row (`80eb207`): `src/tools/eraser.ts`, `src/components/ToolbarsRight/Eraser/Eraser.tsx`                                                     | **CHEAP**                                                                                  | `history-adapter.ts` — `operationForTool()`'s generic raster arm (generic raster arm)                                                                                     | S                                           |
+| **Clone Stamp** (+ Pattern Stamp)                      | Copies from a user-set source point, with Aligned and Sample-All-Layers                              | **SHIPPED** — `toolsMap.ts` — the `clone-stamp` row, panel `ToolbarsRight/CloneStamp`                                                                                                             | **CHEAP**                                                                                  | `history-adapter.ts` — `operationForTool()`'s generic raster arm                                                                                                          | M (needs a source offset + alignment state) |
+| **Paint Bucket**                                       | Tolerance flood fill, contiguous / global, anti-aliased edge                                         | **SHIPPED on `main`** — `toolsMap.ts` — the paint-bucket row (`80eb207`): `src/tools/fill.ts` over `src/util/floodFill.ts`                                                                        | **CHEAP**, but do not write it                                                             | `history-adapter.ts` — `operationForTool()`'s generic raster arm; see `### Already in flight`                                                                             | S once the branch lands                     |
+| **Gradient**                                           | Linear / radial / angle / reflected / diamond along the drag; multi-stop, dither                     | **SHIPPED** — `toolsMap.ts` — the `gradient` row, panel `ToolbarsRight/Gradient`                                                                                                                  | **CHEAP** (`createLinearGradient` is universal)                                            | `history-adapter.ts` — `operationForTool()`'s generic raster arm                                                                                                          | S                                           |
+| **Dodge / Burn / Sponge**                              | Per-pixel tonal or saturation remap inside the brush footprint, with Exposure and Range              | **ABSENT** — the `dodge`/`burn` hits are `'color dodge'` / `'color burn'` blend-mode names at `src/contexts/psd-utils.ts` — the `'color dodge'` / `'color burn'` blend-mode names                 | **CHEAP for history, EXPENSIVE in effect**                                                 | `history-adapter.ts` — `operationForTool()`'s generic raster arm for the history; the cost is the JS kernel, because the `ctx.filter` route is the inert one — see Tier 3 | M                                           |
+| **Zoom / Hand / Rotate View**                          | Viewport transforms; commit nothing, record nothing                                                  | **ABSENT.** `zoom-container` is a bare class in `Main.tsx` — the div's `transform` style is commented out — and `'zoom'` in its `interactionMode` chain is a dead sentinel meaning "no tool area" | **CHEAPEST** — view state, not document state, so no processor and no history entry at all | `Main.tsx` — the `'zoom'` sentinel                                                                                                                                        | S                                           |
+| **Eyedropper / Color Sampler**                         | Samples a pixel; commits nothing, records nothing                                                    | **SHIPPED on `main`** — `toolsMap.ts` — the `eyedropper` row (`80eb207`): `src/tools/eyedropper.ts`, which has no processor at all                                                                | **CHEAPEST**                                                                               | `SidebarLeft.tsx` — the `SET_COLOR` dispatch already dispatches `SET_COLOR`; a sampler reuses it                                                                          | S                                           |
 
 #### Tier 2 — CHEAP, lower frequency, or a defect rather than a feature
 
-| Tool                                                            | Photoshop behaviour (FROM-MEMORY)                                                                 | Status here                                                                                                                                                                                                                                                       | COST                                                                                                                                        | Deciding `file:line`                                                                                                                                                                                                                                                                                    | Effort                                                  |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **The six pen-family tools + Custom Shape: hide or throw**      | Real vector paths; a path model                                                                   | **SELECTABLE AND INERT** — `commit: 'unimplemented'`, `unimplemented()` returns `[null as never]`                                                                                                                                                                 | **CHEAP** (a removal, not a build)                                                                                                          | `toolProcessors.ts:300-325,331-335` and `Main.tsx:236` — with **no** `interactionMode` arm, so `EventHandler` is `DummyToolArea` (`Main.tsx:236`) and the overlay is `display: none` (`Main.tsx:303`)                                                                                                   | XS                                                      |
-| **Elliptical Marquee** (+ Single Row / Single Column)           | A marquee shape; Shift for a circle, Alt from centre                                              | **BUILT** — `'elliptical-selection'` is registered (`toolProcessors.ts:206-212`, `toolsMap.ts:86`), has real args (`tool-types.ts:43`) and its own options bar (`src/components/ToolbarsRight/EllipticalSelection/`). Single Row / Single Column are still absent | **CHEAP for history** (`selection` → `history-adapter.ts:503` returns `null`); the loop representation caps it at no-AA, no-holes, no-modes | `toolProcessors.ts:193-199` (`rectangular-selection`) is the sibling template; `general-types.ts:61` is the ceiling; `HANDOFF.md` §79 tracks a live drag-tracking defect in `EllipticalSelectionToolArea.tsx`                                                                                           | S (Single Row / Column)                                 |
-| **Magic Wand** — contiguous, Sample All Layers, tolerance range | 0–255 tolerance, default 32; contiguous by default; Sample All Layers                             | **PARTIAL, and a no-op**: `magicWand` is `({ bitmap }) => () => [bitmap]` while registered `commit: 'selection'`                                                                                                                                                  | **CHEAP** for history                                                                                                                       | `src/tools/magicWand.ts:10-14` against `toolProcessors.ts:180-185`; default tolerance 28 at `src/tools/settings.ts:125` (the 0–255 range is a FROM-MEMORY claim)                                                                                                                                        | M                                                       |
-| **Shape-tool fidelity**                                         | Triangle is a drag-defined isosceles, Shift = equilateral; Line snaps 45°; shapes fill by default | **PARTIAL**: Triangle inscribes a _regular_ 3-gon; Line is excluded from every Shift constraint (`if (shiftKey && figure !== 'line')`); `backgroundColor: null` so nothing fills; `oval` carries a dead `cornerRadius`; `polygon` has no `sides`                  | **CHEAP**                                                                                                                                   | `src/tools/shape.ts:79` and `:166`; `src/tools/settings.ts:79,46,48`                                                                                                                                                                                                                                    | S — **but `wip/ps-shape-geometry` is already doing it** |
-| **Text**                                                        | Paragraph layout, wrapping to a text box, justify, tracking, live font gating                     | **PARTIAL / raster-at-birth**: `text.split('\n')` then one `fillText` per line, and `getTextWidth` returns only the **widest** line, so `rect` is decoration, not a wrap box. `lineHeight` is an em multiplier, not a baseline distance                           | **CHEAP** — `commit: 'source'`, routed to `create-layer`                                                                                    | `toolProcessors.ts:153-159`; `src/tools/text.ts:53-56,59-64`; `src/tools/settings.ts:82-94`                                                                                                                                                                                                             | M                                                       |
-| **Count / Note / Ruler**                                        | Measurement and annotation overlays                                                               | **ABSENT**                                                                                                                                                                                                                                                        | **CHEAP** for Count and Note (no commit); Ruler needs a persistent screen-space overlay, which no layer has                                 | `Main.tsx:300` is the rect overlay, `display: none` for every tool but `reposition` (`:303`); the selection-ants overlay at `Main.tsx:313` is `display: none` for every tool outside `POLYGON_SELECTION_MODES` (`:316`), so a ruler has two existing gated canvases to model itself on rather than none | S                                                       |
+| Tool                                                            | Photoshop behaviour (FROM-MEMORY)                                                                 | Status here                                                                                                                                                                                                                                                                                                                                                                                             | COST                                                                                                                                                                           | Deciding `file:line`                                                                                                                                                                                                                                                                                                                                     | Effort                                                  |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **The six pen-family tools + Custom Shape: hide or throw**      | Real vector paths; a path model                                                                   | **SELECTABLE AND INERT** — `commit: 'unimplemented'`, `unimplemented()` returns `[null as never]`                                                                                                                                                                                                                                                                                                       | **CHEAP** (a removal, not a build)                                                                                                                                             | `toolProcessors.ts` — the `commit: 'unimplemented'` rows, and `Main.tsx` with **no** `interactionMode` arm, so `EventHandler` is `DummyToolArea` (the default and its terminal `else`) and the overlay is `display: none` (the tool-overlay canvas's `display` allowlist)                                                                                | XS                                                      |
+| **Elliptical Marquee** (+ Single Row / Single Column)           | A marquee shape; Shift for a circle, Alt from centre                                              | **BUILT** — `'elliptical-selection'` is registered (`src/tools/toolProcessors.ts` — the `'elliptical-selection'` entry, `toolsMap.ts` — the `'elliptical-selection'` row), has real args (`src/contexts/tool-types.ts` — `ToolArgsByName`'s `'elliptical-selection'` member) and its own options bar (`src/components/ToolbarsRight/EllipticalSelection/`). Single Row / Single Column are still absent | **CHEAP for history** (`selection` → `history-adapter.ts` — `operationForTool()`'s `return null` returns `null`); the loop representation caps it at no-AA, no-holes, no-modes | the `'rectangular-selection'` entry is the sibling template; `general-types.ts`'s `Selection` is the ceiling; `HANDOFF.md` §79 tracks a live drag-tracking defect in `EllipticalSelectionToolArea.tsx`                                                                                                                                                   | S (Single Row / Column)                                 |
+| **Magic Wand** — contiguous, Sample All Layers, tolerance range | 0–255 tolerance, default 32; contiguous by default; Sample All Layers                             | **PARTIAL, and a no-op**: `magicWand` is `({ bitmap }) => () => [bitmap]` while registered `commit: 'selection'`                                                                                                                                                                                                                                                                                        | **CHEAP** for history                                                                                                                                                          | `src/tools/magicWand.ts` — `magicWand()` against `src/tools/toolProcessors.ts` — the `'magic-wand'` entry; default tolerance 28 at `src/tools/settings.ts` — the `'magic-wand'` default (the 0–255 range is a FROM-MEMORY claim)                                                                                                                         | M                                                       |
+| **Shape-tool fidelity**                                         | Triangle is a drag-defined isosceles, Shift = equilateral; Line snaps 45°; shapes fill by default | **PARTIAL**: Triangle inscribes a _regular_ 3-gon; Line is excluded from every Shift constraint (`if (shiftKey && figure !== 'line')`); `backgroundColor: null` so nothing fills; `oval` carries a dead `cornerRadius`; `polygon` has no `sides`                                                                                                                                                        | **CHEAP**                                                                                                                                                                      | `shape.ts` — `snapLineGeometry()` and the `figure === 'line'` branch of `computeShapeGeometry`; `settings.ts` — the `shape` entry's `backgroundColor: null`                                                                                                                                                                                              | S — **but `wip/ps-shape-geometry` is already doing it** |
+| **Text**                                                        | Paragraph layout, wrapping to a text box, justify, tracking, live font gating                     | **PARTIAL / raster-at-birth**: `text.split('\n')` then one `fillText` per line, and `getTextWidth` returns only the **widest** line, so `rect` is decoration, not a wrap box. `lineHeight` is an em multiplier, not a baseline distance                                                                                                                                                                 | **CHEAP** — `commit: 'source'`, routed to `create-layer`                                                                                                                       | `src/tools/toolProcessors.ts` — the `text` entry; `src/tools/text.ts` — the per-line `fillText` renderer; `src/tools/settings.ts` — the `text` default                                                                                                                                                                                                   | M                                                       |
+| **Count / Note / Ruler**                                        | Measurement and annotation overlays                                                               | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                              | **CHEAP** for Count and Note (no commit); Ruler needs a persistent screen-space overlay, which no layer has                                                                    | the rect overlay canvas in `Main.tsx` is `display: none` for every tool but `reposition` (its own `display` allowlist); the selection-ants overlay canvas beside it is `display: none` for every tool outside `POLYGON_SELECTION_MODES` (its `[...].includes(...)` gate), so a ruler has two existing gated canvases to model itself on rather than none | S                                                       |
 
 #### Tier 3 — needs a new engine, a new `DurableOperation` variant, or a new document type
 
-| Tool / gap                                                                                    | Photoshop behaviour (FROM-MEMORY)                                      | Status here                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | COST                                                                                                                                                                                                          | Deciding `file:line`                                                                                                                                                       | Effort                         |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| **The `ctx.filter` Safari refusal**                                                           | n/a — this is a correctness fix, not a feature                         | **PARTIAL and wrong on a shipping browser.** Five sites write `ctx.filter` into an `OffscreenCanvas`: `src/tools/blur.ts:11`, `src/tools/colors.ts:12`, `src/tools/levels.ts:12`, `src/contexts/materialization.ts:247`, `src/contexts/layer-renderer.ts:77`. No feature detection exists — `grep -rn "SUPPORTS_CTX_FILTER\|'filter' in" src e2e` returns **0**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | **CHEAP** to add the refusal, and it is the _prerequisite_ for every per-pixel tool above                                                                                                                     | `materialization.ts:73-89` (`filterForOperation`) is the switch to extend; a `'filter' in ctx` check is **insufficient** — see the trap list                               | S                              |
-| **Blend modes**                                                                               | 27 modes with a real compositing equation; separable and non-separable | **PARTIAL** — `blendMode: GlobalCompositeOperation`, the browser's enum, passed straight through                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | **EXPENSIVE** — a new engine, not a new commit kind                                                                                                                                                           | `src/contexts/layer-types.ts:60`; a 29-line partial slice already exists on `ps/tool-expansion` (`src/contexts/layer-utils.ts`)                                            | L                              |
-| **The healing family** (Spot Healing, Healing, Patch, Content-Aware Move, Red Eye)            | Content-aware synthesis of the covered region                          | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — a content-aware engine. The _history_ would be cheap (`raster`); the kernel is the cost                                                                                                       | `history-adapter.ts:416-424` buys the history; nothing else exists                                                                                                         | L                              |
-| **History Brush / Art History Brush**                                                         | Replays or resamples from the document's own history states            | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — Art History needs a per-operation snapshot buffer that no type in the tree models                                                                                                             | `src/contexts/history-types.ts` has no per-step pixel payload; the durable baseline (`history-adapter.ts:466-471`) is a single state, not a tape                           | L                              |
-| **Selection keystone** — mask, add/subtract/intersect, holes, disjoint islands, anti-aliasing | A region, not a loop                                                   | **PARTIAL** and structurally blocking. `Selection` is one `points: Point[]` boundary loop (plus optional `lifecycle` / `geometry` / `sourceTool` / `metadata`). `rasterizePolygonMask` (`src/util/selection.ts:576`) **binarizes** the anti-aliased alpha the Canvas2D just computed — and it is reached from **one** caller, the feathered copy (`:739`), so the binarize is a feathered-path property, not a general one. The default polygon path never binarized: `copyPolygonSelectionToCanvas` (`:501-535`) `clip()`s to the path and returns `{ bitmap, pos }` with the soft alpha intact. `drawPolygonPath` (`:453`) never sets a fill rule, so the browser's non-zero default applies, while `isPointInPolygon` (`:247`) is even-odd ray casting — the two disagree, and `clip()` is what makes that disagreement visible: a self-intersecting loop is filled by winding number on screen but hit-tested even-odd. `copySelectionToCanvas` (`:769`) routes **only** `feather-magnetic-lasso` (`:781`) through the feathered path | **EXPENSIVE** — a new document-model type. This is the keystone: it unblocks every paint tool, every region-scoped adjustment, and all 7 `commit: 'selection'` tools at once                                  | `src/contexts/general-types.ts:61-70`; note `SelectionMode` **does** exist at `src/tools/selection.ts:5` but is `'fill' \| 'outline'`, a fill mode, not a combination mode | XL                             |
-| **Selection Brush / Object Selection**                                                        | Paints or computes a region                                            | **ABSENT** — but **Quick Selection is BUILT**: `'quick-selection'` is registered (`toolProcessors.ts:213-219`, `toolsMap.ts`), has real args (`tool-types.ts:44`) and its own options bar (`src/components/ToolbarsRight/QuickSelection/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — blocked by the keystone above, not by itself                                                                                                                                                  | `general-types.ts:61`; a selection-creating tool cannot be expressed as a raster write                                                                                     | L (after the keystone)         |
-| **`levels` = real Levels; `color` = Black & White + Tint**                                    | Channel selector, histogram, input black/gamma/white, output levels    | **PARTIAL**: `levels` is Brightness/Contrast, `color` is grayscale/sepia/saturation with a fixed `#d9c09a` sepia matrix. The corpus resolved both identities on 2026-09-26 and **neither was implemented** — `src/tools/settings.ts:53-54` are unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | **EXPENSIVE** — a `layer-operation` name trips three closed lists                                                                                                                                             | `history-adapter.ts:393`; `history-model.ts:80-84`; `materialization.ts:73-89`                                                                                             | M                              |
-| **Path Selection / Direct Selection**                                                         | Edits existing vector anchors                                          | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — no vector path model exists anywhere in `src/`                                                                                                                                                | `src/contexts/general-types.ts` has no path type; `src/tools/toolProcessors.ts:300-325` is the pen family's current state                                                  | XL                             |
-| **Path Operations, Transform Selection, Select menu**                                         | Boolean path ops; Select ▸ Modify / Grow / Similar / Refine Edge       | **PARTIAL**: the **Select menu does not exist at all** — `src/components/Menu/Menu.tsx` is 13 lines rendering only `DesktopHeader` and `ToolbarHorizontal`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — combination modes and path ops are the keystone and the path model                                                                                                                            | `src/components/Menu/Menu.tsx:1-13`                                                                                                                                        | M (menu shell) / L (the modes) |
-| **The AI group** (Generative Fill, Generative Expand, Neural Filters)                         | Cloud model inference                                                  | **ABSENT** — no network surface, no async tool-completion model in the tool contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | **EXPENSIVE** — and out of scope for this repo until a tool contract admits async, non-deterministic, cancellable commits. `replay.deterministic` (`src/tools/toolProcessors.ts:52-58`) is a hard requirement | `src/tools/toolProcessors.ts:52-58`; `history-model.ts:120-122` pins a schema version per entry                                                                            | XL / defer                     |
-| **The pen family proper** (Pen, Freeform Pen, Curvature Pen)                                  | Bezier path construction with anchors and handles                      | **SELECTABLE AND INERT** (see Tier 2) — the build is a separate, much larger job                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | **EXPENSIVE** — a new document-model type                                                                                                                                                                     | `src/tools/toolProcessors.ts:300-325`; nothing in `general-types.ts` models a path                                                                                         | XL                             |
+| Tool / gap                                                                                    | Photoshop behaviour (FROM-MEMORY)                                      | Status here                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | COST                                                                                                                                                                                                                                               | Deciding `file:line`                                                                                                                                                                               | Effort                         |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| **The `ctx.filter` Safari refusal**                                                           | n/a — this is a correctness fix, not a feature                         | **PARTIAL and wrong on a shipping browser.** Five sites write `ctx.filter` into an `OffscreenCanvas`: `src/tools/blur.ts` — its `ctx.filter = \`blur(${radius}px)\``write,`src/tools/colors.ts`— its`ctx.filter = buildColorsFilter(...)`write,`src/tools/levels.ts`— its`ctx.filter = buildLevelsFilter(...)`write,`src/contexts/materialization.ts`— its`requireCanvasFilter()`call,`src/contexts/layer-renderer.ts`— its`requireCanvasFilter()`/`requireLayerFilterSupport()`calls. No feature detection exists —`grep -rn "SUPPORTS_CTX_FILTER\|'filter' in" src e2e` returns **0**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | **CHEAP** to add the refusal, and it is the _prerequisite_ for every per-pixel tool above                                                                                                                                                          | `materialization.ts` — `presentationOperations()` is the path to extend; a `'filter' in ctx` check is **insufficient** — see the trap list                                                         | S                              |
+| **Blend modes**                                                                               | 27 modes with a real compositing equation; separable and non-separable | **PARTIAL** — `blendMode: GlobalCompositeOperation`, the browser's enum, passed straight through                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | **EXPENSIVE** — a new engine, not a new commit kind                                                                                                                                                                                                | `src/contexts/layer-types.ts` — `blendMode: GlobalCompositeOperation`; a 29-line partial slice already exists on `ps/tool-expansion` (`src/contexts/layer-utils.ts`)                               | L                              |
+| **The healing family** (Spot Healing, Healing, Patch, Content-Aware Move, Red Eye)            | Content-aware synthesis of the covered region                          | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | **EXPENSIVE** — a content-aware engine. The _history_ would be cheap (`raster`); the kernel is the cost                                                                                                                                            | `history-adapter.ts` — `operationForTool()`'s generic raster arm buys the history; nothing else exists                                                                                             | L                              |
+| **History Brush / Art History Brush**                                                         | Replays or resamples from the document's own history states            | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | **EXPENSIVE** — Art History needs a per-operation snapshot buffer that no type in the tree models                                                                                                                                                  | `src/contexts/history-types.ts` has no per-step pixel payload; the durable baseline (`history-adapter.ts` — `plainObject()`, the durable-state snapshot helper) is a single state, not a tape      | L                              |
+| **Selection keystone** — mask, add/subtract/intersect, holes, disjoint islands, anti-aliasing | A region, not a loop                                                   | **PARTIAL** and structurally blocking. `Selection` is one `points: Point[]` boundary loop (plus optional `lifecycle` / `geometry` / `sourceTool` / `metadata`). `rasterizePolygonMask` (`src/util/selection.ts` — `rasterizePolygonMask()`) **binarizes** the anti-aliased alpha the Canvas2D just computed — and it is reached from **one** caller, the feathered copy (the feathered copy's `rasterizePolygonMask()` call), so the binarize is a feathered-path property, not a general one. The default polygon path never binarized: `copyPolygonSelectionToCanvas` (`copyPolygonSelectionToCanvas()`) `clip()`s to the path and returns `{ bitmap, pos }` with the soft alpha intact. `drawPolygonPath` (`drawPolygonPath()`) never sets a fill rule, so the browser's non-zero default applies, while `isPointInPolygon` (`isPointInPolygon()`) is even-odd ray casting — the two disagree, and `clip()` is what makes that disagreement visible: a self-intersecting loop is filled by winding number on screen but hit-tested even-odd. `copySelectionToCanvas` (`copySelectionToCanvas()`) routes **only** `feather-magnetic-lasso` (its `sourceTool === 'feather-magnetic-lasso'` test) through the feathered path | **EXPENSIVE** — a new document-model type. This is the keystone: it unblocks every paint tool, every region-scoped adjustment, and all 7 `commit: 'selection'` tools at once                                                                       | `src/contexts/general-types.ts` — `Selection`; note `SelectionMode` **does** exist at `src/tools/selection.ts` — `SelectionMode` but is `'fill' \| 'outline'`, a fill mode, not a combination mode | XL                             |
+| **Selection Brush / Object Selection**                                                        | Paints or computes a region                                            | **ABSENT** — but **Quick Selection is BUILT**: `'quick-selection'` is registered (`src/tools/toolProcessors.ts` — the `'quick-selection'` entry, `toolsMap.ts`), has real args (`src/contexts/tool-types.ts` — `ToolArgsByName`'s `'quick-selection'` member) and its own options bar (`src/components/ToolbarsRight/QuickSelection/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | **EXPENSIVE** — blocked by the keystone above, not by itself                                                                                                                                                                                       | `src/contexts/general-types.ts` — `Selection`; a selection-creating tool cannot be expressed as a raster write                                                                                     | L (after the keystone)         |
+| **`levels` = real Levels; `color` = Black & White + Tint**                                    | Channel selector, histogram, input black/gamma/white, output levels    | **PARTIAL**: `levels` is Brightness/Contrast, `color` is grayscale/sepia/saturation with a fixed `#d9c09a` sepia matrix. The corpus resolved both identities on 2026-09-26 and **neither was implemented** — the `levels` and `color` defaults in `settings.ts` are unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **EXPENSIVE** — a `layer-operation` name trips three closed lists                                                                                                                                                                                  | `history-adapter.ts` — `operationForTool()`'s filter allowlist; `history-model.ts` — `DurableFilter`; `materialization.ts` — `presentationOperations()`                                            | M                              |
+| **Path Selection / Direct Selection**                                                         | Edits existing vector anchors                                          | **ABSENT**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | **EXPENSIVE** — no vector path model exists anywhere in `src/`                                                                                                                                                                                     | `src/contexts/general-types.ts` has no path type; `src/tools/toolProcessors.ts` — the pen family's `commit: 'unimplemented'` rows is the pen family's current state                                | XL                             |
+| **Path Operations, Transform Selection, Select menu**                                         | Boolean path ops; Select ▸ Modify / Grow / Similar / Refine Edge       | **PARTIAL**: the **Select menu does not exist at all** — `src/components/Menu/Menu.tsx` is 13 lines rendering only `DesktopHeader` and `ToolbarHorizontal`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | **EXPENSIVE** — combination modes and path ops are the keystone and the path model                                                                                                                                                                 | `src/components/Menu/Menu.tsx` — the whole file                                                                                                                                                    | M (menu shell) / L (the modes) |
+| **The AI group** (Generative Fill, Generative Expand, Neural Filters)                         | Cloud model inference                                                  | **ABSENT** — no network surface, no async tool-completion model in the tool contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | **EXPENSIVE** — and out of scope for this repo until a tool contract admits async, non-deterministic, cancellable commits. `replay.deterministic` (`toolProcessors.ts` — `ToolProcessorDefinition`'s `replay.deterministic`) is a hard requirement | `src/tools/toolProcessors.ts` — `ToolProcessorDefinition`'s `replay.deterministic`; `history-model.ts` — `DurableHistoryEntry`'s `schemaVersion: number` pins a schema version per entry           | XL / defer                     |
+| **The pen family proper** (Pen, Freeform Pen, Curvature Pen)                                  | Bezier path construction with anchors and handles                      | **SELECTABLE AND INERT** (see Tier 2) — the build is a separate, much larger job                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | **EXPENSIVE** — a new document-model type                                                                                                                                                                                                          | `src/tools/toolProcessors.ts` — the pen family's `commit: 'unimplemented'` rows; nothing in `general-types.ts` models a path                                                                       | XL                             |
 
 ### Suggested first three
 
@@ -4267,7 +4267,7 @@ ab5f53c main` **passes**. The eight tools — `elliptical-selection`, `quick-sel
   `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`, `gradient` — **are on `main` today**, with
   real options-bar components under `src/components/ToolbarsRight/` (`CloneStamp`, `Gradient`,
   `Sharpen`, `Smudge`, `Tonal`, `EllipticalSelection`, `QuickSelection`) and rows in
-  `src/tools/toolsMap.ts:96-106`. The branch `merge/ps-tool-expansion` no longer exists either, so
+  `src/tools/toolsMap.ts` — the eight `ps/tool-expansion` rows. The branch `merge/ps-tool-expansion` no longer exists either, so
   "check that branch" sent an agent nowhere. **Re-run the ancestor test and grep `toolsMap.ts`
   before believing any absence in this document** — see §0.8.
 - **`dodge` and `burn` share one options-bar component**, `ToolbarsRight/Tonal/Tonal.tsx`. That is
@@ -4310,7 +4310,7 @@ merge --ff-only main`.
    Symptom: "my change did nothing" in e2e — the run attached to a **different checkout**.
    Defence: `npm run test:e2e`, which allocates a port, verifies it and records it; and behind it
    `reuseExistingServer` is a literal `false` with nothing that can turn it on, plus `--strictPort`
-   so a clash is a hard failure rather than a silent hop to 5174 (`playwright.config.ts:111-137`).
+   so a clash is a hard failure rather than a silent hop to 5174 (`playwright.config.ts` — `reuseExistingServer: false`).
    Both refusals are enforced in `e2e/global-setup.ts` as well as the wrapper, so a raw
    `npx playwright test` cannot bypass them either. A swarm lock is also taken so two agents rarely
    run at once, but it is **advisory only** and can never block a run — see `docs/ORCHESTRATION.md`.
@@ -4339,25 +4339,25 @@ merge --ff-only main`.
     assumes pixel read-back **silently does nothing** — the code guards on
     `typeof ctx.getImageData === 'function'` to detect a reduced canvas, so the guard takes the
     fallback branch and your assertion passes vacuously. Verified:
-    `src/test/setup.ts:185-190` states this in the doc comment; the opt-in is
-    `createPixelCanvasContext` at `:191-209` or `makeMockCtx` from `@/__tests__/canvas-mock`.
+    `src/test/setup.ts` — the doc comment above `createPixelCanvasContext()` states this in the doc comment; the opt-in is
+    `createPixelCanvasContext` at `createPixelCanvasContext()` or `makeMockCtx` from `@/__tests__/canvas-mock`.
 14. **`installCanvasContextStub` returns a NEW mock context per `getContext` call.** Symptom: a
     `last()`-style accessor compares two _different_ context objects and every equality assertion
     fails, or worse, you "fix" it by caching and now assert on a stale context. Verified:
-    `src/test/setup.ts:211-215` builds a fresh `createMockCanvasContext(this)` inside the
-    `mockImplementation`, and `:217,:219-221` re-install it in `beforeEach` because
+    `src/test/setup.ts` — `installCanvasContextStub()` builds a fresh `createMockCanvasContext(this)` inside the
+    `mockImplementation`, and the `beforeEach` re-install in `setup.ts` because
     `vi.restoreAllMocks()` drops it. Two live examples of the correct pattern:
-    `src/tools/__tests__/image-processors.test.ts:27` (documents the hazard) and `:106,:121`
+    `image-processors.test.ts` — the `RecordingOffscreenCanvas` doc comment (documents the hazard) and its two `expect(canvas.ctx.filter)` pins
     (`lastCanvas().ctx`).
 15. **`ctx.filter` is silently ignored by Safari on `OffscreenCanvas`.** Symptom: `blur`, `color`,
     and `levels` are inert in Safari **and still record a history entry**. Verified: five write
-    sites — `src/tools/blur.ts:11`, `src/tools/colors.ts:12`, `src/tools/levels.ts:12`,
-    `src/contexts/materialization.ts:247`, `src/contexts/layer-renderer.ts:77` — and **zero**
+    sites — `src/tools/blur.ts` — its `ctx.filter` write, `src/tools/colors.ts` — its `ctx.filter` write, `src/tools/levels.ts` — its `ctx.filter` write,
+    `src/contexts/materialization.ts` — its `requireCanvasFilter()` call, `src/contexts/layer-renderer.ts` — its `requireCanvasFilter()` / `requireLayerFilterSupport()` calls — and **zero**
     feature detection (`grep -rn "SUPPORTS_CTX_FILTER\|'filter' in" src e2e` returns 0).
     Defence: a per-pixel tool that depends on it must **refuse to commit** rather than silently
     no-op, and `'filter' in ctx` is **not a sufficient probe** — the property exists on the
     prototype and only the Safari implementation ignores writes. The corpus's probe is the honest
-    one (`01-photoshop-reference.md:951-955`): set it, read it back, compare to `'none'`.
+    one (`01-photoshop-reference.md` — the one-line browser-capability probe it recommends): set it, read it back, compare to `'none'`.
     Do not weaken a test to get green here.
 
 ### Options bar
@@ -4365,49 +4365,49 @@ merge --ff-only main`.
 16. **An options bar that mounts its own preview canvas breaks every positional
     `page.locator('canvas')`.** Symptom: a strict-mode "resolved to 2 elements" violation, or
     worse, a silent test that clicks the _preview_ canvas and passes for the wrong reason.
-    Verified live instances: `src/components/ToolbarsRight/Figures/Shape.tsx:301` and
-    `src/components/ToolbarsRight/Draw/Draw.tsx:221` both render
+    Verified live instances: `Shape.tsx` — its `<canvas ref={previewRef}>` preview and
+    `Draw.tsx` — its `<canvas ref={previewRef}>` preview both render
     `<canvas ref={previewRef}>`. Defence: use the workspace-canvas helper —
-    `getWorkspaceCanvas(page)` at `e2e/helpers/canvas-helpers.ts:187-189`, which resolves
-    `data-testid="workspace-canvas"` and nothing else. The doc comment at `:174-186` records the
+    `getWorkspaceCanvas(page)` at `e2e/helpers/canvas-helpers.ts` — `getWorkspaceCanvas()`, which resolves
+    `data-testid="workspace-canvas"` and nothing else. The doc comment at the doc comment above `getWorkspaceCanvas()` records the
     exact history: an earlier `.or(page.locator('canvas').nth(1))` fallback was a wrong document
     index that shifted when the Draw toolbar unmounted its preview.
 17. **The options component is force-remounted on every tool switch.** Symptom: local panel state
     (an open dropdown, a scrub-in-progress value) is lost the moment the user clicks the toolbar.
     Verified: `<ToolComponent key={toolName} />` at
-    `src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:25`. Defence: keep panel state in
+    `ToolbarHorizontal.tsx` — the `overflow-visible` comment above the returned toolbar. Defence: keep panel state in
     `useCurrentTool`'s tool args, never in component state.
 18. **`toolsMap[toolName]?.toolboxComponent` swallows a missing registration.** Symptom: a typo in
     a tool name renders a TODO strip instead of failing. Verified: the optional chain is at
-    `src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:14`. Defence: because `toolsMap` is
-    `Record<ToolName, …>` (`src/tools/toolsMap.ts:47-48`), a row you forget is a **type** error, not a
+    `ToolbarHorizontal.tsx` — `const ToolComponent = toolsMap[toolName]?.toolboxComponent`. Defence: because `toolsMap` is
+    `Record<ToolName, …>` (`src/tools/toolsMap.ts` — the `ToolsMap` type), a row you forget is a **type** error, not a
     runtime one — so the `?.` only ever fires for a `ToolName` that is in the union but not in
     the map, which should be impossible. Treat a `?.` that fires as a registry bug.
 19. **Inserting a flyout group renumbers every later section.** Symptom: an e2e spec that
     hard-codes `tool-flyout-<groupIndex>` silently targets a different tool's flyout. Verified: the
-    testid is minted at `src/components/SidebarLeft/SidebarLeft.tsx:774` from
-    `` `${sectionIndex}-${groupIndex}` `` at `:80`, or `` `two-column-${groupIndex}` `` at
-    `:83` — so one-column and two-column layouts number the _same_ groups differently. Defence:
+    testid is minted at `SidebarLeft.tsx` — the `tool-flyout-${groupIndex}` testid mint from
+    `` `${sectionIndex}-${groupIndex}` `` at `SidebarLeft.tsx` — `oneColumnGroupKey()`, or `` `two-column-${groupIndex}` `` at
+    `SidebarLeft.tsx` — `twoColumnGroupKey()` — so one-column and two-column layouts number the _same_ groups differently. Defence:
     select flyout items by `tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`
-    (`:806`, with the slug rule centralised at `toolbar-mapping.ts:28`), never by index.
+    (`renderToolGroup()`'s `tool-flyout-item-${name}-${slug}` testid, with the slug rule centralised at `toolbar-mapping.ts` — `slugifyToolLabel`), never by index.
 20. **The primary tile is `group[0]`, and flyout test ids are mode-dependent.** Verified:
-    `SidebarLeft.tsx:153` (`const primaryTool = primaryTools[groupIndex] ?? group[0]`), and the
+    `SidebarLeft.tsx` — `renderToolGroup()`'s `primaryTool` (`const primaryTool = primaryTools[groupIndex] ?? group[0]`), and the
     e2e expectation is derived from the same place
-    (`e2e/helpers/toolbar-helpers.ts:205` "Verifies the primary tool shown on a grouped button
+    (`toolbar-helpers.ts` — the `openFlyoutFromTile(page, OVERFLOW_TILE_TESTID)` call "Verifies the primary tool shown on a grouped button
     matches the expected label"). Reordering a group's first item changes what a plain click
     selects.
 21. **A shortcut must account for the backwards registry walk.** Symptom: the wrong handler
     fires, or two handlers both match and only the last-registered wins. Verified: matching walks
     `for (let i = shortcuts.length - 1; i >= 0; i--)`
-    (`src/hooks/useKeyboardEvents.tsx:100-101`) and `break`s on the first hit (`:125`). Note the
+    (`src/hooks/useKeyboardEvents.tsx` — the backwards registry walk) and `break`s on the first hit (its `break` on the first hit). Note the
     nuance that is easy to get wrong: `matchesShortcut` only tests `shift` when the declaration
     sets it (`if (shortcut.shift !== undefined && event.shiftKey !== shortcut.shift) return false;`
-    at `:70`), so registering both a plain and a `shift: true` variant is required _when both
+    at `matchesShortcut`'s `shift` test), so registering both a plain and a `shift: true` variant is required _when both
     would match_ — not unconditionally. Also: `shortcut` in `toolbarMap` is **display-only** and
     binds nothing.
 22. **Two independent `Escape` paths.** Symptom: one `Escape` both closes a flyout and cancels a
     draft. Verified: the flyout one is a raw `window` listener at
-    `src/components/SidebarLeft/SidebarLeft.tsx:98-109` that calls `setOpenGroup(null)` and cannot
+    `SidebarLeft.tsx` — the `OVERFLOW_TILE_TESTID` doc comment and the `FLYOUT_HOLD_MS` comment above it that calls `setOpenGroup(null)` and cannot
     be suppressed by `preventDefault` on the other. (The second path, in
     `PolygonClickToolArea`, is **[unverified]** — find it before relying on it.)
 
@@ -4416,19 +4416,19 @@ merge --ff-only main`.
 23. **A settings-persistence arm that saves a bare `{ toolName }` discards every value on the same
     tick — and a test that asserts only the key survives passes happily.** Symptom: a slider
     resets to its default the moment you touch another control; the options bar looks like it is
-    saving. Verified: the arm at `src/util/settings.ts:70-81` matches nine tool names and stores
+    saving. Verified: the arm at `src/util/settings.ts` — `saveLastSettings()`'s multi-name `cloneDeep({ toolName })` group matches nine tool names and stores
     `cloneDeep({ toolName })` — the _whole_ entry is the key, so `opacity`, `flow`, `hardness`
     and everything else are dropped on the next save. The correct pattern is two lines away, at
-    `:66-70`: `...(lastSavedSettings[toolName] ?? {}), ...args`. Defence, and the reason this trap
-    survives: `src/tools/__tests__/tool-settings.test.ts:59-64` asserts **only**
-    `defaultSettings[toolName].toolName === toolName`, and `:422-428` asserts **only**
+    `saveLastSettings()` writes `...(lastSavedSettings[toolName] ?? {}), ...args`. Defence, and the reason this trap
+    survives: `tool-settings.test.ts` — the `it('stamps each entry with its own key as toolName')` case asserts **only**
+    `defaultSettings[toolName].toolName === toolName`, and `tool-settings.test.ts`'s matching `lastSavedSettings[toolName].toolName === toolName` assertion asserts **only**
     `lastSavedSettings[toolName].toolName === toolName`. Neither test looks at a second field, so
     a regression here is invisible to the suite. When you add a tool, add an assertion about a
     **value** in the same change.
 24. **The `never` trap can be defeated by a coincidentally matching string.** Symptom: a new tool
     name matches an existing `else if` arm and is saved under the _other_ tool's policy, so the
     exhaustiveness check never fires. Verified: `const _exhaustive: never = toolName;` at
-    `src/util/settings.ts:97`. The arms above it are exact string comparisons, so
+    `src/util/settings.ts` — `saveLastSettings()`'s `never` sentinel. The arms above it are exact string comparisons, so
     `'ellipse'` vs `'oval'` vs `'oval-tool'` is decided by the spelling, not by intent.
 25. **Tool settings are in-memory only.** Symptom: a reload resets every slider. Verified: the
     store is in-memory (`src/util/settings.ts` holds `lastSavedSettings` in module state), and
@@ -4437,86 +4437,86 @@ merge --ff-only main`.
 26. **`toolbarPlaceholderConfig` is keyed `Record<string, …>`, so a mistyped key compiles.**
     Symptom: a placeholder renders with `undefined` options instead of failing. Verified: the
     record is `Record<string, readonly string[]>` at
-    `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:1`, and `toolsMap.ts:31` types the
+    `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts` — `placeholderToolGroups`, and `toolsMap.ts` — `placeholderTool()`'s `key: keyof typeof placeholderToolGroups` parameter types the
     lookup parameter as `keyof typeof placeholderToolGroups` — which, for a `Record<string, …>`,
-    is just `string`. Two facts to know about the keys: **`rectangle` (`:8-18`) is defined and
-    consumed by nothing** (`toolsMap.ts:123` gives `rectangle` the real `Shape` component), and
-    the three anchor-point tools reuse the `pen` list (`toolsMap.ts:111,106,111`).
+    is just `string`. Two facts to know about the keys: **the `rectangle` key in `placeholderToolGroups` is defined and
+    consumed by nothing** (`toolsMap.ts` — the `rectangle` row gives `rectangle` the real `Shape` component), and
+    the three anchor-point tools reuse the `pen` list (`toolsMap.ts` — the `add-anchor-point` / `delete-anchor-point` / `convert-point` rows).
 
 ### History
 
 27. **Undo runs the processor with no guard that the live path has.** Symptom: a processor that
     throws on a live pointer move degrades silently on undo, so a bad history entry replays as a
     no-op instead of an error. Verified and load-bearing: the live path **is** guarded —
-    `try { … } catch (error) { console.error(error); return; }` at `src/contexts/useLayer.ts:547-554`,
+    `try { … } catch (error) { console.error(error); return; }` at `src/contexts/useLayer.ts` — `tempUpdateLayer`'s two `isTransformArgs` guards (`catch (error) { console.error(error); return false; }`),
     with a comment naming `transform` and its throwing argument shapes as the reason. The undo
-    factory `applyRasterTool` at `src/contexts/useHistory.ts:98-112` has **no** try/catch. The
+    factory `applyRasterTool` at `src/contexts/useHistory.ts` — the `applyRasterTool` arm has **no** try/catch. The
     asymmetry is real and it is the other way round from what older notes claim.
 28. **`commit: 'unimplemented'` voids the whole durable shadow, not just its own entry.**
     Symptom: one history entry naming an unsupported tool makes the entire document
     `status: 'unavailable'`. Verified: `unimplemented()` returns `[null as never]`
-    (`src/tools/toolProcessors.ts:110`); `operationForTool` throws for an unhandled commit kind
-    (`src/contexts/history-adapter.ts:504`); and `convertLegacyHistorySafely` rolls back and
-    returns `document: null` on **any** error-severity diagnostic (`history-adapter.ts:657-665`).
+    (`src/tools/toolProcessors.ts` — `unimplemented`); `operationForTool` throws for an unhandled commit kind
+    (`src/contexts/history-adapter.ts` — `operationForTool()`'s closing throw); and `convertLegacyHistorySafely` rolls back and
+    returns `document: null` on **any** error-severity diagnostic (`src/contexts/history-adapter.ts` — `convertLegacyHistorySafely()`'s fail-closed return).
     This is correct fail-closed behaviour and must not be "fixed" by manufacturing a durable
     no-op operation.
 29. **`commit: 'document-operation'` is a no-op in legacy replay too.** Verified:
-    `src/contexts/history-replay.ts:215` is literally `if (processor.commit ===
+    `src/contexts/history-replay.ts` — `replayHistory()`'s `document-operation` continue is literally `if (processor.commit ===
 'document-operation') continue;`. It silently loses **both** systems. The durable half returns
-    `null` for `document-operation` alongside `selection` (`history-adapter.ts:503`), so the
+    `null` for `document-operation` alongside `selection` (`src/contexts/history-adapter.ts` — `operationForTool()`'s `return null`), so the
     durable shadow is not the thing to fix.
-30. **A missing durable replay case is a silent no-op.** Verified: `src/contexts/durable-replay.ts:69-143`
-    is a `switch` on `operation.kind` with **no `default` arm**, and `materialization.ts:73-89`
+30. **A missing durable replay case is a silent no-op.** Verified: `src/contexts/durable-replay.ts` — `replayDurableDocument()`'s operation switch
+    is a `switch` on `operation.kind` with **no `default` arm**, and `src/contexts/materialization.ts` — `presentationOperations()`
     is likewise a switch with no `default`. Adding a `DurableOperation` variant therefore fails
     to _compile_ rather than to _replay wrongly_ — which is the correct failure mode, and the
     reason `layer-operation` is EXPENSIVE in this section.
 31. **`replay.requiresRaster` is derived, not declared.** Symptom: you add a tool and rewrite the
     test's expected list, or you set `requiresRaster: true` on a `layer-operation` tool and CI
     fails on a rule you did not know existed. Verified:
-    `src/tools/__tests__/tool-processors.test.ts:799-803` asserts
+    `tool-processors.test.ts` — the `it('derives the %s requiresRaster flag from its commit kind and creator status')` case asserts
     `replay.requiresRaster === (commit === 'raster' || (commit === 'selection' && !creator))`.
     Older plans still recommend flipping the flag; that is now forbidden.
 32. **There are per-tool tables in `tool-processors.test.ts` that a new tool must join.**
     Verified live sites, cited by symbol because the line numbers drift: `unimplementedTools`
-    (`:428`), `paintWrapperTools` (`:438`), `argOverrides` (`:540`), `placeholderTools` (`:806`),
-    the derived `requiresRaster` expectations (`:77-79`, `:110`, `:714-718`, `:728`). A new tool
+    (`unimplementedTools`, `paintWrapperTools`, `argOverrides` and `placeholderTools`),
+    the derived `requiresRaster` expectations (`it('marks only raster-producing tools as requiring raster')`, the `.replay.requiresRaster).toBe(false)` sweep, `it('marks only unimplemented tools as non-deterministic')`, and the frozen-descriptor key assertion). A new tool
     fails CI until each gains its row. This is the largest practical cost of adding a tool and
     the reason a mechanical registration is not free.
 33. **`ToolIconName` is hand-copied into the test.** Verified: the test exists at
     `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`; the union typecheck and the test
-    are two different lists, so they can disagree silently. (I did not verify the old `:21-60`
+    are two different lists, so they can disagree silently. (I did not verify the old the old line-span reference
     range — cite the file, not the line span.)
 34. **`isToolDirty` reads as always-false, and the reason is not the one usually given.**
     Verified: the reducer arm **exists** — `case 'SET_TOOL_DIRTY':` at
-    `src/contexts/StoreContext.tsx:358-362`, cleared by `SET_TOOL_NAME` at `:357`. What is true
+    `src/contexts/StoreContext.tsx` — the reducer's `case 'SET_TOOL_DIRTY'` arm, cleared by `SET_TOOL_NAME` at the reducer's `case 'SET_TOOL_NAME'` arm. What is true
     is that **no production dispatch ever sets it `true`**; three options-bar components say so
-    in their own comments (`ToolbarsRight/Colors/Color.tsx:94`, `Blur/Blur.tsx:66`,
-    `Levels/Levels.tsx:69`). Never build a reset/undo affordance on it.
+    in their own comments (`src/components/ToolbarsRight/Colors/Color.tsx` — its "nothing dispatches `SET_TOOL_DIRTY` with `true`" comment, `src/components/ToolbarsRight/Blur/Blur.tsx` — its "nothing dispatches `SET_TOOL_DIRTY` with `true`" comment,
+    `src/components/ToolbarsRight/Levels/Levels.tsx` — its "nothing dispatches `SET_TOOL_DIRTY` with `true`" comment). Never build a reset/undo affordance on it.
 35. **Every tool area shares one 2D overlay context.** Symptom: a new painter's `globalAlpha`,
     `setLineDash`, or `lineCap` leaks into the next stroke or the next tool. Verified:
-    `src/components/Main/Main.tsx:143` takes the single `toolOverlayRef` context, and
-    `src/tools/draw.ts:43-67` (`setupDrawCtx`) has to set every property unconditionally —
+    `src/components/Main/Main.tsx` — the single `toolOverlayRef.current.getContext('2d')` write takes the single `toolOverlayRef` context, and
+    `src/tools/draw.ts` — `setupDrawCtx()` (`setupDrawCtx`) has to set every property unconditionally —
     including the `else ctx.setLineDash([])` else-branch — precisely because the context is
     shared. Defence: bracket `save()`/`restore()`, and do **not** "fix" it by writing
     `globalAlpha = 1` at the top of setup, which flattens the committed layer.
 36. **Two separate `canvas` elements and a third for rects; the `display` allowlist is a separate
     list from the handler list.** Verified: the workspace canvas is
-    `data-testid="workspace-canvas"` (`Main.tsx:254`), the tool overlay's `display` is a
-    hard-coded array at `src/components/Main/Main.tsx:274-295`, and the rect overlay's is `[...].includes(...)` at
-    `:226`. A preview painted on `toolOverlayRef` is invisible even when the handlers fire.
+    `data-testid="workspace-canvas"` (`src/components/Main/Main.tsx` — the `data-testid="workspace-canvas"` attribute), the tool overlay's `display` is a
+    hard-coded array at `src/components/Main/Main.tsx` — the tool-overlay canvas's `display` allowlist, and the rect overlay's is `[...].includes(...)` at
+    the rect overlay canvas's `[...].includes(...)` gate. A preview painted on `toolOverlayRef` is invisible even when the handlers fire.
 
 ### Docs
 
 38. **`HANDOFF.md` citations go stale the moment you add an import.** Symptom: a future session
     reads a `file:line` that has moved and either wastes an investigation or "fixes" a bug that
     does not exist, and the drift is not
-    hypothetical — a branch's own citation to `src/contexts/history-adapter.ts:199` for the
-    `create-layer` emission is wrong here; it is at **`:504`**. Defence: re-verify every citation
+    hypothetical — a branch's own citation to `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`'s `create-layer` for the
+    `create-layer` emission is wrong here; it is at **`legacyHistoryToDurable()`'s `create-layer`**. Defence: re-verify every citation
     in the handoff you are about to commit, in the same commit, by grepping the tree for each
     line and opening it. (No citation-checking script is checked into the repo — the
     sweep is manual, so budget for it.)
 39. **A passing-test count written into a doc goes stale and must be fixed in the same commit.**
-    Verified: `e2e/OPEN_PROBLEMS.md:41-42` asserts "no e2e test fails: 97 pass, 2 are
+    Verified: `e2e/OPEN_PROBLEMS.md` §"Observed failures" asserts "no e2e test fails: 97 pass, 2 are
     skipped by declaration", and `e2e/OPEN_PROBLEMS.md` is the only place the pass/skip counts live. `AGENTS.md` used
     to assert the same count and no longer does, which is this trap biting a real citation. Any
     change to the suite invalidates the number. Defence: the same commit that changes the count
@@ -4551,38 +4551,38 @@ Treat every claim as unverified until re-checked against the working tree: the c
 against an older revision, and `08-merge-plan.md` in particular describes a campaign that has
 since merged.
 
-| File                                   | What it is FOR                                                                                                                                                                                                                                                                                                                                                     | When to read it                                                                                                                                                                                                                                                                     |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `README.md`                            | The entry point. 8-row file table, the three resolved decisions (D1 `color` = Black & White + Tint, D2 `levels` = real Levels, D3 destructive), a "land these first" list, the phase overview, and a candid list of what to be sceptical about. **Read this one first and completely** — it is the map                                                             | Before anything else. Re-read `:30-61` before planning a tranche: five items there are still unlanded                                                                                                                                                                               |
-| `00-tool-inventory.md`                 | Every registered tool vs Photoshop, the five highest-impact findings, plus Notes A/B/C on `color`, `levels`, and Free Transform. **Scope caveat: its universe is the registry, so it structurally could not surface a missing tool** — that is exactly the finding in `### Where the app stands`                                                                   | For orientation and for the "is this tool partly built?" question. **Not** for "what is missing" — this section is the replacement                                                                                                                                                  |
-| `01-photoshop-reference.md`            | The behaviour spec across 7 tool families with every claim cited, plus **§10 (`:888-955`), the corrections log**. The largest and most valuable file here                                                                                                                                                                                                          | Implementing or reviewing any tool. **§10 before you trust any Photoshop claim** — it lists 17 disproved premises and 18 genuinely unresolved items                                                                                                                                 |
-| `02-implementation-plan.md`            | 10 phases, sequenced, with `file:line` anchors, per-test verdicts, and a suggested landing order at `:1077`                                                                                                                                                                                                                                                        | Deciding what to build next. Cross-check its phase table against this section's ranking — the two disagree in places, and where they do, prefer the tree over both                                                                                                                  |
-| `03-ui-chrome-spec.md`                 | Theme palette, typography, the control vocabulary, **options-bar contents per tool (`:175`)**, cursors, specific widgets, and an explicit "Unverified — do not present as fact" section at `:333`                                                                                                                                                                  | Any visual work. Read `:333` before putting a hex value in code. Check `wip/ps-ux-chrome` first — it may already have built this                                                                                                                                                    |
-| `04-blend-modes-and-brush-spec.md`     | All 27 blend modes with formulas and separability flags, the compositing equation, Opacity-vs-Flow math, brush tip and dab rendering, airbrush, smoothing, auto-erase, color replacement, performance, symmetry. §2 and §8 are what make the blend-mode and `color-replacement` rows implementation-grade                                                          | Before touching blend modes or the brush engine. **Much of it is already written on `ps/tool-expansion`** — port, do not rewrite                                                                                                                                                    |
-| `05-selection-mask-migration.md`       | The selection keystone: an exhaustive call-site inventory, the exact proposed types, combination-mode design, a marching-squares spec, a per-test impact table, a migration order, and risks/non-goals. This is the document that makes the Tier 3 keystone row actionable                                                                                         | **Start here** for any selection or region-scoped work. It is the single highest-leverage file in the corpus                                                                                                                                                                        |
-| `06-adjustments-and-color-pipeline.md` | The sRGB/XYZ/Lab pipeline with exact matrices, real Levels (D2), real Brightness/Contrast, Black & White + Tint (D1), Hue/Saturation and Colorize, the other four adjustments, an engine-independent Gaussian blur, LUT strategy, and a recommended architecture. §11 marks what is reconstructed                                                                  | Before the `levels`/`color` row. The JS kernels it specifies are the correct replacement for the `ctx.filter` path                                                                                                                                                                  |
-| `07-test-harness-and-migration.md`     | The canvas-mock capability report, **§3 the verdict on the seven suspected "tests that assert bugs"**, the affected test files, the established conventions for writing a test here, coverage gaps, and a rewrite order. Its headline finding (the harness silently discarded every `ctx.filter` write) is now **fixed** — read it to see the shape, not the state | Before writing any code, per the corpus README. Read `src/test/setup.ts` for the current state; read this file for the reasoning behind the conventions                                                                                                                             |
-| `08-merge-plan.md`                     | The ownership map, known collisions, merge order, per-merge checklist, cross-cutting state at merge time, and what is deliberately not being fixed                                                                                                                                                                                                                 | **Largely superseded.** It describes a campaign that has since merged into `main`. Use `### Already in flight` above for current branch state                                                                                                                                       |
-| `RESEARCH-BRIEF.md`                    | The constraints brief the research itself ran against — the hard rules, repository orientation, and the architecture constraints any recommendation must respect. It is what the research **disproved**, so reading it is how you learn which of your own assumptions came from a premise rather than a source                                                     | When you need to know _why_ a recommendation looks the way it does, or when you are about to write a research brief of your own. **Its `## 10. Open questions / unknowns` (`:160`) and `## Rules for accuracy about the current code` (`:168`) are the two sections to read first** |
+| File                                   | What it is FOR                                                                                                                                                                                                                                                                                                                                                     | When to read it                                                                                                                                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `README.md`                            | The entry point. 8-row file table, the three resolved decisions (D1 `color` = Black & White + Tint, D2 `levels` = real Levels, D3 destructive), a "land these first" list, the phase overview, and a candid list of what to be sceptical about. **Read this one first and completely** — it is the map                                                             | Before anything else. Re-read the eight-row file table before planning a tranche: five items there are still unlanded                                                                                                                                             |
+| `00-tool-inventory.md`                 | Every registered tool vs Photoshop, the five highest-impact findings, plus Notes A/B/C on `color`, `levels`, and Free Transform. **Scope caveat: its universe is the registry, so it structurally could not surface a missing tool** — that is exactly the finding in `### Where the app stands`                                                                   | For orientation and for the "is this tool partly built?" question. **Not** for "what is missing" — this section is the replacement                                                                                                                                |
+| `01-photoshop-reference.md`            | The behaviour spec across 7 tool families with every claim cited, plus **§10, the corrections log**. The largest and most valuable file here                                                                                                                                                                                                                       | Implementing or reviewing any tool. **§10 before you trust any Photoshop claim** — it lists 17 disproved premises and 18 genuinely unresolved items                                                                                                               |
+| `02-implementation-plan.md`            | 10 phases, sequenced, with `file:line` anchors, per-test verdicts, and a suggested landing order at `02-implementation-plan.md` — its suggested landing order                                                                                                                                                                                                      | Deciding what to build next. Cross-check its phase table against this section's ranking — the two disagree in places, and where they do, prefer the tree over both                                                                                                |
+| `03-ui-chrome-spec.md`                 | Theme palette, typography, the control vocabulary, **options-bar contents per tool**, cursors, specific widgets, and an explicit "Unverified — do not present as fact" section                                                                                                                                                                                     | Any visual work. Read the same document's unverified-list marker before putting a hex value in code. Check `wip/ps-ux-chrome` first — it may already have built this                                                                                              |
+| `04-blend-modes-and-brush-spec.md`     | All 27 blend modes with formulas and separability flags, the compositing equation, Opacity-vs-Flow math, brush tip and dab rendering, airbrush, smoothing, auto-erase, color replacement, performance, symmetry. §2 and §8 are what make the blend-mode and `color-replacement` rows implementation-grade                                                          | Before touching blend modes or the brush engine. **Much of it is already written on `ps/tool-expansion`** — port, do not rewrite                                                                                                                                  |
+| `05-selection-mask-migration.md`       | The selection keystone: an exhaustive call-site inventory, the exact proposed types, combination-mode design, a marching-squares spec, a per-test impact table, a migration order, and risks/non-goals. This is the document that makes the Tier 3 keystone row actionable                                                                                         | **Start here** for any selection or region-scoped work. It is the single highest-leverage file in the corpus                                                                                                                                                      |
+| `06-adjustments-and-color-pipeline.md` | The sRGB/XYZ/Lab pipeline with exact matrices, real Levels (D2), real Brightness/Contrast, Black & White + Tint (D1), Hue/Saturation and Colorize, the other four adjustments, an engine-independent Gaussian blur, LUT strategy, and a recommended architecture. §11 marks what is reconstructed                                                                  | Before the `levels`/`color` row. The JS kernels it specifies are the correct replacement for the `ctx.filter` path                                                                                                                                                |
+| `07-test-harness-and-migration.md`     | The canvas-mock capability report, **§3 the verdict on the seven suspected "tests that assert bugs"**, the affected test files, the established conventions for writing a test here, coverage gaps, and a rewrite order. Its headline finding (the harness silently discarded every `ctx.filter` write) is now **fixed** — read it to see the shape, not the state | Before writing any code, per the corpus README. Read `src/test/setup.ts` for the current state; read this file for the reasoning behind the conventions                                                                                                           |
+| `08-merge-plan.md`                     | The ownership map, known collisions, merge order, per-merge checklist, cross-cutting state at merge time, and what is deliberately not being fixed                                                                                                                                                                                                                 | **Largely superseded.** It describes a campaign that has since merged into `main`. Use `### Already in flight` above for current branch state                                                                                                                     |
+| `RESEARCH-BRIEF.md`                    | The constraints brief the research itself ran against — the hard rules, repository orientation, and the architecture constraints any recommendation must respect. It is what the research **disproved**, so reading it is how you learn which of your own assumptions came from a premise rather than a source                                                     | When you need to know _why_ a recommendation looks the way it does, or when you are about to write a research brief of your own. **Its `## 10. Open questions / unknowns` and `## Rules for accuracy about the current code` are the two sections to read first** |
 
 ### The corpus's own §10, and the four corrections that change a backlog decision
 
-`01-photoshop-reference.md:888-911` records the premises the research **disproved** — acting on
+`01-photoshop-reference.md` §"10" — the corrections log records the premises the research **disproved** — acting on
 the original briefing would have produced wrong work. Four of them change what this backlog
 should recommend:
 
 1. **"The Polygon Tool is click-to-place-vertices" → it is drag-defined**, inscribing a regular
-   n-gon. The real `shape.ts:210` behaviour (`const sides = figure === 'triangle' ? 3 : 5`) is
+   n-gon. The real `src/tools/shape.ts` — `const sides = figure === 'triangle' ? 3 : polygonSides(args.sides)` behaviour (`const sides = figure === 'triangle' ? 3 : 5`) is
    therefore _closer_ to right for polygon than the app's own code suggests, and the defect is the
    **Triangle** (drag-defined isosceles, Shift = equilateral), not the polygon. Do not "fix" the
    polygon into a click tool.
 2. **"The Triangle Tool draws a regular inscribed triangle" → it is a drag-defined _isosceles_,
-   and Shift means equilateral, not aspect-snap.** This makes the `shape.ts:79` Shift-exclusion a
+   and Shift means equilateral, not aspect-snap.** This makes the `src/tools/shape.ts` — `snapLineGeometry()`'s `if (!shiftKey)` branch Shift-exclusion a
    genuine defect, and it is the sharpest of the four because the app's test pins the current
    behaviour.
 3. **"`triangle` lacks `creator: true` while others have it" → inverted.** `rectangle`, `ellipse`,
    and `line` lack it. Any plan that adds `creator: true` to the triangle is fixing the wrong tool;
-   check `toolProcessors.ts:326-330`, where all five figure rows _do_ have it now.
+   check `src/tools/toolProcessors.ts` — the five figure rows' `creator: true`, where all five figure rows _do_ have it now.
 4. **"Free Transform is a toolbar tool" / "Levels and Hue/Saturation are toolbar tools" → both
    are commands** (⌘T, and Image ▸ Adjustments), not toolbar slots. So the app's `transform`,
    `levels`, and `color` registrations occupy slots Photoshop does not have. That does not make
@@ -4595,10 +4595,10 @@ invented one; and **"Black & White has 10 color ranges" → it has 6 sextants** 
 model is Selective Color), which is what makes D1 a 6-slider tool with the `saturation` slider
 dropped rather than a 10-range one.
 
-And one that is not a correction but a boundary: **`01-photoshop-reference.md:945` — "No browser
+And one that is not a correction but a boundary: **`01-photoshop-reference.md` — its "No browser…" boundary claim — "No browser
 was executed."** Every support claim in that corpus derives from caniuse / MDN BCD / the WebKit
 bug tracker, not from runtime measurement. The `ctx.filter` conclusion (trap 15) is in exactly
-that category, which is why the one-line probe at `:951-955` is the thing to run before you
+that category, which is why the one-line probe at the one-line browser-capability probe it recommends is the thing to run before you
 depend on it.
 
 ### What I could not verify
@@ -4620,9 +4620,9 @@ depend on it.
   (11 files, ~265 KB). Their `file:line` anchors are against an older revision and I did not
   re-verify any of them.
 - **Open citations I dropped rather than guess:** the `#d9c09a` sepia matrix in
-  `src/tools/functions.ts`; `PolygonClickToolArea.tsx:733-738`; `useHistory.test.tsx:87-96`;
-  `useCurrentTool.tsx:26-31`; `toolIcons.test.tsx:21-60`; `HANDOFF.md` §45; `draw.ts`'s file
-  length and its `:102` re-stroke. Each is marked in the correction table. A dropped citation is
+  `src/tools/functions.ts`; `PolygonClickToolArea.tsx` — `handlePointerUp()`; `useHistory.test.tsx` — its `vi.mock('../layer-renderer.ts', …)` factory;
+  `src/contexts/useCurrentTool.tsx` — `normalizeToolArgs()`; `toolIcons.test.tsx` — the hand-copied `toolIconNames` array; `HANDOFF.md` §45; `draw.ts`'s file
+  length and its `src/util/draw.ts` — the `drawSpray(stroke)` dispatch inside `draw()` re-stroke. Each is marked in the correction table. A dropped citation is
   a claim the next session must re-derive, which is cheaper than a wrong one.
 
 ## Appendix C — how this document was built, and what to distrust
@@ -4643,4 +4643,4 @@ Facts the correction passes established, kept because nothing else records them:
 - `materialization.ts` resolves `processorId` **by lookup**, which is what makes the `raster` commit kind name-agnostic and why a new raster tool needs no history-adapter arm.
 - In `useHistory` tests, `renderHook` + `StoreProvider` is a forbidden template — the provider pulls in the durable replay path and does not survive the test environment. Drive the pure function, or mock `useStore` with `vi.hoisted` + `vi.mock`.
 - `tool-processors.test.ts` hard-codes **ten** per-tool rosters, not seven. Joining all ten is the largest practical cost of adding a tool.
-- In the e2e helpers, `screenshot-scale.ts` is the single owner of the coordinate converters and `canvas-redraw.ts` re-exports them; the guard at `cdp-helpers.ts:39-51` is a **comment block, not a runtime check**; and the call-site budgets (`threshold: 0.01`, `maxDiffPixels: 100`) differ from the `image-comparison.ts` defaults (`0.2` / `100` / `0.01`), so read the call site.
+- In the e2e helpers, `screenshot-scale.ts` is the single owner of the coordinate converters and `canvas-redraw.ts` re-exports them; the guard at `cdp-helpers.ts` — the "do not divide by devicePixelRatio" comment is a **comment block, not a runtime check**; and the call-site budgets (`threshold: 0.01`, `maxDiffPixels: 100`) differ from the `image-comparison.ts` defaults (`0.2` / `100` / `0.01`), so read the call site.

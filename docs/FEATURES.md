@@ -66,19 +66,21 @@ platform limit.
 New time, and many documents open at once in tabs.
 
 **This app:** the canvas is a `DocumentFrame` — a `Pos` —
-`src/contexts/document-frame.ts:3` — plus a `Size` from
-`src/contexts/general-types.ts:2`. New offers presets, a DPI field shown only for
-physical-unit presets (`src/components/NewImageDialog/NewImageDialog.tsx:128-133`),
+`document-frame.ts` — `DocumentFrame` — plus a `Size` from
+`general-types.ts` — `Size`. New offers presets, a DPI field shown only for
+physical-unit presets (`NewImageDialog.tsx` — the `dpiInput` field),
 background colour and opacity, and pixel dimensions clamped to 1–10000
-(`src/components/NewImageDialog/NewImageDialog.tsx:199-200`, `:218-219`). Opening a
+(`NewImageDialog.tsx` — the `widthInput` and `heightInput` `min`/`max`
+pairs). Opening a
 file replaces the whole document and mints a new `documentId`
-(`src/hooks/useApp.ts:116-144`).
+(`useApp.ts` — `setImageFromUpload()`).
 
 **Status:** `partial`
 
 **Gap:** One document at a time. No colour mode or bit depth. No Image Size or
 Canvas Size dialog. DPI is a one-shot conversion at New time and is never stored on
-the document (`src/components/NewImageDialog/NewImageDialog.tsx:13-19`).
+the document (`NewImageDialog.tsx` — `NewImageDialogProps`, whose comment records why
+there is deliberately no `dpi` field).
 
 ### Unsaved changes
 
@@ -106,7 +108,8 @@ handler.
 
 - The prompt offers **Discard** and **Cancel**. There is no **Save**, because the app's
   only save is Save As to a new file — it proposes `"<name> (copy)"`
-  (`src/contexts/useFile.tsx:190`) — so a Save button would have to open a file picker
+  (`useFile.tsx` — the `proposedName` it hands `SaveDialog`) — so a Save button
+  would have to open a file picker
   and then resume a New or Open. Which of the two is right is a product call; see
   `HANDOFF.md`.
 - The unload prompt's wording is the browser's, not the app's. `beforeunload` can only
@@ -118,16 +121,16 @@ handler.
 **Photoshop:** PSD and PSB, PDF, EPS/AI, camera RAW, HEIF/HEIC, BMP, DICOM, GIF,
 TIFF, WebP, AVIF.
 
-**This app:** `loadDocumentFile` (`src/contexts/image-load-save-utils.ts:68`)
-sniffs the first 64 bytes and dispatches — PSD (`:70`), TIFF (`:74`), BMP (`:78`),
-AVIF (`:82`), ICO (`:86`), GIF (`:90`) and SVG (`:93`) to their own codecs, and
-everything else through the browser's own `<img>` decoder (`:96`), which covers
+**This app:** `loadDocumentFile` (`image-load-save-utils.ts` — `loadDocumentFile()`)
+sniffs the first 64 bytes and dispatches — PSD, TIFF, BMP, AVIF, ICO, GIF and SVG
+to their own codecs, and
+everything else through the browser's own `<img>` decoder, which covers
 JPEG, PNG and WebP.
 
 **Status:** `partial`
 
-**Gap:** No PSB, no 16- or 32-bit, no CMYK PSD (`src/contexts/psd-utils.ts:64-67`);
-a greyscale PSD is converted to RGB with a warning (`:80`).
+**Gap:** No PSB, no 16- or 32-bit, no CMYK PSD (`psd-utils.ts` — `loadPsd()`'s header
+guards); a greyscale PSD is converted to RGB with a warning (also `loadPsd()`).
 
 ### Platform limits on import
 
@@ -147,19 +150,19 @@ below that a browser handles perfectly well today.
 **Photoshop:** PSD/PSB plus PNG, JPEG, TIFF, GIF, WebP, AVIF, PDF, EPS, DICOM and
 HDR, each with its own options.
 
-**This app:** `saveImageToDisk` (`src/contexts/image-load-save-utils.ts:138`)
-writes PNG, JPEG and WebP through `canvas.toBlob`
-(`src/contexts/image-load-save-utils.ts:201-205`), and dispatches TIFF,
-BMP, GIF, AVIF, ICO and SVG to their encoders (`:147-178`). PSD is written
-separately (`src/contexts/psd-utils.ts:209`).
+**This app:** `saveImageToDisk` (`image-load-save-utils.ts` — `saveImageToDisk()`)
+writes PNG, JPEG and WebP through `canvas.toBlob`, and dispatches TIFF,
+BMP, GIF, AVIF, ICO and SVG to their encoders. PSD is written
+separately (`psd-utils.ts` — `savePsd()`).
 
 **Status:** `partial`
 
 **Gap:** No PDF, HEIF, HDR or DICOM output — PDF and DICOM for the platform
 reasons above. The PSD writer drops groups, editable text, masks and effects
-(`src/components/SaveDialog/SaveDialog.tsx:119`), and groups in an imported PSD are
-flattened (`src/contexts/psd-utils.ts:129-132`). SVG export is a raster wrapped in
-an `<svg><image>` element (`src/constants/imageFormats.ts:70` labels it "SVG
+(`SaveDialog.tsx` — its `format === 'psd'` notice), and groups in an imported PSD
+are flattened (`psd-utils.ts` — `visit()`). SVG export is a raster wrapped in
+an `<svg><image>` element (`imageFormats.ts` — `IMAGE_FORMATS`'s SVG entry labels
+it "SVG
 (flattened)"), not vector output.
 
 ## Selection
@@ -169,11 +172,13 @@ Add / Subtract / Intersect), inverts, modifies (Feather / Expand / Contract),
 refines, saves to and loads from a named channel, and is viewed in a Channels panel.
 
 **This app:** a selection is **a polygon point list with a bounding box**, not a
-pixel channel — `src/contexts/general-types.ts:61-70`. Seven selection tools write
-it (`src/contexts/tool-types.ts:40-48`). Marching ants read the points
-(`src/hooks/useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`). An alpha
+pixel channel — `general-types.ts` — `Selection`. Seven selection tools write
+it (`toolProcessors.ts` — the selection entries carrying `creator: true`).
+Marching ants read the points
+(`useAnts.ts`, `useSelectionAnts.ts`, `usePolylineAnts.ts`). An alpha
 mask does exist, but only as a derived copy for clipboard and copy-to-layer
-(`src/util/selection.ts:705`), reached from `copySelectionToCanvas` (`:822`) and
+(`selection.ts` — `createFeatheredAlphaMask()`), reached from
+`copySelectionToCanvas()` and
 nowhere else. Feather is a parameter on that copy, not a modification of the
 selection.
 
@@ -181,7 +186,7 @@ selection.
 
 **Gap:** No Combine (Add / Subtract / Intersect), no Invert, no Modify (Feather /
 Expand / Contract), no Save or Load Selection, no Quick Mask, no Channels panel
-(`src/contexts/PanelLayout.tsx:89` admits only `history` and `layers`). **A
+(`PanelLayout.tsx` — `PanelId` admits only `history` and `layers`). **A
 selection does not clip a stroke**: no tool in `src/tools/` reads `selections`.
 
 That last one is the largest single selection gap and it is a model problem, not
@@ -195,18 +200,20 @@ layers, each with opacity, fill opacity, blend mode, per-property locks, layer
 masks, clipping masks and Blend If.
 
 **This app:** `LayerSource` has three discriminants — `blank`, `image`, `tool`
-(`src/contexts/layer-types.ts:9-26`). Both Type and a shape commit as a source
-(`src/tools/toolProcessors.ts:170-177`, `commit: 'source'` on each), but only the six
-tools in `vectorToolNames` (`src/contexts/layer-renderer.ts:49`) are re-rendered from
+(`layer-types.ts` — the `LayerSource` union). Both Type and a shape commit as a
+source (`toolProcessors.ts` — its `shape` and `text` entries, `commit: 'source'`
+on each), but only the six
+tools in `vectorToolNames` (`layer-renderer.ts`) are re-rendered from
 their args at draw time; Type is not among them, so `getLayerBitmap` falls through to
-the layer's own bitmap (`src/contexts/layer-renderer.ts:55-57`), which replay
-materialises (`src/contexts/history-replay.ts:227`). Sixteen Photoshop blend modes map
-to canvas composite operations (`src/contexts/psd-utils.ts:16-33`), and opacity and
-blend mode are applied at draw time
-(`src/contexts/layer-renderer.ts:114-115`). The layer record is flat, a
-`Record<LayerId, Layer>` with no `parentId` (`src/contexts/layer-types.ts:48-69`,
-`:71`), and the panel offers visibility, reorder, rename and delete
-(`src/components/SidebarRight/LayersTab.tsx:141-271`).
+the layer's own bitmap (`layer-renderer.ts` — `getLayerBitmap()`), which replay
+materialises (`history-replay.ts` — `replayHistory()`). Sixteen Photoshop blend
+modes map to canvas composite operations (`psd-utils.ts` — its `blendModes` map),
+and opacity and blend mode are applied at draw time
+(`layer-renderer.ts` — `drawLayer()`). The layer record is flat, a
+`Record<LayerId, Layer>` (`layer-types.ts` — the `Layer` record and the
+`LayersRecord` map) with no `parentId`, and the panel offers visibility, reorder,
+rename and delete
+(`LayersTab.tsx` — its `layers-list` rows).
 
 **Status:** `partial`
 
@@ -224,18 +231,20 @@ that the obvious writer is discarded by replay.
 visibility toggle, unlimited states, and History States snapshots.
 
 **This app:** a linear `HistoryItem[]` with a cursor
-(`src/contexts/useHistory.ts:34-35`, `src/contexts/history-types.ts:21-25`), unbounded
+(`history-types.ts` — `HistoryItem`, carried in a `HistoryTimeline` whose
+`cursor` indexes it), unbounded
 — append truncates the redo tail and pushes, with no cap anywhere
-(`src/contexts/history-timeline.ts:31-32`). A History panel exists
-(`src/components/SidebarRight/HistoryTab.tsx`) with click-to-rewind (`:74`) and a
-per-step disabled toggle (`:88-98`), plus Undo/Redo in the header
-(`src/components/HistoryControls/HistoryControls.tsx:43-62`).
+(`history-timeline.ts` — `updateHistoryTimeline()`'s append arm). A History panel
+exists
+(`HistoryTab.tsx`) with click-to-rewind and a
+per-step disabled toggle, plus Undo/Redo in the header
+(`HistoryControls.tsx` — its `undo-button` and `redo-button`).
 
 **Status:** `have`
 
 **Note, because it is the opposite of what the code looks like:** entries store
 _args_, never pixels, and undo re-runs the tool processors from index zero
-(`src/contexts/history-replay.ts:73`). See
+(`history-replay.ts` — `replayHistory()`). See
 [`ARCHITECTURE.md`](ARCHITECTURE.md#two-history-systems).
 
 ## Panels
@@ -245,17 +254,17 @@ Swatches, Styles, Character, Paragraph, Brush presets, Navigator, Info, Histogra
 Actions, Measurement Log — dockable, with panel groups.
 
 **This app:** exactly two dockable panels, `PanelId = 'history' | 'layers'`
-(`src/contexts/PanelLayout.tsx:89`). They dock, drag-reorder, resize, collapse to
-icons and roll up (`src/contexts/PanelLayout.tsx:330-348`,
-`src/components/SidebarRight/PanelGroup.tsx`), and Window has Reset Workspace
-(`src/components/DesktopHeader/DesktopHeader.tsx:621-630`).
+(`PanelLayout.tsx` — `PanelId`). They dock, drag-reorder, resize, collapse to
+icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
+plus `PanelGroup.tsx`), and Window has Reset Workspace
+(`DesktopHeader.tsx` — its `handleResetWorkspace`).
 
 **Status:** `partial`
 
 **Gap:** No Properties, Adjustments, Channels, Paths, Character, Paragraph, Brush
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
-(`src/components/SidebarLeft/SidebarLeft.tsx:1255`); the closest analogues to
+(`SidebarLeft.tsx` — its `color-pickers` cluster); the closest analogues to
 Color and Character are the Photo Filter command's three sliders and the Type options bar,
 which are options bars, not panels.
 
@@ -265,12 +274,14 @@ which are options bars, not panels.
 Help.
 
 **This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
-(`src/components/DesktopHeader/DesktopHeader.tsx:368-634`). File has New, Open,
+(`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
 Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
-twenty **disabled** (`DesktopHeader.tsx:207-230`); a disabled item records a capability
+twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
+records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,
-which is where Adobe puts it (`DesktopHeader.tsx:585-594`). Window has Reset Workspace.
+which is where Adobe puts it (`DesktopHeader.tsx` — `handleFreeTransform`). Window
+has Reset Workspace.
 
 **Status:** `divergent`
 
@@ -281,9 +292,11 @@ Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask, Group, Merge, Select 
 Deselect, Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
 unreachable from the menu bar — several are unreachable entirely.
 
-Undo and Redo exist as buttons (`src/components/HistoryControls/HistoryControls.tsx:43-62`)
+Undo and Redo exist as buttons (`HistoryControls.tsx` — its `undo-button` and
+`redo-button`)
 and are bound to `Ctrl+Z` / `Shift+Ctrl+Z`
-(`src/components/Common/AppKeyboardShortcuts.tsx:259`, `:271`); they are missing
+(`AppKeyboardShortcuts.tsx` — the two `key: 'z'` `useKeyDownShortcut`
+registrations); they are missing
 from the menu, not from the app.
 
 ## View and navigation
@@ -293,11 +306,13 @@ Hand-tool panning, rotate view, rulers, guides, snap, a grid overlay, and
 screen-mode switching.
 
 **This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
-scaleY)` with centring offsets (`src/hooks/usePointerPosition.ts:137`,
-`src/util/contain-fit.ts:33-51`). The
-zoom transform is commented out (`src/components/Main/Main.tsx:275`) and so is
-the store's zoom state (`src/contexts/StoreContext.tsx:165-166`, `:1395-1401`).
-There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts:37-170`).
+scaleY)` with centring offsets (`contain-fit.ts` — `containFit()`, which
+`usePointerPosition`'s `calculateDimensions()` calls). The
+zoom transform is commented out (`Main.tsx` — the `.zoom-container` `style` prop)
+and so is the store's zoom state (`StoreContext.tsx` — the commented-out
+`zoomDataRef` and `setZoomData`, in `StoreData` and again in `StoreProvider`).
+There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts` —
+`toolbarMap`).
 
 **Status:** `absent`
 
@@ -313,9 +328,9 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 **Photoshop:** about 200 default bindings.
 
 **This app:** 41. Thirty-three registrations in
-`src/components/Common/AppKeyboardShortcuts.tsx` and eight in the two polygon tool
-areas (`src/components/Main/PolygonClickToolArea.tsx:922-958`,
-`FeatherMagneticLassoToolArea.tsx:543-579`).
+`AppKeyboardShortcuts.tsx` and eight in the two polygon tool areas
+(`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
+`useKeyDownShortcut` registrations each).
 
 **Status:** `partial`
 
@@ -337,8 +352,8 @@ selection model above rather than from the keyboard layer. `Tab`, `F`,
 **This app:** 8-bit sRGB RGBA on every surface. `src/util/color.ts` is 24 lines of
 UI-contrast helpers and nothing else. There is no ICC handling anywhere in `src/`.
 PSD import hard-rejects anything but 8-bit and RGB/greyscale
-(`src/contexts/psd-utils.ts:66-67`), and PSD export quantises opacity to one byte
-(`:256-257`).
+(`psd-utils.ts` — `loadPsd()`), and PSD export quantises opacity to one byte
+(`psd-utils.ts` — `savePsd()`).
 
 **Status:** `platform` for the colour-space and bit-depth half.
 
@@ -357,11 +372,12 @@ compression; GIF colours and dither.
 
 **This app:** a format dropdown and **one** slider. JPEG quality, 0.1–1.0, default
 0.92, shown only for JPEG and passed only for JPEG
-(`src/components/SaveDialog/SaveDialog.tsx:83-116`, `src/constants/imageFormats.ts:1`),
+(`SaveDialog.tsx` — its format select and `jpegQuality` slider, seeded from
+`imageFormats.ts`'s `DEFAULT_JPEG_QUALITY`),
 reaching `canvas.toBlob`
 through `supportsQuality`, which is true for JPEG alone
-(`src/constants/imageFormats.ts:18`). AVIF quality is hard-coded at 80 in the
-encoder (`src/contexts/avif-utils.ts:40`).
+(`imageFormats.ts` — `IMAGE_FORMATS`). AVIF quality is hard-coded at 80 in the
+encoder (`avif-utils.ts` — `encodeAvif()`).
 
 **Status:** `partial`
 
@@ -373,15 +389,19 @@ metadata option; no WebP, AVIF, GIF or TIFF encoder settings.
 **Photoshop:** a touch-optimised workspace with one-finger draw, two-finger pan and
 pinch-zoom.
 
-**This app:** a full mobile shell (`src/App.tsx:119`) — header with menu, undo,
-redo, layers drawer and Export (`src/components/Mobile/MobileHeader.tsx:92-167`),
+**This app:** a full mobile shell (`App.tsx` — the `MobileShell` it mounts) —
+header with menu, undo,
+redo, layers drawer and Export (`MobileHeader.tsx` — its `mobile-header`
+region),
 a tool sheet carrying the active tool's options
-(`src/components/Mobile/MobileToolSheet.tsx:66-97`), a bottom bar whose tiles come
+(`MobileToolSheet.tsx` — its `mobile-tool-options` panel), a bottom bar whose
+tiles come
 from the same `toolbarMap` as desktop so they cannot drift
-(`src/components/Mobile/mobile-tools.ts:50-63`), and a layers drawer
-(`src/components/Mobile/MobileLayersDrawer.tsx:134-320`). Canvas input goes
+(`mobile-tools.ts` — `mobileToolGroups`, derived from `toolbarMap`), and a layers
+drawer
+(`MobileLayersDrawer.tsx`). Canvas input goes
 through Pointer Events with single-pointer capture, so drawing works on touch
-(`src/hooks/usePointerPosition.ts:193`).
+(`usePointerPosition.ts` — `isPointerDownValid()`).
 
 **Status:** `partial`
 
@@ -394,16 +414,19 @@ and pan entirely, not a mobile-specific omission.
 Content-Aware Fill, Neural Filters.
 
 **This app:** no smart objects — a placed layer imports as a raster with an
-explicit warning (`src/contexts/psd-utils.ts:109`), and there is no `LayerSource`
+explicit warning (`psd-utils.ts` — `visit()`), and there is no `LayerSource`
 arm for one. No adjustment layers. No generative, content-aware or neural code in
 `src/`. The Pen family and Custom Shape are unimplemented placeholders
-(`src/tools/toolProcessors.ts:343-378`), so there are no path layers either.
+(`toolProcessors.ts` — their `commit: 'unimplemented'` entries), so there are no path
+layers either.
 
 **What it does have** is a genuine, if narrow, non-destructive mechanism: a
 per-layer retained operation stack — `FilterLayerOperation | AffineLayerOperation`
-(`src/contexts/layer-types.ts:31-46`) — re-rendered as a CSS `ctx.filter` string on
-every draw (`getPresentationFilter` at `src/contexts/presentation-evaluator.ts:103`,
-assigned to `ctx.filter` at `:166`). A layer can be re-blurred, re-levelled or
+(`layer-types.ts` — the `LayerOperation` union) — re-rendered as a CSS `ctx.filter`
+string on
+every draw (`getPresentationFilter` in `presentation-evaluator.ts`, assigned to
+`ctx.filter` by `drawEvaluatedPresentation()`). A layer can be re-blurred,
+re-levelled or
 re-coloured without rasterising.
 
 **Status:** `divergent`

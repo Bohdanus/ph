@@ -99,7 +99,7 @@ violations on `main`.
   never displays" points at the wrong target. `shape` is the only id the flyout
   routes every figure through. Photoshop's shapes are Rectangle, Ellipse, Triangle,
   Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**;
-  the flyout has **six** today (`toolbar-mapping.ts:114-121`) and `Star` is the
+  the flyout has **six** today (the shape flyout in `toolbarMap`) and `Star` is the
   missing one.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
@@ -109,8 +109,8 @@ violations on `main`.
   entry count is 37 and not the tile count): **none lack the suffix**. It used to be
   exactly three — `Colors`, `Levels` and `Transform` — and those three left the rail
   entirely, because they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands
-  rather than tools; `extraTools` is the list that now records them
-  (`toolbar-mapping.ts:172-189`).
+  rather than tools; `extraTools` (`toolbar-mapping.ts`) is the list that now records
+  them.
   "Content-Aware Move tool" is hyphenated
   in Adobe's tables but **no such tool exists in the app yet**, so there is nothing
   to rename — when it lands, render it that way.
@@ -121,14 +121,19 @@ violations on `main`.
   bar is the debt.
   - **The placeholder roster is seven, not eight.** **Color Replacement is NOT on
     that list and must not be put back on it.** It left the roster:
-    `src/tools/toolsMap.ts:138-142` wires the real `ColorReplacement.tsx`,
-    `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13-16` records the
-    removal, `src/tools/__tests__/tool-processors.test.ts:619-642` asserts the real
-    bar renders for every name that left the roster, and `:584-595` asserts the two
-    lists stay disjoint. Re-derive the count with
+    the `color-replacement` entry in `src/tools/toolsMap.ts` wires the real
+    `ColorReplacement.tsx`, the `color-replacement` removal note in
+    `src/components/ToolbarsRight/toolbarPlaceholderConfig.ts` records the
+    removal, and the
+    `it('renders a real options bar for every tool that left the placeholder roster')`
+    case in `src/tools/__tests__/tool-processors.test.ts` asserts the real
+    bar renders for every name that left the roster, while the
+    `it('claims no tool for both the placeholder roster and the real options bars')` case
+    in the same file asserts the two lists stay disjoint. Re-derive the count with
     `grep -c "placeholderTool(" src/tools/toolsMap.ts` and the `placeholderNames`
-    list at `:517-528` of the same test; both answer seven.
-  - **`draw` is a live tile, and it is the last deletion.** `toolbar-mapping.ts:102`
+    list in that same test file; both answer seven.
+  - **`draw` is a live tile, and it is the last deletion.** The
+    `{ label: 'Draw Tool', name: 'draw' }` entry in `toolbarMap`
     gives it its own tile at the end of the painting band, badged with Photoshop's own
     `B`, so the invented tool is not hidden in a flyout — it is a visible,
     keyboard-reachable tile. It is also the suite's default way to make a mark, which is
@@ -158,7 +163,8 @@ colour, so losing it takes the capability away silently, in the one place nobody
 would think to look for it. A test pins the cluster, both swatches, both native
 `<input type="color">` elements and the swap, at the most collapsed state the fit
 can produce — the one-tile rail:
-`src/components/SidebarLeft/__tests__/SidebarLeft.overflow.test.tsx:525-553`
+the `it('leaves the colour pickers in the rail when the fit has collapsed to this
+tile alone')` case in `src/components/SidebarLeft/__tests__/SidebarLeft.overflow.test.tsx`
 collapses the fit to zero visible tools and asserts all six of those nodes are still
 in the document.
 
@@ -175,11 +181,14 @@ one is how to read it.
 This app has no Color, Swatches or HSB panel, so a request to remove the pair is
 a real fidelity loss, not a correction. The pair is one of only **two** writers of
 the store colour — the other is the Eyedropper
-(`src/components/Main/EyedropperToolArea.tsx:133`, the only dispatch of
+(the `SET_COLOR` dispatch in `handlePointerDown()` in
+`src/components/Main/EyedropperToolArea.tsx`, the only dispatch of
 `SET_COLOR` outside the rail) — so deleting the pair leaves the Eyedropper as the
 sole writer and the Paint options bar, which mirrors that colour into its own args
-(`src/components/ToolbarsRight/Paint/Paint.tsx:65-68`) and tints its swatch from it
-(`src/components/ToolbarsRight/Paint/Paint.tsx:226-231`), showing a value nothing
+(the store-colour `useEffect` in `createPaintToolbar()`'s `PaintToolbar` in
+`src/components/ToolbarsRight/Paint/Paint.tsx`) and tints its swatch from it
+(the `isLightColor(color)` chessboard swatch beside the `previewRef` canvas in the same
+component), showing a value nothing
 can change.
 
 ## Confidence and provenance
@@ -221,19 +230,19 @@ Adobe-side inconsistency. "Content-Aware Move tool" is hyphenated.
 Adding a tool means updating every hand-written registry list, including
 `dispatchTable`, `icons`, and `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`.
 The hand-copied lists in the tests are the expensive part.
-`src/components/SidebarLeft/__tests__/toolIcons.test.tsx:26-74` carries a **46-name**
-union by hand (46 = the 41 `ToolName`s plus 5 `shape-*` figure icons), byte-identical
-and in the same order to `ToolIconName` in
-`src/components/SidebarLeft/types.ts:4-52`; **keep it that way**.
+`toolIconNames` in `src/components/SidebarLeft/__tests__/toolIcons.test.tsx` carries a
+**46-name** union by hand (46 = the 41 `ToolName`s plus 5 `shape-*` figure icons),
+byte-identical and in the same order to `ToolIconName` in
+`src/components/SidebarLeft/types.ts`; **keep it that way**.
 
-**`HANDOFF.md` §74 (`HANDOFF.md:1259`) is the rail-clone target and the file-by-file blast
+**`HANDOFF.md` §74 is the rail-clone target and the file-by-file blast
 radius** — it enumerates the hand-copied lists and the tests that pin tool names
 (`src/util/__tests__/constants.test.ts`, `toolIcons.test.tsx`, the four rosters in
 `src/tools/__tests__/tool-processors.test.ts`,
 `src/components/SidebarLeft/__tests__/SidebarLeft.rendering.test.tsx`,
 `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts` and
 `src/components/Common/AppKeyboardShortcuts.tsx`). **`HANDOFF.md` §68
-(`HANDOFF.md:1575`) is not this**: it is about a committed shape being painted twice, and
+is not this**: it is about a committed shape being painted twice, and
 its pointer here was wrong. Count the lists yourself before estimating an edit rather
 than trusting a number written anywhere — including the 46 and the 41 above, which are
 cheap to re-derive with `grep -c` and a line count.

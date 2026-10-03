@@ -85,10 +85,10 @@ reproduced in this suite. Headless is a preventive default. What _was_ measured,
 what made headless the default rather than a preference, is that headed mode also
 changed which tests fail, independently of any human:
 
-| formerly failing tests                        | headed | headless |
-| --------------------------------------------- | ------ | -------- |
-| `cdp-helpers.spec.ts:132 :146 :161 :193 :210` | 5 fail | pass     |
-| `cdp-helpers.spec.ts:281, 301`                | pass   | 2 fail   |
+| formerly failing tests                                                                                                                                                                                                                                                                                                                | headed | headless |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------- |
+| five `captureCanvasScreenshot` cases in `e2e/helpers/cdp-helpers.spec.ts` — `captures screenshot via CDP`, `captures screenshot with clip options`, `uses box coordinates when clip not provided`, `captures screenshot via CDP without explicit DPR scaling`, `captures the page background when the region lies outside the canvas` | 5 fail | pass     |
+| two cases in that file's `captureCanvasScreenshot at an emulated deviceScaleFactor of 2` block — `reports the emulated ratio, so the override provably applied` and `returns the box region at one integral scale`                                                                                                                    | pass   | 2 fail   |
 
 The two groups were disjoint and each mode's set reproduced identically across
 repeats. Both are now fixed — the assertions no longer name a capture scale, so they
@@ -457,7 +457,8 @@ So the two failure shapes to know about:
 - **Do not assume a height sweep would catch it.** The right panel's width — and therefore
   the canvas box — is a function of width alone, so every height agreed at a fixed width.
   `the export is independent of the shell layout` sweeps widths across the `lg` breakpoint
-  (1024px, `src/index.scss:38`) at two heights and in both sidebar states, and compares the
+  (1024px, the `--breakpoint-lg` custom property in `src/index.scss`) at two heights and in
+  both sidebar states, and compares the
   **exported PNG bytes** with `Buffer.equals`. PNG rather than a comparison of
   `sourceDataUrl`, because the property is about the export and PNG is the only lossless
   format that never leaves the browser — TIFF, GIF and AVIF lazily `import()` `utif`,

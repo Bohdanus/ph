@@ -470,7 +470,7 @@ expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocume
 // <button aria-label="Rotate 90° Left" title="Rotate 90° Left">...</button>
 ```
 
-**Evidence**: Transform.test.tsx:35-37 uses `getByTitle` for rotate buttons. The source likely renders `<button title="Rotate 90° Left">` without `aria-label`. Add `aria-label` to source and use `getByRole`.
+**Evidence**: `Transform.test.tsx` uses `getByTitle` for rotate buttons — `screen.getByTitle('Rotate 90° Left')`. The source likely renders `<button title="Rotate 90° Left">` without `aria-label`. Add `aria-label` to source and use `getByRole`.
 
 ---
 
@@ -688,7 +688,7 @@ These are tracked across sessions. Update after each run.
 | ---------------------- | ------------------------------------------------------------------------------------ | ------------- | ------------------------- |
 | useTheme array mock    | DesktopHeader.test.tsx (was fixed), Main.test.tsx (verify)                           | Solid (6)     | Phase 3 — Critical only   |
 | Fake-timer hygiene     | usePolylineAnts.test.tsx (fixed), check others                                       | Gold (5)      | Phase 3 — Critical only   |
-| Vitest 5 hoisting      | SidebarLeft.test.tsx:53, others                                                      | Gold (7)      | Phase 3 — Critical only   |
+| Vitest 5 hoisting      | the `SidebarLeft` suites under `src/components/SidebarLeft/__tests__/`, others       | Gold (7)      | Phase 3 — Critical only   |
 | Brittle toolbar tests  | Draw, Transform, Levels, Text, MagicWand, RectangularSelection, FeatherMagneticLasso | Shallow (0-1) | Phase 4 — Safe to improve |
 | Format-utils shallow   | bmp, tiff, ico, gif, svg, avif utils tests                                           | Shallow (0-1) | Phase 5 — Safe to improve |
 | Toolbar negative paths | 7 toolbar components                                                                 | Shallow (0-1) | Phase 5 — Safe to improve |
@@ -697,18 +697,18 @@ These are tracked across sessions. Update after each run.
 
 Patterns verified in actual test files (not speculative). GTD scores from the rubric above.
 
-| Pattern                                                           | File:Line                                                                                                                | GTD           | Severity | Evidence                                                |
+| Pattern                                                           | Where                                                                                                                    | GTD           | Severity | Evidence                                                |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------- | -------- | ------------------------------------------------------- |
-| `getByTitle` used instead of accessible query                     | Transform.test.tsx:35-37                                                                                                 | Shallow (1)   | High     | `screen.getByTitle('Rotate 90° Left')` — not accessible |
-| `getByText(...).toBeTruthy()` instead of `toBeInTheDocument`      | Transform.test.tsx:37-40, Levels.test.tsx:35-38                                                                          | Shallow (1)   | High     | Truthy assertion on DOM node                            |
-| `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | Draw.test.tsx:45-47, Levels.test.tsx:38-39                                                                               | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| `getByTitle` used instead of accessible query                     | `Transform.test.tsx` — its `screen.getByTitle('Rotate 90° Left')` assertions                                             | Shallow (1)   | High     | `screen.getByTitle('Rotate 90° Left')` — not accessible |
+| `getByText(...).toBeTruthy()` instead of `toBeInTheDocument`      | `Transform.test.tsx`, `Levels.test.tsx`                                                                                  | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | `Draw.test.tsx`, `Levels.test.tsx`                                                                                       | Shallow (1)   | High     | Truthy assertion on DOM node                            |
 | Single happy-path test only                                       | Draw.test.tsx (1 test), Transform.test.tsx (3 tests), Levels.test.tsx (2 tests), MagicWand.test.tsx (1 test)             | Shallow (0-1) | Medium   | No negative/error path coverage                         |
-| `vi.mock` inside describe block                                   | SidebarLeft.test.tsx:24-60                                                                                               | Gold (7)      | Critical | Vitest 5 hoisting violation                             |
-| `useTheme` array mock (object return)                             | DesktopHeader.test.tsx:51 (was fixed)                                                                                    | Solid (6)     | Critical | Already addressed in prior session                      |
-| `mockResolvedValue` without error path                            | DesktopHeader.test.tsx:135-143                                                                                           | Solid (6)     | Medium   | Only success path tested                                |
+| `vi.mock` inside describe block                                   | the `SidebarLeft` suites under `src/components/SidebarLeft/__tests__/`                                                   | Gold (7)      | Critical | Vitest 5 hoisting violation                             |
+| `useTheme` array mock (object return)                             | `DesktopHeader.test.tsx` — its `useTheme` mock (was fixed)                                                               | Solid (6)     | Critical | Already addressed in prior session                      |
+| `mockResolvedValue` without error path                            | `DesktopHeader.test.tsx` — its `openNewImageDialog` mock                                                                 | Solid (6)     | Medium   | Only success path tested                                |
 | Format-utils shallow (mocked codec)                               | bmp-utils.test.tsx, tiff-utils.test.tsx, ico-utils.test.tsx, gif-utils.test.tsx, svg-utils.test.tsx, avif-utils.test.tsx | Shallow (0-1) | Medium   | Real round-trip only in psd-utils.test.tsx              |
-| `vi.hoisted` used correctly                                       | MagicWand.test.tsx:5-6                                                                                                   | Shallow (1)   | Good     | Pattern to replicate                                    |
-| `vi.stubGlobal` + `vi.unstubAllGlobals`                           | DesktopHeader.test.tsx:131-132, 146-147                                                                                  | Solid (6)     | Good     | Pattern to replicate                                    |
+| `vi.hoisted` used correctly                                       | `MagicWand.test.tsx` — its `dispatchMock` hoisted declaration                                                            | Shallow (1)   | Good     | Pattern to replicate                                    |
+| `vi.stubGlobal` + `vi.unstubAllGlobals`                           | `DesktopHeader.test.tsx`                                                                                                 | Solid (6)     | Good     | Pattern to replicate                                    |
 
 ### Gold-Standard Files (DO NOT TOUCH)
 

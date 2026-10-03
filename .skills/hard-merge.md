@@ -474,8 +474,9 @@ carries the citation in its own header for exactly this reason. Keep the two apa
 **`docs/TOOLS-TOO-HARD.md` is this repository's existing record of the class-D and class-C
 verdicts**, complete with Adobe citations, and it is scoped to the Tools rail. Read it before
 researching a rail or panel question from scratch; the answer is often already written down there.
-`docs/TOOLS-TOO-HARD.md:1-19` states the policy it records: a capability listed there is a decision,
-not a backlog item, and it is deleted when the capability lands.
+`docs/TOOLS-TOO-HARD.md` — "Tools — too hard, and not attempted" — states the policy it records: a
+capability listed there is a decision, not a backlog item, and it is deleted when the capability
+lands.
 
 ### The token axis
 
@@ -543,7 +544,8 @@ git -c merge.conflictStyle=zdiff3 merge-tree --write-tree <main> <branch>
 
 This runs the real three-way merge in a scratch object store. It touches **no working tree, no
 index and no ref** — the property that matters, and the one this repository's own inventory script
-depends on (`scripts/lib/worktree-inventory/git.mjs:198`). It is not object-store-neutral: the
+depends on (`mergeConflict()` in `scripts/lib/worktree-inventory/git.mjs`). It is not
+object-store-neutral: the
 tree it prints is written to the object store as unreachable loose objects. That is the same
 trade the repo already made, and the claim it makes is the one that counts.
 
@@ -552,11 +554,11 @@ Two things to know about the output:
 - **Read the conflict list from `^CONFLICT` on stdout, never from the exit code.** A non-zero exit
   also means an unresolvable ref. "No conflicts" is a licence to land, so a wrong licence is how a
   branch breaks `main`; a failed run must degrade to **unknown**, never to clean. This is the
-  repo's own rule, and it is stated twice — the JSDoc at
-  `scripts/lib/worktree-inventory/git.mjs:194-197` ("`null` is NOT `false`: an unknown answer must
+  repo's own rule, and it is stated twice — the JSDoc on `mergeConflict()` in
+  `scripts/lib/worktree-inventory/git.mjs` ("`null` is NOT `false`: an unknown answer must
   not be reported as a clean merge, because 'no conflicts' is a licence to land and a wrong licence
-  is how a branch breaks main") and the `return { conflict: null, … }` at `:226-231`. The `^CONFLICT`
-  match itself is at `:214`.
+  is how a branch breaks main") and that function's `return { conflict: null, … }` on its failure
+  paths. The `^CONFLICT` match is inside `mergeConflict()` too.
 - **Use `zdiff3`, and know why.** Plain `merge` style shows two sides and nothing between, so you
   cannot tell a line that was _added by them_ from one that was _in the base and deleted by us_.
   `diff3` shows the base but **always** shows it, and git has no way to omit an empty one, so on a
@@ -969,8 +971,8 @@ all five are gates, not advice.
 
 **The merge was flagged `remerge CONFLICT: Merge conflict in AGENTS.md`, the commit landed, and the
 committed file still carried live markers.** It carried **six** of them: an unindented
-`<<<<<<< HEAD` at :57, `=======` at :759 and :1001, **an indented `<<<<<<<` at :848**, and two
-space-separated `> > > > > > > main` label lines at :818 and :1003. They passed through three
+`<<<<<<< HEAD` opening, two `=======` separators, **one indented `<<<<<<<`**, and two
+space-separated `> > > > > > > main` label lines. They passed through three
 further commits — one of them a merge — before `ef85d3ab` ("docs(agents): repair a committed
 conflict in AGENTS.md, and shorten it") removed them.
 
@@ -991,7 +993,7 @@ gate run _during_ the merge the two agree; for the audit you run afterwards, onl
 
 **Require seven of the marker character, and allow leading whitespace.** The obvious version —
 anchored, no whitespace, `>` uncounted — finds only **3 of the 6** markers in that commit, because
-`:848` is indented and `:818`/`:1003` are the space-separated `diff3` label form
+one of the markers it misses is indented and two more are the space-separated `diff3` label form
 `> > > > > > > main`, not `>>>>>>> main`. The same uncounted `>` also matches **every markdown
 blockquote**: it fires 79 times in `.skills/photoshop-tool-creation.md` and 7 times in
 `HANDOFF.md` on ordinary `>` quote lines. A sweep like that reports a clean merge as broken, and an
@@ -1276,7 +1278,7 @@ incident that produced this document; the rest from the wider merge corpus.
 | 2   | **Opposing product decisions on one literal**                      | `useState(false)` vs `useState(true)`. Resolved against the operator's spoken instruction to the branch that had it.                                                                                                              |
 | 3   | **Both sides rewrote the same explanatory comment**                | The `h-full` / `min-h-full` block in `SidebarLeft.tsx`; also `responsive-shell.spec.ts`, `text-tool.spec.ts`, `document-dialogs.spec.ts` — prose collisions above unchanged code.                                                 |
 | 4   | **A duplicated numbered section**                                  | Two `## 79.` in `HANDOFF.md`, independently authored, both real. Main keeps 79; the branch renumbers to 83.                                                                                                                       |
-| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` at `curated.mjs:947` and on the branch at a different line. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.   |
+| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` in that entry and on the branch at a different place. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.         |
 | 6   | **A helper whose signature diverged**                              | `leftOf(): number` vs `boxOf(): {left, top}`, and the call sites diverged with it.                                                                                                                                                |
 | 7   | **The same import, added twice**                                   | `SidebarLeft.tsx` and `SidebarLeft.flyout-hardening.test.tsx`. The trivial union — **and the most common shape, so do not let its triviality set your expectation for the rest.**                                                 |
 | 8   | **A document was split on `main`**                                 | `main` split `AGENTS.md` into a thin root plus `docs/ORCHESTRATION.md`, `docs/TESTING.md` and `docs/PHOTOSHOP-UX.md`; the branch edited the long form. Ported the edit to its new home.                                           |
@@ -1286,9 +1288,10 @@ incident that produced this document; the rest from the wider merge corpus.
 ### Class 11 — the one that is not a conflict
 
 `git reported this merge as resolved, and the committed file still contained live conflict markers.*
-**Six** of them, in `AGENTS.md`: an unindented `<<<<<<< HEAD`at :57,`=======`at :759 and :1001,
-**an indented`<<<<<<<`at :848**, and two space-separated`> > > > > > > main`label lines at :818
-and :1003. They passed through three further commits before`ef85d3ab`repaired them. Neither`--remerge-diff`, nor `--cc`, nor the existence of a merge commit catches that. **A grep over the
+**Six** of them, in `AGENTS.md`: an unindented `<<<<<<< HEAD`opening, two`=======`separators,
+**one indented`<<<<<<<`**, and two space-separated `> > > > > > > main`label lines. They passed
+through three further commits before`ef85d3ab`repaired them. Neither`--remerge-diff`, nor
+`--cc`, nor the existence of a merge commit catches that. **A grep over the
 merge's changed files does** — and it must allow leading whitespace _and_ require seven of the
 marker character, or it finds 3 of these 6 while firing on every markdown blockquote in the
 repository. → [Phase 7](#71-the-marker-sweep)
@@ -1565,15 +1568,16 @@ where the check was not actually run** — the same honesty convention the tool-
 
 5. **`merge-tree` exits non-zero for reasons that are not conflicts.** Symptom: a branch reported
    as "conflicts" when the real answer is "could not be determined", and a branch reported as
-   clean because the ref did not resolve. Defence: match `^CONFLICT` on stdout (the test is at
-   `scripts/lib/worktree-inventory/git.mjs:214`), and degrade a failed run to **unknown**, never to
-   clean — the rule the file's own JSDoc states at `git.mjs:194-197` and implements at `:231` and `:233`.
+   clean because the ref did not resolve. Defence: match `^CONFLICT` on stdout (the test is inside `mergeConflict()` in
+   `scripts/lib/worktree-inventory/git.mjs`), and degrade a failed run to **unknown**, never to
+   clean — the rule `mergeConflict()`'s own JSDoc states and that same function's two
+   `conflict: null` returns implement.
 
 6. **An expired lease makes a file look free while the agent working in it is not.** Symptom: a
    `swarm check` returns `free` for a path another agent is actively rewriting, because its
    45-minute lease lapsed and was swept. Defence: an unclaimed path looks free — claim or hold it
    before editing, and treat "free" as "not currently locked", never as "nobody is here". See
-   `docs/ORCHESTRATION.md:596-606`.
+   `docs/ORCHESTRATION.md` — "The swarm board".
 
 7. **The board cannot see two writers in one worktree, and cannot see two agents on one _feature_
    in two worktrees.** Symptom: two agents pick overlapping work and neither sees the other.
@@ -1641,7 +1645,8 @@ to a cited document, not only to the code it points into.
 **A count is the same defect wearing a different hat.** If a count is load-bearing, derive it in
 the same sentence that uses it. Three files in this repository state a line count for
 `.skills/photoshop-tool-creation.md` and **all three are wrong** — its own gitignored loader says
-4,819, `docs/TOOLS-RESEARCH-BRIEF.md:103` says 4,371, and an earlier form of this paragraph said
+4,819, `docs/TOOLS-RESEARCH-BRIEF.md` says 4,371 in its "What already exists" section, and an
+earlier form of this paragraph said
 4,395; `wc -l .skills/photoshop-tool-creation.md` is the only one of the four that can be right.
 That is not a slip in a citation; it is a stale number that reads plausibly, which is the exact
 failure mode this appendix is about. **Verify any count you copy from here, including this one** —
