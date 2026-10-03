@@ -198,17 +198,40 @@ const drawDisc = async (page: Page, box: BoundingBox) => {
 };
 
 /**
- * The seeded values of the four controls this tool's bar renders, read off
- * `defaultSettings['feather-magnetic-lasso']` in `src/tools/settings.ts:120`-`:125`.
+ * The seeded values of the six controls this tool's bar renders, read off
+ * `defaultSettings['feather-magnetic-lasso']` in `src/tools/settings.ts:131`-`:142`.
  *
  * Asserted before anything is changed, so each exact-name assertion below is a claim about a
  * value that MOVED rather than a claim about a value that happened to already be right.
+ *
+ * Snap and Smooth are here for the same reason as the other four and were the two the bar grew
+ * without anyone noticing: `snapStrength` is seeded `0.85` and rendered as
+ * `Math.round(snapStrength * 100)` percent, while `smoothing` is seeded `1.5` and rendered as a
+ * bare px with a fractional step of 0.5 — so the two are the only controls whose readout is not
+ * the value the slider carries, which is exactly what a copy of the seeded number would get
+ * wrong. The units differ per control throughout (`px` on Feather and Width, `%` on Contrast and
+ * Snap, none on Frequency, `px` on Smooth) and the readouts have to match them.
  */
 const SEEDED_READOUTS = [
   { control: /^Feather/, seeded: 'Feather 12px', value: '4', moved: 'Feather 4px' },
   { control: /^Width/, seeded: 'Width 18px', value: '24', moved: 'Width 24px' },
   { control: /^Contrast/, seeded: 'Contrast 30%', value: '45', moved: 'Contrast 45%' },
   { control: /^Frequency/, seeded: 'Frequency 40', value: '80', moved: 'Frequency 80' },
+  { control: /^Snap/, seeded: 'Snap 85%', value: '0', moved: 'Snap 0%' },
+  { control: /^Smooth/, seeded: 'Smooth 1.5px', value: '0', moved: 'Smooth 0px' },
+] as const;
+
+/**
+ * The bar's two checkboxes, seeded on and carrying static text.
+ *
+ * They are asserted by STATE rather than by readout because they have no value in their label
+ * at all, and their labels are matched exactly so a rename would fail rather than silently
+ * re-target a different control. Both default to true (`antiAlias`, `previewFeather` at
+ * `src/tools/settings.ts:138`-`:139`), so "starts checked" is a claim about the seed.
+ */
+const CHECKBOXES = [
+  { label: 'Anti-alias', arg: 'antiAlias' },
+  { label: 'Preview feather', arg: 'previewFeather' },
 ] as const;
 
 test.describe('Magnetic Lasso', () => {
@@ -407,5 +430,66 @@ test.describe('Magnetic Lasso', () => {
       await slider.fill(value);
       await expect(slider, `${control} must report the value it was set to`).toHaveAccessibleName(moved);
     }
+
+    // Both checkboxes, which carry static text and therefore NO value in their label — so they
+    // are asserted by state, and their labels are asserted as resolvable so a rename would fail.
+    for (const { label, arg } of CHECKBOXES) {
+      const box = page.getByRole('checkbox', { name: label });
+      await expect(box, `${label} (${arg}) must be on the magnetic lasso bar`).toBeVisible();
+      await expect(box, `${label} (${arg}) is seeded on`).toBeChecked();
+
+      await box.uncheck();
+      await expect(box, `${label} (${arg}) must take the uncheck`).not.toBeChecked();
+      // Put it back, so a control later in the loop is asserted against the seed rather than
+      // against whatever the previous iteration left behind.
+      await box.check();
+      await expect(box, `${label} (${arg}) must take the re-check`).toBeChecked();
+    }
+  });
+
+  /**
+   * The two remaining ways a draft can end, neither of which the Alt test above reaches.
+   *
+   * `finishSelection` (`:377`) is reachable three ways that are not Enter, and the component's own
+   * comment enumerates them: "the close-anchor click and the double-click in
+   * `handlePointerDown`, `handleContextMenu`, and the Enter shortcut" (`:423`-`:425`).
+   * `handleContextMenu` (`:528`) calls it at `:530` behind a `preventDefault`, so it is the route a
+   * test can drive without depending on the double click's own 12px/300ms timing thresholds —
+   * which is why it is the one exercised here. Right-click is also the only one of the three a
+   * keyboard-free test can reach at all.
+   *
+   * Both halves are asserted through the committed outline, because both are claims about
+   * COMMITTING, and a draft that merely drew more blue would satisfy a weaker reading. Copy is
+   * asserted alongside as the non-pixel reading: it is gated on `hasActiveSelection`
+   * (`:145`, used at `:361`), which is false for a draft.
+   *
+   * Escape first, on an empty draft, because `cancelSelectionDraft` (`:303`) early-returns on
+   * `anchorsRef.current.length === 0`. Asserted as a negative — Copy still off — which is the
+   * only reading that distinguishes "correctly did nothing" from "cancelled something that was
+   * never there": neither can be told apart from the absence of a selection alone, but only one
+   * leaves Copy disabled for the rest of the gesture.
+   */
+  test('a right-click also finishes the path, and Escape before any anchor does nothing', async ({ page }) => {
+    const box = await workspaceBox(page);
+    const clip = canvasClip(page, box);
+    const copy = page.getByRole('button', { name: 'Copy', exact: true });
+    const hasCommittedOutline = async (screenshot: Buffer) => (await getSelectionBounds(screenshot)) !== null;
+
+    await page.keyboard.press('Escape');
+    await expect(copy, 'Escape on an empty draft must leave nothing committed').toBeDisabled();
+
+    // Four anchors around the outline, so the committed path is a recognisable shape rather than a
+    // degenerate loop, then a right-click to finish.
+    for (const degrees of [270, 340, 50, 160]) {
+      const at = onDiscEdge(box, degrees);
+      await page.mouse.click(box.x + at.x, box.y + at.y);
+    }
+    const closeAt = onDiscEdge(box, 200);
+    await page.mouse.click(box.x + closeAt.x, box.y + closeAt.y, { button: 'right' });
+
+    await waitForCanvasPixels(page, clip, hasCommittedOutline, {
+      description: 'the committed selection outline after a right-click finish',
+    });
+    await expect(copy, 'a right-click finish is a commit, so Copy is enabled').toBeEnabled();
   });
 });
