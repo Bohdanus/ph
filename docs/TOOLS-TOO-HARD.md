@@ -530,10 +530,13 @@ entry in this file where the obstacle is not the algorithm — accumulating ligh
 replay contract. A `commit: 'raster'` tool's commit must be a pure function of its args, because
 `HistoryItem[]` is the production replay authority and `requiresRaster: true` replay has to
 reconstruct the same pixels from the recorded args. Dwell accumulation makes the commit a function of
-wall-clock time as well, so the same args replay to a different image. The app already has the
-converse recorded: `saveLayerCanvas()` promoting cached canvases outside reducer publication is a
-reason not to start the single-writer cutover. Changing the commit discipline for dwell tools is a
-history-architecture change with a migration attached, not a processor edit.
+wall-clock time as well, so the same args replay to a different image. That is a different half of
+the replay contract from the one the presentation boundary covers — a promoted cache reaches a
+published layer only inside the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm
+(`src/contexts/StoreContext.tsx:647-660`), and `AGENTS.md`'s Architecture status section is the one
+home for that — so what dwell accumulation breaks is commit purity, not cache publication. Changing
+the commit discipline for dwell tools is a history-architecture change with a migration attached,
+not a processor edit.
 
 **What the app does instead.** One application of the effect at the tool's Exposure value — or, on the
 Sponge, at its Flow value — committed on release. Both are per-stroke settings, which is what the bar
