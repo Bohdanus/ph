@@ -133,6 +133,7 @@ export function layersDifferOnlyByPresentation(current: LayersRecord, next: Laye
  */
 export class DocumentPresentationScope {
   private readonly published = new Map<string, Set<BitmapSource>>();
+  private readonly leases = new Map<string, Map<BitmapSource, () => void>>();
   private disposed = false;
 
   /** Records a bitmap the store just published, keyed by owning document. */
@@ -144,6 +145,18 @@ export class DocumentPresentationScope {
     const owned = this.published.get(documentId) ?? new Set<BitmapSource>();
     owned.add(bitmap);
     this.published.set(documentId, owned);
+  }
+
+  /** Records a materialization lease alongside its presentation bitmap. */
+  trackPublishedLease(documentId: string, bitmap: BitmapSource, release: () => void): void {
+    if (this.disposed) {
+      release();
+      return;
+    }
+    this.trackPublished(documentId, bitmap);
+    const documentLeases = this.leases.get(documentId) ?? new Map<BitmapSource, () => void>();
+    documentLeases.set(bitmap, release);
+    this.leases.set(documentId, documentLeases);
   }
 
   /**
@@ -177,8 +190,15 @@ export class DocumentPresentationScope {
     const departed = [...owned].filter((bitmap) => !reachable.has(bitmap));
     if (!departed.length) return;
     for (const bitmap of departed) owned.delete(bitmap);
+    const documentLeases = this.leases.get(documentId);
     if (!owned.size) this.published.delete(documentId);
-    for (const bitmap of departed) closePresentationBitmap(bitmap);
+    if (documentLeases && !owned.size) this.leases.delete(documentId);
+    for (const bitmap of departed) {
+      const release = documentLeases?.get(bitmap);
+      documentLeases?.delete(bitmap);
+      if (release) release();
+      else closePresentationBitmap(bitmap);
+    }
   }
 
   /** Closes every published cache of a document that is being replaced. */
@@ -186,7 +206,13 @@ export class DocumentPresentationScope {
     const owned = this.published.get(documentId);
     if (!owned) return;
     this.published.delete(documentId);
-    for (const bitmap of owned) closePresentationBitmap(bitmap);
+    const documentLeases = this.leases.get(documentId);
+    this.leases.delete(documentId);
+    for (const bitmap of owned) {
+      const release = documentLeases?.get(bitmap);
+      if (release) release();
+      else closePresentationBitmap(bitmap);
+    }
   }
 
   /**
@@ -236,9 +262,15 @@ export class DocumentPresentationScope {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    for (const owned of this.published.values()) {
-      for (const bitmap of owned) closePresentationBitmap(bitmap);
+    for (const [documentId, owned] of this.published) {
+      const documentLeases = this.leases.get(documentId);
+      for (const bitmap of owned) {
+        const release = documentLeases?.get(bitmap);
+        if (release) release();
+        else closePresentationBitmap(bitmap);
+      }
     }
     this.published.clear();
+    this.leases.clear();
   }
 }

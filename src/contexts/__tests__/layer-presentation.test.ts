@@ -280,6 +280,20 @@ describe('DocumentPresentationScope ownership', () => {
     scope.dispose();
   });
 
+  it('releases a transferred materialization lease when its presentation leaves the store', () => {
+    const scope = new DocumentPresentationScope();
+    const bitmap = createMockImageBitmap();
+    const release = vi.fn();
+    scope.trackPublishedLease('doc-1', bitmap, release);
+
+    scope.retireUnreferenced('doc-1', () => new Set());
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(bitmap.close).not.toHaveBeenCalled();
+
+    scope.dispose();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps an adopted raster alive while a history entry still names it, then closes it once', () => {
     // An ADOPTED raster — an import, a merge, a document import — is named by
     // three aliases, and after the layer is replaced the only one left is the
