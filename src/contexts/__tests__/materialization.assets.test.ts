@@ -690,6 +690,28 @@ describe('materialization operation loop guards', () => {
     registry.shutdown();
   });
 
+  it('passes the materialized base bitmap into a Brush replay before drawing the stroke', async () => {
+    const registry = new AssetRegistry();
+    const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [
+      {
+        kind: 'apply-raster-processor',
+        layerId: 'layer-1',
+        processorId: 'brush',
+        version: 1,
+        args: { toolName: 'brush', alpha: 1, color: '#000000', penType: 'pen', lineWidth: 2, points: [{ x: 2, y: 2 }] },
+      },
+    ]);
+
+    await materializeLayer(layer, makeRequest(registry));
+
+    const copiedBase = recordedContexts.some((context) =>
+      vi
+        .mocked(context.drawImage)
+        .mock.calls.some(([source]) => recordedBitmaps.includes(source as (typeof recordedBitmaps)[number]))
+    );
+    expect(copiedBase).toBe(true);
+  });
+
   it('skips operation kinds that are neither retained nor raster processors', async () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [

@@ -262,12 +262,10 @@ describe('toolProcessors registry', () => {
     }
   });
 
-  it('marks only fresh-canvas paint processors as unable to composite onto input', () => {
-    expect(findToolProcessor('brush')?.compositesOntoInput).toBe(false);
-    expect(findToolProcessor('pencil')?.compositesOntoInput).toBe(false);
+  it('keeps every raster processor safe to replay over its input bitmap', () => {
     for (const toolName of processorNames) {
       const processor = findToolProcessor(toolName)!;
-      if (processor.commit !== 'raster' || toolName === 'brush' || toolName === 'pencil') continue;
+      if (processor.commit !== 'raster') continue;
       expect(processor.compositesOntoInput, toolName).not.toBe(false);
     }
   });
@@ -1034,6 +1032,20 @@ describe('toolProcessors dispatch for every tool name', () => {
 
     expect(result[0]).toBe(canvas as unknown as OffscreenCanvas);
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(undefined, -2, -3);
+  });
+
+  it.each(['brush', 'pencil'] as const)('composites %s over the supplied input bitmap', (toolName) => {
+    const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
+      ...defaultSettings[toolName],
+      points: [
+        { x: 4, y: 4 },
+        { x: 8, y: 8 },
+      ],
+    } as never);
+    const canvas = result[0] as unknown as RecordingOffscreenCanvas;
+
+    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, size.width, size.height);
+    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
   });
 });
 

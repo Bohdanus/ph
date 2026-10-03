@@ -304,16 +304,14 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   brush: {
     commit: 'raster',
-    compositesOntoInput: false,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen'));
+      const [canvas] = draw(params)(buildDrawArgs(args, 'pen'));
       return [canvas];
     },
   },
   pencil: {
     commit: 'raster',
-    compositesOntoInput: false,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
       // `??` guards only `undefined` and `null`, so a non-numeric string reaches
@@ -321,7 +319,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
       // in favour of a width it picks itself. Only a finite width may reach the clamp.
       const width = Number((args as Partial<DrawToolArgs>).lineWidth ?? DEFAULT_PENCIL_LINE_WIDTH);
       const lineWidth = Number.isFinite(width) ? Math.max(1, width) : DEFAULT_PENCIL_LINE_WIDTH;
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen', lineWidth));
+      const [canvas] = draw(params)(buildDrawArgs(args, 'pen', lineWidth));
       return [canvas];
     },
   },

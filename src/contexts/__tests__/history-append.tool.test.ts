@@ -83,15 +83,18 @@ describe('history append retained tool translation', () => {
     });
   });
 
-  it('retains a raster processor from canonical tool arguments without a bitmap snapshot', () => {
-    const args = { toolName: 'sponge', mode: 'desaturate', size: 4 };
+  it.each([
+    ['brush', { toolName: 'brush', color: '#123456', size: 4 }],
+    ['pencil', { toolName: 'pencil', color: '#123456', lineWidth: 3 }],
+    ['sponge', { toolName: 'sponge', mode: 'desaturate', size: 4 }],
+  ])('retains %s from canonical tool arguments without a bitmap snapshot', (_label, args) => {
     const result = plan(args);
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.durableEntry?.operation).toEqual({
+    expect(result.durableEntry?.operation).toMatchObject({
       kind: 'apply-raster-processor',
       layerId: 'layer-1',
-      processorId: 'sponge',
+      processorId: args.toolName,
       version: 1,
       args,
     });
@@ -108,17 +111,6 @@ describe('history append retained tool translation', () => {
       expect.objectContaining({ code: 'invalid-history-entry', severity: 'warning' })
     );
     expect(result.diagnostics[0]?.message).toContain('lineDash[1]');
-  });
-
-  it.each([
-    ['brush', { toolName: 'brush', color: '#123456', size: 4 }],
-    ['pencil', { toolName: 'pencil', color: '#123456', lineWidth: 3 }],
-  ])('refuses %s because its processor does not composite onto the input bitmap', (_label, args) => {
-    const result = plan(args);
-
-    expect(result.durableEntry).toBeNull();
-    expect(result.diagnostics[0]).toMatchObject({ code: 'unsupported-history-feature', severity: 'warning' });
-    expect(result.diagnostics[0]?.message).toContain('creates a raster from its own input');
   });
 
   it.each([
