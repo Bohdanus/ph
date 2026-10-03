@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import * as citationPatterns from '../lib/citations/resolve.mjs';
 import { deadNumbers } from '../lib/agent-board/handoff-import.mjs';
 
 /**
@@ -288,10 +289,53 @@ const RETIRED_GATE_SYMBOLS = new Map([
  * Matched as a bare word, NOT as a call form, which is the whole difference from the leg above:
  * the call form stopped matching the moment the identifier was backticked into prose, and that is
  * the drift this function is here to survive.
+ *
+ * ## The git-ref exemption, and why it is a correction rather than a hole
+ *
+ * A mention inside a GIT REF is not a claim about the program. `fix/saveLayerCanvas-citations` is a
+ * branch that exists — `git rev-parse` resolves it — and a document that names it is reporting a fact
+ * about the repository, in the same way that naming `HANDOFF.md` names a file. The reason string
+ * above asserts that "naming this symbol in a maintained document is a claim about an export the
+ * program does not contain", and that is FALSE for a ref: the sentence "`docs/citation-anchors` and
+ * `fix/saveLayerCanvas-citations` are the same two commits" is true today and stays true after those
+ * branches are deleted. So this exemption makes the detector match its own stated principle rather
+ * than loosening it, and the defect class the leg exists for is untouched: an assertion that the
+ * program HAS the export is still reported, in every form.
+ *
+ * The discriminator is a SLASH inside the same whitespace-free token, because that is what separates a
+ * ref from an identifier in this repository's own naming: every branch that carries a retired symbol
+ * is namespaced (`fix/…`, `docs/…`), and no bare identifier contains one. Requiring the whole token
+ * rather than a lookaround is deliberate — a lookaround for "a slash anywhere nearby" would exempt
+ * "`saveLayerCanvas` is gated on `src/util/x.ts`", which is exactly the false constraint this file
+ * was written to catch.
  */
+/**
+ * Whether EVERY mention of a retired symbol sits inside a git ref.
+ *
+ * "Every", not "any", and that is the whole safety property. An earlier version returned on the first
+ * ref it found, so a document that named the branch AND made a claim in prose — `fix/saveLayerCanvas-citations`
+ * is a branch, and saveLayerCanvas promotes it` — came back exempt, and the one sentence in it that
+ * asserts the program has the export is exactly what this leg exists to catch. An exemption has to be
+ * earned by the whole document, because the document is what is being judged.
+ */
+const isGitRef = (markdown, name) => {
+  const mentions = [...markdown.matchAll(new RegExp(`\\b${name}\\b`, 'g'))];
+  if (!mentions.length) return false;
+  const isBoundary = (ch) => ch === undefined || /[\s`]/.test(ch);
+  return mentions.every(({ index }) => {
+    // Widen from the mention to the token around it. A ref has no whitespace in it, so the token is
+    // found by walking outwards to the nearest boundary rather than by guessing a fixed width.
+    let start = index;
+    let end = index + name.length;
+    while (!isBoundary(markdown[start - 1])) start -= 1;
+    while (!isBoundary(markdown[end])) end += 1;
+    return markdown.slice(start, end).includes('/');
+  });
+};
+
 const staleRetiredSymbols = (markdown) =>
   [...RETIRED_GATE_SYMBOLS]
-    .filter(([name]) => new RegExp(`\\b${name}\\b`).test(markdown))
+    .filter(([name]) => new RegExp(`\\b${name}\\b`).test(markdown) && !isGitRef(markdown, name))
     .map(([name, reason]) => `${name} — ${reason}`);
 
 /**
@@ -350,28 +394,34 @@ const staleHandoffRefs = (markdown, handoff) => {
 /**
  * A `file.ext:NNN` citation: a line number in a document.
  *
- * The extension list is the one that makes this safe against the text it will meet. Requiring a
- * known extension followed by COLON and DIGITS is what keeps `node:fs`, `node:path` and
- * `http://localhost:5173` out — the three shapes a looser `\w+:\d+` would report, and the first
- * two of which appear in this very repository's import lines. `.md` is IN the list on purpose:
+ * The pattern lives in `scripts/lib/citations/resolve.mjs` and is IMPORTED here rather than written
+ * out again, which is the fix for a drift this file used to carry. The gate listed 20 extensions and
+ * the migration sweep listed 13, so `svg`, `png`, `html`, `wasm`, `avif`, `webp` and `jpg` citations
+ * were invisible to the tool that builds the worklist — and the drift ran the dangerous way, with
+ * the sweep reporting CLEAN on a document this gate rejects. A gate and the tool that feeds it must
+ * agree on what a citation is; two hand-written lists cannot be relied on to, and this one had
+ * already diverged.
+ *
+ * What the pattern must keep out is unchanged and is the reason the extension list exists: requiring
+ * a known extension followed by COLON and DIGITS keeps `node:fs`, `node:path` and
+ * `http://localhost:5173` out — the shapes a looser `\w+:\d+` would report, and the first two of
+ * which appear in this very repository's import lines. `.md` is IN the list on purpose:
  * `docs/README.md` citing `HANDOFF.md:99` drifts exactly as much as `HANDOFF.md:99` does, and
  * excluding prose targets would exempt the documents with the most citations in them.
  *
- * A RANGE (`file.ts:12-20`) and a comma list are caught by the same match, because the pattern
- * only needs the first number; the reported string stops there, which is enough to name the line
- * for a human to go and look at.
+ * A RANGE (`file.ts:12-20`) and a comma list are caught by the same match, because the pattern only
+ * needs the first number; the reported string stops there, which is enough to name the line for a
+ * human to go and look at.
  */
-const LINE_NUMBER_CITATION =
-  /[\w./@-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml|html|svg|wasm|avif|webp|jpg|png):\d+/g;
+const { LINE_NUMBER_CITATION, withoutFencedCode } = citationPatterns;
 
 /**
  * A fenced code block's contents, removed.
  *
  * This is the ONE exemption from the ban, and it is exemption-by-quotation rather than
- * exemption-by-path. `HANDOFF.md` §96, §99, §106, §107, §108 and §109 are entries whose SUBJECT is a
- * drifted line-number citation — "every `history-replay.ts` line citation past `:89` is off by
- * twenty" cannot be stated without the number, because the number is what the finding is about.
- * Deleting it does not migrate those entries, it deletes the finding.
+ * exemption-by-path. A `HANDOFF.md` entry whose SUBJECT is a drifted line-number citation cannot be
+ * stated without the number — "every `history-replay.ts` line citation past `:89` is off by twenty"
+ * is a claim ABOUT the citation, so deleting the number deletes the finding.
  *
  * A fence is the honest container for that, and it is checkable in a way an exemption list is not: a
  * reader runs the grep and sees only what is quoted, and the quote is visibly a quotation. An
@@ -384,13 +434,16 @@ const LINE_NUMBER_CITATION =
  * that forgets its closing fence loses the check on everything after it, and the failure to notice
  * is a fence that is trivially visible.
  *
- * Two passes rather than one alternation, because `$` under the `m` flag also matches BEFORE a
- * newline and a single pattern closed by `$` therefore terminates on the opening fence's own line
- * end. The paired form runs first and the leftover form second, so the unterminated case is a
- * consequence of what the first pass did not match rather than a branch of the same pattern.
+ * The two passes are why there are two: `$` under the `m` flag also matches BEFORE a newline, so a
+ * single pattern closed by `$` terminates on the opening fence's own line end. The paired form runs
+ * first and the leftover form second, so the unterminated case is a consequence of what the first
+ * pass did not match rather than a branch of the same pattern.
+ *
+ * The implementation is imported from `scripts/lib/citations/resolve.mjs` rather than written here,
+ * for the same reason the citation pattern is: the gate and the migration sweep have to strip the
+ * same bytes, or the sweep hands reviewers worklist items — fenced quotations — whose correct
+ * resolution is to change nothing.
  */
-const withoutFencedCode = (markdown) =>
-  markdown.replace(/^[ \t]{0,3}```[\s\S]*?^[ \t]{0,3}```[^\n]*$/gm, '').replace(/^[ \t]{0,3}```[\s\S]*$/m, '');
 
 /**
  * The distinct numbered citations in a string, deduplicated, with fences removed.
@@ -402,6 +455,30 @@ const withoutFencedCode = (markdown) =>
  */
 const lineNumberCitationsIn = (text) => [
   ...new Set([...withoutFencedCode(text).matchAll(LINE_NUMBER_CITATION)].map((m) => m[0])),
+];
+
+/**
+ * A BARE continuation — `` `:476` `` with no filename — is the same banned form with the file
+ * carried over from the citation beside it.
+ *
+ * Two patterns rather than one because the two shapes really are different text: `file.ext:‹line›`
+ * names its own file, and a bare `:‹line›` does not. The enforcement leg checks both, because a
+ * document that states the rule has to state it completely — a reader who learns the form from
+ * `AGENTS.md` will write the bare form when the file was named a clause earlier, and a gate that only
+ * matched the self-naming shape would let that through in the one document that must not contain it.
+ *
+ * What this does NOT do is extend the remainder leg below, which reports the migration's outstanding
+ * work. It cannot: `docs/OVERRIDES.md` carries two bare continuations, that file is the operator's to
+ * write, and `AGENTS.md` forbids an agent from editing it. The finding is recorded in `HANDOFF.md`
+ * rather than papered over here, so the limitation is a to-do item and not a quiet gap.
+ */
+const BARE_CONTINUATION = /`:(?:\d+(?:-\d+)?(?:,:\d+(?:-\d+)?)*)`/g;
+
+const bannedNumbersIn = (text) => [
+  ...new Set([
+    ...[...withoutFencedCode(text).matchAll(LINE_NUMBER_CITATION)].map((m) => m[0]),
+    ...[...withoutFencedCode(text).matchAll(BARE_CONTINUATION)].map((m) => m[0]),
+  ]),
 ];
 
 /**
@@ -431,10 +508,7 @@ const LINE_NUMBER_GATED = new Set(['AGENTS.md', 'docs/DOCUMENTATION.md', 'docs/R
 const lineNumberCitationsByDocument = (documents) =>
   documents
     .filter(({ path }) => LINE_NUMBER_GATED.has(path))
-    .flatMap(({ path, text }) => {
-      const found = new Set([...withoutFencedCode(text).matchAll(LINE_NUMBER_CITATION)].map((m) => m[0]));
-      return [...found].map((citation) => `${path}: ${citation}`);
-    });
+    .flatMap(({ path, text }) => bannedNumbersIn(text).map((citation) => `${path}: ${citation}`));
 
 /**
  * The maintained documents that still carry a numbered citation, and are therefore not gated yet.
@@ -539,6 +613,20 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
     expect(staleRetiredSymbols('run `saveLayerCanvas()`')).toHaveLength(1);
     expect(staleRetiredSymbols('run `saveLayerCanvas`')).toHaveLength(1);
     expect(staleRetiredSymbols('gated on a canvas-promotion helper, which was saveLayerCanvas')).toHaveLength(1);
+
+    // The git-ref exemption, and the four things it must NOT buy. Every one of these is a claim that
+    // the program contains the export, which is the whole defect class this leg exists for, so each
+    // has to stay a hit even though a ref elsewhere in the same document would be exempt.
+    expect(staleRetiredSymbols('`fix/saveLayerCanvas-citations` is a branch')).toHaveLength(0);
+    expect(staleRetiredSymbols('`docs/citation-anchors` and `fix/saveLayerCanvas-citations`')).toHaveLength(0);
+    // A ref AND a real claim in one document: the ref is exempt, the claim is not, so this is a hit.
+    // An exemption that silenced the whole document would be the hole, not the fix.
+    expect(
+      staleRetiredSymbols('`fix/saveLayerCanvas-citations` is a branch, and saveLayerCanvas promotes it')
+    ).toHaveLength(1);
+    // A file path near a bare mention is not a ref — this is the sentence the guard was written for.
+    expect(staleRetiredSymbols('saveLayerCanvas writes into `src/util/layer-renderer.ts`')).toHaveLength(1);
+    expect(staleRetiredSymbols('`saveLayerCanvas` is gated on `src/contexts/reducer.ts`')).toHaveLength(1);
     // A live symbol is not a hit, and neither is a name that merely contains the string.
     expect(staleRetiredSymbols('`saveLayerCanvasRegistry` and `PUBLISH_RUNTIME_PRESENTATION`')).toEqual([]);
   });
@@ -569,6 +657,34 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
 
   it('cites no line number in a gated document', () => {
     expect(lineNumberCitationsByDocument(readMaintainedDocuments())).toEqual([]);
+  });
+
+  it('catches a BARE continuation in a gated document, not only the self-naming form', () => {
+    // Untested enforcement is not enforcement, and this leg is the only one that can fail on the
+    // documents that STATE the rule. `bannedNumbersIn` exists because `LINE_NUMBER_CITATION` needs a
+    // filename and a bare `:476` has none — so the shape a reader writes when the file was named a
+    // clause earlier was invisible in the three documents that must model the rule correctly.
+    // `:480`-`:486` is TWO backticked tokens, so it is two citations, not one range — each token is
+    // its own coordinate and either can hide a different one. `:480-486` inside ONE token is a
+    // genuine range and stays one entry.
+    const bare = 'The guard at `:476` fails, and so does the span `:480-486`.';
+    expect(lineNumberCitationsByDocument([{ path: 'AGENTS.md', text: bare }])).toEqual([
+      'AGENTS.md: `:476`',
+      'AGENTS.md: `:480-486`',
+    ]);
+    const split = 'The guard at `:480`-`:486` fails.';
+    expect(lineNumberCitationsByDocument([{ path: 'AGENTS.md', text: split }])).toEqual([
+      'AGENTS.md: `:480`',
+      'AGENTS.md: `:486`',
+    ]);
+    // Both shapes together, and a fenced one still exempt. The self-naming form reports without its
+    // backticks — `LINE_NUMBER_CITATION` matches the coordinate, not the quoting — while the bare
+    // form necessarily includes them, because the backtick IS what makes `:34` a citation.
+    const mixed = 'See `AGENTS.md:12` and `:34`, but not this:\n```\n`AGENTS.md:56`\n```\n';
+    expect(lineNumberCitationsByDocument([{ path: 'AGENTS.md', text: mixed }])).toEqual([
+      'AGENTS.md: AGENTS.md:12',
+      'AGENTS.md: `:34`',
+    ]);
   });
 
   it('detects a line-number citation, and not the shapes that only look like one', () => {
