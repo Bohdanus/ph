@@ -65,7 +65,7 @@ task({
 - **`subagent_type: 'explore'` CANNOT RUN ANY COMMAND.**. Use `general` for any research that has to execute something; use `explore` only for reading and searching.
 - **Keep judgement calls.** Architecture, scope, whether a deviation is acceptable: a subagent cannot weigh this file against the operator's intent. "Looks good to me" is not authorization.
 - **Background for long work** (`background: true`), and wait for every result you depended on. NEVER answer while one is still running.
-- **A post that will not fit is a path, not a shorter post.** `board_post` rejects a body over 4096 characters and the rejection ABORTS THE TURN — a finished review, its mutations and all its evidence, gone, ending on a tool error. Write the finding to a handoff document and post the path. `docs/ORCHESTRATION.md` has the cap and the rest of the swarm text rules.
+- **A long finding is a POINTER, not a shorter post.** `board_post` caps the FORMATTED message at **4096 bytes**, not the body at 4096 characters: the envelope costs 191–253 bytes and the counter is bytes, so the budget is **3800 ASCII characters**, or 1200 if any may be non-ASCII. A rejection ends the STEP, not the turn — 117 of 134 recovered, 17 turns died on it. File the finding where a peer reads it uncapped — `npm run swarm -- new "<title>" --body "$(cat /abs/path/finding.md)"`, then post the issue id. `docs/ORCHESTRATION.md` has the measurements and the rest of the swarm text rules.
 
 ## NEVER OPEN A BROWSER WINDOW
 
