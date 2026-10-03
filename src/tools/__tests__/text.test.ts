@@ -77,7 +77,14 @@ const RESTORED_BY_SAVE = [
   'fontVariantCaps',
   'fillStyle',
   'globalAlpha',
+  // `strokeStyle` and `lineWidth` are written by `drawOverflowIndicator` alone, so restoring them is
+  // what proves THAT function's own bracket rather than the renderer's.
+  'strokeStyle',
+  'lineWidth',
 ] as const;
+
+/** The `strokeStyle` every context starts with, so "was restored" is a value rather than `undefined`. */
+const SEED_STROKE_STYLE = 'rgb(0, 0, 0)';
 
 /** Per-context log of the style state at each measurement, written by `makeTextCtx`. */
 const appliedDuring = new WeakMap<CanvasRenderingContext2D, Record<string, unknown>[]>();
@@ -126,6 +133,11 @@ const makeTextCtx = ({
     log.push(Object.fromEntries(RESTORED_BY_SAVE.map((key) => [key, target[key]])) as Record<string, unknown>);
     return measure(value);
   });
+
+  // Seeded so the restore assertions compare against a known value rather than against `undefined`,
+  // which `expect(undefined).not.toBe(...)` would accept — the trap this file was audited for.
+  ctx.strokeStyle = SEED_STROKE_STYLE;
+  ctx.lineWidth = 1;
 
   return ctx;
 };
@@ -657,13 +669,21 @@ describe('layoutText', () => {
     expect(rejoined).toBe('ab cd ef');
   });
 
-  it('keeps a whitespace-only body to one line rather than one line per space', () => {
-    // Three spaces split into four empty tokens under the old rule, and each was measured and
-    // emitted as its own line — three blank lines of height for a body with no ink in it.
+  it('does not emit a blank line per space, which is what the old token loop did', () => {
+    // This has to go THROUGH THE TOKEN LOOP to say anything, and the first version of it did not:
+    // `fits('   ')` trims to `''`, measures 0 and is under any wrap width, so the old code's
+    // `if (fits(line)) return [line]` short-circuited before `split(' ')` was ever reached — and the
+    // assertion passed against the code it was written to disprove. A body with tokens AND a width
+    // narrow enough to force the loop is the only shape where the rule is visible.
     const ctx = makeTextCtx();
     const style = resolveTextStyle(baseArgs);
 
-    expect(layoutText(ctx, style, '   ', 5 * CH).lines).toHaveLength(1);
+    const layout = layoutText(ctx, style, 'ab   cd', 2 * CH);
+
+    // Three spaces would have made four tokens under the old rule, the empty ones each emitted as a
+    // line of their own. Two real words make two lines.
+    expect(layout.lines).toEqual(['ab', 'cd']);
+    expect(layout.lines.every((line) => line.length > 0)).toBe(true);
   });
 
   it('does not trim a non-breaking space out of the fit test', () => {
@@ -821,16 +841,24 @@ describe('renderText', () => {
       //
       // `makeTextCtx` models `save`/`restore` as bare spies, so the bracket has to be asserted
       // through its EFFECT on a real property rather than by counting the calls.
-      const ctx = makeTextCtx();
+      // `modern: true`, and this was the defect in the first version of this test: without it
+      // `applyTextStyle` SKIPS both writes — `'letterSpacing' in ctx` is the only feature test it has
+      // — so `ctx.fontVariantCaps` was `undefined`, and `expect(undefined).not.toBe('normal')` passes
+      // against a renderer that never applies caps at all. Two assertions that cannot fail.
+      const ctx = makeTextCtx({ modern: true });
       ctx.font = '10px sans-serif';
 
       renderText(ctx, { ...baseArgs, tracking: 250, allCaps: true });
 
+      // The seed is back, which is the restore this whole test exists for.
       expect(ctx.font).toBe('10px sans-serif');
-      // And the state `applyTextStyle` wrote is visible while the type is being drawn, which is what
-      // makes the restore above a restore rather than a no-op that never applied anything.
-      expect(ctx.fontVariantCaps).not.toBe('normal');
-      expect(ctx.letterSpacing).not.toBe('0px');
+      expect(ctx.fontVariantCaps).toBe('normal');
+      expect(ctx.letterSpacing).toBe('0px');
+      // And each value really was written while the type was drawn, so the restore above restores
+      // something rather than confirming that nothing was ever applied.
+      expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('all-small-caps');
+      // tracking 250 of 1000 em at the base 20px is 5px.
+      expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('5px');
     });
 
     it("restores the caller's alpha after rendering a draft", () => {
@@ -1044,8 +1072,19 @@ describe('renderText', () => {
       const ctx = makeTextCtx();
       const order: string[] = [];
       let styleAtStroke = '';
-      vi.mocked(ctx.save).mockImplementation(() => void order.push('save'));
-      vi.mocked(ctx.restore).mockImplementation(() => void order.push('restore'));
+      // CHAINED to `makeTextCtx`'s modelling rather than replacing it. These overrides used to
+      // swallow the save/restore state entirely, which is why an earlier version of this case could
+      // assert nothing about `strokeStyle` and the icon's own bracket went unpinned.
+      const modelSave = vi.mocked(ctx.save).getMockImplementation()!;
+      const modelRestore = vi.mocked(ctx.restore).getMockImplementation()!;
+      vi.mocked(ctx.save).mockImplementation(() => {
+        order.push('save');
+        modelSave();
+      });
+      vi.mocked(ctx.restore).mockImplementation(() => {
+        order.push('restore');
+        modelRestore();
+      });
       vi.mocked(ctx.stroke).mockImplementation(() => {
         order.push('stroke');
         styleAtStroke = String(ctx.strokeStyle);
@@ -1079,12 +1118,18 @@ describe('renderText', () => {
       // face it is wearing — so pinning the count would break on the next honest bracket rather
       // than on a defect.
       expect(styleAtStroke).toBe('#ff0000');
+      // The stroke happened inside SOME bracket — balance and depth, not an exact sequence, because
+      // `renderText`, `layoutText` and `requiredHeightForLines` each open one now.
       const depthBefore = order.slice(0, order.indexOf('stroke')).filter((op) => op === 'save').length;
       expect(depthBefore).toBeGreaterThan(0);
       const saves = order.filter((op) => op === 'save').length;
       const restores = order.filter((op) => op === 'restore').length;
-      expect({ saves, restores }).toEqual({ saves: restores, restores });
+      expect(saves).toBe(restores);
       expect(order.lastIndexOf('restore')).toBeGreaterThan(order.indexOf('stroke'));
+      // And the ICON's own bracket, which balance alone does not prove: `strokeStyle` is only ever
+      // written by `drawOverflowIndicator`, so a restored seed is that function's bracket closing.
+      // Without it the stroke colour outlived the call on the shared overlay.
+      expect(ctx.strokeStyle).toBe(SEED_STROKE_STYLE);
     });
 
     it('draws no indicator on the default call, even for text that overflows', () => {

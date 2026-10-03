@@ -384,42 +384,47 @@ describe('TextToolArea', () => {
     // not the gesture.
     it('does NOT reclassify a draft when the press lands inside it', () => {
       const existing = { x1: 10, y1: 10, x2: 120, y2: 40 };
-      toolArgs = makeTextArgs({ text: 'hello world', rect: existing, kind: 'point' } as Partial<TextArgs>);
-      // `useRect` reports `'inside'` for a press strictly within an existing rect — this is the
-      // fact the component reads to know the press was not a placement.
+      // A PARAGRAPH draft, and a press that travelled 1px. The two rules now DISAGREE: travel alone
+      // says point, and the guard says leave a paragraph box alone. A point-type fixture would make
+      // them agree, which is what made this test pass with the guard deleted — a regression test
+      // whose two answers are the same is not a regression test.
+      toolArgs = makeTextArgs({ text: 'hello world', rect: existing, kind: 'paragraph' } as Partial<TextArgs>);
+      // `useRect` reports `'inside'` for a press strictly within an existing rect — this is the fact
+      // the component reads to know the press was not a placement.
       h.currentEdgeRef.current = 'inside';
       vi.mocked(calculateNewRect).mockReturnValue(existing);
 
       const rendered = renderArea();
-      // A press that barely moves: the pointer travelled 1px, so by travel alone this is a click.
       gesture(rendered, { x: 60, y: 25 }, { x: 61, y: 25 }, existing);
 
       expect(calculateNewRect).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'point', rect: existing }),
+        expect.objectContaining({ kind: 'paragraph', rect: existing }),
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
-      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point' }));
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph' }));
     });
 
     it('does not reclassify a PARAGRAPH draft when a handle is dragged, and hands the rect through', () => {
       const existing = { x1: 10, y1: 10, x2: 120, y2: 40 };
       const resized = { x1: 10, y1: 10, x2: 200, y2: 40 };
-      toolArgs = makeTextArgs({ text: 'hello', rect: existing, kind: 'paragraph' } as Partial<TextArgs>);
+      // A POINT draft, and a handle drag that travelled 80px — far past the threshold. Again the two
+      // rules disagree: travel alone says paragraph, and the guard says leave point type alone. This
+      // fixture also passes with the ENTIRE production change reverted, because the old extent rule
+      // read a 190x30 rect as a drag too; that is the second half of why it is worth pinning.
+      toolArgs = makeTextArgs({ text: 'hello', rect: existing, kind: 'point' } as Partial<TextArgs>);
       h.currentEdgeRef.current = 'right';
       vi.mocked(calculateNewRect).mockReturnValue(resized);
 
       const rendered = renderArea();
-      // The pointer travels 80px — far past the threshold — but this is a RESIZE of a box that
-      // already exists, so it must not also turn point type into paragraph type.
       gesture(rendered, { x: 120, y: 25 }, { x: 200, y: 25 }, resized);
 
       expect(calculateNewRect).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'paragraph', rect: resized }),
+        expect.objectContaining({ kind: 'point', rect: resized }),
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
-      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph' }));
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point' }));
     });
   });
 

@@ -1668,9 +1668,12 @@ test.describe('Text tool', () => {
     // this read 0.01.
     await size.fill('');
     await expect(size, 'a cleared field published a size instead of keeping the last one').toHaveValue('32');
-    // And the blur restore is a second line of defence for a draft left empty, not the only one.
+    // The restore is React re-rendering the CONTROLLED `value={style.fontSize}` — there is no blur
+    // handler, and an earlier version of this file asserted one that was dead code: its guard tested
+    // a value `resolveTextStyle` had already clamped, so the body could never run. Blurring changes
+    // nothing, and this asserts exactly that: the value is the same with or without it.
     await size.blur();
-    await expect(size, 'the last good size was not restored on blur').toHaveValue('32');
+    await expect(size, 'blurring a cleared field changed the value it had already restored').toHaveValue('32');
 
     // Half the size is half the ink, which is the pixel statement that the clamped value above
     // is the one the renderer drew with rather than a number sitting in a field. Measured at
@@ -1862,10 +1865,20 @@ test.describe('Text tool', () => {
     // count came back as 1, the box never grew, and the committed layer carried ONE band of ink
     // instead of three, because the layer's own canvas is the box the type was laid out in.
     //
-    // It is stated as a property — the box is TALLER than what was dragged — so it fails if the wrap
-    // is measured in the wrong face again, and does not care how many lines the string takes.
+    // It is stated as a property — the box grew — rather than as a line count, so it does not care
+    // how many lines the string takes.
+    //
+    // The FRAME's own overhang has to come off before the comparison, or the assertion cannot fail:
+    // `useRect`'s `drawMask` strokes a 2px outline centred on each edge and paints corner handles
+    // `HANDLE_SIZE / 2` out from each corner on every call, unconditionally — which is the
+    // `FRAME_OVERHANG_DOC_PX` this file already carries. That is 7 document px per edge, about
+    // 13.6 CSS px at this fit, so an UNGROWN 120px box already measures 133.6 and cleared a bare
+    // `> 120`. The first version of this assertion did exactly that and its comment claimed it would
+    // catch the regression; it would not have. Subtracting the overhang puts the un-grown box at the
+    // boundary and the grown one well above it.
+    const overhangCss = 2 * FRAME_OVERHANG_DOC_PX * containFit(box).scale;
     expect(
-      spanHeight(draft.frame),
+      spanHeight(draft.frame) - overhangCss,
       'the paragraph box did not grow downward to hold its wrapped lines'
     ).toBeGreaterThan(DRAFT_RECT.y2 - DRAFT_RECT.y1);
   });
@@ -1898,7 +1911,7 @@ test.describe('Text tool', () => {
     await setTextToolColor(page, TEXT_COLOR);
 
     // A press, not a drag. `page.mouse.click` moves, presses and releases at ONE coordinate, so
-    // `useRect`'s rect is zero-width and zero-height and `isClick` is true on both axes. Nothing
+    // `useRect`'s rect is zero-width and zero-height and the pointer's travel is nil. Nothing
     // else in the gesture is load-bearing: the threshold is 3 CSS px, so a press that travelled
     // 4 on either axis would be a paragraph press and this test would be measuring the wrong box.
     await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);

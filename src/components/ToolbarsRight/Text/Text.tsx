@@ -63,23 +63,20 @@ const Text: React.FC<{}> = () => {
     // false reasoning: `fill` cannot produce a value a number input will not accept, but BACKSPACE
     // can, and a two-digit size can no longer be typed from scratch without passing through empty.
     //
-    // So an empty field publishes NOTHING. `handleFontSizeBlur` restores the last good value on the
-    // way out, which is what makes the field self-repairing rather than merely inert.
+    // So an empty field publishes NOTHING, and the field is CONTROLLED — `value={style.fontSize}` —
+    // which is the whole of how the old value comes back. React re-renders with the last published
+    // size as soon as the change event settles, so an emptied field snaps back to the value the user
+    // had, without any blur handler. There was one here, written to do that restore explicitly, and
+    // it was DEAD: `style` is `resolveTextStyle(toolArgs)`, which already folds `fontSize` into
+    // `[FONT_SIZE_MIN, FONT_SIZE_MAX]`, so its guard was true on every call and its body unreachable.
+    // `e2e/text-tool.spec.ts` asserted the restore "on blur" and passed for exactly the reason the
+    // handler was unnecessary.
+    //
+    // What this does NOT fix, and what a local draft state would: a size typed from scratch passes
+    // through the intermediate values, so typing `0` first publishes `FONT_SIZE_MIN` and the field
+    // rewrites itself before the second digit lands. `HANDOFF.md` carries that.
     if (event.target.value === '' || !Number.isFinite(requested)) return;
     publishStyle({ fontSize: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, requested)) });
-  };
-
-  /**
-   * Put the last published size back when the field is left empty.
-   *
-   * A controlled number input showing `''` while its value is a real number is the one state the
-   * `onChange` guard above cannot resolve on its own: nothing is published, so React re-renders
-   * with the old value and the caret jumps to the end. Restoring on blur leaves the user with the
-   * value they had, which is also what Photoshop does when a Size field is emptied and left.
-   */
-  const handleFontSizeBlur = () => {
-    if (style.fontSize >= FONT_SIZE_MIN && style.fontSize <= FONT_SIZE_MAX) return;
-    publishStyle({ fontSize: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, style.fontSize)) });
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -139,8 +136,14 @@ const Text: React.FC<{}> = () => {
   const applyText = () => {
     if (!text || !rect) return;
     if (appliedArgsRef.current === toolArgs) return;
-    appliedArgsRef.current = toolArgs;
+    // The re-entrancy guard is armed AFTER the create, not before it. Armed before, a throw from
+    // `createLayerFromTool` left it armed against a `toolArgs` identity nothing has changed, so
+    // every later Apply returned here and did nothing — the draft survived, but the control was
+    // bricked, and no second attempt could recover it. Arming it after the create keeps the guard
+    // doing its real job, which is a repeated invocation of THIS handler within one tick, without
+    // letting a failure consume the user's next try.
     createLayerFromTool({ args: toolArgs });
+    appliedArgsRef.current = toolArgs;
     onChange({ ...toolArgs, text: '', rect: null });
   };
 
@@ -212,7 +215,6 @@ const Text: React.FC<{}> = () => {
           step="any"
           value={style.fontSize}
           onChange={handleFontSizeChange}
-          onBlur={handleFontSizeBlur}
           className="w-24 h-9 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>

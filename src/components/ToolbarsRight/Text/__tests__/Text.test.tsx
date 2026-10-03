@@ -325,7 +325,7 @@ describe('Text toolbar', () => {
   });
 
   it('recomputes the rect for a change of metrics and leaves it alone for a change of decoration', () => {
-    // This is the whole of `publishStyle`'s split (Text.tsx:45-48). Bold changes the advance width
+    // This is the whole of `publishStyle`'s split (`Text.tsx` — `publishStyle`). Bold changes the advance width
     // of every glyph, and a box measured against the previous weight is a box one metric out of
     // date. Underline and strikethrough draw in the type colour inside the box the glyphs already
     // occupy, so recomputing them would move a rectangle that was already right.
@@ -473,6 +473,39 @@ describe('Text toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
   });
 
+  // The re-entrancy guard, and the order it is armed in. Armed BEFORE the create it poisoned itself:
+  // a throw from `createLayerFromTool` left it set against a `toolArgs` identity nothing had changed,
+  // so every later Apply returned immediately and the user's next try did nothing at all. The draft
+  // survived — which was the point of the reorder — but the control did not, and nothing tested it.
+  it('can Apply again after a create that threw', () => {
+    // A throw out of a React event handler reaches `window.onerror`, and an uncaught exception there
+    // is reported as an unhandled error by the runner — which fails the run without failing a test.
+    // This test needs the throw for its whole point, so the error is CAUGHT here and on no other:
+    // `preventDefault` is what marks it handled, and the listener is removed the moment the test ends.
+    const swallow = (event: ErrorEvent) => event.preventDefault();
+    window.addEventListener('error', swallow);
+    try {
+      mockCreateLayerFromTool.mockImplementationOnce(() => {
+        throw new Error('Layer width and height must be greater than 0');
+      });
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+      // Nothing was cleared, and — this is the assertion — the failed attempt did NOT consume the guard.
+      expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+
+      // The second click, with a create that works this time.
+      mockCreateLayerFromTool.mockImplementation(() => undefined);
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+      expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(2);
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    } finally {
+      window.removeEventListener('error', swallow);
+    }
+  });
+
   it('clears text when Clear clicked', () => {
     renderWithProvider(<Text />);
 
@@ -492,7 +525,7 @@ describe('Text toolbar', () => {
       expect(screen.getByRole('button', { name: 'Impact' })).toBeInTheDocument();
     });
 
-    it('publishes the chosen family and recomputes the text rect (Text.tsx:45-48)', () => {
+    it('publishes the chosen family and recomputes the text rect (publishStyle)', () => {
       renderWithProvider(<Text />);
 
       fireEvent.click(screen.getByLabelText('Font'));
@@ -590,7 +623,7 @@ describe('Text toolbar', () => {
   });
 
   describe('apply idempotency', () => {
-    it('commits the same tool args only once, however often Apply is activated (Text.tsx:89-96)', () => {
+    it('commits the same tool args only once, however often Apply is activated (applyText)', () => {
       renderWithProvider(<Text />);
 
       const applyButton = screen.getByRole('button', { name: 'Apply' });

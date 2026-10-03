@@ -235,7 +235,12 @@ export function resolveTextStyle(args: TextToolArgs): ResolvedTextStyle {
     lineHeight: finiteOr(args.lineHeight, AUTO_LEADING),
     smallCaps: args.smallCaps ?? false,
     strikethrough: args.strikethrough ?? false,
-    tracking: finiteOr(args.tracking, 0),
+    // Range-folded too, and the reason is concrete: `tracking: 1e9` produced a `trackingPx` of
+    // twenty million, which `inkWidth` then subtracts from every measured line — `Math.max(0, width -
+    // spacing)` clamps each line to ZERO, every fit test passes, nothing ever wraps, and
+    // `calculateNewRect`'s point arm sized the box to `0 + 2 * TEXT_PADDING` for the entire string.
+    // `TRACKING_MIN`/`TRACKING_MAX` are the bar's own limits and were sitting fifteen lines above.
+    tracking: finiteInRangeOr(args.tracking, TRACKING_MIN, TRACKING_MAX, 0),
     underline: args.underline ?? false,
   };
 }
@@ -613,9 +618,16 @@ export function layoutText(
   // `10px sans-serif` wraps a 1042px line at 163px. `withTextStyle` brackets, so a caller that has
   // already styled — `renderText` draws in the draft's face and `getTextWidth` measures in it — gets
   // its own styling back rather than this function's.
-  const wrapped = Number.isFinite(wrapWidth)
-    ? withTextStyle(ctx, style, () => hardBroken.flatMap((line) => wrapLine(ctx, line, wrapWidth, spacing)))
-    : null;
+  // `wrapWidth > 0` and not merely finite. A box narrower than twice `TEXT_PADDING` makes
+  // `textWrapWidth` NEGATIVE, and `fits('')` is then false — so an empty hard-break line reported a
+  // width overflow it could not possibly have, and Adobe's icon appeared for a body with no ink in
+  // it. A box with no usable interior cannot overflow horizontally. `calculateNewRect` floors a
+  // paragraph box at that padding anyway, so this is a guard on the public function rather than on
+  // the production path.
+  const wrapped =
+    Number.isFinite(wrapWidth) && wrapWidth > 0
+      ? withTextStyle(ctx, style, () => hardBroken.flatMap((line) => wrapLine(ctx, line, wrapWidth, spacing)))
+      : null;
   const lines = wrapped ? wrapped.flatMap((result) => result.lines) : hardBroken;
 
   // Adobe's condition is "more text than can fit within a paragraph boundary", which is about the
@@ -806,22 +818,20 @@ function renderTextInto(
  * because `calculateNewRect` needs the count and nothing else, and measuring the width as well
  * would double the `measureText` calls on every keystroke.
  */
+/**
+ * How many lines this body needs in a box of `wrapWidth`.
+ *
+ * One line, no bracket of its own, because `layoutText` — the layout authority — styles the context
+ * it measures on. That is the whole point of {@link withTextStyle}: this function used to carry its
+ * own `save`/`applyTextStyle`/`restore` while `layoutText` did not, which is how a paragraph box's
+ * WIDTH came out right and its HEIGHT did not. With the styling inside the authority there is
+ * nothing left here to bracket, and a second bracket would be a second place to forget.
+ *
+ * **No production caller** — `calculateNewRect` takes its line count from the `layoutText` it already
+ * performs, so this exists as the seam a caller wants when it has a box and needs only the count.
+ */
 export function getTextLineCount(ctx: Ctx2D, args: TextToolArgs, wrapWidth: number): number {
-  const style = resolveTextStyle(args);
-  const text = args.text ?? '';
-  // Bracketed, and the bracket is load-bearing rather than defensive: `calculateNewRect` hands this
-  // the live tool overlay, whose context carries whatever the last tool left on it — measured in the
-  // browser, the overlay reports `10px sans-serif` and counts the test string at 162.9px against the
-  // renderer's 64px Arial. Measuring unstyled makes every candidate fit, so a paragraph box sized by
-  // this grew to one line and committed two wrapped lines of ink as a single band that overflowed it.
-  // An unbracketed version would additionally leave the Type tool's typography on the shared overlay.
-  ctx.save();
-  try {
-    applyTextStyle(ctx, style);
-    return layoutText(ctx, style, text, wrapWidth).lines.length;
-  } finally {
-    ctx.restore();
-  }
+  return layoutText(ctx, resolveTextStyle(args), args.text ?? '', wrapWidth).lines.length;
 }
 
 export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs): number {
