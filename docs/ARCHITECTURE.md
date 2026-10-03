@@ -42,7 +42,9 @@ importer outside `__tests__/`.
 
 ## The store
 
-`src/contexts/StoreContext.tsx`, 1186 lines, a `useReducer`.
+`src/contexts/StoreContext.tsx`, a `useReducer`. Its length moves with every
+commit, so count it with `wc -l src/contexts/StoreContext.tsx` rather than
+trusting a figure stored here.
 
 - `reducer(state: StoreData, action: Action)`, wired by
   `useReducer(reducer, initialState)`.
@@ -58,9 +60,13 @@ importer outside `__tests__/`.
   `ADOPT_LAYER_BITMAPS`, `PUBLISH_RUNTIME_PRESENTATION`, `REORDER_LAYERS`,
   `COMMIT_DOCUMENT_EDIT`, `APPLY_HISTORY_REPLAY`, `REPLACE_DOCUMENT`.
 
-`StoreData` has 33 top-level fields: five refs, four imperative
+`StoreData` has 35 top-level fields: seven refs, four imperative
 handles, five file/image fields, one tool field, three layer fields, five selection
-fields, eight history fields and two colours. Tool _args_ are deliberately not in
+fields, eight history fields and two colours. The seven refs are the five
+`RefObject`s the type's `// refs` block opens with plus `currentArgs` and
+`previewLayers`, which are ref objects too — the two a five-ref count drops. Re-derive with
+`sed -n '/^export type StoreData = {/,/^};/p' src/contexts/StoreContext.tsx | grep -cE '^  [a-zA-Z]+[?]?:'`.
+Tool _args_ are deliberately not in
 it — only `toolName`.
 
 Surrounding it, `src/App.tsx`'s provider tree nests seven providers: `File`,
@@ -142,8 +148,11 @@ operations were discriminated; the guard is what decides.
 
 ## Rendering
 
-`src/contexts/layer-renderer.ts`, 146 lines, eight functions, four of them
-exported.
+`src/contexts/layer-renderer.ts`, eleven functions of which four are exported —
+`getLayerFilter()`, `drawLayerSource()`, `drawLayer()` and `drawLayersToCanvas()` —
+counted with `grep -cE '^(export )?function ' src/contexts/layer-renderer.ts`. The
+file's length moves with every commit, so count it with
+`wc -l src/contexts/layer-renderer.ts` rather than trusting a figure stored here.
 
 **Stage, then publish.** `drawLayersToCanvas()` draws every layer into a
 freshly created `document.createElement('canvas')` and only then
@@ -163,13 +172,20 @@ then the filter stack, inside `drawLayerSource()`.
 operators only, with Photoshop's names mapped by the `blendModes` table in
 `psd-utils.ts`.
 
-`ctx.filter` is set in five places: `drawEvaluatedPresentation()` in
-`presentation-evaluator.ts`, `materializeLayer()` in `materialization.ts`,
-and the three processors `blur()` in `tools/blur.ts`, `colors()` in
-`tools/colors.ts`, `levels()` in `tools/levels.ts`. **It is set with no capability
-check**, which `HANDOFF.md`
-§130 records as a live defect: on a browser without `ctx.filter`, a blur becomes a
-silent no-op that history then records as pixels.
+`ctx.filter` is assigned in **four** places: `drawEvaluatedPresentation()` in
+`presentation-evaluator.ts`, and the three processors `blur()` in `tools/blur.ts`,
+`colors()` in `tools/colors.ts`, `levels()` in `tools/levels.ts`.
+`grep -rn "ctx.filter *=" src/` returns those four plus
+`supportsCanvasFilter()` in `canvas-filter.ts`, which writes a filter and reads it
+back to detect support and then restores what it read — a probe, not an
+application. `materialization.ts` assigns none: `materializeLayer()` builds
+presentation descriptors, delegates the draw, and calls `requireCanvasFilter()` on a
+`requiresCanvasFilter` processor on the way. **Every one of the four is behind a
+capability check** — `requireCanvasFilter()` is the first statement of each
+processor, and `requireLayerFilterSupport()` guards the renderer's own assignment in
+`drawLayerSource()` — so an engine that ignores the write raises
+`CanvasFilterUnsupportedError` rather than applying the filter as a silent no-op, and
+`drawLayersToCanvas()` catches that per layer and skips it.
 
 ### The presentation cache
 
