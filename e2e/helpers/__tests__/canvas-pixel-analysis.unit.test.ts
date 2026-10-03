@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CANVAS_REDRAW_CLIP,
   INK_LUMA_FLOOR,
   STROKE_ANALYSIS,
   dominantRed,
@@ -123,6 +124,56 @@ describe('hasDarkPixels', () => {
     setPixel(image, 7, 3, { red: 0, green: 0, blue: 0 });
 
     expect(await hasDarkPixels(image)).toBe(true);
+  });
+
+  // A TRIPWIRE, not a pin. Every case above says the predicate CAN answer true; this one
+  // says the thing it is pointed at cannot, and it is the only test in the suite that can.
+  it('reports the empty LIGHT workspace backdrop as empty — the premise the pinnedTheme fixture exists to hold', async () => {
+    // Under the light theme pin every pixel a capture can hold is one of two colours: the
+    // workspace checkerboard's own `#fff` and `#f3f3f3`, or the opaque white boot document.
+    // `hasDarkPixels` is a disjunction over opaque pixels, so an image carrying EVERY colour
+    // that backdrop can produce is the strongest form of the assertion — false here means no
+    // subset of it can be true. The document is the 255, which no threshold reaches, so the
+    // checkerboard alone already IS that worst case and the document is left out deliberately
+    // rather than filled in.
+    //
+    // The grid phase and the dimensions are incidental to the verdict (both colours appear
+    // under any phase, and the predicate is order-independent), but they are taken from
+    // `CANVAS_REDRAW_CLIP` so the fixture is the shape of the capture a redraw wait actually
+    // photographs — and so a later edit that quietly rebuilt this as a flat fill would be
+    // visible in the diff rather than only in the verdict.
+    const paper: Color = { red: 255, green: 255, blue: 255 };
+    const checker: Color = { red: 0xf3, green: 0xf3, blue: 0xf3 };
+    const { width, height } = CANVAS_REDRAW_CLIP;
+    const image = createImageData(width, height);
+    fillAll(image, paper);
+    for (let cellY = 0; cellY * 20 < height; cellY++) {
+      for (let cellX = 0; cellX * 20 < width; cellX++) {
+        if ((cellX + cellY) % 2 === 1) {
+          fillRect(
+            image,
+            {
+              left: cellX * 20,
+              top: cellY * 20,
+              right: cellX * 20 + 19,
+              bottom: cellY * 20 + 19,
+            },
+            checker
+          );
+        }
+      }
+    }
+
+    expect(
+      await hasDarkPixels(image),
+      `hasDarkPixels must answer false on the empty light workspace backdrop, and it answered true. The darkest ` +
+        `pixel of that backdrop is #f3f3f3 (243) against a DARK_PIXEL_THRESHOLD of ${DARK_PIXEL_THRESHOLD}. ` +
+        `Two things make it true, and only two: the app is painting its DARK checkerboard (#000 / #121212 in ` +
+        `the workspace rule in index.scss), which the pinnedTheme fixture in extended-test.ts is what stops, ` +
+        `or DARK_PIXEL_THRESHOLD has been tuned past 243. Under the first, every waitForCanvasRedraw in the ` +
+        `suite returns on its first poll and every hasDarkPixels-based assertion becomes an always-true no-op — ` +
+        `and a green run cannot tell.`
+    ).toBe(false);
   });
 });
 
