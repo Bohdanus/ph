@@ -577,6 +577,15 @@ export function useRect({
   // `pointerHandlers` is the only group any caller may spread onto an element,
   // and it holds only the three DOM handlers. The other two are named so that
   // spreading the hook's result is a type error rather than nine console errors.
+  //
+  // `pointerState.currentEdgeRef` is exposed as a FACT about the press and NOT as a
+  // gesture classifier: it is `null` while the current press began on empty canvas, and holds
+  // `'inside'` or one of the nine edge names when it began on an existing box. Only this hook knows
+  // which of those happened, because only it runs `getEdgeAtPoint`. A caller that needs to tell a
+  // fresh placement from a move or a resize — the Type tool, to decide whether the gesture may
+  // CHANGE what kind of box it is — reads it. What that gesture MEANS stays with the caller: the
+  // 3px click/drag threshold the Type tool applies is not here, because this hook is also the
+  // crop's, the move's and every selection tool's.
   return {
     pointerHandlers: {
       onPointerDown: handlePointerDown,
@@ -594,6 +603,6 @@ export function useRect({
         drawMask();
       },
     },
-    pointerState: { ...pointerPositionData },
+    pointerState: { ...pointerPositionData, currentEdgeRef },
   };
 }

@@ -1289,8 +1289,9 @@ Every handler builds on `base`, so a second change in the same frame inherits th
 first instead of discarding it. `pendingUpdateRef.current` is cleared inside
 `throttledOnChange()`'s own rAF callback and in `discardAdjustment()`, so it holds exactly the
 unpublished edits, and `args` is the right fallback for the first change of a
-frame. Worth checking `Blur.tsx` and `Levels.tsx` for the same shape — they were
-not audited here.
+frame. `Blur.tsx` and `Levels.tsx` were checked for this same shape and are both
+clean: `Levels.tsx`'s `throttledOnChange()` already merges from the pending value,
+and `Blur.tsx` carries one mutable field, so nothing can be lost there.
 
 **Test that fails without the fix.** The two above. A test that waits on each
 control's accessible name between the two changes cannot see this, and must not:
@@ -5741,3 +5742,336 @@ ends up claiming a tip it is not.
 ref of this repository; `.skills/photoshop-tool-creation.md` records that the underlying material
 has since landed and that these claims are mainline. The finding outlived the branch, and the
 branch's own entry died with it, which is how it came to have no entry at all.
+
+## 184. A selection's anti-aliased edge is computed and then thrown away, so the app cannot reproduce its own soft edge
+
+**Problem.** `rasterizePolygonMask()` in `src/util/selection.ts` fills a polygon path into a canvas,
+reads the pixels back, and reduces the alpha channel with a presence test rather than a scale. The
+threshold is "greater than zero", not a midpoint, so a pixel the canvas covered at five per cent is
+recorded as **fully** selected rather than as a fifth of a pixel. The CPU fallback is equally
+binary: `isPointInPolygon()` samples at pixel centres and returns a boolean, so this is not an
+artefact of the canvas arm — both paths produce a 1-bit mask.
+
+The consequence is downstream of the mask, not in it. `createFeatheredAlphaMask()` re-derives a
+smooth alpha from that already-binary mask by way of a chamfer distance transform, so by the time
+feathering runs the anti-aliasing the canvas had computed is gone. Every copy-out path in
+`copySelectionToCanvas()` goes through `rasterizePolygonMask()`, so the app cannot reproduce a
+feathered selection edge at full precision from the selection it stored.
+
+**How this sits against what is already recorded.** `docs/FEATURES.md` — Selection records the
+representation decision: a selection is a polygon point list rather than a pixel channel, which is
+why marching ants read points and why holes are impossible. That document owns the _choice_. It
+does not say that the code computes coverage and then discards it, and the choice does not require
+discarding it — a mask is exactly where that coverage would live. The combination-modes decision in
+`docs/TOOLS-TOO-HARD.md` is the other half: it names "a single point path cannot express" boolean
+operations, and this is the same missing structure seen from the rasteriser.
+
+**Affected.** `src/util/selection.ts` — `rasterizePolygonMask()`, `isPointInPolygon()`,
+`createFeatheredAlphaMask()`, and `copySelectionToCanvas()` as the caller that makes it reachable
+in production.
+
+**What would close it.** Return the alpha channel instead of the thresholded mask, and let
+`alphaFromSignedDistance()` consume coverage directly. On its own that changes nothing the user
+can see, because the mask is still recomputed from the point list on every use — so it is worth
+doing together with making the mask authoritative rather than derived, not before.
+
+## 185. The Magic Wand discards every matched region except the largest, on every click
+
+**Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
+loops, classifies them into outer contours and holes, and then keeps exactly one outer contour:
+`selectLargestBoundaryLoop()` returns the single loop with the largest absolute area. Every other
+matched region is dropped. There is no warning, no log line, and no note in any tracked document.
+
+It is not gated on an option. The bar renders `Contiguous`, and this reduction runs unconditionally
+on every click — the earlier claim that it is a discontinuous-mode behaviour is wrong, and there is
+no Discontinuous control on this tool at all.
+
+**Distinct from the recorded hole refusal.** The same function refuses the whole selection when any
+hole is present, and that refusal _is_ already recorded in `src/tools/descriptions/selection.ts` for
+the Magic Wand. Keeping only the largest contour is a different loss on a different condition, and
+it is the one a user hits without any signal at all: a click spanning two separated areas silently
+produces a selection of one of them.
+
+**Affected.** `src/util/magicWand.ts` — `selectLargestBoundaryLoop()`,
+`createMagicWandSelectionFromImageData()`, and `classifyBoundaryLoops()` as the caller that already
+has every contour in hand before the reduction.
+
+**What would close it.** Keep every outer contour and commit them as subpaths, which needs the
+selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
+declines. Until that exists, the smallest honest change is to make the loss visible rather than
+silent, because a selection that is quietly smaller than the click that made it is the harder bug
+to diagnose later.
+
+## 186. A tool description says the Magic Wand cannot reach the top two thirds of Photoshop's colour range, and the code says it can
+
+**Problem.** The Magic Wand `appNotes` in `src/tools/descriptions/selection.ts` states that a
+"0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32" means "the app cannot reach the
+top two thirds of Photoshop's color range". The implementation says otherwise.
+`getToleranceDistance()` in `src/util/flood-fill.ts` maps the slider across the full colour
+distance — the reading divided by one hundred, times `MAX_COLOR_DISTANCE`, which is the ceiling of
+the four-channel RGBA distance — so a reading of one hundred reaches every colour that can possibly
+match. That file's own header says this is what the top of the slider means.
+
+The claim is false as written, and it is not confined to the source: the note is data, so it is
+generated into `docs/TOOLS.md` under the Magic Wand tool. The checked-in per-tool specification
+therefore carries a false statement about the app's reach.
+
+**What survives, and is already recorded.** The metric really does differ from Adobe's scale — a
+four-channel Euclidean RGBA distance is not Adobe's — and the default differs from a figure
+`src/tools/descriptions/selection.ts` itself records as a third-party claim with no Adobe citation.
+Neither needs this entry.
+
+**Not already owned elsewhere.** The `fix/audit-falsehoods` branch was checked: the sentence is
+byte-identical there and `getToleranceDistance()` is untouched, so that branch does not own this.
+
+**Affected.** `src/tools/descriptions/selection.ts` — the Magic Wand record's `appNotes`, which
+`npm run docs:tools` then renders into `docs/TOOLS.md` — and `src/util/flood-fill.ts` —
+`getToleranceDistance()` and `MAX_COLOR_DISTANCE`, which are correct as they stand.
+
+**What would close it.** Correct the note at source and regenerate. Do not widen the slider to match
+the sentence: the code is right about the range and the sentence is wrong about it, and "fixing"
+the code to agree with a false note would trade a documentation defect for a behavioural one.
+
+## 187. The blend-mode comment names six absent modes, omits five, and ends on two that are not mode values
+
+**Problem.** The doc comment on `PAINT_BLEND_MODES` in `src/tools/brush.ts` says "Photoshop offers
+more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind, Clear)". Six of the
+modes actually absent from that set are missing from the sentence — Darker Color, Lighter Color,
+Linear Dodge (Add), Linear Light and Hard Mix — and the two it ends on, Behind and Clear, are
+Layers-panel entries rather than values the Mode dropdown can carry. So the comment's own premise,
+that the list is in the order Photoshop's Mode dropdown lists them, does not hold for the two it
+closes with.
+
+The list of sixteen is right, and so is the recorded reasoning beside it: the canvas compositing set
+has no equivalent for the rest, and offering one would ship a dead option. `brush.test.ts` pins the
+sixteen values, not this sentence, so nothing catches the enumeration drifting.
+
+**Why it is worth an entry rather than a shrug.** The comment is the nearest thing to a record of
+why the mode set is short, and it is the sentence a reader will consult to learn which modes are
+missing. Being wrong in the direction of undercounting is what makes it survive review — a reader
+checking "is Dissolve in that list" finds it, and stops.
+
+**Affected.** `src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`. The capability itself
+is already recorded in `docs/TOOLS-TOO-HARD.md` and the per-tool data; only this enumeration is
+wrong.
+
+**What would close it.** Correct the list and drop Behind and Clear from it, keeping the decision's
+reasoning intact.
+
+## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
+
+**Problem.** The
+`it('carries no New / Add / Subtract / Intersect, because no selection tool in this app has them')`
+title in `src/components/ToolbarsRight/SingleRowColumnMarquee/__tests__/SingleRowColumnMarquee.test.tsx`
+carries a comment asserting the modes are "absent for EVERY selection tool here". The test queries
+by button role, and `QuickSelection.tsx` renders Add and Subtract in a `Mode` dropdown over
+`QUICK_SELECTION_MODES` — a `select`, not buttons, so the query misses them and the comment's
+universal claim is false.
+
+**The fact is recorded; the contradiction is not.** `docs/TOOLS-TOO-HARD.md` owns the combination
+modes as an unbuilt capability, and `src/tools/descriptions/selection.ts` separately records that
+Quick Selection's dropdown offers Add and Subtract. So nothing here is new about the app. What is new
+is a test whose stated reason contradicts it, and a pin is the one artefact in this repository that
+gets quoted as evidence — so a false reason in a pin propagates.
+
+**Affected.** The single test file above. The pin itself is correct as an assertion of what it
+queries: no selection _bar_ renders the four as buttons.
+
+**What would close it.** Narrow the comment to what the assertion actually proves. Deleting the pin
+is not the fix and would be a gate being weakened — the combination buttons are still absent.
+
+## 189. Three fields on a tool's replay declaration are read by tests and by nothing else
+
+**Problem.** `ToolProcessorDefinition` in `src/tools/toolProcessors.ts` gives every tool a `replay`
+descriptor carrying a kind, a determinism flag, a raster requirement and a version. Across the whole
+repository the first three have **zero production reads**. Every read of them is in
+`src/tools/__tests__/tool-processors.test.ts`, in `color-replacement.test.ts`, or in a fixture
+literal. Production consults only the version, at seven sites across three files, through
+`operationForTool()` in `history-adapter.ts` and the version guards in `history-append.ts` and
+`materialization.ts`.
+
+The unimplemented kind is a declared member of both the commit-kind and the replay-kind unions, and
+no production branch compares either field against it. An unimplemented tool reaches production only
+by falling through to the shared throw, which the
+`it('rejects an unimplemented tool with an unsupported-history-feature diagnostic')` title pins. So
+a tool that declares itself deterministic when it is not, or declares that it does not need
+rasterising when it does, is not detected by anything that runs in a browser.
+
+**Why the blast radius is bounded, and why it still matters.** Production re-derives pixels by
+re-running the processor rather than by trusting the flag, and the route is chosen by the commit
+kind, so a wrong flag does not by itself corrupt an export today. What it removes is the only
+non-test enforcement of a set of claims the project states as truth. The single enforcement point is
+the rosters in `tool-processors.test.ts` — the
+`it('keeps the %s replay kind aligned with its commit kind')` title among them — so a determinism
+flag set on a wall-clock tool ships as a silently irreproducible commit with a green suite.
+
+The gap is specific to these three fields, and that is what makes it a defect rather than a
+convention: the sibling declaration fields on the same type _are_ read in production.
+`requiresCanvasFilter` gates five sites, and `creator` is what `materialization.ts` — the refusal in
+`sourceBitmap()` — checks before it will render a vector source. The project enforces two of its
+declaration fields and not three others, with nothing recording the difference.
+
+**Affected.** `src/tools/toolProcessors.ts` — the `replay` descriptor on
+`ToolProcessorDefinition`; `src/contexts/history-adapter.ts` — `operationForTool()`, which is where a
+version is already read and where one assertion would go; `src/contexts/materialization.ts`, which
+already refuses on `creator` and could refuse on the raster requirement the same way.
+
+**What would close it.** One production assertion at the durable write point rejecting an
+unimplemented replay kind, and a guard refusing a layer whose recorded raster requirement is false.
+Neither needs a schema change.
+
+## 190. The triangle's geometry is asserted nowhere, so a fix would break no test
+
+**Problem.** `drawShape()` in `src/tools/shape.ts` renders the triangle by inscribing a regular
+three-sided polygon in the drag box, and `normalizeShapeGeometry()` squares the drag box when Shift
+is held rather than forcing an equilateral result. Both halves are already recorded —
+`src/tools/descriptions/shape.ts` — the `triangle` entry's `appNotes` — and `shape.notes.md`
+explains why the original premise was wrong twice over. None of that is new.
+
+What is not recorded is that **no assertion anywhere would fail if this were fixed**. The only test
+touching the rendered triangle, the
+`it('draws the figure each geometry variant is registered for, not a generic shape')` title, counts
+`moveTo` and `lineTo` calls, so it cannot fail when the vertices move. `normalizeShapeGeometry()`'s
+aspect tests are a `describe.each` over rectangle and oval only, so the Shift squaring is unpinned
+for the triangle too. And there is no triangle spec under `e2e/` at all, where every other figure has
+some path through the suite.
+
+**Why that is an entry.** A fix here will look like it should turn tests red, and it will not. Read
+without this, an unred fix reads as an incomplete one, and the instinct to make it red sends someone
+to write an assertion for the behaviour they just replaced. The pin-removal rule cuts the other way
+here: there is nothing to remove, and inventing an assertion after the fact is how the current state
+would get pinned again.
+
+**Affected.** `src/tools/shape.ts` — the `figure === 'triangle' || figure === 'polygon'` branch of
+`drawShape()` and the `shiftKey` arm of `normalizeShapeGeometry()`;
+`src/tools/__tests__/shape.test.ts` — the `it.each` case that pins the squaring for triangle and
+polygon, which asserts the square and would need to change with the behaviour.
+
+A branch named `fix/shape-truth` exists and is ahead of `main`; read its diff before starting, since
+it may already carry the change this entry describes.
+
+## 191. Theme is a two-value toggle, and no interface-size control exists anywhere
+
+**Problem.** `ThemeContext.tsx` declares the theme as the two-value union light and dark and one
+button flips between them. Nothing in the application offers an interface size.
+
+`docs/FEATURES.md` — Keyboard records that the corresponding keyboard shortcut is unbound. That is a
+true and different claim: an unbound key and an absent control are two gaps, and binding the key to
+the toggle would produce a shortcut that changes the theme rather than the size — a fix that looks
+like a fix and addresses nothing.
+
+**Affected.** `src/contexts/ThemeContext.tsx`, and the theme ramp the stylesheet would have to
+support.
+
+**What would close it.** Either widen the union to the size ramp the stylesheet already carries, or
+record the absence as a decision. Which of those is the operator's call — the documentation ladder
+puts a deliberate departure in `docs/OVERRIDES.md`, and an agent must not add an entry there.
+
+## 192. Painting shows the default cursor: no brush-tip outline, and no modifier for a precise one
+
+**Problem.** While a paint stroke is in progress the cursor is the default one. `DrawToolArea.tsx`
+draws no outline, and the application has no cursor registry — `src/tools/descriptions/eyedropper-draw.ts`
+says so for its own tool. Sixteen tool areas do set their own cursor, so this is not a general
+absence of per-tool cursors and should not be described as one; what is missing is the cursor for the
+one tool whose cursor carries information, because it tells the user where the tip is and how wide.
+
+`HANDOFF.md` §151 names a brush-tip circle as part of its fix, since the view transform that would
+size it is commented out. The modifier that switches to a precise cursor is recorded nowhere.
+
+**Affected.** `DrawToolArea.tsx`, and the cursor rules in `src/components/Main/Main.scss` for the
+precise variant.
+
+**What would close it.** A screen-space circle sized from the tip during a paint drag, and a
+modifier that swaps the crosshair for the precise crosshair. Both depend on the view transform
+§151 carries, so neither lands usefully before it.
+
+## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
+
+**Problem.** `calculateNewRect`'s paragraph arm returns `trimRect2(newRect, imageSize)`, so every
+edge of a paragraph box is clamped into the document. That clamp is what makes Adobe's overflow icon
+reachable — the icon reports the lines against the box's height, and a box that could grow past the
+document's bottom edge could never outgrow its own height — and `e2e/text-tool.spec.ts` pins it.
+
+The consequence is that a paragraph box whose content needs more height than the document has is
+clamped to the document, and the lines below that edge are cropped rather than overflowing. The layer's
+canvas IS the box (`createLayerFromTool` takes `pos` from the rect and `layer-utils`' `createLayerSource`
+sizes the creator's canvas at `size: pos`), so the committed layer is the one-line-tall file the type
+was laid out in. A point box does not have this problem: it clamps its ORIGIN and lets its extent be
+whatever the content needs, so ink past the document edge belongs to the layer.
+
+**Affected.** `src/util/rect.ts` — `calculateNewRect`'s paragraph arm and its final
+`trimRect2(newRect, imageSize)`. Pinned by `e2e/text-tool.spec.ts` — the overflow-icon test.
+
+**What would close it.** One of three, and they are mutually exclusive, so this is a product decision
+rather than a bug fix:
+
+- Let the paragraph box grow past the document's bottom edge. Closes the crop, and makes the
+  overflow icon unreachable — a box that always grows to fit cannot overflow — which deletes a
+  shipped Photoshop feature and its e2e.
+- Keep the clamp and disable Apply while the draft overflows. Keeps the icon, costs the user a
+  control they cannot use until they make room, and invents a gate Adobe does not document.
+- Report the overflow against the box the user DRAGGED rather than the grown one, so the icon
+  survives a growing box. `renderText` is handed only the final rect and has no knowledge of the
+  drag, so `calculateNewRect`'s return type would have to carry it.
+
+**Provenance.** Found by review of the Type tool against its own requirements document, not by a
+failing test: no current run trips it, which is exactly why the clamp was allowed to stand.
+
+## 194. Every button built on `buttonStyles.ts` has no keyboard focus indicator
+
+**Problem.** `PRIMARY_BUTTON`, `PRIMARY_BUTTON_LARGE`, `SECONDARY_BUTTON`, `SECONDARY_BUTTON_LARGE`
+and `ICON_BUTTON` all carry `focus:outline-none` and none carries a `focus-visible` replacement. Tailwind's
+`focus:` compiles to `:focus`, which outranks the user agent's `:focus-visible` outline, so the ring is
+removed and nothing restores it. A keyboard user tabbing through any panel that uses these styles gets
+no visible focus at all. `FontSelect`'s trigger gets it right in the same bar, which is what makes the
+omission look like an oversight rather than a deliberate style.
+
+**Affected.** `src/components/ToolbarsRight/buttonStyles.ts`. `SECONDARY_BUTTON`'s missing `disabled:`
+variant was a separate half of this and is fixed; the focus ring is not.
+
+**What would close it.** Add `focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2`
+(or an outline equivalent) to the five styles. Do NOT do it as a drive-by inside a feature change: it
+alters how every focused control renders, across panels that have nothing to do with each other, and
+the visual-regression baselines are recorded per panel. It wants its own change and its own check.
+
+## 195. Alignment does nothing for point type, and the bar does not say so
+
+**Problem.** `renderText` anchors `align` INSIDE the box: for a point box, `boxLeft` is `x1 + TEXT_PADDING`
+and `boxRight` is `x2 - TEXT_PADDING`, and a point box is exactly `inkWidth + 2 * TEXT_PADDING` by
+construction. All three settings therefore compute the same `x`, so Left, Centre and Right render
+pixel-identically for every point draft — the control is live, focusable, and does nothing.
+
+This was investigated as a `calculateNewRect` defect and is NOT one. The growth arm in
+`calculateNewRect` is correctly gated on `requiredWidth > currentWidth`: it places the growth when the
+text outgrows a box that has no slack to distribute, and leaves the box alone when there is slack —
+because `renderText` then anchors within it. Moving that arm outside the guard was tried and reverted:
+it moves the box AND lets `renderText` anchor inside the moved box, so the ink shifts by twice the
+slack. The defect is the interaction, and there is nothing to fix in the geometry.
+
+**Affected.** `src/util/rect.ts` (`calculateNewRect`'s point arm) and `src/tools/text.ts`
+(`renderText`'s anchor). Both carry comments describing the division of labour. No test pins the
+no-op, which is why it survived.
+
+**What would close it.** A decision about the control, and it needs Adobe before it needs code: either
+Photoshop also renders alignment as a no-op for point type — in which case the honest fix is to
+disable the control while the draft is point type and say why in the bar — or it re-flows the box, in
+which case the box has to gain room to align within, which contradicts "the line expands or shrinks as
+you edit it". Do not resolve this by making the box honour `align` without settling that question
+first.
+
+## 196. Escape does not abort an uncommitted text draft
+
+**Problem.** `TextToolArea` has no abort route. A draft is left by Clear, by Apply, by switching tools,
+or by nothing at all; there is no Escape, and the gesture has no `pointercancel` handler of its own.
+`useRect`'s own pointer capture IS released on `pointercancel` and on unmount, so the capture cannot
+leak — what is missing is a way to abandon a draft the user has decided against. Photoshop's `Esc` on
+an uncommitted type box removes it.
+
+**Affected.** `src/components/Main/TextToolArea.tsx`, and `src/hooks/useRect.ts` if the abort is
+implemented as a `releasePointer` call rather than a draft reset.
+
+**What would close it.** A product decision on two questions this entry cannot answer from the code:
+whether Escape clears the draft or only the in-flight gesture, and what it does when focus is in the
+textarea — which is where it will be, because the tool area focuses the textarea on commit, and
+Escape inside a `<textarea>` is a normal key. Getting that wrong makes Escape clear the text the user
+is typing, which is worse than the missing feature.

@@ -257,8 +257,14 @@ export const text =
   };
 ```
 
-`renderText` is a measure-and-draw function over a string (`text.ts` — `renderText()`), and nothing
-re-runs it against the committed pixels.
+`renderText` is a measure-and-draw function over a string (`text.ts` — `renderText()`), and the
+**durable** engine does re-run it: `materialization.ts` — `sourceBitmap()` re-runs the creator for a
+`kind: 'text'` durable source, classified by `history-adapter.ts` — `convertSource()`. Only the
+RUNTIME path skips it — `layer-renderer.ts`'s `vectorToolNames` lists six tools with `text` absent,
+so a live layer draws from `layer.bitmap`. Stating the skip without the qualifier is what made this
+paragraph wrong when the Type tool was in scope: it told a reader the committed characters could not
+be reproduced from the args, when one of the two engines can. `docs/TOOLS.md`'s two-engine section
+has it right.
 
 **Why it is too hard.** It needs a text layout engine, font shaping and rasterisation, and an
 on-canvas editing surface with a caret, selection and IME input. The app also has a replay contract

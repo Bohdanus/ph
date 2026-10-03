@@ -449,6 +449,30 @@ describe('Text toolbar', () => {
     );
   });
 
+  // THE ORDER, asserted as the CALL ORDER rather than as two independent facts, because the order is
+  // the defect: `onChange` writes the args both imperatively and into React state, so clearing
+  // before the create destroys the draft before the layer is even attempted.
+  //
+  // `createLayerFromTool` CAN throw — `layer-utils` refuses a zero extent, and the tool area is
+  // `absolute inset-0` over the whole centred container, so a click in the letterbox margin reached
+  // it — and a throw from a React event handler goes to `window.onerror` rather than to an error
+  // boundary, since `ToolbarHorizontal` sits outside every boundary in the tree. The old order
+  // therefore lost the user's typed text with no layer, no message and Apply disabled: the empty
+  // textarea was the only evidence anything had happened. Inverting these two lines fails this test.
+  it('creates the layer BEFORE clearing the draft', () => {
+    const order: string[] = [];
+    mockCreateLayerFromTool.mockImplementation(() => void order.push('create'));
+    mockSetToolArgs.mockImplementation(() => void order.push('clear'));
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(order).toEqual(['create', 'clear']);
+    // Both still happen: this is a reordering, not a removal.
+    expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+  });
+
   it('clears text when Clear clicked', () => {
     renderWithProvider(<Text />);
 
@@ -513,7 +537,12 @@ describe('Text toolbar', () => {
       // `!text` early return, which is load-bearing for exactly this case.
       const rect = lastToolArgs().rect as { x1: number; y1: number; x2: number; y2: number };
       expect(Object.keys(rect).sort()).toEqual(['x1', 'x2', 'y1', 'y2']);
-      expect(rect).toMatchObject({ x1: -1, y1: 0, x2: 11 });
+      // `x1` is 0 and not -1. The one-pixel widening is what makes a zero-area press visible
+      // pre-typing, and it used to be returned UNCLAMPED — so a drag starting at the document's left
+      // edge published a box that began a pixel outside the document, while `useRect`'s `drawMask`
+      // painted it clamped to `[0, 1]`. The frame the user was looking at and the box the first
+      // keystroke grew from were therefore different boxes, and the frame jumped on that keystroke.
+      expect(rect).toMatchObject({ x1: 0, y1: 0, x2: 11 });
       expect(rect.y2).toBeCloseTo(64 * 1.1 + 2 * 5, 10);
     });
   });
@@ -701,11 +730,34 @@ describe('Text toolbar', () => {
       expect(fontSizeField.type).toBe('number');
       expect(fontSizeField.min).toBe('0.01');
       expect(fontSizeField.max).toBe('1296');
-      expect(fontSizeField.step).toBe('1');
+      // `any`, and the value it replaced was `1`. Per the HTML step algorithm the base is `min`, so
+      // `step={1}` over `min={0.01}` produced the grid 0.01, 1.01, 2.01 … which contradicted the
+      // point of this very test: the seeded 64 sat OFF-grid on first paint, so the spinner needed two
+      // presses to reach 65, and the last landable value below the maximum was 1295.01, so Adobe's
+      // own 1296 could not be reached by the spinner or an arrow key at all. The range is now typed
+      // rather than stepped, which is what a number field for a continuous quantity should be.
+      expect(fontSizeField.step).toBe('any');
       expect(fontSizeField.value).toBe('64');
 
       fireEvent.change(fontSizeField, { target: { value: '48' } });
       expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 48 }));
+
+      // The property `step={1}` actually broke, stated as a behaviour rather than as a modulo:
+      // a size between two integers has to be publishable at all. Under `step={1}` the browser
+      // reported this value as `:invalid` and the spinner could not land on it.
+      fireEvent.change(fontSizeField, { target: { value: '48.5' } });
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 48.5 }));
+
+      // And Adobe's own maximum is a legal value, which the old grid stopped one step short of.
+      fireEvent.change(fontSizeField, { target: { value: fontSizeField.max } });
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 1296 }));
+
+      // An emptied field publishes NOTHING, which is the other half: `Number('')` is `0`, not
+      // `NaN`, so the old finiteness guard let it through and the clamp turned a retyped size into
+      // `FONT_SIZE_MIN` before a second digit could be entered.
+      mockSetToolArgs.mockClear();
+      fireEvent.change(fontSizeField, { target: { value: '' } });
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
 
       // The label is still `Font Size` and it is still a real `<label for>`, so clicking the
       // label focuses the field. Its readout is the FIELD's range, not the current size: with a

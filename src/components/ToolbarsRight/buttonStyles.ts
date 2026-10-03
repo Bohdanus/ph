@@ -21,9 +21,23 @@ export const PRIMARY_BUTTON_LARGE =
  * Used for Cancel, Clear, secondary actions
  * Light theme: white bg with gray text, hover to light gray
  * Dark theme: gray-700 bg with gray text, hover to darker gray
+ *
+ * **`disabled:opacity-50` and `disabled:cursor-not-allowed` are load-bearing, not decoration.**
+ * Every other style in this file that can be disabled carries a `disabled:` variant, and this one
+ * did not — so a disabled secondary button rendered pixel-for-pixel as an enabled one. On the Text
+ * tool's bar that meant Apply and Clear looked live for the whole of a session in which no box had
+ * been dragged yet, and there is no other signal on the control: a `disabled` attribute is invisible
+ * to a sighted user and to a screenshot. The opacity matches `PRIMARY_BUTTON`'s, so the two styles
+ * read as one system.
+ *
+ * The missing `focus:` ring is a REAL omission and is deliberately NOT fixed here: `focus:outline-none`
+ * compiles to `:focus`, which outranks the user agent's `:focus-visible` outline, so every button
+ * built on this style has no keyboard focus indicator at all. Repairing it repo-wide changes how every
+ * focused control renders and needs its own change with its own visual-regression check, so
+ * `HANDOFF.md` carries it rather than this file quietly growing a half-applied ring.
  */
 export const SECONDARY_BUTTON =
-  'rounded border border-gray-300 bg-white px-3 h-9 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
+  'rounded border border-gray-300 bg-white px-3 h-9 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * Secondary button style - for larger buttons

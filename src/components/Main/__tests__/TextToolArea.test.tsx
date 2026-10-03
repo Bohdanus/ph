@@ -26,6 +26,10 @@ const h = vi.hoisted(() => ({
   pointerDown: vi.fn(),
   pointerMove: vi.fn(),
   pointerUp: vi.fn(),
+  // `useRect`'s own record of what the current press hit: `null` for a press on empty canvas, and
+  // `'inside'` or an edge name for a press on an existing box. The component reads it to decide
+  // whether the gesture may change what KIND of box the draft is.
+  currentEdgeRef: { current: null as string | null },
   useRectProps: { current: null as UseRectProps | null },
   textarea: { current: null as HTMLTextAreaElement | null },
   containerRef: { current: document.createElement('div') },
@@ -89,7 +93,7 @@ vi.mock('../../../hooks/useRect.ts', () => ({
         onPointerUp: h.pointerUp,
       },
       rectHandles: { redraw: h.redraw, clearSelection: vi.fn() },
-      pointerState: {},
+      pointerState: { currentEdgeRef: h.currentEdgeRef },
     };
   },
 }));
@@ -113,6 +117,29 @@ vi.mock('../../../tools/text.ts', async () => {
 const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null } = { current: null }) =>
   render(<TextToolArea overlayCtxRef={overlayCtxRef} />);
 
+/**
+ * A whole press-drag-release, followed by the `onChangeEnd` `useRect` would have called.
+ *
+ * The pointer events are fired for real rather than `onChangeEnd` being called directly, because
+ * the two client positions ARE the input now: the component measures how far the POINTER travelled,
+ * in CSS px, and the rect it is handed is only the box. Calling `onChangeEnd` with a rect alone
+ * would test the old rule and pass for the wrong reason.
+ */
+const gesture = (
+  rendered: { container: HTMLElement },
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  rect: { x1: number; y1: number; x2: number; y2: number }
+) => {
+  // The tool area's own element, not RTL's wrapper: the handlers are spread onto the div the
+  // component renders, and firing at the wrapper would never reach them.
+  const area = rendered.container.firstElementChild as HTMLElement;
+  fireEvent.pointerDown(area, { button: 0, clientX: from.x, clientY: from.y });
+  fireEvent.pointerMove(area, { clientX: to.x, clientY: to.y });
+  fireEvent.pointerUp(area, { button: 0, clientX: to.x, clientY: to.y });
+  act(() => h.useRectProps.current!.onChangeEnd(rect));
+};
+
 describe('TextToolArea', () => {
   beforeEach(() => {
     h.setToolArgs.mockReset();
@@ -121,6 +148,7 @@ describe('TextToolArea', () => {
     h.pointerDown.mockReset();
     h.pointerMove.mockReset();
     h.pointerUp.mockReset();
+    h.currentEdgeRef.current = null;
     h.useRectProps.current = null;
     h.textarea = { current: null };
     h.color = '#000000';
@@ -204,8 +232,10 @@ describe('TextToolArea', () => {
       const newRect = { x1: 0, y1: 0, x2: 55, y2: 20 };
       vi.mocked(calculateNewRect).mockReturnValue(newRect);
 
-      renderArea();
-      act(() => h.useRectProps.current!.onChangeEnd({ x1: 0, y1: 0, x2: 40, y2: 20 }));
+      const rendered = renderArea();
+      // A real 40x20 drag rather than a bare `onChangeEnd`, because the classification reads the
+      // pointer's travel and a rect alone no longer decides it.
+      gesture(rendered, { x: 0, y: 0 }, { x: 40, y: 20 }, { x1: 0, y1: 0, x2: 40, y2: 20 });
 
       expect(calculateNewRect).toHaveBeenCalledWith(
         expect.objectContaining({ text: 'hi', rect: { x1: 0, y1: 0, x2: 40, y2: 20 } }),
@@ -265,8 +295,8 @@ describe('TextToolArea', () => {
       toolArgs = makeTextArgs({ text: 'hi', rect: dragged });
       vi.mocked(calculateNewRect).mockReturnValue(dragged);
 
-      renderArea();
-      act(() => h.useRectProps.current!.onChangeEnd(dragged));
+      const rendered = renderArea();
+      gesture(rendered, { x: 100, y: 100 }, { x: 260, y: 200 }, dragged);
 
       expect(calculateNewRect).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'paragraph', rect: dragged }),
@@ -281,8 +311,8 @@ describe('TextToolArea', () => {
       toolArgs = makeTextArgs({ text: 'hi', rect: clicked });
       vi.mocked(calculateNewRect).mockReturnValue(clicked);
 
-      renderArea();
-      act(() => h.useRectProps.current!.onChangeEnd(clicked));
+      const rendered = renderArea();
+      gesture(rendered, { x: 12, y: 34 }, { x: 14, y: 35 }, clicked);
 
       expect(calculateNewRect).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'point', rect: { x1: 12, y1: 34, x2: 12, y2: 34 } }),
@@ -297,8 +327,8 @@ describe('TextToolArea', () => {
       toolArgs = makeTextArgs({ text: 'hi', rect: dragged });
       vi.mocked(calculateNewRect).mockReturnValue(dragged);
 
-      renderArea();
-      act(() => h.useRectProps.current!.onChangeEnd(dragged));
+      const rendered = renderArea();
+      gesture(rendered, { x: 20, y: 20 }, { x: 24, y: 21 }, dragged);
 
       expect(calculateNewRect).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'paragraph', rect: dragged }),
@@ -313,8 +343,8 @@ describe('TextToolArea', () => {
       toolArgs = makeTextArgs({ text: 'hi', rect: dragged });
       vi.mocked(calculateNewRect).mockReturnValue(dragged);
 
-      renderArea();
-      act(() => h.useRectProps.current!.onChangeEnd(dragged));
+      const rendered = renderArea();
+      gesture(rendered, { x: 0, y: 10 }, { x: 200, y: 13 }, dragged);
 
       // The click test is the AND of two per-axis verdicts, so the negation is their OR: 3px of
       // travel on y is not a click, and the 200px on x carries the drag on its own. The rect is
@@ -332,8 +362,8 @@ describe('TextToolArea', () => {
       toolArgs = makeTextArgs({ text: 'hi', rect });
       vi.mocked(calculateNewRect).mockReturnValue({ x1: 7, y1: 8, x2: 7, y2: 8 });
 
-      renderArea();
-      act(() => h.useRectProps.current!.onChangeEnd(rect));
+      const rendered = renderArea();
+      gesture(rendered, { x: 30, y: 40 }, { x: 33, y: 43 }, rect);
 
       // `<=` and not `<`: the threshold is the largest press still counted as a click on BOTH
       // axes, so a 4px travel is the first that is not.
@@ -343,6 +373,53 @@ describe('TextToolArea', () => {
         { width: 100, height: 100 }
       );
       expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point' }));
+    });
+
+    // THE REGRESSION. The threshold was read off the rect `useRect` handed back, and for a press
+    // inside an existing draft that rect is the DRAFT — so a box holding any text was always wider
+    // and taller than 3px and every such press was classified as a drag. Placing a point draft,
+    // typing into it, and clicking inside it "to say where the box is" silently turned it into a
+    // paragraph box, and `calculateNewRect` re-wrapped the text at the new width inside a frame
+    // that never moved. No threshold value fixes this: the quantity being measured was the box,
+    // not the gesture.
+    it('does NOT reclassify a draft when the press lands inside it', () => {
+      const existing = { x1: 10, y1: 10, x2: 120, y2: 40 };
+      toolArgs = makeTextArgs({ text: 'hello world', rect: existing, kind: 'point' } as Partial<TextArgs>);
+      // `useRect` reports `'inside'` for a press strictly within an existing rect — this is the
+      // fact the component reads to know the press was not a placement.
+      h.currentEdgeRef.current = 'inside';
+      vi.mocked(calculateNewRect).mockReturnValue(existing);
+
+      const rendered = renderArea();
+      // A press that barely moves: the pointer travelled 1px, so by travel alone this is a click.
+      gesture(rendered, { x: 60, y: 25 }, { x: 61, y: 25 }, existing);
+
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'point', rect: existing }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point' }));
+    });
+
+    it('does not reclassify a PARAGRAPH draft when a handle is dragged, and hands the rect through', () => {
+      const existing = { x1: 10, y1: 10, x2: 120, y2: 40 };
+      const resized = { x1: 10, y1: 10, x2: 200, y2: 40 };
+      toolArgs = makeTextArgs({ text: 'hello', rect: existing, kind: 'paragraph' } as Partial<TextArgs>);
+      h.currentEdgeRef.current = 'right';
+      vi.mocked(calculateNewRect).mockReturnValue(resized);
+
+      const rendered = renderArea();
+      // The pointer travels 80px — far past the threshold — but this is a RESIZE of a box that
+      // already exists, so it must not also turn point type into paragraph type.
+      gesture(rendered, { x: 120, y: 25 }, { x: 200, y: 25 }, resized);
+
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'paragraph', rect: resized }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph' }));
     });
   });
 
