@@ -312,6 +312,100 @@ describe('calculateNewRect', () => {
     expect(result!.y2).toBeGreaterThan(1000);
   });
 
+  it('gives a VERTICAL paragraph drag a usable width, because it is classified as a paragraph', () => {
+    // THE REGRESSION THIS FILE HAD NO CASE FOR. `TextToolArea` classifies on the larger of the two
+    // axes, so a drag straight DOWN — no horizontal travel at all — is a paragraph box, and `useRect`
+    // hands back a sorted rect whose `x1` equals its `x2`. A zero-width box has no positive extent,
+    // and `layer-utils`' `createLayerSource` refuses one outright, so Apply threw on a box the user
+    // could see and could not fix. Nothing caught it: the e2e drags both ways, and no unit test
+    // placed a paragraph box narrower than its own padding.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind: 'paragraph',
+        rect: { x1: 500, y1: 100, x2: 500, y2: 200 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x2).toBeGreaterThan(result!.x1);
+    // At the floor, which is the box's own padding, so `textWrapWidth` is zero rather than negative:
+    // below that every fit test fails and the breaker reports a width overflow for a body with no ink.
+    expect(result!.x2 - result!.x1).toBe(2 * 5);
+  });
+
+  it('floors a paragraph box a HANDLE RESIZE has narrowed to nothing, not just an empty draft', () => {
+    // The second route to the same zero width: a user dragging the right handle onto the left edge.
+    // The non-empty paragraph path never re-derives the width, so flooring only the empty draft
+    // would have left this one throwing.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind: 'paragraph',
+        rect: { x1: 100, y1: 100, x2: 100, y2: 180 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x2 - result!.x1).toBe(2 * 5);
+  });
+
+  it('leaves a point box at its own one-pixel widening, because the floor is paragraph-only', () => {
+    // A point press is a zero-AREA point rather than a zero-width box, and its one pixel is what
+    // makes its overlay mask visible before anything is typed. Giving it the paragraph floor would
+    // replace that with a 20px box the user never dragged.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 100, y1: 100, x2: 100, y2: 100 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    // One pixel each side of the click, so two where nothing clamps — and nowhere near the
+    // paragraph floor, which is the point of the case.
+    expect(result!.x2 - result!.x1).toBe(2);
+    expect(result!.x2 - result!.x1).toBeLessThan(2 * 5);
+  });
+
+  it('leaves a wider paragraph drag exactly as dragged', () => {
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind: 'paragraph',
+        rect: { x1: 100, y1: 100, x2: 480, y2: 180 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x1).toBe(100);
+    expect(result!.x2).toBe(480);
+  });
+
   it('keeps an empty PARAGRAPH draft exactly the width the user dragged', () => {
     const canvasRef = makeCanvasRef(0);
     const result = calculateNewRect(
@@ -387,6 +481,32 @@ describe('calculateNewRect', () => {
     );
     expect(result!.x2).toBe(100);
   });
+
+  it.each(['left', 'center', 'right'] as const)(
+    'leaves a box that already fits its text exactly where it was dragged, for align %s',
+    (align) => {
+      // The guard `requiredWidth > currentWidth` is what keeps a point box still when there is no
+      // slack for `align` to distribute — and `renderText` anchors `align` INSIDE the box, so moving
+      // the box would move the ink twice. `HANDOFF.md` records that the arm was once moved outside
+      // this guard and reverted for exactly that reason, and at the time only `left` was pinned: a
+      // revert would have shifted the ink 55px on `center` and moved the committed layer's origin
+      // and width on `right`, both undetected. So the case is run for all three.
+      const dragged = { x1: 0, y1: 0, x2: 100, y2: 50 };
+      // 40 of ink + 2 * 5 of padding = 50, against a box 100 wide: 50 of genuine SLACK. The first
+      // version of this case made the text exactly fill the box, and every arm then computed the
+      // same box whether or not it was inside the guard — the same trap as the fixtures above, one
+      // level down. Slack is what `align` would distribute, so slack is what makes the guard matter.
+      const canvasRef = makeCanvasRef(40);
+
+      const result = calculateNewRect(
+        { ...baseArgs, text: 'hello', fontSize: 20, lineHeight: 1.2, rect: dragged, align } as TextToolArgs,
+        canvasRef,
+        imageSize
+      );
+
+      expect(result).toEqual(dragged);
+    }
+  );
 
   it('measures with the font the args carry, so the box follows the face', () => {
     // Font-sensitive mock: no pinned width, so every measure reads `ctx.font`. A point box whose

@@ -110,10 +110,22 @@ export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
  * level, so this is load-bearing rather than decoration.
  */
 function clampTextOrigin(rect: RectXYSorted, imageSize: Size): RectXYSorted {
-  const x1 = clampEdge(rect.x1, imageSize.width);
-  const y1 = clampEdge(rect.y1, imageSize.height);
+  // Sorted FIRST. `RectXYSorted` is an alias of `RectXY`, so nothing at the type level guarantees
+  // `x1 <= x2`, and this function's whole contract is that the box it returns has a positive extent.
+  // Without the sort the far-edge floor below DELETES the span instead of normalising it: an input of
+  // `{x1: 500, x2: 100}` came back `{x1: 500, x2: 500}` — width zero, 400px of box gone — where
+  // `sortRect` would have given `{100, 500}`. The production caller happens to sort already, which is
+  // exactly why the JSDoc could claim a guarantee the code did not keep.
+  const sorted = sortRect(rect);
+  const x1 = clampEdge(sorted.x1, imageSize.width);
+  const y1 = clampEdge(sorted.y1, imageSize.height);
 
-  return { x1, y1, x2: Math.max(rect.x2, x1), y2: Math.max(rect.y2, y1) };
+  // The far edges are floored at the clamped origin rather than clamped too. Clamping them is the
+  // obvious reading and it is wrong: a box dragged out past the right edge would have its ORIGIN
+  // pulled back to the edge and keep its far edge beyond the document, which still has a positive
+  // extent, whereas clamping both collapses such a box to nothing at the boundary. The ink this
+  // function exists to preserve lives beyond the document by design.
+  return { x1, y1, x2: Math.max(sorted.x2, x1), y2: Math.max(sorted.y2, y1) };
 }
 
 // `trimRect` without the clamp: crop extends the canvas past the image edge, so the
@@ -166,12 +178,49 @@ export function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
+/**
+ * The narrowest a PARAGRAPH box may be, as the width a drag has to leave.
+ *
+ * **A RECONSTRUCTION, with no Adobe figure behind it.** Adobe documents that paragraph type wraps
+ * to the dimensions of its bounding box and says nothing about how narrow that box is allowed to
+ * get, so this is the app's own floor and it exists here for two structural reasons rather than for
+ * looks:
+ *
+ * - A press with no horizontal travel produces `x1 === x2`, because `useRect` sorts the mask rect and
+ *   a vertical drag has no width. `TextToolArea` classifies on the larger of the two axes, so a
+ *   purely VERTICAL drag is a paragraph box — and a zero-width box has no positive extent, which
+ *   `layer-utils`' `createLayerSource` refuses outright. Without a floor, dragging straight down
+ *   leaves Apply throwing on a box the user can see and cannot fix, and the throw reaches
+ *   `window.onerror` rather than a boundary.
+ * - Below the box's own padding, `textWrapWidth` goes NEGATIVE, and then `fits('')` is false for
+ *   every candidate and the breaker reports a width overflow for a body with no ink in it.
+ *
+ * The value is therefore the padding, and not a round number chosen to look like a UI minimum: it is
+ * the width at which the wrap width reaches zero, which is the point below which the box has no
+ * usable interior left.
+ */
+const MIN_PARAGRAPH_WIDTH = TEXT_PADDING * 2;
+
+/**
+ * Hold a paragraph box at {@link MIN_PARAGRAPH_WIDTH}, leaving a wider drag exactly as dragged.
+ *
+ * Applied at BOTH of this function's paragraph exits — the empty-draft early return and the final
+ * one — because a user can reach a zero-width paragraph box by dragging vertically OR by dragging a
+ * handle onto its opposite edge, and the non-empty path never re-derives the width. Flooring only
+ * the empty draft would leave the resize route throwing.
+ */
+function atLeastMinParagraphWidth(rect: RectXYSorted, isParagraph: boolean): RectXYSorted {
+  if (!isParagraph) return rect;
+  if (rect.x2 - rect.x1 >= MIN_PARAGRAPH_WIDTH) return rect;
+  return { ...rect, x2: rect.x1 + MIN_PARAGRAPH_WIDTH };
+}
+
 export const calculateNewRect = (
   newArgs: TextToolArgs,
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  const { align, text, fontSize, lineHeight, rect } = newArgs;
+  const { align, text, rect } = newArgs;
   // No rect means the text has not been placed on the canvas yet, and there is nothing to
   // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
   // document origin, which no caller wanted: the only path that can reach here with a null
@@ -202,8 +251,16 @@ export const calculateNewRect = (
   // box at the document edge instead of half of one hanging off it.
   if (!text) {
     const inset = isParagraph ? 0 : 1;
-    const draft = trimRect2({ ...rect, x1: rect.x1 - inset, x2: rect.x2 + inset }, imageSize);
-    return { ...draft, y2: draft.y1 + fontSize * lineHeight + 2 * TEXT_PADDING };
+    // Raw `fontSize`/`lineHeight` would put a `NaN` from a corrupt settings record straight into
+    // `y2`, and `createLayerSource` rejects only `=== 0`, so a negative extent reaches
+    // `new OffscreenCanvas`. `resolveTextStyle` is the one seam that folds both, and every other
+    // measurement in this file already goes through it.
+    const { fontSize: size, lineHeight: leading } = resolveTextStyle(newArgs);
+    const draft = atLeastMinParagraphWidth(
+      trimRect2({ ...rect, x1: rect.x1 - inset, x2: rect.x2 + inset }, imageSize),
+      isParagraph
+    );
+    return { ...draft, y2: draft.y1 + size * leading + 2 * TEXT_PADDING };
   }
 
   // A paragraph box's width is the width the user dragged, so it is clamped BEFORE anything is
@@ -300,10 +357,16 @@ export const calculateNewRect = (
   // its own layout call above, and it must not be settled twice from two different sources — which
   // is exactly what happened before, and is why `HANDOFF.md` still carries an entry about a
   // paragraph box whose wrapped and hard-break heights disagreed.
-  const currentHeight = newRect.y2 - newRect.y1;
-  const pointRequiredHeight = hardBreakHeight(ctx2d, newArgs, text);
-  if (!isParagraph && pointRequiredHeight > currentHeight) {
-    newRect = { ...newRect, y2: newRect.y1 + pointRequiredHeight };
+  // The guard is HOISTED, not applied to the result. It used to read
+  // `!isParagraph && hardBreakHeight(...) > currentHeight`, so a paragraph draft still paid for the
+  // call: a `resolveTextStyle` allocation, a bracketed `applyTextStyle` writing five properties, and
+  // a `measureText('')` — a real font metric read, which can force a synchronous font load on a face
+  // not yet resident — on every keystroke, purely to have the number discarded one line later.
+  if (!isParagraph) {
+    const pointRequiredHeight = hardBreakHeight(ctx2d, newArgs, text);
+    if (pointRequiredHeight > newRect.y2 - newRect.y1) {
+      newRect = { ...newRect, y2: newRect.y1 + pointRequiredHeight };
+    }
   }
 
   // A PARAGRAPH box keeps every edge clamped to the document, which is the same
@@ -314,7 +377,7 @@ export const calculateNewRect = (
   //
   // A POINT box is not clamped: its extent is what the content required, and the ink past the
   // document edge belongs to the layer even though the canvas cannot show it.
-  return isParagraph ? trimRect2(newRect, imageSize) : newRect;
+  return isParagraph ? trimRect2(atLeastMinParagraphWidth(newRect, true), imageSize) : newRect;
 };
 
 /** The wrap width a box of this kind offers its text: the box's own for paragraph, unbounded for point. */

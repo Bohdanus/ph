@@ -6152,3 +6152,27 @@ prompt. Add the user-configurable setting only at the caller boundary.
 `src/contexts/replay-coordinator.ts` — `ReplayCoordinator.request()`;
 `src/contexts/materialization.ts` — `materializeDocument()`; `src/contexts/useHistory.ts`;
 and the empty-history/baseline tests.
+
+## 200. The Size field cannot be retyped, because it publishes every intermediate value
+
+**Problem.** `Text.tsx`'s size input is controlled by `value={style.fontSize}` and its `onChange`
+publishes whatever is in range. So typing a size from scratch publishes each keystroke: typing `64`
+over an existing `32` requires the field to pass through `6`, which is in range, so `6` is published
+and the field rewrites itself to `6` before the `4` lands. Typing `0` first is worse — `0` clamps to
+`FONT_SIZE_MIN`, so the field becomes `0.01` mid-edit.
+
+The empty-field half is fixed: an empty value publishes nothing, and the controlled restore puts the
+last good size back, which `e2e/text-tool.spec.ts` pins. This entry is about what that does NOT fix —
+select-all-and-retype works, and backspacing works, but typing through intermediate values does not.
+
+**Affected.** `src/components/ToolbarsRight/Text/Text.tsx` — the size field's `onChange`.
+
+**What would close it.** Local draft state: a `useState<string>` holding what the user has typed,
+synced from `toolArgs` only when the published value changes for a reason other than typing, and
+committed on blur or Enter. That is the only shape in which "the field shows what I typed until I am
+done" is true. It is a behaviour change to a control, and it is the reason it was not done inside the
+guard fix rather than alongside it.
+
+**Provenance.** Found by review. An earlier correction in this area added a blur handler that turned
+out to be dead code — its guard tested a value `resolveTextStyle` had already clamped — and while
+establishing that it was dead, the intermediate-value problem became visible.
