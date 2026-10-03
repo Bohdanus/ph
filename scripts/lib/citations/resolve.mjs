@@ -384,6 +384,53 @@ export const resolveHeadingAtLine = (text, line) => {
 };
 
 /**
+ * The file extensions a citation may name, and the ONE place this list exists.
+ *
+ * This started as two lists and they had already drifted: the gate in
+ * `scripts/__tests__/agents-citations.test.mjs` matched 20 extensions while this resolver matched
+ * 13, so `html`, `svg`, `wasm`, `avif`, `webp`, `jpg` and `png` were invisible to the sweep. The
+ * consequence is the one that matters and runs the wrong way: the sweep is the tool that builds the
+ * migration's worklist, so a document whose only citations were `logo.svg:12` and `bg.png:4`
+ * reported CLEAN while the gate rejected it. A checker that under-reports the remainder is worse
+ * than no checker, because it converts the gate's red into a green that is not true.
+ *
+ * Both patterns below are therefore compiled from this one string, and `LINE_NUMBER_CITATION` is
+ * exported so the gate uses the very pattern the sweep does. Adding an extension is a one-line
+ * change that both sides inherit; the two can no longer disagree, which is the property the drift
+ * was losing.
+ *
+ * The list is deliberately longer than the extensions this repository mostly cites. `node:fs` and
+ * `node:path` stay out because there is no dot-extension before the colon, and a URL's port stays
+ * out because a port is not a file — the two shapes a looser `\w+:\d+` would report, and the first
+ * of which appears in this repository's own import lines.
+ */
+const CITATION_EXTENSION_SOURCE =
+  'ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml|html|svg|wasm|avif|webp|jpg|png';
+
+/**
+ * The gate's own detection pattern, exported so the gate cannot hold a second copy.
+ *
+ * No `i` flag, and that is a decision rather than an oversight: an uppercase `README.MD:12` is not
+ * a form any document in this repository writes, and matching case-insensitively would report the
+ * `.MD` in a sentence that legitimately discusses extensions without catching a drift that has ever
+ * existed. The sweep and the gate must agree on what a citation IS before either can be trusted
+ * about how many are left.
+ */
+const LINE_NUMBER_CITATION = new RegExp(`[\\w./@-]+\\.(?:${CITATION_EXTENSION_SOURCE}):\\d+`, 'g');
+
+/**
+ * A fenced code block's contents, removed.
+ *
+ * This is the ONE exemption from the ban, and it lives here beside the pattern because it changes
+ * what the pattern SEES rather than what it matches: the gate strips fences before it reads, so a
+ * fence is a claim about the form and the prose on either side is still checked. Kept as a second
+ * pass for the unterminated fence, which strips to the end of the document — the safe direction,
+ * since a document that forgets its closing fence loses the check on everything after it.
+ */
+const withoutFencedCode = (markdown) =>
+  markdown.replace(/^[ \t]{0,3}```[\s\S]*?^[ \t]{0,3}```[^\n]*$/gm, '').replace(/^[ \t]{0,3}```[\s\S]*$/m, '');
+
+/**
  * The citation forms this repository actually writes, in one pattern.
  *
  * The trailing forms exist because a document that has already been partly migrated still carries
@@ -391,9 +438,50 @@ export const resolveHeadingAtLine = (text, line) => {
  * only matched the full form would report the first and silently leave the second. `CONTINUATION`
  * is matched separately and resolved against the last full citation seen on the same line, which is
  * how a reader reads it.
+ *
+ * The captures are what `citationsIn` needs and the gate does not: the gate only reports the match
+ * for a human to look up, while the sweep has to resolve the target, so this pattern captures the
+ * target, the first line and the optional range end. Both are compiled from
+ * `CITATION_EXTENSION_SOURCE`, so a form one of them can see the other can see.
  */
-const FULL_CITATION = /`?([\w./@-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml)):(\d+)(?:-(\d+))?`?/g;
-const CONTINUATION = /`:(\d+)(?:-(\d+))?`/g;
+/**
+ * ONE OR MORE numbers, comma-separated, each optionally a range.
+ *
+ * This is a list because documents write lists inside a single backticked token. `` `:122`, `:390` ``
+ * is two tokens and was always caught, but `` `:217,:219-221` `` and `` `x.ts:1,2,3` `` are ONE token
+ * holding three positions, and the single-number form matched only the first. Two independent
+ * migration sessions found real citations surviving in that shape, which means the gate was green over
+ * a hole: a document could carry `` `:217,:219-221` `` indefinitely with neither the sweep nor
+ * `LINE_NUMBER_CITATION` reporting anything. A comma is not a reason to stop reading a coordinate.
+ */
+const NUMBER_LIST = String.raw`\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*`;
+
+/**
+ * A continuation's list, where every number keeps its own colon.
+ *
+ * `` `:217,:219-221` `` is not `` `:217,219-221` `` — the writer repeated the colon because each
+ * number reads as its own coordinate, and a reader parses it that way. So the separator between them
+ * is `,:` rather than `,`, which is why the first version of this pattern still reported zero for a
+ * shape two migration sessions had already found in real documents.
+ */
+const CONTINUATION_LIST = String.raw`\d+(?:-\d+)?(?:,:\d+(?:-\d+)?)*`;
+
+const FULL_CITATION = new RegExp('`?([\\w./@-]+\\.(?:' + CITATION_EXTENSION_SOURCE + ')):(' + NUMBER_LIST + ')`?', 'g');
+const CONTINUATION = new RegExp('`:(' + CONTINUATION_LIST + ')`', 'g');
+
+/**
+ * One entry per position in a number list, in the order written.
+ *
+ * A RANGE stays ONE citation, because the rule says a range names one enclosing unit — that is a
+ * judgement about a span, not two citations. A comma list is different: `x.ts:1,2,3` is three
+ * positions a reader looks up separately, so it becomes three entries and none of them can hide
+ * behind the first. `bare` says whether each part carries its own leading colon to strip.
+ */
+const expandNumbers = (list, fields, bare = false) =>
+  list.split(',').map((part) => {
+    const [first, last] = (bare ? part.replace(/^:/, '') : part).split('-');
+    return { ...fields, line: Number(first), endLine: last ? Number(last) : undefined };
+  });
 
 /**
  * Every citation in a document, in source order, with the target line to resolve.
@@ -401,38 +489,53 @@ const CONTINUATION = /`:(\d+)(?:-(\d+))?`/g;
  * Line order matters for continuations, which is why this is a single forward pass rather than two
  * independent `matchAll` calls: a bare `:476` is only meaningful relative to the full citation it
  * continues, and losing that association is how a proposal ends up pointing at the wrong file.
+ *
+ * Fences are stripped first, and that is a correctness requirement rather than tidiness. The gate
+ * exempts a fenced block as quotation, so a sweep that reported fenced citations would hand a
+ * reviewer a worklist item whose correct resolution is "change nothing" — and a worklist that
+ * contains items that must not be acted on trains its reader to skim it. Both sides of the
+ * migration now read the document through the same strip.
  */
 export const citationsIn = (text) => {
   const out = [];
-  let lastTarget;
-  for (const line of text.split('\n')) {
+  for (const line of withoutFencedCode(text).split('\n')) {
+    // Scoped to the LINE, which is what this function's own doc comment always claimed and what the
+    // code did not do: `lastTarget` lived outside the loop, so a bare `:NNN` bound to the last FULL
+    // citation anywhere earlier in the document. Three separate migration sessions were misled by it
+    // — `docs/TOOLS-INVENTORY.md`'s five continuations all resolved against a `tool-types.ts` line
+    // six paragraphs above, and one proposal named `isBedrock` for a `docs/PHOTOSHOP-UX.md` heading.
+    // The failure is silent and authoritative-looking, which is the worst combination available: a
+    // reviewer has no reason to doubt a proposal that names a real symbol in a real file.
+    let lastTarget;
     for (const match of line.matchAll(FULL_CITATION)) {
-      const [raw, target, first, last] = match;
-      out.push({
-        raw,
-        target,
-        line: Number(first),
-        endLine: last ? Number(last) : undefined,
-        continuation: false,
-      });
+      const [raw, target, list] = match;
+      out.push(...expandNumbers(list, { raw, target, continuation: false }));
       lastTarget = target;
     }
     for (const match of line.matchAll(CONTINUATION)) {
-      if (!lastTarget) continue;
-      const [raw, first, last] = match;
-      out.push({
-        raw,
-        target: lastTarget,
-        line: Number(first),
-        endLine: last ? Number(last) : undefined,
-        continuation: true,
-      });
+      const [raw, list] = match;
+      // Emitted even with no antecedent on the line, and marked, rather than skipped or bound to a
+      // document-away guess. Skipping hid nine real line numbers from the sweep; binding them
+      // invented an answer. An explicit `no-antecedent` is the one option that leaves the judgement
+      // with the reader, whose sentence is what actually decides the target.
+      out.push(
+        ...expandNumbers(
+          list,
+          {
+            raw,
+            target: lastTarget,
+            continuation: true,
+            unresolvedContinuation: lastTarget === undefined,
+          },
+          true
+        )
+      );
     }
   }
   return out;
 };
 
-export { FULL_CITATION, CONTINUATION };
+export { FULL_CITATION, CONTINUATION, LINE_NUMBER_CITATION, CITATION_EXTENSION_SOURCE, withoutFencedCode };
 
 const MARKDOWN_TARGET = /\.md$/;
 
@@ -490,7 +593,17 @@ const IGNORED_DIRECTORIES = new Set([
  */
 const listSourceFiles = (root) => {
   try {
-    const listed = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    // `stdio` pins git's stderr to a discard. Without it a non-checkout directory prints
+    // `fatal: not a git repository` on the parent's stderr every time this runs, which is how the
+    // fallback below went unnoticed as untested for as long as it existed: the noise looked like
+    // incidental test output rather than a branch that had never been asserted. A fallback that is
+    // exercised but never checked is a fallback nobody knows works.
+    const listed = execFileSync('git', ['ls-files'], {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
       .split('\n')
       .filter(Boolean);
     if (listed.length) return listed;
@@ -584,6 +697,12 @@ const resolveAmbiguous = (repoRoot, candidates, line) => {
 };
 
 export const resolveCitation = (repoRoot, targetPath, line) => {
+  // A continuation with no antecedent on its line arrives here with no target at all. That is a real
+  // citation the reader must resolve from the sentence, not a crash and not a guess: naming
+  // `untracked-file` would send a reviewer looking for a file that plainly exists, because the
+  // target was never missing — it was never stated.
+  if (targetPath === undefined)
+    return { kind: 'no-antecedent', file: undefined, line, proposal: undefined, targetDisplay: `:${line}` };
   const located = locateTarget(repoRoot, targetPath);
   if (located.candidates) return resolveAmbiguous(repoRoot, located.candidates, line);
   if (!located.path) return { kind: 'untracked-file', file: targetPath, line, proposal: undefined };

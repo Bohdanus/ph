@@ -11,6 +11,7 @@ import {
   resolveHeadingAtLine,
   resolveSymbolAtLine,
   citationsIn,
+  CITATION_EXTENSION_SOURCE,
 } from '../resolve.mjs';
 
 /**
@@ -216,5 +217,109 @@ describe('citationsInProbe', () => {
 
   it('does not read `node:fs` or a URL port as a citation', () => {
     expect(citationsIn("from 'node:fs' and http://localhost:5173/")).toEqual([]);
+  });
+});
+
+/**
+ * The three properties the sweep and the gate have to SHARE, each of which was a divergence.
+ *
+ * Every other test in this file asserts a resolution. These assert that the thing doing the
+ * resolving agrees with the thing judging the result, which is the failure mode that survives a
+ * green suite: a resolver that cannot see a citation the gate can see reports its document clean,
+ * and the gate's red is the only thing that disagrees.
+ */
+describe('the sweep and the gate agree', () => {
+  it('reads a citation the gate reads, for every extension the gate knows', () => {
+    // The drift this pins had seven extensions on the gate's side and none on the sweep's:
+    // `logo.svg:12` was reported by the gate and invisible to the worklist built for it.
+    for (const extension of CITATION_EXTENSION_SOURCE.split('|')) {
+      const found = citationsIn(`see \`logo.${extension}:12\``);
+      expect(found.map((entry) => entry.target)).toContain(`logo.${extension}`);
+    }
+  });
+
+  it('resolves a citation in a directory that is not a git checkout', () => {
+    // `scaffold` writes into a temp directory, so every test above already runs the fallback —
+    // which is exactly why it went unasserted: it was exercised on every run and checked by none.
+    // Asserting the resolution is what turns "it did not throw" into "it works", and an untracked
+    // file is the case only the walk can satisfy.
+    const root = scaffold(FIXTURE);
+    clearIndex();
+    expect(locateTarget(root, 'draw.ts').path).toBe('src/tools/draw.ts');
+    expect(resolveCitation(root, 'draw.ts', 3).proposal).toContain('buildStroke');
+  });
+
+  it('does not read a fenced quotation as a citation', () => {
+    // The fence is the one exemption, and the sweep used to ignore it: a reviewer following the
+    // worklist would have been asked to "fix" the quoted `:89` inside a `HANDOFF.md` entry whose
+    // subject IS that citation, where the correct action is to change nothing.
+    const quoted = '```\nhistory-replay.ts:89 is off by twenty\n```\nand `other.ts:4` too';
+    expect(citationsIn(quoted).map((entry) => entry.raw)).toEqual(['`other.ts:4`']);
+  });
+});
+
+describe('a continuation without an antecedent on its line', () => {
+  it('does not bind to a citation from an earlier line', () => {
+    // The bug this pins: `lastTarget` outlived the line, so a bare `:NNN` bound to the last FULL
+    // citation anywhere above it. Three migration sessions were misled by proposals that named a
+    // real symbol in a real file and were answering a different sentence.
+    const found = citationsIn('`a.ts:1` is one thing\n\nand `:9` is another, with no file beside it');
+    expect(found.map((entry) => [entry.raw, entry.target])).toEqual([
+      ['`a.ts:1`', 'a.ts'],
+      ['`:9`', undefined],
+    ]);
+    expect(found[1].unresolvedContinuation).toBe(true);
+  });
+
+  it('reports no-antecedent rather than throwing or naming a file that exists', () => {
+    // `untracked-file` would be a lie here: the target was never missing, it was never stated.
+    const root = scaffold(FIXTURE);
+    const resolved = resolveCitation(root, undefined, 9);
+    expect(resolved.kind).toBe('no-antecedent');
+    expect(resolved.proposal).toBeUndefined();
+  });
+
+  it('still binds a continuation that shares its line with its antecedent', () => {
+    // The shape the per-line scoping is FOR. `settings.ts:70` and the `:84` beside it are one
+    // citation each, and the second is meaningless without the first.
+    const found = citationsIn('`settings.ts:70` is rect, `:84` is sortRoundRect');
+    expect(found.map((entry) => entry.target)).toEqual(['settings.ts', 'settings.ts']);
+    expect(found[1].continuation).toBe(true);
+    expect(found[1].unresolvedContinuation).toBe(false);
+  });
+});
+
+describe('a comma-separated list inside one token', () => {
+  it('reads every position, not just the first', () => {
+    // The shape two migration sessions found in real documents after the gate had been green for
+    // days: one backticked token holding three coordinates. The single-number pattern matched the
+    // first and left the rest, so a document could carry `:217,:219-221` indefinitely with neither
+    // the sweep nor the gate reporting anything.
+    expect(citationsIn('the guards are `:217,:219-221` here').map((e) => [e.line, e.endLine])).toEqual([
+      [217, undefined],
+      [219, 221],
+    ]);
+    expect(citationsIn('`x.ts:1,2,3` form').map((e) => [e.target, e.line])).toEqual([
+      ['x.ts', 1],
+      ['x.ts', 2],
+      ['x.ts', 3],
+    ]);
+  });
+
+  it('keeps a RANGE as one citation', () => {
+    // The rule says a range names ONE enclosing unit, so this is a judgement about a span rather than
+    // two positions. Expanding it would hand a reviewer two lookups for one claim.
+    const found = citationsIn('`x.ts:12-20` is one span');
+    expect(found).toHaveLength(1);
+    expect([found[0].line, found[0].endLine]).toEqual([12, 20]);
+  });
+
+  it('binds a comma continuation list to the file named on its line', () => {
+    const found = citationsIn('`u.ts:5` and `:8,:12-14` beside it');
+    expect(found.map((e) => [e.target, e.line, e.endLine])).toEqual([
+      ['u.ts', 5, undefined],
+      ['u.ts', 8, undefined],
+      ['u.ts', 12, 14],
+    ]);
   });
 });
