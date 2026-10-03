@@ -28,17 +28,19 @@ and the verification is `git log`, not this file.
 | `src/contexts/replay-checkpoints.ts` | **0**                                 |
 | `src/contexts/durable-replay.ts`     | 1 — `materialization.ts`, itself dead |
 
-Production still runs legacy `HistoryItem[]` → `replayHistory` (`useHistory.ts:81`) → runtime
-`Layer` → `layer-renderer.ts:65-146` → canvas. `durableDocument`, `durableStatus` and
-`durableDiagnostics` are derived by `buildDurableDocument` (`StoreContext.tsx:659-696`) and
-projected onto the three `StoreData` fields at each call site, never inside that function. Two
-production components read the fields from `useStore()` — `DevStatusStrip.tsx:18` and
-`ErrorBoundary.tsx:48` — so this entry's earlier claim that they are "read by nothing outside that
+Production still runs legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
+`useHistory.ts`) → runtime `Layer` → `layer-renderer.ts` → canvas. `durableDocument`,
+`durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
+(`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
+inside that function. Two production components read the fields from `useStore()` —
+`DevStatusStripContents` in `DevStatusStrip.tsx` and `ErrorBoundaryFallback` in
+`ErrorBoundary.tsx` — so this entry's earlier claim that they are "read by nothing outside that
 file" was false and is withdrawn. Neither reader runs on a normal production load, so the
-conclusion below still stands: `DevStatusStrip.tsx:62` gates its body on `import.meta.env.DEV`, and
-`ErrorBoundary`'s `useStore()` call is inside `ErrorBoundaryFallback` (`ErrorBoundary.tsx:41`),
-which renders only after a region has thrown (`ErrorBoundary.tsx:95`).
-`StoreContext.durable-boundary.test.tsx:573-583` actively pins the absence — it asserts that
+conclusion below still stands: `DevStatusStrip` gates its body on `import.meta.env.DEV`, and
+`ErrorBoundary`'s `useStore()` call is inside `ErrorBoundaryFallback`, which renders only after
+a region has thrown (`ErrorBoundary.render`). The
+`it('no longer exposes replayCoordinator, presentationMaterialization or getReplayRevisionToken')`
+case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — it asserts that
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
@@ -47,19 +49,19 @@ conversion, diagnosable failure, deterministic asset ownership — currently pro
 user-visible behaviour. The migration's deliverable is unwired.
 
 **Trap for whoever wires it.** The affine composition is _not_ duplicated —
-`operationAffine` (`materialization.ts:109-116`) composes through the shared
+`operationAffine` (in `materialization.ts`) composes through the shared
 `multiplyAffineTransforms` and `getAffineBounds` from `affine-transform.ts`. What _is_ a second
-implementation is the vector-argument rescale: `vectorArgsForSize` (`materialization.ts:125-145`)
-scales `start`/`end`/`lineWidth` by the source-to-current ratio inline, and
-`scaleVectorArgs` (`layer-renderer.ts:38-49`) does the same arithmetic for the legacy path. Two
-files, no shared owner, so the two can drift and the drift only shows as a wrong shape after
+implementation is the vector-argument rescale: `vectorArgsForSize` (in `materialization.ts`)
+scales `start`/`end`/`lineWidth` by the source-to-current ratio inline, and `scaleVectorArgs`
+(reached from `layer-renderer.ts`) does the same arithmetic for the legacy path. Two files, no
+shared owner, so the two can drift and the drift only shows as a wrong shape after
 cutover. `materializeLayer` / `materializeDocument` have zero callers, so the first wiring attempt
 is the first time that code executes against real state.
 
 **Also wrong at the boundary.** The runtime path feeds an _untransformed_ bitmap — `layer.tmpCanvas
-?? layer.bitmap` (`useLayer.ts:557`) — straight into a pixel processor (`useLayer.ts:571`); the
-durable path materializes the retained presentation first
-(`materialization.ts:270-276`). Wiring the durable path without reconciling these changes pixel-tool
+?? layer.bitmap` — straight into a pixel processor, and both live in `tempUpdateLayer` in
+`useLayer.ts`; the durable path materializes the retained presentation first (in
+`renderRetainedSegment`). Wiring the durable path without reconciling these changes pixel-tool
 results.
 
 **Fix.** Pick one rendering authority and make the other a projection. Minimum viable: route the
@@ -75,14 +77,15 @@ rest, and delete the duplicated composer. Do not attempt all five consumers at o
 
 **Problem.** `materialization.ts`'s product rule groups operations by kind rather than applying them
 in timeline order, so a filter applied between two affines is hoisted. Raster processors are now
-genuine segment boundaries (`materialization.ts:264-291`), so this is **half-fixed**:
+genuine segment boundaries (in `renderRetainedSegment`), so this is **half-fixed**:
 _inter-intra-segment_ interleaving is still grouped.
 
-`materialization.ordering.test.ts:415` is `it.fails('applies interleaved affine and filter
-operations in original order, not grouped by type')`. **The pin is inert — it cannot be removed in
-the same change as the fix, because it never observes the defect.** It spies on
-`HTMLCanvasElement.prototype.getContext` (`:428-429`), but `materialization.ts:55` short-circuits to
-`OffscreenCanvas`, `src/test/setup.ts:195-224` installs a global one for every suite that does not
+The `it('applies interleaved affine and filter operations in original order, not grouped by type')`
+case in `materialization.ordering.test.ts` is `it.fails(...)`. **The pin is inert — it cannot be
+removed in the same change as the fix, because it never observes the defect.** It spies on
+`HTMLCanvasElement.prototype.getContext` (in `materialization.ordering.test.ts`), but
+`createCanvas` in `materialization.ts` short-circuits to `OffscreenCanvas`, the `MockOffscreenCanvas`
+polyfill in `src/test/setup.ts` installs a global one for every suite that does not
 already provide its own, and that test file never stubs it. A probe replicating the pin's instrument
 recorded **zero** calls on both
 `transform` and `drawImage`, so its assertions fail on `0` rather than on the grouping — and
@@ -96,7 +99,8 @@ correctness bug in the shared pipeline, so it blocks item 1 as well as the phase
 
 **Fix.** Make `renderRetainedSegment` a fold over the operation list in order, keeping the
 raster-processor boundary but not reordering within a segment. **Re-instrument the pin first**, with
-`vi.stubGlobal('OffscreenCanvas', …)` as `materialization.assets.test.ts:134` does, and add
+`vi.stubGlobal('OffscreenCanvas', …)` as the `beforeEach` in `materialization.assets.test.ts` does,
+and add
 `expect(recordedContexts.length).toBeGreaterThan(0)` as a positive control — it fails today and is
 what makes the pin a tripwire. Only then can the `it.fails` be removed in the same change.
 
@@ -107,8 +111,8 @@ what makes the pin a tripwire. Only then can the `it.fails` be removed in the sa
 
 ## 4. P0 — one error diagnostic voids the entire durable shadow
 
-**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts:720`) checks
-`converted.diagnostics.some((d) => d.severity === 'error')` at `:732` and, if any one entry
+**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts`) checks
+`converted.diagnostics.some((d) => d.severity === 'error')` and, if any one entry
 produced an error, rolls back the asset transaction and returns `status: 'unavailable'` with
 `document: null`.
 
@@ -130,7 +134,7 @@ severity check too.
 
 ## 10. `ReplayRevisionToken` cannot be invalidated by a frame change
 
-**Problem.** `ReplayRevisionToken` (`replay-coordinator.ts:1-10`) carries `documentId`,
+**Problem.** `ReplayRevisionToken` (`replay-coordinator.ts`) carries `documentId`,
 `documentRevision`, `durableRevision`, `branchRevision`, `cursor`, `baselineAssetGeneration`,
 `operationSetRevision`, `sourceGeneration`. There is no `frameRevision`, so a document-frame change
 cannot invalidate a token. `DurableLayerSnapshot` likewise has no `frame` field, which contradicts
@@ -151,9 +155,9 @@ Latent only while nothing schedules replays (item 1), but it is a required input
 
 ## 11. `materialization.ts` does not apply `blendMode`
 
-**Problem.** `materialization.ts:162` sets `ctx.globalAlpha = source.opacity`, but there is no
-`blendMode` / `globalCompositeOperation` anywhere in `materialization.ts` or `durable-replay.ts`.
-Only the legacy renderer applies it (`layer-renderer.ts:101`).
+**Problem.** `sourceBitmap` in `materialization.ts` sets `ctx.globalAlpha = source.opacity`, but
+there is no `blendMode` / `globalCompositeOperation` anywhere in `materialization.ts` or
+`durable-replay.ts`. Only the legacy renderer's `drawLayer` applies it (`layer-renderer.ts`).
 
 So the moment `materialization.ts` becomes the render path (item 1), every layer with a non-normal
 blend mode renders incorrectly. The durable snapshot carries the field; the pipeline drops it.
@@ -167,9 +171,10 @@ and add a test that a multiply-blended layer materializes differently from a nor
 
 ## 12. `rasterize-layer` has no writer anywhere
 
-**Problem.** The operation kind is declared (`history-model.ts:107`), matched when assets are
-collected from it (`:166`) and when it is cloned (`:250`), and in replay (`durable-replay.ts:122`),
-and exercised by four test files — but no
+**Problem.** The operation kind is declared (in the `DurableOperation` union in
+`history-model.ts`), matched when assets are
+collected from it (`collectDurableAssetIds`) and when it is cloned, and in replay (the
+`'rasterize-layer'` case in `durable-replay.ts`), and exercised by four test files — but no
 production code ever constructs one. `grep -rn "rasterize-layer" src` returns only the model, the
 replay reducer, and tests.
 
@@ -199,36 +204,37 @@ Reorder and `remove-layer` are no longer among them. These production sites stil
 `durableEntry` is necessary but not sufficient: the store publishes only on
 `outcome === 'published'` and otherwise reconverts.
 
-| Site                                      | Action             | Why                                           |
-| ----------------------------------------- | ------------------ | --------------------------------------------- |
-| `useLayer.ts:229` `createBlankLayer`      | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:247` `createLayerFromBitmap` | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:278` `createLayerFromTool`   | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:323` `updateLayerByTool`     | `TOOL_ACTION`      | asset-neutral; not blocked by §54             |
-| `useLayer.ts:365` `commitDirtyTool`       | `TOOL_ACTION`      | asset-neutral; one commit per pending edit    |
-| `useLayer.ts:671` `mergeAllLayers`        | `MERGE_ACTION`     | asset-bearing, retires layers                 |
-| `useSelectionHistory.ts:149`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
-| `useSelectionHistory.ts:305`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| Site                                              | Action             | Why                                           |
+| ------------------------------------------------- | ------------------ | --------------------------------------------- |
+| `createBlankLayer` (`useLayer.ts`)                | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `createLayerFromBitmap` (`useLayer.ts`)           | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `createLayerFromTool` (`useLayer.ts`)             | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `updateLayerByTool` (`useLayer.ts`)               | `TOOL_ACTION`      | asset-neutral; not blocked by §54             |
+| `commitDirtyTool` (`useLayer.ts`)                 | `TOOL_ACTION`      | asset-neutral; one commit per pending edit    |
+| `mergeAllLayers` (`useLayer.ts`)                  | `MERGE_ACTION`     | asset-bearing, retires layers                 |
+| `appendSelectionClear` (`useSelectionHistory.ts`) | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| `commitSelection` (`useSelectionHistory.ts`)      | `SELECTION_ACTION` | `catch` fallback when planning throws         |
 
 The three `NEW_LAYER_ACTION` rows are the creators that mint the history item, not one shared
-dispatch: `useLayer.ts:240`, `:262` and `:316` are the only `layerSource:` writers in the file, and
-`_addLayer` (`:185`) is the sink they all dispatch through.
+dispatch: `createBlankLayer`, `createLayerFromBitmap` and `createLayerFromTool` are the only
+`layerSource:` writers in `useLayer.ts`, and `_addLayer` is the sink they all dispatch through.
 
-Three sites have no `durableEntry` concept and reconvert unconditionally: `useHistory.ts:117`
-`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:195` and `useApp.ts:117` (both
-`REPLACE_DOCUMENT`). The `useHistory.ts:52 addHistoryEntry` row this table used to carry is
+Three sites have no `durableEntry` concept and reconvert unconditionally: `resetHistoryTo` in
+`useHistory.ts` (`APPLY_HISTORY_REPLAY`), `createBlankLayer` in `useLayer.ts` and
+`setImageFromUpload` in `useApp.ts` (both
+`REPLACE_DOCUMENT`). The `addHistoryEntry` row this table used to carry is
 **deleted**: that symbol no longer exists anywhere in `src/`, and "see item 14" pointed at a
 reader that no longer had a referent.
 
 **Fix, in order.** Only `create-layer` and `merge-document` are blocked on §54's registry
 transaction, and that gap is what keeps those four writers here. `remove-layer` and the
 `TOOL_ACTION` operations are asset-neutral: a `remove-layer` carries only a `layerId`
-(`history-model.ts:89`), and a `TOOL_ACTION` carrying no layer source is derived by
-`operationForTool` (`history-adapter.ts:442`), whose every arm returns an operation with no raster
-snapshot — `apply-raster-processor` (`:460`, `:511`), `apply-affine-transform` (`:478`),
-`apply-filter` (`:494`) and `reposition-layer` (`:503`) — reached from the caller arm at `:754`.
-`collectDurableAssetIds` scans the whole replayable history but collects only raster-bearing kinds
-(`history-model.ts:158-175`), so a removal or an in-place pixel edit changes no reachable asset and
+(the `'remove-layer'` case in `history-model.ts`), and a `TOOL_ACTION` carrying no layer source is
+derived by `operationForTool` (`history-adapter.ts`), whose every arm returns an operation with no
+raster snapshot — `apply-raster-processor`, `apply-affine-transform`, `apply-filter` and
+`reposition-layer` all live in that same function — reached from the `TOOL_ACTION` caller arm in
+`legacyHistoryToDurable`. `collectDurableAssetIds` scans the whole replayable history but collects
+only raster-bearing kinds, so a removal or an in-place pixel edit changes no reachable asset and
 needs neither registration nor retirement. They remain here only until a `durableEntry` is planned
 for them; §54 is untouched and still applies to the first actual asset-bearing append writer.
 
@@ -239,10 +245,10 @@ for them; §54 is untouched and still applies to the first actual asset-bearing 
 
 The blocker was that a reorder's durable operation cannot be derived from the history item: it names
 the resulting order of **every** layer, and the item carries only intent. The store now plans it
-from `state.layers` read at the boundary (`StoreContext.tsx:890 layerOrderBottomFirst(currentState.layers)`), which is
+from `state.layers` read at the boundary (`layerOrderBottomFirst` in `StoreContext.tsx`), which is
 the same record `reorderLayers` is about to mutate. Three things make that safe:
 
-- **`reorderOrderAfterIntent` (`history-append.ts:229`) is a second implementation, not a call into
+- **`reorderOrderAfterIntent` (`history-append.ts`) is a second implementation, not a call into
   the converter's.** The converter's copy is an inline arm inside `legacyHistoryToDurable`, so
   calling it would reproduce a bug in it rather than catch one. Two copies can drift, so
   `history-append.reorder.test.ts` pins them against each other against a real converter run over
@@ -250,8 +256,9 @@ the same record `reorderLayers` is about to mutate. Three things make that safe:
   _both_ sides still fails. The store test pins the published document against a full conversion,
   which is the end-to-end oracle.
 - **The shadow's own layer ORDER is a precondition, compared as a sequence.** Durable replay skips
-  ids it does not know (`durable-replay.ts:110`), and a published map is a fresh normalisation of
-  the order, so it overwrites whatever order the shadow had. Publishing while the two models
+  ids it does not know (the `'reorder-layers'` case in `durable-replay.ts`), and a published map is
+  a fresh normalisation of the
+  order, so it overwrites whatever order the shadow had. Publishing while the two models
   already disagree about the order launders that disagreement into a durable document no
   reconversion will produce. Membership is not enough: the models can name exactly the same layers
   in a different sequence, and only the sequence check sees it.
@@ -271,7 +278,7 @@ but it is still O(durable history), so calling this "a fast path with no walk" w
 falls back to conversion. That is not caution about an edge case; it is because the two
 implementations genuinely disagree, which was measured, not assumed:
 
-- `reorderLayers` (`layer-utils.ts:280-288`) anchors on the mover's own order, shifts everything
+- `reorderLayers` (`layer-utils.ts`) anchors on the mover's own order, shifts everything
   above it, then re-assigns the mover. On a three-layer stack the **visible sequence is unchanged**
   — `{bottom:0, middle:2, top:4}` still reads bottom, middle, top.
 - The converter's inline arm drops the mover from `remaining` **first**, so `remaining.indexOf`
@@ -290,11 +297,12 @@ the identity-on-`preOrder` map is the honest one — then change the converter's
 would make a published shadow differ from a reconverted one for the same history, which is the
 exact failure this item exists to prevent.
 
-**Unreachable in production today, and both UIs guard it.** `LayersTab.tsx:94` computes
-`isDropTarget` as `dropTargetId === layer.id && dropTargetId !== draggedLayerId && …` and
-`LayersTab.tsx:155` returns before dispatching when it is false, so a row cannot be dropped on
-itself; the other `animateMove` call site (`LayersTab.tsx:276`) passes no anchor at all, and
-`MobileLayersDrawer.tsx:63,72` anchors on a neighbouring index. `git grep moveLayerAfter` returns
+**Unreachable in production today, and both UIs guard it.** `LayersTab.tsx` computes
+`isDropTarget` as `dropTargetId === layer.id && dropTargetId !== draggedLayerId && …` and the drop
+handler returns before dispatching when it is false, so a row cannot be dropped on
+itself; the other `animateMove` call site in `LayersTab.tsx` passes no anchor at all, and
+`handleMoveUp` / `handleMoveDown` in `MobileLayersDrawer.tsx` anchor on a neighbouring index.
+`git grep moveLayerAfter` returns
 only those two components. This was asserted as reachable on an earlier read of this section and
 that was wrong — the drop guard is the reason, and it is a guard, not a coincidence. It is still a
 real defect: a disabled entry, a replayed history, or any future writer that names its own anchor
@@ -343,40 +351,44 @@ exists to avoid choosing between. Two tripwires, because either can fail silentl
 
 **Done, and how it was verified.** `legacyHistoryToDurable` now pushes a `warning` diagnostic
 naming the entry when a `SET_DOCUMENT_FRAME_ACTION` entry derives no durable operation
-(`history-adapter.ts:675-681`), so the conversion no longer reports `status: 'current'` while
+(the `SET_DOCUMENT_FRAME` arm of `legacyHistoryToDurable` in `history-adapter.ts`), so the
+conversion no longer reports `status: 'current'` while
 silently omitting a document-frame change. The severity is the decision, and it is not a detail:
 `convertLegacyHistorySafely` returns `unavailable` and withholds the **whole** shadow on the first
-`error` diagnostic (`history-adapter.ts:816`), so an error here would punish every unrelated entry
+`error` diagnostic (`history-adapter.ts`), so an error here would punish every unrelated entry
 for a defect the legacy timeline tolerates. The archived branch's copy used `error`; that is one of
 the two reasons it could not simply be ported. Verified by
-`history-adapter.branches.test.ts:322` — the diagnostic, its severity and its message body — plus
+the `it('records a disabled reorder entry without applying it to the converted layers')` case in
+`history-adapter.branches.test.ts` — the diagnostic, its severity and its message body — plus
 that file's coverage of every falsifying branch of `isValidDocumentFrame` and three valid frames
 that must still convert silently. It replaced an assertion that pinned the SILENCE
 (`expect(diagnostics).toEqual([])`), which was a tripwire for this defect rather than a contract.
 
 **Still open: the append path records nothing.** The boundary's own refusal is real and typed —
-`unavailable` (`history-append.ts:81-95`) returns a `warning`-severity diagnostic (`:89`) — and
-`decideDurableAppend` never re-checks the plan it is handed (`history-append.ts:641-642`). Two
+`unavailable` (`history-append.ts`) returns a `warning`-severity diagnostic — and
+`decideDurableAppend` never re-checks the plan it is handed. Two
 things then lose it:
 
 - A refused plan is `null`, and `if (!planned)` is the **first** precondition
-  (`history-append.ts:590`), so a null planned entry yields `outcome: 'preconditions'` — never
-  `'mismatch'`. `durableAppendDiagnostic` (`:663-671`) and its `durable-append-mismatch` code
-  (`:668`) are produced only on the `mismatch` branch, at `StoreContext.tsx:990-994` for
-  `COMMIT_DOCUMENT_EDIT` and `:922-924` for a reorder.
+  (inside `decideDurableAppend`), so a null planned entry yields `outcome: 'preconditions'` —
+  never `'mismatch'`. `durableAppendDiagnostic` (`history-append.ts`) and its `durable-append-mismatch`
+  code are produced only on the `mismatch` branch, in `StoreContext.tsx`'s `COMMIT_DOCUMENT_EDIT`
+  dispatch branch and its `REORDER_LAYERS` dispatch branch for a reorder.
 - The diagnostic the boundary **did** compute never leaves the boundary. All four production call
-  sites destructure only two of the three result fields — `useLayer.ts:478`, `useLayer.ts:648`,
-  `useSelectionHistory.ts:133` and `useSelectionHistory.ts:289` each read `entry` and `durableEntry`
-  — and `diagnostics` (`history-append.ts:78`) has no slot on the `COMMIT_DOCUMENT_EDIT` payload
-  (`StoreContext.tsx:235`), so it is discarded at the call site.
+  sites destructure only two of the three result fields — `updateLayerByTool` and `removeLayer`
+  (`useLayer.ts`), `appendSelectionClear` and `commitSelection` (`useSelectionHistory.ts`) each read
+  `entry` and `durableEntry` — and `diagnostics` (on `AppendBoundaryResult` in `history-append.ts`)
+  has no slot on the `CommitDocumentEditIntentPayload` type in
+  `StoreContext.tsx`, so it is discarded at the call site.
 
 **User-visible failure: none today.** The only writer of this action, `applyDocumentCrop`, rejects
-`width/height <= 0` (`useLayer.ts:640`) and any frame that fails `isValidDocumentFrame`
-(`useLayer.ts:643`) before it plans, and a document load creates a single `OPEN_DOCUMENT_ACTION`
-(`useApp.ts:122`). This is a latent observability gap, not a live bug: the day a second
-`SET_DOCUMENT_FRAME_ACTION` writer appears, its refusals are as silent as these were. The far end
-stays unvalidated too — `durable-replay.ts:129-131` applies `next` with no check — so the shadow
-can still _hold_ an invalid frame; what changed is that conversion no longer produces one silently.
+`width/height <= 0` and any frame that fails `isValidDocumentFrame`
+(both inside `applyDocumentCrop` in `useLayer.ts`) before it plans, and `setImageFromUpload` in
+`useApp.ts` creates a single `OPEN_DOCUMENT_ACTION`. This is a latent observability gap, not a live
+bug: the day a second `SET_DOCUMENT_FRAME_ACTION` writer appears, its refusals are as silent as
+these were. The far end stays unvalidated too — the `'set-document-frame'` case in
+`durable-replay.ts` applies `next` with no check — so the shadow can still _hold_ an invalid frame;
+what changed is that conversion no longer produces one silently.
 
 **Fix.** Two independent halves. Report the boundary's own `diagnostics`: either dispatch them on
 `COMMIT_DOCUMENT_EDIT`, or fold them into `durableDiagnostics` at the point the store already
@@ -397,50 +409,60 @@ the legacy timeline also makes.
 > own, and that is the remaining work.** Not deleted.
 
 **Done, and how it was verified.** Conversion now withholds a repeated id from publication and says
-so. `publishedEntryIds` (`history-adapter.ts:581`) is consulted at the publication guard (`:752`)
-and a skip pushes a `warning` naming the id (`:772-778`). `warning` is the only severity the
+so. `publishedEntryIds` (`history-adapter.ts`) is consulted at the publication guard in
+`legacyHistoryToDurable` and a skip pushes a `warning` naming the id in that same function.
+`warning` is the only severity the
 conversion can afford, for §16's reason: `convertLegacyHistorySafely` withholds the whole shadow on
-the first `error` (`history-adapter.ts:816`), and the archived branch's copy used `error`. Only ids
-that actually reached `entries` consume the id (`:779-781`), so an entry that derived nothing does
+the first `error`, and the archived branch's copy used `error`. Only ids
+that actually reached `entries` consume the id, again in `legacyHistoryToDurable`, so an entry that
+derived nothing does
 not shadow a later one. Verified by the `durable entry id uniqueness` block in
-`history-adapter.diagnostics.test.ts`: the conversion stays `current` (`:576`), the entries after a
-repeat still convert (`:602`), the id-keyed lookup still resolves exactly one entry (`:797`), there
-is one durable cursor per legacy entry (`:727`), and the frame and layer folds stay advanced
-(`:742`, `:764`).
+`history-adapter.diagnostics.test.ts`: the conversion stays `current`, the entries after a
+repeat still convert, the id-keyed lookup still resolves exactly one entry, there
+is one durable cursor per legacy entry, and the frame and layer folds stay advanced.
 
 **Still open: the boundary has no uniqueness check, and the one diagnostic it can produce names the
 wrong list.** `decideDurableAppend` never re-checks uniqueness. `validatePlannedDurableEntry`
-(`history-append.ts:477`) compares `planned.id` to `entry.id` (`:483`) — planned-versus-**legacy**
-agreement, not timeline uniqueness — and `next.entries[next.entries.length - 1] !== entry` (`:608`)
-is a reference check on the same object. `freezeDurableDocument` only clones and freezes, and
-`history-timeline.ts:31-32` appends unconditionally. So a duplicate id on the published path yields
+(`history-append.ts`) compares `planned.id` to `entry.id` inside that same function —
+planned-versus-**legacy**
+agreement, not timeline uniqueness — and its `next.entries[next.entries.length - 1] !== entry`
+check is a reference check on the same object. `freezeDurableDocument` only clones and freezes, and
+`updateHistoryTimeline` (`history-timeline.ts`) appends unconditionally. So a duplicate id on the
+published path yields
 a durable document with two same-id entries, and since the id is a lookup key
-(`history-adapter.ts:880`, `history-timeline.ts:24`) a later toggle hits the wrong entry. The
+(`toggleDurableEntry` in `history-adapter.ts`, and `updateHistoryTimeline`'s `toggle-disabled`
+command in `history-timeline.ts`) a later toggle hits the wrong entry. The
 invariant rests entirely on a diagnostic that is computed and discarded.
 
-`validateTimeline` (`history-append.ts:278`) does check uniqueness, at `:279`, and returns an
-`error`-severity diagnostic — but it reads the **LEGACY** timeline only, so it cannot see the
-durable base, which is the only list the durable entries live in. It also runs after `translate`
-(`:307-315`), so the diagnostic coexists with a non-null `durableEntry` by construction.
+`validateTimeline` (`history-append.ts`) does check uniqueness, at the top of that function, and
+returns an `error`-severity diagnostic — but it reads the **LEGACY** timeline only, so it cannot
+see the durable base, which is the only list the durable entries live in. It also runs after
+`translate`, inside `planHistoryAppend`, so the diagnostic coexists with a non-null `durableEntry`
+by construction.
 
 **Reachability, stated accurately.** This section previously said `planHistoryAppend` is called with
 no `id`. That is **wrong**, and would not survive a check: **two of the four production call sites
-do pass one.** `useSelectionHistory.ts:133` passes the `uuidv4()` minted at `:124`, and
-`useSelectionHistory.ts:289` the one minted at `:277`; the other two — `useLayer.ts:478` and
-`useLayer.ts:648` — pass none, so `createHistoryItem` mints one (`history-utils.ts:81`). The
+do pass one.** `appendSelectionClear` in `useSelectionHistory.ts` passes the `uuidv4()` it mints,
+and `commitSelection` the one it mints; the other two — `updateLayerByTool` and `removeLayer` in
+`useLayer.ts` — pass none, so `createHistoryItem` (`history-utils.ts`) mints one. The
 conclusion is unchanged and the reason is narrower: **all four ids are a fresh `uuidv4()`**, so a
 collision requires a uuid that repeats. The base's own ids are those same minted ids, carried in by
 the rebuild, which is what makes `validateTimeline`'s check fire at all. Every production
 `REPLACE_DOCUMENT` supplies a non-empty history.
 
-The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts:599`) requires
+The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts`) requires
 `prior.cursor === prior.entries.length - 1`, so any out-of-range cursor already falls back first.
 
 **Fix.** Return `durableEntry: null` when `validateTimeline` produces an `error`-severity
 diagnostic, so the store takes the reconversion fallback. **This breaks two tests, not one.** The
-plan-level case at `history-append.test.ts:504` asserts `result.durableEntry` is non-null on exactly
+plan-level case at
+`it('reports a duplicate entry id without changing the entry')` in `history-append.test.ts` asserts
+`result.durableEntry` is
+non-null on exactly
 this collision, under the comment "reporting never blocks the append" — that is the assertion the
-fix deletes. And the boundary-level block at `history-append.test.ts:1300` pins the same blindness
+fix deletes. And the boundary-level case at
+`it('publishes an entry id the durable document already holds, and the shadow keeps both')` in
+`history-append.test.ts` pins the same blindness
 from the other side: it asserts `decision.outcome === 'published'` for a base whose history already
 holds the id, and its own last block pins the coexistence (`expect(collidingPlan.durableEntry)
 .not.toBeNull()`). Both must be re-pointed in the same change as the fix; neither may be relaxed.
@@ -457,10 +479,11 @@ the alarm the fix has to trip.
 
 ## 31. The selection baseline lookup must stay unbounded over the whole timeline
 
-**Problem.** `deriveSelectionBaseline` (`selection-baseline.ts:56`) is deliberately unbounded: it
+**Problem.** `deriveSelectionBaseline` (`selection-baseline.ts`) is deliberately unbounded: it
 takes the **first** non-disabled `SELECTION_ACTION` on the timeline and seeds from that entry's
-`previousSelectionState` (`:57-59`), with no cursor argument at all. Both consumers take the
-timeline wholesale — `history-replay.ts:68` and `history-adapter.ts:543` — so the durable baseline
+`previousSelectionState`, with no cursor argument at all. Both consumers take the
+timeline wholesale — `replayHistory` in `history-replay.ts` and `legacyHistoryToDurable` in
+`history-adapter.ts` — so the durable baseline
 and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
 extracted this rule to own.
 
@@ -469,13 +492,16 @@ every selection-creating gesture recorded its own entry. That precondition now h
 is actionable: the bound is safe to make.** Two tests still pin the unbounded behaviour as
 load-bearing, not stale:
 
-- `src/contexts/__tests__/useHistory.test.tsx:475` — "restores a cleared selection when undoing the
+- The `it('restores a cleared selection when undoing the tool-switch history entry')` case in
+  `useHistory.test.tsx` — "restores a cleared selection when undoing the
   tool-switch history entry". The fixture is a rename entry at index 0 and a selection-clear entry
   at index 1; `undo()` from `historyIndex: 1` replays to index 0, and the only record that the
   selection ever existed is the clear entry at index 1 — after the target. Bound the lookup and
   undoing a tool-switch deselect becomes a silent visual no-op.
-- `src/contexts/__tests__/history-replay.test.ts:99` — "uses the first selection action baseline
-  before it and its next state at or after it". `replayHistory(history, 0, …)` at `:126` expects the
+- The `it('uses the first selection action baseline before it and its next state at or after it')`
+  case in `history-replay.test.ts` — "uses the first selection action baseline
+  before it and its next state at or after it". `replayHistory(history, 0, …)` inside that same
+  case expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
 **Fix.** Bound the lookup at the replay target, and change those two tests **in the same change**:
@@ -484,51 +510,54 @@ bound pass. The unbounded behaviour was a live feature, so a fix that makes one 
 re-deriving it has removed a user-visible capability, not corrected a pin.
 
 Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
-cursor argument) and be threaded through `history-replay.ts:68` and `history-adapter.ts:543`
+cursor argument) and be threaded through `replayHistory` in `history-replay.ts` and
+`legacyHistoryToDurable` in `history-adapter.ts`
 together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
 exists to close.
 
 **Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
 them:**
 
-- `selection-baseline.ts:46-55` — the doc comment above `deriveSelectionBaseline`. The claim is at
-  `:50-51`, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
-  record that the selection ever existed", with `:52-54` restating it for the durable baseline.
-- `history-adapter.ts:538-542` — the comment above the `deriveSelectionBaseline(legacyHistory)` call
-  at `:543` repeats it in the adapter's own voice: "It cannot be narrowed to the pre-first-entry state
+- The doc comment above `deriveSelectionBaseline` in `selection-baseline.ts`. The claim is in that
+  comment, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
+  record that the selection ever existed", restated there for the durable baseline.
+- The comment above the `deriveSelectionBaseline(legacyHistory)` call in `legacyHistoryToDurable`
+  (`history-adapter.ts`) repeats it in the adapter's own voice: "It cannot be narrowed to the
+  pre-first-entry state
   **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
   the only record that the selection existed." Rewriting only the first leaves the rule's owner
   corrected and its caller still advertising the reason it must not be bounded, so the next reader
   takes the call site as exempt from the bound being introduced at the signature.
 
-**Files.** `src/contexts/selection-baseline.ts:46-59`, `src/contexts/history-replay.ts:68`,
-`src/contexts/history-adapter.ts:538-543`, `src/contexts/__tests__/useHistory.test.tsx:475`,
-`src/contexts/__tests__/history-replay.test.ts:99,126`
+**Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
+`src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,
+`src/contexts/__tests__/history-replay.test.ts`
 
 ---
 
 ## 32. Every selection change now appears as a "Selection" row in the History panel
 
-**Problem.** `getHistoryItemTitle` (`useHistory.ts:14`) special-cases a tool source (`:17-19`),
-`TOOL_ACTION` (`:21-23`) and the crop (`:25`), and otherwise **falls through to the raw action
-name** (`:27`). `HistoryTab.tsx:69` renders that string, so a `SELECTION_ACTION` entry is labelled
+**Problem.** `getHistoryItemTitle` (`useHistory.ts`) special-cases a tool `layerSource`,
+`TOOL_ACTION` and the crop, and otherwise **falls through to the raw action
+name**. `HistoryTab.tsx` renders that string, so a `SELECTION_ACTION` entry is labelled
 with the constant's own value.
 
 That was invisible while selections wrote no history. It is not any more. Every one of these appends
 one real entry through `commitSelection` / `clearSelections` / `appendSelectionClear`:
 
-| gesture                                                          | append site                                                                 |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Clear/Deselect control, and the tool switch                      | `useSelectionHistory.ts:212`, `useSelectionHistory.ts:95` (`useApp.ts:184`) |
-| magic-wand click                                                 | `MagicWandToolArea.tsx:93`                                                  |
-| rectangle drag end                                               | `RectangularSelectionToolArea.tsx:114`                                      |
-| polygonal / freehand lasso close, feathered magnetic lasso close | `PolygonClickToolArea.tsx:324`, `FeatherMagneticLassoToolArea.tsx:424`      |
-| polygon's committed anchor or body drag                          | `PolygonClickToolArea.tsx:758`                                              |
+| gesture                                                          | append site                                                                                              |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Clear/Deselect control, and the tool switch                      | `clearSelections` / `appendSelectionClear` in `useSelectionHistory.ts`, and `goToTool` in `useApp.ts`    |
+| magic-wand click                                                 | `handlePointerDown` in `MagicWandToolArea.tsx`                                                           |
+| rectangle drag end                                               | `onChangeEnd` in `RectangularSelectionToolArea.tsx`                                                      |
+| polygonal / freehand lasso close, feathered magnetic lasso close | `finishSelection` in `PolygonClickToolArea.tsx`, `finishSelection` in `FeatherMagneticLassoToolArea.tsx` |
+| polygon's committed anchor or body drag                          | `handlePointerUp` in `PolygonClickToolArea.tsx`                                                          |
 
 So every selection change in a session adds a row, and **one gesture can add more than one kind**: a
 lasso gesture appends a creation and a later drag appends a separate move, both labelled identically.
-Each row is also a navigation target (`resetHistoryTo(originalIndex)` at `HistoryTab.tsx:74`) and
-carries a disable toggle (`:53-57`), so a user can step onto or disable a row whose label says nothing
+Each row is also a navigation target (`resetHistoryTo(originalIndex)` in `HistoryTab.tsx` —
+`handleRewind()`) and carries a disable toggle (`HistoryTab.tsx` — `handleToggleDisabled()`), so a
+user can step onto or disable a row whose label says nothing
 about what it did — and there is no way to tell a creation from a move from a clear, since all three
 carry the same `layerId: 'selection'` and the same action name.
 
@@ -536,20 +565,20 @@ carry the same `layerId: 'selection'` and the same action name.
 selection entries from the panel, grouping consecutive ones into a single row, and relabelling them
 distinguishably (create / move / clear). Whichever is chosen, the label has to come from
 something the entry actually carries; `nextSelectionState` and `previousSelectionState` are already
-on the item (`useSelectionHistory.ts:263-273`), so a relabel is derivable without a new history
-field. Do not add a history field for presentation alone while the legacy timeline is still the
+on the item (`useSelectionHistory.ts` — `commitSelection()`), so a relabel is derivable without a new
+history field. Do not add a history field for presentation alone while the legacy timeline is still the
 replay authority.
 
-**Files.** `src/contexts/useHistory.ts:14-28`, `src/components/SidebarRight/HistoryTab.tsx`
+**Files.** `src/contexts/useHistory.ts`, `src/components/SidebarRight/HistoryTab.tsx`
 
 ---
 
 ## 45. The codecs' raster ceilings disagree, and four of six have no budget at all
 
 **What this entry is about.** A document between 80 MP and 100 MP **cannot be saved as AVIF at
-all** — `saveImageToDisk` throws with the budget message and `useFile.tsx:117-151` logs it and
-resolves `null`. That is the right failure (a clamp silently hands back a smaller image), and the
-number was not chosen by whoever added the guard.
+all** — `saveImageToDisk` throws with the budget message and `useFile.tsx` — `handleImageSave()` logs
+it and resolves `null`. That is the right failure (a clamp silently hands back a smaller image), and
+the number was not chosen by whoever added the guard.
 
 **Decided 2026-09-28: the 80 MP ceiling stands.** The operator was asked to choose between raising
 `MAX_AVIF_PIXELS` to TIFF's `MAX_CREATABLE_DOCUMENT_PIXELS` derivation and accepting the export loss,
@@ -562,20 +591,20 @@ Adobe rather than this. The remaining work is the other-format gap below, not th
 or downscaled**: a clamp silently hands the user a smaller image than the one they opened, and a
 rejected file loses nothing. The TIFF byte ceiling also has a recorded provenance worth keeping —
 `MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, the largest buffer
-`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample,
-`UTIF.js:116`, times 4 samples) — and `MAX_TIFF_PIXELS` is that same budget read at 8 bytes per
-pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
+`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample, in
+`UTIF.js` — `UTIF.decodeImage()`, times 4 samples) — and `MAX_TIFF_PIXELS` is that same budget read at
+8 bytes per pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
 different number defensible if the ceiling is ever revisited.
 
 **Five ceilings exist and two are below what the dialog can create:**
 
-| ceiling                             | value       | where                                                |
-| ----------------------------------- | ----------- | ---------------------------------------------------- |
-| largest document the app can create | 100,000,000 | `tiff-utils.ts:13` (`MAX_CREATABLE_DOCUMENT_PIXELS`) |
-| affine transform                    | 67,108,864  | `affine-transform.ts:34`                             |
-| PSD                                 | 67,108,864  | `psd-utils.ts:36`                                    |
-| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`                                   |
-| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23-24`                                |
+| ceiling                             | value       | where                                              |
+| ----------------------------------- | ----------- | -------------------------------------------------- |
+| largest document the app can create | 100,000,000 | `MAX_CREATABLE_DOCUMENT_PIXELS` in `tiff-utils.ts` |
+| affine transform                    | 67,108,864  | `MAX_AFFINE_PIXELS` in `affine-transform.ts`       |
+| PSD                                 | 67,108,864  | `maxPixels` in `psd-utils.ts`                      |
+| AVIF, open and save                 | 80,000,000  | `MAX_AVIF_PIXELS` in `avif-utils.ts`               |
+| TIFF, open and save                 | 200,000,000 | `MAX_TIFF_PIXELS` in `tiff-utils.ts`               |
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
@@ -596,49 +625,55 @@ reconcile **five** constants, not one.
 
 The three that are actionable without an architecture decision, all in files no campaign owns:
 
-- **TIFF's byte predictor ignores the tiled-allocation branch.** `tiff-utils.ts:89-104` is the whole
-  predictor and never reads `t322` (TileWidth) or `t323` (TileLength), but `UTIF.js:132` allocates a
-  **separate** per-tile buffer for a tiled page. The page
+- **TIFF's byte predictor ignores the tiled-allocation branch.** `tiff-utils.ts` —
+  `predictDecodeBytes()` is the whole predictor and never reads `t322` (TileWidth) or `t323`
+  (TileLength), but `UTIF.js` — `UTIF.decodeImage()` allocates a **separate** per-tile buffer for a
+  tiled page. The page
   `{t256:[1000], t257:[1000], t258:[8,8,8,8], t322:[23170], t323:[23170]}` predicts 4,000,000 bytes
   — comfortably inside the 1.6 GB ceiling — while UTIF allocates **2,147,395,600 (2.15 GB)**. A
-  ~200-byte file forces a 2.15 GB allocation, through the exact mechanism `tiff-utils.ts:74-88`
-  documents as the module's reason for existing. Fix: also predict
+  ~200-byte file forces a 2.15 GB allocation, through the exact mechanism the doc comment above
+  `tiff-utils.ts` — `predictDecodeBytes()` documents as the module's reason for existing. Fix: also
+  predict
   `Math.ceil(t322[0] * t323[0] * bitsPerPixel / 8)` and return the larger; a present `t322` with a
-  missing `t323` should return `null`, which `assertByteBudget:34` already refuses like over-ceiling.
-- **GIF checks the ceiling after allocating the whole raster.** `gif-utils.ts:10` runs
-  `getCanvasImageData(canvas)` before the `65535` check at `:14`, so a 70000×100000 canvas allocates
+  missing `t323` should return `null`, which `tiff-utils.ts` — `assertByteBudget()` already refuses
+  like over-ceiling.
+- **GIF checks the ceiling after allocating the whole raster.** `gif-utils.ts` — `encodeGif()` runs
+  `getCanvasImageData(canvas)` before its own `65535` check, so a 70000×100000 canvas allocates
   28 GB before the line that would refuse it — the same ordering defect this item's AVIF half had.
-  `gif-utils.test.ts:472-480` cannot catch it: it mocks `getContext` to report a width no real canvas
-  has and never asserts `getImageData` was not called. Fix: hoist both checks above `:10`.
-- **ICO checks the ceiling after PNG-encoding the entire canvas.** `ico-utils.ts:114` runs
-  `canvasToPngBlob` before the 256 check at `:116`, so `Save as ICO` on a 10000×10000 document pays
-  a full PNG encode of a 400 MP raster and then throws. The test double stubs `toBlob` with a 3-byte
-  blob, so nothing detects it. Fix: move `:115-118` above `:114`.
+  `gif-utils.test.ts` — the `it('rejects canvases that exceed the 65535 pixel limit')` title cannot
+  catch it: it mocks `getContext` to report a width no real canvas has and never asserts
+  `getImageData` was not called. Fix: hoist both checks above the `getCanvasImageData(canvas)` call.
+- **ICO checks the ceiling after PNG-encoding the entire canvas.** `ico-utils.ts` — `encodeIco()`
+  runs `canvasToPngBlob` before its 256 check, so `Save as ICO` on a 10000×10000 document pays a full
+  PNG encode of a 400 MP raster and then throws. The test double stubs `toBlob` with a 3-byte blob,
+  so nothing detects it. Fix: move the 256 check above the `canvasToPngBlob(canvas)` call.
 
-**And one round-trip asymmetry.** ICO's loader (`ico-utils.ts:23`) validates only
-`dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0`; the 256 ceiling at `:84-85` is
-used for **entry selection** only, and the geometry actually decoded is read from the DIB at `:18-19`
-and never compared to 256. **A file that opens cannot be saved back.**
+**And one round-trip asymmetry.** ICO's loader (`ico-utils.ts` — `decodeBmpIcon()`) validates only
+`dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0`; the 256 ceiling in
+`ico-utils.ts` — `loadIcoFile()` is used for **entry selection** only, and the geometry actually
+decoded is read from the DIB in `ico-utils.ts` — `decodeBmpIcon()` and never compared to 256.
+**A file that opens cannot be saved back.**
 
-**BMP is the worst amplification.** `bmp-utils.ts:46-47` bounds the input by its on-disk byte length
-and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
+**BMP is the worst amplification.** `bmp-utils.ts` — `decodeBmp()` bounds the input by its on-disk
+byte length and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
 `32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
 absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 7×4, so no
 test can reach an interesting ratio.
 
-**Owned, so recorded not fixed:** `image-load-save-utils.ts:113-136` is the load path for GIF and SVG
-and bounds nothing — the whole file is base64-encoded into a data URL and handed to `new Image()`.
-That is where a shared load-side ceiling would have to live for those two formats. Separately,
-TIFF's save-side byte check at `:176` is provably dead (`MAX_TIFF_PIXELS * 4` is always below
+**Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
+GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
+`new Image()`. That is where a shared load-side ceiling would have to live for those two formats.
+Separately, TIFF's save-side byte check in `tiff-utils.ts` — `encodeTiff()` is provably dead
+(`MAX_TIFF_PIXELS * 4` is always below
 `MAX_TIFF_BYTES`) and its message says "Decoding it" on a save; AVIF's `assertPixelBudget` has no
 finite/integer guard, so a decoded `width: -5, height: -3` passes the budget and reaches
 `createImageData(-5, -3)`, throwing a DOM `IndexSizeError` instead of an actionable message.
 
-**Files.** `src/contexts/avif-utils.ts:13-19`, `src/contexts/tiff-utils.ts:8-9,74-104,176`,
-`src/contexts/bmp-utils.ts:45-47`, `src/contexts/gif-utils.ts:10-16`,
-`src/contexts/ico-utils.ts:18-23,84-85,113-118`,
-`src/contexts/image-load-save-utils.ts:112-136`, `src/contexts/affine-transform.ts:34`,
-`src/contexts/psd-utils.ts:36`
+**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
+`src/contexts/bmp-utils.ts`, `src/contexts/gif-utils.ts`,
+`src/contexts/ico-utils.ts`,
+`src/contexts/image-load-save-utils.ts`, `src/contexts/affine-transform.ts`,
+`src/contexts/psd-utils.ts`
 
 ---
 
@@ -655,10 +690,10 @@ the fix rather than the wish.
 
 ## 46. The `SidebarLeft` suites each carry their own copy of the icon mock
 
-`src/components/SidebarLeft/__tests__/harness.tsx:1-11,64-127` is a shared render harness, and its
+`src/components/SidebarLeft/__tests__/harness.tsx` is a shared render harness, and its
 docstring says a suite must import it before `../SidebarLeft.tsx` so its hoisted `vi.mock` calls
-apply. **Exactly one suite does** — `SidebarLeft.tablet.test.tsx:4-5`, which does it the required
-way. The other ten — `SidebarLeft.cleanup`, `SidebarLeft.color-pickers`,
+apply. **Exactly one suite does** — `SidebarLeft.tablet.test.tsx`, whose `useSidebarLeftHarness`
+import does it the required way. The other ten — `SidebarLeft.cleanup`, `SidebarLeft.color-pickers`,
 `SidebarLeft.context-menu`, `SidebarLeft.flyout`, `SidebarLeft.flyout-hardening`,
 `SidebarLeft.icon-state`, `SidebarLeft.keyboard`,
 `SidebarLeft.layout`, `SidebarLeft.primary-selection`, `SidebarLeft.rendering` — re-declare the
@@ -682,20 +717,22 @@ duplicated exports. While in there, replace the
 again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it needs a
 `vi.mock` that maps over the real keys rather than a hard-coded array.
 
-**Files.** `src/components/SidebarLeft/__tests__/harness.tsx:1-11,64-127` and the ten
+**Files.** `src/components/SidebarLeft/__tests__/harness.tsx` and the ten
 `SidebarLeft.*.test.tsx` files listed above.
 
 ---
 
 ## 47. `FillToolArgs.size` is written by the tool area and read by nothing
 
-`src/tools/fill.ts:38-44` declares `size: Size` on `FillToolArgs`,
+`src/tools/fill.ts` — `FillToolArgs` declares `size: Size`,
 with the comment that a fill needs its layer geometry in the committed args. The seeded defaults are
-`{ width: 1, height: 1 }` (`src/tools/settings.ts:205,205`), and the two fill processors take the real
-size from the curried `ProcessorToolParams` — `fillLayer` destructures `params.size` (`:102`) and never
+`{ width: 1, height: 1 }` (`src/tools/settings.ts` — the `'magic-eraser'` and `'paint-bucket'`
+defaults), and the two fill processors take the real
+size from the curried `ProcessorToolParams` — `fillLayer` destructures `params.size` in `fill.ts`,
+and never
 reads `args.size`. `pos` is genuinely required, because a durable `apply-raster-processor` op replays
-from the stored args alone (`src/contexts/materialization.ts:282`); `size` is not, because the same
-call site passes `{ bitmap, size }` separately.
+from the stored args alone (`materialization.ts` — `materializeLayer()`); `size` is not, because the
+same call site passes `{ bitmap, size }` separately.
 
 So the field is a write-only trap: a tool area that forgets to write it produces a layer-sized fill
 with no error, and a reader that trusts `args.size` gets `1x1`. It is also the only tool args in
@@ -705,7 +742,7 @@ the repository that carries a size — every other tool learns it from `params`.
 `args.size` and assert in `src/tools/__tests__/fill.test.ts` that a `pos`/`size` pair in the args
 governs the raster, so the field cannot be write-only. Do not leave it as it is.
 
-**Files.** `src/tools/fill.ts:38-44`, `src/tools/settings.ts:205,205` (the two
+**Files.** `src/tools/fill.ts` — `FillToolArgs`, `src/tools/settings.ts` (the two
 `size: { width: 1, height: 1 }`
 defaults)
 
@@ -727,11 +764,14 @@ defaults)
 
 **Problem.** `decideDurableAppend` publishes a cloned durable document directly, while full
 conversion wraps asset-bearing operations in `beginDocumentAssetTransaction` / commit / reconcile
-(`history-adapter.ts:830`, `:843`, `:844`). Every append family published today is asset-neutral —
+(all three in `history-adapter.ts` — `convertLegacyHistorySafely()`). Every append family published
+today is asset-neutral —
 `set-document-frame`, `set-selection`, `reorder-layers`, `set-layer-properties` and `remove-layer`
-(`history-append.ts:499,513,534,556,589` are the five `validatePlannedDurableEntry` arms, and its
-terminal refusal at `:600` is what makes the set exhaustive), none of which
-`collectDurableAssetIds` scans (`history-model.ts:158-175`) — so the fast path is safe so far. The
+(their five arms in `history-append.ts` — `validatePlannedDurableEntry()`, whose terminal
+`no durable translation is published for "…" yet` refusal is what makes the set exhaustive), none of
+which
+`collectDurableAssetIds` scans (`history-model.ts` — `collectDurableAssetIds()`) — so the fast path
+is safe so far. The
 next asset-bearing operation could publish a document without registering or retiring its raster
 ownership.
 
@@ -815,24 +855,25 @@ tracked; gitignored under `.kilo/`), and the `Files` line of every entry named i
 
 ## 56. Layer opacity has no writer, and the obvious one is discarded by replay without a word
 
-**Problem.** `Layer.opacity` is a required field (`src/contexts/layer-types.ts:58` — the `Layer`
+**Problem.** `Layer.opacity` is a required field (`src/contexts/layer-types.ts` — the `Layer`
 type moved out of `tool-types.ts`, which now only carries the tool-args types),
-PSD import populates and validates it (`src/contexts/psd-utils.ts:159,229`), and
-`materialization.ts:162` applies it to the document frame. Nothing in the app ever
+PSD import populates and validates it (`src/contexts/psd-utils.ts` — `loadPsd()` populates it,
+`savePsd()` validates it), and
+`materialization.ts` — `sourceBitmap()` applies it to the document frame. Nothing in the app ever
 writes it. There is no opacity control in the desktop shell, and the mobile layers
 drawer had one that was removed rather than shipped broken.
 
 **Why the obvious implementation is wrong.** A slider would reach for
 `updateLayer(id, { opacity }, TOOL_ACTION)`, because that is the signature every
-other layer property write uses (`src/contexts/useLayer.ts:473`). It fails three
+other layer property write uses (`src/contexts/useLayer.ts` — `updateLayer()`). It fails three
 times, all silently. `updateLayer` only plans a durable append when
 `isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
-whitelist, so the entry never gets a durable translation. `history-replay.ts:166`
+whitelist, so the entry never gets a durable translation. `history-replay.ts` — `replayHistory()`
 reads `if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries
 no `toolName` in its args, so legacy replay skips it and the document after an undo
 diverges from the document before. And `getHistoryItemTitle`
-(`src/contexts/useHistory.ts:22`) returns `(args as ToolArgs).toolName` for a
-`TOOL_ACTION`, which is `undefined` here, so the history panel grows an untitled row
+(`src/contexts/useHistory.ts` — `getHistoryItemTitle()`) returns `(args as ToolArgs).toolName` for
+a `TOOL_ACTION`, which is `undefined` here, so the history panel grows an untitled row
 per step. A slider drag writes one of each per step: dragging the handle to 50% would
 leave ~100 untitled, unreplayable entries in the timeline.
 
@@ -843,20 +884,21 @@ belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
 
 - `src/util/constants.ts` — a `SET_LAYER_OPACITY_ACTION` next to
   `SHOW_LAYER_ACTION`/`HIDE_LAYER_ACTION`/`RENAME_LAYER_ACTION`.
-- `src/contexts/history-model.ts:80` — add `opacity` to
+- `src/contexts/history-model.ts` — add `opacity` to
   `DurableLayerPropertyPatch`. The type is `Readonly<…>`, which is deliberate: it is
   what stops a writer smuggling an arbitrary `Partial<Layer>` through the append
   boundary as a patch the validator then has to re-derive.
-- `src/contexts/history-adapter.ts:355` and `:387` — add the action to
-  `isSetLayerPropertiesAction` and give `deriveSetLayerPropertiesEntry` its branch.
+- `src/contexts/history-adapter.ts` — add the action to
+  `isSetLayerPropertiesAction()` and give `deriveSetLayerPropertiesEntry()` its branch.
   Adding it to the first without the second makes `updateLayer` plan an append that
   resolves to no durable entry, and it silently falls back to the raw patch.
-- `src/contexts/history-replay.ts:132-141` — the legacy arm beside the
+- `src/contexts/history-replay.ts` — the legacy arm in `replayHistory()` beside the
   show/hide and rename arms, writing `{ ...layer, opacity }` the way those write
   `visible` and `name`. This is the arm that made the `TOOL_ACTION` route wrong, and
   without it undo/redo leaves the document inconsistent.
-- `src/contexts/useHistory.ts:14` — a real title. Not a correctness fix: the
-  `return actionName` fallback at `:27` already yields a non-empty string for a
+- `src/contexts/useHistory.ts` — `getHistoryItemTitle()` gets a real title. Not a
+  correctness fix: its
+  `return actionName` fallback already yields a non-empty string for a
   purpose-built action, so the `undefined` above is specific to `TOOL_ACTION`. It
   matters because `SHOW_LAYER_ACTION` and friends already render their raw constant
   name in the History panel, and a fourth raw constant is a worse answer than a
@@ -869,15 +911,19 @@ There is no longer an `UPDATE_LAYERS` shortcut to avoid: it was removed as an un
 second writer surface, so `updateLayer` with a whitelisted action is the only way to set a
 layer property.
 
-**Files.** `src/contexts/layer-types.ts:58`, `src/contexts/useLayer.ts:473`,
-`src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:355,387`,
-`src/contexts/history-replay.ts:132-141,166`, `src/contexts/useHistory.ts:14,22`,
-`src/contexts/psd-utils.ts:159,229`
+**Files.** `src/contexts/layer-types.ts`, `src/contexts/useLayer.ts` — `updateLayer()`,
+`src/contexts/history-model.ts` — `DurableLayerPropertyPatch`,
+`src/contexts/history-adapter.ts` — `isSetLayerPropertiesAction()` and
+`deriveSetLayerPropertiesEntry()`,
+`src/contexts/history-replay.ts` — `replayHistory()`, `src/contexts/useHistory.ts` —
+`getHistoryItemTitle()`,
+`src/contexts/psd-utils.ts`
 
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1138-1153,1125-1140,1143-1150`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx` — the `color-pickers`
+cluster).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -897,25 +943,29 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1138-1153,1125-1140,1143-1150`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx` — the `color-pickers` cluster,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
 
 ## 58. A single brush stroke makes the durable document un-materializable, and it voids the whole document
 
-**Problem.** `convertSource` (`history-adapter.ts:166-171`) routes a layer source's `args.toolName`
+**Problem.** `convertSource` (`history-adapter.ts` — `convertSource()`) routes a layer source's
+`args.toolName`
 to `text` or `vector` for exactly two cases — `'text'`, and the six shape names — and to
-`legacy-tool` for everything else. `materialization.ts:156` throws on `legacy-tool`
-**unconditionally**, and `materializeDocument` releases every taken lease and rethrows (`:347-350`),
+`legacy-tool` for everything else. `materialization.ts` — `sourceBitmap()` throws on `legacy-tool`
+**unconditionally**, and `materializeDocument` releases every taken lease and rethrows (both in
+`materialization.ts` — `materializeDocument()`'s `catch`),
 so a single unconvertible layer voids the entire document rather than itself.
 
-`useLayer.ts:287` writes `args: { ...args }` from the concrete tool, so `args.toolName` is
+`useLayer.ts` — `createLayerFromTool()` writes `args: { ...args }` from the concrete tool, so
+`args.toolName` is
 `'brush' | 'pencil' | 'color-replacement'`, never `'draw'`. **All three painting tools take the
 `legacy-tool` route.** The second thing a user does in a session is draw a stroke, so this is not a
 latent shape of the cutover — it is what the cutover would do.
 
-The irony worth recording: `toolProcessors.draw` at `toolProcessors.ts:153-159` is a genuine `creator: true`, so a
+The irony worth recording: `toolProcessors.draw` in `toolProcessors.ts` — the `draw` entry of
+`toolProcessors` — is a genuine `creator: true`, so a
 deterministic creator for exactly this exists and is simply unreachable, because the adapter never
 routes to it.
 
@@ -926,24 +976,29 @@ one wiring step.
 **Fix.** Either route those three tools to a typed source via the existing `draw` creator, or make
 `materializeDocument` isolate per-layer failure — materialize the rest, record the failed layer — so
 one unconvertible layer cannot void a document. The second is worth doing regardless: the
-whole-document rethrow at `:347-350` is what turns any per-layer defect into a total one.
+whole-document rethrow in `materialization.ts` — `materializeDocument()`'s `catch` is what turns any
+per-layer defect into a total one.
 
 **Test that fails without the fix.** A brush history item through `legacyHistoryToDurable` must not
 yield `source.kind === 'legacy-tool'`. And `materializeDocument` over a replay containing a brush
 layer plus two good layers must resolve with the good layers present.
 
-**Files.** `src/contexts/history-adapter.ts:144-185`, `src/contexts/materialization.ts:156,347-350`,
-`src/contexts/useLayer.ts:287`, `src/tools/toolProcessors.ts:153-159`
+**Files.** `src/contexts/history-adapter.ts` — `convertSource()`,
+`src/contexts/materialization.ts` — `sourceBitmap()` and `materializeDocument()`,
+`src/contexts/useLayer.ts` — `createLayerFromTool()`,
+`src/tools/toolProcessors.ts` — the `draw` entry
 
 ---
 
 ## 59. Five selection tools claim `creator: true` and cannot create anything
 
 **Problem.** `materializeLayer` trusts the `creator` flag as its only gate
-(`materialization.ts:174`). **Five** `commit: 'selection'` entries claim it — `polygonal-lasso`
-(`toolProcessors.ts:178-184`), `freehand-lasso` (`:185-191`), `rectangular-selection` (`:204-210`),
-and, added after this entry was first written, `elliptical-selection` (`:216-222`) and
-`quick-selection` (`:223-229`). All five processors are pass-throughs over a `bitmap` that is
+(`materialization.ts` — `sourceBitmap()`, the `processor?.creator` refusal). **Five**
+`commit: 'selection'` entries claim it — `polygonal-lasso`, `freehand-lasso`,
+`rectangular-selection` (all three in `toolProcessors.ts` — `toolProcessors`), and, added after this
+entry was first written, `elliptical-selection` and
+`quick-selection` (the two newer entries in the same map). All five processors are pass-throughs over
+a `bitmap` that is
 `undefined` on a creator call:
 
 ```ts
@@ -953,7 +1008,8 @@ export const rectangularSelection =
 ```
 
 - `rectangular-selection`, `elliptical-selection` and `quick-selection` → `[undefined]`, caught by
-  `if (!created) throw` (`:179`), message blames the tool. `ellipticalSelection.ts` and
+  `if (!created) throw` (`materialization.ts` — `sourceBitmap()`), message blames the tool.
+  `ellipticalSelection.ts` and
   `quickSelection.ts` are the same pass-through, so the second and third fail identically.
 - `polygonal-lasso` / `freehand-lasso` with empty `points` → `copyPolygonToCanvas` returns a **1×1
   canvas**, which is truthy, so the guard **accepts it** and the layer silently materializes blank.
@@ -973,16 +1029,23 @@ flag is a sound determinism signal wherever it is honestly set.
 `width`/`height` ≥ 1. Fails today for all five, and for none of the honest creators.
 
 **Three pins assert the current roster, and each is a tripwire by its own admission.**
-`tool-processors.test.ts:265-289` hard-codes the 13-name creator roster including all five and
+`tool-processors.test.ts` — the `it('only labels source-creating tools as creators, and each creator
+commits as a source')` title hard-codes the 13-name creator roster including all five and
 asserts `expect(['source', 'selection']).toContain(commit)`, so it passes on the lie rather than
-catching it; `:985-999` records it in prose — "Both lasso tools are flagged creators, yet
+catching it; the `it('hands a creator-param lasso call no source bitmap, because selection consumes
+one (the lasso entries in toolProcessors.ts)')` title records it in prose — "Both lasso tools are
+flagged creators, yet
 `selection` reads `bitmap` … The behaviour is pinned here so the registry/param-type mismatch stays
-visible"; and `:367-368` names the two newer offenders. Delete or re-point all three in the same
+visible"; and the `it('selects the polylasso processor for the lasso and the shape processor for
+figure variants')` title names the two newer offenders. Delete or re-point all three in the same
 change as the fix.
 
-**Files.** `src/tools/toolProcessors.ts:178-249`, `src/tools/selection.ts:15-19`,
-`src/tools/rectangularSelection.ts:9-13`, `src/tools/ellipticalSelection.ts:20-24`,
-`src/tools/quickSelection.ts:24`, `src/contexts/materialization.ts:173-179`
+**Files.** `src/tools/toolProcessors.ts` — the `commit: 'selection'` entries,
+`src/tools/selection.ts` — `selection()`,
+`src/tools/rectangularSelection.ts` — `rectangularSelection()`,
+`src/tools/ellipticalSelection.ts` — `ellipticalSelection()`,
+`src/tools/quickSelection.ts` — `quickSelection()`,
+`src/contexts/materialization.ts` — `sourceBitmap()`
 
 ---
 
@@ -1010,30 +1073,40 @@ call site**: take the ref, and any state flag, only when the claim succeeds — 
 
 ## 62. The error boundary's fallback loses the region's own sizing and grid cell
 
-`ErrorBoundary`'s fallback renders a bare `div` with no `grid-area` (`ErrorBoundary.tsx:52-56`),
-while the regions it replaces are `[grid-area:main]` (`Main.tsx:375`) and `[grid-area:right]`
-(`SidebarRight.tsx:321`). Its props are a human-readable `label` and the `children` it has already
-replaced (`ErrorBoundary.tsx:5-13`), so it does not know which region it wrapped.
+`ErrorBoundary`'s fallback renders a bare `div` with no `grid-area`
+(`ErrorBoundary.tsx` — `ErrorBoundaryFallback()`),
+while the regions it replaces are `[grid-area:main]` (`Main.tsx` — the region's own container) and
+`[grid-area:right]`
+(`SidebarRight.tsx` — the region's own container). Its props are a human-readable `label` and the
+`children` it has already
+replaced (`ErrorBoundary.tsx` — `ErrorBoundaryProps`), so it does not know which region it wrapped.
 
 **The auto-placement half of the original claim is wrong, and the consequence is different.** The
-grid template at `App.tsx:82` names `header`, `toolbar`, `left`, `main`, `right` and `footer`, but
-`header` and `toolbar` are claimed by `DesktopHeader.tsx:302` and `ToolbarHorizontal.tsx:5`, both
-rendered by `Menu.tsx:7-8` **before** the boundaries in document order — so auto-placement does not
-start at the toolbar row. With `left` claimed by `SidebarLeft.tsx:1056`, the first free cell in
+grid template in `App.tsx` — the shell's `[grid-template-areas:…]` class names `header`, `toolbar`,
+`left`, `main`, `right` and `footer`, but
+`header` and `toolbar` are claimed by `DesktopHeader.tsx` — its `[grid-area:header]` `<header>` — and
+`ToolbarHorizontal.tsx` — `TOOLBAR_BASE_CLASS`, both
+rendered by `Menu.tsx` — `Menu()` **before** the boundaries in document order — so auto-placement does
+not start at the toolbar row. With `left` claimed by `SidebarLeft.tsx` — its `[grid-area:left]` branch,
+the first free cell in
 document order is row 3 col 2, which is exactly the canvas's own cell; the second boundary's
 fallback then takes `right`. On mobile the template collapses to `'header'`/`'main'`/`'bottom'` with
 `main` again the first free cell. Both messages land in the right cells.
 
 **What genuinely remains** is the sizing: the fallback also drops the region's own
-`relative overflow-y-auto` (`Main.tsx:375`), so the canvas's message renders content-height instead
+`relative overflow-y-auto` (`Main.tsx` — the `[grid-area:main]` container), so the canvas's message
+renders content-height instead
 of filling the cell.
 
-**Fix.** A new optional `gridArea` prop **plus** the two `App.tsx` call sites (`:92`, `:96`), and the
+**Fix.** A new optional `gridArea` prop **plus** the two `App.tsx` call sites — the
+`<ErrorBoundary label="Canvas">` and `<ErrorBoundary label="Right sidebar">` wrappers — and the
 sizing class alongside it. Do not add the prop without them — an always-`undefined` prop is worse
 than the current auto-placement, which at least lands in the right cell.
 
-**Files.** `src/components/Common/ErrorBoundary.tsx:5-13,52-56`, `src/App.tsx:82,92,96`,
-`src/components/Main/Main.tsx:375`, `src/components/SidebarRight/SidebarRight.tsx:321`
+**Files.** `src/components/Common/ErrorBoundary.tsx` — `ErrorBoundaryProps` and
+`ErrorBoundaryFallback()`, `src/App.tsx` — the grid template and its two `ErrorBoundary` call sites,
+`src/components/Main/Main.tsx` — the `[grid-area:main]` container,
+`src/components/SidebarRight/SidebarRight.tsx` — the `[grid-area:right]` container
 
 ## 63. The presentation scope's liveness set assumes an invariant it does not enforce
 
@@ -1061,8 +1134,8 @@ not be visible from `main`.
 
 ## 66. A refused pointer gesture is a silent no-op on the document
 
-`src/hooks/usePointerPosition.ts:194-229`, and every tool area that calls its
-validators as a bare guard.
+`src/hooks/usePointerPosition.ts` — `isPointerDownValid()` and `isPointerUpValid()` — and every
+tool area that calls its validators as a bare guard.
 
 `isPointerDownValid` refuses a non-primary button, refuses any press while
 `activePointerId` is already set, and only then records the id and takes pointer
@@ -1071,16 +1144,18 @@ does not match, and only then clears. Both return `false` and nothing else. Ever
 caller treats that as "this gesture is not mine" and returns early — with no
 log, no thrown error, and no entry in the store. `DrawToolArea` is the clearest
 case, because the commit lives in `handlePointerUp` and nowhere else
-(`src/components/Main/DrawToolArea.tsx:110-143`), so a refused release means the
+(`DrawToolArea.tsx` — `handlePointerUp()`), so a refused release means the
 whole stroke vanishes: no layer, no history entry, no pixels, and the tool
-overlay cleared anyway by `:146`.
+overlay cleared anyway by the `overlayCtxRef.current?.clearRect(…)` at the end of
+`handlePointerUp()`.
 
 That silence is the defect, and it is separate from any particular race. Every
 other writer in this codebase either publishes a history entry or reports; a
 gesture that is dropped reports nothing at all, so a lost stroke and a
 successfully drawn one are the same observable state. Two callers are already
 known to need a reason for a refusal and cannot get one:
-`EraserToolArea.tsx:142-145` comments that a release the validator refuses must
+`EraserToolArea.tsx` — `handlePointerUp()`'s `releaseDocumentClaim()` comment says a release the
+validator refuses must
 not hand the document back, which is only checkable by instrumenting the
 validator; and `TEST-FLAKES.md` §8 records an e2e failure that surfaced as a bare
 ten-second pixel timeout against a canvas that was never going to change, which
@@ -1094,21 +1169,25 @@ returns, which is a product decision rather than a test one.
 
 ## 67. Five of the six shape-family tools never receive the store colour
 
-**Problem.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34` mirrors the foreground and
+**Problem.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape`'s store-mirroring
+`useEffect` — mirrors the foreground and
 background swatches into the tool's args, but gates the mirror on `args.toolName === 'shape'`
-(the test is at `:32`). `src/tools/toolsMap.ts` routes all six shape-family tools to that one
-component — `shape` at `:63`, and `rectangle`, `ellipse`, `triangle`, `polygon`, `line` at
-`:154-158` — while `src/tools/settings.ts` gives each of those five its own `toolName` in its
-default args: `:276`, `:283`, `:290`, `:297`, `:304`. The guard therefore returns for every one of
+(the test is in that same effect). `src/tools/toolsMap.ts` routes all six shape-family tools to that
+one component — `shape` in its own `toolProcessors.shape` entry, and `rectangle`, `ellipse`,
+`triangle`, `polygon`, `line` in their five entries below it — while `src/tools/settings.ts` gives
+each of those five its own `toolName` in its
+default args: the `'rectangle'`, `'ellipse'`, `'triangle'`, `'polygon'` and `'line'` seeded defaults.
+The guard therefore returns for every one of
 them, and their args stay frozen on the hardcoded `color: '#000000'`. Only `shape` itself, whose
-default is `toolName: 'shape'` at `src/tools/settings.ts:82`, passes. Moving the foreground swatch
+default is `toolName: 'shape'` in `src/tools/settings.ts`'s `shape` block, passes. Moving the
+foreground swatch
 therefore changes the toolbar preview for `shape` and nothing at all for the other five, and the
 committed layer is black in all five cases.
 
 The fill half is the mirror's own doing, and it is the more visible half. For the one tool the
-effect does run on it mirrors **both** swatches, and `src/tools/shape.ts:144-145` fills with
+effect does run on it mirrors **both** swatches, and `src/tools/shape.ts` — `setShapeCtx()` fills with
 `backgroundColor` — `if (hasFill && backgroundColor) { ctx.fillStyle = backgroundColor; }` — where
-the store's background swatch defaults to `'#ffffff'` (`src/contexts/StoreContext.tsx:325`). So
+the store's background swatch defaults to `'#ffffff'` (`StoreContext.tsx` — `initialState`). So
 ticking "Filled" paints white, and the shape reads as an outline with a transparent interior on a
 white document. The only way to change the fill colour is to move the **background** swatch, which
 is shared with the eraser, the bucket and every other tool that uses it.
@@ -1123,48 +1202,59 @@ The second half is a product decision, not a bug fix — the operator has alread
 fill should follow Photoshop's model, which is a dedicated Fill swatch, so this item reduces to
 implementing that and then widening the guard.
 
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34`, `src/tools/toolsMap.ts:65,154-158`,
-`src/tools/settings.ts:82,276,283,290,297,304`, `src/tools/shape.ts:144-145`,
-`src/contexts/StoreContext.tsx:325`
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape`,
+`src/tools/toolsMap.ts` — the six shape-family entries,
+`src/tools/settings.ts` — the `shape` block and the five seeded shape defaults,
+`src/tools/shape.ts` — `setShapeCtx()`,
+`src/contexts/StoreContext.tsx` — `initialState`
 
 ---
 
 ## 68. A committed shape is painted twice, and nothing removes the overlay
 
 **Problem.** `src/components/Main/ShapeToolArea.tsx` never clears the tool overlay during a gesture,
-not even on a successful commit. `handlePointerUp` (`:140`) ends with a `flushDrawingFrame()`
-(`:174`), whose last act is clear-and-**redraw** (`:74`, `:82-88`), and `createLayerFromTool(fullArgs)`
-(`:200`) then commits it as a layer while the overlay keeps the painted shape. For as long as the
+not even on a successful commit. `handlePointerUp` ends with a `flushDrawingFrame()`
+(in `ShapeToolArea.tsx` — `handlePointerUp()` calling `flushDrawingFrame()`), whose last act is
+clear-and-**redraw** (the `clearRect` then `setShapeCtx`/`drawShape` inside `flushDrawingFrame()`),
+and `createLayerFromTool(fullArgs)`
+then commits it as a layer while the overlay keeps the painted shape. For as long as the
 shape tool stays selected the same shape exists twice: once in the document, once on the overlay
-above it. Only the unmount cleanup at `:239-241` clears it, so it disappears on a tool switch, which
+above it. Only the unmount `useEffect` cleanup in `ShapeToolArea.tsx` clears it, so it disappears on
+a tool switch, which
 is not the same thing as not painting it.
 
-The file says so itself, at `:228-238`: "This area never clears the overlay on pointer up at all:
-`handlePointerUp`'s last `flushDrawingFrame` REDRAWS the shape and the commit at :200 leaves it
+The file says so itself, in the comment above that same unmount cleanup: "This area never clears the
+overlay on pointer up at all:
+`handlePointerUp`'s last `flushDrawingFrame` REDRAWS the shape and the commit leaves it
 there … without it the preview stays painted over the next tool's document — and over this one, for
 as long as the shape tool stays selected."
 
 **A unit test now pins the double paint**, which is a finding in its own right:
-`ShapeToolArea.test.tsx:1141` is titled "clears the preview a committed shape leaves painted, which
-nothing else removes", its comment at `:1158-1162` reads "The shape is now a layer AND is painted
-twice", and it asserts `clearRect` is called **exactly once** — only at unmount (`:1167-1168`). **A
+`ShapeToolArea.test.tsx` — the `it('clears the preview a committed shape leaves painted, which nothing
+else removes')` title, its own
+comment reads "The shape is now a layer AND is painted
+twice", and it asserts `clearRect` is called **exactly once** — only at unmount. **A
 fix must delete that test in the same change**, per `AGENTS.md`: a pin left behind turns the fix
 into a red suite.
 
 **Fix.** Clear the overlay as part of the commit, after `createLayerFromTool`, so the committed layer
 is the only copy. Do not add a second `clearRect` inside `flushDrawingFrame` — it is the batched
-draw path and clearing there would blank a frame that has not been committed yet (`:137` re-arms it).
+draw path and clearing there would blank a frame that has not been committed yet
+(`ShapeToolArea.tsx` — `handlePointerMove()`'s `requestAnimationFrame(flushDrawingFrame)` re-arms
+it).
 
 **The coordinate-space half of the earlier version of this entry was wrong, and the suite already
-covers what it claimed was uncovered.** `ShapeToolArea.test.tsx:68-69` defines a deliberately
-non-zero `DOCUMENT_FRAME` and `beforeEach` at `:209` installs it, so every test in the file runs
-under a frame. `:740` ("computes the committed bounds from the same geometry the preview draws")
-asserts at `:766-775` that the committed `start`/`end` equal the preview's **plus** `DOCUMENT_FRAME`
+covers what it claimed was uncovered.** `ShapeToolArea.test.tsx`'s deliberately non-zero `DOCUMENT_FRAME`
+constant, which `beforeEach` installs onto the store state, so every test in the file runs
+under a frame. The `it('computes the committed bounds from the same geometry the preview draws')`
+title asserts that the committed `start`/`end` equal the preview's **plus** `DOCUMENT_FRAME`
 minus `pos` — preview in canvas space, commit the same geometry in document space. §132 derives that
 same division of labour, and §68's "they can disagree" claim is refuted by a passing test.
 
-**Files.** `src/components/Main/ShapeToolArea.tsx:70-88,137,140,174,200,228-241`,
-`src/components/Main/__tests__/ShapeToolArea.test.tsx:1141-1168`
+**Files.** `src/components/Main/ShapeToolArea.tsx` — `flushDrawingFrame()`, `handlePointerUp()` and
+the unmount `useEffect` cleanup,
+`src/components/Main/__tests__/ShapeToolArea.test.tsx` — the `it('clears the preview a committed
+shape leaves painted, which nothing else removes')` title
 
 ---
 
@@ -1176,7 +1266,8 @@ same division of labour, and §68's "they can disagree" claim is refuted by a pa
 
 ## 72. A duplicated `/**` makes `DrawToolArgs.composite`'s doc comment a comment about itself
 
-`src/tools/draw.ts:15-16` opens two block comments back to back. JavaScript block comments do not
+`src/tools/draw.ts` — `DrawToolArgs`'s `composite` field opens two block comments back to back.
+JavaScript block comments do not
 nest, so the second `/**` is swallowed as comment text and the `composite` field's documentation is
 malformed from its first line. It parses, no line number moves, and every test in the tree passes —
 which is why nothing reports it.
@@ -1187,21 +1278,24 @@ It matters because the field's real comment is load-bearing prose rather than de
 `source-over`, and explains why a legacy stroke still renders as it did. Anyone re-deriving a
 citation from that comment reads a comment that starts `/**` and has to work out what it was
 supposed to say. Found while researching `draw` for `docs/TOOLS.md`, where the resulting
-misreading is recorded as a caveat rather than acted on: deleting line 16 shifts every line below
+misreading is recorded as a caveat rather than acted on: deleting the duplicated `/**` shifts every
+line below
 it, and three `file:line` citations into this file in the description record were written against
 the current numbering.
 
-Fix is deleting line 16, then re-deriving any citation into `src/tools/draw.ts` below it.
+Fix is deleting the second `/**` in `src/tools/draw.ts`, then re-deriving any citation into that file
+below it.
 
 ---
 
 ## 73. Two Colors sliders moved in one frame: the first change is silently dropped
 
-**Problem.** `Color.tsx`'s `throttledOnChange` (`src/components/ToolbarsRight/Colors/Color.tsx:28-41`)
+**Problem.** `Color.tsx`'s `throttledOnChange` (`src/components/ToolbarsRight/Colors/Color.tsx` —
+`throttledOnChange()`)
 stashes the whole args object in `pendingUpdateRef` and writes it from a
 `requestAnimationFrame` callback. Each of the three handlers builds that object from
-the **render-time** `args` closure — `handleGrayscaleChange` at `:43-46`,
-`handleSepiaChange` at `:48-51`, `handleSaturationChange` at `:53-56` — and none of
+the **render-time** `args` closure — `handleGrayscaleChange`, `handleSepiaChange` and
+`handleSaturationChange` in the same component — and none of
 them reads the pending value. So two slider changes that land in the same frame are
 both built from the same stale `args`: the second object carries the new second
 value over the **old** first value, and the first change is gone. The rAF does not
@@ -1218,12 +1312,13 @@ the jsdom tests below**, which drive the handlers directly and cannot miss it.
 **The behaviour is already pinned, and pinned on purpose.** Two tests in
 `src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx` assert the loss:
 
-- `'coalesces a burst of changes across different sliders into one frame'`
-  (`:187`) fires all three sliders before the stubbed rAF and expects
+- the `it('coalesces a burst of changes across different sliders into one frame')`
+  title in `Color.test.tsx` fires all three sliders before the stubbed rAF and
+  expects
   `{ grayscale: 0, sepia: 0, saturation: 30 }` — the first two gone. Its own
   comment says this documents the lost-update behaviour "rather than a merge".
-- `'drops the earlier in-frame edit when two different sliders move before the
-frame runs'` (`:213`) fires grayscale and sepia and expects
+- the `it('drops the earlier in-frame edit when two different sliders move before
+the frame runs')` title in the same file fires grayscale and sepia and expects
   `{ grayscale: 0, sepia: 20 }`.
 
 So **fixing this turns both tests red, and flipping those two assertions is part
@@ -1241,8 +1336,8 @@ pendingUpdateRef.current = { ...base, grayscale };
 ```
 
 Every handler builds on `base`, so a second change in the same frame inherits the
-first instead of discarding it. `pendingUpdateRef.current` is cleared in the rAF
-itself (`:36`) and in `discardAdjustment` (`:115`), so it holds exactly the
+first instead of discarding it. `pendingUpdateRef.current` is cleared inside
+`throttledOnChange()`'s own rAF callback and in `discardAdjustment()`, so it holds exactly the
 unpublished edits, and `args` is the right fallback for the first change of a
 frame. Worth checking `Blur.tsx` and `Levels.tsx` for the same shape — they were
 not audited here.
@@ -1251,8 +1346,11 @@ not audited here.
 control's accessible name between the two changes cannot see this, and must not:
 it is a race, and the test for a race is the one that does not wait.
 
-**Files.** `src/components/ToolbarsRight/Colors/Color.tsx:28-56`,
-`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx:187,210`
+**Files.** `src/components/ToolbarsRight/Colors/Color.tsx` — `throttledOnChange()`,
+`handleGrayscaleChange()`, `handleSepiaChange()`, `handleSaturationChange()` and `discardAdjustment()`,
+`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx` — the
+`it('coalesces a burst of changes across different sliders into one frame')` and
+`it('drops the earlier in-frame edit when two different sliders move before the frame runs')` titles
 
 ---
 
@@ -1296,17 +1394,20 @@ Content-Aware Tracing's slot inside the Pen flyout; **Line before Star or Star b
 Shape flyout (one line, and a line a user's hand learns); and whether Note and Count are in the
 default panel or sitting in Extra Tools.
 
-**`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
+**`toolbar-mapping.ts` — the doc comment above `toolbarMap` says "Unsupported Photoshop tools are
+intentionally omitted rather
 than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx:153` does `toolbarMap.flat()`, which discards the
+deleted, not kept.** Separately: `SidebarLeft.tsx` — the module-level `const toolbarGroups =
+toolbarMap.flat()` discards the
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
 **Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands, and their
 processors are reused unchanged — but this is **not** the pure routing change with "the history and
 durable paths untouched" that this line used to claim, and the claim was refuted before it shipped:
-`'color' | 'levels'` are a **durable schema type** (`src/contexts/history-model.ts:75`,
-`src/contexts/layer-types.ts:28`), so every already-committed operation of either crosses the durable
+`'color' | 'levels'` are a **durable schema type** (`src/contexts/history-model.ts` — `DurableFilter`,
+`src/contexts/layer-types.ts` — `LayerOperationArgs`), so every already-committed operation of either
+crosses the durable
 boundary whether or not the surface it was minted from moves. `shape` dissolves into the five figure
 `ToolName`s that
 already have processors and are already dispatched. `draw` is last and is the expensive one: it is
@@ -1329,7 +1430,8 @@ masks (glyph→selection rasterisation), Path Selection and Direct Selection (a 
 from `src/tools/shape.ts` entirely), and Artboard and Frame (layer kinds the app has no type for).
 
 **One step is a baseline hazard and belongs on its own branch:** Hand, Zoom and Rotate View. The
-app's zoom state is commented out (`StoreContext.tsx:1171-1175`; `ZoomData` survives only as a
+app's zoom state is commented out (`StoreContext.tsx` — the commented-out `// zoom data` block;
+`ZoomData` survives only as a
 type), so the seam exists and the state does not. It is small in lines and large in blast radius,
 because it touches the renderer and every e2e screenshot baseline.
 
@@ -1339,13 +1441,18 @@ not the tiles. Any future invented tool fails it. It is cheap, and it is the tri
 other eight steps safe.
 
 **What this costs in tests, before a single tool is added.** The hand-copied lists are the expense,
-and they are already drifted: `src/util/__tests__/constants.test.ts:106-136` holds a hand-copied
+and they are already drifted: `constants.test.ts` — the `it('names a tool that exists in the tool
+registry')` title holds a hand-copied
 29-name list that is **12 short of the real 41** and passes only because its assertion is
-`toContain`. `toolIcons.test.tsx:25-75` holds a 46-name union by hand; `tool-processors.test.ts`
-carries four separate 41-name and 10-name rosters; `SidebarLeft.rendering.test.tsx:123-140` pins
-the exact 16-tile order by name; and `toolbar-mapping.test.ts:101-103` compares a hand-copied
+`toContain`. `toolIcons.test.tsx` — `toolIconNames` holds a 46-name union by hand;
+`tool-processors.test.ts`
+carries four separate 41-name and 10-name rosters; `SidebarLeft.rendering.test.tsx` — the
+`it('renders the available tools in Photoshop-inspired order')` title pins
+the exact 16-tile order by name; and `toolbar-mapping.test.ts` — the `it('lists the shape flyout in
+the exact expected order and shape')` title compares a hand-copied
 expected shape flyout with `toEqual`, so **an added key on any shape entry breaks it**.
-`AppKeyboardShortcuts.tsx:10-17` asserts in prose that its cycle groups match the mapping's groups;
+`AppKeyboardShortcuts.tsx` — the doc comment above `brushGroup` asserts in prose that its cycle
+groups match the mapping's groups;
 **three of its seven do not** — the Pen tile is six wide and its cycle is three, the shape tile is
 six wide and its `Shift+U` cycle is four, and `Shift+U` from the Triangle or Polygon does not skip
 them but **restarts** at the rectangle. Nothing tests that claim. And `availableTools` /
@@ -1362,11 +1469,11 @@ as the work of a fix that had not happened there.
 
 Re-derived against the actual pre-fix commit `13f44a1`, all three were already correct:
 
-| Reported as fixed by the fix pass               | Actually already true at `13f44a1`          |
-| ----------------------------------------------- | ------------------------------------------- |
-| color-replacement `placeholder` → `partial`     | `'partial'` already, `paint.ts:301`         |
-| rectangle and ellipse `implemented` → `partial` | `'partial'` already, `shape.ts:199,226`     |
-| levels black/white point `partial` → `missing`  | `'missing'` already, `transform.ts:301,315` |
+| Reported as fixed by the fix pass               | Actually already true at `13f44a1`                                   |
+| ----------------------------------------------- | -------------------------------------------------------------------- |
+| color-replacement `placeholder` → `partial`     | `'partial'` already, `paintDescriptions` — `'color-replacement'`     |
+| rectangle and ellipse `implemented` → `partial` | `'partial'` already, `shapeDescriptions` — `rectangle` and `ellipse` |
+| levels black/white point `partial` → `missing`  | `'missing'` already, `transformDescriptions` — `levels`              |
 
 So the honest tally of that closure check is **0 fixed, 42 absent, 1 regression** — it was
 measuring the tree, not the diff. The regression it _did_ find is real and was fixed: a new
@@ -1398,13 +1505,14 @@ namespace and left an unguarded regex in the test. Half-finished is worse than f
 **The loss, measured.** `NUMBERED = /^(?:item\s+)?#?(\d+)\b/i` cannot match a letter suffix —
 there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-anchored reorder …')`
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
-`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:324` is a **level-2**
+`if (open && record.level <= open.level) close(...)`. `HANDOFF.md` §15a is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
 `## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
-`HANDOFF.md:325-338` is **876 raw characters**, or **874** once the span's leading and
+`HANDOFF.md` §15a occupies is **876 raw characters**, or **874** once the span's leading and
 trailing blank lines are trimmed — 874 is the trimmed count, and the raw count is the one
-that includes them. Line 455 is a `---` rule, which `bodyOf` drops as layout, so the prose the
-parser actually strands is lines 443-454. All of it is unreachable from any item title or body.
+that includes them. The first `---` rule inside that span is one `bodyOf` drops as layout, so the
+prose the parser actually strands is everything between the `## 15a.` heading and that rule. All of
+it is unreachable from any item title or body.
 Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
 entry is a load-bearing tripwire, so this is live work loss, not latent.
 
@@ -1424,7 +1532,8 @@ parser, which is exactly why an unmeasured number must not be edited.
 `## 15a, 16. Old things — deleted` returns `[15,16]`. This is silent corruption, not silent loss,
 and a fix that only widens `NUMBERED` does not address it.
 
-**Why the test suite cannot see either.** `handoff-import.test.mjs:205`'s own heading-count regex
+**Why the test suite cannot see either.** The `it('produces one item per numbered heading, and no
+item for a prose section')` title's own heading-count regex
 carries the **identical** `\d+\b` blind spot, so `items === headings` holds for `## 15a.`,
 `## 15b.` and `## 16a.` simultaneously. Both sides miss it; the equality stays green. The corpus
 has exactly one such heading today, `## 15a`. Proven: with `NUMBERED` fixed and the count regex
@@ -1433,7 +1542,8 @@ left alone, the count test fails. **The quoted output `expected 38 to be 37` was
 count regex, 38 items once the suffix is accepted. On `main` the same projection reads
 **`expected 49 to be 48`** — 48 headings under the count regex, 49 once the suffix is accepted —
 re-measured at **`0d64d75`**, the tip of `main` this branch merges. Neither number reproduces
-unless the tree is named, and the assertion itself is `handoff-import.test.mjs:207`. Note that a
+unless the tree is named, and the assertion itself is the
+`expect(doc.parsed.items.length).toBe(headings)` inside that same `it` title. Note that a
 _naive_ `NUMBERED` patch does not produce 49: it maps
 `15a` to `Number('15a') === NaN`, and folding it to `15` instead collides with the live
 `HANDOFF.md#15` and loses it to first-occurrence-wins — the same collision the `makeItem` row
@@ -1442,15 +1552,15 @@ is the open design question under this table.
 
 **A real fix must change all of these together:**
 
-| Where                              | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `handoff-import.mjs` `NUMBERED`    | the suffix, and its case rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `handoff-import.test.mjs:205`      | the count regex, same blind spot. `:137`'s `HEADING_NUMBER` has it too, so there are **three** grammars to keep in step, not two. **"Hoist all three to module constants" is wrong as it stands**, and wrong on all three rows: `:205` is an inline regex literal handed straight to `countHeadings`, and `:137` is a `const` declared **inside an `it()` body** — already named, but test-local, so it agrees with nothing and hoisting it changes only where it sits. The one grammar that _is_ a module constant is `NUMBERED`, in the other file. The fix is therefore one shared constant for the two test-side grammars, declared once at module scope |
-| `handoff-import.mjs` `makeItem`    | `` `${base}#${number}` `` — `Number('15a')` is `NaN`, so every suffixed entry gets a literal `#NaN` origin                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `handoff-import.mjs` `planImport`  | the `/#(\d+)$/` dead-set filter cannot match `#15a`, so a suffixed item can never be suppressed by the document's own dead list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `handoff-import.test.mjs:256`      | and `:265`. The **unguarded** `Number(/#(\d+)$/.exec(item.origin)[1])` this entry used to cite is **gone from `main`** — `a14d728` ("close the eight findings from the board's review") replaced it with the guarded `?.[1]` at those two lines. There is no unguarded form left to fix here; the obligation moves to whoever writes the `## 15a.` assertion                                                                                                                                                                                                                                                                                                 |
-| `handoff-import.test.mjs:67`       | `liveItems`, which the same row used to point at as the place to copy. It is at **67**, and it does **not** use `?.[1]`: it is `!number \|\| !parsed.dead.includes(Number(number[1]))` at `:70`, guarding on a separate statement. The guarded form to copy is at `:256`/`:265`                                                                                                                                                                                                                                                                                                                                                                              |
-| `handoff-import.mjs` `deadNumbers` | the dead set is `number[]` end to end — typedef, both `Set`s, and `planImport`'s `.map(Number).filter(Number.isInteger)`. It cannot represent a non-integer at all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Where                                                                                                                 | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handoff-import.mjs` `NUMBERED`                                                                                       | the suffix, and its case rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `handoff-import.test.mjs` — the `it('produces one item per numbered heading, and no item for a prose section')` title | the count regex, same blind spot. The `it('reads a numbered document as one item per number, in document order')` title's `HEADING_NUMBER` has it too, so there are **three** grammars to keep in step, not two. **"Hoist all three to module constants" is wrong as it stands**, and wrong on all three rows: the count regex is an inline regex literal handed straight to `countHeadings`, and `HEADING_NUMBER` is a `const` declared **inside an `it()` body** — already named, but test-local, so it agrees with nothing and hoisting it changes only where it sits. The one grammar that _is_ a module constant is `NUMBERED`, in the other file. The fix is therefore one shared constant for the two test-side grammars, declared once at module scope |
+| `handoff-import.mjs` `makeItem`                                                                                       | `` `${base}#${number}` `` — `Number('15a')` is `NaN`, so every suffixed entry gets a literal `#NaN` origin                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `handoff-import.mjs` `planImport`                                                                                     | the `/#(\d+)$/` dead-set filter cannot match `#15a`, so a suffixed item can never be suppressed by the document's own dead list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `handoff-import.test.mjs` — the `it('does not file a number the document records as finished')` title                 | both of its `?.[1]` reads, one over each parsed item and one over each created origin. The **unguarded** `Number(/#(\d+)$/.exec(item.origin)[1])` this entry used to cite is **gone from `main`** — `a14d728` ("close the eight findings from the board's review") replaced it with the guarded `?.[1]` there. There is no unguarded form left to fix here; the obligation moves to whoever writes the `## 15a.` assertion                                                                                                                                                                                                                                                                                                                                     |
+| `handoff-import.test.mjs` `liveItems`                                                                                 | which the same row used to point at as the place to copy. It does **not** use `?.[1]`: it is `!number \|\| !parsed.dead.includes(Number(number[1]))`, guarding on a separate statement. The guarded form to copy is the `it('does not file a number the document records as finished')` title                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `handoff-import.mjs` `deadNumbers`                                                                                    | the dead set is `number[]` end to end — typedef, both `Set`s, and `planImport`'s `.map(Number).filter(Number.isInteger)`. It cannot represent a non-integer at all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 **Open design question, for a human.** What origin shape should a suffixed entry get? `#15a` is
 the label the document actually wrote and is the natural key, but it is grammatically
@@ -1472,10 +1582,12 @@ documentation, 2026-09-29.** §74 carries the inventory; these are the _mechanic
 and each is a one-line fix.
 
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
-`toolbar-mapping.ts:102` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
-`toolbar-mapping.ts:73` gives the Brush. The badge is rendered from the map
-(`SidebarLeft.tsx:860`), so the user is told the Draw Tool answers to `B`; and
-`AppKeyboardShortcuts.tsx:20` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
+The `draw` entry in `toolbarMap` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
+the Brush's own entry gives. The badge is rendered from the map
+(`SidebarLeft.tsx` — the `<kbd>` badge inside `renderToolGroup()`), so the user is told the Draw Tool
+answers to `B`; and
+`AppKeyboardShortcuts.tsx` — `brushGroup` = `['brush','pencil','color-replacement','eraser']` puts
+`b` on the brush group,
 so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
 is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
 
@@ -1489,7 +1601,8 @@ app's own `G` handler already cycles a Gradient/Paint-Bucket pair, and the Gradi
 is the one the rail contradicts. This matters independently of §74's unresolved order questions:
 group membership is settled, only position is not.
 
-**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts:126-131`
+**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts` — the
+`it('only declares U as the shape shortcut')` title
 checks the `U` group and nothing else, so a `B`/`B` collision is invisible to the suite. One
 `expect` over the flattened map's `shortcut` values would have found defect 1 on the day it
 shipped. Note the trap it must not fall into: `draw` and `pen` variants legitimately share a
@@ -1501,22 +1614,27 @@ doing them here would land the deletion without the replacement rail.
 
 ## 79. A move drag that goes out and back releases the selection where it was never taken
 
-`src/components/Main/EllipticalSelectionToolArea.tsx:200-204`, and the two accumulators
+`src/components/Main/EllipticalSelectionToolArea.tsx` — `handlePointerMove()`, and the two
+accumulators
 disagree about which frame of the drag they are tracking. `delta` is measured from `drag.origin`,
-which `:207` then **advances** to the current pointer position, and it is applied to
+which the same arm then **advances** to the current pointer position, and it is applied to
 `drag.baseline`, which **never** advances. The running displacement is therefore the last frame's
 delta alone, and every earlier frame is discarded. Take a selection 60px right and 40px down,
 retract the pointer to the point you pressed from, and release: the commit lands the selection at
 `(-60, -40)` on a document that starts at the origin. One frame's worth of history, applied twice,
 in opposite directions — and the preview overlay shows the same wrong position for the whole
-gesture, because `drag.preview` feeds `redrawOverlay` at `:209-211`.
+gesture, because `drag.preview` feeds the same arm's `redrawOverlay({ selectionOverride: … })`.
 
-The fix is already written elsewhere in the same directory. `PolygonClickToolArea.tsx:825-827`
+The fix is already written elsewhere in the same directory. `PolygonClickToolArea.tsx` — its
+`handlePointerMove()` move branch —
 applies the same delta to `selectionDrag.selection` and advances **both** accumulators into the
-next ref record in one statement; that is the correct shape and it is what `:206` should be.
+next ref record in one statement; that is the correct shape and it is what
+`EllipticalSelectionToolArea.tsx` — `handlePointerMove()` should be.
 `moveSelectionByDelta(drag.preview, delta)` puts this arm on the same footing, and the first
-frame needs no special case because `drag.preview` is already seeded with `activeSelection` at
-`:165`. The release gate at `:226` then does the rest for free: a net displacement of zero lands
+frame needs no special case because `drag.preview` is already seeded with `activeSelection` in
+`EllipticalSelectionToolArea.tsx` — `handlePointerDown()`'s `mode: 'move'` seed. The release gate in
+`EllipticalSelectionToolArea.tsx` — `handlePointerUp()` then does the rest for free: a net
+displacement of zero lands
 the preview back on the baseline's own geometry, `hasSameSelectionGeometry` reports them equal,
 and the gesture commits nothing.
 
@@ -1524,21 +1642,25 @@ and the gesture commits nothing.
 `EllipticalSelectionToolArea.test.tsx` issued exactly one `pointerMove`, and with a single frame
 the last delta _is_ the whole delta — so `moveSelectionByDelta(baseline, delta)` and
 `moveSelectionByDelta(preview, delta)` return the same selection. The suite was blind to the
-difference by construction rather than by accident. Verified by mutation: changing `:206` to
-`drag.preview` leaves every pre-existing case green, including the zero-delta single move the file
-has since gained at `:359` — which agrees under both accumulators, exactly as the one-frame
+difference by construction rather than by accident. Verified by mutation: changing
+`handlePointerMove()`'s `moveSelectionByDelta(drag.baseline, delta)` to `drag.preview` leaves every
+pre-existing case green, including the zero-delta single move the file has since gained as the
+`it('commits nothing for a selection drag whose last move had no delta')` title — which agrees under
+both accumulators, exactly as the one-frame
 argument predicts.
 
 The half of that which was sound: no assertion in the file pins the drifted position, so nothing
 enshrines the bug. It was uncovered, not endorsed.
 
-Pinned as `it.fails` at `EllipticalSelectionToolArea.test.tsx:318`, "commits nothing for a move drag
-that went out and came back to the press point". A zero net displacement is observed through the
+Pinned as `it.fails` in `EllipticalSelectionToolArea.test.tsx` — the `it('commits nothing for a move
+drag that went out and came back to the press point')` title. A zero net displacement is observed
+through the
 absence of a commit rather than through a committed position, which is the same observable the
 neighbouring zero-delta case pins for the one-frame shape of the same gesture; the case carries
 its own control — a second, single-frame drag on the same mount, which is independent of the
 defect — so the empty assertion cannot pass by the arm never having run. **Delete the `it.fails`
-in the same change that fixes `:206`**, per `AGENTS.md`: it is a tripwire for broken behaviour,
+in the same change that fixes `handlePointerMove()`'s accumulator choice**, per `AGENTS.md`: it is a
+tripwire for broken behaviour,
 and left behind it turns the fix into a red suite.
 
 ## 80. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
@@ -1549,9 +1671,10 @@ hand `usePaintStroke` — Dodge, Burn, Smudge, CloneStamp and Gradient — "and 
 Both halves need narrowing, and the error in the second one is about coverage rather than about
 the flag.
 
-The list of five is **correct**: `DodgeToolArea.tsx:59`, `BurnToolArea.tsx:65`, `SmudgeToolArea.tsx:79`,
-`CloneStampToolArea.tsx:210` and `GradientToolArea.tsx:85` each compute an `enabled` /
-`isEnabled` from `activeLayer && !activeLayer.isBedrock` and pass it to `usePaintStroke`. What is
+The list of five is **correct**: the `enabled` / `isEnabled` each of `DodgeToolArea.tsx`,
+`BurnToolArea.tsx`, `SmudgeToolArea.tsx`,
+`CloneStampToolArea.tsx` and `GradientToolArea.tsx` computes from
+`activeLayer && !activeLayer.isBedrock` and passes to `usePaintStroke`. What is
 wrong is "not one had a test" as a description of the finished branch: `b001d7d` added suites for
 four of the five, and **`CloneStampToolArea` still has no test file** — `git ls-tree main --
 src/components/Main/__tests__/` answers none. The fifth area the commit covers is
@@ -1561,14 +1684,16 @@ more than "the suite mounts a store fixture and drives real pointer events".
 
 Two components read `isBedrock` without `usePaintStroke` and must not be counted into that set
 either: `CloneStampToolArea` folds it into `isEnabled` **and** uses `usePaintStroke`, so it is
-in; `MoveToolArea.tsx:35`, `EraserToolArea.tsx:56-63` and `FillToolArea` read the flag directly
+in; `MoveToolArea.tsx` — `activeLayerRect`, `EraserToolArea.tsx` — its own `isEnabled` — and
+`FillToolArea` — its bedrock early return — read the flag directly
 and are out of it. **The cheapest thing that settles whether `CloneStampToolArea` is actually
 covered is a test, not a sentence** — and until one exists, treat the "not one had a test" claim
 as four, not five.
 
 ## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
 
-`src/hooks/usePolylineAnts.ts:134-136` — pending animation-frame handle
+`src/hooks/usePolylineAnts.ts` — the stale comment above the `isPaused` effect, "pending animation-frame
+handle"
 
 Two `it.fails` tests in `src/hooks/__tests__/usePolylineAnts.animation.test.tsx` were **deleted
 and the behaviour pinned as working**, because both were pinned to a defect that a rAF mock
@@ -1590,30 +1715,37 @@ POSITIVE long"; that phrase is in no version of the spec and the IDL return type
 the pre-increment above.
 
 **(b) The production guard is a truthiness guard where its sibling uses `!== null`.**
-`usePolylineAnts.ts` guards a pending frame three times — `:80` (the `clear` cancel), `:124` (the
-`draw` cancel before rescheduling) and `:148` (the `isPaused` effect cleanup) — and all three are
-`if (animationIdRef.current)`. `useAnts.ts:40` and `:82` do the identical job for the identical
-"pending animation handle" and use `if (animationIdRef.current !== null)` and
-`=== null`. `useAnts` nulls the ref immediately after cancelling, so `0` and `null` are genuinely
+`usePolylineAnts.ts` guards a pending frame three times — `clear()`'s cancel, `draw()`'s cancel before
+rescheduling and the `isPaused` effect cleanup's cancel — and all three are
+`if (animationIdRef.current)`. `useAnts.ts` does the identical job for the identical
+"pending animation handle": `clear()` uses `if (animationIdRef.current !== null)` and
+`schedule()` uses `=== null`. `useAnts` nulls the ref immediately after cancelling, so `0` and `null`
+are genuinely
 distinguishable there; `usePolylineAnts` never produces `0` either way, which is why the
 truthiness form is currently correct. **It is correct by the spec argument in (a), not by
 construction**, and the sibling in the same directory is the standing counterexample to "0 cannot
 happen" — which is a local property of one file's mocks, not of the platform.
 
-**(c) The comment at `:134-136` is stale and asserts the branch removed.** It reads:
+**(c) The comment above that same `isPaused` effect is stale and asserts the branch removed.** It
+reads:
 
 > A pending handle of 0 is the one case the cleanup's own truthy guard skips, but 0 is falsy here
 > too, so cancelling here never had anything to do. That falsy-0 path is why pausing with frame 0
 > pending does not stop the loop.
 
-The last sentence is the claim `usePolylineAnts.animation.test.tsx:145` now **falsifies**: the
-test at that line asserts that pausing before the first frame has run _does_ stop the loop, and
-cites `:148` — the very line this comment describes. The repo currently holds a production comment
+The last sentence is the claim the `it('stops the loop when paused before the first frame has run
+…')` title in `usePolylineAnts.animation.test.tsx` now
+**falsifies**: that test asserts that pausing before the first frame has run _does_ stop the loop, and
+its own comment cites the `isPaused` effect cleanup's `if (animationIdRef.current)` — the very guard
+this comment
+describes. The repo currently holds a production comment
 saying the loop does not stop and a test saying it does, and only one of them can be right.
 
-**When production is next touched, `usePolylineAnts.ts:134-136` must be corrected or deleted**, and
-the two sibling counters that still start at `0` — `usePolylineAnts.test.tsx:9`,
-`useAnts.test.tsx:9`, `useAnts.transform.test.tsx:20` — should move to `1` in the same change, so
+**When production is next touched, the stale comment above `usePolylineAnts.ts`'s `isPaused` effect
+must be corrected or deleted**, and
+the two sibling counters that still start at `0` — `usePolylineAnts.test.tsx` and
+`useAnts.test.tsx`'s `let nextId = 0`, and `useAnts.transform.test.tsx`'s — should move to `1` in the
+same change, so
 the four rAF mocks in `src/hooks/__tests__/` stop disagreeing about a value the platform fixes.
 Switching the three guards to `!== null` to match `useAnts` is the durable fix and makes the whole
 question disappear; it is deliberately **not** done here, because this branch is tests and handoff
@@ -1633,7 +1765,8 @@ trusts it would re-add the tripwires.
 two facts compose into a silent loss: a **live** numbered heading that happens to end in a status
 word is retired, and its prose leaves the import with nothing anywhere in the parse result saying
 so. Measured through the real parser, both directions, side by side (indented deliberately: the
-heading-count assertion at `scripts/__tests__/handoff-import.test.mjs:205` matches
+heading-count assertion — `scripts/__tests__/handoff-import.test.mjs`, the
+`it('produces one item per numbered heading, and no item for a prose section')` title — matches
 `^#{1,6}[ \t]+\d+` **without skipping fenced code**, so an example of this shape written at column
 zero inside any fenced block fails that test against the parser being _right_ — a blind spot in the
 assertion, pre-existing, and the reason for the indentation):
@@ -1681,13 +1814,13 @@ dialog-closed assertion is fixed`.
 What it buys that is real; what it costs is larger, and the cost is measurable. Re-derived by
 patching the separator class and re-running the real parser over the merged corpus:
 
-| Heading                                                                                    | Now                | Separator required |
-| ------------------------------------------------------------------------------------------ | ------------------ | ------------------ |
-| `## 13. Landed, superseded and deleted` (pinned fixture, `handoff-import.test.mjs:654`)    | `dead=[13]`        | `dead=[]`          |
-| `### Items 5, 7, 9, … — deleted` (`HANDOFF.md:119`, the corpus's **only** real retirement) | `dead=` 26 numbers | `dead=[]`          |
-| Whole `HANDOFF.md` — `planImport(...).create`                                              | 49                 | **51**             |
+| Heading                                                                                                                                                                                         | Now                | Separator required |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------ |
+| `## 13. Landed, superseded and deleted` (pinned fixture, `handoff-import.test.mjs` — the `it('reads a heading that ENDS with a status marker as a retirement, in every separator form')` title) | `dead=[13]`        | `dead=[]`          |
+| `### Items 5, 7, 9, … — deleted` (this file's preamble heading, the corpus's **only** real retirement)                                                                                          | `dead=` 26 numbers | `dead=[]`          |
+| Whole `HANDOFF.md` — `planImport(...).create`                                                                                                                                                   | 49                 | **51**             |
 
-The second row is the one that decides it. `HANDOFF.md:119` is the heading the `DEAD_HEADING`
+The second row is the one that decides it. That preamble heading is the one the `DEAD_HEADING`
 docstring names as "the only retirement marker any of the three documents actually uses", and the
 separator requirement re-reads it as live prose: `dead` goes from 26 numbers to **none**, and two
 already-retired items — `HANDOFF.md#7` and `HANDOFF.md#18` — come back to the board as open work.
@@ -1707,7 +1840,10 @@ should choose which of the two behaviours a mistyped heading should have.
 holds the shape in `it.fails('keeps a LIVE numbered heading that ends in a status word as an open,
 filed item')`: the body asserts what a **fixed** parser returns, so it is red today and the `fails`
 is what makes the suite green. It is the marker the repo already uses in ~20 places
-(`image-processors.test.ts:151`, `StoreContext.durable-boundary.test.tsx:441`) and the one
+(`image-processors.test.ts` — the `it.fails('clamps a negative or non-finite radius into a valid CSS
+filter …')` inside `describe('tool image processors')`, whose title carries its own stale
+`src/tools/blur.ts` citation; and `StoreContext.durable-boundary.test.tsx` — the `it('uses the
+replacement document baseline when updates omit totalSize and documentFrame')` title) and the one
 `AGENTS.md` describes. **Delete the `it.fails` in the same change that fixes `DEAD_HEADING`** — the
 moment the body goes green, the `fails` goes red, which is the intended signal and not a
 regression to chase. The live side of the same rule, and the visible false row it contrasts with,
@@ -1814,23 +1950,27 @@ fails if `xAnchor` is removed.
 
 **Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
 `ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
-(`src/hooks/useRect.ts:235-236`). No `lineDashOffset` is ever assigned, and the file's one
-`requestAnimationFrame` (`:483-488`) throttles the DRAG, not the border: it recomputes the rect and
-calls `drawMask(true)`, which redraws the same fixed dash. It looks alive during a drag only because
-the drag is RAF-throttled, so the line is redrawn at pointer rate — the dashes never move.
+(`useRect.ts` — `drawMask()`). No `lineDashOffset` is ever assigned, and the file's one
+`requestAnimationFrame` (also `useRect.ts` — `handlePointerMove()`) throttles the DRAG, not the
+border: it recomputes the rect and calls `drawMask(true)`, which redraws the same fixed dash. It
+looks alive during a drag only because the drag is RAF-throttled, so the line is redrawn at pointer
+rate — the dashes never move.
 
 **`useRect` is the one border in the app that redraws without advancing, and THREE selection
 borders are drawn that way — not one.** `useMarchingAnts`
-(`src/hooks/useAnts.ts:24,48-70`) is the real marching-ants loop, and its only production consumer is
-`MoveToolArea.tsx:6`, which paints the outline of a **hovered layer** in `reposition` mode. So
+(`useAnts.ts` — `useMarchingAnts()`) is the real marching-ants loop, and its only production
+consumer is `MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a
+**hovered layer** in `reposition` mode. So
 "marching ants on a rectangle" is the Move tool's layer outline.
 
 **Three selection borders still sit still, not one.** A polygon selection animates
-(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx:42`'s
-`POLYGON_SELECTION_MODES`. The elliptical and quick selection tools are deliberately absent from it
-and map to their own `interactionMode`s (`Main.tsx:114,106`), so their borders stay the static
+(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx` — the
+`POLYGON_SELECTION_MODES` list. The elliptical and quick selection tools are deliberately absent
+from it and map to their own `interactionMode`s (`Main.tsx` — the `interactionMode` mapping in
+`Main`), so their borders stay the static
 `drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
-(`createCommittedPolygonSelection`, `src/util/selection.ts:29`, whose `geometry: 'polygon'` is at `:51`), so nothing about the selection's
+(`createCommittedPolygonSelection`, `selection.ts` — whose `geometry: 'polygon'` is the value it
+returns), so nothing about the selection's
 own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
 (`useRect`), the elliptical marquee and quick selection. Fixing only the rectangle — the cheap half
 of the choice below — would leave two behind, which is why they are named here together.
@@ -1838,8 +1978,9 @@ of the choice below — would leave two behind, which is why they are named here
 **The rectangle and the polygon no longer match each other** in colour or weight (`#007bff` at 2px,
 plus four square handles, versus black/white ants at 1px), and the two marquee tools match neither.
 
-**It affects four tools, not one.** `useRect` is shared by `MoveToolArea.tsx:117`, `CropToolArea.tsx:61`,
-`RectangularSelectionToolArea.tsx:65` and `TextToolArea.tsx:24`, so the crop rectangle, the move
+**It affects four tools, not one.** `useRect` is shared by `MoveToolArea` — its `useRect()` call —
+`CropToolArea`, `RectangularSelectionToolArea` and `TextToolArea`, each reached through their own
+`useRect()` call, so the crop rectangle, the move
 rectangle, the text frame and the rectangular selection all have the same still border.
 
 **Fix.** Three shapes, and the choice is a recording decision rather than a mechanical one. Fixing
@@ -1853,37 +1994,44 @@ borders, and the entry above says which is which — pick the scope deliberately
   two marquee tools static.
 - Or give the rect the ants treatment the polygon got: stop `useRect` stroking the border, drop
   `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
-  (`useSelectionAnts.ts:69` currently skips rectangles on the assumption that `useRect` still paints
-  one), and let the ants canvas own the rect. Note the constraint this has to respect: `useRect` also
-  draws the dim-out scrim (`:226`) and, in the same pass, the border and the corner handles (`:233-246`), so the border and the handles have to
+  (`useSelectionMarchingAnts` currently skips rectangles on the assumption that `useRect` still
+  paints one), and let the ants canvas own the rect. Note the constraint this has to respect:
+  `useRect` also draws the dim-out scrim and, in the same `drawMask()` pass, the border and the
+  corner handles, so the border and the handles have to
   end up on different canvases or the scrim will wipe the ants mid-drag.
 - Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
-  three: add `'elliptical-selection'` and `'quick-selection'` to `POLYGON_SELECTION_MODES`
-  (`Main.tsx:42`) and stop those two tool areas calling `drawSelectionOutline`
-  (`EllipticalSelectionToolArea.tsx:112`, `QuickSelectionToolArea.tsx:104`). This one is not only a
-  mode list, because both commit `sourceTool: 'magic-wand'`
-  (`ellipticalSelection.ts:48`, `quickSelection.ts:43`) — the constant each borrows from the wand —
+  three: add `'elliptical-selection'` and `'quick-selection'` to `Main.tsx`'s
+  `POLYGON_SELECTION_MODES` and stop those two tool areas calling `drawSelectionOutline`. This one
+  is not only a
+  mode list, because both commit `sourceTool: 'magic-wand'` — `ellipticalSelection.ts` —
+  `ELLIPTICAL_SELECTION_SOURCE_TOOL` and `quickSelection.ts` — `QUICK_SELECTION_SOURCE_TOOL`, the
+  constant each borrows from the wand —
   and `drawSelectionAnchors` skips that source, so the anchors have to be taught the difference
   between a wand selection and a marquee selection or the two tools lose their handles as well as
   their border. `EllipticalSelectionToolArea.test.tsx`'s 'strokes a committed selection border' pins
   the current ownership and will fail until this is done on purpose.
 
-Whichever is chosen, `useRect.drag.test.ts:136,252` pins the current `setLineDash` values and has to be
-updated in the same change.
+Whichever is chosen, the two `setLineDash` assertions in `useRect.drag.test.ts` — the
+`it('paints the initial selection, its blend cut-out, and the four handles')` and
+`it('scales the dash and the handles by the container scale')` titles — pin the current values and
+have to be updated in the same change.
 
-**Files.** `src/hooks/useRect.ts:233-246,483-488`, `src/hooks/useAnts.ts:24,48-70`,
-`src/components/Main/MoveToolArea.tsx:6,117`, `src/components/Main/CropToolArea.tsx:61`,
-`src/components/Main/RectangularSelectionToolArea.tsx:65`, `src/components/Main/TextToolArea.tsx:24`,
-`src/hooks/useSelectionAnts.ts:69-70`, `src/hooks/__tests__/useRect.drag.test.ts:136,252`
+**Files.** `src/hooks/useRect.ts` — `drawMask()`, `handlePointerMove()`; `src/hooks/useAnts.ts` —
+`useMarchingAnts()`; `src/components/Main/MoveToolArea.tsx` — `MoveToolArea`; `src/components/Main/CropToolArea.tsx` —
+`CropToolArea`; `src/components/Main/RectangularSelectionToolArea.tsx` — `RectangularSelectionToolArea`;
+`src/components/Main/TextToolArea.tsx` — `TextToolArea`; `src/hooks/useSelectionAnts.ts` —
+`useSelectionMarchingAnts()`; `src/hooks/__tests__/useRect.drag.test.ts` — the two `setLineDash`
+titles named above
 
 ## 87. The append boundary never checks that its base is at its own tip
 
-**Problem.** `decideDurableAppend` (`history-append.ts:579`) proves `documentId`, both revisions,
+**Problem.** `decideDurableAppend` (`history-append.ts` — `decideDurableAppend()`) proves
+`documentId`, both revisions,
 the legacy tip, the length delta, the legacy cursor and the appended entry's identity
-(`:590-610`) — and never proves `base.cursor === base.history.length - 1`. The published cursor is
-`base.history.length` (`:644`), not `base.cursor + 1`, so a base sitting below its own history
+— and never proves `base.cursor === base.history.length - 1`. The published cursor is
+`base.history.length`, not `base.cursor + 1`, so a base sitting below its own history
 publishes a cursor **past** the entries it had not reached. The one cursor guard that looks related
-runs the other way: `cursor > next.cursor` (`:647`) catches a base with too MANY entries, and a base
+runs the other way: `cursor > next.cursor` catches a base with too MANY entries, and a base
 with too few slips straight through.
 
 **User-visible failure.** An edit the user undid comes back as applied. The entries between the
@@ -1893,14 +2041,18 @@ satisfies every precondition.
 
 **Reachable only by accident today.** A mid-timeline base is produced by a rebuild, and
 `buildDurableDocument` derives the shadow cursor from the **legacy** cursor
-(`StoreContext.tsx:674-677`, `converted.legacyCursorToDurableCursor[historyCursor] ?? -1`) — so the
-same rebuild also hands the boundary a `prior` that is not at its tip, which `:599` refuses before
+(`StoreContext.tsx` — `buildDurableDocument()`, at its
+`converted.legacyCursorToDurableCursor[historyCursor] ?? -1`) — so the
+same rebuild also hands the boundary a `prior` that is not at its tip, which `decideDurableAppend()`
+refuses before
 this gap is reachable. Nothing in the boundary enforces the invariant; only that coupling does, and
 it is one refactor away from not holding.
 
 **Fix.** Add `if (base.cursor !== base.history.length - 1)` to the precondition list, next to the
-legacy tip check at `:599`, with the same `preconditions` outcome. Pinned as a KNOWN-GAP pin at
-`history-append.test.ts:1182`; the fix must re-point it in the same change.
+legacy tip check in `decideDurableAppend()`, with the same `preconditions` outcome. Pinned as a
+KNOWN-GAP pin as the `it('publishes onto a base that is not at its own tip, turning a redo-only
+entry into an applied one')` title in `history-append.test.ts`; the fix must re-point it in the
+same change.
 
 **Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
 
@@ -1908,27 +2060,35 @@ legacy tip check at `:599`, with the same `preconditions` outcome. Pinned as a K
 
 ## 88. The append boundary never re-validates a planned frame's `next`
 
-**Problem.** `validatePlannedDurableEntry`'s frame branch (`history-append.ts:486-498`) proves only
-that `planned.operation.next` equals the legacy `args.nextFrame` structurally (`sameFrame`, `:492`)
-and that `nextFrame` is present (`:491`). It never asks whether either is a **document frame** —
+**Problem.** `validatePlannedDurableEntry`'s frame branch (`history-append.ts` —
+`validatePlannedDurableEntry()`) proves only
+that `planned.operation.next` equals the legacy `args.nextFrame` structurally (`sameFrame`) and
+that `nextFrame` is present. It never asks whether either is a **document frame** —
 `isValidDocumentFrame` is not called anywhere in the boundary. The shared derivation the boundary
-relies on does call it (`history-adapter.ts:260`, reached from `history-append.ts:133`), so the two
+relies on does call it (`history-adapter.ts` — `deriveSetDocumentFrameEntry()`, reached from
+`history-append.ts` — `translate()`), so the two
 routes disagree about one legacy item by construction.
 
 **User-visible failure.** A published `0x0` crop. Durable replay applies `next` with no validation
-at all (`durable-replay.ts:129-131`) and `documentFrameSize` clamps to a 1×1 minimum
-(`document-frame.ts:9-14`), so the shadow comes to describe a **one-pixel-square document** rather
+at all (the `'set-document-frame'` case in `durable-replay.ts`) and `documentFrameSize()` in
+`document-frame.ts` clamps to a 1×1 minimum,
+so the shadow comes to describe a **one-pixel-square document** rather
 than a zero — the loss is invisible as a degenerate size. The conversion route for the same item
-publishes nothing and names the loss (`history-adapter.ts:675-681`), so of the two routes only one
+publishes nothing and names the loss (the `SET_DOCUMENT_FRAME_ACTION` arm of
+`legacyHistoryToDurable()`, whose `invalid-history-entry` **warning** says the entry was not
+published), so of the two routes only one
 says anything.
 
 **Latent.** Only a **supplied** entry reaches it: every production `durableEntry` is
-`planHistoryAppend`'s output, which refuses the frame at `history-append.ts:134-136`, or
-`deriveReorderLayersEntry`, which is not a frame action (`StoreContext.tsx:913`).
+`planHistoryAppend`'s output, which refuses the frame in `history-append.ts` — `translate()`, or
+`deriveReorderLayersEntry()`, which is not a frame action (`StoreContext.tsx` — its
+`deriveReorderLayersEntry()` call).
 
 **Fix.** In the frame branch, reject a `planned.operation.next` that fails `isValidDocumentFrame`
 before comparing it to the legacy arg, and treat the refusal as a `mismatch` so the store records
-it. Pinned as a KNOWN-GAP pin at `history-append.test.ts:1221`; the fix must re-point it.
+it. Pinned as a KNOWN-GAP pin as the `it('publishes a planned frame whose next frame is not a
+document frame, and the shadow replays it anyway')` title in `history-append.test.ts`; the fix must
+re-point it.
 
 **Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
 
@@ -1937,27 +2097,31 @@ it. Pinned as a KNOWN-GAP pin at `history-append.test.ts:1221`; the fix must re-
 ## 89. The baseline document source's id is not in the duplicate-id set
 
 **Problem.** The duplicate-id guard records an id only when an entry is actually published
-(`history-adapter.ts:779-782`). The baseline document source is adopted, not published: its branch
-`continue`s at `:586-589` — pushing cursor `-1` at `:587` — long before the publication guard at
-`:752`, so the baseline's id never reaches `publishedEntryIds` (`:581`) and a later entry reusing it
+(the `publishedEntryIds` check inside `legacyHistoryToDurable()` in `history-adapter.ts`). The
+baseline document source is adopted, not published: its branch
+`continue`s — pushing cursor `-1` — long before the publication guard,
+so the baseline's id never reaches `publishedEntryIds` and a later entry reusing it
 is published as a first occurrence. No diagnostic is raised, and the two id-based resolvers now
 disagree: `updateHistoryTimeline` finds the **first** match in the legacy timeline
-(`history-timeline.ts:24`) while `toggleDurableEntry` finds the first in the durable document
-(`history-adapter.ts:880`), so one History-panel eye click disables a different edit in each model.
+(`history-timeline.ts` — `updateHistoryTimeline()`) while `toggleDurableEntry()` in
+`history-adapter.ts` finds the first in the durable document,
+so one History-panel eye click disables a different edit in each model.
 
 **User-visible failure.** A click that toggles the wrong row, and a durable document whose entries
 carry an id the legacy timeline already used. Silent: `status` stays `current` and no diagnostic
 names the id.
 
 **Reachable only by accident today.** Production mints a fresh `uuidv4()` per commit
-(`history-utils.ts:81`), so the baseline id and a later entry's id are unrelated values. Note that
+(`history-utils.ts` — `createHistoryItem()`, whose `id` parameter defaults to `uuidv4()`), so the
+baseline id and a later entry's id are unrelated values. Note that
 this is the one hole where the "does not consume its id" rule is **not** a safe answer, unlike the
 refused replacement and the entry that threw: the baseline id is not a durable entry, so this set
 structurally cannot see it, while the legacy timeline still holds it.
 
 **Fix.** Add the baseline's id to `publishedEntryIds` when it is adopted, or widen the guard to
-compare against the legacy timeline as well. Pinned as a KNOWN LIMIT pin at
-`history-adapter.diagnostics.test.ts:873`; the fix must delete or re-point it.
+compare against the legacy timeline as well. Pinned as a KNOWN LIMIT pin as the
+`it('reports a later entry that reuses the baseline open-document id')` title in
+`history-adapter.diagnostics.test.ts`; the fix must delete or re-point it.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.diagnostics.test.ts`
 
@@ -1966,9 +2130,11 @@ compare against the legacy timeline as well. Pinned as a KNOWN LIMIT pin at
 ## 90. A disabled FIRST history entry is adopted as the durable baseline
 
 **Problem.** `replayHistory` skips a disabled item before it does anything else
-(`history-replay.ts:74`), so the document it produces for a timeline whose first entry is disabled
+(`history-replay.ts` — `replayHistory()`, at its `if (!item || item.disabled) continue`), so the
+document it produces for a timeline whose first entry is disabled
 is empty. The converter takes that **same entry** as the durable baseline
-(`history-adapter.ts:584-589`) without ever consulting `isEntryEnabled` (`:422-425`), and maps it to
+(`history-adapter.ts` — the baseline branch of `legacyHistoryToDurable()`) without ever consulting
+`isEntryEnabled()`, and maps it to
 cursor `-1` as though it were the pre-history state.
 
 **User-visible failure, and this one is REACHABLE.** Disable the first History row and the canvas
@@ -1977,19 +2143,23 @@ selection of an edit the user just turned off. The two models disagree about the
 no diagnostic, and nothing downstream reconciles them.
 
 **How the toggle is exposed.** The History tab renders one eye button per row, including the first:
-`HistoryTab.tsx:88-98` calls `handleToggleDisabled` (`:90`, titled "Disable history item" at `:95`)
-→ `toggleDisabled(itemId)` (`:56`) → `useHistory.ts:148` → `updateHistoryTimeline`'s
+the row's `onClick` in `HistoryTab.tsx` — `HistoryTab` — calls `handleToggleDisabled`, whose `title`
+reads "Disable history item"
+→ `toggleDisabled(itemId)` (`HistoryTab.tsx` — inside `handleToggleDisabled`) → `useHistory.ts` —
+`toggleDisabled()` → `updateHistoryTimeline`'s
 `toggle-disabled` command, which flips `disabled` on the addressed entry
-(`history-timeline.ts:23-28`). `sortedHistory` is `[...history].reverse()` (`HistoryTab.tsx:12`),
+(`history-timeline.ts` — the `toggle-disabled` arm of `updateHistoryTimeline()`). `sortedHistory` is
+`[...history].reverse()` (`HistoryTab.tsx` — the `sortedHistory` binding),
 so the first entry is the **last** row — the one closest to the panel's footer, not a row anyone
 treats as special. The mobile drawer exposes the same control
-(`MobileLayersDrawer.tsx:106-110`).
+(`MobileLayersDrawer.tsx` — its `handleToggleDisabled`).
 
 **Fix.** Make the baseline branch adopt an entry only when `isEntryEnabled` agrees that the entry
 would have applied — and say what a timeline whose baseline is disabled should convert to, because
 "an empty baseline" and "a baseline derived from the first **enabled** entry" are two different
 answers and only one of them is the document `replayHistory` produces. Pinned as a KNOWN-DIVERGENCE
-pin at `history-adapter.branches.test.ts:704`; the fix must re-point it.
+pin as the `it('a disabled first entry replays as the empty state legacy replays')` title in
+`history-adapter.branches.test.ts`; the fix must re-point it.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.branches.test.ts`
 
@@ -1998,11 +2168,13 @@ pin at `history-adapter.branches.test.ts:704`; the fix must re-point it.
 ## 91. The durable baseline's bedrock frame rule is implemented and no test reaches it at index 0
 
 **The rule, and why it is right, so nobody re-derives it.** Legacy replay takes the document frame
-from a bedrock source when the entry is the FIRST one (`history-replay.ts:103-109`), and that is the
-shape every document opens with: `App.tsx:21-27` seeds a `DEFAULT_BLANK_IMAGE` carrying
+from a bedrock source when the entry is the FIRST one (`history-replay.ts` — `replayHistory()`, at
+its bedrock frame branch), and that is the
+shape every document opens with: `App.tsx` — the `DEFAULT_BLANK_IMAGE` constant — seeds a
+`DEFAULT_BLANK_IMAGE` carrying
 `{ isBedrock: true, size }` and commits it through `setBlankImage` → `createBlankLayer(params, true)`
-(`useApp.ts:77-80`). `frameFromFirstEntryBedrock` (`history-adapter.ts:263-271`) is the durable
-model's copy of that rule, applied at `:591` as
+(`useApp.ts` — `setBlankImage()`). `frameFromFirstEntryBedrock()` (`history-adapter.ts`) is the durable
+model's copy of that rule, applied inside `legacyHistoryToDurable()` as
 
 ```ts
 frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
@@ -2011,16 +2183,23 @@ frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFram
 — ranked **above** `options.initialFrame`, which is the caller's current frame, and therefore the
 cropped frame once the document has been cropped. The two models agree at index 0 by rule, not by
 seeding. The read is in the baseline, not in the create-layer arm, which still leaves `currentFrame`
-alone for every later entry (`:649-654`): a bedrock commit mid-history moves neither model.
+alone for every later entry (the create-layer arm of `legacyHistoryToDurable()`): a bedrock commit
+mid-history moves neither model.
 
 **What is missing is the tripwire, and nothing on `main` can fail.** `grep -rn frameFromFirstEntryBedrock src/`
 matches only `history-adapter.ts` — the function has no test at all. The two cross-model tests that
-look like they cover it do not: `history-adapter.branches.test.ts:746-793` puts its bedrock entry at
-index **1** (its `convert` helper at `:93-99` prepends `baselineHistory()`), and
-`history-adapter.tool-conversion.test.ts:136-154` does the same through its own `convert`
-(`:48-61`) and asserts only `created.layer.source` — never `baseline.frame`, never
+look like they cover it do not: `history-adapter.branches.test.ts` — the
+`it('leaves the durable frame at the pre-add size when a bedrock layer is added mid-history')` title
+in `describe('bedrock frame authority between durable shadow and legacy replay')` — puts its bedrock
+entry at
+index **1** (its `convert` helper prepends `baselineHistory()`), and
+`history-adapter.tool-conversion.test.ts` — the `it('derives a bedrock tool source size from the
+recorded size instead of the position')` title — does the same through its own `convert`
+helper and asserts only `created.layer.source` — never `baseline.frame`, never
 `replayDurableDocument(…, -1)`. The one test that seeds an `initialFrame` differing from the derived
-size, `history-adapter.branches.test.ts:131-149`, has a history with **no** source at all, so
+size, `history-adapter.branches.test.ts` — the `it('prefers the explicit initial frame over a derived
+size when the first entry has no document source')` title — has a history with **no** source at all,
+so
 `frameFromFirstEntryBedrock` returns `undefined` and `options.initialFrame` still wins.
 
 So a regression that flips the ranking — putting the caller's seed back above the bedrock size — is
@@ -2032,44 +2211,54 @@ with an `options.initialFrame` of a different size, asserting `baseline.frame` e
 size AND that `replayDurableDocument(converted.document, -1)` agrees with
 `replayHistory(history, 0)`. Neither model is allowed to prefer the caller's seed at index 0.
 
-**Files.** `src/contexts/history-adapter.ts:263-271,591,649-654`,
-`src/contexts/history-replay.ts:103-109`,
-`src/contexts/__tests__/history-adapter.branches.test.ts:93-99,131-149,746-793`,
-`src/contexts/__tests__/history-adapter.tool-conversion.test.ts:48-61,136-154`
+**Files.** `src/contexts/history-adapter.ts` — `frameFromFirstEntryBedrock()`, and the baseline and
+create-layer arms of `legacyHistoryToDurable()`;
+`src/contexts/history-replay.ts` — `replayHistory()`'s bedrock frame branch;
+`src/contexts/__tests__/history-adapter.branches.test.ts` — the `convert` helper and the two `it`
+titles named above;
+`src/contexts/__tests__/history-adapter.tool-conversion.test.ts` — the `convert` helper and its
+bedrock-size `it` title
 
 ---
 
 ## 92. The converter re-derives a created or merged layer's snapshot, and disagrees with the runtime rule
 
-**Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts:166`),
-which `replayHistory` reaches through its `createLayer` dependency (`:108` and `:134`, wired at
-`useHistory.ts:88`). The converter builds the same layer through a **second, re-derived** rule,
-`sourceToRuntimeLayer` (`history-adapter.ts:842-860`), called from the create-layer arm (`:605`) and
-the merge arm (`:728`). The two disagree on three fields, on the first layer of any document:
+**Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts` —
+`createLayerSource()`),
+which `replayHistory` reaches through its `createLayer` dependency (its two
+`dependencies.createLayer` calls, wired at `useHistory.ts` — the `createLayer` dependency). The
+converter builds the same layer through a **second, re-derived** rule,
+`sourceToRuntimeLayer` (`history-adapter.ts`), called from the create-layer arm and
+the merge arm of `legacyHistoryToDurable()`. The two disagree on three fields, on the first layer of
+any document:
 
-| field     | runtime (`createLayerSource`)                                         | shadow (`sourceToRuntimeLayer`)                          |
-| --------- | --------------------------------------------------------------------- | -------------------------------------------------------- |
-| `name`    | `` `${getNameFromSource(source)} ${maxOrder}` `` (`:181`)             | the bare kind, with no order suffix (`:847`)             |
-| `opacity` | `1`, always (`:189`)                                                  | `source.opacity` for a blank (`:850`)                    |
-| `order`   | `maxLayerOrder(layers) + 1` (`:169`), `0` for an empty record (`:41`) | `Math.max(-1, …) + 1` (`:853`), so `0` for an empty fold |
+| field     | runtime (`layer-utils.ts` — `createLayerSource()`)                                                  | shadow (`history-adapter.ts` — `sourceToRuntimeLayer()`)               |
+| --------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `name`    | `` `${getNameFromSource(source)} ${maxOrder}` `` — the `name` it binds                              | the bare kind, with no order suffix — the `name` it binds              |
+| `opacity` | `1`, always — the `opacity` it binds                                                                | `source.opacity` for a blank — the `opacity` it binds                  |
+| `order`   | `maxLayerOrder(layers) + 1` — the `order` it binds; `0` for an empty record, from `maxLayerOrder()` | `Math.max(-1, …) + 1` — the `order` it binds, so `0` for an empty fold |
 
 Executed against the real converter on a blank source with `opacity: 0.5` added to an empty
 document: the runtime layer is `{ name: 'Blank 1', opacity: 1, order: 1 }` and the durable snapshot
 is `{ name: 'Blank', opacity: 0.5, order: 0 }`. A second disagreement rides along in the same line:
-`getNameFromSource` applies `ellipsify` (`layer-utils.ts:158`), so a long image name is truncated in
+`getNameFromSource` applies `ellipsify` (`layer-utils.ts` — `getNameFromSource()`), so a long image
+name is truncated in
 the document and not in the shadow.
 
 **User-visible failure.** The shadow describes a differently **named** and differently **transparent**
 layer than the document for the same edit. The `opacity` half is the dangerous one and it is not
 merely a wrong number: the runtime bakes a blank's `source.opacity` into the canvas pixels
-(`layer-utils.ts:205-215`, `ctx.globalAlpha` at `:212`) and leaves `layer.opacity` at `1`, so the
+(`layer-utils.ts` — `createLayerSource()`'s blank arm, at its `ctx.globalAlpha`) and leaves
+`layer.opacity` at `1`, so the
 shadow's `opacity: 0.5` is a **layer-level** claim about an alpha the document holds in the bitmap.
 A materialization that applied it would double-apply the transparency. The `order` half is quieter
 but not free: it puts the first layer of a document at order `0` in one model and `1` in the other.
 
-**Two existing tests pin the two answers, which is why neither side is accidental.**
-`layer-utils.createLayerSource.test.ts:107-108` pins the runtime (`'Blank 1'`, `'shape 1'`) and
-`durable-replay.layer-operations.test.ts:113` pins the shadow (`'Blank'`). **A fix has to flip the
+**Two existing tests pin the two answers, which is why neither side is accidental.** The `it('names a
+blank layer Blank and a tool layer after its tool')` title in
+`layer-utils.createLayerSource.test.ts` pins the runtime (`'Blank 1'`, `'shape 1'`) and the `it('create-layer
+makes a new layer visible at the tip and absent at prior cursors')` title in
+`durable-replay.layer-operations.test.ts` pins the shadow (`'Blank'`). **A fix has to flip the
 second one.**
 
 **Fix — this is a decision, not an edit, and the decision comes first.** The obvious move is to have
@@ -2088,15 +2277,17 @@ than one of the two.
 
 ## 93. `plainValue` drops `undefined` from an object and throws on it inside an array
 
-**Problem.** The two arms of `plainValue` (`history-adapter.ts:101-120`) disagree about one value.
-The object arm filters it out — `.filter(([, item]) => item !== undefined)` (`:116`) — so an
-`undefined` property is silently dropped. The array arm (`:106-111`) has no filter, so an `undefined`
-element falls through both guards to `:112` and throws `Non-plain value at <path>[i]`.
+**Problem.** The two arms of `plainValue` (`history-adapter.ts` — `plainValue()`) disagree about one
+value.
+The object arm filters it out — its `.filter(([key]) => Object.prototype.propertyIsEnumerable.call(value, key))`
+plus the `item === undefined ? undefined : …` guard — so an
+`undefined` property is silently dropped. The array arm has no filter, so an `undefined`
+element falls through both guards to `throw new Error(\`Non-plain value at ${path}\`)` and throws.
 
 **User-visible failure.** One sparse tool-arg array voids the **entire** durable document. The throw
-is raised inside the per-item `try` (`history-adapter.ts:602`), caught at `:748-750`, and recorded by
-`diagnosticFromError` at `severity: 'error'` (`:411`) — which is precisely the condition
-`convertLegacyHistorySafely` turns into `status: 'unavailable'` with `document: null` (`:816`). The
+is raised inside `legacyHistoryToDurable()`'s per-item `try`, caught by its own `catch`, and recorded
+by `diagnosticFromError()` at `severity: 'error'` — which is precisely the condition
+`convertLegacyHistorySafely()` turns into `status: 'unavailable'` with `document: null`. The
 object arm's `undefined` proves the value is not a contract violation; the array arm treats it as
 one, and pays for it with every other entry in the timeline. Executed: a tool source whose args hold
 `composite: [1, undefined, 3]` produces `Non-plain value at layer:L1.source.args.composite[1]` and
@@ -2107,17 +2298,20 @@ real array-valued arg.)
 
 **Not latent, and the earlier version of this entry said otherwise for the wrong reason.** It claimed
 "No `ToolArgs` field is an array", which is false — `DrawToolArgs.points?: Point[]` and
-`lineDash?: null | number[]` (`src/tools/draw.ts:13-14`), `EraserToolArgs.points` (`eraser.ts:66`),
-`DodgeBurnToolArgs.points` (`dodgeBurn.ts:26`), `CloneStampToolArgs.points` (`cloneStamp.ts:18`),
-`ColorReplacementToolArgs.points?` (`colorReplacement.ts:97`), plus the polygonal-lasso,
+`lineDash?: null | number[]` (`draw.ts` — `DrawToolArgs`), `EraserToolArgs.points` (`eraser.ts` —
+`EraserToolArgs`), `DodgeBurnToolArgs.points` (`dodgeBurn.ts` — `DodgeBurnToolArgs`),
+`CloneStampToolArgs.points` (`cloneStamp.ts` — `CloneStampToolArgs`),
+`ColorReplacementToolArgs.points?` (`colorReplacement.ts` — `ColorReplacementToolArgs`), plus the
+polygonal-lasso,
 feather-magnetic-lasso, quick-selection and elliptical-selection args — and production really does
-write them into history verbatim: `BurnToolArea.tsx:88-94` commits
-`updateLayerByTool({ toolArgs: { …args, points: … } })`, and `updateLayerByTool` appends the
-`TOOL_ACTION` entry at `useLayer.ts:376-386`. A `points` array of `Point` objects never contains
+write them into history verbatim: `BurnToolArea.tsx` — its `onCommit` handler — commits
+`updateLayerByTool({ toolArgs: { …args, points: … } })`, and `updateLayerByTool()` in `useLayer.ts`
+appends the
+`TOOL_ACTION` entry. A `points` array of `Point` objects never contains
 `undefined`, so the user-visible failure is not reachable today. But the arm is one stray element
 away on a field already in production history, which is a stronger argument than the one it
-replaces. The call sites are the ones that carry whole tool args — `convertSource:165` and
-`operationForTool:495`, `:516`, `:546`.
+replaces. The call sites are the ones that carry whole tool args — `convertSource` and
+`operationForTool` in `history-adapter.ts`.
 
 **Fix.** Drop `undefined` elements in the array arm the way the object arm drops `undefined`
 properties, and document that a sparse tool arg is normalised rather than rejected. If a future arg
@@ -2129,28 +2323,34 @@ frames this as a choice between compaction and rejection and asserts `main` pres
 holes today. That is right about a true **hole** (`.map` skips it) and wrong about an explicit
 `undefined`, which throws and voids the document — the plan never mentions the throw.
 
-**Files.** `src/contexts/history-adapter.ts:101-120,165,495,516,546,648,800-802,868-876`,
-`src/contexts/useLayer.ts:376-386`, `src/tools/draw.ts:13-14`, `src/tools/eraser.ts:66`,
-`src/tools/dodgeBurn.ts:26`, `src/tools/cloneStamp.ts:18`, `src/tools/colorReplacement.ts:97`
+**Files.** `src/contexts/history-adapter.ts` — `plainValue()`, `convertSource()`,
+`operationForTool()` and `convertLegacyHistorySafely()`;
+`src/contexts/useLayer.ts` — `updateLayerByTool()`; `src/tools/draw.ts` — `DrawToolArgs`;
+`src/tools/eraser.ts` — `EraserToolArgs`; `src/tools/dodgeBurn.ts` — `DodgeBurnToolArgs`;
+`src/tools/cloneStamp.ts` — `CloneStampToolArgs`; `src/tools/colorReplacement.ts` —
+`ColorReplacementToolArgs`
 
 ---
 
 ## 94. A skipped duplicate leaves the fold advanced, so a later `set-document-frame` can carry a `previous` the durable history never reached
 
 **Problem.** When a duplicate id is skipped, the publication is withheld and the **fold state is
-deliberately left advanced** (`history-adapter.ts:752-782`). That breaks the invariant the frame
-derivation states in its own docstring — `currentFrame` is the last enabled **durable** frame
-(`:253`) — so a later `set-document-frame` that supplies no `previousFrame` takes its `previous`
-from `currentFrame` (`:263`) and publishes a frame the durable history never reached.
+deliberately left advanced** (the duplicate-id skip inside `legacyHistoryToDurable()` in
+`history-adapter.ts`). That breaks the invariant the frame derivation states in its own docstring —
+`deriveSetDocumentFrameEntry()`'s, which documents `currentFrame` as the last enabled **durable**
+frame — so a later `set-document-frame` that supplies no `previousFrame` takes its `previous`
+from `currentFrame` (inside `deriveSetDocumentFrameEntry()`) and publishes a frame the durable
+history never reached.
 
 **User-visible failure, today: none.** Nothing reads `previous`. Durable replay applies `next` only
-(`durable-replay.ts:129-131`), exactly as `set-selection` applies `after` only
-(`durable-replay.ts:140-142`). This is a latent hazard for the day something does read it, not a live
+(the `'set-document-frame'` case in `durable-replay.ts`), exactly as `set-selection` applies `after`
+only (the selection case in `durable-replay.ts`). This is a latent hazard for the day something does
+read it, not a live
 wrong answer — recorded here so the day it stops being latent is not also the day the advance is
 "fixed" by someone who has not read this.
 
 **The advance is deliberate and must not be undone.** `replayHistory` addresses entries by position
-(`history-replay.ts:73`) and has no id check, so it **applies both** repeats and ends in the same
+and has no id check, so it **applies both** repeats and ends in the same
 fold state the converter holds. Not advancing would add a second, independent way for a later
 derivation to disagree with the legacy timeline — the converter would then differ from both the
 document and itself. Parity is the reason; the stale `previous` is the price, and it is a price
@@ -2158,7 +2358,10 @@ worth paying while `previous` is unread.
 
 **Fix.** Not a fix to the advance. When something starts reading `previous`, the invariant has to be
 restored then — most likely by recording the durable-reachable frame separately from the fold — and
-that change must re-point the pins at `history-adapter.diagnostics.test.ts:742` and `:764`, which
+that change must re-point the `it('leaves the frame fold advanced, so the next derived frame starts
+where the skipped repeat ended')` and `it('leaves the layer fold advanced, so a reorder after a
+skipped repeat is not derived from stale order')` titles in
+`history-adapter.diagnostics.test.ts`, which
 assert the advanced fold on purpose.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/durable-replay.ts`
@@ -2169,51 +2372,62 @@ assert the advanced fold on purpose.
 
 **Problem.** `StoreContext` refuses the publication when
 `layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)` is false
-(`src/contexts/StoreContext.tsx:849`) and logs one `console.error` for it
-(`src/contexts/StoreContext.tsx:862`). The comment above it already knows the problem
-(`src/contexts/StoreContext.tsx:851-852`): _"Two refusals share that outcome and mean different
-things, so only one of them is reported."_ Two refusals, one message — so the second is not merely
+(the dispatcher's `PUBLISH_RUNTIME_PRESENTATION` guard in `StoreContext.tsx`) and logs one
+`console.error` for it
+(its `Refused a runtime presentation publication that also changes durable layer state` call). The
+comment above it already knows the problem
+(the same guard, at _"Two refusals share that outcome and mean different
+things, so only one of them is reported."_) Two refusals, one message — so the second is not merely
 unreported, it is **misreported**: a publication that is a deliberate no-op is logged with the text
 of a lost logical edit.
 
 **The second reason is an identity affine operation.** The shape, from the code:
 
 - `normalizeCommittedToolArgs` returns `null` for a transform whose retained history args are the
-  identity (`src/contexts/useLayer.ts:76`, tested by `isIdentityAffineTransform`,
-  `src/contexts/affine-transform.ts:47`), so the operation is dropped from the **history args**.
+  identity (`useLayer.ts` — `normalizeCommittedToolArgs()`, tested by `isIdentityAffineTransform()`,
+  `affine-transform.ts`), so the operation is dropped from the **history args**.
 - The layer record published alongside it is built from the preview and **copies the preview's
-  operations array** (`src/contexts/useLayer.ts:391`), so the identity operation is still on it.
+  operations array** (`useLayer.ts` — `tempUpdateLayer()`'s transform arm), so the identity operation
+  is still on it.
 - `pendingToolEdits` is only pushed when the normalized args are truthy
-  (`src/contexts/useLayer.ts:396`), so with nothing recorded the commit takes the
-  `!pendingToolEdits.length` branch (`src/contexts/useLayer.ts:414`) and dispatches
-  `PUBLISH_RUNTIME_PRESENTATION` (`src/contexts/useLayer.ts:417`) with a payload that differs from
+  (inside `commitDirtyTool()` in `useLayer.ts`), so with nothing recorded the commit takes the
+  `!pendingToolEdits.length` branch (also `commitDirtyTool()`) and calls
+  `publishRuntimePresentation()` (from that same branch) with a payload that differs from
   the stored layer in `operations` alone.
-- `layersDifferOnlyByPresentation` (`src/contexts/layer-presentation.ts:96`) compares durable state,
+- `layersDifferOnlyByPresentation` (`layer-presentation.ts` — `layersDifferOnlyByPresentation()`)
+  compares durable state,
   and `operations` is durable. The publication is refused, and a no-op is reported as an invariant
   violation.
 
-**It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx:80` calls
-`tempUpdateLayer` and nothing else; the option bar's own commit is the `change` event at
-`Transform.tsx:54-69`, which is a separate listener. The commit is
-`commitDirtyTool(true)` at `src/contexts/useLayer.ts:443`, reached from `goToTool`, a new layer,
+**It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx` —
+`throttledOnChange()` — calls
+`tempUpdateLayer` and nothing else; the option bar's own commit is the `change` event on
+`onValueCommitted`, which is a separate listener. The commit is
+`commitDirtyTool(true)` in `useLayer.ts` — `commitDirtyTool()`, reached from `goToTool`, a new layer,
 or `mergeAllLayers` — the options bar's Apply link, which used to be the fourth caller, was
 removed by `c424469a`. So the operation is **staged** by the slider and only meets the
-publishing branch when one of those commits — and `useLayer.lifecycle.test.tsx:541` already pins
+publishing branch when one of those commits — and the `it('discards an identity transform preview
+without publishing a layer or history entry')` title in `useLayer.lifecycle.test.tsx` already pins
 that a staged identity preview is discarded. Do not write the test for this by moving a slider and
 releasing; nothing publishes.
 
 **Why it matters beyond the log line.** The refusal is contained — nothing is persisted and
-`previewLayersRef.current` is cleared at `src/contexts/useLayer.ts:400` — so no user edit is lost.
-It is NOT the `tmpCanvas` story the comment at `src/contexts/StoreContext.tsx:850-851` tells for the
-other refusal: the transform preview nulls `tmpCanvas` outright (`src/contexts/useLayer.ts:557`), so
+`previewLayersRef.current` is cleared inside `commitDirtyTool()` — so no user edit is lost.
+It is NOT the `tmpCanvas` story the same guard's own
+_"a refused publication is a contained no-op: the layer keeps rendering from its tmpCanvas"_ comment
+in `StoreContext.tsx` tells for the
+other refusal: the transform preview nulls `tmpCanvas` outright (`useLayer.ts` — `tempUpdateLayer()`'s
+transform arm), so
 there is no cached raster still rendering. What is lost is the signal — a `console.error` reading
 "this action's invariant was broken" for a commit that did exactly what the user asked. Once that
 text exists, the real violation is the one an operator learns to discount.
 
 **Two tests already pin the message, so this is a change to them, not an addition beside them.**
-`src/contexts/__tests__/useLayer.commit.test.tsx:258-261` asserts the call count, the invariant text
-and the offending ids — and its own comment at `:256-257` already states the two-refusal claim this
-entry is recording. `src/contexts/__tests__/StoreContext.presentation.test.tsx:315-318` pins the
+The `it('preserves hasUnsavedChanges and the durable shadow across a presentation-only commit')`
+title in `useLayer.commit.test.tsx` asserts the call count, the invariant text
+and the offending ids — and its own comment already states the two-refusal claim this
+entry is recording. The `it('does not close a restored layer cache when a later removal re-files it')`
+title in `StoreContext.presentation.test.tsx` pins the
 count and the layer ids. Any fix must decide what those two assert for the identity case, which is
 the actual design question, and it is not a question this entry can answer for you.
 
@@ -2229,31 +2443,40 @@ What `StoreContext` then does with a `true` is the decision:
 - **Accept, and publish the stored record** — the larger change, and the one the durable model
   prefers. An identity operation in `layer.operations` with no history entry is live state the
   durable shadow cannot reproduce: the reducer deliberately does not move `durableStatus` on this
-  transition (`src/contexts/StoreContext.tsx:510-515`), and `history-replay.ts:200` rebuilds
+  transition (the `'PUBLISH_RUNTIME_PRESENTATION'` case in `StoreContext.tsx`, which returns
+  `{ ...state, layers }` and nothing else), and `replayHistory()`'s `layer-operation` arm in
+  `history-replay.ts` rebuilds
   `layer.operations` from history entries. Accepting the payload as-is would publish a record whose
   operations the shadow cannot re-derive. Publishing the STORED record instead makes the preview a
   pure no-op, which is what the user asked for.
 
 Whichever is chosen, two details are load-bearing. `operations` **is** in `logicalLayerState`, because
 `PRESENTATION_FIELDS` is only `bitmap` and `tmpCanvas`
-(`src/contexts/layer-presentation.ts:70,76-78`), so it must be excluded explicitly on both sides. And
-`getLayerAffineTransform` skips both non-affine kinds and disabled operations
-(`src/contexts/affine-transform.ts:229-236`), so the filter must be exactly `kind === 'affine-transform'
-&& isIdentityAffineTransform(op.transform)` — and since `createAffineLayerOperation` mints a fresh
-uuid per preview (`src/contexts/layer-utils.ts:114`), the two sides are only comparable after the
+(`layer-presentation.ts` — `PRESENTATION_FIELDS` and `logicalLayerState()`), so it must be excluded
+explicitly on both sides. And
+`getLayerAffineTransform()` skips both non-affine kinds and disabled operations
+(`affine-transform.ts`), so the filter must be exactly `kind === 'affine-transform'
+&& isIdentityAffineTransform(op.transform)` — and since `createAffineLayerOperation()` mints a fresh
+uuid per preview (`layer-utils.ts`), the two sides are only comparable after the
 identity entries are removed from **both**.
 
-**Files.** `src/contexts/StoreContext.tsx:849-868`,
-`src/contexts/__tests__/useLayer.commit.test.tsx:256-261`,
-`src/contexts/__tests__/StoreContext.presentation.test.tsx:313-318`,
-`src/contexts/layer-presentation.ts:96`, `src/contexts/useLayer.ts:76,391,396,400,414-417,557`,
-`src/contexts/affine-transform.ts:47,229-236`, `src/contexts/layer-utils.ts:114`,
-`src/components/ToolbarsRight/Transform/Transform.tsx:48`.
+**Files.** `StoreContext.tsx` — the dispatcher's `PUBLISH_RUNTIME_PRESENTATION` guard and the
+reducer case of the same name;
+`src/contexts/__tests__/useLayer.commit.test.tsx` — the `it` title named above,
+`src/contexts/__tests__/StoreContext.presentation.test.tsx` — the `it` title named above,
+`src/contexts/layer-presentation.ts` — `layersDifferOnlyByPresentation()`, `PRESENTATION_FIELDS`,
+`logicalLayerState()`; `src/contexts/useLayer.ts` — `normalizeCommittedToolArgs()`,
+`commitDirtyTool()`, `tempUpdateLayer()`; `src/contexts/affine-transform.ts` —
+`isIdentityAffineTransform()`, `getLayerAffineTransform()`; `src/contexts/layer-utils.ts` —
+`createAffineLayerOperation()`,
+`src/components/ToolbarsRight/Transform/Transform.tsx` — `throttledOnChange()` and
+`onValueCommitted`.
 
 **Origin.** Salvaged from the unmerged `fix/unit-tests` branch, which also carried two
 `history-adapter` changes — a duplicate-durable-entry-id filter and a frame-omission diagnostic.
-Both have since landed on `main` by other routes (`history-adapter.ts:581,752,780` and the `else`
-at `:656`). The `layer-presentation` predicate was the third part, and it has NOT landed: it is
+Both have since landed on `main` by other routes (the `publishedEntryIds` check and add inside
+`legacyHistoryToDurable()` in `history-adapter.ts`, and that function's `SET_DOCUMENT_FRAME_ACTION`
+`else`). The `layer-presentation` predicate was the third part, and it has NOT landed: it is
 absent from `main` today, and `fix/unit-tests` remains 2 commits ahead with 13 conflicting files,
 `StoreContext.tsx` and `useLayer.ts` among them. Treat the branch as at-risk salvage, not as a clean
 source, and re-derive from this entry rather than from its copy.
@@ -2272,30 +2495,41 @@ docs/LAYERS-PANEL.md:825:6. **The `e2e/OPEN-PROBLEMS.md` filename mismatch — a
 e2e/viewport-drawing.spec.ts:228:   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
 ```
 
-`docs/LAYERS-PANEL.md:826-834` reports it as "written in **only two files, five lines**:
-`AGENTS.md:15`, `:161`, `:172` and `TEST-FLAKES.md:391`, `:657`". Every one of those five citations
+`docs/LAYERS-PANEL.md` §20 item 6 reported it as "written in **only two files, five lines**", with
+this shape of citation:
+
+```
+AGENTS.md:15, :161, :172  and  TEST-FLAKES.md:391, :657
+```
+
+Every one of those five citations
 is stale, and two of the four files it names (`AGENTS.md`) no longer hold the typo at all — the
 routing table rewrite replaced them with the underscore form. Its supporting premise is stale the
 same way: `AGENTS.md` no longer carries the route-by-scope rule that the item argues from, and that
-rule is now `docs/DOCUMENTATION.md:103-117`. So `TEST-FLAKES.md:391` and `:657` name a port note and
-a marker-bounding-box note rather than a filename reference, and `:712` in an earlier revision of this
-entry was the occurrence that is now at `:722`.
+rule is now `docs/DOCUMENTATION.md` §"The single-home rule". So both `TEST-FLAKES.md` citations name
+a port note and
+a marker-bounding-box note rather than a filename reference, and the third was the occurrence that
+has since moved.
 
 **The three survivors route differently, and two of them are not this file's business.**
-`TEST-FLAKES.md:722` and `docs/LAYERS-PANEL.md:825` are prose, so this entry is their routed home.
-`e2e/viewport-drawing.spec.ts:228` is a comment inside a Playwright spec, so by the same routing table
+The `TEST-FLAKES.md` §12 `captureCanvasScreenshot` drift note and `docs/LAYERS-PANEL.md` §20 item 6
+are prose, so this entry is their routed home.
+The SKIPPED-BY-DECISION comment above the
+`test('line stays under cursor after window resize (normal, wide and narrow)')` case in
+`e2e/viewport-drawing.spec.ts` is a comment inside a Playwright spec, so by the same routing table
 it belongs in `e2e/OPEN_PROBLEMS.md` — **and no such entry exists** (`grep -in 'OPEN-PROBLEMS' e2e/OPEN_PROBLEMS.md`
 is empty). A fix confined to the two prose files leaves that third occurrence standing, which is
 almost certainly how it has survived every earlier pass.
 
-**Fix.** Correct all three to the underscore form, filing the `e2e/viewport-drawing.spec.ts:228`
+**Fix.** Correct all three to the underscore form, filing the `e2e/viewport-drawing.spec.ts` comment
 occurrence in `e2e/OPEN_PROBLEMS.md` rather than here. Then delete or rewrite §20 item 6 so it
-asserts neither a five-line census nor the `AGENTS.md` premise. Re-derive the remaining line numbers
+asserts neither a five-line census nor the `AGENTS.md` premise. Re-derive the remaining references
 from the prose at the time of the fix: `AGENTS.md` is the file every agent reads first, so a citation
 into it silently rots, and its own rule says as much.
 
-**Files.** `docs/LAYERS-PANEL.md:825`, `TEST-FLAKES.md:722`,
-`e2e/viewport-drawing.spec.ts:228`, `docs/DOCUMENTATION.md:103-117`
+**Files.** `docs/LAYERS-PANEL.md` §20 item 6, `TEST-FLAKES.md` §12,
+`e2e/viewport-drawing.spec.ts` — the SKIPPED-BY-DECISION comment named above,
+`docs/DOCUMENTATION.md` §"The single-home rule"
 
 ---
 
@@ -2304,27 +2538,30 @@ into it silently rots, and its own rule says as much.
 **Decided 2026-09-30: the app gets no user-facing error surface.** Swallowing a failure is acceptable
 provided the console reports it. Every `alert()` was removed in favour of `console.error`
 (`155ba7b8`), and nothing replaced them: `git grep -iE "toast|snackbar|notif"` over production `src/`
-returns nothing, and `ErrorBoundary` is mounted at only two places (`src/App.tsx:92,96`), catches
+returns nothing, and `ErrorBoundary` is mounted at only two places (`App.tsx` — the two
+`ErrorBoundary` mounts), catches
 React render throws only, and covers neither `Menu`, `MobileMenuDrawer` nor `MobileHeader`.
 **Do not "fix" a silent failure by adding a dialog or a banner** without asking again — the reasoning
 that removed the alerts applies to whatever would replace them.
 
 **The accepted cost, which is real and deliberate.** A failed file open, save, export or selection
 copy is invisible on screen. Export is the sharpest case: `handleImageSave`'s `finally` closes the
-save dialog unconditionally (`src/contexts/useFile.tsx:133-136`), so a failure closes it exactly as a
+save dialog unconditionally (`useFile.tsx` — `handleImageSave()`), so a failure closes it exactly as a
 success does, and on desktop the screen is then byte-identical to success — `fileName` is rendered
-only at `src/components/Mobile/MobileMenuDrawer.tsx:110` and `src/components/Mobile/MobileHeader.tsx:107`,
+only at `MobileMenuDrawer.tsx` and `MobileHeader.tsx` — the `fileName` bindings each reads from the
+store —
 and `hasUnsavedChanges` is rendered nowhere, appearing in components only inside the three `confirm()`
 guards. This is reachable by decision, not by accident: entry 45 keeps the 80 MP AVIF ceiling, so an
 80–100 MP document is _supposed_ to fail to export.
 
-No data is lost. `useApp.handleImageSave` (`src/hooks/useApp.ts:67-71`) is the only writer of
+No data is lost. `useApp.handleImageSave` (`useApp.ts` — `handleImageSave()`) is the only writer of
 `hasUnsavedChanges: false` and of the rename, and it is guarded by `if (data)` at every call site, so
 a failed export leaves the document dirty and intact rather than half-saved.
 
 **What the decision required.** A report is only as good as the channel, so the console gap had to be
-closed for it to hold. `copyActiveSelection` returns `false` without throwing for every null-snapshot
-case (`src/contexts/useSelectionClipboard.ts:41-62`), and seven call sites used to discard that boolean
+closed for it to hold. `copyActiveSelection` — `useSelectionClipboard` — `copySelection()` — returns
+`false` without throwing for every null-snapshot
+case, and seven call sites used to discard that boolean
 in silence — `FreehandLasso.tsx`, `FeatherMagneticLasso.tsx`, `MagicWand.tsx`, `QuickSelection.tsx`,
 `EllipticalSelection.tsx`, `RectangularSelection.tsx` and the `AppKeyboardShortcuts.tsx` copy shortcut.
 All seven now log it, so no failure path is silent. The file and export sites also pass the caught
@@ -2338,42 +2575,71 @@ unasserted in general: `e2e/helpers/console-police.ts` fails every spec on an un
 error or page error. What remains true here is narrower — those four paths are never _reached_
 in a browser, so nothing there could produce a message for it to catch.)
 
-**Files.** `src/contexts/useFile.tsx:118-136`, `src/hooks/useApp.ts:67-71`,
-`src/contexts/useSelectionClipboard.ts:41-62`, `src/components/Main/Main.tsx:195,355,369`,
+**Files.** `src/contexts/useFile.tsx` — `handleImageSave()`, `src/hooks/useApp.ts` —
+`handleImageSave()`,
+`src/contexts/useSelectionClipboard.ts` — `copySelection()`,
+`src/components/Main/Main.tsx` — `handleDrop()` and its `onDrop` binding,
 `src/components/DesktopHeader/DesktopHeader.tsx` (File > Save handler),
-`src/components/Mobile/MobileMenuDrawer.tsx:49,60,82,110`,
-`src/components/Mobile/MobileHeader.tsx:81,107`, `src/App.tsx:92,96`,
-`src/util/selection.ts:430-442`.
+`src/components/Mobile/MobileMenuDrawer.tsx` — `handleNew()`, `handleOpen()`, `handleSave()` and its
+`fileName` binding,
+`src/components/Mobile/MobileHeader.tsx` — `handleExport()` and its `fileName` binding,
+`src/App.tsx` — the two `ErrorBoundary` mounts,
+`src/util/selection.ts` — `getSelectionCanvasContext()` and `SelectionCanvasContextError`.
 
-## 99. Every `history-replay.ts` line citation past `:89` is off by twenty
+## 99. Every `history-replay.ts` line citation past the `documentSource` arm's gate is off by twenty
 
 **Problem.** The bedrock-frame assignment in `replayHistory` is now wrapped in `if (index === 0)`
-(`history-replay.ts:103-109`), which turned a five-line block into a thirteen-line one, and the
-`documentSource` arm above it grew a gate of its own (`:89-94`). Every cited line up to `:78` still
-points where it did; **every citation past `:89` is now twenty lines early**, and the shift in between
-is not uniform (`:79-82` moved eleven, `:83-84` twelve, `:85-89` nineteen). The citations were all
+(`history-replay.ts` — `replayHistory()`, at its `index === 0` bedrock block), which turned a five-line
+block into a thirteen-line one, and the
+`documentSource` arm above it grew a gate of its own (that same `documentSource` arm). Every cited
+line up to the top of the `documentSource` arm still
+points where it did; **every citation past that point is now twenty lines early**, and the shift in
+between
+is not uniform (the rest of the `documentSource` arm moved eleven, its trailing lines twelve, the
+whole arm nineteen). The citations were all
 correct before the gates and are all wrong after them, so nothing here is pre-existing rot — it is
 drift this change introduced.
 
 **Why it matters.** These are references a session follows instead of reading, and `history-replay.ts`
-ends at 227, so a twenty-line miss lands inside the neighbouring arm rather than past the file. The
+runs past two hundred lines, so a twenty-line miss lands inside the neighbouring arm rather than past
+the file. The
 sites this entry listed in other documents have been re-pointed; the ones left are in the history
-tests, which still quote the bedrock block as `:85-97`
-(`history-adapter.branches.test.ts:724`, `:771`, and `useHistory.test.tsx:413`), the document-frame
-arm as `:99-105` (`history-adapter.branches.test.ts:344`) and the document-source arm as `:78-84`
-(`:669-670`). Entry 96 in this file is the same genre of defect for the same reason.
+tests, which still quote the bedrock block as a line range
+(the fixture comment in `history-adapter.branches.test.ts` — the
+`it('reports the omission through the safe entry point while keeping the shadow available')` and
+`it('leaves the durable frame at the pre-add size when a bedrock layer is added mid-history')` titles
+— and `useHistory.test.tsx` — the `it.each(...)('replays image sources for %s without saving null
+canvases')` case), the document-frame
+arm as a line range (the `it('keeps a disabled remove entry in history without removing the layer')`
+title in `history-adapter.branches.test.ts`) and the document-source arm as a line range (that same
+file's `it('reports the omission through the safe entry point while keeping the shadow available')`
+title). Entry 96 in this file is the same genre of defect for the same reason.
 
 **Fix.** Re-point each site by reading the file, not by arithmetic — the shift is not uniform below
-`:89`. For reference, past `:89` the two gates together moved everything twenty lines down: the
-bedrock block is `:103-109`, the document-frame arm `:111-117`, the layer arms `:126-161`, the
-`layer-operation` test `:172` and the `document-operation` `continue` `:215`. Already correct, and
+the `documentSource` arm's gate. For reference, past that gate the two gates together moved everything
+twenty lines down: the
+bedrock block is `replayHistory()`'s `index === 0` block, the document-frame arm its
+`SET_DOCUMENT_FRAME_ACTION` arm, the layer arms its `NEW_LAYER_ACTION`/`TOOL_ACTION` handling, the
+`layer-operation` test its `processor.commit === 'layer-operation'` arm and the `document-operation`
+`continue` its `processor.commit === 'document-operation'` guard. Already correct, and
 re-verified against the working tree: the `set-document-frame` comment in
-`src/contexts/history-adapter.ts:707-717` (which now names `frameFromFirstEntryBedrock` and cites
-`:103-109`), `src/contexts/history-adapter.ts:303` and `:670`, and `src/contexts/history-append.ts:179`
-and `:464`. The four sites in this file are re-pointed too. Sites still stale:
+`history-adapter.ts` — the one inside `legacyHistoryToDurable()`'s `SET_DOCUMENT_FRAME_ACTION` arm,
+which now names `frameFromFirstEntryBedrock` and cites
+the bedrock block by line — plus that file's `deriveSetDocumentFrameEntry()` and its `legacyHistoryToDurable()`,
+and `history-append.ts` — `compareDurableSourceToLegacy()` and `deriveReorderLayersEntry()`. The four
+sites in this file are re-pointed too. Sites still stale:
 
-- `src/contexts/__tests__/history-adapter.branches.test.ts:344` (`:99-105`), `:669-670` (`:78-84`), `:724` and `:771` (`:85-97`), `:1407` (`:135`)
-- `src/contexts/__tests__/useHistory.test.tsx:413` (`:85-97`)
+- `src/contexts/__tests__/history-adapter.branches.test.ts` — the
+  `it('keeps a disabled remove entry in history without removing the layer')` title (the document-frame
+  arm), the `it('reports the omission through the safe entry point while keeping the shadow available')`
+  title (the document-source arm), the
+  `it('a disabled first entry replays as the empty state legacy replays')` and `it('leaves the durable
+frame at the pre-add size when a bedrock layer is added mid-history')` titles (the bedrock block),
+  and the `it('keeps recording a property action for a layer an earlier entry removed')` title (the
+  layer arms)
+- `src/contexts/__tests__/useHistory.test.tsx` — the
+  `it.each(...)('replays image sources for %s without saving null canvases')` case (the bedrock
+  block)
 
 **Files.** `src/contexts/history-replay.ts`
 
@@ -2383,12 +2649,15 @@ and `:464`. The four sites in this file are re-pointed too. Sites still stale:
 
 ## 101. A new blank image keeps the previous document's file name, so Save As pre-fills the old file's name
 
-**Problem.** `src/contexts/useLayer.ts:199-212` builds the `REPLACE_DOCUMENT` payload for a new
+**Problem.** `_addLayer()`'s `newDocument` branch (`useLayer.ts`) builds the `REPLACE_DOCUMENT` payload
+for a new
 document and omits `fileName` from `updates`. `REPLACE_DOCUMENT` spreads caller `updates` over state
-(`src/contexts/StoreContext.tsx:574`), so the field is simply never written and the outgoing
+(the `'REPLACE_DOCUMENT'` case in `StoreContext.tsx`), so the field is simply never written and the
+outgoing
 document's name survives. The other two document-creation paths both set it — the raster open through
-`_setFileName` (`src/hooks/useApp.ts:164`) and the PSD open through `updates.fileName`
-(`src/hooks/useApp.ts:128`) — which is exactly why the omission reads as an accident rather than a
+`_setFileName()` (called from `setImageFromUpload()` in `useApp.ts`) and the PSD open through
+`updates.fileName` (that same function's PSD arm) — which is exactly why the omission reads as an
+accident rather than a
 decision.
 
 Measured 2026-09-30 against the real `StoreProvider`, driving `setBlankImage` after seeding a document
@@ -2401,33 +2670,42 @@ PROBE hasUnsavedChanges = true
 
 Consequence: a document the user just created from scratch is named after a file that had nothing to
 do with it. The stale name reaches the export path through three hops — the store's `fileName` into
-`openSaveImageDialog` (`src/components/DesktopHeader/DesktopHeader.tsx:390`), into `setFileInput`
-(`src/contexts/useFile.tsx:110`), and out as `SaveDialog`'s `proposedName`
-(`src/contexts/useFile.tsx:174`) — so the save dialog is pre-filled from the old file. On mobile the
-staleness is also on screen, in the two components that render it (`MobileHeader.tsx:107`,
-`MobileMenuDrawer.tsx:110`); on desktop nothing displays it, so there the stale name is invisible until
+`openSaveImageDialog()` (`DesktopHeader.tsx` — its File > Save handler), into
+`openSaveImageDialog()`'s `setFileInput`
+(`useFile.tsx`), and out as `SaveDialog`'s `proposedName`
+(also `useFile.tsx`) — so the save dialog is pre-filled from the old file. On mobile the
+staleness is also on screen, in the two components that render it (the `fileName` binding in
+`MobileHeader.tsx` and in `MobileMenuDrawer.tsx`); on desktop nothing displays it, so there the stale
+name is invisible until
 a save. `hasUnsavedChanges` is not rendered anywhere, so there is no dirty-marker reading either way —
-its only consumers are the two `confirm()` guards at `DesktopHeader.tsx:340` and `:365`.
+its only consumers are the two `confirmDiscard()` guards in `DesktopHeader.tsx` — the `new-document`
+and `open-document` ones.
 
 **Fix.** Add `fileName` to the `updates` block in `_addLayer`'s `newDocument` branch
-(`src/contexts/useLayer.ts:199`). A new document's name is a product decision, not a derivation — the
-PSD arm sets the imported name, so the blank arm needs the untitled one (`BlankImageParams` at
-`src/contexts/tool-types.ts:117` carries no name field, so either a constant is introduced or the
-value arrives from the caller alongside `size`; `src/App.tsx:21`'s `DEFAULT_BLANK_IMAGE` is the
+(`useLayer.ts`). A new document's name is a product decision, not a derivation — the
+PSD arm sets the imported name, so the blank arm needs the untitled one (`BlankImageParams` in
+`tool-types.ts` carries no name field, so either a constant is introduced or the
+value arrives from the caller alongside `size`; `DEFAULT_BLANK_IMAGE` in
+`App.tsx` is the
 existing precedent for a caller-supplied default). `src/hooks/__tests__/useApp.document-reset.test.tsx`
 is the place to pin it, and its `expectOutgoingDocumentKilled` helper deliberately asserts nothing
 about `fileName` today — adding that assertion is the fix's own tripwire, so it must be added in the
 same change.
 
-**Files.** `src/contexts/useLayer.ts:199-212`, `src/contexts/StoreContext.tsx:574`,
-`src/hooks/useApp.ts:128`, `:164`, `src/contexts/useFile.tsx:110`, `:174`,
-`src/components/DesktopHeader/DesktopHeader.tsx:390`, `src/components/Mobile/MobileHeader.tsx:107`
+**Files.** `src/contexts/useLayer.ts` — `_addLayer()`; `src/contexts/StoreContext.tsx` — the
+`'REPLACE_DOCUMENT'` case;
+`src/hooks/useApp.ts` — `setImageFromUpload()` (both its `_setFileName()` call and its PSD arm),
+`src/contexts/useFile.tsx` — `openSaveImageDialog()`, `handleNewImageClose()` and `SaveDialog`'s
+`proposedName`,
+`src/components/DesktopHeader/DesktopHeader.tsx` — its File > Save handler and the two
+`confirmDiscard()` guards, `src/components/Mobile/MobileHeader.tsx` — its `fileName` binding
 
 ---
 
 ## 102. A failed raster open resizes the canvas and then keeps the old document
 
-**Problem.** `src/hooks/useApp.ts:160-164` resizes the canvas before it has anything to replace:
+**Problem.** `setImageFromUpload()` in `useApp.ts` resizes the canvas before it has anything to
+replace:
 
 ```ts
 const { image } = data;
@@ -2436,8 +2714,10 @@ handleImageCreate(size); // :162  resizes the canvas
 await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true); // :163  may reject
 ```
 
-`createLayerFromBitmap` awaits `immutableRaster` (`src/contexts/useLayer.ts:253`) before it dispatches
-`REPLACE_DOCUMENT`, so a decode failure rejects at `:163` with the canvas already resized and no store
+`createLayerFromBitmap` awaits `immutableRaster` (`useLayer.ts` — `createLayerFromBitmap()`) before it
+dispatches
+`REPLACE_DOCUMENT`, so a decode failure rejects at that `createLayerFromBitmap` call with the canvas
+already resized and no store
 transition published. The store half is correct — the retained document is untouched, and
 `src/hooks/__tests__/useApp.document-reset.test.tsx` pins exactly that as a negative control. The
 canvas half is not: it is now the new file's size while the document, `totalSize` and `documentFrame`
@@ -2453,26 +2733,31 @@ PROBE documentId after failed open = outgoing
 
 The retained document then renders through a canvas of the wrong size until something redraws it, and
 the overlay refs are untouched, so the tool overlay keeps the old geometry while the base canvas does
-not. The PSD arm already gets this right — it resizes all three refs at `:111-115` only after
-`immutableRaster` has resolved every layer at `:88-104`.
+not. The PSD arm already gets this right — it resizes all three refs in `setImageFromUpload()`'s PSD arm
+only after
+`immutableRaster` has resolved every layer in that same arm.
 
 **Fix.** Move `handleImageCreate(size)` to after `await createLayerFromBitmap(...)`, matching the PSD
 arm's ordering, or resize inside `_addLayer`'s `newDocument` branch where the replacement is
 published. Three things must change in the same commit, all of them pins of this defect rather than of
 intended behaviour:
 
-- `src/hooks/__tests__/useApp.image-upload.test.ts:148-153` asserts
+- The `it('sizes the canvas, creates the bedrock layer, and renames the document only afterwards')`
+  title in `useApp.image-upload.test.ts` asserts
   `['resizeCanvas:80x480', 'resizeCanvas:80x40', 'createLayerFromBitmap', 'SET_FILE_NAME']`.
-- `src/hooks/__tests__/useApp.image-upload.test.ts:174-179` asserts the same shape with a live canvas
+- The `it('has already resized the canvas to the image size when the layer creation starts')` title in
+  the same file asserts the same shape with a live canvas
   read — `createLayerFromBitmap(canvas=120x90)` is interpolated from inside the mock, so it pins the
   canvas's dimensions at the moment the layer build starts and cannot be satisfied by reordering alone.
-- The `it` titles at `src/hooks/__tests__/useApp.image-upload.test.ts:143` and `:167` declare the
+- That second title, and the `describe('useApp setImageFromUpload')` block it sits in, declare the
   ordering as the behaviour ("has already resized the canvas to the image size when the layer creation
   starts"), so renaming the expectations while leaving those titles would leave the test promising the
   defect.
 
-**Files.** `src/hooks/useApp.ts:160-164`, `src/contexts/useLayer.ts:247-277`,
-`src/hooks/__tests__/useApp.image-upload.test.ts:143-180`,
+**Files.** `src/hooks/useApp.ts` — `setImageFromUpload()`, `src/contexts/useLayer.ts` — `_addLayer()`
+and `createLayerFromBitmap()`,
+`src/hooks/__tests__/useApp.image-upload.test.ts` — the `describe` block and the two `it` titles named
+above,
 `src/hooks/__tests__/useApp.document-reset.test.tsx` ("kills nothing when the import fails before the
 document is replaced")
 
@@ -2480,26 +2765,30 @@ document is replaced")
 
 ## 103. The `REPLACE_DOCUMENT` fast path is a second, untested copy of the reducer's identity logic
 
-**Problem.** `src/contexts/StoreContext.tsx:1064-1108` intercepts `REPLACE_DOCUMENT` before it
+**Problem.** The dispatcher's `REPLACE_DOCUMENT` arm in `StoreContext.tsx` intercepts `REPLACE_DOCUMENT`
+before it
 reaches the reducer. It recomputes seven fields the reducer's own `REPLACE_DOCUMENT` arm
-(`:568-586`) also computes — `documentFrame`, `totalSize`, `documentId`, `documentRevision`,
-`branchRevision`, `history`, `historyIndex` — assigns them to `latestStateRef.current` at
-`:1085-1097`, and then calls `rawDispatch`, so the reducer runs anyway and React state is recomputed
+also computes — `documentFrame`, `totalSize`, `documentId`, `documentRevision`,
+`branchRevision`, `history`, `historyIndex` — assigns them to `latestStateRef.current` in
+that arm's own pre-write, and then calls `rawDispatch`, so the reducer runs anyway and React state is
+recomputed
 from the reducer chain. The two copies are related by nothing but a comment.
 
 **Measured 2026-09-30, one field at a time, against the real provider** with
-`src/hooks/__tests__/useApp.document-reset.test.tsx` (12 tests, all green):
+`src/hooks/__tests__/useApp.document-reset.test.tsx` (12 tests, all green). Each row mutates one of the
+seven assignments in the fast path's pre-write — named by its field below, since they all live in that
+one arm — plus the disposal guard beside it:
 
-| fast-path line | field              | mutated to                      | result                                                                               |
-| -------------- | ------------------ | ------------------------------- | ------------------------------------------------------------------------------------ |
-| `:1088`        | `documentFrame`    | `currentState.documentFrame`    | **survives**                                                                         |
-| `:1089`        | `totalSize`        | `currentState.totalSize`        | **survives**                                                                         |
-| `:1090`        | `documentId`       | `currentState.documentId`       | **survives**                                                                         |
-| `:1091`        | `documentRevision` | `currentState.documentRevision` | **survives**                                                                         |
-| `:1092`        | `branchRevision`   | `currentState.branchRevision`   | **survives**                                                                         |
-| `:1096`        | `history`          | appended instead of replaced    | **survives**                                                                         |
-| `:1097`        | `historyIndex`     | `currentState.historyIndex`     | **survives**                                                                         |
-| `:1082`        | disposal guard     | `if (false)`                    | caught — but by `StoreContext.durable-boundary.test.tsx:711`, not by any other suite |
+| fast-path site     | field              | mutated to                      | result                                                                           |
+| ------------------ | ------------------ | ------------------------------- | -------------------------------------------------------------------------------- |
+| the seed           | `documentFrame`    | `currentState.documentFrame`    | **survives**                                                                     |
+| the seed           | `totalSize`        | `currentState.totalSize`        | **survives**                                                                     |
+| the seed           | `documentId`       | `currentState.documentId`       | **survives**                                                                     |
+| the seed           | `documentRevision` | `currentState.documentRevision` | **survives**                                                                     |
+| the seed           | `branchRevision`   | `currentState.branchRevision`   | **survives**                                                                     |
+| the seed           | `history`          | appended instead of replaced    | **survives**                                                                     |
+| the seed           | `historyIndex`     | `currentState.historyIndex`     | **survives**                                                                     |
+| the disposal guard | disposal guard     | `if (false)`                    | caught — but by `StoreContext.durable-boundary.test.tsx`, not by any other suite |
 
 Seven of eight survive, and the reason is structural rather than incidental: the pre-write lands in
 `latestStateRef`, which the next dispatch reads as its `currentState`, and that value is used only to
@@ -2508,10 +2797,12 @@ React state and no exported value can observe it. The one append that reads a cu
 `updateHistoryTimeline` — clamps it, so even a stale `historyIndex` yields the same timeline.
 
 **Why it matters.** The duplication is a real correctness surface, not dead code: `currentState` is
-read by the disposal guard, so a wrong `documentId` at `:1090` would dispose the wrong document's
+read by the disposal guard, so a wrong `documentId` in the fast path's seed would dispose the wrong
+document's
 assets — and that is precisely the one field whose divergence is currently caught by a different
 suite, which is luck rather than design. Nothing binds the two copies together, so an edit to the
-reducer arm that is not mirrored at `:1085-1097` is invisible, and an edit to the fast path that is
+reducer arm that is not mirrored in the fast path's pre-write is invisible, and an edit to the fast
+path that is
 not mirrored in the reducer is invisible too.
 
 **Fix.** Two options, and the second is the real one. Either expose the fast path's pre-write to a
@@ -2519,10 +2810,13 @@ test — `latestStateRef` is already in the provider's value, so a store test ca
 fields directly and pin the two copies against each other. Or delete the fast path and let the
 reducer be the only writer; the pre-write exists to make same-batch dispatches see the new document,
 which `useSetSelectionFromHistory` and the append path need, so deletion is not free and the first
-option is the cheaper correct move. Whichever is chosen, the seven lines above are the list.
+option is the cheaper correct move. Whichever is chosen, the seven seeds in the table above are the
+list.
 
-**Files.** `src/contexts/StoreContext.tsx:1064-1108`, `:568-586`,
-`src/contexts/__tests__/StoreContext.durable-boundary.test.tsx:711`
+**Files.** `src/contexts/StoreContext.tsx` — the dispatcher's `REPLACE_DOCUMENT` arm and the reducer
+case of the same name,
+`src/contexts/__tests__/StoreContext.durable-boundary.test.tsx` — the `it('keeps unavailable rather
+than downgrading to stale when a selection commits after a failure')` title
 
 ## 106. `docs/TOOLS-RESEARCH-BRIEF.md` cites four numbers for one file, and all four are stale
 
@@ -2535,9 +2829,16 @@ grep -n '^## Photoshop shape tools\|^## The tool backlog\|^## Appendix A' \
 which prints `373:## Photoshop shape tools`, `3879:## The tool backlog — what to build next` and
 `4094:## Appendix A — the trap list`.
 
-`docs/TOOLS-RESEARCH-BRIEF.md:102-104` says "a 4,371-line playbook", its `## Photoshop shape tools`
-section is "`:357-846`", its `## The tool backlog` is "`:3797`" and its `## Appendix A` is
-"`:4012`". Every one of those points at content that has since moved. This is the citation-staleness
+`docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching" said "a 4,371-line
+playbook", and gave each of the three sections it names as a line range:
+
+```
+its `## Photoshop shape tools` section is `:357-846`
+its `## The tool backlog` is `:3797`
+its `## Appendix A` is `:4012`
+```
+
+Every one of those points at content that has since moved. This is the citation-staleness
 defect `.skills/photoshop-tool-creation.md` phase 9 exists to catch, in the one document that tells
 an agent what to read before writing a tool — and the drift is in the count as well as the anchors,
 which is the case a `grep` cannot see.
@@ -2546,46 +2847,55 @@ which is the case a `grep` cannot see.
 the sections by heading rather than by line, since a heading survives a merge and a line number
 does not.
 
-**Files.** `docs/TOOLS-RESEARCH-BRIEF.md:102-104`, `.skills/photoshop-tool-creation.md`
+**Files.** `docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching",
+`.skills/photoshop-tool-creation.md`
 
 ## 107. `docs/ORCHESTRATION.md` cites a handoff section and a source line that both point at the wrong thing
 
-The pointer in the document every other worktree rule defers to: `docs/ORCHESTRATION.md:201` cites
-`db.mjs:1130` for the `lock.agent_id !== who` conflict test. `:1130` is `holdFiles`' own signature
-line. The lock-level comparisons are `scripts/lib/agent-board/db.mjs:1163` (inside `holdFiles`) and
-`:1554` (inside `lockFile`); the claim-level ones are `:1071`, `:1320`, `:1587` and `:1677`.
+The pointer in the document every other worktree rule defers to: `docs/ORCHESTRATION.md`
+§"Four traps that cost real debugging time" cited
+`db.mjs`'s `holdFiles()` signature line for the `lock.agent_id !== who` conflict test. The lock-level
+comparisons are in `scripts/lib/agent-board/db.mjs` — one inside `holdFiles()` and one inside
+`lockFile`; the claim-level ones are in `createIssue()`, `claimIssue()`, `holdFileInTransaction()` and
+`releaseIssueLocksInTransaction()`.
 
 It matters more than an ordinary stale citation because it sits inside a rule an agent is told to
 obey rather than to check — the section that ends "Only `e2e-run/<…>/<digits>` is probed" — and
-because the wrong line names a function rather than a comparison, so a reader who opens `db.mjs:1130`
+because the wrong line names a function rather than a comparison, so a reader who opens that
+`holdFiles()` signature
 sees something that looks like the rule and is not.
 
-A second, now-corrected pointer: `docs/ORCHESTRATION.md:117` attributed the `git stash` rule to
+A second, now-corrected pointer: `docs/ORCHESTRATION.md` §"Landing" attributed the `git stash` rule to
 "HANDOFF §69", which was an eraser-preview defect, not the stash rule, and the real rule's own entry
 restated `docs/ORCHESTRATION.md` back at it. Both entries are now deleted and the dangling pointer
 went with them, so `docs/ORCHESTRATION.md` carries the stash rule once and on its own.
 
-**Files.** `docs/ORCHESTRATION.md:201`, `scripts/lib/agent-board/db.mjs:1130`, `:1163`, `:1554`
+**Files.** `docs/ORCHESTRATION.md` §"Four traps that cost real debugging time" and §"Landing",
+`scripts/lib/agent-board/db.mjs` — `holdFiles()`, `createIssue()`, `claimIssue()`,
+`holdFileInTransaction()`, `releaseIssueLocksInTransaction()`
 
 ## 108. `.skills/photoshop-tool-creation.md` carries ~200 source citations it last verified two days before `main` moved, and it does not know which are dead
 
 The skill's own header says every `file:line` was "last re-verified on 2026-09-28", and `main` has
-moved since. The four worst instances are confirmed stale today:
+moved since. The four worst instances were confirmed stale, each quoted here as it stood:
 
-- **`:492`** quotes `e2e/README.md:30` for "npm run test:e2e is **headless by default. Keep it that
-  way.**". That sentence is at `e2e/README.md:73`; `:30` is the "Counts are deliberately absent…"
-  line. The same paragraph says the README is "415 lines" and it is **580**.
-- **`:3774-3779`** and **`:3766-3767`** assert `e2e/README.md:401-411` still says the `e2e` job is
-  `continue-on-error: true`, and instruct the reader that "the README is the stale one — fix it in
-  the same commit". It is already fixed: `e2e/README.md:401-411` is a file listing of the export
-  baselines, and the history is at `:564`, which reads "It **was** `continue-on-error`". **This
-  instructs an agent to "fix" a correct document.**
-- **`:3137`**, **`:3553`**, **`:3766`**, **`:4328`** say the pass/skip count lives in
-  `e2e/OPEN_PROBLEMS.md:41-42`. `:41` is blank and `:42` is the `## Observed failures` heading;
-  `grep -c '97 pass\|skipped by declaration' e2e/OPEN_PROBLEMS.md` returns **0**. The count moved
-  to `AGENTS.md:125` and nothing in the file says so.
-- **`:3207-3208`** cites `e2e/README.md:243-263` for `testInfo.snapshotDir`, which is at `:395`; and
-  **`:3770-3772`** cites `e2e/OPEN_PROBLEMS.md:13-17` for a passage that starts at `:19`.
+```
+:492         quotes e2e/README.md:30 for "npm run test:e2e is headless by default. Keep it that way."
+:3774-3779   asserts e2e/README.md:401-411 still says the `e2e` job is `continue-on-error: true`
+:3137        says the pass/skip count lives in e2e/OPEN_PROBLEMS.md:41-42
+:3207-3208   cites e2e/README.md:243-263 for `testInfo.snapshotDir`
+```
+
+The first named the wrong `e2e/README.md` line — the headless sentence is in the README's own
+commands section, and the cited line was the "Counts are deliberately absent…" line instead. The same
+paragraph claimed the README was "415 lines" and it was **580**. The second is the damaging one: the
+README's history section already read "It **was** `continue-on-error`", and the skill still instructed
+the reader that "the README is the stale one — fix it in the same commit", so it **instructed an agent
+to "fix" a correct document.** The third pointed at two lines of `e2e/OPEN_PROBLEMS.md` that are blank
+and the `## Observed failures` heading, while `grep -c '97 pass\|skipped by declaration'
+e2e/OPEN_PROBLEMS.md` returned **0**; the count had moved into `AGENTS.md` and nothing in the skill
+said so. The fourth cited a twenty-line `e2e/README.md` range for `testInfo.snapshotDir`, which sits
+somewhere else entirely.
 
 **Why this is filed as one entry rather than five.** The individual fixes are mechanical and were
 deliberately **not** made here: a bulk re-derivation of a 4,455-line document's citations is its own
@@ -2602,26 +2912,28 @@ line, and where it has moved, replace it with `file:symbol` rather than a new nu
 the date the pass covered. Fix the `e2e/README.md` `continue-on-error` instruction **first**, since
 it is the one that causes an agent to make the tree worse.
 
-**Files.** `.skills/photoshop-tool-creation.md:492`, `:3774-3779`, `:3137`, `:3207-3208`, `:3553`,
-`:3766`, `:3770-3772`, `:4328`; `e2e/README.md:30`, `:73`, `:401-411`, `:564`;
-`e2e/OPEN_PROBLEMS.md:41-42`
+**Files.** `.skills/photoshop-tool-creation.md` — its "last re-verified" header, the phase table's
+phase 9 row, and the four quoted bodies above; `e2e/README.md` — its commands section and its history
+section; `e2e/OPEN_PROBLEMS.md` — the `## Observed failures` section; `AGENTS.md` — its known-failures
+section
 
 ## 109. `.skills/hard-merge.md` cites eight source locations that have moved, three of them inside a paragraph that tells the reader to re-derive
 
 `.skills/hard-merge.md` has the strongest evidentiary discipline of any document here — it names the
-tree it was read against, and Appendix F is entirely about not trusting a citation. These are the
-ones that did not get re-derived:
+tree it was read against, and Appendix F is entirely about not trusting a citation. These were the
+ones that did not get re-derived, each row naming the `.skills/hard-merge.md` section whose citation
+was wrong on the left and what it actually resolved to on the right:
 
-| line                   | claims                                                           | actually                                                                     |
-| ---------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `:433`                 | `git.mjs:183-224` is `mergeConflict`                             | `git.mjs:198` (`export function mergeConflict`)                              |
-| `:445`                 | "JSDoc at `git.mjs:193-196`"                                     | `:194-197`                                                                   |
-| `:445`                 | `return { conflict: null, … }` at `:226-231`                     | the two returns are at `:231` and `:233`                                     |
-| `:1129`                | `'toolbar-overflow'` present on `main` at `:859`                 | `scripts/lib/worktree-inventory/curated.mjs:947`                             |
-| `:1067`                | "of the last 200 merge commits on `main`, 50 carry a body"       | re-running the document's own command returns **62**                         |
-| `:851-853`, `:868-871` | "matches 83"; "78 times … and 5 in `HANDOFF.md`"                 | 92 uncorrected today: 79 in this skill, 7 in `HANDOFF.md`                    |
-| `:829-830`             | quotes `ef85d3ab`'s subject                                      | the real subject ends "**and shorten it**"; quoted with no ellipsis          |
-| `:1426`                | "See `docs/ORCHESTRATION.md:290-294`" for the expired-lease trap | that range is the `mustNotPrune` paragraph; the lease material is `:596-606` |
+| section                                                  | claimed                                                             | actually                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| §"Preview without touching anything"                     | a range in `git.mjs` is `mergeConflict`                             | `mergeConflict()` in `git.mjs`                                                                   |
+| §"Preview without touching anything"                     | "JSDoc at" a range in `git.mjs`                                     | the JSDoc on `mergeConflict()`                                                                   |
+| §"Preview without touching anything"                     | `return { conflict: null, … }` at a range                           | two returns inside `mergeConflict()`, not one range                                              |
+| §"Preview without touching anything"                     | `'toolbar-overflow'` present on `main` at a line                    | the `'toolbar-overflow'` entry in `curated.mjs`                                                  |
+| the merge-commit corpus section                          | "of the last 200 merge commits on `main`, 50 carry a body"          | re-running the document's own command returns **62**                                             |
+| §"1. Union — the default", §"2. Graft, do not duplicate" | "matches 83"; "78 times … and 5 in `HANDOFF.md`"                    | 92 uncorrected today: 79 in this skill, 7 in `HANDOFF.md`                                        |
+| §"Corrected rather than deleted"                         | quotes `ef85d3ab`'s subject                                         | the real subject ends "**and shorten it**"; quoted with no ellipsis                              |
+| the expired-lease section                                | "See a range in `docs/ORCHESTRATION.md`" for the expired-lease trap | that range is the `mustNotPrune` paragraph; the lease material is elsewhere in the same document |
 
 The load-bearing claim — that the **corrected** pattern has **0** occurrences — still holds, so the
 rule the numbers support is intact. What is broken is every number a reader would copy.
@@ -2629,9 +2941,10 @@ rule the numbers support is intact. What is broken is every number a reader woul
 **Fix.** Correct the eight, and prefer the symbol over the line everywhere in this file, because
 Appendix F's own argument is that a line number is a property of a moment.
 
-**Files.** `.skills/hard-merge.md:433`, `:445`, `:829-830`, `:851-853`, `:868-871`, `:1067`,
-`:1129`, `:1426`; `scripts/lib/worktree-inventory/git.mjs:198`,
-`scripts/lib/worktree-inventory/curated.mjs:947`
+**Files.** `.skills/hard-merge.md` — the eight sections named above;
+`scripts/lib/worktree-inventory/git.mjs` — `mergeConflict()`,
+`scripts/lib/worktree-inventory/curated.mjs` — the `'toolbar-overflow'` entry;
+`docs/ORCHESTRATION.md` — the `mustNotPrune` paragraph and the expired-lease material
 
 ## 110. `ToolbarsRight/Lasso/Lasso.tsx` has no importer, and it is the only UI for two persisted lasso settings
 
@@ -2642,14 +2955,15 @@ git grep -nE "import .*\bLasso\b.* from" -- src e2e   # zero hits
 git grep -n "Lasso/Lasso.tsx" -- src e2e             # zero hits
 ```
 
-`src/tools/toolsMap.ts:67-81` wires the three lasso keys to `PolygonalLasso`, `FreehandLasso`
+`src/tools/toolsMap.ts` — its three lasso entries — wires the three lasso keys to `PolygonalLasso`,
+`FreehandLasso`
 and `FeatherMagneticLasso`. The component's only consumer is its own test,
 `Lasso/__tests__/Lasso.test.tsx`, which renders a component the app can never reach.
 
 **It is nevertheless the only place `lineWidth` and `alpha` are editable**, and both are
 persisted defaults for two live keys:
 
-- `src/tools/settings.ts:98-113` — `'polygonal-lasso'` and `'freehand-lasso'` each declare
+- `src/tools/settings.ts` — its `'polygonal-lasso'` and `'freehand-lasso'` defaults — each declare
   `{ alpha: 1, lineWidth: 3, color: '#FF0000', fill: false, points: [] } satisfies LassoToolArgs`.
 - `src/tools/polygonSelection.ts` types all of them, and `PolygonSelectionToolSettings` is
   `Omit<LassoToolArgs, 'points'>` — so they survive a reload.
@@ -2657,29 +2971,33 @@ persisted defaults for two live keys:
 
 So deleting it is not a cleanup, it is a second defect: two persisted settings with no UI
 at all, and a settings bucket that round-trips values a user can no longer change. **The real
-defect is the missing options bar.** `src/tools/descriptions/selection.notes.md:92` already
+defect is the missing options bar.** `src/tools/descriptions/selection.notes.md` §"What is true of
+all seven" already
 records what Photoshop's Polygonal Lasso bar carries — the four combination modes, `Feather`,
 `Style` and `Anti-alias` — and marks them absent here, while `FeatherMagneticLasso` ships
-`featherRadius` / `magneticWidth` / `edgeContrast` / `frequency` (`settings.ts:122-126`).
+`featherRadius` / `magneticWidth` / `edgeContrast` / `frequency` (`src/tools/settings.ts` — its
+`'feather-magnetic-lasso'` default).
 
-The component is also wrong if reconnected: `Lasso.tsx:22` hardcodes
+The component is also wrong if reconnected: `Lasso.tsx` hardcodes
 `toolName: 'polygonal-lasso'` into every `setToolArgs`, so wiring it to the freehand key would
 label that tool's panel with the polygonal name.
 
 **Fix.** Do not delete. Port `lineWidth` and `alpha` — and Photoshop's `Feather` and
 `Anti-alias` — into `PolygonalLasso.tsx` and `FreehandLasso.tsx`, which are the components the
 keys actually render, and delete `Lasso.tsx` and `Lasso.test.tsx` **in the same change**. The
-two hints in `Lasso.tsx:145-146` ("Backspace removes anchor • Enter finishes • Esc cancels")
+two hints `Lasso.tsx` renders ("Backspace removes anchor • Enter finishes • Esc cancels")
 are behaviour the live panels do not document, so carry them across too.
 
 **Files.** `src/components/ToolbarsRight/Lasso/Lasso.tsx`,
 `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx`,
 `src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
-`src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts:98-113`
+`src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts` — the three
+lasso defaults
 
 ## 112. Freeform Pen and Curvature Pen render the standard Pen's chip list, and a test documents the wrong config as expected
 
-`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23-25` defines:
+`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts` — its `pen`, `freeform-pen` and
+`curvature-pen` entries — defines:
 
 ```ts
 pen:             ['Tool Mode', 'Fill', 'Stroke', 'Make Selection', 'Path Operations', 'Alignment', 'Auto Add/Delete'],
@@ -2687,13 +3005,15 @@ pen:             ['Tool Mode', 'Fill', 'Stroke', 'Make Selection', 'Path Operati
 'curvature-pen': ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
 ```
 
-but `src/tools/toolsMap.ts:153` and `:158` point all three at the **`pen`** key, so
+but the `placeholderTool(...)` calls for `freeform-pen` and `curvature-pen` in
+`src/tools/toolsMap.ts` both name the **`pen`** config key, so
 `freeform-pen` and `curvature-pen` render the standard Pen's seven chips. **Magnetic and Curve
 Fit are the two controls that are the entire reason those two tools exist** — a Freeform Pen
 tool without Magnetic, and a Curvature Pen without Curve Fit, are the Pen under another name
-(`src/tools/descriptions/pen.notes.md`, `docs/TOOLS.md:1811`, `:1871`).
+(`src/tools/descriptions/pen.notes.md`, `docs/TOOLS.md` §"Pen and path" and §"Pen Tool").
 
-`ToolbarPlaceholder.test.tsx:164-173` asserts the resulting dead config is
+The `it('documents the config groups that no tool consumes')` title in `ToolbarPlaceholder.test.tsx`
+asserts the resulting dead config is
 `expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle'])` and the
 comment is explicit that the list is _meant_ to be short. So this test is **half a pin**: it is
 doing its stated job against a growing pile, and it will fail the moment the wiring is fixed.
@@ -2706,22 +3026,25 @@ registry id the rail never names (see §114), so it renders the real `Shape` bar
 `placeholderTool(...)` calls in `toolsMap.ts`, and update the expected array in the same
 change.
 
-**Files.** `src/tools/toolsMap.ts:150-159`,
-`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24-25`,
-`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:164-173`
+**Files.** `src/tools/toolsMap.ts` — the two `placeholderTool` calls named above,
+`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts` — its `freeform-pen` and `curvature-pen`
+entries,
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named above
 
 ## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
 
-`docs/TOOLS-TOO-HARD.md:214-215`:
+`docs/TOOLS-TOO-HARD.md` §"The Pen family":
 
 > "`AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
 > Photoshop grouping and naming are the specification, and the stub bar is the debt."
 
 `grep -rn "grouping and naming are the specification" --include='*.md'` returns exactly two
-hits — `docs/TOOLS-TOO-HARD.md:218` and `docs/PHOTOSHOP-UX.md:107`. `AGENTS.md` is 158 lines
+hits — the same paragraph in `docs/TOOLS-TOO-HARD.md` §"The Pen family" and `docs/PHOTOSHOP-UX.md`
+§"Open violations". `AGENTS.md` is 158 lines
 with no match for _placeholder_, _specification_, _grouping_ or _stub bar_.
 
-The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md:104-108` — _"A tool the
+The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md` §"Open violations" — _"A
+tool the
 app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
 because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
 — the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
@@ -2732,13 +3055,13 @@ deletion this week and every one came back "keep" **because of that policy**. An
 reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
 conclusion from a missing policy is that no policy was ever written down.
 
-**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md:104-108` in that one sentence.
+**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md` §"Open violations" in that one sentence.
 
-**Files.** `docs/TOOLS-TOO-HARD.md:214-215`, `docs/PHOTOSHOP-UX.md:104-108`
+**Files.** `docs/TOOLS-TOO-HARD.md` §"The Pen family", `docs/PHOTOSHOP-UX.md` §"Open violations"
 
 ## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
 
-`toolbar-mapping.ts:115-119` (repo root) gives the toolbox entries
+`toolbar-mapping.ts` — its five `shape`-named toolbox entries — gives the toolbox entries
 `name: 'shape'` plus a `figure`, never the key:
 
 ```ts
@@ -2749,23 +3072,25 @@ conclusion from a missing policy is that no policy was ever written down.
 { label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
 ```
 
-All four activation surfaces translate — `SidebarLeft.tsx:603-606`,
-`Mobile/mobile-tools.ts:77-85`, `DesktopHeader.tsx:248-254`,
-`AppKeyboardShortcuts.tsx:130-157` — and `useApp.ts:196` is the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx:110-123` records that dispatching the
+All four activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
+equivalent in `Mobile/mobile-tools.ts`, the `Image`/`Edit` menu dispatch in `DesktopHeader.tsx`, and
+the keyboard map in `AppKeyboardShortcuts.tsx` — and `useApp.ts` holds the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. `DesktopHeader.tsx` records that dispatching the
 key directly was a **bug they fixed**: it mounted the Shape panel where the
-`toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the colour publish, so the well said
+`toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
 red and the shape committed black.
 
 So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
-(`src/contexts/tool-types.ts:75-87`), a per-figure settings bucket (`src/tools/settings.ts:301-335`),
-a description record (`src/tools/descriptions/shape.ts:290,318,345,387,423`) and doc sections.
-`docs/PHOTOSHOP-UX.md:88-96` names them as _"registry ids the rail never names"_ and frames the
+(its `rectangle`, `ellipse`, `triangle`, `polygon` and `line` variants in `tool-types.ts`), a
+per-figure settings bucket (the five figure buckets in `settings.ts`),
+a description record (`shape.ts` — its per-figure `sources` entries) and doc sections.
+`docs/PHOTOSHOP-UX.md` §"Open violations" names them as _"registry ids the rail never names"_ and
+frames the
 rail-naming decision around them.
 
 **What is not stated anywhere is whether they are forward-scaffolding or residue**, and one fact
 would settle it: **can a durable document or a replayed history item carry
-`toolName: 'rectangle'`?** `src/tools/toolProcessors.ts:359-363` registers all five as
+`toolName: 'rectangle'`?** `toolProcessors.ts` registers all five as
 `{ creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape }`,
 so a committed shape carries its tool name into history. The dispatch path is closed in the
 running app, but document import and the durable `ToolArgs` deserialiser were **not** audited
@@ -2776,69 +3101,79 @@ and the `ToolArgs` union is carrying five variants nothing constructs.
 **Fix.** Audit the import and durable-replay path for a persisted figure-key `toolName`, then
 either state in `docs/PHOTOSHOP-UX.md` that the five ids exist to keep historical documents
 replayable, or delete them together with their `ToolArgs` variants, settings buckets and
-descriptions. Whichever it is, `ToolbarPlaceholder.test.tsx:173`'s `rectangle` entry in the
+descriptions. Whichever it is, the `rectangle` entry in `ToolbarPlaceholder.test.tsx`'s
 unreachable-config list changes and that test moves with it.
 
-**Files.** `toolbar-mapping.ts:115-119`, `src/tools/toolsMap.ts:175-180`,
-`src/tools/toolProcessors.ts:359-363`, `src/contexts/tool-types.ts:75-87`,
-`src/tools/settings.ts:301-335`, `docs/PHOTOSHOP-UX.md:88-96`,
-`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:164-173`
+**Files.** `toolbar-mapping.ts` — the five `shape`-named toolbox entries,
+`src/tools/toolsMap.ts` — its five `Shape`-component entries,
+`src/tools/toolProcessors.ts` — the five figure registrations,
+`src/contexts/tool-types.ts` — the five figure `ToolArgs` variants,
+`src/tools/settings.ts` — the five figure settings buckets, `docs/PHOTOSHOP-UX.md` §"Open violations",
+`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named in §112
 
 ## 115. The rectangular marquee ships no options bar at all, while the elliptical marquee beside it ships four controls
 
-`src/tools/settings.ts:132` declares
+`src/tools/settings.ts` — its `'rectangular-selection'` default — declares
 `'rectangular-selection': { toolName: 'rectangular-selection' }` — **no settings whatsoever** —
-while `:220-226` gives `elliptical-selection` `style`, `fixedRatio`, `fixedWidth` and
-`fixedHeight`, implemented in full at `src/tools/ellipticalSelection.ts:9,51-67` down to the
-`MARQUEE_RATIO_MIN/MAX` and `MARQUEE_SIZE_MIN/MAX` bounds.
+while the same file's `'elliptical-selection'` default gives it `style`, `fixedRatio`, `fixedWidth`
+and `fixedHeight`, implemented in full in `ellipticalSelection.ts` — its `MarqueeStyle` type, its
+`MARQUEE_STYLES` and `isMarqueeStyle()` exports and the `MARQUEE_RATIO_MIN`/`MAX` and
+`MARQUEE_SIZE_MIN`/`MAX` bounds.
 
-`RectangularSelection.tsx:36` is, in full, the literal string
+`RectangularSelection.tsx` is, in full, the literal string
 `'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
 
 Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
-`Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md:92` already records them
-as absent. Since `docs/PHOTOSHOP-UX.md:104-108` makes the rendered bar the contract, this is debt
+`Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
+already records them
+as absent. Since `docs/PHOTOSHOP-UX.md` §"Open violations" makes the rendered bar the contract, this
+is debt
 on a **shipped, working, reachable** tool — the rectangular marquee is a rail tile
-(`toolbar-mapping.ts:41`) with the `M` shortcut.
+(its entry in `toolbar-mapping.ts`'s marquee group) with the `M` shortcut.
 
 **Fix.** Give `RectangularSelectionToolArgs` the same `MarqueeStyle` field the ellipse uses,
-extract `ellipticalSelection.ts:121-131`'s `applyRatio` as a shared ratio helper, and render
+extract `ellipticalSelection.ts`'s `applyRatio` as a shared ratio helper, and render
 the four controls.
 
-**Files.** `src/tools/settings.ts:132`, `src/tools/rectangularSelection.ts:4-7`,
-`src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx:36-48`,
-`src/tools/descriptions/selection.notes.md:92`
+**Files.** `src/tools/settings.ts` — the `'rectangular-selection'` and `'elliptical-selection'`
+defaults, `src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`,
+`src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx` — the whole component's
+rendered body, `src/tools/ellipticalSelection.ts` — `applyRatio()`,
+`src/tools/descriptions/selection.notes.md` §"What is true of all seven"
 
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
 
-`AppKeyboardShortcuts.tsx:53` binds `penGroup = ['pen', 'freeform-pen', 'curvature-pen']`, so
+`AppKeyboardShortcuts.tsx` — `penGroup` — is `['pen', 'freeform-pen', 'curvature-pen']`, so
 `P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
-`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx:99-101` lists
-only the three pens. `AppKeyboardShortcuts.tsx:130-158` is the only `DEFAULT_KEYBOARD_SHORTCUTS`
-consumer and `useApp.ts:196` the only `SET_TOOL_NAME` dispatch, so the enumeration is complete.
+`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx`'s
+`TOOL_MENU_ITEMS` lists only the three pens. `AppKeyboardShortcuts.tsx`'s `selectShapeTool()` is the
+only `DEFAULT_KEYBOARD_SHORTCUTS` consumer and `useApp.ts`'s `goToTool()` the only `SET_TOOL_NAME`
+dispatch, so the enumeration is complete.
 
 **Both other halves of the earlier version of this heading are wrong, and the rail never needed
-them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx:81-85` gives `freeform-pen` its
-own `FreeformPenIcon`, and `toolbar-mapping.ts:106-111` gives each of the six its own label. The
-Tools-menu absence is Adobe's own doing — Adobe's keyboard-shortcut reference (Adobe, primary, and
-the source `docs/PHOTOSHOP-UX.md:233` cites for its own shortcut list) lists **no** shortcut for
-`Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, so a menu row for them would be a
-departure rather than a fix, and `docs/OVERRIDES.md` has no entry authorising one. What
-`docs/TOOLS.md:1910`, `:1942`, `:1978` record is only that the shortcuts do not exist, which is what
-this entry says.
+them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx`'s `freeform-pen` entry gives
+`freeform-pen` its own `FreeformPenIcon`, and `toolbar-mapping.ts`'s `toolbarMap` gives each of the
+six its own label. The Tools-menu absence is Adobe's own doing — Adobe's keyboard-shortcut reference
+(Adobe, primary, and the source `docs/PHOTOSHOP-UX.md` — "What it costs" cites for its own shortcut
+list) lists **no** shortcut for `Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, so a
+menu row for them would be a departure rather than a fix, and `docs/OVERRIDES.md` has no entry
+authorising one. What `docs/TOOLS.md` — "Freeform Pen Tool", "Curvature Pen Tool" and "Curvature
+Pen Tool" again — record is only that the shortcuts do not exist, which is what this entry says.
 
-**The rail half does not survive either.** `docs/PHOTOSHOP-UX.md:119` states the six Pen-family
-tools "currently render a `PlaceholderTool` chip bar instead", and its open-violations section
-(`:30-56`) lists only `draw`, `color`, `levels` and `transform` as invented entries — **not** the
+**The rail half does not survive either.** `docs/PHOTOSHOP-UX.md` — "Open violations" states the six
+Pen-family tools "currently render a `PlaceholderTool` chip bar instead", and that same open-violations
+section lists only `draw`, `color`, `levels` and `transform` as invented entries — **not** the
 pen family. So the "incomplete hiding" framing has no premise: nothing was hidden, and
 `docs/PHOTOSHOP-UX.md` is the document that owns the answer if the family is ever implemented. **Do
 not add a shortcut here without asking.** What remains is a record, not a defect.
 
-**Files.** `src/components/Common/AppKeyboardShortcuts.tsx:53,109-137`,
-`src/components/DesktopHeader/DesktopHeader.tsx:99-101`,
-`src/components/SidebarLeft/SidebarLeft.tsx:158-170`,
-`src/components/SidebarLeft/toolIcons.tsx:81-85`, `docs/TOOLS.md:1910,1787,1823`,
-`docs/PHOTOSHOP-UX.md:30-98,110,191`
+**Files.** `src/components/Common/AppKeyboardShortcuts.tsx` — `penGroup` and `selectBrushTool()`;
+`src/components/DesktopHeader/DesktopHeader.tsx` — `TOOL_MENU_ITEMS`;
+`src/components/SidebarLeft/SidebarLeft.tsx` — `RailGripIcon`;
+`src/components/SidebarLeft/toolIcons.tsx` — the `freeform-pen` entry; `docs/TOOLS.md` — "Freeform
+Pen Tool", "Shape Tool (the Tools panel group; no entry by that name)" and "Pen Tool";
+`docs/PHOTOSHOP-UX.md` — "Open violations" and "The foreground/background swatch pair BELONGS in the
+rail, and must NEVER be hidden"
 
 <!-- §117 DELETED, not merged. Its own closing sentence made deletion the exit condition:
      "This entry stays until the three are gone from `toolbar-mapping.ts`, at which point the fix
@@ -2860,8 +3195,8 @@ not add a shortcut here without asking.** What remains is a record, not a defect
 ```
 
 So `brush ≡ pencil ≡ draw` at the pixel level. They differ by nothing a user can see except the
-preset list (`src/tools/brush.ts:143-154`) and the tool name carried into history.
-`src/components/ToolbarsRight/Brush/Brush.tsx:3` and `Pencil/Pencil.tsx:3` are both three-line
+preset list (`src/tools/brush.ts` — `PAINT_PRESETS`) and the tool name carried into history.
+`src/components/ToolbarsRight/Brush/Brush.tsx` and `Pencil/Pencil.tsx` are both three-line
 `createPaintToolbar('brush' | 'pencil')` calls over one shared bar.
 
 **The constraint that makes this correct rather than a duplication bug exists only on an
@@ -2877,14 +3212,15 @@ The corollary's original pointer (`HANDOFF.md` §70, "a tool whose settings do n
 is gone — that defect was fixed, and the rule it recorded is the sentence above. `grep -c
 PaintToolName AGENTS.md` on `main` returns **0**. `git grep -ln PaintToolName -- '*.md'`
 returns exactly one file, `.skills/photoshop-tool-creation.md`. The type exists and is enforced in
-code (`src/tools/draw.ts`, asserted at `src/tools/__tests__/paint-tools.test.ts:22`) — but the
-sentence that explains _why_ `'brush' | 'pencil'` is a narrowing and not an accident is on a
-branch that has not landed, and **it is now the only copy**: the entry that used to hold it is
-deleted, correctly, because its own defect was fixed.
+code (`src/tools/draw.ts`, asserted at `src/tools/__tests__/paint-tools.test.ts` —
+`paintToolNames`) — but the sentence that explains _why_ `'brush' | 'pencil'` is a narrowing and not
+an accident is on a branch that has not landed, and **it is now the only copy**: the entry that used
+to hold it is deleted, correctly, because its own defect was fixed.
 
 **Why it matters for the dead-tool question this surfaced.** Three tools sharing one rasteriser
 is exactly the shape that reads as dead-code duplication, and the correct deletion — merging
-`brush` and `pencil` into `draw`, or deleting `draw` as `docs/PHOTOSHOP-UX.md:32-37` orders — would
+`brush` and `pencil` into `draw`, or deleting `draw` as `docs/PHOTOSHOP-UX.md` — "Open violations",
+its "No invented tools" bullet — orders would
 be a real regression for anyone who has not read the rule. The rule is what stops it. That is
 also the general lesson: **a rule can outlive the entry that recorded it, and deleting the entry
 does not delete the rule** — so a rule with no home is a defect in itself.
@@ -2894,13 +3230,14 @@ does not delete the rule** — so a rule with no home is a defect in itself.
 boundary rule of the same kind, and it is currently only readable by whoever opens a branch that
 was never merged.
 
-**Files.** `src/tools/toolProcessors.ts:97`, `:292-295`, `:300-308`,
-`src/tools/brush.ts:143-154`, `AGENTS.md` §Architecture status, `docs/PHOTOSHOP-UX.md:32-37`
+**Files.** `src/tools/toolProcessors.ts` — `buildDrawArgs()`, the `'clone-stamp'` entry and the
+`brush` entry; `src/tools/brush.ts` — `PAINT_PRESETS`; `AGENTS.md` §Architecture status;
+`docs/PHOTOSHOP-UX.md` — "Open violations"
 
 ## 119. The Draw tile and the Brush tile both advertise `B`, and no keypress selects the Draw tool
 
-**Problem.** Two tiles print the same key. `toolbar-mapping.ts:73` declares the Brush with
-`shortcut: 'B'` and `toolbar-mapping.ts:102` declares the Draw tile with `shortcut: 'B'`, so the rail
+**Problem.** Two tiles print the same key. `toolbar-mapping.ts`'s `toolbarMap` declares the Brush
+with `shortcut: 'B'` and declares the Draw tile with `shortcut: 'B'` as well, so the rail
 renders `B` on both.
 
 ```
@@ -2908,13 +3245,15 @@ renders `B` on both.
  90: [{ label: 'Draw Tool',   name: 'draw',   shortcut: 'B' }],
 ```
 
-The key answers to the Brush. `AppKeyboardShortcuts.tsx:369-381` registers `b` and `shift+b` against
-`selectBrushTool` and registers nothing for `draw`, so the Draw tool cannot be reached by the key its
+The key answers to the Brush. `AppKeyboardShortcuts.tsx`'s two `useKeyDownShortcut({ key: 'b' … })`
+registrations bind `b` and `shift+b` against
+`selectBrushTool` and register nothing for `draw`, so the Draw tool cannot be reached by the key its
 own tile prints. That is worse than a tile printing no key: the reader has been told a shortcut
 exists, and pressing it goes somewhere else.
 
 **Nothing asserts this, which is why it survived.** `toolbar-mapping.test.ts` checks shortcut shape
-inside the figure flyout only — `:82` ("only declares U as the shape shortcut") and `:107`. No test
+inside the figure flyout only — the `it('keeps Triangle, Polygon, Line and Custom Shape in the
+flyout')` case and the `it('only declares U as the shape shortcut')` title beside it. No test
 compares shortcuts across the rail, so a second declaration of a live key is invisible to the suite
 however it arrives.
 
@@ -2929,27 +3268,29 @@ than the other way round, and add a rail-wide uniqueness assertion over `toolbar
 declaration of a key cannot land again. The assertion is the part that outlives the decision: it
 fails on any duplicate, whichever tile the duplicate is on.
 
-**Files.** `toolbar-mapping.ts:73`, `:102`, `src/components/Common/AppKeyboardShortcuts.tsx:20`,
-`:348-360`, `src/components/SidebarLeft/SidebarLeft.tsx:620`, `:644`,
+**Files.** `toolbar-mapping.ts` — `toolbarMap`; `src/components/Common/AppKeyboardShortcuts.tsx` —
+`brushGroup` and its `useKeyDownShortcut({ key: 'j' … })` registration;
+`src/components/SidebarLeft/SidebarLeft.tsx` — `renderToolGroup()`;
 `src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts`
 
 ## 120. The Move tool has nine documented missing controls and no entry tracking them as work
 
-`docs/TOOLS.md:2161-2183` gives `reposition` a written `partial` verdict and enumerates what is
-absent: Tool Preset Picker, Auto-Select, Auto-Select: Group, Auto-Select: Layer, Show Transform
+`docs/TOOLS.md` — "Move Tool" — gives `reposition` a written `partial` verdict and enumerates what
+is absent: Tool Preset Picker, Auto-Select, Auto-Select: Group, Auto-Select: Layer, Show Transform
 Controls, Align, Distribute, Align to, Width, Height — plus Alt-drag, Shift-constrain,
 Shift-extend and arrow-key nudge. It records Auto-Select as welded on with no control to turn it
 off.
 
-`grep -n reposition HANDOFF.md e2e/OPEN_PROBLEMS.md` returns only `:347`, `:1755` and `:2539`,
-and each is about a different subject. **Nothing tracks the nine as work.**
+`grep -n reposition HANDOFF.md e2e/OPEN_PROBLEMS.md` returns only three matches, and each is about a
+different subject. **Nothing tracks the nine as work.**
 
 The tool itself is not parked, which is the reason this is a handoff entry and not a deletion
 candidate. Its _processor_ file was last touched 2026-09-25 by `2e1b6e46` — a config-and-test
 commit whose real content was removing a dead `resize` rasteriser branch — but its live surface,
 `src/components/Main/MoveToolArea.tsx` and the Move panel, was changed on **2026-09-28** by
 `a30c318a` and `f6f54752`, i.e. _newer_ than `transform`'s 2026-09-27. It is the tool that owns
-`Merge all` (`src/components/ToolbarsRight/Reposition/Reposition.tsx:21`), which nothing else has.
+`Merge all` (`src/components/ToolbarsRight/Move/Reposition.tsx` — its `Merge all` button), which
+nothing else has.
 
 The scope decision is written down; the work is not. A documented `partial` verdict with no
 tracked work is how a half-built tool becomes permanently half-built.
@@ -2957,15 +3298,17 @@ tracked work is how a half-built tool becomes permanently half-built.
 **Fix.** Add one `HANDOFF.md` entry carrying the nine controls and the four modifiers as named
 work, referencing the existing verdict rather than restating it.
 
-**Files.** `docs/TOOLS.md:2161-2183`, `src/components/ToolbarsRight/Reposition/Reposition.tsx:21`,
+**Files.** `docs/TOOLS.md` — "Move Tool";
+`src/components/ToolbarsRight/Move/Reposition.tsx` — its `Merge all` button,
 `src/components/Main/MoveToolArea.tsx`
 
 ## 121. The worktree sweep is structurally blind to every branch that has no worktree, and one of those branches is the upstream reference implementation
 
 **Problem.** `scripts/worktree-inventory.mjs` derives its entire model from
 `git worktree list`; the only place any branch name is read is
-`scripts/lib/worktree-inventory/git.mjs:69`, which parses a `branch refs/heads/…` line out of that
-listing. A branch with no worktree is therefore not `land`, not `at-risk`, not `dispose` and not
+`scripts/lib/worktree-inventory/git.mjs` — `listWorktrees()`, which parses a `branch refs/heads/…`
+line out of that listing. A branch with no worktree is therefore not `land`, not `at-risk`, not
+`dispose` and not
 `goneWorktrees` — it does not appear in `WORKTREES.json` at all, so no reclaim or harvest run can
 ever reach it. There are **42** such branches in `refs/heads` today, and the one that matters is
 worse than merely unlisted.
@@ -3010,9 +3353,9 @@ git remote get-url origin                                       # .../drguz69/li
    `grep -nE "remote-tracking|rewrote the whole history|refs/remotes" docs/ORCHESTRATION.md` returns
    nothing, and `git log -S'rewrote the whole history' --all` names only `4833e740`, the commit
    that introduced the citation. So the rule needs writing into `docs/ORCHESTRATION.md` as part of
-   this fix; the closest real content there is the landing rule at `:100-105` ("a branch merges into
-   `main` only after `main` has already been merged or rebased into the branch"), which is about
-   merge discipline and not about identifying an upstream reference.
+   this fix; the closest real content there is the landing rule in `docs/ORCHESTRATION.md` — "Landing"
+   ("a branch merges into `main` only after `main` has already been merged or rebased into the
+   branch"), which is about merge discipline and not about identifying an upstream reference.
 2. Teach the inventory to enumerate branch-only refs. `git for-each-ref refs/heads` alongside
    `git worktree list` is the whole change; a branch with no worktree should surface as an explicit
    category rather than as silence. The 39 fully-merged branch-only refs
@@ -3021,7 +3364,8 @@ git remote get-url origin                                       # .../drguz69/li
    ancestor: merge commits only) and `fix-merge` (already on `main`) — are the ones a reader needs
    warned about.
 
-**Files.** `scripts/lib/worktree-inventory/git.mjs:69`, `scripts/worktree-inventory.mjs`,
+**Files.** `scripts/lib/worktree-inventory/git.mjs` — `listWorktrees()`,
+`scripts/worktree-inventory.mjs`,
 `docs/ORCHESTRATION.md` (where the upstream-rewrite rule has to be written)
 
 ## 122. No pixel tool honours an active selection — the eraser, the magic eraser, the paint bucket and the clone stamp all ignore it
@@ -3082,7 +3426,7 @@ canvas handle in the processor contract would work, but it must NOT go in `args`
 conversion whitelists the tool-arg shape, and a canvas in `args` would either void the document or
 require a migration. Put it outside `args`.
 
-**Files.** `src/contexts/useLayer.ts:583-612`
+**Files.** `src/contexts/useLayer.ts` — `tempUpdateLayer()`
 
 ## 124. An ordinary tool commit can move the document's size, and a mid-document bedrock blank layer is the production trigger
 
@@ -3096,7 +3440,7 @@ has never been run to a verdict. Four production entry points, all of them live 
    the pre-crop size and every later cursor at the cropped one
 3. a 64×64 document opened from a fixture, then five commits and five undo/redo rounds (the import is
    async, so it must be polled, and the opened size must be passed in rather than the seeded default)
-4. the **mobile shell** — `MobileLayersDrawer.tsx:172` calls
+4. the **mobile shell** — `MobileLayersDrawer.tsx`'s add-layer button calls
    `createBlankLayer({ …, size: totalSize, isBedrock: true })` with NO `replaceDocument`
 
 **Entry point 4 is STILL OPEN, and a previous version of this entry said otherwise. That claim was
@@ -3105,33 +3449,36 @@ one production path that still has the defect.**
 
 The deleted paragraph claimed that `MobileLayersDrawer.tsx` "no longer calls `createBlankLayer` at
 all", that the shell's blank layer "now goes through `applyRasterReplacement`
-(`MobileLayersDrawer.tsx:205-216`)", and that `src/hooks/useApp.ts:140-154` routes it through
-`setBlankImage`. Against the tree as it stands:
+(`MobileLayersDrawer.tsx` — its layers-list row `<li>`)", and that `src/hooks/useApp.ts`'s PSD
+import branch routes it through `setBlankImage`. Against the tree as it stands:
 
-1. `MobileLayersDrawer.tsx:174` **still** calls
+1. `MobileLayersDrawer.tsx`'s add-layer button **still** calls
    `createBlankLayer({ color: '#ffffff', opacity: 1, size: totalSize, isBedrock: true })` — with **no**
    `replaceDocument`, exactly the history shape this entry was written about. It is the only
    production writer of a mid-timeline bedrock entry, and the sole reason `replayHistory` needs a
    bedrock branch at all.
 2. **`applyRasterReplacement` does not exist.** `grep -rn applyRasterReplacement src e2e` returns
    **zero** hits; the identifier appears only in this file and in the copies of this file inside
-   worktrees. `MobileLayersDrawer.tsx:205-216` is an `<li>` carrying a comment about `role="button"`.
-3. `src/hooks/useApp.ts:140-154` is the `REPLACE_DOCUMENT` payload of the **PSD** import branch plus
-   an `ADOPT_LAYER_BITMAPS` dispatch. `setBlankImage` is at `src/hooks/useApp.ts:77-80` and is
-   reached from `src/App.tsx:37` (the boot seed) and the New-document path — neither from the mobile
-   drawer.
+   worktrees. `MobileLayersDrawer.tsx`'s layers-list row `<li>` is what carries a comment about
+   `role="button"`.
+3. `src/hooks/useApp.ts` — `setImageFromUpload()`'s PSD-import branch — is the `REPLACE_DOCUMENT`
+   payload of the **PSD** import plus an `ADOPT_LAYER_BITMAPS` dispatch. `setBlankImage` is
+   `src/hooks/useApp.ts` — `setBlankImage()` — and is
+   reached from `src/App.tsx` — `BlankImageStarter()` (the boot seed) and the New-document path —
+   neither from the mobile drawer.
 
 The premise was not merely stale; it was a wrong answer delivered with a `file:line`, and it is
 recorded here as the standing example of why a stale line number is worse than none.
 
 **What is left, stated as the tree actually is.** The mobile drawer commits a bedrock blank layer
 mid-history. `createLayerSource` forces `pos = { x: 0, y: 0, ...source.size }` for any bedrock
-source (`src/contexts/layer-utils.ts:171-173`), so after a crop to a frame whose origin is not
-`{0,0}` the new layer lands **off-canvas**: measured at `(-100, -80)` relative to the visible
-document for a crop to `{x:100,y:80,w:400,h:320}`. The `index === 0` gate in `history-replay.ts`
-stops the FRAME from moving on undo; it does nothing about the layer's position, which is why that
-gate was described as masking this defect rather than fixing it. **The fix is to commit a non-bedrock
-layer from the drawer** — it is a normal empty layer above the current one, not a document.
+source (`src/contexts/layer-utils.ts` — `createLayerSource()`), so after a crop to a frame whose
+origin is not `{0,0}` the new layer lands **off-canvas**: measured at `(-100, -80)` relative to the
+visible document for a crop to `{x:100,y:80,w:400,h:320}`. The `index === 0` gate in
+`history-replay.ts` stops the FRAME from moving on undo; it does nothing about the layer's position,
+which is why that gate was described as masking this defect rather than fixing it. **The fix is to
+commit a non-bedrock layer from the drawer** — it is a normal empty layer above the current one, not
+a document.
 
 **Reproduce.** The harness is committed on `salvage/probe-canvas-growth` (it was untracked in a
 detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it).
@@ -3149,8 +3496,8 @@ npm run test:e2e -- e2e/zzz-probe-canvas-growth.spec.ts              # the four 
 
 **Landing shape, corrected.** The previous text warned that `probe-canvas-growth.test.tsx` is named
 `*.test.tsx` and is therefore collected by `npm run test`. **That warning was also false**:
-`vitest.config.ts:20` sets `exclude: [...configDefaults.exclude, '**/.kilo/**', 'e2e/**']`, and
-`.gitignore:49` ignores `.kilo`. A probe under `.kilo/worktrees/` is therefore invisible to both
+`vitest.config.ts`'s `exclude` sets `exclude: [...configDefaults.exclude, '**/.kilo/**', 'e2e/**']`, and
+`.gitignore` ignores `.kilo`. A probe under `.kilo/worktrees/` is therefore invisible to both
 suites, which is exactly what the worktree is for. The `ln -s … node_modules` in the commands above is
 required for Vite (it does not walk up to a parent checkout) but makes three cases in
 `scripts/__tests__/tsc-guard.test.mjs` measure the root checkout instead — §135 — so those three
@@ -3159,10 +3506,11 @@ failures are the symlink and not your work.
 **Verified 2026-10-01 against `main` `c8c27619`: the store-level half of this entry does NOT
 reproduce, and the numbers are in the plan.** Both probes are green, and that is structural rather
 than lucky: `totalSize` is recomputed only from `updates.documentFrame`
-(`src/contexts/StoreContext.tsx:353,357`), and of the eight `COMMIT_DOCUMENT_EDIT` dispatches in
-`src/contexts/useLayer.ts` exactly one carries a frame — `applyDocumentCrop` at `:719`, which cannot
-grow the document because `trimRect` clamps every edge into `[0, totalSize]`
-(`src/util/rect.ts:36-50`).
+(`src/contexts/StoreContext.tsx` — `projectPublishedTimeline()`, reached from the
+`COMMIT_DOCUMENT_EDIT` case), and of the eight `COMMIT_DOCUMENT_EDIT` dispatches in
+`src/contexts/useLayer.ts` exactly one carries a frame — `applyDocumentCrop()`, which cannot
+grow the document because `trimRect()` clamps every edge into `[0, totalSize]`
+(`src/util/rect.ts` — `trimRect()`, whose clamp is `clampEdge()`).
 
 **What the green run does NOT cover, which is most of this entry.** Scenarios D and E are
 deliberately assertion-light: they assert only `expect(rows.length).toBeGreaterThan(0)`, a tautology,
@@ -3174,13 +3522,16 @@ and is exactly why D asserts nothing. The off-canvas layer position above is mea
 does not depend on that scenario.
 
 **So the remaining question is not the store — it is the DISPLAY, and it is unmeasured.** The
-workspace canvas is `h-full w-full object-contain` (`src/components/Main/Main.tsx:290-294`), so its
+workspace canvas is `h-full w-full object-contain` (`src/components/Main/Main.tsx` —
+`renderContent()`), so its
 CSS box is the `1fr` grid cell and the document raster is letterboxed inside it at
-`containFit(outer, image).scale` (`src/util/contain-fit.ts:33-50`). The element box and the on-screen
-document rect are two quantities neither probe reads, and **no test in the suite asserts that either
-is invariant across a commit.** The existing coverage reads the canvas box only across a dock toggle
-(`e2e/responsive-shell.spec.ts:449-461`) and the document size only across dialogs
-(`e2e/document-dialogs.spec.ts:341-346`). Measure those, per tool, before building anything on this
+`containFit(outer, image).scale` (`src/util/contain-fit.ts` — `containFit()`). The element box and the
+on-screen document rect are two quantities neither probe reads, and **no test in the suite asserts
+that either is invariant across a commit.** The existing coverage reads the canvas box only across a
+dock toggle (`e2e/responsive-shell.spec.ts` — the
+`test('reclaims the layers column by default and offers a toggle for it')` title) and the document
+size only across dialogs (`e2e/document-dialogs.spec.ts` — `documentSize()`). Measure those, per
+tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
 
@@ -3189,9 +3540,11 @@ tool list and the four independent quantities.
 **Problem.** `rectangle`, `ellipse`/`oval`, `triangle`, `polygon` and `line` all take their colour from
 a hardcoded literal rather than the foreground swatch:
 
-- `src/components/ToolbarsRight/Figures/Shape.tsx:32` mirrors the swatch behind an
-  `args.toolName !== 'shape'` guard, and one options-bar component serves all six of `toolsMap.ts`
-- `src/tools/settings.ts:301-329` gives each of those five a hardcoded `color: '#000000'`
+- `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`, in the `args.toolName !== 'shape'`
+  guard — mirrors the swatch behind that guard, and one options-bar component serves all six of
+  `toolsMap.ts`
+- `src/tools/settings.ts` — the five figure entries in `defaultSettings`, which give each of those
+  five a hardcoded `color: '#000000'`
 - `src/components/Main/ShapeToolArea.tsx` contains **zero** occurrences of `color` — it reads
   `args.color` and nothing sets it
 
@@ -3201,8 +3554,9 @@ So moving the foreground swatch does nothing for five of the six figure tools.
 the same shape `FillToolArea.tsx` already ships — and inject them into the committed args and the
 live preview. Do **not** route through `setToolArgs`: `saveLastSettings` persists those five names as
 a bare `{ toolName }`, so a tool-args write would leave `args.points` and `lineWidth` undefined after a
-tool switch. The alternative — deleting the `args.toolName !== 'shape'` guard at `Figures/Shape.tsx:32`
-— writes through the args context, so that persistence hazard has to be closed first.
+tool switch. The alternative — deleting the `args.toolName !== 'shape'` guard in
+`Figures/Shape.tsx`'s `Shape()` — writes through the args context, so that persistence hazard has to
+be closed first.
 
 Baked-in args rather than replay-time reads are what keep undo/redo re-rasterising in the painted
 colour with no migration, because the durable `legacy-tool` conversion already serialises the whole
@@ -3210,18 +3564,21 @@ args object. Add BOTH colours: `hasFill` and the fill swatch are store-owned for
 a half-fixed shape tool strokes in the swatch while still filling in the default.
 
 **Where this came from.** The abandoned branch `fix/paint-overlay`. Its other two commits are dead:
-`139cc432` (clear the tool overlay on unmount) is on `main` verbatim at `useRect.ts:129-135`, and
+`139cc432` (clear the tool overlay on unmount) is on `main` verbatim in `useRect.ts`'s unmount
+cleanup `useEffect`, and
 `37132d95`'s primary claim about `brush`/`pencil`/`color-replacement` being wired to a placeholder is
-false on main, which built a real options panel at `src/components/ToolbarsRight/Paint/Paint.tsx:63-66`.
-Only this rider survives.
+false on main, which built a real options panel in
+`src/components/ToolbarsRight/Paint/Paint.tsx` — `createPaintToolbar()`'s `PaintToolbar`. Only this
+rider survives.
 
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:32`, `src/tools/settings.ts:301-329`,
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`;
+`src/tools/settings.ts` — the five figure entries in `defaultSettings`;
 `src/components/Main/ShapeToolArea.tsx`
 
 ## 128. `scripts/lib/agent-board/db.mjs` carries two raw NUL bytes, at 90 KB in
 
-**Problem.** `scripts/lib/agent-board/db.mjs` is 90,036 bytes and contains **two raw NUL bytes**, at
-**line 1117** (byte offsets 44860 and 44978), inside the `Map` key of `locksFor`:
+**Problem.** `scripts/lib/agent-board/db.mjs` is 90,036 bytes and contains **two raw NUL bytes** (byte
+offsets 44860 and 44978), inside the `Map` key of `Board.locksFor()`:
 
 ```js
 const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path}<NUL>${lock.agent_id}`, lock]));
@@ -3256,7 +3613,7 @@ sniff inspects only the first 8,000 bytes, and both NULs sit far past that. So `
 stands; what is overstated is the set of tools it breaks, and anyone who checks with `git grep -I`
 will conclude the file is clean and think the entry wrong.
 
-**Files.** `scripts/lib/agent-board/db.mjs:1117`
+**Files.** `scripts/lib/agent-board/db.mjs` — `Board.locksFor()`
 
 ## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
 
@@ -3286,8 +3643,8 @@ and it moves the knife edge rather than removing it.
 **The second worktree-count sensitivity this entry used to name has been removed from the tree, and
 the removal is documented in place.** The old sibling `it('gives every non-primary worktree a curated
 entry, so none is undocumented')` — the one that asserted on the size of the operator's fleet — no
-longer exists. What replaced it is a 28-line comment at
-`scripts/__tests__/worktree-inventory.test.mjs:1863-1891` headed "WHY THERE IS NO 'EVERY WORKTREE HAS
+longer exists. What replaced it is a 28-line comment in `scripts/__tests__/worktree-inventory.test.mjs`
+— `describe('the curated table')`, headed "WHY THERE IS NO 'EVERY WORKTREE HAS
 AN ENTRY' RULE HERE", which records that the rule was the recurring red, why no agent can make a
 committed table agree with a moving fleet, and that the risk is now asserted where the risk is
 derived. The knife edge above therefore no longer has a second test on the same axis; the entry keeps
@@ -3303,7 +3660,9 @@ edge moves when a sweep grows the fleet and not when a commit does. That is the 
 there — it belongs in this file only as its routed home while it is being written, and this entry
 should go when the addition lands.
 
-**Files.** `scripts/__tests__/worktree-inventory.test.mjs:1863-1891,1983-2014`, `TEST-FLAKES.md` §14
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs` — the `describe('the curated table')`
+comment headed "WHY THERE IS NO 'EVERY WORKTREE HAS AN ENTRY' RULE HERE", and the
+`it('re-checks a read-derived no-ref claim against the live tree')` title; `TEST-FLAKES.md` §14
 
 ## 132. The shape's three document-frame conversions are correct, and no test pins that
 
@@ -3312,40 +3671,46 @@ reading of this code claimed the frame offset is applied twice to a shape and la
 where it was dragged. **That reading was wrong.** The arithmetic is worth writing down so nobody
 derives it again. Three conversions, in order:
 
-| where                                                                                    | conversion        | sign   |
-| ---------------------------------------------------------------------------------------- | ----------------- | ------ |
-| `ShapeToolArea.tsx:177-178`, `canvasToDocumentPoint(..., documentFrame)`                 | canvas → document | **+1** |
-| `useLayer.ts:306`, `createLayerFromTool`, `pos: canvasToDocumentPos(pos, documentFrame)` | canvas → document | **+1** |
-| `layer-renderer.ts:78-79`, `position.x - (documentFrame?.x ?? 0)`                        | document → canvas | **−1** |
+| where                                                                                  | conversion        | sign   |
+| -------------------------------------------------------------------------------------- | ----------------- | ------ |
+| `ShapeToolArea.tsx`'s `handlePointerUp()`, `canvasToDocumentPoint(..., documentFrame)` | canvas → document | **+1** |
+| `useLayer.ts`'s `createLayerFromTool`, `pos: canvasToDocumentPos(pos, documentFrame)`  | canvas → document | **+1** |
+| `layer-renderer.ts`'s `drawLayerSource()`, `position.x - (documentFrame?.x ?? 0)`      | document → canvas | **−1** |
 
-`document-frame.ts:44-47` — `canvasToDocumentPos` adds. `:40-41` — `documentToCanvasPos`
-subtracts. The renderer's inline subtraction is that same conversion. **Net +1**, which is
+`document-frame.ts`'s `canvasToDocumentPos()` adds. `documentToCanvasPos()` subtracts. The
+renderer's inline subtraction is that same conversion. **Net +1**, which is
 correct: a shape in a cropped document belongs one frame down and right of the origin.
 
 The two "+1"s are not redundant. The first converts the _gesture_ from canvas to document space.
 The second is `createLayerFromTool`'s unconditional conversion, which exists because a caller may
-supply a `pos` already in layer space and a caller may not. `useLayer.ts:286` skips only the
-_derivation_ when `pos` is supplied; the conversion at `:306` is not conditional, and that is
-deliberate rather than an oversight.
+supply a `pos` already in layer space and a caller may not. `useLayer.ts`'s `_addLayer()` skips only
+the _derivation_ when `pos` is supplied; the conversion inside `createLayerFromTool` is not
+conditional, and that is deliberate rather than an oversight.
 
 **Do not "fix" this by dropping either conversion.**
 
 **The tripwire this names is not on `main`, and two documents claim it is.** An earlier revision of
-this entry said a test already pinned the cancellation, and `docs/ARCHITECTURE.md:333` repeats that
+this entry said a test already pinned the cancellation, and `docs/ARCHITECTURE.md` — "File I/O"
+repeats that
 claim. Both are false: `grep -rn "cancels the commit's" src/ e2e/` returns nothing, and the four
-`ShapeToolArea.test.tsx` cases naming a `documentFrame` are about the `currentFrame === null`
-fallback (`:1064`), not about the offset cancelling. The nearest analogue lives on the unlanded
+`ShapeToolArea.test.tsx` cases naming a `documentFrame` are about the
+`it('falls back to documentFrameFromSize when currentFrame is null')` fallback, not about the offset
+cancelling. The nearest analogue lives on the unlanded
 branch `fix/shape-truth`, and it is about the Draw tool
-(`DrawToolArea.test.tsx:450`). **Two corrections, in one change:** add the test, and strike the
+(`DrawToolArea.test.tsx` — the `it('shifts the committed bounding box by the document frame
+origin')` title). **Two corrections, in one change:** add the test, and strike the
 sentence from `docs/ARCHITECTURE.md` that says one exists.
 
 The test to add: a shape committed into a non-zero `documentFrame`, asserting the committed bounds
-equal the preview bounds plus the frame — the same relation `ShapeToolArea.test.tsx:766-775` already
+equal the preview bounds plus the frame — the same relation the
+`it('computes the committed bounds from the same geometry the preview draws')` case in
+`ShapeToolArea.test.tsx` already
 checks between preview and commit, extended to the renderer's subtraction.
 
-**Files.** `src/components/Main/ShapeToolArea.tsx:177-200`, `src/contexts/useLayer.ts:278-309`,
-`src/contexts/layer-renderer.ts:78-79`, `src/contexts/document-frame.ts:40-47`,
-`docs/ARCHITECTURE.md:333`
+**Files.** `src/components/Main/ShapeToolArea.tsx` — `handlePointerUp()`;
+`src/contexts/useLayer.ts` — `createLayerFromTool`;
+`src/contexts/layer-renderer.ts` — `drawLayerSource()`; `src/contexts/document-frame.ts` —
+`canvasToDocumentPos()` and `documentToCanvasPos()`; `docs/ARCHITECTURE.md` — "File I/O"
 
 ## 133. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
 
@@ -3362,7 +3727,9 @@ it, so the wait times out. The measurement on the branch: the landed renderer dr
 
 **Why it matters beyond this suite:** the threshold is not a test detail, it is the definition of
 "there is ink here". Anything that reasons about spray coverage inherits it, and the unit suite
-hard-codes the same threshold at `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`, so
+hard-codes the same threshold in
+`e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts`'s `CONSTANT_CONTRACT` row for
+`SPRAY_LUMINANCE_THRESHOLD`, so
 changing the rule has to change that too — it is a gate on the gate.
 
 **Fix.** Either widen the classifier to a real "is this an ink pixel for the tool that drew it"
@@ -3384,12 +3751,13 @@ same subject, rebuilt on a different base, which is why `git cherry` reported it
 defect record was missing, and it is recorded nowhere on main
 (`git show main:e2e/OPEN_PROBLEMS.md | grep -i spray` → empty).
 
-**Files.** `e2e/helpers/canvas-helpers.ts:242`, `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts:48`
+**Files.** `e2e/helpers/canvas-helpers.ts` — `getStrokeAnalysis()` and the `STROKE_ANALYSIS`
+constants; `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts` — `CONSTANT_CONTRACT`
 
 ## 134. Three tool descriptions promise a scrubby slider that does not exist
 
-**Problem.** `main:src/tools/descriptions/paint.ts` promises the same thing three times — at `:37`
-(Opacity, Brush), `:44` (Flow) and `:170` (Opacity, Pencil):
+**Problem.** `main:src/tools/descriptions/paint.ts` promises the same thing three times — in the
+Brush's `Opacity` row, the Brush's `Flow` row and the Pencil's `Opacity` row:
 
 > "A label with a numeric field, **scrubbable by dragging the label**, 0 to 100 percent."
 
@@ -3424,8 +3792,8 @@ architecture, so the `ScrubbableField` component and `fieldPrecision` are worth 
 options-bar rewrite is not. Its `railPanelIcons.tsx` and ten icon edits are unexplained in any of its
 commit messages — read them before assuming they belong to this work.
 
-**Files.** `src/tools/descriptions/paint.ts:37,44,170`,
-`src/components/ToolbarHorizontal/` (no `ScrubbableField` on main)
+**Files.** `src/tools/descriptions/paint.ts` — the Brush's `Opacity` row, the Brush's `Flow` row and
+the Pencil's `Opacity` row; `src/components/ToolbarHorizontal/` (no `ScrubbableField` on main)
 
 ## 135. Symlinking a worktree's `node_modules` to the root's makes `tsc` resolve through the ROOT checkout
 
@@ -3443,8 +3811,10 @@ $ readlink node_modules/.bin/tsc
 So the resolution is `<root>/node_modules/.bin/../../scripts/tsc-guard.mjs` — and `realpathSync` on it
 lands in the **root checkout's** `scripts/`, not the worktree's. The tsc guard then guards main.
 
-**Observed.** A landing in this worktree failed 3 cases in
-`scripts/__tests__/tsc-guard.test.mjs:392,424` for no reason connected to its change. The cause was
+**Observed.** A landing in this worktree failed 3 cases in `scripts/__tests__/tsc-guard.test.mjs` —
+the `it('repairs npm plain symlink, which is the whole documented recovery path')` and
+`it('replaces a dangling link rather than leaving one npm would skip')` cases among them — for no
+reason connected to its change. The cause was
 this symlink, not the work. The fix is a real `npm ci` in the worktree — and the order matters:
 `rm` the symlink **first**, because a real directory at that path makes `npm ci` delete the contents
 of the directory it is pointed at, which is main's `node_modules`.
@@ -3465,19 +3835,23 @@ form of the same trap: they not only work, they work on the wrong files.
 
 ## 138. Two tool options bars justify their clamping with a `localStorage` round trip that no code performs
 
-`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:111-112` and
-`src/components/ToolbarsRight/Smudge/Smudge.tsx:114` both carry the same comment:
+The comment above the `amount`/`radius` clamps in
+`src/components/ToolbarsRight/Sharpen/Sharpen.tsx` and the one above `tip`/`strength` in
+`src/components/ToolbarsRight/Smudge/Smudge.tsx` both carry the same text:
 
 > A persisted args object can hold a value outside Photoshop's range — settings are round-tripped
 > through `localStorage` and restored before anything clamps them — and a controlled `<input
 type="range">` whose `value` is out of its own `min`/`max` pins the thumb to the bound while
 > reporting the raw value, so the readout and the thumb disagree.
 
-The reasoning is sound and the clamping is correct. **The premise is false.** `saveLastSettings`
-(`src/contexts/useCurrentTool.tsx:62`) writes to `src/tools/settings.ts:367`, a module-level
-singleton, seeded from `defaultSettings` (`src/tools/settings.ts:53-337`). Grepping `localStorage`
-across `src/` returns exactly two keys — `panelLayout` (`src/contexts/PanelLayout.tsx:229`, `:304`)
-and `theme` (`src/contexts/ThemeContext.tsx:14`, `:28`). Nothing reaches the disk.
+The reasoning is sound and the clamping is correct. **The premise is false.** `saveLastSettings()`
+is called from `src/contexts/useCurrentTool.tsx` — `_setToolArgs()` — and writes to
+`src/tools/settings.ts`'s module-level singleton `lastSavedSettings`, seeded from `defaultSettings`.
+Grepping `localStorage`
+across `src/` returns exactly two keys — `panelLayout` (read in `src/contexts/PanelLayout.tsx`'s
+`readStoredLayout()`, written in `PanelLayoutProvider()`'s persist effect)
+and `theme` (read and written in `src/contexts/ThemeContext.tsx`'s `ThemeProvider()`). Nothing
+reaches the disk.
 
 So the comment's stated scenario cannot occur, and a reader who believes it will reason about a
 restore path that does not exist when changing the clamping. It is worse than a harmless lie for a
@@ -3492,9 +3866,10 @@ disagreeing readout. If cross-reload persistence is wanted, that is a feature, i
 `localStorage` layer with a versioned schema, and the two comments become true. Neither is a
 cleanup; pick deliberately.
 
-**Files.** `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:111-112`,
-`src/components/ToolbarsRight/Smudge/Smudge.tsx:114`, `src/contexts/useCurrentTool.tsx:62`,
-`src/util/settings.ts:22-166`, `src/tools/settings.ts:367`
+**Files.** `src/components/ToolbarsRight/Sharpen/Sharpen.tsx` — the comment above the
+`amount`/`radius` clamps; `src/components/ToolbarsRight/Smudge/Smudge.tsx` — the comment above
+`tip`/`strength`; `src/contexts/useCurrentTool.tsx` — `_setToolArgs()`;
+`src/util/settings.ts` — `saveLastSettings()`; `src/tools/settings.ts` — `lastSavedSettings`
 
 ---
 
@@ -3503,15 +3878,16 @@ cleanup; pick deliberately.
 `AUDIT-STASHED-DOCS.md`, `FOCUSED-REVIEW-2026-09-28.md`, `MIGRATION_NEXT_STEPS_SUNDAY.md`,
 `TEST_ISSUES.md` and `CANVAS-RESOLUTION-PLAN.md` sit at the repository root and are not part of any
 documentation hierarchy: all five are point-in-time reports, and two carry banners saying they are
-obsolete (`TEST_ISSUES.md:3-8`, `docs/save-settings-inconsistency.md:3-11`, `docs/next-target-useLayer.md:3-8`).
+obsolete (`TEST_ISSUES.md` — "Open Unit-Test Issues"; `docs/save-settings-inconsistency.md` —
+"Tool Settings Persistence Inconsistency"; `docs/next-target-useLayer.md` — "Next Tier 1 Target:
+`src/contexts/useLayer.ts` — Test Plan").
 `docs/README.md` now names all seven — those five plus the two recovered `docs/*.md` subjects — and
 excludes them explicitly.
 
 The obvious cleanup — move them to `docs/archive/` — **breaks `curated.mjs`**, which is why it has
 not happened. `scripts/lib/worktree-inventory/curated.mjs` keys `ref:` values on these exact
-paths, 9 references in all: `TEST_ISSUES.md` at `:300,313,324`, `AUDIT-STASHED-DOCS.md` at
-`:299,315,326`, `FOCUSED-REVIEW-2026-09-28.md` at `:244,254`, and `MIGRATION_NEXT_STEPS_SUNDAY.md`
-at `:341`. Beyond
+paths, 9 references in all: three on `TEST_ISSUES.md`, three on `AUDIT-STASHED-DOCS.md`, two on
+`FOCUSED-REVIEW-2026-09-28.md`, and one on `MIGRATION_NEXT_STEPS_SUNDAY.md`. Beyond
 that, `TEST_ISSUES.md` and `AUDIT-STASHED-DOCS.md` reference each other, and the two obsolete
 `docs/*.md` files each point at `AUDIT-STASHED-DOCS.md`. `git ls-files '*.md' | xargs grep -c`
 over the tracked markdown names 43 further occurrences: 16 in this file, 15 in
@@ -3524,9 +3900,9 @@ names, so the migration touches no skill file at all.
 Two of the seven are genuinely dead and can go without ceremony: `TEST_ISSUES.md` says "do not add to
 it", and `docs/next-target-useLayer.md` says "do not work from it" — both contradict their own
 bodies, which still read as open plans, which is the residue the lifecycle rule exists to prevent.
-A third is worse: `docs/save-settings-inconsistency.md:3-9` carries a "Superseded" banner and then
-`:11` heads a `## Status: Open` section underneath it, so the file contradicts itself eleven lines
-down. Deleting it is part of the same change.
+A third is worse: `docs/save-settings-inconsistency.md` carries a "Resolved, and the plan is
+obsolete" banner and then heads a `## Status: Open` section underneath it, so the file contradicts
+itself a few lines down. Deleting it is part of the same change.
 
 **Fix.** Do it as its own change, not inside a documentation change: delete `TEST_ISSUES.md`,
 `docs/next-target-useLayer.md` and `docs/save-settings-inconsistency.md`, then move the remaining
@@ -3537,22 +3913,26 @@ references alone. Verify by grepping for each old path afterwards, and by runnin
 `npm run test:e2e:unit` — `scripts/__tests__/worktree-inventory.test.mjs` parses `curated.mjs` and
 would catch a stale key.
 
-**Files.** `scripts/lib/worktree-inventory/curated.mjs:244,254,299-341`,
-`docs/README.md:78-94` ("Not maintained here"), `TEST_ISSUES.md:3-8`,
-`CANVAS-RESOLUTION-PLAN.md:1-4`, `docs/next-target-useLayer.md:3-8`,
-`docs/save-settings-inconsistency.md:3-11`, `e2e/OPEN_PROBLEMS.md`
+**Files.** `scripts/lib/worktree-inventory/curated.mjs` — the four `ref:` key sets on these paths;
+`docs/README.md` — "Not maintained here"; `TEST_ISSUES.md` — "Open Unit-Test Issues";
+`CANVAS-RESOLUTION-PLAN.md` — "Canvas resolution: investigation, blast radius, and plan";
+`docs/next-target-useLayer.md` — "Next Tier 1 Target: `src/contexts/useLayer.ts` — Test Plan";
+`docs/save-settings-inconsistency.md` — "Tool Settings Persistence Inconsistency";
+`e2e/OPEN_PROBLEMS.md`
 ---
 
 ## 140. `index.html` loads a Google Tag Manager container, so every e2e run beacons to Google
 
-`index.html:18` and `index.html:35` load the Google Tag Manager container `GTM-WBWSB9XS` (the id is
-declared at `index.html:20`) from `googletagmanager.com`. Nothing in `e2e/` stubs, blocks or
+`index.html`'s two Google Tag Manager `<script>` tags load the container `GTM-WBWSB9XS` (the id is
+declared in `index.html`'s container-id constant) from `googletagmanager.com`. Nothing in `e2e/`
+stubs, blocks or
 asserts on it.
 
 Three consequences, in increasing order of how much they matter:
 
-1. **The suite is not hermetic.** `e2e/helpers/console-police.ts:34-40` is where this is now
-   recorded, in the "reported but not failed" list — the container "beacons to
+1. **The suite is not hermetic.** `e2e/helpers/console-police.ts` — its module note headed "WHAT IS
+   REPORTED BUT NOT FAILED" — is where this is now
+   recorded — the container "beacons to
    `region1.google-analytics.com` on every page — including every e2e run, which makes the suite
    non-hermetic and would otherwise fail ~36 times over a network call no test controls". That is
    the accurate figure; the "1-8 per test" this entry used to quote is not stated anywhere in the
@@ -3572,13 +3952,16 @@ flag, and have `e2e/global-setup.ts` route `*.google-analytics.com` and `*.googl
 to `abort()` so the suite stops depending on them. The third point is the one worth resolving
 regardless of which policy is chosen.
 
-**Files.** `index.html:18,20,35`, `e2e/global-setup.ts:237`, `e2e/helpers/console-police.ts:34-40`
+**Files.** `index.html` — the two Google Tag Manager `<script>` tags and the `GTM-WBWSB9XS` container
+id; `e2e/global-setup.ts` — `refuseVisibleBrowser()`;
+`e2e/helpers/console-police.ts` — its "WHAT IS REPORTED BUT NOT FAILED" note
 
 ---
 
 ## 142. `classify` reports the main worktree as `keep` while it holds the only copy of uncommitted work
 
-`scripts/lib/worktree-inventory/classify.mjs:236-243` returns for the primary worktree before any
+`scripts/lib/worktree-inventory/classify.mjs`'s `classify()` returns for the primary worktree before
+any
 tree-state check runs:
 
 ```js
@@ -3588,8 +3971,8 @@ if (wt.isPrimary) {
 }
 ```
 
-`KEEP` maps to `ACTION.KEEP` in the one-decision switch (`:334`), never `AT_RISK`. The
-`STATUS.UNMERGED_WORK`-with-`uncommitted` arm that produces `SALVAGE` → `AT_RISK` (`:294-299`) is
+`KEEP` maps to `ACTION.KEEP` in `classify()`'s one-decision `switch (recommendation)`, never
+`AT_RISK`. The `STATUS.UNCOMMITTED_ONLY` arm in `classify()` that produces `SALVAGE` → `AT_RISK` is
 downstream and never reached for the main checkout.
 
 **Observed, not inferred.** While correcting the `color`/`levels`/`transform` rail-removal decision
@@ -3601,18 +3984,21 @@ ph (curated: NONE): ahead=0 onMain=true dirty=3 untracked=0
   — readable, so this must be reported as at-risk, not as anything else
 ```
 
-Three modified files in main, in no commit on any branch, classified as **keep**. The guard at
-`scripts/__tests__/worktree-inventory.test.mjs:2326-2331` caught it and the suite went green the
+Three modified files in main, in no commit on any branch, classified as **keep**. The guard in
+`scripts/__tests__/worktree-inventory.test.mjs` — `describe('the duplicate-key reader, proven against
+injected shapes')` — caught it and the suite went green the
 moment the files were committed — which is the correct behaviour of the guard and the defect in
 `classify` at the same time.
 
 **Why it matters.** The inventory's stated purpose is to point an operator at work that exists in no
 commit and can therefore be lost. Main is the **most** likely place for that, not the least:
-`docs/ORCHESTRATION.md:118-120` records that other sessions commit into it concurrently, and
-`:122-130` documents a merge that silently reverted 17 files through it. A `keep` verdict is read as
-"this checkout is fine" by anything consuming the inventory, and the one checkout whose loss is
+`docs/ORCHESTRATION.md` — "Landing" records that other sessions commit into it concurrently, and its
+`git add -A` bullet documents a merge that silently reverted 17 files through it. A `keep` verdict is
+read as "this checkout is fine" by anything consuming the inventory, and the one checkout whose loss
+is
 catastrophic gets the verdict that says nothing needs attention. The `isPrimary` exemption is
-correct for **deletion** — the comment at `:237-240` is right that main is the landing site — but
+correct for **deletion** — the comment inside `classify()`'s `wt.isPrimary` branch is right that main
+is the landing site — but
 the branch conflates "not a deletion candidate" with "nothing to report".
 
 **Fix.** Keep the primary worktree out of every prune and dispose verdict, and make the dirty case
@@ -3623,38 +4009,47 @@ already gives. `wt.isPrimary` then needs to gate the _prune_ decision rather tha
 recommendation.
 
 **This entry is not a request to weaken a test.** The failing assertion is the guard working. Do not
-touch `worktree-inventory.test.mjs:2326`; fix `classify`. Reproduce by editing any tracked file in
+touch that guard in `worktree-inventory.test.mjs`; fix `classify`. Reproduce by editing any tracked
+file in
 main and running `npx vitest run scripts/__tests__/worktree-inventory.test.mjs`.
 
-**Files.** `scripts/lib/worktree-inventory/classify.mjs:236-243`, `:294-299`, `:314-338`,
-`scripts/__tests__/worktree-inventory.test.mjs:2300-2336`
+**Files.** `scripts/lib/worktree-inventory/classify.mjs` — `classify()`, its `wt.isPrimary`
+early-return, its `STATUS.UNCOMMITTED_ONLY` salvage arm, its `STATUS.UNMERGED_WORK` arms and its
+one-decision `switch (recommendation)`;
+`scripts/__tests__/worktree-inventory.test.mjs` — the `it('declares no key twice, because a
+duplicate key silently discards a curation change')` title
 
-    docs(handoff): the AVIF timeout is a symlink artefact, and main's entry is correct
+```
+docs(handoff): the AVIF timeout is a symlink artefact, and main's entry is correct
 
-    Two audits disagreed about e2e/OPEN_PROBLEMS.md:705. The second measured the AVIF
-    pair failing on a detached worktree of committed main and concluded the entry was
-    falsified. The measurement was made through a symlinked node_modules, so Vite
-    refused to serve the @jsquash avif_enc.wasm - the run's own [WebServer] log says so
-    in one line - and the encoder never finished. With a real npm ci in the worktree the
-    same specs pass on the same commit.
+Two audits disagreed about e2e/OPEN_PROBLEMS.md:705. The second measured the AVIF
+pair failing on a detached worktree of committed main and concluded the entry was
+falsified. The measurement was made through a symlinked node_modules, so Vite
+refused to serve the @jsquash avif_enc.wasm - the run's own [WebServer] log says so
+in one line - and the encoder never finished. With a real npm ci in the worktree the
+same specs pass on the same commit.
 
-    Acting on the wrong conclusion would have replaced a correct entry with a wrong
-    one, so the finding is recorded as a non-finding.
+Acting on the wrong conclusion would have replaced a correct entry with a wrong
+one, so the finding is recorded as a non-finding.
 
 diff --git a/HANDOFF.md b/HANDOFF.md
 index 772cc328..d599aa82 100644
 --- a/HANDOFF.md
-++ b/HANDOFF.md
++++ b/HANDOFF.md
 @@ -4471,3 +4471,47 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
 form of the same trap: they not only work, they work on the wrong files.
 
 **Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
 
+```
+
 ## 143. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
 
 **Problem.** Two audits of this sweep disagreed about the same thing, and the second one was wrong.
-Main's `e2e/OPEN_PROBLEMS.md:705` records the AVIF download timeout and states that **both specs pass
-on `main`**, calling load "an explanation rather than a measurement". One audit measured the AVIF pair
+Main's `e2e/OPEN_PROBLEMS.md` — "P2 — the AVIF export waits on a wasm encoder inside a 30s download
+timeout, and only AVIF exceeds it" — records the AVIF download timeout and states that **both specs
+pass on `main`**, calling load "an explanation rather than a measurement". One audit measured the
+AVIF pair
 failing on a detached worktree of committed `main` and concluded that entry was falsified. That
 conclusion is wrong, and acting on it would replace a correct entry with a wrong one.
 
@@ -3689,9 +4084,11 @@ rm -rf /tmp/avif-check/node_modules          # or simply do NOT symlink it
 **Fix / convention.** A measurement taken through a symlinked `node_modules` is not a measurement of
 `main`. When an audit reports that a documented flake reproduces on `main`, the first thing to check is
 whether the reproduction was itself broken — and the run's own `[WebServer]` log usually says so in one
-line. **The entry at `:704` stands.** Do not edit it, and do not add a second AVIF entry.
+line. **The AVIF entry in `e2e/OPEN_PROBLEMS.md` stands.** Do not edit it, and do not add a second
+AVIF entry.
 
-**Files.** `e2e/OPEN_PROBLEMS.md:705`, `e2e/export/helpers.ts:408`,
+**Files.** `e2e/OPEN_PROBLEMS.md` — "P2 — the AVIF export waits on a wasm encoder inside a 30s
+download timeout, and only AVIF exceeds it"; `e2e/export/helpers.ts` — `waitUntil()`;
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
 
 ---
@@ -3715,10 +4112,12 @@ classified a different shape. Verified by isolating `classify` with the shape th
 which is what the test demands. So `classify` is right and **the facts object the guard passes it
 is not the one whose `workingTree` was counted**.
 
-The likely cause is the name join at `worktree-inventory.test.mjs:2302` —
-`worktrees.find((x) => x.name === r.name)` — against the shape `liveWorktreeFacts` builds at
-`:344-357`, which sets `mergedIntoBase` and `commitsAhead` rather than the `mergedIntoMain` the
-predicate at `:307` reads. A join that misses returns `undefined` and throws; one that matches a
+The likely cause is the name join in the
+`it('protects that shape in a worktree NOBODY has written anything down about')` case —
+`worktrees.find((x) => x.name === r.name)` — against the shape `liveWorktreeFacts()` builds,
+which sets `mergedIntoBase` and `commitsAhead` rather than the `mergedIntoMain` the
+`holdsWorkGitCannotSee()` predicate reads. A join that misses returns `undefined` and throws; one
+that matches a
 _different_ worktree with the same display name returns a clean shape and reads `landed`, which is
 the failure above.
 
@@ -3738,19 +4137,23 @@ rather than a name-matched lookup, since `buildInventory` already produced `r`. 
 constructs a dirty-mainworktree shape directly, so the guard does not depend on the developer's
 working tree to have anything to assert.
 
-**Files.** `scripts/__tests__/worktree-inventory.test.mjs:307`, `:329-357`, `:2300-2336`,
-`scripts/lib/worktree-inventory/classify.mjs:105`, `:159`
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs` — `holdsWorkGitCannotSee()`,
+`liveWorktreeFacts()` and the
+`it('protects that shape in a worktree NOBODY has written anything down about')` case;
+`scripts/lib/worktree-inventory/classify.mjs` — `RECENT_IO_WINDOW_MS` and `hasLiveSession()`
 
 ## 145. The Dodge's and the Burn's tonal-range shortcuts are described as working, and are bound to nothing
 
 **Problem.** `src/tools/descriptions/focus.ts` carries six `shortcuts` rows that state, as fact, what
 `Shift+Alt+S`, `Shift+Alt+M` and `Shift+Alt+H` do to the Dodge and to the Burn — "Sets the stroke to
-the Shadows range while the Dodge tool is active" (`:275`, `:379` and its two siblings at `:280`,
-`:284`, `:384`, `:388`). **No keyboard handler anywhere in the app binds them.** The only two
+the Shadows range while the Dodge tool is active" (the Dodge's `Shift+Alt+S` row, the Burn's
+`Shift+Alt+S` row, and the four sibling `Shift+Alt+M` / `Shift+Alt+H` rows beside them). **No
+keyboard handler anywhere in the app binds them.** The only two
 `alt: true` registrations in `src/components/Common/AppKeyboardShortcuts.tsx` are the Sponge's own
-mode keys, at `:596` and `:606`. The Range select is the only thing that writes
+two `useKeyDownShortcut({ key: 'd' … alt: true })` / `{ key: 's' … alt: true })` mode-key
+registrations. The Range select is the only thing that writes
 `DodgeBurnToolArgs.range`, and it writes it from the user's click
-(`src/components/ToolbarsRight/Tonal/Tonal.tsx:107`).
+(`src/components/ToolbarsRight/Tonal/Tonal.tsx` — `handleRangeChange()`).
 
 **Why it is a defect and not a gap.** A missing capability is filed `missing` per control. These rows
 are in the `shortcuts` array, which has **no status field at all** — a row there reads as a statement
@@ -3773,23 +4176,25 @@ happen.
 tool being `dodge` or `burn`, using `patchToolArgs(tool, { range })` — the same `alt`/`shift`
 registration shape the Sponge's two mode keys use. The three values already exist as
 `DODGE_BURN_RANGES`, so this is three registrations and a small table, with no new args field. Until
-then, either delete the six rows or add a `status` field to `ToolShortcut`
-(`src/tools/descriptions/types.ts:58-63`) so a documented key can be recorded as unbound; the second
+then, either delete the six rows or add a `status` field to
+`ToolShortcut` (`src/tools/descriptions/types.ts` — `ToolShortcut`) so a documented key can be recorded
+as unbound; the second
 is the durable fix, because the field is the reason this could not be caught mechanically.
 
-**Files.** `src/tools/descriptions/focus.ts:275`, `:280`, `:284`, `:379`, `:384`, `:388`;
-`src/components/Common/AppKeyboardShortcuts.tsx:596`, `:606`;
-`src/components/ToolbarsRight/Tonal/Tonal.tsx:107`;
-`src/tools/descriptions/types.ts:58`
+**Files.** `src/tools/descriptions/focus.ts` — the Dodge's and the Burn's `Shift+Alt+S/M/H` shortcut
+rows; `src/components/Common/AppKeyboardShortcuts.tsx` — the Sponge's two `alt: true` mode-key
+registrations; `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `handleRangeChange()`;
+`src/tools/descriptions/types.ts` — `ToolShortcut`
 
 ## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
 
 **Problem.** The Sponge shipped with `mode: 'desaturate'` and `vibrance: true`
-(`src/tools/settings.ts:292`). **Neither is an Adobe default, because Adobe documents neither.** A
+(`src/tools/settings.ts` — the `sponge` entry in `defaultSettings`). **Neither is an Adobe default,
+because Adobe documents neither.** A
 dedicated search of Adobe's desktop Sponge page, its tool-techniques page, the CS4 manual and the
 CS2 Bible found no statement of which `Mode` the bar opens on and no statement of whether `Vibrance`
 ships checked. The app's two seeds rest on arguments, recorded at `SPONGE_MODE_DEFAULT`
-(`src/tools/sponge.ts:60`) and in the tool's `appNotes`:
+(`src/tools/sponge.ts`) and in the tool's `appNotes`:
 
 - `Desaturate` was chosen because it is the non-destructive direction, since a saturated stroke that
   clips a channel cannot be painted back. **One non-Adobe source asserts it** and no second was found.
@@ -3806,13 +4211,15 @@ Photoshop. If `Vibrance` is really unchecked, the tool's Saturate direction clip
 `Vibrance` was on precisely to protect; if `Mode` really opens on Saturate, a first stroke out of the
 box can clip.
 
-**Fix.** Confirm both against a live Photoshop and change `src/tools/settings.ts:292` if either is
+**Fix.** Confirm both against a live Photoshop and change the `sponge` entry in
+`src/tools/settings.ts`'s `defaultSettings` if either is
 inverted. Nothing else needs to move — both are single values, both are already isolated as named
 constants, and both are already the subject of pinned unit tests. If the defaults cannot be
 confirmed, the alternative is to stop asserting either: render the `Mode` select unseeded and refuse
 the commit until the user chooses, which is worse and is not recommended.
 
-**Files.** `src/tools/settings.ts:292`; `src/tools/sponge.ts:60`, `:87`;
+**Files.** `src/tools/settings.ts` — the `sponge` entry in `defaultSettings`; `src/tools/sponge.ts` —
+`SPONGE_MODE_DEFAULT` and `SPONGE_FLOW_DEFAULT`;
 `src/tools/descriptions/focus.ts` §sponge `appNotes`;
 `src/tools/descriptions/focus.notes.md` §Sponge Tool and items 15-16
 
@@ -3820,16 +4227,19 @@ the commit until the user chooses, which is worse and is not recommended.
 
 **Problem.** Adobe scopes behaviour to `Image > Mode` in several places, and this app has no such
 surface — a `grep -rni grayscale src` finds only `colors.ts`'s `grayscale` **filter amount**
-(`src/tools/colors.ts:5`, applied as a canvas `ctx.filter` at `:15`), the `color` tool's own
-`Grayscale` slider (`src/components/ToolbarsRight/Colors/Color.tsx:130`), a PSD-import warning
-(`src/contexts/psd-utils.ts:80`, "Grayscale PSD converted to RGB") and the Sponge's own prose.
+(`src/tools/colors.ts` — `ColorsToolArgs`, applied as a canvas `ctx.filter` in `colors()`), the
+`color` tool's own
+`Grayscale` slider (`src/components/ToolbarsRight/Colors/Color.tsx` — its `Grayscale` slider), a
+PSD-import warning
+(`src/contexts/psd-utils.ts` — `loadPsd()`, "Grayscale PSD converted to RGB") and the Sponge's own
+prose.
 
 The Sponge is the case that surfaced it. Adobe: "When an image is in Grayscale mode, the tool
 increases or decreases contrast by moving gray levels away from or toward the middle gray"
 (<https://helpx.adobe.com/photoshop/using/change-color-saturation-sponge-tool.html>), and Photoshop
 Elements splits the direction — "In grayscale, Saturate increases contrast … In grayscale,
 Desaturate decreases contrast" (<https://helpx.adobe.com/photoshop-elements/using/adjusting-color-saturation-hue-vibrance.html>).
-That rule is **deliberately not implemented** (`SPONGE_MIDDLE_GREY`, `src/tools/sponge.ts:110`), and
+That rule is **deliberately not implemented** (`SPONGE_MIDDLE_GREY`, in `src/tools/sponge.ts`), and
 the reasoning is sound: the rule is scoped to a document MODE, and on an RGB pixel with no chroma the
 chroma scale is already an exact no-op, so adding the pivot would make the tool behave the way
 Photoshop behaves in a mode this app cannot reach.
@@ -3839,7 +4249,8 @@ more than one: `Image > Mode` also governs what the Channels panel lists, what a
 `Image > Adjustments` behaves like, and how Photoshop's own Histogram reads a merged channel. An
 agent that finds one of those will read the Sponge's `appNotes` and conclude "no mode, so skip it",
 which is right here and would be wrong elsewhere — a greyscale document imported from a PSD is
-**already converted to RGB on import** (`psd-utils.ts:80`), so the pixels a mode-scoped rule would
+**already converted to RGB on import** (`psd-utils.ts`'s `loadPsd()`), so the pixels a mode-scoped rule
+would
 read as grey exist in the app today, as RGB pixels, and the mode-scoped rule would then be the
 Photoshop-correct answer for them. That inversion is the trap.
 
@@ -3850,8 +4261,10 @@ currently reads as "no mode, so nothing to do" when the imported-greyscale case 
 should, `Image > Mode` is a document-level property with a PSD round trip attached, and the Sponge's
 grayscale branch is a small consumer of it rather than the reason to build it.
 
-**Files.** `src/tools/sponge.ts:110`; `src/tools/colors.ts:5`, `:15`;
-`src/components/ToolbarsRight/Colors/Color.tsx:130`; `src/contexts/psd-utils.ts:80`
+**Files.** `src/tools/sponge.ts` — `SPONGE_MIDDLE_GREY`; `src/tools/colors.ts` — `ColorsToolArgs`
+and the `ctx.filter` assignment in `colors()`;
+`src/components/ToolbarsRight/Colors/Color.tsx` — its `Grayscale` slider;
+`src/contexts/psd-utils.ts` — `loadPsd()`
 
 ## 148. The rail's fit depends on React flushing passive effects before the first paint, and the fix is refused by a lint rule
 
@@ -3892,7 +4305,8 @@ never paints the unrefitted tree here. `e2e/toolbar-fit.spec.ts` deliberately ha
 this, and that absence is the honest state — if one is added it must be able to go red when the
 scheduling changes, or it is a tripwire for a defect that cannot occur.
 
-**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`, `src/components/SidebarLeft/SidebarLeft.tsx:1040`,
+**Files.** `src/components/SidebarLeft/use-toolbar-overflow.ts`,
+`src/components/SidebarLeft/SidebarLeft.tsx` — `twoColumnEntries`,
 `react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
 runs on a concurrent render that yielded — neither is a pre-paint refit).
 
@@ -3901,9 +4315,10 @@ runs on a concurrent render that yielded — neither is a pre-paint refit).
 ## 149. The three-dots flyout reopens itself after the window crosses the edge where nothing collapses
 
 **Problem.** `openGroup` is reset when its tile is swallowed by a collapse, but only against
-`collapsedGroups` (`src/components/SidebarLeft/SidebarLeft.tsx:411`), and that set can only ever
-contain GROUP keys — `0-0`, `two-column-N`. The three-dots tile is keyed `OVERFLOW_GROUP_KEY`, the
-string `'overflow'` (`:133`), which no group key can equal. So `collapsedGroups.has('overflow')` is
+`collapsedGroups` — the `if (openGroup !== null && collapsedGroups.has(openGroup))` render-time
+reset in `SidebarLeft.tsx` — and that set can only ever contain GROUP keys — `0-0`,
+`two-column-N`. The three-dots tile is keyed `OVERFLOW_GROUP_KEY`, the string `'overflow'` (the
+`OVERFLOW_GROUP_KEY` declaration in `SidebarLeft.tsx`), which no group key can equal. So `collapsedGroups.has('overflow')` is
 always false, the reset never fires for that tile, and `openGroup` outlives the unmount.
 
 **Reproduced.** Open the three-dots menu at 1280x700, grow the window to 1400 — the tile unmounts,
@@ -3917,7 +4332,8 @@ AFTER SHRINK: the flyout is in the DOM with nothing clicked = 1
 
 The user is shown a tool menu they did not open, over the tool they were reaching for.
 
-**Why the `lg`-crossing fix at `:388` does not cover it**, and is worth reading as the same class
+**Why the `lg`-crossing fix — the `lastRailLayout !== railLayout` reset in `SidebarLeft.tsx` — does
+not cover it**, and is worth reading as the same class
 rather than the same bug: the two crossings both unmount tiles, and both leave `openGroup` naming a
 tile that is no longer rendered. The desktop↔tablet crossing is handled by deriving the adjustment
 from the layout; a COLLAPSE is handled by the `collapsedGroups` membership test; and the
@@ -3940,23 +4356,29 @@ tile to be added moves it.
 on plan changes only, and that is the point of the throttle; a subscriber that reset state on every
 version bump would re-open the same class of problem as the one the throttle closed.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:156,211,383-391,1227,1236`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx` — the `RailGripIcon` doc comment, the
+`openGroup` state, the `overflowTools` memo with the render-time collapse reset beside it, and the
+two `renderToolGroup` call sites that render the overflow tile,
 `src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
-`e2e/toolbar-fit.spec.ts:317-322` (the 1094/1093 edge).
+`e2e/toolbar-fit.spec.ts` — the
+`test('the count follows the window, and only the count that fits is ever shown')` case (the
+1094/1093 edge).
 
 ## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
 
 **Problem.** `SingleRowColumnMarqueeToolArea.tsx` wires both `onPointerLeave` and
-`onPointerCancel` to `abortDrag` (`:436`-`:437`), so a drag that leaves the tool element ends as
-a cancelled gesture that commits nothing. The geometry module documents the opposite behaviour
-three files away: `singleRowColumnMarquee.ts:65-73` advertises that an out-of-document pointer
-clamps to the first or last row, and cites Adobe's scripting API as the reason. Both statements
-cannot stand. Only the PRESS clamps. A drag past the canvas edge is discarded.
+`onPointerCancel` to `abortDrag`, so a drag that leaves the tool element ends as a cancelled
+gesture that commits nothing. The geometry module documents the opposite behaviour three files
+away: `singleRowMarqueeRect`'s doc comment in `singleRowColumnMarquee.ts` advertises that an
+out-of-document pointer clamps to the first or last row, and cites Adobe's scripting API as the
+reason. Both statements cannot stand. Only the PRESS clamps. A drag past the canvas edge is
+discarded.
 
-`EllipticalSelectionToolArea.tsx:301`-`:302` wires the same pair, so this is house convention
-rather than something these two tools introduced — but `RectangularSelectionToolArea.tsx:176`
-wires `pointercancel` ALONE, so the rectangular marquee keeps tracking a drag off the edge. Three
-selection tools, two behaviours, and one of the two is undocumented.
+`EllipticalSelectionToolArea.tsx` wires the same pair, so this is house convention rather than
+something these two tools introduced — but `RectangularSelectionToolArea.tsx` wires
+`onPointerCancel` ALONE, to its own `handlePointerCancel`, so the rectangular marquee keeps
+tracking a drag off the edge. Three selection tools, two behaviours, and one of the two is
+undocumented.
 
 **Why it is reachable and not theoretical.** The tool element is the canvas area, so the abort
 fires as soon as the pointer crosses it. At zoom 1 with letterboxing that is the document edge;
@@ -3981,10 +4403,12 @@ That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export
 `activePointerId` refuses every later press, so the tool stops responding until it unmounts.
 `abortDrag` calls `releasePointer()` for that reason and must keep doing so.
 
-**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx:393-410,436-437`,
-`src/components/Main/EllipticalSelectionToolArea.tsx:265-276,301-302`,
-`src/components/Main/RectangularSelectionToolArea.tsx:176`,
-`src/tools/singleRowColumnMarquee.ts:65-82`.
+**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx` — `handlePointerDown` and
+`abortDrag` with its two JSX wirings,
+`src/components/Main/EllipticalSelectionToolArea.tsx` — `handlePointerDown` and `abortDrag` with
+its two JSX wirings,
+`src/components/Main/RectangularSelectionToolArea.tsx` — `handlePointerCancel`,
+`src/tools/singleRowColumnMarquee.ts` — `singleRowMarqueeRect`'s doc comment.
 
 ---
 
@@ -3994,24 +4418,23 @@ That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export
 the root cause anywhere in the tree. `toolbar-mapping.ts` (repo root) has no `hand`, `zoom` or
 `rotate` entry. The store's view state is entirely commented out:
 
-- `src/contexts/StoreContext.tsx:142-143` — the context's `zoomDataRef` / `setZoomData` members,
-  commented out, with only the type left live.
-- `src/contexts/StoreContext.tsx:1171-1177` — the whole zoom block, `// const zoomDataRef =
-useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest.
-- `src/contexts/general-types.ts:14` — `export type ZoomData = { dx, dy, zoom }` is still a live
-  export with **zero** live consumers. A type with no consumer is the residue of the removal.
+- `StoreContext.tsx` — `StoreData`'s commented-out `zoomDataRef` / `setZoomData` members, with only
+  the type left live.
+- `StoreContext.tsx` — `StoreProvider`'s whole commented zoom block, `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest.
+- `general-types.ts` — `export type ZoomData = { dx, dy, zoom }` is still a live export with
+  **zero** live consumers. A type with no consumer is the residue of the removal.
 
 **The `'zoom'` default is a trap, and it is the half nobody has written down.**
-`src/components/Main/Main.tsx:70` initialises `let interactionMode = 'zoom'` and the string `'zoom'`
-is assigned by **no branch** in the file — the chain runs `:72-273` and terminates
-`else EventHandler = DummyToolArea` at `:274`. So `'zoom'` is not a mode anything enters; it is the
-value every tool without its own arm falls through to, and it lands on a `display: none` div with no
-handlers. `Main.tsx:286` still carries the matching `// transform: translate(${dx}px, ${dy}px)
-scale(${zoom})`, and `src/components/Main/Main.scss:1-9`'s `.zoom-container` sets
-`transform-origin` with no `transform` to anchor.
+`Main.tsx` initialises `let interactionMode = 'zoom'` and the string `'zoom'`
+is assigned by **no branch** in the file — the `if`/`else if` chain that assigns `interactionMode`
+runs from its first `else if` to the `else EventHandler = DummyToolArea` that terminates it. So
+`'zoom'` is not a mode anything enters; it is the value every tool without its own arm falls through
+to, and it lands on a `display: none` div with no handlers. `Main.tsx` still carries the matching
+`// transform: translate(${dx}px, ${dy}px) scale(${zoom})` on the `.zoom-container` div, and
+`Main.scss`'s `.zoom-container` rule sets `transform-origin` with no `transform` to anchor.
 
 **A second, smaller finding in the same cause.** `src/components/SidebarLeft/SidebarLeft.tsx`
-has exactly one `<hr>` (`:1250`), and the comment at `:1243-1249` justifies it by describing a
+has exactly one `<hr>`, and the comment above that `<hr>` justifies it by describing a
 commented-out Zoom control: "The second `<hr>` this replaces stood between the colour cluster and
 NOTHING — the commented-out Zoom control that followed it was deleted with it". The control it
 reasons about is not in the file.
@@ -4032,22 +4455,23 @@ Two smaller fixes that can land independently, and are cheap:
 1. Replace the `'zoom'` default with something honest — `DummyToolArea` itself, or an explicitly
    named `UNHANDLED` — so the fallthrough is a decision rather than an accident that reads as a
    feature. As written, a reader must diff the whole chain to learn that `'zoom'` is never assigned.
-2. Delete or reword the `<hr>` comment at `SidebarLeft.tsx:1243-1249`; the control it cites is
-   gone.
+2. Delete or reword the `<hr>` comment in `SidebarLeft.tsx`; the control it cites is gone.
 
 **Why this is being refiled.** `4833e740` deleted the entry that carried it on the grounds that it
-was "already carried by a tracked document". It is not. `docs/TOOLS-INVENTORY.md:210-212` has
-catalogue rows for the three names and `:222` notes "The app has a zoom interaction mode on the
-canvas and no Zoom tool" — a description, not a filed defect. `docs/TOOLS-TOO-HARD.md:694-696`
-repeats that one sentence. `docs/PHOTOSHOP-UX.md:201` lists the three only as "not
-Adobe-table-confirmed". The one surviving mention of the root cause is `HANDOFF.md:1326-1329` in
-§74, framed as a roadmap step ("belongs on its own branch"), which never names the `'zoom'`
-fallthrough or the stale comment. Verified against `main@cf41f642`.
+was "already carried by a tracked document". It is not. `docs/TOOLS-INVENTORY.md`'s "Navigation and
+measuring" table has catalogue rows for the three names, and its "Zoom deserves one note of
+accuracy" note records "The app has a zoom **interaction mode** on the canvas and **no Zoom tool**"
+— a description, not a filed defect. `docs/TOOLS-TOO-HARD.md`'s "The Adobe tools the rail omits"
+section repeats that one sentence. `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section
+lists the three only as "not Adobe-table-confirmed". The one surviving mention of the root cause is
+`HANDOFF.md` §74, framed as a roadmap step ("belongs on its own branch"), which never names the
+`'zoom'` fallthrough or the stale comment. Verified against `main@cf41f642`.
 
-**Files.** `toolbar-mapping.ts` (repo root), `src/contexts/StoreContext.tsx:142-143,1171-1177`,
-`src/contexts/general-types.ts:14`, `src/components/Main/Main.tsx:70,274,286`,
-`src/components/Main/Main.scss:1-9`, `src/components/SidebarLeft/SidebarLeft.tsx:1243-1250`,
-`src/hooks/usePointerPosition.ts`
+**Files.** `toolbar-mapping.ts` (repo root), `src/contexts/StoreContext.tsx` (`StoreData` and
+`StoreProvider`), `src/contexts/general-types.ts` (`ZoomData`),
+`src/components/Main/Main.tsx` (`interactionMode`, the `EventHandler` chain, the `.zoom-container`
+div), `src/components/Main/Main.scss` (`.zoom-container`), `src/components/SidebarLeft/SidebarLeft.tsx`
+(the single `<hr>` and the comment above it), `src/hooks/usePointerPosition.ts`
 
 ---
 
@@ -4057,17 +4481,18 @@ fallthrough or the stale comment. Verified against `main@cf41f642`.
 768px and above the only layer list the app renders is the desktop one, so on an iPad in landscape
 the rows cannot be reordered at all.
 
-- `src/components/SidebarRight/LayersTab.tsx:142` sets `draggable={editingLayerId !== layer.id}`,
-  with `onDragStart` at `:143` (reading `e.dataTransfer`), `onDragOver` at `:163` and `onDrop` at
-  `:171`. There is no pointer-events reorder path anywhere in the file.
-- The breakpoint is `src/hooks/useMediaQuery.ts:13` — `MOBILE_MEDIA_QUERY = '(width < 768px)'` —
-  and `src/components/SidebarRight/SidebarRight.tsx:321` hides the desktop aside below it. So the
-  residual window is exactly `width >= 768px`, which includes the 768-1024px tablet band this
-  suite already exercises (`e2e/OPEN_PROBLEMS.md:913-915` runs at 1133x744).
+- `LayersTab.tsx` sets `draggable={editingLayerId !== layer.id}` on the layer row, with an
+  `onDragStart` that reads `e.dataTransfer`, an `onDragOver` and an `onDrop`. There is no
+  pointer-events reorder path anywhere in the file.
+- The breakpoint is `useMediaQuery.ts` — `MOBILE_MEDIA_QUERY = '(width < 768px)'` — and
+  `SidebarRight.tsx` hides the desktop aside with `max-md:hidden` below it. So the residual window
+  is exactly `width >= 768px`, which includes the 768-1024px tablet band this suite already
+  exercises (`e2e/OPEN_PROBLEMS.md` — its "P2 — the mobile bottom bar scrolls 615px with no
+  affordance" entry runs at 1133x744).
 
 **The phone case is not part of this and must not be claimed.** Below 768px the app ships explicit
-reorder controls: `src/components/Mobile/MobileLayersDrawer.tsx:299-311` and `:313-327` render ▲ and
-▼ buttons with `aria-label={`Move ${layer.name} up`}` / `down`, `disabled` at the ends of the list,
+reorder controls: `MobileLayersDrawer.tsx` renders ▲ and ▼ buttons — the `Move ${layer.name} up`
+and `Move ${layer.name} down` pair — `disabled` at the ends of the list,
 on `min-h-11 min-w-11` (44px) targets, calling `moveLayerAfter`. An earlier version of this entry
 said layer rows "cannot be reordered on a phone", which that refutes. The tablet-width case is the
 one that is live, and it is the one an earlier version did not name.
@@ -4075,12 +4500,14 @@ one that is live, and it is the one an earlier version did not name.
 **Two companions, both still true.**
 
 1. **No stylus discrimination.** `pointerType` appears in production code in exactly two places,
-   both in a test fixture: `src/__tests__/fixtures/pointer.ts:10,41`. `usePointerPosition` reads
+   both in a test fixture: the `pointerType` member of the fixture object in
+   `src/__tests__/fixtures/pointer.ts`. `usePointerPosition` reads
    `button`, `pointerId` and `clientX/Y` and nothing else, and no tool reads `pressure`. So there is
    no stylus-versus-palm rejection and no pinch-zoom.
 2. **Slider hit areas.** There is no `src/components/Common/TouchSlider.tsx`, and the options-bar
-   sliders are 4-6px tall — `h-1.5` in `Draw.tsx:151,157`, `Levels.tsx:111,116` and `Smudge.tsx:25`,
-   `h-1` in `Transform.tsx:185` and `:205`. The mobile tool sheet renders those same bars.
+   sliders are 4-6px tall — `h-1.5` on every range input in `Draw.tsx` and in `Levels.tsx`, and on
+   `Smudge.tsx`'s `SLIDER_CLASS`; `h-1` on every range input in `Transform.tsx`. The mobile tool
+   sheet renders those same bars.
 
 **Why it is not a wiring bug.** Touch reordering needs a pointer-events drag with a gesture
 threshold, and the layers list has an existing HTML5 path with its own keyboard affordances to keep
@@ -4090,8 +4517,9 @@ in step. Slider sizing is a component decision that applies to every bar at once
 
 1. Add a pointer-events reorder path to `LayersTab.tsx` beside the HTML5 one — pointerdown on the
    row's drag affordance, a movement threshold before it is a drag rather than a click, then the
-   same `moveLayerAfter` the mobile drawer calls. Reuse the threshold `SidebarLeft.tsx:499` already
-   uses for its own press-versus-drag decision rather than inventing a second number.
+   same `moveLayerAfter` the mobile drawer calls. Reuse the 3px threshold `onRailDrag` in
+   `SidebarLeft.tsx` already uses for its own press-versus-drag decision rather than inventing a
+   second number.
 2. Read `event.pointerType` in `usePointerPosition` and skip a pen/touch gesture that the tool
    cannot use, so a palm resting on the canvas does not paint. This is the first consumer of
    `pointerType` the app would have, which is why the fixture has it and nothing else does.
@@ -4103,37 +4531,42 @@ in step. Slider sizing is a component decision that applies to every bar at once
    `MobileShell.tsx` and `e2e/mobile-shell.spec.ts`. Take the component, re-derive the document.
 
 **Why this is being refiled.** `4833e740` deleted the entry and named no reason for it. It is not
-routed anywhere: `e2e/OPEN_PROBLEMS.md:803-851` is a Playwright-configuration coverage entry (one
-project, zero `hasTouch`/`isMobile`/`touchscreen`) and never names `draggable`, layer reordering,
-`pointerType` or slider hit size. `docs/FEATURES.md:346-349` records the mobile gap as "No
-pinch-zoom and no two-finger pan" and asserts drawing works on touch, which is a different claim.
-Verified against `main@cf41f642`.
+routed anywhere: `e2e/OPEN_PROBLEMS.md`'s "P3 — no mobile or HiDPI project, and no touch anywhere"
+is a Playwright-configuration coverage entry (one project, zero
+`hasTouch`/`isMobile`/`touchscreen`) and never names `draggable`, layer reordering, `pointerType` or
+slider hit size. `docs/FEATURES.md`'s "Mobile" section records the mobile gap as "No pinch-zoom and
+no two-finger pan" and asserts drawing works on touch, which is a different claim. Verified against
+`main@cf41f642`.
 
-**Files.** `src/components/SidebarRight/LayersTab.tsx:142,143,163,171`,
-`src/components/SidebarRight/SidebarRight.tsx:321`, `src/hooks/useMediaQuery.ts:13`,
-`src/components/Mobile/MobileLayersDrawer.tsx:299-327`, `src/hooks/usePointerPosition.ts`,
-`src/components/ToolbarsRight/Draw/Draw.tsx:151`, `src/components/ToolbarsRight/Levels/Levels.tsx:111`
+**Files.** `src/components/SidebarRight/LayersTab.tsx` (the layer row's HTML5 drag handlers),
+`src/components/SidebarRight/SidebarRight.tsx` (the `max-md:hidden` aside),
+`src/hooks/useMediaQuery.ts` (`MOBILE_MEDIA_QUERY`), `src/components/Mobile/MobileLayersDrawer.tsx`
+(the ▲/▼ pair), `src/hooks/usePointerPosition.ts`,
+`src/components/ToolbarsRight/Draw/Draw.tsx`, `src/components/ToolbarsRight/Levels/Levels.tsx`
+(their range-input track classes)
 
 ---
 
 ## 153. The main-worktree guard runs after the edit, so a subagent fan-out rooted in main is still unstopped
 
-**Problem.** `docs/ORCHESTRATION.md:9-15` states the rule — tracked-file changes happen in a
-worktree, main is for reading and merging — and the commit path is now a program. The write path is
-not, and that asymmetry is the defect.
+**Problem.** `docs/ORCHESTRATION.md`'s "Worktrees" section states the rule — tracked-file changes
+happen in a worktree, main is for reading and merging — and the commit path is now a program. The
+write path is not, and that asymmetry is the defect.
 
-`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit:17` and refuses a commit made
-from the main worktree (override `ALLOW_MAIN_COMMIT=1`, honoured only on an exact `1` at `:151`),
-pinned by `scripts/__tests__/main-worktree-guard.test.mjs` whose last describe asserts the guard is
-actually installed. The guard states its own limit at `:26-36`, headed "WHAT IT DOES NOT DO, because
-the limit is load-bearing":
+`scripts/main-worktree-guard.mjs` runs first in `.husky/pre-commit` — the bare
+`node scripts/main-worktree-guard.mjs` line — and refuses a commit made from the main worktree
+(override `ALLOW_MAIN_COMMIT=1`, honoured only on an exact `1` by `decide()`), pinned by
+`scripts/__tests__/main-worktree-guard.test.mjs` whose last describe, "the guard is actually
+installed", asserts exactly that. The guard states its own limit in the header block headed "WHAT IT
+DOES NOT DO, because the limit is load-bearing":
 
 > It runs AFTER the edit, not before it. A session that writes into the main worktree and never
 > commits is not stopped here; its files are still uncommitted, and they are still in a checkout
 > every other session is reading. … Closing the write side is a process fix, not a program.
 
-`docs/ORCHESTRATION.md:78-82` says the same thing: "What it does **not** do is stop the write … the
-write side is the process rule above, and the guard is the floor under it."
+`docs/ORCHESTRATION.md`, under "The rule is enforced at the commit, not by the reader", says the
+same thing: "What it does **not** do is stop the write … the write side is the process rule above,
+and the guard is the floor under it."
 
 **Nothing fills the gap.** A `task` subagent inherits the calling session's working directory, and
 `AGENTS.md`'s headline instruction is "LAUNCH AS MANY SUBAGENTS AS THE TASK NEEDS" — so a fan-out
@@ -4144,14 +4577,15 @@ chats sit. Two root-level defaults would close it, and neither exists:
    has to happen at the root — and `kilo.jsonc` cannot express it, because tool permissions match a
    path glob and have no term for the working directory. There is no pre-tool-use hook in
    `kilo.jsonc` or in any tracked agent definition, and no script under `scripts/` runs
-   `git worktree add` (`scripts/worktree-inventory.mjs:126` runs only `git worktree list --porcelain`).
+   `git worktree add` (`repoRoot()` in `scripts/worktree-inventory.mjs` runs only
+   `git worktree list --porcelain`).
 2. Nothing stops `agent_manager` `mode: 'local'` from putting an editing session in the root
    checkout. That mode exists by construction to start sessions in the caller's directory.
 
-Note the audit gap: `.kilo/` is gitignored (`.gitignore:49`), so an agent-definition or
-Agent Manager surface cannot be verified from a worktree. What is verifiable from the tracked tree
+Note the audit gap: `.kilo/` is gitignored (the `.kilo` line in `.gitignore`), so an agent-definition
+or Agent Manager surface cannot be verified from a worktree. What is verifiable from the tracked tree
 is that `kilo.jsonc`'s `permission` block contains only the Playwright window-opening `deny` rules
-(`:31-69`) and no working-directory term.
+and no working-directory term.
 
 **Why this is being refiled, in this form.** `4833e740` deleted the entry and classified it under
 "fixed on main". Part one is fixed and demonstrably intact. Part two was the entry's own point —
@@ -4165,9 +4599,11 @@ at a root checkout. Until those exist the guard is worth exactly what it says it
 process rule, converting "rogue commits nobody can attribute" into "a dirty tree the next
 `git status` names".
 
-**Files.** `scripts/main-worktree-guard.mjs:26-36,151`, `.husky/pre-commit:17`,
-`scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md:9-15,78-82`,
-`kilo.jsonc:31-69`, `AGENTS.md` (delegation section)
+**Files.** `scripts/main-worktree-guard.mjs` (its header's "WHAT IT DOES NOT DO" block, and
+`decide()`), `.husky/pre-commit` (the guard invocation),
+`scripts/__tests__/main-worktree-guard.test.mjs`, `docs/ORCHESTRATION.md` ("Worktrees", and "The rule
+is enforced at the commit, not by the reader"), `kilo.jsonc` (`permission`), `AGENTS.md` (delegation
+section)
 
 ## 156. `fix/overnight-test-red` must not be merged: it restores an attribute a written prohibition forbids, and its one remaining change is a decision the operator has already refused
 
@@ -4184,10 +4620,12 @@ stopped applying — which is the part worth re-deriving rather than trusting.
 
 `identity` present _is_ the three-dots tile — the code's own comment says the tile is the
 one caller that passes an `identity` — so the branch adds `aria-pressed` to the overflow
-tile. `e2e/OPEN_PROBLEMS.md:699-701` forbids this in bold: restoring `aria-pressed` there
+tile. `e2e/OPEN_PROBLEMS.md`'s "P2 — a collapsed tool's selection assertion is GROUP-level, so it
+passes for any member of the collapsed set" entry forbids this in bold: restoring `aria-pressed`
+there
 "would announce a pressed toggle for whichever hidden tool happens to be selected, on a
-control whose only job is to open a menu — the exact defect `1dcc25cb` corrected." The same
-file, at `:695-697`, calls it a product change to be decided deliberately, with no
+control whose only job is to open a menu — the exact defect `1dcc25cb` corrected." That same
+entry calls it a product change to be decided deliberately, with no
 `docs/OVERRIDES.md` entry. Per `AGENTS.md` the prohibition outranks the branch, an agent may
 not add an override to settle it, and the operator has now refused it explicitly.
 
@@ -4195,8 +4633,8 @@ not add an override to settle it, and the operator has now refused it explicitly
 the assertion `gives every non-primary worktree a curated entry, so none is undocumented`
 with `requires a curated entry for the worktree this suite runs from, if it holds work`,
 narrowing a machine-wide invariant to one directory. That rule **no longer exists on
-`main`**: it was removed on purpose, and
-`scripts/__tests__/worktree-inventory.test.mjs:2038-2062` carries a header explaining why —
+`main`**: it was removed on purpose, and `describe('the curated table')` in
+`scripts/__tests__/worktree-inventory.test.mjs` carries a header explaining why —
 it demanded a curated entry for every live in-repo worktree, which is what an in-flight task
 looks like for its whole life, so it was red from the first minute of every task in every
 OTHER checkout too, and it compared a COMMITTED file against LIVE machine state that nothing
@@ -4220,9 +4658,11 @@ does want `aria-pressed` on the three-dots tile, it goes into `docs/OVERRIDES.md
 operator's hand — an agent records the finding and stops, which is what this entry is.
 
 **Files.** `fix/overnight-test-red:src/components/SidebarLeft/SidebarLeft.tsx` (`renderToolGroup`),
-`fix/overnight-test-red:scripts/__tests__/worktree-inventory.test.mjs:76,1877`,
-`scripts/__tests__/worktree-inventory.test.mjs:2038-2062`,
-`e2e/OPEN_PROBLEMS.md:695-701`, `AGENTS.md` (model policy, overrides)
+`fix/overnight-test-red:scripts/__tests__/worktree-inventory.test.mjs` (the
+`it('requires a curated entry for the worktree this suite runs from, if it holds work')` title),
+`scripts/__tests__/worktree-inventory.test.mjs` (`describe('the curated table')`),
+`e2e/OPEN_PROBLEMS.md` (the GROUP-level collapsed-tool assertion entry), `AGENTS.md` (model policy,
+overrides)
 
 ## 157. A worktree directory git no longer tracks is unreachable by the disposal path, because disposal only accepts registered worktrees
 
@@ -4249,13 +4689,13 @@ a directory with tracked-looking content and no `.git` is a finding, not an obst
 the refusal message should say which of the three conditions matched. `protectedContentOnDisk`
 and `isRegenerableIgnored` are already exported from the module and answer the
 "is there anything here worth keeping" half of the question, so the fallback can reuse them
-rather than re-deriving the judgement. The `e2e-last-run.json` writer is
-`scripts/e2e-run.mjs:708`, keyed on `REPO_ROOT`, which is why a pruned worktree leaves one
-behind: nothing in the e2e runner cleans its own record.
+rather than re-deriving the judgement. The `e2e-last-run.json` writer is the `RUN_RECORD`
+constant in `scripts/e2e-run.mjs`, keyed on `REPO_ROOT`, which is why a pruned worktree leaves
+one behind: nothing in the e2e runner cleans its own record.
 
 **Files.** `scripts/dispose-worktree.mjs` (argument resolution, `locateInventory`),
 `scripts/dispose-worktree.mjs` (`isRegenerableIgnored`, `protectedContentOnDisk`),
-`scripts/e2e-run.mjs:708`
+`scripts/e2e-run.mjs` (`RUN_RECORD`)
 
 ## 158. The worktree-inventory suite reads the shared main checkout, so its verdict depends on whether main happens to be clean
 
@@ -4264,13 +4704,14 @@ worktree git reports — including the MAIN checkout, located by `listWorktrees(
 precisely so the answer does not depend on which worktree the suite was invoked from. Two
 consequences, and the second is the defect.
 
-`classify.mjs:210` marks the primary worktree `STATUS.LANDED` **unconditionally**, before any
+`classify()` marks the primary worktree `STATUS.LANDED` **unconditionally** — the `wt.isPrimary` arm
+of the status ladder — before any
 look at its working tree: `isPrimary` short-circuits ahead of the `uncommitted && ahead === 0`
 arm that would otherwise report `UNCOMMITTED_ONLY`. So the main checkout holding uncommitted
 work is still classified `landed`.
 
 The test `protects that shape in a worktree NOBODY has written anything down about`
-(`worktree-inventory.test.mjs:2268`) filters to `r.inRepo` and asserts nothing there is
+in `worktree-inventory.test.mjs` filters to `r.inRepo` and asserts nothing there is
 unreported. The main checkout is in that set. Its own comment claims "creating a worktree,
 and this agent's own worktree, change nothing here" — true of worktrees this agent creates,
 and false of the one worktree every agent shares.
@@ -4296,8 +4737,9 @@ it will read it as its own.
    move below the `uncommitted` arm, which changes the inventory's output for every run and
    belongs to whoever owns `WORKTREES.json`'s meaning.
 
-**Files.** `scripts/__tests__/worktree-inventory.test.mjs:2268`,
-`scripts/lib/worktree-inventory/classify.mjs:209-212`
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs` (the
+`it('protects that shape in a worktree NOBODY has written anything down about')` case),
+`scripts/lib/worktree-inventory/classify.mjs` (`classify()`, its `wt.isPrimary` status arm)
 ---
 
 ## 159. A paint stroke committed after a crop renders at the old frame coordinates
@@ -4337,11 +4779,13 @@ crop-followed-by-stroke band assertion to `e2e/crop-history.spec.ts`, carrying t
 above, so a fix cannot pass by making the band read uniformly empty. Do not weaken the existing crop
 history assertions or add an accepted console error.
 
-**Files.** `src/hooks/usePaintStroke.ts` (`:166-167` — the path is under `hooks/`, not `tools/`, which
-is how an earlier version of this entry sent a reader to a file that does not exist),
-`src/contexts/presentation-evaluator.ts` (the frame subtraction), `src/util/layer-space.ts` (the
-layer-space rebase, a different axis), `e2e/crop-history.spec.ts` (`:403`, the case that does not
-cover this).
+**Files.** `src/hooks/usePaintStroke.ts` (`toDocumentPoint()` — the path is under `hooks/`, not
+`tools/`, which is how an earlier version of this entry sent a reader to a file that does not
+exist), `src/contexts/presentation-evaluator.ts` (`drawEvaluatedPresentation()`, the frame
+subtraction), `src/util/layer-space.ts` (`documentPointsToLayerLocal()`, the layer-space rebase, a
+different axis), `e2e/crop-history.spec.ts` (the
+`test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back')` case —
+the one that does not cover this).
 **Problem.** `usePaintStroke.ts` records brush points in document coordinates, while the runtime
 compositor renders a cropped document with `layerCoordinate - documentFrame.origin`. After a crop,
 the stroke is therefore offset by the frame origin and can render outside the visible document.
@@ -4361,7 +4805,7 @@ an accepted console error; the issue is a coordinate transform defect in the pai
 
 ## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
 
-`src/contexts/ThemeContext.tsx:20` hard-codes `DEFAULT_THEME = 'dark'` and the
+`ThemeContext.tsx` hard-codes `DEFAULT_THEME = 'dark'` and the
 `prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e
 suite pins itself to **light** (`e2e/fixtures/extended-test.ts`'s `pinnedTheme` auto fixture),
 because its pixel oracle — `hasDarkPixels`, `getStrokeAnalysis`, `measureInk` — reads "there is
@@ -4369,26 +4813,27 @@ nothing here" out of a near-white pixel and is calibrated against the light work
 That pin is correct and its header says why. This entry is its cost, and the cost is not the pin.
 
 **The gap.** The one test that runs with the pin released
-(`e2e/document-dialogs.spec.ts:1132`, "with nothing stored the document starts dark") asserts the
+(`e2e/document-dialogs.spec.ts`, the `test('with nothing stored the document starts dark')` case)
+asserts the
 `dark` class on `<html>` and the string in `localStorage`. It reads **no pixel**, so it would stay
 green if every `dark:` Tailwind variant in the app stopped applying. No other spec exercises a
 single `dark:` class. **Nothing measures how dark renders.**
 
 **The defect that gap hides, measured.** The dock's collapse glyph is a single `«`/`»` character
-at `text-sm`, `src/components/SidebarRight/SidebarRight.tsx:359`:
+at `text-sm`, in the collapse-glyph `<button>` in `SidebarRight.tsx`:
 
 - light: `text-gray-500` (#6b7280) on `bg-gray-200` (#e5e7eb) = **3.90:1**
 - dark: `dark:text-gray-400` (#9ca3af) on `dark:bg-gray-700` (#374151) = **4.06:1**
 
 WCAG AA for normal text is **4.5:1**, so this fails in both themes. axe cannot judge it: it returns
 `incomplete` on both with "Element content is too short to determine if it is actual text
-content", and `e2e/accessibility.spec.ts:98` records that **`incomplete` is never asserted** —
-`:268`, "attached but NOT asserted". So this is a live AA failure that the only accessibility gate
+content", and `e2e/accessibility.spec.ts`'s header bullet records that **`incomplete` is never
+asserted** — as does the doc comment on `expectNoViolations()`, "attached but NOT asserted". So this is a live AA failure that the only accessibility gate
 in the repository structurally cannot see, and it is not a dark-only problem: dark being the
 default raises its visibility, it does not create it.
 
 **Fix.** Either raise the glyph's contrast above 4.5:1 in both themes (`dark:text-gray-300` on
-`gray-700` is 7.00:1, and it is the value `PanelGroup.tsx:42` already uses for the same surface), or
+`gray-700` is 7.00:1, and it is the value `PANEL_TAB_CLASS` in `PanelGroup.tsx` already uses for the same surface), or
 give the button a real accessible name with a visible label and stop rendering the glyph alone as
 the only text. Then either assert the `incomplete` bucket in the axe helper or assert that a
 specific node is absent from it — a gate that logs a bucket it never checks reports "0 violations"
@@ -4399,10 +4844,10 @@ about a page whose failing control it printed.
 Both reproduced in **light and dark**; neither is dark-specific.
 
 - **`region`, moderate**, on the flyout/tooltip portal wrapper, with the flyout open
-  (`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`). A real violation at 1115 audited
+  (`AnchoredOverlay.tsx`'s `createPortal()` wrapper `style` object). A real violation at 1115 audited
   nodes, in a region the file's header lists as unscanned.
-- **`aria-allowed-role`, minor** and **`region`, moderate**, on
-  `<nav role="toolbar" data-testid="mobile-bottom-bar">` (`src/components/Mobile/MobileBottomBar.tsx:25-33`).
+- **`aria-allowed-role`, minor** and **`region`, moderate**, on the
+  `<nav role="toolbar" data-testid="mobile-bottom-bar">` in `MobileBottomBar.tsx`.
   `role="toolbar"` is not permitted on `nav`. Visible at 500x800, 309 nodes audited.
 
 ### `e2e/accessibility.spec.ts`'s header is stale in five places, and reading it costs the next session an hour
@@ -4410,16 +4855,19 @@ Both reproduced in **light and dark**; neither is dark-specific.
 Every one of these was fixed in the **same commit that added the file** (`6982cd35`), and the
 header describes the state that commit fixed:
 
-- `:75-83` says dark reports two extra `color-contrast` violations on the panel tab labels, citing
-  `dark:text-gray-400` at `PanelGroup.tsx:42`. That class is now `dark:text-gray-300`
+- The header's "The dark theme is NOT scanned" bullet says dark reports two extra `color-contrast`
+  violations on the panel tab labels, citing
+  `dark:text-gray-400` at `PANEL_TAB_CLASS` in `PanelGroup.tsx`. That class is now
+  `dark:text-gray-300`
   (**7.00:1**), and a dark scan of the shell reports **0** violations. Measured: light and dark are
   both clean in all three scanned regions — shell, New Image dialog, Draw options bar.
-- `:122-128` "**THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE**", and the four-violation
-  attribution block at `:429-480`, describe a red suite. `npm run test:e2e -- accessibility` is
+- The header's "## THIS FILE CURRENTLY FAILS, AND THAT IS THE DELIVERABLE" section, and the
+  four-violation attribution block under it, describe a red suite. `npm run test:e2e -- accessibility` is
   **3 passed, 0 violation(s)**.
 - The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
   File (New/Open/Save) and Tools menus only.
-- `:94` says the Save dialog is unscanned. It was measured here: 0 violations, 45 nodes, both
+- The header's "The scans are per-state, not per-app" bullet says the Save dialog is unscanned. It
+  was measured here: 0 violations, 45 nodes, both
   themes. (Not added to the gate, so the header is still right about the gate and wrong about the
   state.)
 - Dark is **cleaner** than light by one node: `.text-lg > span` (the same `«`) is `incomplete` in
@@ -4429,53 +4877,64 @@ header describes the state that commit fixed:
 narrative: state the three scanned regions, their node counts, that both themes report 0, and that
 `incomplete` is not asserted — which is what let the glyph through.
 
-**Files.** `src/components/SidebarRight/SidebarRight.tsx:359`, `:418`, `:433`,
-`src/components/SidebarLeft/AnchoredOverlay.tsx:224-232`,
-`src/components/Mobile/MobileBottomBar.tsx:25-33`,
-`e2e/accessibility.spec.ts:75-83`, `:94`, `:98`, `:122-128`, `:268`, `:429-480`,
-`e2e/fixtures/extended-test.ts` (`pinnedTheme`), `e2e/document-dialogs.spec.ts:1132`
+**Files.** `SidebarRight.tsx` (the three collapsed-dock `«`/`»` glyph buttons),
+`AnchoredOverlay.tsx` (`createPortal()`'s wrapper `style`),
+`MobileBottomBar.tsx` (the `<nav role="toolbar">`),
+`e2e/accessibility.spec.ts` (its header — "The dark theme is NOT scanned", "`incomplete` is NOT
+asserted", "The scans are per-state, not per-app", "## THIS FILE CURRENTLY FAILS, AND THAT IS THE
+DELIVERABLE" and its four-violation attribution block — plus `expectNoViolations()`'s doc comment),
+`e2e/fixtures/extended-test.ts` (`pinnedTheme`), `e2e/document-dialogs.spec.ts` (the
+`test('with nothing stored the document starts dark')` case)
 
 ---
 
 ## 162. A failed export tells the user nothing, and `SaveDialog` has nowhere to tell them
 
-`src/components/SaveDialog/SaveDialog.tsx:14-17`
+`src/components/SaveDialog/SaveDialog.tsx` — the four `useState` calls at the top of `SaveDialog`
 
 `renderExportCanvas` throws when the compositor reports failure, which `useFile.handleImageSave`
-catches at `src/contexts/useFile.tsx:142-152`: it logs and resolves `null`. The dialog is
+catches in its own `catch` block: it logs and resolves `null`. The dialog is
 deliberately left open so a retry is possible — that teardown placement is itself a documented
-fix at `useFile.tsx:131-139` — but `SaveDialog` holds exactly three pieces of state
+fix, spelled out in the comment above the success branch's `setShowSaveDialog(false)` — but
+`SaveDialog` holds exactly three pieces of state
 (`fileName`, `format`, `jpegQuality`) plus `saving`, has no error state, and no render slot
-for one. Its only visual signal is `saving ? 'Saving…' : 'Save'` at `:141`. Its own `catch` at
-`:23-24` is unreachable from this path, because `handleImageSave` catches internally and always
+for one. Its only visual signal is the submit button's `{saving ? 'Saving...' : 'Save'}` label.
+Its own `catch`, inside `handleSave()`, is unreachable from this path, because `handleImageSave`
+catches internally and always
 resolves.
 
 So a broken layer bitmap — a transferred or detached `ImageBitmap` raises `InvalidStateError`
-inside `drawImage`, which `layer-renderer.ts:152-155` catches into a `false` return — produces a
+inside `drawImage`, which the `catch` in `snapshotVisibleCanvas()` in `layer-renderer.ts` catches
+into a `false` return — produces a
 click with no visible consequence at all. Before the export decouple, the same broken layer left
-the display canvas holding the last good composite (`layer-renderer.ts:122-126` states that
-preservation as its contract) and the export encoded a stale-but-real file.
+the display canvas holding the last good composite (`drawLayer()`'s `save`/`finally` pair states
+that preservation as its contract) and the export encoded a stale-but-real file.
 
-**Fix.** Add an error state to `SaveDialog` and render it in the panel body between `:122` and
-`:124`. This requires a signature change: `onSave` is `(data) => Promise<void>` (`:9`) and must
-become in-band, since today the only signal is the in-band `null` every caller already guards
+**Fix.** Add an error state to `SaveDialog` and render it in the panel body, above the footer
+button row. This requires a signature change: `onSave` is `(data) => Promise<void>` on
+`SaveDialogProps` and must become in-band, since today the only signal is the in-band `null` every
+caller already guards
 with. Decide the copy and whether the message is dismissible; that is a product judgement, not
 a mechanical edit.
 
-**Files.** `src/components/SaveDialog/SaveDialog.tsx:14-17,23-24,141`,
-`src/contexts/useFile.tsx:142-152`
+**Files.** `src/components/SaveDialog/SaveDialog.tsx` (its `useState` block, `handleSave()`'s
+`catch`, and the submit button's label),
+`src/contexts/useFile.tsx` (`handleImageSave()`)
 
 ---
 
 ## 163. Every paint stroke is bilinearly resampled, at DPR 1, because the layer box is fractional
 
-`src/util/draw.ts:22-25`, `src/tools/draw.ts:102`
+`src/util/draw.ts` — `pointsBoundingPos()`'s return — `src/tools/draw.ts` — `draw()`
 
 `pointsBoundingPos` returns `width: maxX - minX + 2 * lineWidth` with no rounding of any kind,
 and its inputs are pointer coordinates divided by the contain fit, so `pos.width` is generally
-fractional. `draw.ts:102` then does `new OffscreenCanvas(size.width, size.height)`, whose
-constructor **truncates** — the mechanism `src/tools/shape.ts:131-137` already documents. The
-composite draws at the _untruncated_ size (`src/contexts/presentation-evaluator.ts:168`,
+fractional. `draw()` in `tools/draw.ts` then does `new OffscreenCanvas(size.width, size.height)`,
+whose
+constructor **truncates** — the mechanism `shapeGeometryBounds()`'s doc comment in
+`src/tools/shape.ts` already documents. The
+composite draws at the _untruncated_ size (`drawEvaluatedPresentation()` in
+`src/contexts/presentation-evaluator.ts`,
 `ctx.drawImage(bitmap, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height)`) with
 `imageSmoothingEnabled` at its default `true`, because nothing in the composite path sets it.
 
@@ -4485,29 +4944,33 @@ a 0.12% horizontal stretch — an order of magnitude weaker than the retina blur
 hardest on exactly the 1–3px strokes, where the fixed sub-pixel destination offset is largest
 relative to the stroke.
 
-**This is in `CANVAS-RESOLUTION-PLAN.md:184`'s "Paint algorithms — CLEAR — do not touch" row, and
+**This is in `CANVAS-RESOLUTION-PLAN.md`'s "Blast radius" table, in its "Paint algorithms —
+CLEAR — do not touch" row, and
 that row is wrong for this file.** The correct pattern is four lines away in concept and already
-in the tree: `shapeGeometryBounds` (`src/tools/shape.ts:149-162`) floors the origin and ceils the
+in the tree: `shapeGeometryBounds()` in `src/tools/shape.ts` floors the origin and ceils the
 far edge, producing four integers.
 
 **Fix.** Round `pointsBoundingPos` outward the way `shapeGeometryBounds` does. Verify against
-`e2e/paint-tool-pixels.spec.ts:250-251`, whose `edge.height < 30` is a **capture-pixel**
+the `test('… commits a stroke that spans the drag gesture')` cases in
+`e2e/paint-tool-pixels.spec.ts`, whose `edge.height < 30` is a **capture-pixel**
 measurement with no scale correction and is recorded in DPR-1 numbers — a 0.12% resample moves
 it, and it sits closest to its limit of anything in the suite.
 
-**Files.** `src/util/draw.ts:6-27`, `src/tools/draw.ts:99-103`,
-`src/contexts/presentation-evaluator.ts:168`, `CANVAS-RESOLUTION-PLAN.md:184`,
-`e2e/paint-tool-pixels.spec.ts:250-251`
+**Files.** `src/util/draw.ts` (`pointsBoundingPos()` and `drawPen()`), `src/tools/draw.ts`
+(`draw()`), `src/contexts/presentation-evaluator.ts` (`drawEvaluatedPresentation()`),
+`CANVAS-RESOLUTION-PLAN.md` (the "Blast radius" table), `e2e/paint-tool-pixels.spec.ts` (the
+`test('… commits a stroke that spans the drag gesture')` cases)
 
 ---
 
 ## 164. No stroke geometry is aligned to the pixel grid, so a 1px line is two half-grey rows
 
-`src/tools/shape.ts:171-175`, `src/tools/draw.ts:76-97`, `src/util/draw.ts:151-154`
+`src/tools/shape.ts` — `setShapeCtx()`, `src/tools/draw.ts` — `setupDrawCtx()`, `src/util/draw.ts` —
+`drawPen()`
 
 Neither context setup contains a half-pixel offset, a coordinate snap, or any `Math.round` on a
-point. `setShapeCtx` (`shape.ts:164-175`) sets `strokeStyle`, `fillStyle`, `lineWidth`,
-`lineCap`, `globalAlpha` and `setLineDash` and nothing else; `setupDrawCtx` (`draw.ts:76-97`)
+point. `setShapeCtx` (`shape.ts`) sets `strokeStyle`, `fillStyle`, `lineWidth`,
+`lineCap`, `globalAlpha` and `setLineDash` and nothing else; `setupDrawCtx` (`tools/draw.ts`)
 adds `globalCompositeOperation`, `lineJoin` and `lineCap`. A `lineWidth: 1` horizontal stroke at
 an integer y therefore covers `y ∈ [y-0.5, y+0.5]` — row `y-1` at 50% and row `y` at 50% — a
 2px band of grey where the user asked for a 1px line. Visible at DPR 1, and orthogonal to the
@@ -4517,7 +4980,7 @@ has.
 **Re-derive Adobe's rule from Adobe before implementing anything here.** There is no entry in
 `docs/OVERRIDES.md`, and per `AGENTS.md`'s ladder the product's own behaviour is the source of
 truth for what Photoshop does. Two facts make a naive fix wrong: the thickness slider reaches
-half-integers (`src/components/ToolbarsRight/Figures/Shape.tsx:165`, `step="0.5"`), so "crisp" is
+half-integers (`step="0.5"` in `src/components/ToolbarsRight/Figures/Shape.tsx`), so "crisp" is
 undefined for a 1.5px stroke and any snap rule is a policy choice; and only axis-aligned strokes
 can be snapped this way, so a 45° line would stay soft — a half-measure that looks fixed in a
 demo.
@@ -4527,67 +4990,80 @@ it moves the committed raster, therefore the exported file, therefore the baseli
 `e2e/export/visual-regression.spec.ts`, which `AGENTS.md` forbids re-recording to accommodate a
 change. Raising the display resolution (D2c) does not.
 
-**Files.** `src/tools/shape.ts:164-175`, `src/tools/draw.ts:76-97`, `src/util/draw.ts:151-154`,
-`src/components/ToolbarsRight/Figures/Shape.tsx:160-167`, `e2e/export/visual-regression.spec.ts`
+**Files.** `src/tools/shape.ts` (`setShapeCtx()`), `src/tools/draw.ts` (`setupDrawCtx()`),
+`src/util/draw.ts` (`drawPen()`), `src/components/ToolbarsRight/Figures/Shape.tsx` (the thickness
+slider's `step`), `e2e/export/visual-regression.spec.ts`
 
 ---
 
 ## 165. Nothing in the suite can detect a change to a canvas backing store
 
-`e2e/check-dpr.spec.ts:8`, `e2e/helpers/screenshot-scale.ts:177-185`
+`e2e/check-dpr.spec.ts` (`CSS_POSITION_TOLERANCE`), `e2e/helpers/screenshot-scale.ts`
+(`imageBoundsToCss()`)
 
 `imageBoundsToCss` derives its scale from the decoded capture's extent over the measured box's
 extent, so it is invariant under capture scaling: `check-dpr.spec.ts` passes identically whether
-the store is 1×, 2× or 8×. Its tolerance is 25 CSS px (`CSS_POSITION_TOLERANCE`, declared at `:8`,
-asserted at `:66-68`), roughly 50× the measured pointer-mapping error, so it distinguishes
+the store is 1×, 2× or 8×. Its tolerance is 25 CSS px (`CSS_POSITION_TOLERANCE`, declared beside
+the imports, and asserted by the file's three `line start`/`line end`/`line shifted in Y`
+expectations), roughly 50× the measured pointer-mapping error, so it distinguishes
 "mapping is DPR-invariant" from "mapping is grossly broken" and nothing finer. It is the only
 `page.goto('/')` in the suite under an emulated `deviceScaleFactor: 2`; every other 2× test uses
 `page.setContent` on synthetic HTML. Two further sites divide by a canvas's own extent
-(`e2e/selection-marching-ants.spec.ts:130-132`, `e2e/selection-gestures.spec.ts:254-256`), so
+(the `scale`/`offsetX`/`offsetY` block in `e2e/selection-marching-ants.spec.ts`, and the same
+block in `e2e/selection-gestures.spec.ts`), so
 doubling the store halves the derived scale and leaves the CSS position unchanged — equally blind.
 
 The three overlay stores (`tool-overlay-canvas`, `rect-overlay-canvas`, `selection-ants-canvas`,
-`src/components/Main/Main.tsx:260,300,313`) are compared against nothing, not even each other, so
+the three `<canvas>` elements in `src/components/Main/Main.tsx`) are compared against nothing, not
+even each other, so
 a change that raised one and not the others is undetectable.
 
 **The relation to pin is `store / data-fit-document-* === 1`, in BOTH a dpr-1 and a dpr-2
 context** — the dpr-2 copy is load-bearing, not redundant, since a dpr-conditional raise passes
 at dpr 1. The right-hand side comes from the app's own `data-fit-document-*`
-(`src/hooks/usePointerPosition.ts:107-108`, from the store's `totalSize`), which is a different
-subsystem from `resizeCanvas`.
+(`publishFit()` in `src/hooks/usePointerPosition.ts`, from the store's `totalSize`), which is a
+different subsystem from `resizeCanvas`.
 
 **Do not write `canvas.width === box.width * devicePixelRatio`.** It is false today twice over:
-`src/util/canvas.ts:3-6` assigns the width in JS, so no device property is in the causal chain;
-and the element is `h-full w-full object-contain` (`Main.tsx:255`), so the store is a _document_
+`resizeCanvas()` in `src/util/canvas.ts` assigns the width in JS, so no device property is in the
+causal chain;
+and the workspace `<canvas>` is `h-full w-full object-contain` in `Main.tsx`, so the store is a
+_document_
 quantity and the box enters only through the contain fit, on the **binding axis** alone. At
 1280×720 the fit is height-limited (583/600 = 0.9717), so the width-axis form is red today
-(777.3 vs 974). `e2e/text-tool.spec.ts:481` already rejects the DPR form in writing, for captures.
+(777.3 vs 974). `e2e/text-tool.spec.ts` already rejects the DPR form in writing, for captures.
 
-**Files.** `e2e/check-dpr.spec.ts`, `e2e/helpers/screenshot-scale.ts:5-7,177-185`,
-`e2e/selection-marching-ants.spec.ts:130-132`, `e2e/selection-gestures.spec.ts:254-256`,
-`src/components/Main/Main.tsx:260,300,313`, `src/hooks/usePointerPosition.ts:107-108`,
+**Files.** `e2e/check-dpr.spec.ts`, `e2e/helpers/screenshot-scale.ts` (its module header, and
+`imageBoundsToCss()`), `e2e/selection-marching-ants.spec.ts` (its contain-fit mapping),
+`e2e/selection-gestures.spec.ts` (the same block), `src/components/Main/Main.tsx` (the four
+overlay and workspace canvases), `src/hooks/usePointerPosition.ts` (`publishFit()`),
 `playwright.config.ts` (no `deviceScaleFactor`; `devices['Desktop Chrome HiDPI']` exists with the
 same 1280×720 viewport, and nothing in `e2e/` reads `window.screen`, so a second project would not
 move any layout arithmetic — but it would put the six known 2× failures in
-`e2e/OPEN_PROBLEMS.md:822-829` into the default run)
+`e2e/OPEN_PROBLEMS.md`'s "P3 — no mobile or HiDPI project, and no touch anywhere" entry into the
+default run)
 
 ---
 
 ## 166. The raster and PSD export branches size from different fields, and nothing reconciles them
 
-`src/contexts/export-canvas.ts:61-66`, `src/contexts/psd-utils.ts:243`
+`src/contexts/export-canvas.ts` — `renderExportCanvas()`'s extent comparison,
+`src/contexts/psd-utils.ts` — `savePsd()`'s composite allocation
 
 `renderExportCanvas` derives its extent from `documentFrame` and ignores its `size` argument
 whenever the frame is valid. `savePsd` does the opposite: it sizes the composite from `size`
 (`canvas2d(size.width, size.height)`) and uses the frame only for layer offsets. A second
-asymmetry in the same path: `src/contexts/useFile.tsx:122` gates the PSD frame on truthiness
+asymmetry in the same path: the PSD branch of `handleImageSave()` in
+`src/contexts/useFile.tsx` gates the frame on truthiness
 alone, so an invalid-but-truthy frame reaches `savePsd` unvalidated, while the raster branch
 validates it with `isValidDocumentFrame`.
 
 **Unreachable today, and that is the whole risk.** Every store writer that sets a frame re-derives
-`totalSize` from it (`src/contexts/StoreContext.tsx:419,455-456,1197-1198,1243-1244,1288`), and
-the one reducer arm that could set `size` alone — `SET_SIZE` at `StoreContext.tsx:588-600` — has
-no dispatcher anywhere; the only non-test reference is commented out at `:1379-1384`. A future
+`totalSize` from it (the five `documentFrameSize(nextFrame)` call sites in
+`src/contexts/StoreContext.tsx`), and
+the one reducer arm that could set `size` alone — the `SET_SIZE` arm of `reducer()` — has
+no dispatcher anywhere; the only non-test reference is the commented-out `SET_SIZE` dispatch inside
+`StoreProvider`. A future
 dispatcher is what turns a comment defect into a silent one-document-two-sizes bug.
 
 **Fix.** Reconcile them at the boundary rather than documenting the gap: have the raster branch
@@ -4599,16 +5075,20 @@ the call site, which is where a frame can be dropped — at `src/contexts/__test
 ("renders the export surface from the staged documentFrame, not from size alone"), which gives
 the frame a non-zero origin and an extent that disagrees with `size`.
 
-**Files.** `src/contexts/export-canvas.ts:44,61-66`, `src/contexts/psd-utils.ts:209-213,243`,
-`src/contexts/useFile.tsx:122`,
-`src/contexts/StoreContext.tsx:419,455-456,588-600,1197-1198,1243-1244,1288,1379-1384`
+**Files.** `src/contexts/export-canvas.ts` (`renderExportCanvas()`), `src/contexts/psd-utils.ts`
+(`savePsd()`), `src/contexts/useFile.tsx` (`handleImageSave()`'s PSD branch),
+`src/contexts/StoreContext.tsx` (the `documentFrameSize()` call sites, `reducer()`'s `SET_SIZE`
+arm, and the commented-out `SET_SIZE` dispatch)
 
-`e2e/toolbar-fit.spec.ts:254-261` (the 1037/1036 edge).
+`e2e/toolbar-fit.spec.ts` — the
+`test('the rendered grid fits its slot, and leaves less than a row behind, at every window height')`
+case (the 1037/1036 edge).
 
 ## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
 
 **Problem.** `Edit` carries exactly one item, `Free Transform`
-(`src/components/DesktopHeader/DesktopHeader.tsx:523-532`), because that is where Adobe puts it at
+(the `Edit` menu's only `<li>`, in `src/components/DesktopHeader/DesktopHeader.tsx`), because that
+is where Adobe puts it at
 the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt, and it is
 where a user who knows Photoshop looks for eleven commands. Adobe's own page enumerates them —
 "You can find these commands under `Edit > Transform`" —
@@ -4638,10 +5118,11 @@ Again`"). Re-derive the membership before building the item; do not add it becau
 
 1. **`patchToolArgs` alone does not update the canvas.** It is the only setter a menu item can reach
    from outside a tool bar, and it is pure state: `patchToolArgs` is
-   `src/contexts/useCurrentTool.tsx:75-81`, and all it does is call `_setToolArgs` (`:56-66`), which
+   the `useCallback` of that name in `src/contexts/useCurrentTool.tsx`, and all it does is call
+   `_setToolArgs`, which
    writes the `currentArgs` ref, saves `lastSavedSettings` and publishes React state. Nothing in that
    chain touches a layer. **The pixels move only when `tempUpdateLayer` runs**
-   (`src/contexts/useLayer.ts:565`), which the options bar calls explicitly on **every** control
+   (`src/contexts/useLayer.ts`), which the options bar calls explicitly on **every** control
    change, immediately before `setToolArgs`:
 
    ```ts
@@ -4654,38 +5135,45 @@ Again`"). Re-derive the membership before building the item; do not add it becau
    };
    ```
 
-   `src/components/ToolbarsRight/Transform/Transform.tsx:44-50`. So a `Scale` menu item that presets
+   `throttledOnChange` in `src/components/ToolbarsRight/Transform/Transform.tsx`. So a `Scale`
+   menu item that presets
    args and stops there moves the options bar and nothing else — and every item is the same "preset the
    args" operation, so this is not one item's problem. **`Warp` is a second, separate gap**: it is a
    grid deformation, and `TransformToolArgs` has no warp member at all. `resetArgs`
-   (`Transform.tsx:18-28`) is `rotate` / `mirrorH` / `mirrorV` / `skewX` / `skewY` / `trapezoid` /
+   (the `const resetArgs: TransformToolArgs` in `Transform.tsx`) is `rotate` / `mirrorH` / `mirrorV` /
+   `skewX` / `skewY` / `trapezoid` /
    `resizeX` / `resizeY` and nothing more.
 
 2. **`Rotate 180°` is outside the rotate slider's range.** The slider is `min={-90}` `max={90}`
-   (`Transform.tsx:179-186`). The bar's own `180°` button does not go through the slider — it writes
-   `rotate: (rotate + 180) % 360` (`Transform.tsx:164`) — so a value the slider cannot represent is
+   (the `#rotate-slider` range input in `Transform.tsx`). The bar's own `180°` button does not go
+   through the slider — it writes
+   `rotate: (rotate + 180) % 360` (the same `180°` button) — so a value the slider cannot represent is
    already reachable, and a menu item that presets `rotate: 180` lands the options bar in a state its
    own control cannot display. `Scale` has the mirror problem: `resizeX`/`resizeY` are percentages, so
    Adobe's absolute Width/Height percentages need a document-size read the menu does not currently do.
 
 **Fix.** Solve both, in that order, and only then add items. Constraint 1 is load-bearing: either a menu
 item reaches `tempUpdateLayer` the way the bar does, or the args-preset path grows a preview step — and
-that decision collides with the transient-preview contract in the comment at `Transform.tsx:45-47`, which
-is what keeps a slider drag from writing one history entry per frame. Constraint 2 is a control question,
-not a computation one: reconcile the slider's range with the `±90` button pair at
-`Transform.tsx:95-105`, which already wraps through 360.
+that decision collides with the transient-preview contract in the comment above `throttledOnChange`,
+which is what keeps a slider drag from writing one history entry per frame. Constraint 2 is a control
+question, not a computation one: reconcile the slider's range with the `±90` button pair
+(`handleRotateLeft` / `handleRotateRight`), which already wraps through 360.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:503-535`,
-`src/components/ToolbarsRight/Transform/Transform.tsx:18-28`, `:44-50`, `:95-110`, `:164`, `:179-186`,
-`src/contexts/useCurrentTool.tsx:56-81`, `src/contexts/useLayer.ts:565`
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (the `Edit` and `Image ▸ Adjustments`
+menus), `src/components/ToolbarsRight/Transform/Transform.tsx` (`resetArgs`, `throttledOnChange` and
+its transient-preview comment, `handleRotateLeft`/`handleRotateRight`, the `180°` button, the
+`#rotate-slider` range input), `src/contexts/useCurrentTool.tsx` (`patchToolArgs`, `_setToolArgs`),
+`src/contexts/useLayer.ts` (`tempUpdateLayer`)
 
 ## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
 
 **Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
-(`DesktopHeader.tsx:194`), and selecting it shows the `color` command's options bar, which renders
+(the `const ADJUSTMENTS_ITEMS` list in `DesktopHeader.tsx`), and selecting it shows the `color`
+command's options bar, which renders
 three sliders — **Grayscale**, **Sepia**, **Saturation**
-(`src/components/ToolbarsRight/Colors/Color.tsx:126-180`) — wired to `buildColorsFilter`
-(`src/tools/functions.ts:60-63`), which emits `grayscale(%) sepia(%) saturate(%)`.
+(the three slider rows in `src/components/ToolbarsRight/Colors/Color.tsx`) — wired to
+`buildColorsFilter()`
+(`src/tools/functions.ts`), which emits `grayscale(%) sepia(%) saturate(%)`.
 
 Adobe's Photo Filter is a hue adjustment applied "from a preset filter or a custom color filter", with
 a **Density** slider and a **Preserve Luminosity** option, reachable at `Image > Adjustments > Photo
@@ -4703,8 +5191,11 @@ is enabled under a name that promises a capability its bar does not have, in the
 precisely to find out what the app can do.
 
 **The control cannot simply be deleted without a decision, and that is the operator's call.** This bar
-is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (`DesktopHeader.tsx:200`) is
-**disabled**, because no second command owns desaturation. `Black and White` is disabled too (`:154`) —
+is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (the `Desaturate` entry in
+`ADJUSTMENTS_ITEMS`) is
+**disabled**, because no second command owns desaturation. `Black and White` is disabled too (the
+`Black and White` entry, which
+carries no `toolName`) —
 it needs per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
 
 **Exactly two honest answers, and this entry does not pick between them:**
@@ -4722,14 +5213,15 @@ it needs per-hue sextant weighting, and there is no hue decomposition anywhere i
 `grayscale(%) sepia(%) saturate(%)`. That is a fake control dressed in Adobe's words, which is the one
 thing this repo's policy refuses, and doing it in a menu is worse than doing it in a rail.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:169-175`, `:186-209`,
-`src/components/ToolbarsRight/Colors/Color.tsx:121-180`, `src/tools/functions.ts:60-63`,
-`src/tools/colors.ts`
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and
+`ADJUSTMENTS_ITEMS`, and their doc comments), `src/components/ToolbarsRight/Colors/Color.tsx` (the
+three slider rows), `src/tools/functions.ts` (`buildColorsFilter()`), `src/tools/colors.ts`
 
 ## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
 
 **Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
-(`DesktopHeader.tsx:322`, `:423`, `:452`, `:525`, `:559`). Adobe's is eleven: File, Edit, Image, Layer,
+(the five `header-*-menu-button` triggers in `DesktopHeader.tsx`). Adobe's is eleven: File, Edit,
+Image, Layer,
 Type, Select, Filter, 3D, View, Window, Help. Two of the five that exist are nearly empty: `Edit` holds
 one item, and `Image` holds one submenu.
 
@@ -4738,8 +5230,8 @@ The gap is not cosmetic. A user who knows Photoshop reaches for `Select > Desele
 nothing. Worse, several of those are **unreachable entirely**, not merely unreachable from a menu: the
 app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a selection
 (`src/util/selection.ts` exports no such function), and no adjustment layers at all
-(`src/contexts/psd-utils.ts:88-106` warns `adjustment`, `mask` and `clipping` are unsupported and not
-preserved on import).
+(the unsupported-key warning list in `src/contexts/psd-utils.ts` names `adjustment`, `mask` and
+`clipping`, and says they are not preserved on import).
 
 **The documentation consequence is the part to fix first.** `docs/TOOLS-TOO-HARD.md` files the Select
 gaps as capability absences and justifies them with a menu that does not exist — "There is no menu
@@ -4749,21 +5241,24 @@ as an algorithm gap in the first place.
 
 **Fix.** Add the missing top-level menus in Adobe's order, each carrying the commands the app can
 already do and a **disabled** item for each it cannot — the shape `Image ▸ Adjustments` already uses
-(`DesktopHeader.tsx:147-150`, `:488`), where an item is enabled by having a `toolName` and nothing else.
+(the `MenuHostItem` rule that an item is enabled by having a `toolName` and nothing else, applied by the
+`disabled={toolName === undefined}` attribute on the menu item button).
 Start with **`Select`**: its honest contents are the smallest, because Select All and Deselect are
 trivial and Feather / Grow / Modify / Inverse are `disabled` items until the model work lands. Then
 **`Layer`**, almost all of it disabled while adjustment layers do not exist. **`View`** and **`Filter`**
 follow the same rule. **`Type`** last of the plausible ones; **`3D`** is a candidate for never shipping
 at all, and should be decided rather than deferred.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:313-570`, `:147-150`, `:186-209`,
-`src/util/selection.ts`, `src/contexts/psd-utils.ts:88-106`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem`, `ADJUSTMENTS_ITEMS`
+and their doc comments, and the five menu triggers), `src/util/selection.ts`,
+`src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
 
 ## 170. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
 
 **Problem.** `ADJUSTMENTS_ITEMS` enables exactly two items
-(`src/components/DesktopHeader/DesktopHeader.tsx:186-209`), and both name a capability the app does
+(the `const ADJUSTMENTS_ITEMS` list in `src/components/DesktopHeader/DesktopHeader.tsx`), and both
+name a capability the app does
 not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args really are
 `{ brightness, contrast }` and whose processor really does emit `brightness(…) contrast(…)` — so that
 label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
@@ -4826,41 +5321,51 @@ overturned by writing one line above. The cost of taking it is that a user can r
 an Adobe name that Adobe's dialog does not have; the cost of the alternative is that `color` is
 unreachable until real Black and White is built, which is a larger loss than a documented partial.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx:147-150`, `:186-209`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and `ADJUSTMENTS_ITEMS`),
 `src/components/DesktopHeader/__tests__/DesktopHeader.test.tsx`, `src/tools/colors.ts`,
-`src/tools/functions.ts:60-63`, `docs/TOOLS-TOO-HARD.md` (the enabled-items entry and Black and
+`src/tools/functions.ts` (`buildColorsFilter()`), `docs/TOOLS-TOO-HARD.md` (the enabled-items entry
+and Black and
 White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
 
 ## 171. `color`'s and `levels`' `imageProcessor` is unreachable from every production call site, which leaves two files maintained on a path nothing runs
 
 **Problem.** `src/tools/colors.ts` and `src/tools/levels.ts` export only an `imageProcessor`, and both
-tools declare `commit: 'layer-operation'` (`src/tools/toolProcessors.ts:132-152`). This entry existed to
+tools declare `commit: 'layer-operation'` (the `color` and `levels` entries in
+`src/tools/toolProcessors.ts`). This entry existed to
 record that the reachability claim was UNPROVEN, because it had been derived from the single call site in
 `useLayer` and five others had not been traced. All six are traced now, and the claim holds for these two
 tools:
 
-- `useLayer.ts:731` — closed by the `commit === 'layer-operation'` arm at `:695-703`, which appends the
+- `useLayer.ts` — closed by the `commit === 'layer-operation'` arm of `tempUpdateLayer()`, which
+  appends the
   retained operation, redraws and returns.
-- `useHistory.ts:96` (`applyRasterTool`) — closed by replay: `history-replay.ts:173-193` re-appends the
+- `useHistory.ts`'s `applyRasterTool` dependency — closed by replay: the
+  `commit === 'layer-operation'` arm in `history-replay.ts` re-appends the
   retained operation for a `layer-operation` tool and `continue`s, so the raster branch is never taken for
   either id.
-- `materialization.ts:136` — requires `processor.creator`, which neither tool sets. The module has no
+- `materialization.ts`'s `createLayerFromTool()` path — requires `processor.creator`, which neither tool
+  sets. The module has no
   runtime importer at all: `durable-compositor.ts` is its only non-test importer, and nothing outside
   tests imports that.
-- `materialization.ts:251` — reached only by an `apply-raster-processor` operation, and
-  `history-adapter.ts:521-533` maps every `layer-operation` tool to `apply-filter`, whitelisting exactly
+- `materialization.ts`'s raster-operation application — reached only by an `apply-raster-processor`
+  operation, and
+  the `commit === 'layer-operation'` arm of `history-adapter.ts` maps every `layer-operation` tool to
+  `apply-filter`, whitelisting exactly
   `['blur', 'color', 'levels']`.
-- `layer-utils.ts:226` — needs a `tool` layer source, and `createLayerFromTool`'s callers are the text,
+- `layer-utils.ts`'s `createLayerFromTool()` — needs a `tool` layer source, and `createLayerFromTool`'s
+  callers are the text,
   draw and shape paths.
-- `layer-renderer.ts:67` — gated by `isVectorSource`, whose set is the six shape ids.
+- `layer-renderer.ts`'s `getLayerBitmap()` — gated by `isVectorSource`, whose set is the six shape ids.
 
 **`transform` is not in this class and must not be lumped with them.** It is `commit: 'affine-operation'`
-(`src/tools/toolProcessors.ts:146-152`), which falls past that early return: the trapezoid path calls
-`applyRasterTool` at replay time, and `history-adapter.ts:493-499` emits `apply-raster-processor` with
+(the `transform` entry in `src/tools/toolProcessors.ts`), which falls past that early return: the
+trapezoid path calls
+`applyRasterTool` at replay time, and the trapezoid arm of `history-adapter.ts` emits
+`apply-raster-processor` with
 `processorId: 'transform'`. Its processor runs.
 
 **Why it matters.** If a processor is unreachable then the CSS-filter string (`buildColorsFilter` /
-`buildLevelsFilter`, `src/tools/functions.ts:60-70`) is the whole of the capability, and the
+`buildLevelsFilter`, the two functions in `src/tools/functions.ts`) is the whole of the capability, and the
 `OffscreenCanvas` work in both files is maintenance on a path nothing runs. That is worth knowing before a
 real Levels and a real Black and White are built on top of either.
 
@@ -4870,10 +5375,13 @@ them and say in `docs/TOOLS-TOO-HARD.md` that they are the raster implementation
 canvas-filter requirement, so the two files are not later mistaken for dead code. Do not delete
 `transform`'s processor: it runs.
 
-**Files.** `src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/toolProcessors.ts:132-152`,
-`src/contexts/useLayer.ts:695-731`, `src/contexts/history-replay.ts:173-193`,
-`src/contexts/history-adapter.ts:493-533`, `src/contexts/materialization.ts:126-136`, `:237-251`,
-`src/contexts/layer-utils.ts:222-226`, `src/contexts/layer-renderer.ts:49-67`, `docs/TOOLS-TOO-HARD.md`
+**Files.** `src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/toolProcessors.ts` (the
+`color`/`levels`/`transform` entries), `src/contexts/useLayer.ts` (`tempUpdateLayer()`),
+`src/contexts/history-replay.ts` (its `layer-operation` arm),
+`src/contexts/history-adapter.ts` (its `layer-operation` and trapezoid arms),
+`src/contexts/materialization.ts` (`createLayerFromTool()` and the raster-operation application),
+`src/contexts/layer-utils.ts` (`createLayerFromTool()`),
+`src/contexts/layer-renderer.ts` (`getLayerBitmap()`, `isVectorSource()`), `docs/TOOLS-TOO-HARD.md`
 
 ## 172. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers is unanswered, and it changes the durable schema
 
@@ -4884,8 +5392,9 @@ than a UI one.** The two answers are not the same amount of work and they do not
 document:
 
 - **Baked pixels.** `Image ▸ Adjustments` applies a retained filter operation to the active layer.
-  The machinery exists — `layer.operations[]` re-rendered as a CSS filter string by `getLayerFilter`
-  (`src/contexts/layer-renderer.ts:32`, applied at `:99`). The gap is only that the operations cannot
+  The machinery exists — `layer.operations[]` re-rendered as a CSS filter string by `getLayerFilter()`
+  (`src/contexts/layer-renderer.ts`, applied inside `drawLayerSource()`). The gap is only that the
+  operations cannot
   be re-edited and there is no Properties panel.
 - **Real adjustment layers.** Each adjustment becomes its own layer with its own settings and a mask.
   This needs a layer kind, a settings payload that survives serialization, a mask, and a Properties
@@ -4893,7 +5402,8 @@ document:
   parameters change without changing pixels and the linear history model has no entry for that.
 
 **Why it is a question and not a defect.** Nothing is broken; something is undecided, and the
-undecided thing is which document model the app has. `src/contexts/psd-utils.ts:88-106` refuses
+undecided thing is which document model the app has. `loadPsd()`'s unsupported-key warning list in
+`src/contexts/psd-utils.ts` refuses
 `adjustment`, `mask` and `clipping` on import, so a PSD written by Photoshop with any of them loses
 them on the way in today. Choosing baked pixels leaves that refusal in place for a feature that is
 one Photoshop adjustment; choosing adjustment layers makes it the first thing to fix. **This cannot
@@ -4916,21 +5426,25 @@ default does NOT settle: it does not make the adjustment re-editable, and it doe
 Properties panel exist, so either answer still leaves `docs/TOOLS-TOO-HARD.md`'s adjustment-layers
 entry open.
 
-**Files.** `src/contexts/psd-utils.ts:88-106`, `src/contexts/layer-types.ts:31-46`,
-`src/contexts/layer-renderer.ts:32`, `src/contexts/history-model.ts`, `AGENTS.md` §Architecture
+**Files.** `src/contexts/psd-utils.ts` (`loadPsd()`'s unsupported-key warning list),
+`src/contexts/layer-types.ts` (`FilterLayerOperation`, `AffineLayerOperation`, `LayerOperation`),
+`src/contexts/layer-renderer.ts` (`getLayerFilter()`), `src/contexts/history-model.ts`, `AGENTS.md`
+§Architecture
 status, `docs/TOOLS-TOO-HARD.md` (the adjustment-layers entry), `docs/FEATURES.md`
 
 ## 173. `color`, `levels` and `transform` are unreachable below 768px, because the rail is not the only thing `toolbarMap` drives
 
 **Problem.** The rail removal deleted one three-wide group from `toolbarMap`, and `toolbarMap` is also
 the source for the **mobile** tool bar and tool sheet: `src/components/Mobile/mobile-tools.ts` derives
-`mobileToolGroups` from it (`:50`), consumed by `MobileBottomBar.tsx:33` and `MobileToolSheet.tsx:24`.
+`mobileToolGroups` from it, consumed by `MobileBottomBar.tsx` and `MobileToolSheet.tsx`.
 So the three left mobile as a side effect of a decision that was about the rail.
 
 Their only new host is `Image ▸ Adjustments` and `Edit ▸ Free Transform` in
-`src/components/DesktopHeader/DesktopHeader.tsx`, and the header is `max-md:hidden` (`:302`). The
+`src/components/DesktopHeader/DesktopHeader.tsx`, and the header `<header>` element is
+`max-md:hidden`. The
 mobile drawer (`MobileMenuDrawer.tsx`) carries New / Open / Save / Theme and nothing else. The
-breakpoint is pinned at `md` = 768px (`src/index.scss:37`, `src/hooks/useMediaQuery.ts:14`), so
+breakpoint is pinned at `md` = 768px (the `--breakpoint-md` custom property in `src/index.scss`, and
+`TABLET_MEDIA_QUERY` in `src/hooks/useMediaQuery.ts`), so
 **at every viewport width under 768px there is no UI path to any of the three.** Before this change
 they were in the mobile tool sheet (`git show 9a99fe2a:toolbar-mapping.ts` lines 62-64), so this is a
 capability regression, not a pre-existing gap.
@@ -4953,9 +5467,10 @@ that closes on every action. (c) Split the rail's view of `toolbarMap` from the 
 four read sites in `SidebarLeft.tsx`; cheapest, and it re-creates the two-lists divergence this
 change closed.
 
-**Files.** `toolbar-mapping.ts`, `src/components/Mobile/mobile-tools.ts:50`,
-`src/components/Mobile/MobileBottomBar.tsx:33`, `src/components/Mobile/MobileToolSheet.tsx:24`,
-`src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx:302`
+**Files.** `toolbar-mapping.ts`, `src/components/Mobile/mobile-tools.ts` (`mobileToolGroups`),
+`src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileToolSheet.tsx`,
+`src/components/Mobile/MobileMenuDrawer.tsx`, `src/components/DesktopHeader/DesktopHeader.tsx` (the
+`<header>` element)
 
 ---
 
@@ -4971,11 +5486,14 @@ implemented around.
 
 **Why it is not simply "add a Save button".** The app's only save is Save As to a NEW file:
 `openSaveImageDialog` always proposes `"<name> (copy)"`
-(`src/contexts/useFile.tsx:190`) and `SaveDialog`'s own title is `Save File As...`
-(`src/components/SaveDialog/SaveDialog.tsx:54`). There is no path that writes back to the file
+(the `proposedName` the dialog is rendered with, in `src/contexts/useFile.tsx`) and `SaveDialog`'s
+own title is `Save File As...`
+(the dialog's own `<h2>` in `src/components/SaveDialog/SaveDialog.tsx`). There is no path that writes
+back to the file
 the document was opened from, and no save point to return to — `hasUnsavedChanges` is a boolean
 with no `savedRevision` to compare against, and undo always ends dirty
-(`src/contexts/StoreContext.tsx:426` hard-codes `true` in `projectPublishedTimeline`). So a Save
+(`projectPublishedTimeline()` in `src/contexts/StoreContext.tsx` hard-codes
+`hasUnsavedChanges: true`). So a Save
 button on the discard prompt would have to open Save As, and then RESUME the interrupted action —
 open the New Image dialog the user asked for, or continue the file open. Whether the user should be
 able to do that at all, or whether the interrupted action should simply be abandoned after a save,
@@ -4997,73 +5515,83 @@ If it should not, `docs/OVERRIDES.md` is where the deviation from Adobe belongs,
 the operator's to write.
 
 **Files.** `src/components/ConfirmDialog/ConfirmDialog.tsx`,
-`src/contexts/UnsavedChangesContext.tsx`, `src/contexts/useFile.tsx:190`,
-`src/components/SaveDialog/SaveDialog.tsx:54`, `src/contexts/StoreContext.tsx:426`,
-`docs/FEATURES.md`
+`src/contexts/UnsavedChangesContext.tsx`, `src/contexts/useFile.tsx` (the `proposedName` the save
+dialog is rendered with), `src/components/SaveDialog/SaveDialog.tsx` (its own title),
+`src/contexts/StoreContext.tsx` (`projectPublishedTimeline()`), `docs/FEATURES.md`
 
 ## 175. Paste places a layer at a canvas-space position that the layer reader treats as document space
 
-**Problem.** `pasteSelectionClipboard` (`src/contexts/useSelectionClipboard.ts:70-75`) builds
+**Problem.** `pasteSelectionClipboard` (the `centerPos` it builds, in
+`src/contexts/useSelectionClipboard.ts`) builds
 
 ```ts
 x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2));
 ```
 
-`totalSize` is the DOCUMENT size — `documentFrameSize(nextFrame)` at `src/contexts/StoreContext.tsx:419`
-and `:456` — so `(totalSize.width - width) / 2` is already the document-space offset that centres
+`totalSize` is the DOCUMENT size — `documentFrameSize(nextFrame)` at the two
+`totalSize:` assignments in `src/contexts/StoreContext.tsx` — so `(totalSize.width - width) / 2` is
+already the document-space offset that centres
 the pasted layer. Adding `documentFrame.x` converts it to canvas space, and the result is passed
-as `pos` to `createLayerFromBitmap` (`src/contexts/useSelectionClipboard.ts:76-80`), which reads
+as `pos` to `createLayerFromBitmap()` (the `await createLayerFromBitmap({ … })` call in the same
+function), which reads
 `pos` as DOCUMENT space. On a cropped document the pasted layer therefore lands `documentFrame.x`
 pixels right and `documentFrame.y` pixels down of centre, by exactly the frame origin.
 
-**This is enshrined as correct by three passing tests**, which is what makes it a trap:
-`src/contexts/__tests__/useSelectionClipboard.test.tsx:213` asserts `pos {47, 37}` against a frame
+**This is enshrined as correct by three passing tests**, which is what makes it a trap: the
+`it('clones the clipboard bitmap and centers the new layer inside the document frame')` case in
+`src/contexts/__tests__/useSelectionClipboard.test.tsx` asserts `pos {47, 37}` against a frame
 `{x: 12, y: 7, width: 100, height: 100}`, where the document-space centre is `{35, 30}` — the
-asserted value is `{35, 30}` plus the frame origin. The companions are at `:230` and `:246`. Those
+asserted value is `{35, 30}` plus the frame origin. The companions are the
+`it('clamps a clipboard larger than the document to the document frame origin')` and
+`it('prefers the clipboard position size over the bitmap size')` cases. Those
 three assertions must be re-pointed in the same change that fixes the code; they are not evidence
 that the current behaviour is right.
 
 **The sibling path is correct**, which is why this reads as a copy/paste asymmetry rather than a
-shared convention: `layerViaCopy` (`src/contexts/useSelectionClipboard.ts:92` out, `:100` back) is
+shared convention: `layerViaCopy` (the `documentToCanvasPos` call on its way out and the
+`canvasToDocumentPos` call on its way back, both in `src/contexts/useSelectionClipboard.ts`) is
 a proven round-trip identity, pinned by
-`src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx:208`. The pin that used to sit
+`src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx`'s round-trip identity case. The
+pin that used to sit
 there asserted the double-count this entry describes, and was deleted on that evidence — its stated
-mechanism (`documentToCanvasPos` at `:100`) named a call the line does not make.
+mechanism (naming `documentToCanvasPos`) named a call the line does not make.
 
-**Fix.** Drop `documentFrame.x` / `documentFrame.y` from the centring expression at `:71-72`, and
+**Fix.** Drop `documentFrame.x` / `documentFrame.y` from the `centerPos` centring expression, and
 re-point the three assertions above. No conversion is needed in the other direction: the reader
 already treats `pos` as document space.
 
 ## 176. Copy clamps canvas-space points against the document size
 
 **Problem.** `layerViaCopy` converts the selection out of document space
-(`documentToCanvasPos` at `src/contexts/useSelectionClipboard.ts:92`) and then hands the
-canvas-space points to `copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize)` at
-`:93`. `totalSize` is the document size (see §175), and the copy path clamps against it —
-`getSelectionCanvasBounds` in `src/util/selection.ts:531-536` does
+(`documentToCanvasPos` in `src/contexts/useSelectionClipboard.ts`) and then hands the
+canvas-space points to `copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize)` in the
+same call. `totalSize` is the document size (see §175), and the copy path clamps against it —
+`getSelectionCanvasBounds()` in `src/util/selection.ts` does
 `maxX = Math.min(imageSize.width, maxX)`. Canvas coordinates run as high as
 `frame.x + totalSize.width`, so the rightmost `frame.x` pixels and the bottom `frame.y` pixels of a
 cropped document are unclippable and a selection reaching them is silently truncated, while a
 selection one pixel left of the origin clamps to 0.
 
 **Fix.** Pass the canvas-space extent — `totalSize` offset by the frame origin, or the canvas's own
-`width`/`height` — as the clamp bound rather than the document size. `:45` is the same call in
-`copySelectionToCanvas`'s other caller and needs the same bound.
+`width`/`height` — as the clamp bound rather than the document size. The other
+`copySelectionToCanvas` call in the same file needs the same bound.
 
 ## 177. G0 and G13 cannot both be satisfied, and the widened gate that proves it is committed red
 
 **Problem.** The plan's G0 forbids production source from importing the retired replay and
 materialization modules; G13 requires `materialization.ts` to have exactly one production importer.
 As written they are contradictory: the only way to satisfy G13 is for the durable compositor to
-exist and be wired, and the compositor's own import of `materialization.ts`
-(`src/contexts/durable-compositor.ts:4`) is exactly what G0 forbids. No state satisfies both.
+exist and be wired, and the compositor's own `import { materializeDocument, … } from
+'./materialization.ts'` in
+`src/contexts/durable-compositor.ts` is exactly what G0 forbids. No state satisfies both.
 
 **Proof, and the gate that finds it.** The G0 assertion read ONE file — `../StoreContext.tsx`
 — so it could not see `durable-compositor.ts` at all, and passed. Widened to every tracked
 production module (excluding `__tests__`, `test`, `*.test.*`, `*.spec.*`, `*.stories.*` and
-ambient `*.d.ts`, the convention already established for this question at
-`src/contexts/__tests__/history-writer-census.test.ts:214-234`), it is RED by exactly one hit.
-The walk's roots are `src/` **and** `toolbar-mapping.ts`: `tsconfig.app.json:43` puts that file
+ambient `*.d.ts`, the convention already established for this question by `sourceFiles()` in
+`src/contexts/__tests__/history-writer-census.test.ts`), it is RED by exactly one hit.
+The walk's roots are `src/` **and** `toolbar-mapping.ts`: the `include` in
+`tsconfig.app.json` puts that file
 in the app's `include` beside `src` and four components import it, so a walk rooted only at
 `src/` reported a subset while implying the repository. The violation is:
 
@@ -5073,8 +5601,10 @@ in the app's `include` beside `src` and four components import it, so a walk roo
 
 The forbidden set is unchanged and correct — `replay-coordinator`, `materialization`,
 `replay-checkpoints` — and must stay that way: `presentation-evaluator.ts` is imported by production
-on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`, `materialization.ts:14`), and `durable-replay.ts`
-is read as a value at `StoreContext.tsx:41`, so adding either would make the gate red on correct code.
+on purpose (the `presentation-evaluator.ts` import blocks in `layer-renderer.ts`, `useLayer.ts` and
+`materialization.ts`), and `durable-replay.ts`
+is read as a value by `replayDurableDocument` at the top of `StoreContext.tsx`, so adding either would
+make the gate red on correct code.
 A specifier is matched on its BASENAME, not by substring, so a helper named
 `materialization-utils.ts` is not a violation of a gate about `materialization.ts`.
 
@@ -5097,7 +5627,10 @@ it is a pin, and a pin that outlives its defect is a gate that stops meaning any
 
 **Problem.** The branch deletes the `draw` tool; OVR-2 in `docs/OVERRIDES.md` keeps the tile, so
 its premise is void. It is still a live ref at `603356ac` and carries a broken assertion —
-`e2e/history-panel.spec.ts:29-64` repoints the stroke filter to `/^brush/`, then still asserts
+`e2e/history-panel.spec.ts`'s `drawRows` locator
+(`historyRows(page).filter({ hasText: /^draw/ })`, used by the
+`test('the panel lists one row per committed edit, newest first')` case) repoints the stroke filter
+to `/^brush/`, then still asserts
 `toContainText('draw')`.
 
 **Why it is parked.** Insurance only. OVR-2 marks Dashed Pen and Spray a temporary hold on controls
@@ -5112,16 +5645,18 @@ the mutant above.
 **Problem.** `5d388e02` is 1 commit ahead and 135 behind, and 15 of its 24 files are dirty on both
 sides. It cannot be merged as a commit, and it must never be cherry-picked whole: one hunk narrows
 `drawLayersToCanvas`'s previous-pixel snapshot to resize-only, which is exactly the change `d5d8db65`
-made in the other direction. `main:src/contexts/layer-renderer.ts:231-246` snapshots in EVERY case and
+made in the other direction. `main:src/contexts/layer-renderer.ts`'s
+`drawLayersToCanvas()` snapshots in EVERY case and
 says why — `resizeCanvas` resets a resized canvas to transparent and `clearRect` empties one whose
 dimensions already matched, so a `drawImage` throwing between them left the document blank. The branch
-reinstates that window and pins the reinstatement in `layer-renderer.drawLayersToCanvas.test.ts:530`.
+reinstates that window and pins the reinstatement in `layer-renderer.drawLayersToCanvas.test.ts`'s
+snapshot assertion.
 
 Three of its production fixes also landed on `main` under different names, so a merge produces two
 taxonomies or a silent winner: `presentation-evaluator.ts`'s `PresentationFilterRefusal` against
 `main`'s `FilterArgumentUnrenderableError` (`src/util/canvas-filter.ts`) and `evaluatePresentationForDraw`;
 `history-append.ts`'s `hasAsset` against `main`'s `registryResolvesAsset` (4f8bdcbb); and
-`layer-renderer.filters.test.ts`, which re-points a `getLayerFilter` that `main:layer-renderer.ts:30`
+`layer-renderer.filters.test.ts`, which re-points a `getLayerFilter` that `main:layer-renderer.ts`
 still exports, so merging it deletes a symbol main's own tests use.
 
 **What survives, and is worth re-applying.** `presentation-evaluator.parity.test.ts` (+783) —
@@ -5130,7 +5665,8 @@ order, two independent implementations against literal fixtures; the best test i
 `durable-compositor.refusal.test.ts`'s negative cases, `history-append.merge.test.ts`'s key-order
 reversal, and the `history-append.create.test.ts` cases that fix an `if (…) return;` that made a
 reader-throwing case vacuous. One case in the refusal file does not test what it claims:
-`durable-compositor.refusal.test.ts:418` builds its abort with `new AbortController().abort()`, which
+`durable-compositor.refusal.test.ts`'s abort case
+builds its abort with `new AbortController().abort()`, which
 in jsdom is a real `DOMException`, so it stays green on the defect `isAbortError` exists to catch.
 
 **Three decisions this branch takes and cannot.** `.kilo/plans/history-migration-finalisation.md` §8
@@ -5142,68 +5678,21 @@ rather than by ruling, and `docs/OVERRIDES.md` has no entry. Second, `presentati
 compiler-enforced rule. Third, grading `opacity` against the live record decides part of §92, whose
 own text says the decision comes before the edit.
 
-## 180. `docs/no-line-numbers` states enforcement it does not have, and its assertion is a to-do list
-
-**Problem.** `9b220f4b` rewrites the no-line-numbers rule and ships an assertion it describes as
-expected to fail for as long as documents are unmigrated. At that commit 27 maintained documents
-carry 2,830 citations and `HANDOFF.md` alone has 895. That is a migration plan wearing an
-assertion's clothes: it fails while the defect lives, which is the inverse of this repository's pin
-convention, and it blocks every commit and the `gate:push` suite.
-
-Three claims in the documents the commit rewrites are false about the code shipped beside them.
-`AGENTS.md` says the check "reads every tracked markdown document… so a document you add is covered
-the day it lands", against a `LINE_NUMBER_GATED` set of three paths. `docs/DOCUMENTATION.md` says
-"Everything else is migrated" over those 2,830 citations, and says the check reads "every tracked
-markdown document" for the call-form and `§N` legs, which read `AGENTS.md` alone. The fence
-exemption's justification — that §99, §106–§109 are entries whose subject is a drifted citation — is
-also wrong: those entries have zero in-fence citations, and the 8 that are fenced in `HANDOFF.md` sit
-in unrelated sections.
-
-**`816c5894` is landed. `4dffad98` must not be, and the reason is a defect in the guard's premise
-rather than in its code.** `816c5894` corrects the two residual `saveLayerCanvas` claims, and every
-citation in it was re-verified against `main` before landing: the symbol has zero occurrences under
-`src/`, `:657` is the only write of a promoted bitmap onto a published record and sits inside the
-`PROMOTE_LAYER_PRESENTATIONS` arm, `:955` is the dispatcher's `isSamePresentationCanvas` re-check,
-`:1362` is the dispatch, and `647-660` is that arm's extent. `AGENTS.md` was already corrected, so
-`main` was internally inconsistent until this landed.
-
-`4dffad98` widens the retired-symbol leg from `AGENTS.md` alone to every tracked markdown document,
-and it goes red on `main` the moment it lands — on `HANDOFF.md`. The leg's premise is that ANY mention
-of a retired symbol is a claim that it exists, and it has no way to say otherwise: the only exclusions
-are whole documents. That premise is false for a defect ledger whose job is recording deletions. After
-`816c5894` the only occurrences in maintained documents are §180 and §181 _naming the correction_, so
-landing the guard would require either excluding `HANDOFF.md` — which the branch's own third test
-deliberately forbids, and correctly — or forbidding the ledger from recording that a deletion was
-documented. Point-in-time reports do not have this problem, which is why the branch's exclusion set
-handled `MIGRATION_NEXT_STEPS_SUNDAY.md` and `docs/next-target-useLayer.md` and not `HANDOFF.md`.
-
-So the widening needs a way to distinguish "claims it exists" from "records that it was deleted"
-before it is worth having, and that is a design question, not a patch. Everything else in the commit
-is sound and worth keeping when it is: `git ls-files` enumeration over a hand-written list, the
-fail-closed `docs/README.md` table reader, and the bidirectional set accounting
-(`checked + excluded === tracked`, every exclusion carrying a reason) rather than the length
-comparisons the middle test uses.
-
-**What is needed.** For the rest of the branch: turn the red assertion into a `HANDOFF.md` migration
-plan, correct the three claims above to what the code does, re-derive or drop the fence, and run the
-migration. `docs/citation-anchors` and `fix/saveLayerCanvas-citations` are `816c5894` + `4dffad98` at
-the same tree, so the first is landed by it and the second stays unmerged until the widening is
-redesigned.
-
-## 181. A branch sweep under-reports unmerged work, and five hardening branches are unmerged because of it
+## 181. A branch sweep under-reports unmerged work, and two hardening branches are unmerged because of it
 
 **Problem.** Ancestry alone is not a completeness test. `test/infra-suite-hardening` is not an ancestor
 of `main`, yet `git diff --stat main...test/infra-suite-hardening` is empty — it landed by cherry-pick
 roughly a hundred commits ago, and `git rev-list --count main..` still reports 2 ahead. A sweep that
 asks only "is this branch an ancestor of main" reports live work as pending.
 
-Running the per-file blob comparison instead found five branches whose unit-test work is genuinely
-absent from `main`: `docs/no-line-numbers` (5 ahead — carries a new `scripts/lib/citations/resolve.mjs`
-and its 220-line test, neither in `main`), `fix/migration-review-sweep` (see §179),
-`docs/luna-psd-currency` (+809 lines to the citation guard), and `docs/citation-anchors` +
-`fix/saveLayerCanvas-citations` (the same two commits, unmerged, superseded by `docs/no-line-numbers` —
-see §180). None has an entry in `.kilo/agent-manager.json` at all, which is why §121's structural
-blindness went unnoticed rather than being the only cause of it.
+Running the per-file blob comparison instead found five branches whose unit-test work was genuinely
+absent from `main`. Three of the five have since landed, which is why the count is two:
+`docs/no-line-numbers` carried the citation resolver and its test, and `docs/citation-anchors` +
+`fix/saveLayerCanvas-citations` were the same two commits at an earlier tree, so all three are on
+`main` together. What remains is `fix/migration-review-sweep` (see §179) and
+`docs/luna-psd-currency` (+809 lines to the citation guard). Neither has an entry in
+`.kilo/agent-manager.json` at all, which is why §121's structural blindness went unnoticed rather than
+being the only cause of it.
 
 **Also unaccounted for.** Eight `agent-manager.json` worktree entries point at directories that no
 longer exist and branches that exist in no ref, in no reflog entry and in no dangling commit:
@@ -5227,7 +5716,8 @@ on `main` as of `4c07778c`. `node scripts/dispose-worktree.mjs` refuses both any
 reads as "2 ahead of main" forever. This is the same under-reporting as §181 one layer down: there the
 lie was in a sweep's own logic, here it is in the field the whole disposal path gates on.
 
-`docs/ORCHESTRATION.md:390-394` says the only field in a curated entry that moves a verdict is
+`docs/ORCHESTRATION.md`, under "Removal goes through one program", says the only field in a curated
+entry that moves a verdict is
 `mustNotPrune`, and that it applies to "a branch git already calls disposable" — which these are not.
 `summary`, `note`, `issues` and `landed` are documentation. So there is no supported way to express
 "landed, but not by reachability", and `dispose-worktree.mjs` has no `--force` by design.
@@ -5249,3 +5739,34 @@ nothing" that is not `mustNotPrune`, which is what all three branches need. Unti
 `git branch -D` and `git worktree remove --force` are the only paths to them, both are gated in
 `kilo.jsonc`, and defeating that gate is not the answer — which leaves the operator as the only party
 who can retire them.
+
+## 183. `docs/OVERRIDES.md` carries two bare-continuation citations, and the gate cannot be widened to see them
+
+**Problem.** `docs/OVERRIDES.md`'s `draw` entry cites `docs/PHOTOSHOP-UX.md` by two bare line
+coordinates — `"No invented tools" at `:33``, and "`draw` is a live tile, and it is the last
+deletion" at `:131``. Both are the banned form, and the second has drifted since the phrase was
+written: `docs/PHOTOSHOP-UX.md` no longer badges `draw` with Photoshop's `B` at all, so the
+suspension's own wording names a state that document has moved past.
+
+**Why the gate cannot simply be widened.** `scripts/__tests__/agents-citations.test.mjs` now checks
+the BARE form, `` `:‹line›` ``, as well as the self-naming `file.ext:‹line›` — but only in the
+enforcement leg, over `LINE_NUMBER_GATED`. The remainder leg, which reports the migration's
+outstanding work, still matches the self-naming form only, and widening THAT is what turns the gate
+red on this file. `AGENTS.md` forbids an agent from editing `docs/OVERRIDES.md`, and forbids solving it
+with an exemption entry, so the limitation is recorded here rather than engineered around: a leg that
+reported this file would fail CI on a file no agent may change, and the exemption that made it green
+would be the assertion-nobody-can-falsify that the gate's own design comment rejects.
+
+**What is needed.** Two steps, in this order, because the first is the operator's and the second is
+only safe once it has happened:
+
+1. The operator rewrites those two citations as units — `docs/PHOTOSHOP-UX.md`'s "No invented tools"
+   and "the last deletion" wording, or the headings that carry them — and re-reads the `draw`
+   suspension against `docs/PHOTOSHOP-UX.md` as it stands now, since the `B` badge it cites was
+   deliberately removed as a falsehood (`toolbar-mapping.ts`'s own comment says so, and
+   `toolbar-mapping.test.mjs` pins that `draw` has no shortcut).
+2. Then widen the remainder leg to `bannedNumbersIn`, which is a one-line change, and the gate covers
+   both shapes across every maintained document. Until step 1 lands, that change fails on this file.
+
+The wider audit found no other maintained document carrying a bare continuation: the only other hit
+is `localhost:5173` in `.skills/hard-merge.md`, which is a port and not a citation.

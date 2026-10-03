@@ -48,7 +48,8 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   works inside _that_ root's worktree and splits by file, which is the whole
   reason `task` exists.
   **The board cannot enforce this, and the reason matters.** Board identity is the
-  git branch (`identity.mjs:43-47`), and `holdFiles` refuses only a _foreign_ lock,
+  git branch (the `agentId` derivation in `resolveIdentity()`, `identity.mjs`), and `holdFiles`
+  refuses only a _foreign_ lock,
   so two writers in one worktree are the same agent to the board: both holds are
   granted, and the file reads as uncontended. It is a discipline, not a lock.
   When two writers do collide in one worktree, neither sees it in the board — the
@@ -207,7 +208,8 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   fails. It is a **virtual** path: it never exists on disk, so an agent editing `e2e/*.spec.ts`
   holds those files separately and does not collide with it.
   - **The holder is a RUN, not a branch.** Board identity is the branch and the conflict test is
-    `lock.agent_id !== who` (`db.mjs:1163` in `holdFiles`, `db.mjs:1554` in `lockFile`), so a branch never conflicts with itself: with branch
+    `lock.agent_id !== who` (in `holdFiles` and `lockFile`, both in `db.mjs`), so a branch never
+    conflicts with itself: with branch
     identity, two runs in one worktree both "acquire" and the second one's `unlock` releases the
     row the first still believes it holds. Every board call therefore passes
     `--agent e2e-run/<branch>/<pid>`, and `swarm status` shows that while a suite runs — the
@@ -226,7 +228,8 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     only on the path that uses it, and a bad lease is reported and replaced.
   - **A holder this wrapper did not create is never reclaimed.** The reclaim unlocks AS the holder
     it is reclaiming, so a wrong liveness answer releases a real agent's slot. Board identity is
-    the sanitized branch and `sanitize` preserves `/` (`scripts/lib/agent-board/identity.mjs:28`),
+    the sanitized branch and `sanitize` preserves `/` (it is in `sanitize()`'s allowed-character
+    class, `scripts/lib/agent-board/identity.mjs`),
     so a holder on `fix/1234` — or anyone who passed `--agent 2026` — has an identity whose last
     segment parses as a pid. Only `e2e-run/<…>/<digits>` is probed. `E2E_SKIP_LOCK=1` (or `--no-lock`)
     skips the queue, and `E2E_LOCK_TIMEOUT`, `E2E_LOCK_POLL` and `E2E_LOCK_LEASE` tune the wait.
@@ -450,7 +453,7 @@ Re-check read-derived lists against the live tree before removing a worktree: a
 read-derived count is a claim about a moment, which is why `workOnNoRef` carries
 `stillOnNoRef`.
 
-`chats.unfinished` holds **six** states (`chats.mjs:57-64`): `active`,
+`chats.unfinished` holds **six** states (`UNFINISHED_STATES` in `chats.mjs`): `active`,
 `abandoned-midflight` (a stale session whose last turn ended on a tool call),
 `blocked` (waiting on a human answer), `died-at-birth`, `rejected-credits` and
 `orphaned` (the worktree directory no longer exists). `chats.dead` holds the
@@ -704,7 +707,7 @@ never read — the one process-level signal the schema carries is consulted nowh
 
 **The two readers disagree about a malformed timestamp, and the board side is the
 dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
-(`db.mjs:1065`) treats it as **free**, because `NaN > at` is false — so the
+(`db.mjs`) treats it as **free**, because `NaN > at` is false — so the
 inventory can show a file held while `swarm check` calls it free. Unreachable
 today, since every writer goes through `msFromNow`, but a resource's safety rests
 on an invariant the code does not hold. Claims fail the other way: `doctor` tests

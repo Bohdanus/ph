@@ -117,16 +117,18 @@ the moment it lands.
 
 Moving these breaks a test, not just a link:
 
-- **`docs/TOOLS.md`** — hardcoded in `scripts/generate-tool-docs.mjs:18`, and
-  `scripts/__tests__/tool-descriptions.test.mjs:111` asserts the file is byte-equal
+- **`docs/TOOLS.md`** — the `OUTPUT` constant in
+  `scripts/generate-tool-docs.mjs`, and the
+  `it('writes docs/TOOLS.md exactly as the generator produces it')` case in
+  `scripts/__tests__/tool-descriptions.test.mjs` asserts the file is byte-equal
   to the generator's output.
 - **`HANDOFF.md`**, **`TEST-FLAKES.md`**, **`e2e/OPEN_PROBLEMS.md`** — the three
-  keys of `SCOPE_BY_FILE` in `scripts/lib/agent-board/handoff-import.mjs:56`, which
+  keys of `SCOPE_BY_FILE` in `scripts/lib/agent-board/handoff-import.mjs`, which
   routes work onto the swarm board by document. They are the registry, not a
   convention.
 
 `AGENTS.md` stays at the repository root for the same reason: it is read from disk
-by `scripts/__tests__/agents-citations.test.mjs:73`.
+by `scripts/__tests__/agents-citations.test.mjs`.
 
 ## Where a new fact goes
 

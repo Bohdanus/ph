@@ -25,11 +25,11 @@ loosening a threshold, adding a skip, or re-recording a baseline. Evidence, incl
 the measurements that established each defect and the mutation tests that prove the
 fixes, is in `OPEN_PROBLEMS.md`.
 
-| formerly failing tests            | was                                     | now                                                |
-| --------------------------------- | --------------------------------------- | -------------------------------------------------- |
-| `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale no longer asserted; mode-independent |
-| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to an rAF focus race, then awaited     |
-| `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order      |
+| formerly failing tests                                                                                                        | was                                     | now                                                |
+| ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------- |
+| `cdp-helpers.spec.ts`                                                                                                         | 2 headless, 5 headed, disjoint per mode | capture scale no longer asserted; mode-independent |
+| `sidebar-keyboard.spec.ts` — its `Enter activates focused flyout item` and `full keyboard flow: open, navigate, select` tests | 0–2, 5 of 12 measured headless runs     | root-caused to an rAF focus race, then awaited     |
+| `levels.spec.ts` — its `changes red line via brightness` and `changes red line via contrast` tests                            | 2, both modes                           | canvas located by test id, not document order      |
 
 **Done since the migration — `getWorkspaceCanvas` (previously item 2 here).** All
 three parts landed together, and the two `levels.spec.ts` failures it caused are
@@ -43,8 +43,9 @@ green:
   raised a strict-mode violation. A single-selector locator cannot.
 - `resolveFakeLocator` is gone, replaced by `resolveFakeMatches`, which returns the
   whole match list so a union can no longer read as a single-element hit. The 5
-  pins in `canvas-interaction.unit.test.ts:26` were rewritten and a sixth pins
-  `.or()` as a union.
+  pins in the `describe('getWorkspaceCanvas')` block of
+  `e2e/helpers/__tests__/canvas-interaction.unit.test.ts` were rewritten and a
+  sixth, in that file's `describe('Locator.or')` block, pins `.or()` as a union.
 
 `data-testid="reposition-hint-text"` went in alongside it, replacing the two
 `getByText('Drag or resize on canvas')` lookups in `select-move.spec.ts`.
