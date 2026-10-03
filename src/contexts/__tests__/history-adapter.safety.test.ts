@@ -924,7 +924,7 @@ describe('plainValue absence handling (history-adapter)', () => {
 
   it('keeps a hole-padded array hole-padded at the same index', () => {
     const registry = new AssetRegistry();
-    // eslint-disable-next-line no-sparse-arrays -- the hole IS the subject under test: a history arg carrying an absent element is the input §93 is about, and a dense literal could not express it
+    // eslint-disable-next-line no-sparse-arrays -- the hole IS the subject under test: a history arg carrying an absent element is the input this arm exists for, and a dense literal could not express it
     const holey: unknown[] = [0, , 1];
 
     const stops = durableStops(convertSafely([levelsItem({ stops: holey })], registry).document);
