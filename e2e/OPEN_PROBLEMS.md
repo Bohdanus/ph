@@ -1,10 +1,10 @@
 # Open Problems
 
 Not a changelog. Each entry is an unfixed defect, with the evidence that proves
-it. The one section that is not work says so on its own heading. Line numbers are
-re-read from the working tree when the entry is written; where an entry sits
-against a spec that has since been rewritten, its references are a record of the
-past and are labelled as such.
+it. The one section that is not work says so on its own heading. Every citation
+names the unit it points at, re-read from the working tree when the entry is
+written; where an entry sits against a spec that has since been rewritten, its
+references are a record of the past and are labelled as such.
 
 Two sections, because they came from two passes. Everything above
 **Transferred findings** was written against this repository. Everything below it
@@ -56,11 +56,11 @@ Three defect groups used to fail here and have been fixed in this repository. Th
 evidence is kept below rather than deleted, because each explains a shape the suite
 must not drift back into:
 
-| was failing                           | was                                     | now                                            |
-| ------------------------------------- | --------------------------------------- | ---------------------------------------------- |
-| `e2e/helpers/cdp-helpers.spec.ts`     | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
-| `e2e/sidebar-keyboard.spec.ts:69, 80` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
-| `e2e/levels.spec.ts:203, 274`         | 2, both modes                           | canvas found by test id, not document order    |
+| was failing                                                                                                                       | was                                     | now                                            |
+| --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------- |
+| `e2e/helpers/cdp-helpers.spec.ts`                                                                                                 | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
+| `e2e/sidebar-keyboard.spec.ts` — its `Enter activates focused flyout item` and `full keyboard flow: open, navigate, select` tests | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
+| `e2e/levels.spec.ts` — its `changes red line via brightness` and `changes red line via contrast` tests                            | 2, both modes                           | canvas found by test id, not document order    |
 
 All of these were introduced with the specs and were independent of how they were
 moved into this repository: each was reproducible with no changes to the specs or
@@ -70,11 +70,11 @@ are latent defects that no current run trips.
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
-this file is the work queue. `playwright.config.ts:91` resolves
-`headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, and
-`playwright.config.ts:54` loads `e2e/global-setup.ts`, which throws on `--headed`,
-`--ui` and `--debug` and on any project that resolves to `headless: false`
-(`e2e/global-setup.ts:44-61`). The refusal arrives before a browser exists, so the
+this file is the work queue. `playwright.config.ts`'s `use.headless` resolves
+`headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, and its `globalSetup`
+loads `e2e/global-setup.ts`, whose `refuseVisibleBrowser()` throws on `--headed`,
+`--ui` and `--debug` and on any project that resolves to `headless: false`.
+The refusal arrives before a browser exists, so the
 rule is structural rather than remembered. What follows is the reasoning the default
 rests on, kept because whoever removes the guard needs it.
 
@@ -89,9 +89,10 @@ then get recorded as "flaky" and neither gets fixed.
 **This is a preventive rule, and it is worth being precise about the evidence.** No
 operator-input-caused failure has been reproduced in this suite: the one
 intermittent failure on record before headless became the default
-(`sidebar-keyboard.spec.ts:80`) turned out to be a real race that fires in headless
-runs with no operator input at all; the mechanism is recorded at
-`sidebar-keyboard.spec.ts:5-10`. The hazard is
+(`sidebar-keyboard.spec.ts`'s `full keyboard flow: open, navigate, select` test)
+turned out to be a real race that fires in headless
+runs with no operator input at all; the mechanism is recorded in the leading
+comment of `sidebar-keyboard.spec.ts`, above `GROUPED_TILE`. The hazard is
 reported as recurring across this project's test work generally, which is why the
 default is structural rather than procedural: it removes the failure class instead
 of relying on everyone to remember.
@@ -99,10 +100,10 @@ of relying on everyone to remember.
 Headless is also simply better for this suite, and that part is measured. The
 failure sets are disjoint per mode and deterministic across repeats:
 
-| specs                                                                                         | headed | headless |
-| --------------------------------------------------------------------------------------------- | ------ | -------- |
-| CDP, deriving expected size from `getDevicePixelRatio()` (`:128` `:142` `:157` `:179` `:208`) | 5 fail | pass     |
-| CDP, explicit `deviceScaleFactor: 2` block (`:272` `:287`)                                    | pass   | 2 fail   |
+| specs                                                                                                                                   | headed | headless |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------- |
+| CDP, deriving expected size from `getDevicePixelRatio()` (the `captureCanvasScreenshot` block in `e2e/helpers/cdp-helpers.spec.ts`)     | 5 fail | pass     |
+| CDP, explicit `deviceScaleFactor: 2` block (the `captureCanvasScreenshot at an emulated deviceScaleFactor of 2` block in the same spec) | pass   | 2 fail   |
 
 So headless was the better mode even then, and both sets have since been fixed
 (below).
@@ -121,13 +122,13 @@ a real window, because that is what they are for. The rule applies to
 
 ## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
 
-`e2e/helpers/canvas-helpers.ts:505-522`
+`e2e/helpers/canvas-helpers.ts` — `drawLine()`
 
 A spec must not drift into the assumption that `drawLine`'s arguments are
 document coordinates. They are not. `drawLine` computes
 `{ x: box.x + startX, y: box.y + startY }` and nothing else, while the document it
-addresses is **contained** in that box (`object-contain`,
-`src/components/Main/Main.tsx:242-246`): the CSS origin of document `(0,0)` is
+addresses is **contained** in that box (`object-contain` on the `workspace-canvas`
+element in `src/components/Main/Main.tsx`): the CSS origin of document `(0,0)` is
 
 ```text
 scale    = min(boxWidth / 800, boxHeight / 600)
@@ -159,7 +160,7 @@ breaks all of them at once.
 
 ## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
 
-`e2e/helpers/screenshot-scale.ts:103-125`, `e2e/helpers/cdp-helpers.ts:45-64`
+`e2e/helpers/screenshot-scale.ts` — `viewportRectToPageRect()`, `e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
 
 The hazard, for whoever refactors this next. `Locator.boundingBox()` measures against
 the VIEWPORT and goes negative the moment the page scrolls, and `page.mouse` shares
@@ -185,13 +186,14 @@ property of Playwright and CDP rather than of this app, and the same class of bu
 returns the moment anything is allowed to scroll the document again.
 
 **The helper-level fix is done, and it is recorded here so a refactor does not
-undo it.** The conversion is the pure function `viewportRectToPageRect`
-(`screenshot-scale.ts:126-133`), it is applied **at the CDP site only**
-(`cdp-helpers.ts:56-64`) and not in the callers, the scroll offset is read per
-capture rather than cached (`getPageScroll`, `canvas-helpers.ts:356` — the offset is
-a live read because a page that scrolls can scroll again between captures, whatever
-currently makes it scroll), and the rule is unit-tested for a non-zero offset at
-`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:404-427`. That unit test is the
+undo it.** The conversion is the pure function `viewportRectToPageRect()`
+(`screenshot-scale.ts`), it is applied **at the CDP site only** — inside
+`captureCanvasScreenshot()` in `cdp-helpers.ts`, not in the callers — the scroll
+offset is read per capture rather than cached (`getPageScroll()` in
+`canvas-helpers.ts` — the offset is a live read because a page that scrolls can
+scroll again between captures, whatever currently makes it scroll), and the rule is
+unit-tested for a non-zero offset by `describe('viewportRectToPageRect')` in
+`e2e/helpers/__tests__/screenshot-scale.unit.test.ts`. That unit test is the
 load-bearing part now: it is the only coverage of the non-zero-offset case, since the
 app cannot produce one.
 
@@ -201,7 +203,7 @@ somewhere that already has one.
 
 ## P3 — zero-sized image yields `NaN` edges
 
-`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:31`) and
+`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts`) and
 `imagePointToCss` / `cssPointToImage` (`e2e/helpers/screenshot-scale.ts`)
 divide by the image or box dimension, so a zero-sized input produces `NaN` or
 `Infinity` instead of throwing. Deliberate — the modules stay branch-free and
@@ -210,16 +212,16 @@ opaque. Callers must reject empty images first.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
-`e2e/helpers/canvas-helpers.ts:409` and `:706` **[pinned]**
+`dominantRed()` and `getColorAtPoint()` in `e2e/helpers/canvas-helpers.ts` **[pinned]**
 
 `dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
 invisible pixel counts at full weight. A weighting concern rather than a
 correctness bug, and the only helper that reports the colour back to the caller.
 They are the two places the distinction bites hardest, because the other two
-`alpha === 0` filters, in `hasDarkPixels` (`:434`) and `hasRedPixels` (`:454`),
-answer a yes/no question where one nearly-invisible pixel is the same as one
-opaque one. The other half of the file, `getDarkPixelBounds` (`:602`) and
-`getSelectionBounds` (`:661`), filters on `a !== 0` instead — a different question
+`alpha === 0` filters, in `hasDarkPixels()` and `hasRedPixels()`, answer a yes/no
+question where one nearly-invisible pixel is the same as one
+opaque one. The other half of the file, `getDarkPixelBounds()` and
+`getSelectionBounds()`, filters on `a !== 0` instead — a different question
 asked with a boolean rather than a weight.
 
 ## P2 — the letterbox is still read as ink by two predicates and by two of the four cell colours
@@ -305,7 +307,7 @@ were left in place because deleting committed baselines was not authorized.
 
 ## P3 — the artifact name is interpolated into a path unsanitised
 
-`e2e/helpers/cdp-helpers.ts:19-20`
+`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
 
 Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
 name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
@@ -321,27 +323,30 @@ silently rewriting it would attach the report under a name the test never asked
 for. Sanitising would also let two distinct names collide into one artifact.
 
 Pinned by `treats a name containing a path separator as a path, not a filename`
-(`:517`) and `writes outside the output directory when the name traverses out of it`
-(`:531`) in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
+and `writes outside the output directory when the name traverses out of it` in
+`e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
 pins in the same change; the first one's own comment names sanitisation as the
 shape a fix must not take.
 
 ## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
 
-`e2e/helpers/cdp-helpers.ts:15-18`
+`e2e/helpers/cdp-helpers.ts` — the `outputDir` guard in `captureCanvasScreenshot()`
 
-The guard exists and is the same shape as `canvas-helpers.ts:392-395`, but it is
+The guard exists and is the same shape as the one at the top of
+`takeLineScreenshot()` in `canvas-helpers.ts`, but it is
 the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
-`cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — now line
-17 — uncovered, against 100% of its functions. The sibling guard is pinned
-(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:205-229`), so nothing fails
+`cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — the second
+statement of `captureCanvasScreenshot()` — uncovered, against 100% of its
+functions. The sibling guard is pinned by
+`it('names the helper and the missing field when testInfo has no output directory')`
+in `e2e/helpers/__tests__/canvas-interaction.unit.test.ts`, so nothing fails
 if this one is deleted, and the raw V8 failure it exists to replace
 (`The "path" argument must be of type string. Received undefined`) returns with it.
 
 Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
 `TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
 own message and that no CDP session was opened. `createTestInfoMock()`
-(`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:268`) already makes `outputDir`
+in `e2e/helpers/__tests__/canvas-helpers.fixtures.ts` already makes `outputDir`
 optional, so the double needs no change.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
@@ -349,7 +354,8 @@ optional, so the double needs no change.
 `@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
 
 Every options bar in this repository wraps its own control in a `<label>`
-(`src/components/ToolbarsRight/Eraser/Eraser.tsx:47-59` and every sibling bar), so the
+(the `<label htmlFor="eraser-mode">` in
+`src/components/ToolbarsRight/Eraser/Eraser.tsx` and every sibling bar), so the
 markup that makes a control's accessible name is the same markup that defeats the
 assertion on it. Playwright's `disabled` state does not test the element the locator
 resolved: `retarget` first walks a non-form-control up to
@@ -363,12 +369,14 @@ against the `<select>`, which carries no `disabled` attribute. The result is
 
 This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
 cannot render, would still be reported as correct. It is also invisible in jsdom —
-`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:90` asserts
+`it('offers the three Photoshop modes, all of them selectable')` in
+`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx` asserts
 `expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
 because that matcher reads the DOM property directly and has no retarget step. A
 jsdom pass is therefore not evidence that the browser assertion works.
 
-Workaround used in `e2e/erase-fill-eyedropper.spec.ts:376`: assert the attribute and
+Workaround used by `test('the eraser mode select offers all three Photoshop modes, and the
+select is live')` in `e2e/erase-fill-eyedropper.spec.ts`: assert the attribute and
 the enabled set, both read straight off the DOM.
 
 ```ts

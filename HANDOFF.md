@@ -28,17 +28,19 @@ and the verification is `git log`, not this file.
 | `src/contexts/replay-checkpoints.ts` | **0**                                 |
 | `src/contexts/durable-replay.ts`     | 1 — `materialization.ts`, itself dead |
 
-Production still runs legacy `HistoryItem[]` → `replayHistory` (`useHistory.ts:81`) → runtime
-`Layer` → `layer-renderer.ts:65-146` → canvas. `durableDocument`, `durableStatus` and
-`durableDiagnostics` are derived by `buildDurableDocument` (`StoreContext.tsx:659-696`) and
-projected onto the three `StoreData` fields at each call site, never inside that function. Two
-production components read the fields from `useStore()` — `DevStatusStrip.tsx:18` and
-`ErrorBoundary.tsx:48` — so this entry's earlier claim that they are "read by nothing outside that
+Production still runs legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
+`useHistory.ts`) → runtime `Layer` → `layer-renderer.ts` → canvas. `durableDocument`,
+`durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
+(`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
+inside that function. Two production components read the fields from `useStore()` —
+`DevStatusStripContents` in `DevStatusStrip.tsx` and `ErrorBoundaryFallback` in
+`ErrorBoundary.tsx` — so this entry's earlier claim that they are "read by nothing outside that
 file" was false and is withdrawn. Neither reader runs on a normal production load, so the
-conclusion below still stands: `DevStatusStrip.tsx:62` gates its body on `import.meta.env.DEV`, and
-`ErrorBoundary`'s `useStore()` call is inside `ErrorBoundaryFallback` (`ErrorBoundary.tsx:41`),
-which renders only after a region has thrown (`ErrorBoundary.tsx:95`).
-`StoreContext.durable-boundary.test.tsx:573-583` actively pins the absence — it asserts that
+conclusion below still stands: `DevStatusStrip` gates its body on `import.meta.env.DEV`, and
+`ErrorBoundary`'s `useStore()` call is inside `ErrorBoundaryFallback`, which renders only after
+a region has thrown (`ErrorBoundary.render`). The
+`it('no longer exposes replayCoordinator, presentationMaterialization or getReplayRevisionToken')`
+case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — it asserts that
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
@@ -47,19 +49,19 @@ conversion, diagnosable failure, deterministic asset ownership — currently pro
 user-visible behaviour. The migration's deliverable is unwired.
 
 **Trap for whoever wires it.** The affine composition is _not_ duplicated —
-`operationAffine` (`materialization.ts:109-116`) composes through the shared
+`operationAffine` (in `materialization.ts`) composes through the shared
 `multiplyAffineTransforms` and `getAffineBounds` from `affine-transform.ts`. What _is_ a second
-implementation is the vector-argument rescale: `vectorArgsForSize` (`materialization.ts:125-145`)
-scales `start`/`end`/`lineWidth` by the source-to-current ratio inline, and
-`scaleVectorArgs` (`layer-renderer.ts:38-49`) does the same arithmetic for the legacy path. Two
-files, no shared owner, so the two can drift and the drift only shows as a wrong shape after
+implementation is the vector-argument rescale: `vectorArgsForSize` (in `materialization.ts`)
+scales `start`/`end`/`lineWidth` by the source-to-current ratio inline, and `scaleVectorArgs`
+(reached from `layer-renderer.ts`) does the same arithmetic for the legacy path. Two files, no
+shared owner, so the two can drift and the drift only shows as a wrong shape after
 cutover. `materializeLayer` / `materializeDocument` have zero callers, so the first wiring attempt
 is the first time that code executes against real state.
 
 **Also wrong at the boundary.** The runtime path feeds an _untransformed_ bitmap — `layer.tmpCanvas
-?? layer.bitmap` (`useLayer.ts:557`) — straight into a pixel processor (`useLayer.ts:571`); the
-durable path materializes the retained presentation first
-(`materialization.ts:270-276`). Wiring the durable path without reconciling these changes pixel-tool
+?? layer.bitmap` — straight into a pixel processor, and both live in `tempUpdateLayer` in
+`useLayer.ts`; the durable path materializes the retained presentation first (in
+`renderRetainedSegment`). Wiring the durable path without reconciling these changes pixel-tool
 results.
 
 **Fix.** Pick one rendering authority and make the other a projection. Minimum viable: route the
@@ -75,14 +77,15 @@ rest, and delete the duplicated composer. Do not attempt all five consumers at o
 
 **Problem.** `materialization.ts`'s product rule groups operations by kind rather than applying them
 in timeline order, so a filter applied between two affines is hoisted. Raster processors are now
-genuine segment boundaries (`materialization.ts:264-291`), so this is **half-fixed**:
+genuine segment boundaries (in `renderRetainedSegment`), so this is **half-fixed**:
 _inter-intra-segment_ interleaving is still grouped.
 
-`materialization.ordering.test.ts:415` is `it.fails('applies interleaved affine and filter
-operations in original order, not grouped by type')`. **The pin is inert — it cannot be removed in
-the same change as the fix, because it never observes the defect.** It spies on
-`HTMLCanvasElement.prototype.getContext` (`:428-429`), but `materialization.ts:55` short-circuits to
-`OffscreenCanvas`, `src/test/setup.ts:195-224` installs a global one for every suite that does not
+The `it('applies interleaved affine and filter operations in original order, not grouped by type')`
+case in `materialization.ordering.test.ts` is `it.fails(...)`. **The pin is inert — it cannot be
+removed in the same change as the fix, because it never observes the defect.** It spies on
+`HTMLCanvasElement.prototype.getContext` (in `materialization.ordering.test.ts`), but
+`createCanvas` in `materialization.ts` short-circuits to `OffscreenCanvas`, the `MockOffscreenCanvas`
+polyfill in `src/test/setup.ts` installs a global one for every suite that does not
 already provide its own, and that test file never stubs it. A probe replicating the pin's instrument
 recorded **zero** calls on both
 `transform` and `drawImage`, so its assertions fail on `0` rather than on the grouping — and
@@ -96,7 +99,8 @@ correctness bug in the shared pipeline, so it blocks item 1 as well as the phase
 
 **Fix.** Make `renderRetainedSegment` a fold over the operation list in order, keeping the
 raster-processor boundary but not reordering within a segment. **Re-instrument the pin first**, with
-`vi.stubGlobal('OffscreenCanvas', …)` as `materialization.assets.test.ts:134` does, and add
+`vi.stubGlobal('OffscreenCanvas', …)` as the `beforeEach` in `materialization.assets.test.ts` does,
+and add
 `expect(recordedContexts.length).toBeGreaterThan(0)` as a positive control — it fails today and is
 what makes the pin a tripwire. Only then can the `it.fails` be removed in the same change.
 
@@ -107,8 +111,8 @@ what makes the pin a tripwire. Only then can the `it.fails` be removed in the sa
 
 ## 4. P0 — one error diagnostic voids the entire durable shadow
 
-**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts:720`) checks
-`converted.diagnostics.some((d) => d.severity === 'error')` at `:732` and, if any one entry
+**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts`) checks
+`converted.diagnostics.some((d) => d.severity === 'error')` and, if any one entry
 produced an error, rolls back the asset transaction and returns `status: 'unavailable'` with
 `document: null`.
 
@@ -130,7 +134,7 @@ severity check too.
 
 ## 10. `ReplayRevisionToken` cannot be invalidated by a frame change
 
-**Problem.** `ReplayRevisionToken` (`replay-coordinator.ts:1-10`) carries `documentId`,
+**Problem.** `ReplayRevisionToken` (`replay-coordinator.ts`) carries `documentId`,
 `documentRevision`, `durableRevision`, `branchRevision`, `cursor`, `baselineAssetGeneration`,
 `operationSetRevision`, `sourceGeneration`. There is no `frameRevision`, so a document-frame change
 cannot invalidate a token. `DurableLayerSnapshot` likewise has no `frame` field, which contradicts
@@ -151,9 +155,9 @@ Latent only while nothing schedules replays (item 1), but it is a required input
 
 ## 11. `materialization.ts` does not apply `blendMode`
 
-**Problem.** `materialization.ts:162` sets `ctx.globalAlpha = source.opacity`, but there is no
-`blendMode` / `globalCompositeOperation` anywhere in `materialization.ts` or `durable-replay.ts`.
-Only the legacy renderer applies it (`layer-renderer.ts:101`).
+**Problem.** `sourceBitmap` in `materialization.ts` sets `ctx.globalAlpha = source.opacity`, but
+there is no `blendMode` / `globalCompositeOperation` anywhere in `materialization.ts` or
+`durable-replay.ts`. Only the legacy renderer's `drawLayer` applies it (`layer-renderer.ts`).
 
 So the moment `materialization.ts` becomes the render path (item 1), every layer with a non-normal
 blend mode renders incorrectly. The durable snapshot carries the field; the pipeline drops it.
@@ -167,9 +171,10 @@ and add a test that a multiply-blended layer materializes differently from a nor
 
 ## 12. `rasterize-layer` has no writer anywhere
 
-**Problem.** The operation kind is declared (`history-model.ts:107`), matched when assets are
-collected from it (`:166`) and when it is cloned (`:250`), and in replay (`durable-replay.ts:122`),
-and exercised by four test files — but no
+**Problem.** The operation kind is declared (in the `DurableOperation` union in
+`history-model.ts`), matched when assets are
+collected from it (`collectDurableAssetIds`) and when it is cloned, and in replay (the
+`'rasterize-layer'` case in `durable-replay.ts`), and exercised by four test files — but no
 production code ever constructs one. `grep -rn "rasterize-layer" src` returns only the model, the
 replay reducer, and tests.
 
@@ -199,36 +204,37 @@ Reorder and `remove-layer` are no longer among them. These production sites stil
 `durableEntry` is necessary but not sufficient: the store publishes only on
 `outcome === 'published'` and otherwise reconverts.
 
-| Site                                      | Action             | Why                                           |
-| ----------------------------------------- | ------------------ | --------------------------------------------- |
-| `useLayer.ts:229` `createBlankLayer`      | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:247` `createLayerFromBitmap` | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:278` `createLayerFromTool`   | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:323` `updateLayerByTool`     | `TOOL_ACTION`      | asset-neutral; not blocked by §54             |
-| `useLayer.ts:365` `commitDirtyTool`       | `TOOL_ACTION`      | asset-neutral; one commit per pending edit    |
-| `useLayer.ts:671` `mergeAllLayers`        | `MERGE_ACTION`     | asset-bearing, retires layers                 |
-| `useSelectionHistory.ts:149`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
-| `useSelectionHistory.ts:305`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| Site                                              | Action             | Why                                           |
+| ------------------------------------------------- | ------------------ | --------------------------------------------- |
+| `createBlankLayer` (`useLayer.ts`)                | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `createLayerFromBitmap` (`useLayer.ts`)           | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `createLayerFromTool` (`useLayer.ts`)             | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `updateLayerByTool` (`useLayer.ts`)               | `TOOL_ACTION`      | asset-neutral; not blocked by §54             |
+| `commitDirtyTool` (`useLayer.ts`)                 | `TOOL_ACTION`      | asset-neutral; one commit per pending edit    |
+| `mergeAllLayers` (`useLayer.ts`)                  | `MERGE_ACTION`     | asset-bearing, retires layers                 |
+| `appendSelectionClear` (`useSelectionHistory.ts`) | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| `commitSelection` (`useSelectionHistory.ts`)      | `SELECTION_ACTION` | `catch` fallback when planning throws         |
 
 The three `NEW_LAYER_ACTION` rows are the creators that mint the history item, not one shared
-dispatch: `useLayer.ts:240`, `:262` and `:316` are the only `layerSource:` writers in the file, and
-`_addLayer` (`:185`) is the sink they all dispatch through.
+dispatch: `createBlankLayer`, `createLayerFromBitmap` and `createLayerFromTool` are the only
+`layerSource:` writers in `useLayer.ts`, and `_addLayer` is the sink they all dispatch through.
 
-Three sites have no `durableEntry` concept and reconvert unconditionally: `useHistory.ts:117`
-`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:195` and `useApp.ts:117` (both
-`REPLACE_DOCUMENT`). The `useHistory.ts:52 addHistoryEntry` row this table used to carry is
+Three sites have no `durableEntry` concept and reconvert unconditionally: `resetHistoryTo` in
+`useHistory.ts` (`APPLY_HISTORY_REPLAY`), `createBlankLayer` in `useLayer.ts` and
+`setImageFromUpload` in `useApp.ts` (both
+`REPLACE_DOCUMENT`). The `addHistoryEntry` row this table used to carry is
 **deleted**: that symbol no longer exists anywhere in `src/`, and "see item 14" pointed at a
 reader that no longer had a referent.
 
 **Fix, in order.** Only `create-layer` and `merge-document` are blocked on §54's registry
 transaction, and that gap is what keeps those four writers here. `remove-layer` and the
 `TOOL_ACTION` operations are asset-neutral: a `remove-layer` carries only a `layerId`
-(`history-model.ts:89`), and a `TOOL_ACTION` carrying no layer source is derived by
-`operationForTool` (`history-adapter.ts:442`), whose every arm returns an operation with no raster
-snapshot — `apply-raster-processor` (`:460`, `:511`), `apply-affine-transform` (`:478`),
-`apply-filter` (`:494`) and `reposition-layer` (`:503`) — reached from the caller arm at `:754`.
-`collectDurableAssetIds` scans the whole replayable history but collects only raster-bearing kinds
-(`history-model.ts:158-175`), so a removal or an in-place pixel edit changes no reachable asset and
+(the `'remove-layer'` case in `history-model.ts`), and a `TOOL_ACTION` carrying no layer source is
+derived by `operationForTool` (`history-adapter.ts`), whose every arm returns an operation with no
+raster snapshot — `apply-raster-processor`, `apply-affine-transform`, `apply-filter` and
+`reposition-layer` all live in that same function — reached from the `TOOL_ACTION` caller arm in
+`legacyHistoryToDurable`. `collectDurableAssetIds` scans the whole replayable history but collects
+only raster-bearing kinds, so a removal or an in-place pixel edit changes no reachable asset and
 needs neither registration nor retirement. They remain here only until a `durableEntry` is planned
 for them; §54 is untouched and still applies to the first actual asset-bearing append writer.
 
@@ -239,10 +245,10 @@ for them; §54 is untouched and still applies to the first actual asset-bearing 
 
 The blocker was that a reorder's durable operation cannot be derived from the history item: it names
 the resulting order of **every** layer, and the item carries only intent. The store now plans it
-from `state.layers` read at the boundary (`StoreContext.tsx:890 layerOrderBottomFirst(currentState.layers)`), which is
+from `state.layers` read at the boundary (`layerOrderBottomFirst` in `StoreContext.tsx`), which is
 the same record `reorderLayers` is about to mutate. Three things make that safe:
 
-- **`reorderOrderAfterIntent` (`history-append.ts:229`) is a second implementation, not a call into
+- **`reorderOrderAfterIntent` (`history-append.ts`) is a second implementation, not a call into
   the converter's.** The converter's copy is an inline arm inside `legacyHistoryToDurable`, so
   calling it would reproduce a bug in it rather than catch one. Two copies can drift, so
   `history-append.reorder.test.ts` pins them against each other against a real converter run over
@@ -250,8 +256,9 @@ the same record `reorderLayers` is about to mutate. Three things make that safe:
   _both_ sides still fails. The store test pins the published document against a full conversion,
   which is the end-to-end oracle.
 - **The shadow's own layer ORDER is a precondition, compared as a sequence.** Durable replay skips
-  ids it does not know (`durable-replay.ts:110`), and a published map is a fresh normalisation of
-  the order, so it overwrites whatever order the shadow had. Publishing while the two models
+  ids it does not know (the `'reorder-layers'` case in `durable-replay.ts`), and a published map is
+  a fresh normalisation of the
+  order, so it overwrites whatever order the shadow had. Publishing while the two models
   already disagree about the order launders that disagreement into a durable document no
   reconversion will produce. Membership is not enough: the models can name exactly the same layers
   in a different sequence, and only the sequence check sees it.
@@ -271,7 +278,7 @@ but it is still O(durable history), so calling this "a fast path with no walk" w
 falls back to conversion. That is not caution about an edge case; it is because the two
 implementations genuinely disagree, which was measured, not assumed:
 
-- `reorderLayers` (`layer-utils.ts:280-288`) anchors on the mover's own order, shifts everything
+- `reorderLayers` (`layer-utils.ts`) anchors on the mover's own order, shifts everything
   above it, then re-assigns the mover. On a three-layer stack the **visible sequence is unchanged**
   — `{bottom:0, middle:2, top:4}` still reads bottom, middle, top.
 - The converter's inline arm drops the mover from `remaining` **first**, so `remaining.indexOf`
@@ -290,11 +297,12 @@ the identity-on-`preOrder` map is the honest one — then change the converter's
 would make a published shadow differ from a reconverted one for the same history, which is the
 exact failure this item exists to prevent.
 
-**Unreachable in production today, and both UIs guard it.** `LayersTab.tsx:94` computes
-`isDropTarget` as `dropTargetId === layer.id && dropTargetId !== draggedLayerId && …` and
-`LayersTab.tsx:155` returns before dispatching when it is false, so a row cannot be dropped on
-itself; the other `animateMove` call site (`LayersTab.tsx:276`) passes no anchor at all, and
-`MobileLayersDrawer.tsx:63,72` anchors on a neighbouring index. `git grep moveLayerAfter` returns
+**Unreachable in production today, and both UIs guard it.** `LayersTab.tsx` computes
+`isDropTarget` as `dropTargetId === layer.id && dropTargetId !== draggedLayerId && …` and the drop
+handler returns before dispatching when it is false, so a row cannot be dropped on
+itself; the other `animateMove` call site in `LayersTab.tsx` passes no anchor at all, and
+`handleMoveUp` / `handleMoveDown` in `MobileLayersDrawer.tsx` anchor on a neighbouring index.
+`git grep moveLayerAfter` returns
 only those two components. This was asserted as reachable on an earlier read of this section and
 that was wrong — the drop guard is the reason, and it is a guard, not a coincidence. It is still a
 real defect: a disabled entry, a replayed history, or any future writer that names its own anchor
@@ -343,40 +351,44 @@ exists to avoid choosing between. Two tripwires, because either can fail silentl
 
 **Done, and how it was verified.** `legacyHistoryToDurable` now pushes a `warning` diagnostic
 naming the entry when a `SET_DOCUMENT_FRAME_ACTION` entry derives no durable operation
-(`history-adapter.ts:675-681`), so the conversion no longer reports `status: 'current'` while
+(the `SET_DOCUMENT_FRAME` arm of `legacyHistoryToDurable` in `history-adapter.ts`), so the
+conversion no longer reports `status: 'current'` while
 silently omitting a document-frame change. The severity is the decision, and it is not a detail:
 `convertLegacyHistorySafely` returns `unavailable` and withholds the **whole** shadow on the first
-`error` diagnostic (`history-adapter.ts:816`), so an error here would punish every unrelated entry
+`error` diagnostic (`history-adapter.ts`), so an error here would punish every unrelated entry
 for a defect the legacy timeline tolerates. The archived branch's copy used `error`; that is one of
 the two reasons it could not simply be ported. Verified by
-`history-adapter.branches.test.ts:322` — the diagnostic, its severity and its message body — plus
+the `it('records a disabled reorder entry without applying it to the converted layers')` case in
+`history-adapter.branches.test.ts` — the diagnostic, its severity and its message body — plus
 that file's coverage of every falsifying branch of `isValidDocumentFrame` and three valid frames
 that must still convert silently. It replaced an assertion that pinned the SILENCE
 (`expect(diagnostics).toEqual([])`), which was a tripwire for this defect rather than a contract.
 
 **Still open: the append path records nothing.** The boundary's own refusal is real and typed —
-`unavailable` (`history-append.ts:81-95`) returns a `warning`-severity diagnostic (`:89`) — and
-`decideDurableAppend` never re-checks the plan it is handed (`history-append.ts:641-642`). Two
+`unavailable` (`history-append.ts`) returns a `warning`-severity diagnostic — and
+`decideDurableAppend` never re-checks the plan it is handed. Two
 things then lose it:
 
 - A refused plan is `null`, and `if (!planned)` is the **first** precondition
-  (`history-append.ts:590`), so a null planned entry yields `outcome: 'preconditions'` — never
-  `'mismatch'`. `durableAppendDiagnostic` (`:663-671`) and its `durable-append-mismatch` code
-  (`:668`) are produced only on the `mismatch` branch, at `StoreContext.tsx:990-994` for
-  `COMMIT_DOCUMENT_EDIT` and `:922-924` for a reorder.
+  (inside `decideDurableAppend`), so a null planned entry yields `outcome: 'preconditions'` —
+  never `'mismatch'`. `durableAppendDiagnostic` (`history-append.ts`) and its `durable-append-mismatch`
+  code are produced only on the `mismatch` branch, in `StoreContext.tsx`'s `COMMIT_DOCUMENT_EDIT`
+  dispatch branch and its `REORDER_LAYERS` dispatch branch for a reorder.
 - The diagnostic the boundary **did** compute never leaves the boundary. All four production call
-  sites destructure only two of the three result fields — `useLayer.ts:478`, `useLayer.ts:648`,
-  `useSelectionHistory.ts:133` and `useSelectionHistory.ts:289` each read `entry` and `durableEntry`
-  — and `diagnostics` (`history-append.ts:78`) has no slot on the `COMMIT_DOCUMENT_EDIT` payload
-  (`StoreContext.tsx:235`), so it is discarded at the call site.
+  sites destructure only two of the three result fields — `updateLayerByTool` and `removeLayer`
+  (`useLayer.ts`), `appendSelectionClear` and `commitSelection` (`useSelectionHistory.ts`) each read
+  `entry` and `durableEntry` — and `diagnostics` (on `AppendBoundaryResult` in `history-append.ts`)
+  has no slot on the `CommitDocumentEditIntentPayload` type in
+  `StoreContext.tsx`, so it is discarded at the call site.
 
 **User-visible failure: none today.** The only writer of this action, `applyDocumentCrop`, rejects
-`width/height <= 0` (`useLayer.ts:640`) and any frame that fails `isValidDocumentFrame`
-(`useLayer.ts:643`) before it plans, and a document load creates a single `OPEN_DOCUMENT_ACTION`
-(`useApp.ts:122`). This is a latent observability gap, not a live bug: the day a second
-`SET_DOCUMENT_FRAME_ACTION` writer appears, its refusals are as silent as these were. The far end
-stays unvalidated too — `durable-replay.ts:129-131` applies `next` with no check — so the shadow
-can still _hold_ an invalid frame; what changed is that conversion no longer produces one silently.
+`width/height <= 0` and any frame that fails `isValidDocumentFrame`
+(both inside `applyDocumentCrop` in `useLayer.ts`) before it plans, and `setImageFromUpload` in
+`useApp.ts` creates a single `OPEN_DOCUMENT_ACTION`. This is a latent observability gap, not a live
+bug: the day a second `SET_DOCUMENT_FRAME_ACTION` writer appears, its refusals are as silent as
+these were. The far end stays unvalidated too — the `'set-document-frame'` case in
+`durable-replay.ts` applies `next` with no check — so the shadow can still _hold_ an invalid frame;
+what changed is that conversion no longer produces one silently.
 
 **Fix.** Two independent halves. Report the boundary's own `diagnostics`: either dispatch them on
 `COMMIT_DOCUMENT_EDIT`, or fold them into `durableDiagnostics` at the point the store already
@@ -397,50 +409,60 @@ the legacy timeline also makes.
 > own, and that is the remaining work.** Not deleted.
 
 **Done, and how it was verified.** Conversion now withholds a repeated id from publication and says
-so. `publishedEntryIds` (`history-adapter.ts:581`) is consulted at the publication guard (`:752`)
-and a skip pushes a `warning` naming the id (`:772-778`). `warning` is the only severity the
+so. `publishedEntryIds` (`history-adapter.ts`) is consulted at the publication guard in
+`legacyHistoryToDurable` and a skip pushes a `warning` naming the id in that same function.
+`warning` is the only severity the
 conversion can afford, for §16's reason: `convertLegacyHistorySafely` withholds the whole shadow on
-the first `error` (`history-adapter.ts:816`), and the archived branch's copy used `error`. Only ids
-that actually reached `entries` consume the id (`:779-781`), so an entry that derived nothing does
+the first `error`, and the archived branch's copy used `error`. Only ids
+that actually reached `entries` consume the id, again in `legacyHistoryToDurable`, so an entry that
+derived nothing does
 not shadow a later one. Verified by the `durable entry id uniqueness` block in
-`history-adapter.diagnostics.test.ts`: the conversion stays `current` (`:576`), the entries after a
-repeat still convert (`:602`), the id-keyed lookup still resolves exactly one entry (`:797`), there
-is one durable cursor per legacy entry (`:727`), and the frame and layer folds stay advanced
-(`:742`, `:764`).
+`history-adapter.diagnostics.test.ts`: the conversion stays `current`, the entries after a
+repeat still convert, the id-keyed lookup still resolves exactly one entry, there
+is one durable cursor per legacy entry, and the frame and layer folds stay advanced.
 
 **Still open: the boundary has no uniqueness check, and the one diagnostic it can produce names the
 wrong list.** `decideDurableAppend` never re-checks uniqueness. `validatePlannedDurableEntry`
-(`history-append.ts:477`) compares `planned.id` to `entry.id` (`:483`) — planned-versus-**legacy**
-agreement, not timeline uniqueness — and `next.entries[next.entries.length - 1] !== entry` (`:608`)
-is a reference check on the same object. `freezeDurableDocument` only clones and freezes, and
-`history-timeline.ts:31-32` appends unconditionally. So a duplicate id on the published path yields
+(`history-append.ts`) compares `planned.id` to `entry.id` inside that same function —
+planned-versus-**legacy**
+agreement, not timeline uniqueness — and its `next.entries[next.entries.length - 1] !== entry`
+check is a reference check on the same object. `freezeDurableDocument` only clones and freezes, and
+`updateHistoryTimeline` (`history-timeline.ts`) appends unconditionally. So a duplicate id on the
+published path yields
 a durable document with two same-id entries, and since the id is a lookup key
-(`history-adapter.ts:880`, `history-timeline.ts:24`) a later toggle hits the wrong entry. The
+(`toggleDurableEntry` in `history-adapter.ts`, and `updateHistoryTimeline`'s `toggle-disabled`
+command in `history-timeline.ts`) a later toggle hits the wrong entry. The
 invariant rests entirely on a diagnostic that is computed and discarded.
 
-`validateTimeline` (`history-append.ts:278`) does check uniqueness, at `:279`, and returns an
-`error`-severity diagnostic — but it reads the **LEGACY** timeline only, so it cannot see the
-durable base, which is the only list the durable entries live in. It also runs after `translate`
-(`:307-315`), so the diagnostic coexists with a non-null `durableEntry` by construction.
+`validateTimeline` (`history-append.ts`) does check uniqueness, at the top of that function, and
+returns an `error`-severity diagnostic — but it reads the **LEGACY** timeline only, so it cannot
+see the durable base, which is the only list the durable entries live in. It also runs after
+`translate`, inside `planHistoryAppend`, so the diagnostic coexists with a non-null `durableEntry`
+by construction.
 
 **Reachability, stated accurately.** This section previously said `planHistoryAppend` is called with
 no `id`. That is **wrong**, and would not survive a check: **two of the four production call sites
-do pass one.** `useSelectionHistory.ts:133` passes the `uuidv4()` minted at `:124`, and
-`useSelectionHistory.ts:289` the one minted at `:277`; the other two — `useLayer.ts:478` and
-`useLayer.ts:648` — pass none, so `createHistoryItem` mints one (`history-utils.ts:81`). The
+do pass one.** `appendSelectionClear` in `useSelectionHistory.ts` passes the `uuidv4()` it mints,
+and `commitSelection` the one it mints; the other two — `updateLayerByTool` and `removeLayer` in
+`useLayer.ts` — pass none, so `createHistoryItem` (`history-utils.ts`) mints one. The
 conclusion is unchanged and the reason is narrower: **all four ids are a fresh `uuidv4()`**, so a
 collision requires a uuid that repeats. The base's own ids are those same minted ids, carried in by
 the rebuild, which is what makes `validateTimeline`'s check fire at all. Every production
 `REPLACE_DOCUMENT` supplies a non-empty history.
 
-The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts:599`) requires
+The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts`) requires
 `prior.cursor === prior.entries.length - 1`, so any out-of-range cursor already falls back first.
 
 **Fix.** Return `durableEntry: null` when `validateTimeline` produces an `error`-severity
 diagnostic, so the store takes the reconversion fallback. **This breaks two tests, not one.** The
-plan-level case at `history-append.test.ts:504` asserts `result.durableEntry` is non-null on exactly
+plan-level case at
+`it('reports a duplicate entry id without changing the entry')` in `history-append.test.ts` asserts
+`result.durableEntry` is
+non-null on exactly
 this collision, under the comment "reporting never blocks the append" — that is the assertion the
-fix deletes. And the boundary-level block at `history-append.test.ts:1300` pins the same blindness
+fix deletes. And the boundary-level case at
+`it('publishes an entry id the durable document already holds, and the shadow keeps both')` in
+`history-append.test.ts` pins the same blindness
 from the other side: it asserts `decision.outcome === 'published'` for a base whose history already
 holds the id, and its own last block pins the coexistence (`expect(collidingPlan.durableEntry)
 .not.toBeNull()`). Both must be re-pointed in the same change as the fix; neither may be relaxed.
@@ -457,10 +479,11 @@ the alarm the fix has to trip.
 
 ## 31. The selection baseline lookup must stay unbounded over the whole timeline
 
-**Problem.** `deriveSelectionBaseline` (`selection-baseline.ts:56`) is deliberately unbounded: it
+**Problem.** `deriveSelectionBaseline` (`selection-baseline.ts`) is deliberately unbounded: it
 takes the **first** non-disabled `SELECTION_ACTION` on the timeline and seeds from that entry's
-`previousSelectionState` (`:57-59`), with no cursor argument at all. Both consumers take the
-timeline wholesale — `history-replay.ts:68` and `history-adapter.ts:543` — so the durable baseline
+`previousSelectionState`, with no cursor argument at all. Both consumers take the
+timeline wholesale — `replayHistory` in `history-replay.ts` and `legacyHistoryToDurable` in
+`history-adapter.ts` — so the durable baseline
 and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
 extracted this rule to own.
 
@@ -469,13 +492,16 @@ every selection-creating gesture recorded its own entry. That precondition now h
 is actionable: the bound is safe to make.** Two tests still pin the unbounded behaviour as
 load-bearing, not stale:
 
-- `src/contexts/__tests__/useHistory.test.tsx:475` — "restores a cleared selection when undoing the
+- The `it('restores a cleared selection when undoing the tool-switch history entry')` case in
+  `useHistory.test.tsx` — "restores a cleared selection when undoing the
   tool-switch history entry". The fixture is a rename entry at index 0 and a selection-clear entry
   at index 1; `undo()` from `historyIndex: 1` replays to index 0, and the only record that the
   selection ever existed is the clear entry at index 1 — after the target. Bound the lookup and
   undoing a tool-switch deselect becomes a silent visual no-op.
-- `src/contexts/__tests__/history-replay.test.ts:99` — "uses the first selection action baseline
-  before it and its next state at or after it". `replayHistory(history, 0, …)` at `:126` expects the
+- The `it('uses the first selection action baseline before it and its next state at or after it')`
+  case in `history-replay.test.ts` — "uses the first selection action baseline
+  before it and its next state at or after it". `replayHistory(history, 0, …)` inside that same
+  case expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
 **Fix.** Bound the lookup at the replay target, and change those two tests **in the same change**:
@@ -484,46 +510,48 @@ bound pass. The unbounded behaviour was a live feature, so a fix that makes one 
 re-deriving it has removed a user-visible capability, not corrected a pin.
 
 Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
-cursor argument) and be threaded through `history-replay.ts:68` and `history-adapter.ts:543`
+cursor argument) and be threaded through `replayHistory` in `history-replay.ts` and
+`legacyHistoryToDurable` in `history-adapter.ts`
 together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
 exists to close.
 
 **Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
 them:**
 
-- `selection-baseline.ts:46-55` — the doc comment above `deriveSelectionBaseline`. The claim is at
-  `:50-51`, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
-  record that the selection ever existed", with `:52-54` restating it for the durable baseline.
-- `history-adapter.ts:538-542` — the comment above the `deriveSelectionBaseline(legacyHistory)` call
-  at `:543` repeats it in the adapter's own voice: "It cannot be narrowed to the pre-first-entry state
+- The doc comment above `deriveSelectionBaseline` in `selection-baseline.ts`. The claim is in that
+  comment, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
+  record that the selection ever existed", restated there for the durable baseline.
+- The comment above the `deriveSelectionBaseline(legacyHistory)` call in `legacyHistoryToDurable`
+  (`history-adapter.ts`) repeats it in the adapter's own voice: "It cannot be narrowed to the
+  pre-first-entry state
   **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
   the only record that the selection existed." Rewriting only the first leaves the rule's owner
   corrected and its caller still advertising the reason it must not be bounded, so the next reader
   takes the call site as exempt from the bound being introduced at the signature.
 
-**Files.** `src/contexts/selection-baseline.ts:46-59`, `src/contexts/history-replay.ts:68`,
-`src/contexts/history-adapter.ts:538-543`, `src/contexts/__tests__/useHistory.test.tsx:475`,
-`src/contexts/__tests__/history-replay.test.ts:99,126`
+**Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
+`src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,
+`src/contexts/__tests__/history-replay.test.ts`
 
 ---
 
 ## 32. Every selection change now appears as a "Selection" row in the History panel
 
-**Problem.** `getHistoryItemTitle` (`useHistory.ts:14`) special-cases a tool source (`:17-19`),
-`TOOL_ACTION` (`:21-23`) and the crop (`:25`), and otherwise **falls through to the raw action
-name** (`:27`). `HistoryTab.tsx:69` renders that string, so a `SELECTION_ACTION` entry is labelled
+**Problem.** `getHistoryItemTitle` (`useHistory.ts`) special-cases a tool `layerSource`,
+`TOOL_ACTION` and the crop, and otherwise **falls through to the raw action
+name**. `HistoryTab.tsx` renders that string, so a `SELECTION_ACTION` entry is labelled
 with the constant's own value.
 
 That was invisible while selections wrote no history. It is not any more. Every one of these appends
 one real entry through `commitSelection` / `clearSelections` / `appendSelectionClear`:
 
-| gesture                                                          | append site                                                                 |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Clear/Deselect control, and the tool switch                      | `useSelectionHistory.ts:212`, `useSelectionHistory.ts:95` (`useApp.ts:184`) |
-| magic-wand click                                                 | `MagicWandToolArea.tsx:93`                                                  |
-| rectangle drag end                                               | `RectangularSelectionToolArea.tsx:114`                                      |
-| polygonal / freehand lasso close, feathered magnetic lasso close | `PolygonClickToolArea.tsx:324`, `FeatherMagneticLassoToolArea.tsx:424`      |
-| polygon's committed anchor or body drag                          | `PolygonClickToolArea.tsx:758`                                              |
+| gesture                                                          | append site                                                                                              |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Clear/Deselect control, and the tool switch                      | `clearSelections` / `appendSelectionClear` in `useSelectionHistory.ts`, and `goToTool` in `useApp.ts`    |
+| magic-wand click                                                 | `handlePointerDown` in `MagicWandToolArea.tsx`                                                           |
+| rectangle drag end                                               | `onChangeEnd` in `RectangularSelectionToolArea.tsx`                                                      |
+| polygonal / freehand lasso close, feathered magnetic lasso close | `finishSelection` in `PolygonClickToolArea.tsx`, `finishSelection` in `FeatherMagneticLassoToolArea.tsx` |
+| polygon's committed anchor or body drag                          | `handlePointerUp` in `PolygonClickToolArea.tsx`                                                          |
 
 So every selection change in a session adds a row, and **one gesture can add more than one kind**: a
 lasso gesture appends a creation and a later drag appends a separate move, both labelled identically.

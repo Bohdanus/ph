@@ -17,7 +17,7 @@ fact about Photoshop this document could not establish; it is neither required n
 the marker, not just the prose around it: `UNVERIFIED` in particular is not a decision.
 
 **Scope.** The Layers panel only. It is the tab `SidebarRight` renders at
-`src/components/SidebarRight/SidebarRight.tsx:372`, and its mobile counterpart
+`src/components/SidebarRight/SidebarRight.tsx` — `renderPanel()`, and its mobile counterpart
 `src/components/Mobile/MobileLayersDrawer.tsx`. It is **not** the History panel, the Channels or
 Paths tabs, the tool options bars that `docs/TOOLS.md` generates, or the dock layout. Where the panel
 is not the right home for a Photoshop requirement, this file says where that home is instead of
@@ -27,19 +27,19 @@ restating it.
 
 ## 1. Current state
 
-| Area                      | File                                                                               | Notes                                                                                                                   |
-| ------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | 330 lines, one component, no sub-components                                                                             |
-| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Dock, tabs, collapse, resize, drag. `PanelId = 'history' \| 'layers'` at `src/contexts/PanelLayout.tsx:89`              |
-| Layer model               | `src/contexts/layer-types.ts:48`                                                   | `Layer` is a flat record; `LayerSource` is a 3-way union at `:26`; `LayerOperation` a 2-way union at `:46`              |
-| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `getSortedLayersArray` `:17`, `reorderLayers` `:254`                                                                    |
-| Mutations                 | `src/contexts/useLayer.ts`                                                         | `updateLayer` `:588`, `removeLayer` `:543`, `setActiveLayer` `:627`, `toggleVisibility` `:629`, `moveLayerAfter` `:619` |
-| Property application      | `src/contexts/layer-renderer.ts:114-115`                                           | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                     |
-| Lock enforcement          | `src/contexts/useLayer.ts:122`, `:390`, `:650`                                     | `isLayerLocked`; the **only** source of `locked: true` is PSD import                                                    |
-| History / undo            | `src/contexts/history-replay.ts:60`                                                | Per-action arms: layer arms `:127-162`, plus the document-frame and selection arms at `:112` and `:120`                 |
-| Durable property path     | `src/contexts/history-adapter.ts:380-386`                                          | `LayerPropertyKey = 'visible' \| 'name'` — the closed set                                                               |
-| Mobile panel              | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | A separate, richer surface: new-layer, delete, rename, move up/down                                                     |
-| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | 792 / 396 / 419 unit lines, 506 / 126 e2e lines                                                                         |
+| Area                      | File                                                                               | Notes                                                                                                                |
+| ------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | 330 lines, one component, no sub-components                                                                          |
+| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Dock, tabs, collapse, resize, drag. `PanelId = 'history' \| 'layers'` in `src/contexts/PanelLayout.tsx`              |
+| Layer model               | `src/contexts/layer-types.ts` — `Layer`, `LayerSource`, `LayerOperation`           | `Layer` is a flat record; `LayerSource` is a 3-way union; `LayerOperation` a 2-way union                             |
+| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `getSortedLayersArray()`, `reorderLayers()`                                                                          |
+| Mutations                 | `src/contexts/useLayer.ts`                                                         | `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`                       |
+| Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                  |
+| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked only from `updateLayerByTool()` and `tempUpdateLayer()`; the **only** source of `locked: true` is PSD import |
+| History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Per-action arms: the layer arms, plus the document-frame and selection arms                                          |
+| Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | `LayerPropertyKey = 'visible' \| 'name'` — the closed set                                                            |
+| Mobile panel              | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | A separate, richer surface: new-layer, delete, rename, move up/down                                                  |
+| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | 792 / 396 / 419 unit lines, 506 / 126 e2e lines                                                                      |
 
 The panel today is **a list of names with an eye and a bin**. Everything else in this document is a
 requirement on top of that list. Two facts drive most of what follows:
@@ -50,10 +50,10 @@ requirement on top of that list. Two facts drive most of what follows:
      `docs/TOOLS-TOO-HARD.md`, which is hand-maintained and grows for the same reason. -->
 
 1. **`Layer` is flat and untyped by kind.** There is no `parentId`, no `kind` discriminator on the
-   layer itself, no `fillOpacity`, no `mask`, no `clipping`. `LayerSource` at
-   `src/contexts/layer-types.ts:26` has exactly three kinds (`blank`, `image`, `tool`) and
-   `LayerOperation` at `:46` exactly two (three filter args, plus affine). Photoshop's own taxonomy is
-   Image, Adjustment, Fill, Type, Shape, Smart Object, Video, Background.
+   layer itself, no `fillOpacity`, no `mask`, no `clipping`. `LayerSource` in
+   `src/contexts/layer-types.ts` has exactly three kinds (`blank`, `image`, `tool`) and
+   `LayerOperation` in the same file exactly two (three filter args, plus affine). Photoshop's own
+   taxonomy is Image, Adjustment, Fill, Type, Shape, Smart Object, Video, Background.
 2. **A stroke is a layer.** `DrawToolArea` commits through `createLayerFromTool`, so a canvas with
    many brush strokes has many layers. `docs/TOOLS-TOO-HARD.md` §"Layer opacity, and the paint model"
    records that this is deliberate and expensive to reverse, and
@@ -82,9 +82,9 @@ version-sensitive if a source disagrees with it.
 - `HAVE` (partially) — Two tabs, `History` and `Layers`, each a `PanelGroup` with its own roll-up,
   drag handle and split ratio.
 - `GAP` — **Channels and Paths do not exist.** `PanelId` is the closed union
-  `'history' | 'layers'` (`src/contexts/PanelLayout.tsx:89`). The omission is a recorded decision,
-  not an oversight: `src/contexts/PanelLayout.tsx:74-75` says panel tab _groups_ are a second axis of
-  drag that "only pays off once a third panel exists".
+  `'history' | 'layers'` (`src/contexts/PanelLayout.tsx`). The omission is a recorded decision,
+  not an oversight: the same file's `## Deliberately NOT modelled` note on **Panel tab GROUPS**
+  calls the group a second axis of drag that "only pays off once a third panel exists".
 - `OUT` — Building the tab group now, before either panel exists, is a layout change with no user
   visible consequence. **The requirement is that `PanelId` grows, not that the tabs are built first.**
   When Channels or Paths is built, the group is the correct model and the split is a one-line type
@@ -92,9 +92,10 @@ version-sensitive if a source disagrees with it.
 - The active tab is visually distinct from the inactive ones. Corroborating source only; no Adobe
   page specifies the rendering, and this is a rendering convention rather than a requirement.
 - `HAVE` — `F7`-class show/hide is not bound, but the dock has its own collapse affordance
-  (`data-testid="dock-collapse-toggle"`, `SidebarRight.tsx:365`) and a tablet-width auto-hide
-  (`src/contexts/RightPanelVisibility.tsx:42`). That is a different feature from the panel-tab
-  keyboard contract and is not required here.
+  (`data-testid="dock-collapse-toggle"`, the `headerAction` in `SidebarRight.tsx` — `renderPanel()`)
+  and a tablet-width auto-hide (`src/contexts/RightPanelVisibility.tsx` —
+  `RightPanelVisibilityProvider()`). That is a different feature from the panel-tab keyboard contract
+  and is not required here.
 
 ### 2.2 The filter row
 
@@ -103,9 +104,9 @@ nine filter kinds are `Kind`, `Name`, `Effect`, `Mode`, `Attribute`, `Color`, `S
 `Selected`, `Artboard`. The number and meaning of the icons beside the selector change with the
 selected kind.
 
-- `GAP` — There is no filter state in the panel at all. `LayersTab.tsx:22-34` holds **seven**
-  `useState` values (`:22 draggedLayerId`, `:23 dropTargetId`, `:24 isOverBottom`, `:26
-editingLayerId`, `:28 animatingLayerId`, `:29 isShrinking`, `:30 isExpanding`) and three `useRef`s,
+- `GAP` — There is no filter state in the panel at all. `LayersTab.tsx` — `LayersTab()` — holds
+  **seven** `useState` values (`draggedLayerId`, `dropTargetId`, `isOverBottom`,
+  `editingLayerId`, `animatingLayerId`, `isShrinking`, `isExpanding`) and three `useRef`s,
   all of it drag, rename and animation bookkeeping.
 - **Requirement.** Filtering changes panel display only. It must never change what the document
   renders and must never change which layer is active.
@@ -150,15 +151,15 @@ Two controls on one row: an unlabelled blend-mode pop-up on the left (default **
 `Opacity:` field on the right (default **100%**), itself a pop-up slider with a drop-down of presets.
 
 - `GAP` — no blend-mode control. `Layer.blendMode` is a data field
-  (`src/contexts/layer-types.ts:60`) that `layer-renderer.ts:115` applies, that the paint tool's own
-  Mode select writes, and that PSD import sets. `docs/TOOLS.md` §Smudge Tool states the consequence
-  for the Smudge tool: "a grep for `blendMode` across `src/components/` finds only that select - the
-  Layers panel has no blend-mode control at all."
-- `GAP` — no opacity control. `Layer.opacity` (`src/contexts/layer-types.ts:58`) is written by
-  exactly three sites, none of them a UI: PSD import (`src/contexts/psd-utils.ts:163`), the import
-  composite (`:195`), and `createLayerSource` defaulting it to `1` (`src/contexts/layer-utils.ts:189`).
-  **No user gesture in the app writes it.** The defect record is `HANDOFF.md` §56, which uses the
-  same loose phrasing; `docs/TOOLS-TOO-HARD.md`
+  (`src/contexts/layer-types.ts`) that `layer-renderer.ts` — `drawLayer()` — applies, that the paint
+  tool's own Mode select writes, and that PSD import sets. `docs/TOOLS.md` §Smudge Tool states the
+  consequence for the Smudge tool: "a grep for `blendMode` across `src/components/` finds only that
+  select - the Layers panel has no blend-mode control at all."
+- `GAP` — no opacity control. `Layer.opacity` (`src/contexts/layer-types.ts`) is written by
+  exactly three sites, none of them a UI: PSD import and the import composite
+  (`src/contexts/psd-utils.ts` — `loadPsd()`), and `createLayerSource()` defaulting it to `1`
+  (`src/contexts/layer-utils.ts`). **No user gesture in the app writes it.** The defect record is
+  `HANDOFF.md` §56, which uses the same loose phrasing; `docs/TOOLS-TOO-HARD.md`
   §"Layer opacity, and the paint model" records only that closing it is not a small change, and says
   so explicitly. This file does not restate that defect — see
   [§9](#9-the-layer-model-the-panel-requires).
@@ -182,8 +183,8 @@ order:
 
 Lock All is the sum of the other three: it is the one lock that maps onto Photoshop's "prevent
 everything", and on this model it is equivalent to the single `locked` boolean `Layer` has today.
-That is why the import collapse at `psd-utils.ts:125` is lossy in only one direction — four flags in,
-one out, never the reverse.
+That is why the import collapse in `psd-utils.ts` — `loadPsd()` — is lossy in only one direction —
+four flags in, one out, never the reverse.
 
 The three partial locks are primary-sourced twice each (the `moving-stacking-locking-layers` help page
 and the `unlock-layers` product page) — **both excerpt-only** ([§21](#21-sources)); the order is
@@ -192,10 +193,10 @@ Note that four visible controls do not imply four model fields: Adobe's UXP `Lay
 **five** lock booleans, so the UXP surface is a superset of this row.
 
 - `GAP` — no lock control, and the model cannot express one. `Layer.locked` is a single boolean
-  (`src/contexts/layer-types.ts:59`): it is `true` only when a PSD import collapses Photoshop's
-  per-property protection into a full lock (`src/contexts/psd-utils.ts:124-125`), and
-  `isLayerLocked` (`src/contexts/useLayer.ts:122`) is checked in exactly two places — the tool edit
-  path at `:390` and the preview path at `:650`. There is no UI anywhere that sets it, and
+  (`src/contexts/layer-types.ts`): it is `true` only when a PSD import collapses Photoshop's
+  per-property protection into a full lock (`src/contexts/psd-utils.ts` — `loadPsd()`), and
+  `isLayerLocked()` (`src/contexts/useLayer.ts`) is checked in exactly two places —
+  `updateLayerByTool()` and `tempUpdateLayer()`. There is no UI anywhere that sets it, and
   `src/contexts/__tests__/useLayer.locked.test.tsx` says so in the test's own words.
 - `GAP` — no Fill control. `Fill:` is not a synonym for Opacity; see [§9.1](#91-opacity-and-fill-are-not-the-same-field).
 - The panel lock state renders **on the row**: a padlock to the right of the layer name, **solid** when
@@ -222,12 +223,13 @@ Note that four visible controls do not imply four model fields: Adobe's UXP `Lay
 Two independent third-party sources enumerate this row and agree on all seven and on the order; Adobe
 names controls 2 and 4 directly.
 
-- `GAP` — **the bar does not exist.** `LayersTab.tsx:279-299` is a bottom _drop zone_ used for
-  drag-to-reorder-to-bottom, and `LayersTab.tsx:302-335` is an off-screen drag-ghost element. Those
+- `GAP` — **the bar does not exist.** `LayersTab.tsx` — `LayersTab()` — has a bottom _drop zone_
+  (the `isOverBottom` element, used for drag-to-reorder-to-bottom) and an off-screen drag-ghost
+  element (the `dragImageRef` element). Those
   are the last two children of the component — which is the _only_ thing making this verdict true, so
   appending a real action bar is a change to this section and not only to the component. The only "new
   layer" control in the repo is the mobile drawer's `New Layer` button
-  (`MobileLayersDrawer.tsx:172-186`).
+  (`MobileLayersDrawer.tsx` — `MobileLayersDrawer()`).
 - **Requirement.** New layers land **directly above** the selected layer, or **inside** the selected
   group. (Adobe, primary)
 - **Requirement.** `Alt`/`Option`-clicking New Layer or New Group opens the dialog;
@@ -240,7 +242,7 @@ names controls 2 and 4 directly.
 
 A line-icon button in the panel's top-right corner. This app has **no** panel menu of any kind:
 `PanelGroup`'s header contains a title span and a `headerAction` slot, and the only `headerAction`
-wired in is the dock's collapse double-arrow (`SidebarRight.tsx:354-370`).
+wired in is the dock's collapse double-arrow (`SidebarRight.tsx` — `renderPanel()`).
 
 Sourced menu items, grouped: `New Layer` · `New Group from Layers` · `Duplicate Layer` ·
 `New Layer from Background` · `Background From Layer` · `Delete ▸ Layer` / `Delete Layer` /
@@ -256,11 +258,11 @@ tutorials and community reports say the item reads `Duplicate Group` when a grou
 - `GAP` — a complete panel menu. No source I found enumerates the whole flyout, so specify against
   Adobe's _commands_ first ([§21](#21-sources)) and decide which of them this menu carries
   afterwards. Two of those commands already have an implementation and no panel route: **Merge** is
-  reachable only from the Move and Colors option bars
-  (`ToolbarsRight/Move/Reposition.tsx:21`, `ToolbarsRight/Colors/Color.tsx:68`), and
-  `e2e/layers-panel.spec.ts:289` — which is filed _under this panel_ — reaches it by first selecting
-  the `reposition` tool and then clicking that bar's `Merge all` button
-  (`e2e/layers-panel.spec.ts:300-301`).
+  reachable only from the Move and Colors option bars (the `Merge all` button in
+  `ToolbarsRight/Move/Reposition.tsx`, `handleMergeAll()` in `ToolbarsRight/Colors/Color.tsx`), and
+  the `test('Merge all collapses the document to one layer and keeps the artwork')` case in
+  `e2e/layers-panel.spec.ts` — which is filed _under this panel_ — reaches it by first selecting
+  the `reposition` tool and then clicking that bar's `Merge all` button.
 - **`Align` and `Distribute` are not flyout entries.** They are `Layer > Align` commands (Adobe,
   primary), also mirrored in the Move tool's options bar. `Group Layers` and `Ungroup Layers` are
   `Layer` menu commands too; `Ungroup Layers` additionally appears on a group's right-click menu.
@@ -283,7 +285,8 @@ enumeration. Checked and ruled out: there is no `Color` control, no `Hit Target`
 `Extra Small` thumbnail size in Photoshop.
 
 - `GAP` — no panel and no dialog. The **mechanism** a preference needs is already in the dock:
-  `PanelLayout` persists to `localStorage` (`src/contexts/PanelLayout.tsx:229`, `:304`), which is
+  `PanelLayout` persists to `localStorage` (`src/contexts/PanelLayout.tsx` — `readStoredLayout()` and
+  `PanelLayoutProvider()`), which is
   exactly where a display preference belongs. What is missing is the dialog, and the rule that it
   must not travel through the document.
 - **Requirement.** Panel display preferences are not document state. They must not enter
@@ -313,13 +316,13 @@ a `DragHandleIcon` between the eye and the name is a control that Photoshop does
 
 | Element     | Status    | Evidence                                                                                                                 |
 | ----------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Eye         | `HAVE`    | `LayersTab.tsx:191-205`; `toggleVisibility` at `useLayer.ts:629`                                                         |
-| Drag handle | `PARTIAL` | Decorative only, `aria-hidden` (`src/components/Icons/DragHandleIcon.tsx:11`)                                            |
+| Eye         | `HAVE`    | `LayersTab.tsx` — the row's eye button (`aria-label` `Hide layer`); `toggleVisibility()` in `useLayer.ts`                |
+| Drag handle | `PARTIAL` | Decorative only, `aria-hidden` (`src/components/Icons/DragHandleIcon.tsx` — `DragHandleIcon()`)                          |
 | Thumbnail   | `GAP`     | Nothing renders one. The repo has no layer-thumbnail code.                                                               |
 | `T` badge   | `GAP`     | Even though text layers are baked pixels, so a raster thumbnail would render — see `docs/TOOLS.md` §Horizontal Type Tool |
 | Disclosure  | `GAP`     | No layer has children to disclose                                                                                        |
-| Name        | `HAVE`    | `LayersTab.tsx:210-258`; see [§7](#7-rename) for the mousedown divergence                                                |
-| `fx`        | `GAP`     | `Layer.operations` (`layer-types.ts:46`) holds three filter args plus affine, not layer styles                           |
+| Name        | `HAVE`    | `LayersTab.tsx` — the `layer-name` span; see [§7](#7-rename) for the mousedown divergence                                |
+| `fx`        | `GAP`     | `Layer.operations` (`layer-types.ts` — `LayerOperation`) holds three filter args plus affine, not layer styles           |
 | Padlock     | `GAP`     | `Layer.locked` exists and is never set by the UI                                                                         |
 
 - `PARTIAL` — the active row. Photoshop distinguishes the **active** layer (the one edits apply to)
@@ -361,10 +364,10 @@ a `DragHandleIcon` between the eye and the name is a control that Photoshop does
   `Open This Group`. (Adobe, primary)
 - Deleting a group offers `Group Only` or `Group and Contents`. (Third-party.)
 
-- `GAP` — everything. `Layer` has no parent reference (`src/contexts/layer-types.ts:48-69`),
-  `LayerSource` has no group kind, and PSD import **flattens groups with a warning**:
+- `GAP` — everything. `Layer` has no parent reference (`src/contexts/layer-types.ts` — the `Layer`
+  record), `LayerSource` has no group kind, and PSD import **flattens groups with a warning**:
   "Group flattened to leaf layers; group isolation, blending and opacity fidelity are not preserved."
-  (`src/contexts/psd-utils.ts:130`).
+  (`src/contexts/psd-utils.ts` — `loadPsd()`).
 - **This is the largest single gap in the panel** and it is not a UI gap. Nesting changes the meaning
   of `order`, of every render pass, of selection, of delete, of drag-to-reorder, and of the durable
   document. It is sequenced **ninth** in [§17](#17-priorities), not last, and only because §17's
@@ -386,15 +389,18 @@ Photoshop's model, in Adobe's words:
 
 - **THE NAME COLLISION IS A TRAP. Read this before adding anything.**
   `StoreData` already holds `selections: Selection[]` and `activeSelectionId: string | null`
-  (`src/contexts/StoreContext.tsx:142-143`) — and those are **marquee** selections, not layers. They
-  are history-bearing: `useSelectionHistory.ts:114-115`, `:279-280` write `previousSelectionState` /
-  `nextSelectionState` entries for them, `history-model.ts:115` carries a durable `set-selection`
-  operation with `before`/`after` snapshots, and `selection-baseline.ts:56` reconstructs them by
+  (the two `StoreData` fields in `src/contexts/StoreContext.tsx`) — and those are **marquee**
+  selections, not layers. They
+  are history-bearing: `appendSelectionClear()` and `commitSelection()` in `useSelectionHistory.ts`
+  write `previousSelectionState` /
+  `nextSelectionState` entries for them, `history-model.ts` carries a durable `set-selection`
+  operation with `before`/`after` snapshots, and `selection-baseline.ts` — `deriveSelectionBaseline()`
+  — reconstructs them by
   scanning the timeline. **Do not add `LayerId`s to `selections`, and do not reuse
   `activeSelectionId` for the active layer.** That would retype a structure three subsystems assume
   holds `Selection` geometry, and it would corrupt replay.
 - `GAP` — the **layer** selection. The panel has `activeLayerId: LayerId | null` and no layer set;
-  `LayersTab.tsx:182` is a bare `setActiveLayer(layer.id)`.
+  the row's `onClick` in `LayersTab.tsx` is a bare `setActiveLayer(layer.id)`.
 - **Requirement.** The store must be able to hold layer _selected_ (a set) and layer _active_ (one
   member of it) **separately**, or multi-select cannot be added without renaming every consumer of
   `activeLayerId`. Name the new fields so they cannot be confused with the two above —
@@ -421,8 +427,10 @@ Photoshop's model, in Adobe's words:
 - **Requirement.** The **Background** layer cannot be reordered at all.
 
 - `HAVE` — drag-to-reorder with an insertion indicator, a refusal to drop on the row directly above
-  the dragged row, and a bottom drop zone (`LayersTab.tsx:141-181`, `:279-299`). Pinned by
-  `LayersTab.test.tsx:565-792` and by `e2e/layers.spec.ts:21`.
+  the dragged row, and a bottom drop zone (both in `LayersTab.tsx` — the draggable row `<div>` and
+  the `isOverBottom` drop zone). Pinned by the `describe('LayersTab drag and drop guards')` block in
+  `LayersTab.test.tsx` and by the `test('layers change order and are deleted sequentially')` case in
+  `e2e/layers.spec.ts`.
 - `GAP` — the four arrange commands and their shortcuts. `docs/TOOLS.md` §Rectangle Tool and six
   sibling shape-tool sections (Ellipse, Line, Triangle, Polygon, Custom Shape and the Shape group)
   already record `Path Arrangement` (bring to front / forward / send backward / back) as `missing` on
@@ -430,7 +438,7 @@ Photoshop's model, in Adobe's words:
   panel, and this is the panel's requirement to satisfy.
 - **Requirement.** Reorder is one history entry and one undo step. `HAVE` today —
   `e2e/layers-panel.spec.ts` and `src/contexts/__tests__/StoreContext.reorder.test.tsx` both pin it.
-  `HANDOFF.md` §15 (`HANDOFF.md:188`) records the one real defect in that path: a self-anchored move
+  `HANDOFF.md` §15 records the one real defect in that path: a self-anchored move
   is refused by `reorderOrderAfterIntent`, and a **dangling-anchor reorder still records a
   `REORDER_ACTION` entry that no-ops**.
 
@@ -449,32 +457,43 @@ Layer`. (Adobe, primary, twice.)
   opens nothing.
 - Tab / Shift-Tab walk the rename edit box down and up through the layers. (Third-party.)
 
-- `HAVE` — `contentEditable` on mousedown (`LayersTab.tsx:214-218`, attribute at `:212`), commit on
-  blur (`:223-225`), Enter commits (`:226-229`), Escape restores the stored name (`:230-234`), and a
-  blank or whitespace-only name is refused **and the previous label written back** (`:90-104`). That
+- `HAVE` — `contentEditable` on mousedown (the `layer-name` span in `LayersTab.tsx` — its
+  `contentEditable` attribute and its `onMouseDown`), commit on
+  blur (`onBlur`), Enter commits (`onKeyDown`), Escape restores the stored name (`onKeyDown`), and a
+  blank or whitespace-only name is refused **and the previous label written back** (`handleNameChange()`).
+  That
   last clause was a real defect — a refused rename used to leave a nameless layer on screen, because
   the span stops being `contentEditable` and React no longer owns its text — and it is now pinned as
-  fixed by `LayersTab.test.tsx:549`, a plain `it`, with the write-back explained in the comment above
-  it (`:543-548`) against the two current code sites. Pinned in full by `LayersTab.test.tsx:339-563`
-  and by `e2e/layers-panel.spec.ts:241` and `:267`.
+  fixed by the `it('restores the previous label in the row when a blank rename is rejected')` case in
+  `LayersTab.test.tsx`, a plain `it`, with the write-back explained in the comment above
+  it against the two current code sites. Pinned in full by the `describe('LayersTab inline rename')`
+  block in `LayersTab.test.tsx` and by the `test('renaming a layer commits the new name when Enter is
+pressed')` and `test('abandoning a rename with Escape keeps the original name')` cases in
+  `e2e/layers-panel.spec.ts`.
 - `PARTIAL` — a **single mousedown** enters rename mode, not a double-click. That is a divergence from
   Photoshop's stated gesture, and it is a reasonable one: mousedown-to-edit is unambiguous where
   double-click-to-edit collides with a drag gesture on the same row. **Record it as a deliberate
   divergence, not an oversight**, and do not "fix" it to a double-click without replacing the
   double-click-on-the-thumbnail-opens-Layer-Style rule at the same time.
 - `GAP` — Tab / Shift-Tab navigation between rows during a rename.
-- **Locator trap, load-bearing.** A layer row's `title` is `"Drag to reorder"`
-  (`LayersTab.tsx:189`) and `page.getByTitle` matches on **substring**. That string is a locator used
-  verbatim by **seven e2e call sites across five files** — `e2e/layers.spec.ts:28`,
-  `e2e/keyboard-shortcuts.spec.ts:395`, `e2e/text-tool.spec.ts:842`, `:864`, `:960`,
-  `e2e/layers-panel.spec.ts:87`, `e2e/erase-fill-eyedropper.spec.ts:151` — and by three unit files
-  (`LayersTab.test.tsx:123`, `LayersTab.dispatch.test.tsx:79`, `LayersTab.store.test.tsx:77`).
-  `PanelGroup`'s header `title` is written around it deliberately
-  (`src/components/SidebarRight/PanelGroup.tsx:57-62`). **Any work on the row that
+- **Locator trap, load-bearing.** A layer row's `title` is `"Drag to reorder"` (the row `<div>` in
+  `LayersTab.tsx`) and `page.getByTitle` matches on **substring**. That string is a locator used
+  verbatim by **seven e2e call sites across five files** — the file-local `layerRows` locator in
+  `e2e/layers.spec.ts`, the `test('a tool shortcut is ignored while a layer name is being edited')`
+  case in `e2e/keyboard-shortcuts.spec.ts`, the `test('committing a draft adds a text layer to the
+layers panel')`, `test('committed text reaches the canvas as foreground pixels inside the dragged
+rectangle')` and `test('Clear discards the draft without committing a layer')` cases in
+  `e2e/text-tool.spec.ts`, the file-local `layerRows` locator in `e2e/layers-panel.spec.ts`, and the
+  file-local `openWorkspace` helper in `e2e/erase-fill-eyedropper.spec.ts` — and by three unit files
+  (the `getLayerDivs()`, `getRow()` and `getRowByName()` helpers in `LayersTab.test.tsx`,
+  `LayersTab.dispatch.test.tsx` and `LayersTab.store.test.tsx`).
+  `PanelGroup`'s header `title` is written around it deliberately (the `PanelGroupProps` `title` doc
+  comment in `src/components/SidebarRight/PanelGroup.tsx`). **Any work on the row that
   adds, removes or rewords that `title` silently repoints every one of those locators at a different
   element.** Keep it.
 
-> The tally "five e2e specs and three unit tests" — stated at `PanelGroup.tsx:58` and in
+> The tally "five e2e specs and three unit tests" — stated in that `PanelGroupProps.title` doc
+> comment and in
 > `HANDOFF.md` §83 — counts **files**, and it is right on that reading. It reads as a count of call
 > sites and is short by two: `getByTitle('Drag to reorder')` has seven call sites across five files.
 > Anyone auditing this trap should count sites, not files.
@@ -494,17 +513,22 @@ the Delete key**." (Adobe, primary; corroborated by the Elements shortcut page a
 > `Layer > Merge Down` and `Layer > Flatten Image` on the same page. The singular is correct; the
 > plural is a typo in Adobe's text. Do not copy the plural into this app's menu.
 
-- `PARTIAL` — there is a delete control on every row (`LayersTab.tsx:260-271`) and it deletes
+- `PARTIAL` — there is a delete control on every row (the `aria-label="Remove layer"` button in
+  `LayersTab.tsx`) and it deletes
   immediately, with no confirmation path and no modifier. It is also available on a **bedrock**
-  layer, which `LayersTab.test.tsx:312` pins as intended. **Fix the test with the change:** honouring
+  layer, which the `it('keeps remove control available for a bedrock layer')` case in
+  `LayersTab.test.tsx` pins as intended. **Fix the test with the change:** honouring
   `isBedrock` in the panel ([§17](#17-priorities) row 2) removes this control from bedrock rows, so
-  `LayersTab.test.tsx:312` will fail with an assertion that reads like a deliberate product decision.
-  The same hazard `MobileLayersDrawer.test.tsx:269` carries for opacity is called out in [§14](#14-mobile).
+  that case will fail with an assertion that reads like a deliberate product decision.
+  The same hazard the `it('has no layer-opacity control, because the old one produced untitled
+unreplayable history entries')` case in `MobileLayersDrawer.test.tsx` carries for opacity is called
+  out in [§14](#14-mobile).
 - `GAP` — confirmation. **The requirement is not "add a confirm dialog"**; it is that the _default_
   path confirms and the _modified_ path does not, so the fast path stays fast.
 - `GAP` — the `Delete` key as a panel-level shortcut, and drag-a-row-onto-the-trash.
 - `GAP` — `Delete ▸ Hidden Layers`.
-- `LayersTab.tsx:86` carries `// todo: draw a "undo" button that disappears in few seconds`. That is
+- `handleConfirmRemove()` in `LayersTab.tsx` carries
+  `// todo: draw a "undo" button that disappears in few seconds`. That is
   the author already reaching for the third Photoshop affordance, a transient undo, and it is the
   right one: it is cheaper than a confirm dialog and it does not change the modifier contract. Note
   that `handleConfirmRemove`'s **name** already promises a confirmation that does not exist.
@@ -515,27 +539,27 @@ the Delete key**." (Adobe, primary; corroborated by the Elements shortcut page a
 
 Every panel requirement in this document reduces to a field. This is the table to implement against.
 
-| Photoshop concept | `Layer` field today                         | Status | Consequence of the gap                                                                                         |
-| ----------------- | ------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------- |
-| Backing image     | `isBedrock` `:52`                           | `HAVE` | Enforced at 12 sites but **not in this panel** — [§12](#12-the-background-layer)                               |
-| Background layer  | none                                        | `GAP`  | Not the same thing as `isBedrock`, which is the document's backing image                                       |
-| Layer selection   | `selectedLayerIds` (proposed)               | `GAP`  | Singular only. **Must not reuse `selections`** — [§5](#5-selection)                                            |
-| Visibility        | `visible: boolean` `:57`                    | `HAVE` | —                                                                                                              |
-| Opacity           | `opacity: number` `:58`                     | `GAP`  | Field exists, renderer honours it (`layer-renderer.ts:114`); three construction sites write it, **no UI does** |
-| Fill opacity      | none                                        | `GAP`  | Folded into `opacity` on import — `psd-utils.ts:122` warns "Fill opacity is approximated as layer opacity"     |
-| Blend mode        | `blendMode: GlobalCompositeOperation` `:60` | `GAP`  | No writer in any UI; unsupported values fall back to `source-over` on import (`psd-utils.ts:150,161`)          |
-| Full lock         | `locked: boolean` `:59`                     | `GAP`  | Import collapses four Photoshop flags into one (`psd-utils.ts:125`)                                            |
-| Partial locks (3) | none                                        | `GAP`  | Lock All and Lock Position are not the same rule and cannot share a boolean                                    |
-| Layer kind        | `source?.kind` (3-way union) `:26`          | `GAP`  | Cannot render a type badge, a folder, or a filter-by-kind without it                                           |
-| Group parent      | none                                        | `GAP`  | No nesting, no group opacity, no `Pass Through`                                                                |
-| Mask              | none                                        | `GAP`  | Import warns it is unsupported (`psd-utils.ts:88-107`, one arm of a 16-key loop)                               |
-| Clipping          | none                                        | `GAP`  | Import warns it is unsupported (`psd-utils.ts:93`)                                                             |
-| Linked layers     | none                                        | `GAP`  | —                                                                                                              |
-| Layer styles      | `operations` (filters + affine) `:46`       | `GAP`  | Not layer styles. A filter is not an effect; they share a menu, nothing else                                   |
-| Smart Object      | none                                        | `GAP`  | Import degrades to a raster preview (`psd-utils.ts:109`)                                                       |
-| Color label       | none                                        | `GAP`  | —                                                                                                              |
-| Blend If          | none                                        | `GAP`  | Import warns it is unsupported (`psd-utils.ts:119`)                                                            |
-| Video layer       | none                                        | `OUT`  | Not a browser-canvas capability; see [§19](#19-platform-constraints)                                           |
+| Photoshop concept | `Layer` field today                   | Status | Consequence of the gap                                                                                                     |
+| ----------------- | ------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Backing image     | `isBedrock`                           | `HAVE` | Enforced at 12 sites but **not in this panel** — [§12](#12-the-background-layer)                                           |
+| Background layer  | none                                  | `GAP`  | Not the same thing as `isBedrock`, which is the document's backing image                                                   |
+| Layer selection   | `selectedLayerIds` (proposed)         | `GAP`  | Singular only. **Must not reuse `selections`** — [§5](#5-selection)                                                        |
+| Visibility        | `visible: boolean`                    | `HAVE` | —                                                                                                                          |
+| Opacity           | `opacity: number`                     | `GAP`  | Field exists, renderer honours it (`layer-renderer.ts` — `drawLayer()`); three construction sites write it, **no UI does** |
+| Fill opacity      | none                                  | `GAP`  | Folded into `opacity` on import — `psd-utils.ts` — `loadPsd()` — warns "Fill opacity is approximated as layer opacity"     |
+| Blend mode        | `blendMode: GlobalCompositeOperation` | `GAP`  | No writer in any UI; unsupported values fall back to `source-over` on import (`psd-utils.ts` — `loadPsd()`)                |
+| Full lock         | `locked: boolean`                     | `GAP`  | Import collapses four Photoshop flags into one (`psd-utils.ts` — `loadPsd()`)                                              |
+| Partial locks (3) | none                                  | `GAP`  | Lock All and Lock Position are not the same rule and cannot share a boolean                                                |
+| Layer kind        | `source?.kind` (3-way union)          | `GAP`  | Cannot render a type badge, a folder, or a filter-by-kind without it                                                       |
+| Group parent      | none                                  | `GAP`  | No nesting, no group opacity, no `Pass Through`                                                                            |
+| Mask              | none                                  | `GAP`  | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`, one arm of a 16-key loop)                                    |
+| Clipping          | none                                  | `GAP`  | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`)                                                              |
+| Linked layers     | none                                  | `GAP`  | —                                                                                                                          |
+| Layer styles      | `operations` (filters + affine)       | `GAP`  | Not layer styles. A filter is not an effect; they share a menu, nothing else                                               |
+| Smart Object      | none                                  | `GAP`  | Import degrades to a raster preview (`psd-utils.ts` — `loadPsd()`)                                                         |
+| Color label       | none                                  | `GAP`  | —                                                                                                                          |
+| Blend If          | none                                  | `GAP`  | Import warns it is unsupported (`psd-utils.ts` — `loadPsd()`)                                                              |
+| Video layer       | none                                  | `OUT`  | Not a browser-canvas capability; see [§19](#19-platform-constraints)                                                       |
 
 ### 9.1 Opacity and Fill are not the same field
 
@@ -552,8 +576,9 @@ affecting the opacity of layer effects such as drop shadows.**" (Adobe, primary.
   and it will be wrong in the direction that is hard to see. If Fill is added later, adding the field
   is a migration across history, the durable model and PSD round-trip.
 - The import already takes this decision: `nextOpacity = opacity * (source.opacity ?? 1) *
-(source.fillOpacity ?? 1)` (`src/contexts/psd-utils.ts:127`), multiplying both into one number and
-  warning at `:122`.
+(source.fillOpacity ?? 1)` (`src/contexts/psd-utils.ts` — `loadPsd()`, at that `nextOpacity`
+  assignment), multiplying both into one number and
+  warning in the same function.
 
 ---
 
@@ -567,15 +592,15 @@ than repeated in every section.
   therefore land in **both** `history-replay.ts` and the durable adapter, or the property will change
   on commit and not revert.
 - **Every property write goes through `updateLayer(id, patch, actionName)`
-  (`src/contexts/useLayer.ts:588`)**, and that function plans a durable append **only** when
-  `isSetLayerPropertiesAction(actionName)` is true. The whitelist is
-  `LAYER_PROPERTY_BY_ACTION` (`src/contexts/history-adapter.ts:382-386`) and its key type is the
-  closed set `LayerPropertyKey = 'visible' | 'name'` (`:380`).
+  (`src/contexts/useLayer.ts` — `updateLayer()`)**, and that function plans a durable append **only**
+  when `isSetLayerPropertiesAction(actionName)` is true. The whitelist is
+  `LAYER_PROPERTY_BY_ACTION` (`src/contexts/history-adapter.ts`) and its key type is the
+  closed set `LayerPropertyKey = 'visible' | 'name'`.
 - `DurableLayerPropertyPatch` already **admits** `opacity`, `locked`, `blendMode` and `pos`
-  (`src/contexts/history-model.ts:86-88`). Admitting a key in that type without adding the action to
+  (`src/contexts/history-model.ts`). Admitting a key in that type without adding the action to
   `LAYER_PROPERTY_BY_ACTION` and giving `deriveSetLayerPropertiesEntry` its branch is worse than
   leaving it out: the write falls into the visibility arm as a **silent default**.
-- `LAYER_TRANSPARENCY_ACTION` already exists at `src/util/constants.ts:26`, carrying the comment
+- `LAYER_TRANSPARENCY_ACTION` already exists in `src/util/constants.ts`, carrying the comment
   `// todo this is not triggered not recorded nor replayed yet`. It is a placeholder, not a
   half-implementation.
 - `HANDOFF.md` §56 is the full worked example: a slider reaching for
@@ -590,7 +615,7 @@ than repeated in every section.
 - A gesture that fires many steps (a slider drag, a spin control) commits **once**, on release. This
   is not a performance nicety; per-step entries are the §56 failure mode.
 - Selection of the active layer is **not** a history entry. `HAVE` — `SET_ACTIVE_LAYER`
-  (`useLayer.ts:627`) dispatches no history item.
+  (`useLayer.ts` — `setActiveLayer()`) dispatches no history item.
 - Panel **display** state — filter kind, thumbnail size, expanded groups, which tab is open — is
   **never** a history entry and never marks the document dirty.
 
@@ -602,10 +627,10 @@ than repeated in every section.
   inert until used. Used, the row-level actions that do change the composite are **hide, reorder and
   delete** — and each is already, or must be, exactly **one** history entry.
 - It must not be the only route to a capability that belongs elsewhere. **Merge is the live example,
-  and it is a warning rather than a rule**: `mergeAllLayers` (`src/contexts/useLayer.ts:814`) is
-  reachable only from the **Move** tool's options bar
-  (`src/components/ToolbarsRight/Move/Reposition.tsx:8,21`) and the Colors bar
-  (`src/components/ToolbarsRight/Colors/Color.tsx:10,68`) — never from the History panel, and never
+  and it is a warning rather than a rule**: `mergeAllLayers()` (`src/contexts/useLayer.ts`) is
+  reachable only from the **Move** tool's options bar (its `Merge all` button in
+  `src/components/ToolbarsRight/Move/Reposition.tsx`) and the Colors bar (`handleMergeAll()` in
+  `src/components/ToolbarsRight/Colors/Color.tsx`) — never from the History panel, and never
   from the Layers panel. So a capability Photoshop puts in the Layers panel menu is currently
   unreachable from the panel it belongs to, and reachable from two tool bars it does not. See
   [§2.7](#27-the-panel-menu).
@@ -614,10 +639,11 @@ than repeated in every section.
 - It must not make a locked layer editable, and it must not make a Background layer movable, opacity-
   less or maskable — the lock is data, not a disabled attribute. **Two of these are already `HAVE`,
   and one of them is `HAVE` in the canvas and `GAP` in this panel:**
-  - must not make a **locked** layer editable — `HAVE` on the canvas
-    (`isLayerLocked` at `useLayer.ts:390` and `:650`).
+  - must not make a **locked** layer editable — `HAVE` on the canvas (`isLayerLocked()` in
+    `useLayer.ts`, checked from `updateLayerByTool()` and `tempUpdateLayer()`).
   - must not make a **Background** layer movable — `HAVE` on the canvas
-    (`MoveToolArea.tsx:199`, `:242`, `useRect.ts:454`) and **`GAP` in this panel** (see
+    (`handlePointerDown()` and `handlePointerMove()` in `MoveToolArea.tsx`, the `handlePointerDown`
+    bedrock guard in `useRect.ts`) and **`GAP` in this panel** (see
     [§12](#12-the-background-layer)).
   - opacity-less and maskable — `GAP`, both, and both are model gaps ([§9](#9-the-layer-model-the-panel-requires)).
 
@@ -642,26 +668,36 @@ From Background`, or clicking its padlock. (Adobe, primary.)
   fields of that name and they do not always agree**, which is the part worth knowing before touching
   anything:
   - The **layer** field (`Layer.isBedrock`) is `true` for a new blank document
-    (`src/App.tsx:26`), an opened image file (`src/hooks/useApp.ts:161`) and the mobile drawer's New
-    Layer (`src/components/Mobile/MobileLayersDrawer.tsx:174-180`).
-  - The **source** field (`LayerSource.isBedrock`) is what `psd-utils.ts:188-202` sets: PSD import
-    marks every layer it reads `false` (`:161`), and the flattened composite carries `false` on the
-    layer (`:193`) but **`true` on its source** (`:200`).
-  - `history-adapter.ts:932` derives the layer field back from the source on durable replay
+    (`src/App.tsx` — `DEFAULT_BLANK_IMAGE`), an opened image file (`src/hooks/useApp.ts` —
+    `setImageFromUpload()`) and the mobile drawer's New
+    Layer (`src/components/Mobile/MobileLayersDrawer.tsx` — the `createBlankLayer()` call behind its
+    `New Layer` button).
+  - The **source** field (`LayerSource.isBedrock`) is what `psd-utils.ts` — `loadPsd()` — sets: PSD
+    import
+    marks every layer it reads `false`, and the flattened composite carries `false` on the
+    layer but **`true` on its source**.
+  - `sourceToRuntimeLayer()` in `history-adapter.ts` derives the layer field back from the source on
+    durable replay
     (`isBedrock: !!source.isBedrock`). **So a PSD composite can come back as a bedrock layer after a
     round trip when it was not one at runtime.** That divergence is real, it is not what this spec
     set out to fix, and it is recorded here so nobody "corrects" the import to `false` and changes
     durable behaviour.
 - `HAVE` — the flag is enforced at **twelve** production sites, so this is not an unenforced field:
-  `MoveToolArea.tsx:37,155,199,242` (a press on a bedrock layer is refused and the selection
-  cleared), `useRect.ts:454`, `FillToolArea.tsx:107`, and `EraserToolArea.tsx:79`,
-  `SmudgeToolArea.tsx:79`, `CloneStampToolArea.tsx:210`, `BurnToolArea.tsx:65`,
-  `GradientToolArea.tsx:85`, `DodgeToolArea.tsx:59`, each disabling itself on a bedrock layer.
+  four guards in `MoveToolArea.tsx` (`activeLayerRect`, the selected-layer effect,
+  `handlePointerDown()` and `handlePointerMove()` — a press on a bedrock layer is refused and the
+  selection
+  cleared), the `handlePointerDown` bedrock guard in `useRect.ts`, `handlePointerDown()` in
+  `FillToolArea.tsx`, and `isEnabled` in `EraserToolArea.tsx`,
+  `isEnabled` in `SmudgeToolArea.tsx`, `isEnabled` in `CloneStampToolArea.tsx`, `enabled` in
+  `BurnToolArea.tsx`, `isEnabled` in `GradientToolArea.tsx`, `enabled` in `DodgeToolArea.tsx`, each
+  disabling itself on a bedrock layer.
 - **`GAP` — and the panel is where the flag is not enforced, which is the actual finding.**
   `src/components/SidebarRight/LayersTab.tsx` contains **zero** `isBedrock` references, and
-  `moveLayerAfter` (`src/contexts/useLayer.ts:619-625`) has no guard: `LayersTab.tsx:142` arms
-  **every** row `draggable`, and the trash control is on every row including a bedrock one, with
-  `LayersTab.test.tsx:312` pinning that as _intended_. **The canvas refuses to move a bedrock layer
+  `moveLayerAfter()` (`src/contexts/useLayer.ts`) has no guard: `LayersTab.tsx` arms
+  **every** row `draggable` (`draggable={editingLayerId !== layer.id}`), and the trash control is on
+  every row including a bedrock one, with the `it('keeps remove control available for a bedrock
+layer')` case in `LayersTab.test.tsx` pinning that as _intended_. **The canvas refuses to move a
+  bedrock layer
   and the panel will happily drag it**, which is the one place the panel is looser than the canvas —
   and it is a contradiction inside the app, not a missing Photoshop feature.
 - `GAP` — there is no `isBackground` concept, no conversion, and no opacity rule.
@@ -689,17 +725,20 @@ and explicit move-up / move-down, all with 44px hit targets.
 - **The requirement is that both panels satisfy the same document rules**, and they are close to
   diverging already. The mobile drawer carries no opacity control and says why, in a comment worth
   reading before you touch either panel
-  (`src/components/Mobile/MobileLayersDrawer.tsx:201-206`): the control dispatched `TOOL_ACTION`,
+  (the "There is deliberately no layer-opacity control here" comment above the layer list in
+  `src/components/Mobile/MobileLayersDrawer.tsx`): the control dispatched `TOOL_ACTION`,
   whose history entries carry no `toolName`, so `history-replay.ts` skipped them and the History panel
   grew an untitled row **per drag step**. That is §56 again, reached from a different direction.
 - `MobileLayersDrawer.test.tsx` pins the absence of an opacity control as **intended**. Any change here
   changes a test's meaning, not just its result.
-- The mobile drawer's row is a plain `div` (`MobileLayersDrawer.tsx:230-237`) with `onClick` and **no
+- The mobile drawer's row is a plain `div` (`MobileLayersDrawer.tsx` — the row whose `onClick` calls
+  `setActiveLayer(layer.id)`) with `onClick` and **no
   role, no `tabIndex`, no key handler**, and a long comment above it explaining why
-  (`:214-229`): a `role="button"` container makes its four real button descendants presentational,
-  and the keyboard path is the name's own button. That reasoning applies to the desktop row too,
-  which currently has the same defect in the other direction — a `contentEditable` name and no
-  row-level keyboard handling at all (`LayersTab.tsx:141-181`).
+  (the `A plain \`div\`, NOT \`role="button"\``comment): a`role="button"`container makes its four
+real button descendants presentational,
+and the keyboard path is the name's own button. That reasoning applies to the desktop row too,
+which currently has the same defect in the other direction — a`contentEditable` name and no
+row-level keyboard handling at all (`LayersTab.tsx`— the draggable row`<div>`).
 
 ---
 

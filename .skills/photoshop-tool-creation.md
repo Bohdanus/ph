@@ -195,13 +195,13 @@ The trap is that this _mostly works_: Node walks up to the ancestor checkout, so
 Every worktree's dev server wants `:5173`, so a bare `npx playwright test` used to attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache. **That can no longer happen at all.** Reuse is not off by default here; it is _unreachable_:
 
 ```ts
-// playwright.config.ts:19-20
+// playwright.config.ts — the `port` binding
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://localhost:${port}`;
 
-// playwright.config.ts:111-137
+// playwright.config.ts — the `webServer` block
 webServer: {
-  command: `npm run dev -- --port ${port} --strictPort`,   // :116  a clash is a startup failure, not a hop
+  command: `npm run dev -- --port ${port} --strictPort`,   // `--strictPort`: a clash is a startup failure, not a hop
   url: baseUrl,
   reuseExistingServer: false,                              // literal; nothing can turn it on
 }
@@ -212,7 +212,7 @@ than ignoring it, so setting it is an error, not a no-op. `PLAYWRIGHT_BASE_URL` 
 unless the run says `E2E_ALLOW_REMOTE=1`, which it logs. The wrapper picks a free port, checks it
 is still bindable, exports it as `PLAYWRIGHT_PORT`, and records it to `.kilo/e2e-last-run.json`, so
 the port that served a run can be named after the fact. Local runs are also sequential —
-`workers: 1` outside CI (`playwright.config.ts:42`) — so two runs in one process cannot fight over
+`workers: 1` outside CI (`playwright.config.ts` — `workers`) — so two runs in one process cannot fight over
 one app instance.
 
 ```bash
@@ -427,23 +427,24 @@ RESEARCH PROTOCOL:
 - Verify 2+ independent sources per load-bearing claim. Never invent a URL or fabricate a quote. If something cannot be verified, say so explicitly.
 - You may read files under /Users/bkalynovskyi/ph/src. Do NOT edit anything and do not run mutating commands.
 
-ALREADY-VERIFIED FACTS about this repo (confirmed by direct code reading — trust these, cite file:line):
-- `src/tools/shape.ts:5` — `FigureType = 'line' | 'rectangle' | 'oval' | 'triangle' | 'polygon'`.
-- `src/tools/shape.ts:32-47` — `ShapeToolArgs` declares `toolMode?: 'shape'|'path'|'pixels'`, `hasFill?: boolean`, `lineCap?`, `cornerRadius?`, `lineDash?`, `start?: Point`, `end?: Point`.
-- `src/tools/settings.ts:75-81` — the shape default sets `backgroundColor: null` and there is NO `hasFill` in the defaults, so determine empirically whether fill works at all today.
-- `src/tools/shape.ts:71-99` `normalizeShapeGeometry` implements Shift (aspect snap) and Alt (draw from center). Verify against Photoshop's exact semantics.
-- `src/tools/shape.ts:161-180` — the `figure === 'triangle' || figure === 'polygon'` branch hardcodes `const sides = figure === 'triangle' ? 3 : 5` and inscribes a REGULAR n-gon in the drag box.
-- `src/tools/shape.ts:181-192` — `cornerRadius` is applied only to `rectangle`, never to `oval` (this is correct Photoshop behavior — verify).
-- `src/tools/shape.ts:9-27` — `legacyFigureMap` maps legacy `circle`->`oval` and `square`->`rectangle`, encoding that Circle and Square are Shift-constrained outcomes, not separate tools.
-- `src/tools/toolProcessors.ts:326-330` — all five figure tools (`rectangle`, `ellipse`,
-  `triangle`, `polygon`, `line`) carry `creator: true` and `commit: 'source'`. This was a
+ALREADY-VERIFIED FACTS about this repo (confirmed by direct code reading — trust these, cite the unit):
+- `src/tools/shape.ts` — `FigureType = 'line' | 'rectangle' | 'oval' | 'triangle' | 'polygon'`.
+- `src/tools/shape.ts` (`ShapeToolArgs`) declares `toolMode?: 'shape'|'path'|'pixels'`, `hasFill?: boolean`, `lineCap?`, `cornerRadius?`, `lineDash?`, `start?: Point`, `end?: Point`.
+- `src/tools/settings.ts` (the `shape` default) sets `backgroundColor: null` and there is NO `hasFill` in the defaults, so determine empirically whether fill works at all today.
+- `src/tools/shape.ts` (`normalizeShapeGeometry`) implements Shift (aspect snap) and Alt (draw from center). Verify against Photoshop's exact semantics.
+- `src/tools/shape.ts` (`drawShape`'s `figure === 'triangle' || figure === 'polygon'` branch) hardcodes `const sides = figure === 'triangle' ? 3 : 5` and inscribes a REGULAR n-gon in the drag box.
+- `src/tools/shape.ts` (`drawShape`) applies `cornerRadius` only to `rectangle`, never to `oval` (this is correct Photoshop behavior — verify).
+- `src/tools/shape.ts` (`legacyFigureMap`) maps legacy `circle`->`oval` and `square`->`rectangle`, encoding that Circle and Square are Shift-constrained outcomes, not separate tools.
+- `src/tools/toolProcessors.ts` (the `rectangle` / `ellipse` / `triangle` / `polygon` / `line`
+  entries) — all five figure tools carry `creator: true` and `commit: 'source'`. This was a
   REAL defect once — `rectangle`, `ellipse` and `line` lacked the flag, which
-  `materialization.ts:168` throws on — but the throw was latent (neither
+  `sourceBitmap()` in `materialization.ts` throws on — but the throw was latent (neither
   `materializeLayer` nor `materializeDocument` has a production importer). It is now fixed
-  AND pinned: `src/tools/__tests__/tool-processors.test.ts:287-298` derives the family from
+  AND pinned: the `it('flags every tool routed to the shape processor as a deterministic creator')`
+  case in `src/tools/__tests__/tool-processors.test.ts` derives the family from
   the processor identity rather than a hand-written name list, so a new shape variant
   cannot be registered without it. Do not report it as an open inconsistency.
-- `src/tools/toolProcessors.ts:262-266` — `custom-shape` is `commit: 'unimplemented'` with `imageProcessor: unimplemented` (returns `[null]`); its `ToolArgsByName` entry in `src/contexts/tool-types.ts:62` is just `{ toolName: 'custom-shape' }`; `src/tools/toolsMap.ts:128-132` renders a `PlaceholderTool` with a TODO badge. It IS in `toolbar-mapping.ts` and `availableTools`, so it is user-selectable and does nothing.
+- `src/tools/toolProcessors.ts` (the `'custom-shape'` entry) is `commit: 'unimplemented'` with `imageProcessor: unimplemented` (returns `[null]`); its `ToolArgsByName` entry in `src/contexts/tool-types.ts` (`'custom-shape'`) is just `{ toolName: 'custom-shape' }`; the `'custom-shape'` entry in `src/tools/toolsMap.ts` renders a `PlaceholderTool` with a TODO badge. It IS in `toolbar-mapping.ts` and `availableTools`, so it is user-selectable and does nothing.
 
 THIS IS THE MOST LIKELY SOURCE OF HEADLINE FINDINGS. Establish precisely:
 - **Triangle Tool**: Photoshop draws a drag-defined isosceles RIGHT triangle, NOT a regular polygon inscribed in the drag box. Determine the exact geometry and, critically, what Shift actually does for the Triangle Tool specifically (many sources get this wrong), and Alt.
@@ -573,8 +574,8 @@ must read the conventions, and three of its items are non-negotiable:
     explicitly.
 ```
 
-- **`e2e/README.md` quoted verbatim** (415 lines; the headless rule is at
-  `e2e/README.md:30`: _"`npm run test:e2e` is **headless by default. Keep it that way.**"_).
+- **`e2e/README.md` quoted verbatim** (415 lines; the headless rule is under
+  "Run it headless": _"`npm run test:e2e` is **headless by default. Keep it that way.**"_).
   A summary of the rules is not the rules. The verbatim quote is what stops the new spec from
   reintroducing `--headed`, a wrong `testDir`, or an unquarantined flake.
 - **`e2e/OPEN_PROBLEMS.md` entries enumerated**, section by section: `## Observed failures`,
@@ -697,7 +698,7 @@ one of the four was later itself narrowed:
    "None / Indents-Round / Indents-Round + Sided" and flagged them as likely another
    product. Treat the geometry as settled and the Mode labels as unsettled._
 3. **The Triangle Tool is drag-defined isosceles**, and **Shift means equilateral** — not
-   aspect-snap. The app's `src/tools/shape.ts:161-180`-era code inscribed a regular triangle
+   aspect-snap. The app's `src/tools/shape.ts` (`drawShape`)-era code inscribed a regular triangle
    in the drag box, so this is a live divergence, not a documentation nicety.
 4. **The Line Tool snaps to 45°, not 15°.** The 15° figure is the _Free Transform rotate_
    snap, conflated from a different feature.
@@ -707,8 +708,9 @@ it is the shape of the mistake worth avoiding: the premise "`triangle` lacks `cr
 while `shape`, `polygon` and `line` have it" was **inverted** — it was `rectangle`, `ellipse`
 and `line` that lacked it. That was a real defect (`materialization.ts` threw for three of the
 five most-used shape tools) and it is now **fixed and pinned**: all five figure tools carry
-`creator: true` at `src/tools/toolProcessors.ts:326-330`, and
-`src/tools/__tests__/tool-processors.test.ts:287-298` derives the family from the processor
+`creator: true` in their `src/tools/toolProcessors.ts` registry entries, and the
+`it('flags every tool routed to the shape processor as a deterministic creator')` case in
+`src/tools/__tests__/tool-processors.test.ts` derives the family from the processor
 identity rather than a hand-written name list, so a new shape variant cannot be registered
 without the flag. The app was fixed; the _citation_ in the research corpus is now stale.
 
@@ -723,7 +725,8 @@ D<N> — <the question> — Decided: <the answer> — Consequence: <what shrinks
 
 Keep it in the plan document, not in a chat reply: it is the only record of what was
 deliberately left out, and the next session reads it instead of re-asking. The prior
-campaign's register, from `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/README.md:20-28`:
+campaign's register, from "Resolved decisions (2026-09-26)" in
+`/Users/bkalynovskyi/ph/.kilo/plans/ps-research/README.md`:
 
 | #      | Question                        | Decision                                        | Effect                                                                                                                                                                                                                                    |
 | ------ | ------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -737,7 +740,7 @@ Note what each decision _bought_ as well as what it cost. D3's side benefit — 
 **The rule that makes the register necessary:** a control whose engine does not exist is
 **named work, not a dead slider**. If the plan's research says Photoshop's Brush has Flow,
 and Flow means per-dab alpha accumulation over a stroke buffer that the app does not have
-(`src/tools/toolProcessors.ts:193-200` commits `commit: 'raster'` and rasterizes the stroke
+(the `brush` entry in `src/tools/toolProcessors.ts` commits `commit: 'raster'` and rasterizes the stroke
 on commit), then shipping a Flow slider is a lie the user can see. Write it into the plan as
 "Flow: needs a per-stroke accumulation buffer — Phase 4, blocked on X", and leave the control
 out of this iteration entirely. A `declared-but-inert` control in the options surface is a
@@ -893,7 +896,8 @@ worth keeping past this machine, it has to be rewritten into something tracked.
 
 ### The architecture constraints every brief must restate
 
-These are the ten constraints from `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/RESEARCH-BRIEF.md:51-80`
+These are the ten constraints from "Architecture constraints your recommendations MUST respect"
+in `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/RESEARCH-BRIEF.md`
 — the hard-won decisions the whole research campaign rested on. **Restate all ten, verbatim
 in intent, in the implementation brief.** A brief that drops one invites a design that
 violates it, and the violation is discovered at review, after the work is written.
@@ -915,7 +919,7 @@ violates it, and the violation is discovered at review, after the work is writte
    explicit adoption vs. borrowing, generation tracking, deterministic disposal, and leases
    released on replacement / document replacement / provider teardown. A tool must never
    close a bitmap it borrowed from another owner. (The ownership discriminator is already in
-   the code: `AssetOwnership = 'adopt' | 'borrow'` at `src/contexts/asset-registry.ts:6`.)
+   the code: `AssetOwnership = 'adopt' | 'borrow'` in `src/contexts/asset-registry.ts`.)
 5. **Affine transform is retained, not rasterized.** `src/contexts/affine-transform.ts`
    preserves transform as math on both raster and vector sources, and affine renders apply
    the transform BEFORE filters. Do not propose rasterizing a transform that should be
@@ -940,7 +944,7 @@ Constraint 9 interacts with the rest of the research in a way that is easy to mi
 per-pixel filter whose replay must reproduce pixel output is honestly `requiresRaster: true`,
 or it is dishonest) and a **constraint-9 portability risk** (`ctx.filter` is a silent no-op on
 Safari's `OffscreenCanvas` 2D context — the tool appears inert and still records a history
-entry). Both are live in this repo: `src/tools/toolProcessors.ts:110` is
+entry). Both are live in this repo: `src/tools/toolProcessors.ts` declares
 `const unimplemented = () => () => [null as never] as ToolResult;`, the shape of a no-op that
 consumes a history entry, and a tool that renders nothing while writing history is the exact
 failure mode constraints 3 and 8 exist to prevent.
@@ -967,7 +971,7 @@ would break, and is absent from the bar.
 
 The shipped reference proves the rule in both directions. On `brush-toolbar` the
 brush and pencil bars published exactly four settings — Size → `ctx.lineWidth`
-(`src/tools/draw.ts:54`), Opacity → `ctx.globalAlpha` (`:57`), Smoothing → a new
+(`setupDrawCtx()` in `src/tools/draw.ts`), Opacity → `ctx.globalAlpha` (the same), Smoothing → a new
 point-space filter over the sampled polyline, Mode → a new per-layer blend mode
 resolved when the layer is created — and each one terminates in pixels. Everything
 else Photoshop puts on that bar (Hardness, Spacing, Flow, Airbrush, Scatter, Jitter,
@@ -983,7 +987,7 @@ setting's name and count the hits outside the options bar:
 
 ```
 $ grep -rni "hardness\|spacing\|airbrush\|scatter" src/ --include='*.ts' --include='*.tsx' | grep -v __tests__
-src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:2:  brush: [..., 'Flow', 'Airbrush', ...]
+src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:  brush: [..., 'Flow', 'Airbrush', ...]
 ```
 
 One hit, and it is a string in the placeholder card. That is the shape of
@@ -996,15 +1000,17 @@ implemented.
 
 A tool-options component must:
 
-1. Be typed `ToolbarRightComponent` (`src/components/ToolbarsRight/types.ts:3`, which
+1. Be typed `ToolbarRightComponent` (`src/components/ToolbarsRight/types.ts`, which
    is `React.FC<{}>` — no props, it reads the store).
 2. Be registered as the `toolboxComponent` of its tool in `toolsMap`
-   (`src/tools/toolsMap.ts:47-48`, which types the map as
+   (the `ToolsMap` type in `src/tools/toolsMap.ts`, which types the map as
    `Record<ToolName, Partial<ToolProcessorDefinition> & { icon: string; toolboxComponent: ToolbarRightComponent }>`,
    so the `toolboxComponent` field is mandatory and exhaustively typed).
 3. Read its own state through the type-safe pair `getToolArgs` / `patchToolArgs` from
-   `useCurrentTool` (`src/contexts/useCurrentTool.tsx:14-15`), **not** through a cast.
-   `MagicWand.tsx:10,16-17` is the current idiom:
+   `useCurrentTool` (the `CurrentToolContextState` interface in
+   `src/contexts/useCurrentTool.tsx`), **not** through a cast.
+   The `MagicWand` component in `src/components/ToolbarsRight/MagicWand/MagicWand.tsx`
+   is the current idiom:
 
    ```tsx
    const { getToolArgs, patchToolArgs } = useCurrentTool();
@@ -1013,53 +1019,64 @@ A tool-options component must:
    ```
 
    The older bars use `toolArgs as DrawToolArgs` + `setToolArgs({ ...args, x })`
-   (`Draw.tsx:15,19,41-42`, `Shape.tsx:22,25`). Match the new idiom for new tools.
+   (the `args` cast in `src/components/ToolbarsRight/Draw/Draw.tsx` and in
+   `src/components/ToolbarsRight/Figures/Shape.tsx`). Match the new idiom for new tools.
 
 4. Put the foreground colour into the tool's own args. The store's `color` is what a
    paint stroke should use, and nothing else carries it across — without the sync
    effect a brush is frozen on its `#000000` default however the swatch is set.
-   `Draw.tsx:29-33` does this for the legacy pen; every new paint bar must do it for
-   itself.
+   The colour-sync `useEffect` in `Draw.tsx` does this for the legacy pen; every new
+   paint bar must do it for itself.
 5. Give **every** control a real `<label htmlFor>` + `id` + visible text. That is the
    only reason the control is reachable from e2e, and it is pinned in two directions:
-   `Crop.test.tsx:339` proves the accessible name comes from `htmlFor` + `id` plus
-   the rendered text, and `Crop.test.tsx:352` is an `it.fails` pin asserting that
+   the `it('derives its accessible name from the visible label text and nothing else')`
+   case in `src/components/ToolbarsRight/Crop/__tests__/Crop.test.tsx` proves the
+   accessible name comes from `htmlFor` + `id` plus
+   the rendered text, and the `it.fails('keeps an explicit aria-label on the Aspect Ratio select')`
+   case in the same file is an `it.fails` pin asserting that
    adding an `aria-label` to a select that already has `htmlFor` + `id` is not the house
    pattern.
 
 #### Where it mounts
 
 `ToolbarHorizontal.tsx` is thirty lines and does one thing: read
-`{ hasImage, toolName }` from the store (`:5`), bail to an empty bar when either is
-missing (`:7-11`), look the component up in `toolsMap` **through a `?.`** (`:13`), bail
-to a `TODO: unregistered tool placeholder` strip when the lookup fails (`:15-21`), and
-otherwise render `<ToolComponent key={toolName} />` inside the bar chrome (`:23-27`).
+`{ hasImage, toolName }` from the store (the `ToolbarHorizontal` component's `useStore`
+destructure), bail to an empty bar when either is
+missing (its `if (!toolName || !hasImage)` guard), look the component up in `toolsMap`
+**through a `?.`** (the `ToolComponent` lookup), bail
+to a `TODO: unregistered tool placeholder` strip when the lookup fails, and
+otherwise render `<ToolComponent key={toolName} />` inside the bar chrome.
 Four consequences you have to design around:
 
-- **The bar renders only when the store has `hasImage` AND a `toolName`** (`:7`;
-  pinned at
-  `src/components/ToolbarHorizontal/__tests__/ToolbarHorizontal.test.tsx:83-89`).
-- **A tool missing from `toolsMap` shows a TODO strip instead of failing** (`:13-21`,
-  pinned at `ToolbarHorizontal.test.tsx:62-68`). Registering the component is a
+- **The bar renders only when the store has `hasImage` AND a `toolName`** (pinned by the
+  `it('renders an empty toolbar bar without placeholder copy when the image is missing')`
+  case in `src/components/ToolbarHorizontal/__tests__/ToolbarHorizontal.test.tsx`).
+- **A tool missing from `toolsMap` shows a TODO strip instead of failing** (pinned by the
+  `it('renders a placeholder instead of crashing for a tool that is not registered in the map')`
+  case in `ToolbarHorizontal.test.tsx`). Registering the component is a
   separate, easily-forgotten step.
-- **`key={toolName}`** (`:25`) is a hard remount on every tool switch. Local component
+- **`key={toolName}`** is a hard remount on every tool switch. Local component
   state does not survive a switch; anything that must survive belongs in the tool's
   args, which is what the settings section is about.
-- The chrome class string is repeated verbatim in all three branches (`:9,17,24`).
+- The chrome class string is repeated verbatim in all three branches.
   `overflow-visible` is load-bearing: it lets tooltips and flyouts escape the bar. Do
   not "simplify" it.
 
 #### A complete, compiling example
 
 `Color Replacement` is the right worked example: it has a real renderer
-(`src/tools/toolProcessors.ts:214-221` → `draw(..., 'spray')` →
-`src/util/draw.ts:147-167`), real args (`PaintToolArgs`, `src/tools/draw.ts:36-38`),
-real defaults (`src/tools/settings.ts:165-182`), and it is still a placeholder card
-(`src/tools/toolsMap.ts:86-90`). Replacing that card is the whole task. The bar
+(the `'color-replacement'` entry in `src/tools/toolProcessors.ts` → `draw(..., 'spray')` →
+`drawPen()` in `src/util/draw.ts`), real args (`PaintToolArgs`, the `PaintToolArgs` type
+in `src/tools/draw.ts`), real defaults (the `'color-replacement'` default in
+`src/tools/settings.ts`), and it is still a placeholder card
+(the `'color-replacement'` entry in `src/tools/toolsMap.ts`). Replacing that card is the
+whole task. The bar
 publishes **two** controls, because two reach the renderer: `lineWidth` becomes the
-spray radius at `src/util/draw.ts:155` and `alpha` the gradient stop at `:153`.
+spray radius and `alpha` the gradient stop, both in `drawSpray()` in
+`src/util/draw.ts`.
 Photoshop's `Mode`, `Tolerance` and the three sampling icons are absent, and the
-placeholder card still names them (`toolbarPlaceholderConfig.ts:4`).
+placeholder card still names them (`placeholderToolGroups` in
+`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts`).
 
 ```tsx
 // src/components/ToolbarsRight/Paint/Paint.tsx
@@ -1214,8 +1231,8 @@ mocked `useCurrentTool` with no cross-tool fixture. Independent registries, beca
 
 **Costs.** A per-tool configuration argument is unavoidable, and that argument is
 where the divergence hides: `penType` exists only because each tool's registry adapter
-forces one (`src/tools/toolProcessors.ts:197` forces `'pen'` for brush, `:210` forces
-`'spray'` for color replacement), and a factory that hides that renders a preview the
+forces one (the `brush` entry in `src/tools/toolProcessors.ts` forces `'pen'`, the
+`'color-replacement'` entry forces `'spray'`), and a factory that hides that renders a preview the
 canvas never produces. The second cost is the shared class constants: three tools with
 genuinely different densities either grow a `Record<PaintToolName, string>` of class
 strings or fork the file. Fork the file before you build the table. Use the factory
@@ -1228,27 +1245,28 @@ the moment two components become cheaper.
 There is no form-control library, and `src/components/Common/**` is not where the
 vocabulary lives. The house patterns, all verified in-tree:
 
-| Affordance          | House pattern                                                                                                                                                                                                                            | Reference                     |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Slider + value      | `<label htmlFor>` + `id`, value inline in a `font-bold` span (`{brushSize}px`, `{Math.round(alpha * 100)}%`, `{rotate}°`), `input type="range"` with `h-1.5 w-NN cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700` | `Draw.tsx:134-152,140,202`    |
-| Buttons             | `PRIMARY_BUTTON` / `SECONDARY_BUTTON` from `buttonStyles.ts`                                                                                                                                                                             | `buttonStyles.ts:10-11,25-26` |
-| Segmented control   | adjacent `TOGGLE_BUTTON_ACTIVE` / `TOGGLE_BUTTON_INACTIVE`                                                                                                                                                                               | `buttonStyles.ts:41-44`       |
-| Dropdown            | plain `<select>` with a real `htmlFor` + `id`                                                                                                                                                                                            | `Draw.tsx:119-131`            |
-| Checkbox            | `type="checkbox" className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"`                                                                                                                                      | `Shape.tsx:204-210`           |
-| Crowded row         | root becomes `flex h-full flex-row items-center gap-5 overflow-x-auto`                                                                                                                                                                   | `MagicWand.tsx:53`            |
-| Hint / live readout | `text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800`, holding a value from live state such as `selectedPixelCount.toLocaleString()`               | `MagicWand.tsx:104-109`       |
-| Preview swatch      | a fixed 96×48 `<canvas>` over a `chessboard-*` class, fed by the tool's own renderer                                                                                                                                                     | `Draw.tsx:216-222`            |
+| Affordance          | House pattern                                                                                                                                                                                                                            | Reference                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Slider + value      | `<label htmlFor>` + `id`, value inline in a `font-bold` span (`{brushSize}px`, `{Math.round(alpha * 100)}%`, `{rotate}°`), `input type="range"` with `h-1.5 w-NN cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700` | the `Size` row in `Draw.tsx`                             |
+| Buttons             | `PRIMARY_BUTTON` / `SECONDARY_BUTTON` from `buttonStyles.ts`                                                                                                                                                                             | `buttonStyles.ts` — `PRIMARY_BUTTON`, `SECONDARY_BUTTON` |
+| Segmented control   | adjacent `TOGGLE_BUTTON_ACTIVE` / `TOGGLE_BUTTON_INACTIVE`                                                                                                                                                                               | `buttonStyles.ts` — `TOGGLE_BUTTON_ACTIVE`               |
+| Dropdown            | plain `<select>` with a real `htmlFor` + `id`                                                                                                                                                                                            | the Pen Type `<select>` in `Draw.tsx`                    |
+| Checkbox            | `type="checkbox" className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"`                                                                                                                                      | the `filled-toggle` checkbox in `Shape.tsx`              |
+| Crowded row         | root becomes `flex h-full flex-row items-center gap-5 overflow-x-auto`                                                                                                                                                                   | the root row of `MagicWand.tsx`                          |
+| Hint / live readout | `text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800`, holding a value from live state such as `selectedPixelCount.toLocaleString()`               | the hint readout in `MagicWand.tsx`                      |
+| Preview swatch      | a fixed 96×48 `<canvas>` over a `chessboard-*` class, fed by the tool's own renderer                                                                                                                                                     | the preview swatch in `Draw.tsx`                         |
 
 **No i18n exists.** Every label is a hardcoded English literal. Do not introduce keys.
 
 **There is no numeric scrub field, no segmented-button component, no gradient picker,
 no brush-preset popup grid, no blend-mode dropdown.** The foreground / background
 swatch is a hand-positioned `div` plus a hidden `input type="color"`
-(`src/components/SidebarLeft/SidebarLeft.tsx:365-398`). If your tool needs one of
+(`handleColorClick()` in `src/components/SidebarLeft/SidebarLeft.tsx`). If your tool needs one of
 those you are building it for the first time: factor it into `buttonStyles.ts`-style
 constants rather than inlining a third copy of `SLIDER_CLASS`. The preview canvas
-carries no `aria-label` and no `title`, pinned on purpose
-(`src/components/ToolbarsRight/Draw/__tests__/Draw.test.tsx:548-549`).
+carries no `aria-label` and no `title`, pinned on purpose by the
+`it('renders a 96x48 preview surface with no accessible role')` case in
+`src/components/ToolbarsRight/Draw/__tests__/Draw.test.tsx`.
 
 #### The accessible-name contract
 
@@ -1261,16 +1279,18 @@ a `<select>` with no suffix is just `Mode`. Three consequences:
 
 - **Exact-name locators are brittle.** A spec asking for `'Size 10px'` passes until
   someone moves the slider. Every in-repo spec uses a prefix regex or a bare label for
-  this reason: `e2e/levels.spec.ts:103` is
-  `page.getByRole('slider', { name: /Brightness/ })`, `e2e/pen-types.spec.ts:85` is
-  `page.getByRole('combobox', { name: 'Pen Type' })` — bare, because that select has no
-  suffix. Unit tests do the same: `MagicWand.test.tsx:153-154` is
-  `getByLabelText(/Tolerance/)`, not `'Tolerance 28%'`.
+  this reason: the `const brightness = page.getByRole('slider', { name: /Brightness/ })`
+  locator in `e2e/levels.spec.ts`, the
+  `page.getByRole('combobox', { name: 'Pen Type' })` locator in `e2e/pen-types.spec.ts` —
+  bare, because that select has no
+  suffix. Unit tests do the same: `getByLabelText(/Tolerance/)` in `MagicWand.test.tsx`,
+  not `'Tolerance 28%'`.
 - **The suffix is not decoration.** It is the only place the current value is legible
   without moving the pointer, and it is what makes the control's state assertable from
   a screenshot.
 - **Never add an `aria-label` to a control that already has `htmlFor` + `id`.** That is
-  an `it.fails` pin (`Crop.test.tsx:268`), and a control carrying both announces
+  the `it.fails('keeps an explicit aria-label on the Aspect Ratio select')` pin in
+  `Crop.test.tsx`, and a control carrying both announces
   whichever wins.
 
 #### The control set, and whether it reaches this renderer
