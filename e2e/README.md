@@ -555,8 +555,8 @@ the reporter to `github`, and default `workers` to full parallelism. Locally you
 
 `forbidOnly` is **not** one of the differences, and never was a safe one to make
 conditional. It is unconditional, so a stray `test.only` is a hard error on every
-run rather than a silent scope reduction on the local runs where it is least
-visible.
+run rather than a silent scope reduction in exactly the local runs where it is
+least visible.
 
 The one thing `CI` does change in the wrapper is that it skips the swarm lock and
 keeps the default :5173 and the shared `test-results/`, because a CI job owns its

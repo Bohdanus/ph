@@ -810,13 +810,13 @@ const loadPlaywrightConfig = async () => {
 type PlaywrightConfig = Awaited<ReturnType<typeof loadPlaywrightConfig>>;
 
 /**
- * `forbidOnly` is the one `playwright.config.ts` key whose CORRECT value depends on
- * an environment variable, and the bug it guards is invisible in exactly the runs
- * where it bites: `!!process.env.CI` is true under CI, so reading the imported
- * config in a CI test run cannot tell the unconditional `true` from the
- * conditional one. Both readings are therefore taken here, with the module registry
- * reset between them so the config module actually re-evaluates rather than
- * returning its first evaluation from the ESM cache.
+ * `forbidOnly` WAS the one `playwright.config.ts` key whose value depended on an
+ * environment variable, which is exactly why its guard needs two readings instead of
+ * one: `!!process.env.CI` is true under CI, so a single read of the imported config
+ * in a CI test run cannot tell the unconditional `true` from the conditional one.
+ * Both are therefore taken here, with the module registry reset between them so the
+ * config module actually re-evaluates rather than returning its first evaluation
+ * from the ESM cache.
  *
  * `process.env.CI` is restored in a `finally`, including the delete case, because a
  * test that leaves `CI` set changes what every later assertion in this file is

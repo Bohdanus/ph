@@ -187,9 +187,9 @@ jobs:
     # `test.skip` declarations in `e2e/export/photopea.spec.ts`,
     # `e2e/sidebar-flyout.spec.ts` and `e2e/viewport-drawing.spec.ts`. Nothing in
     # the tree marks a test as failing, so the stated justification had stopped
-    # describing the suite, and the job went on
-    # reporting a state the suite no longer had. The comment kept its number alive
-    # long after the failures behind it were gone.
+    # describing the suite, and the job went on reporting a state the suite no
+    # longer had. The comment kept its number alive long after the failures behind
+    # it were gone.
     #
     # It does not replace the `e2e-unit` job, which stays the gate for the helpers:
     # this one proves the specs pass, that one proves the helpers the specs call are

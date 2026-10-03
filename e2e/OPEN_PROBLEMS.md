@@ -471,12 +471,10 @@ Three specs are `test.skip` by declaration:
   a sandboxed CI.
 - `e2e/sidebar-flyout.spec.ts` — its
   `test.skip('right-click does not open flyout for single-tool groups')` declaration.
-- `e2e/viewport-drawing.spec.ts` — its unconditional
-  `test.skip(true, …)` on the test titled
-  `line stays under cursor after window resize (normal, wide and narrow)`. The
-  declaration's own reason is the intermittent CDP capture drift recorded as open in
-  `TEST-FLAKES.md` §12, and the skip is an operator decision dated 2026-09-29. So it is
-  a gate decision, not a fix, and it does not retire the defect.
+- `e2e/viewport-drawing.spec.ts` — its unconditional `test.skip(true, …)` on the test
+  titled `line stays under cursor after window resize (normal, wide and narrow)`. Its
+  declaration's own reason is the intermittent CDP capture drift that `TEST-FLAKES.md`
+  §12 still records as open, behind an operator decision dated 2026-09-29.
 
 ## Verified and still unverified
 
