@@ -72,11 +72,11 @@ undo, redo, navigation, and history-panel state must agree. During migration,
 legacy-versus-durable differential checks are allowed; shipping two authorities
 is not.
 
-The existing gate names `G0` and `G13` are contradictory as written: `G0`
-forbids production imports of durable replay/materialization modules while
-`G13` requires a production importer for `materialization.ts`. The gate must be
-rewritten to describe the staged state honestly, then become a normal assertion
-when the durable compositor is the intentional production boundary.
+The retired coordination gate forbids production imports of
+`replay-coordinator.ts` and `replay-checkpoints.ts`. A separate plain assertion
+allows exactly one production importer for `materialization.ts`,
+`durable-compositor.ts`, while that compositor remains unwired. This staged
+boundary stays fail-closed until the first durable production surface is chosen.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 
@@ -114,8 +114,8 @@ a separate source-replacement requirement.
 2. Close the current migration boundary defects and keep every currently
    appendable durable operation replayable without changing production
    authority. The runtime retained-operation boundary and supported raster
-   append path are closed; remaining work is coordinator wiring and the
-   explicitly deferred authority transfer.
+   append path are closed; remaining work is selecting and mounting the first
+   durable production surface, then the authority transfer.
 3. Verify source-edit history and source rehydration together for text and
    shape correction. Keep independent legacy/durable parity for creation, edit,
    undo, redo, and navigation.
@@ -138,8 +138,8 @@ decisions, not Photoshop overrides, and are intentionally not encoded in
   and options-bar rehydration must land as one behavior slice.
 - **Authority gate:** durable materialization is the eventual single production
   authority. Legacy replay remains the temporary authority during differential
-  parity; the contradictory `G0`/`G13` gate must be rewritten for that staged
-  cutover.
+  parity; retired coordination modules stay fail-closed until a production
+  surface is explicitly mounted.
 - **Bedrock UX:** use an explicit Photoshop-faithful Layer-from-Background or
   equivalent conversion action. Keep the bedrock refusal, do not auto-flatten,
   and do not silently relax the gate.

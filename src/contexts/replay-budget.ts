@@ -30,13 +30,11 @@
  * finished document would be a lie about cost. The measurement still travels with the outcome, so
  * a caller that wants to prompt on a completed-but-slow run can read it there.
  *
- * This is dormant scaffolding in the sense `replay-coordinator.ts` is dormant: nothing in
- * production constructs a budget or runs this runner, and no navigation or rendering path may
- * import it while the legacy `HistoryItem[]` timeline stays authoritative. The integration seam is
- * `runReplayUnderBudget()` called from the `materialize` callback a `ReplayCoordinator.request()`
- * already takes, with `isStillValid` delegating to the coordinator's own `isCurrent()` over a
- * `ReplayRevisionToken`, and `yieldToHost` imported from `replay-coordinator.ts` so that one
- * scheduling policy stays in one place.
+ * This is dormant scaffolding: nothing in production constructs a budget or runs this runner, and
+ * no navigation or rendering path may import it while the legacy `HistoryItem[]` timeline stays
+ * authoritative. The first durable production surface must choose its own materialization caller,
+ * revision token, user setting, and publication policy; this module deliberately does not depend on
+ * the retired `replay-coordinator.ts`.
  */
 
 /** Why a run stopped for cost rather than for cancellation or failure. */

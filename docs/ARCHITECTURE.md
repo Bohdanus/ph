@@ -37,8 +37,9 @@ Evidence, all four current:
   by a navigation or rendering path while the legacy runtime stays
   authoritative."_
 
-`src/contexts/materialization.ts` and `src/contexts/replay-coordinator.ts` have no
-importer outside `__tests__/`.
+`src/contexts/materialization.ts` has one production importer, the intentionally isolated
+`src/contexts/durable-compositor.ts`; `src/contexts/replay-coordinator.ts` has no importer outside
+`__tests__`.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current

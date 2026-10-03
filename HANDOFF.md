@@ -21,12 +21,12 @@ and the verification is `git log`, not this file.
 **Problem.** Four of the five modules the migration was built around are imported by nothing outside
 `src/contexts/__tests__/`:
 
-| module                               | non-test importing files              |
-| ------------------------------------ | ------------------------------------- |
-| `src/contexts/materialization.ts`    | **0**                                 |
-| `src/contexts/replay-coordinator.ts` | **0**                                 |
-| `src/contexts/replay-checkpoints.ts` | **0**                                 |
-| `src/contexts/durable-replay.ts`     | 1 — `materialization.ts`, itself dead |
+| module                               | non-test importing files                                              |
+| ------------------------------------ | --------------------------------------------------------------------- |
+| `src/contexts/materialization.ts`    | 1 — `durable-compositor.ts`                                           |
+| `src/contexts/replay-coordinator.ts` | **0**                                                                 |
+| `src/contexts/replay-checkpoints.ts` | **0**                                                                 |
+| `src/contexts/durable-replay.ts`     | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
 
 Production still runs legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
 `useHistory.ts`) → runtime `Layer` → `layer-renderer.ts` → canvas. `durableDocument`,
@@ -5530,53 +5530,6 @@ selection one pixel left of the origin clamps to 0.
 `width`/`height` — as the clamp bound rather than the document size. The other
 `copySelectionToCanvas` call in the same file needs the same bound.
 
-## 177. G0 and G13 cannot both be satisfied, and the widened gate that proves it is committed red
-
-**Problem.** The plan's G0 forbids production source from importing the retired replay and
-materialization modules; G13 requires `materialization.ts` to have exactly one production importer.
-As written they are contradictory: the only way to satisfy G13 is for the durable compositor to
-exist and be wired, and the compositor's own `import { materializeDocument, … } from
-'./materialization.ts'` in
-`src/contexts/durable-compositor.ts` is exactly what G0 forbids. No state satisfies both.
-
-**Proof, and the gate that finds it.** The G0 assertion read ONE file — `../StoreContext.tsx`
-— so it could not see `durable-compositor.ts` at all, and passed. Widened to every tracked
-production module (excluding `__tests__`, `test`, `*.test.*`, `*.spec.*`, `*.stories.*` and
-ambient `*.d.ts`, the convention already established for this question by `sourceFiles()` in
-`src/contexts/__tests__/history-writer-census.test.ts`), it is RED by exactly one hit.
-The walk's roots are `src/` **and** `toolbar-mapping.ts`: the `include` in
-`tsconfig.app.json` puts that file
-in the app's `include` beside `src` and four components import it, so a walk rooted only at
-`src/` reported a subset while implying the repository. The violation is:
-
-```
-{ "file": "src/contexts/durable-compositor.ts", "line": 4, "specifier": "./materialization.ts" }
-```
-
-The forbidden set is unchanged and correct — `replay-coordinator`, `materialization`,
-`replay-checkpoints` — and must stay that way: `presentation-evaluator.ts` is imported by production
-on purpose (the `presentation-evaluator.ts` import blocks in `layer-renderer.ts`, `useLayer.ts` and
-`materialization.ts`), and `durable-replay.ts`
-is read as a value by `replayDurableDocument` at the top of `StoreContext.tsx`, so adding either would
-make the gate red on correct code.
-A specifier is matched on its BASENAME, not by substring, so a helper named
-`materialization-utils.ts` is not a violation of a gate about `materialization.ts`.
-
-**The gate is LANDED, as a tripwire rather than a red run.** The property leg is `it.fails`
-(`src/contexts/__tests__/StoreContext.boundary-gates.test.ts`), so `main` is green while the
-contradiction stands and the leg goes RED the moment `durable-compositor.ts` stops importing
-`materialization.ts` — which is the moment G0 and G13 stop disagreeing and the leg must become a
-plain `it`. `it.fails` can only say "at least one violation exists", so a companion plain assertion
-beside it, `has no forbidden production import beyond the one §177 tracks`, turns red if a SECOND
-violation appears anywhere — including in `toolbar-mapping.ts`, which no earlier version of the gate
-could read.
-
-**What is needed.** An operator ruling on which of G0/G13 governs while the durable path is
-unwired: either the forbidden set gains an explicit exemption for the compositor pair, or the
-compositor is removed until it can be wired. That ruling is not the test's to make, and no entry in
-`docs/OVERRIDES.md` records one. When it comes, the property leg is deleted in the same change —
-it is a pin, and a pin that outlives its defect is a gate that stops meaning anything.
-
 ## 178. `fix/rail-drop-draw` is parked on a premise OVR-2 voided
 
 **Problem.** The branch deletes the `draw` tool; OVR-2 in `docs/OVERRIDES.md` keeps the tile, so
@@ -6112,23 +6065,23 @@ stack.
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
 
-## 199. Replay budget runner is dormant until the coordinator owns it
+## 199. Replay budget runner is dormant until a durable production surface owns it
 
 **Problem.** `defineReplayBudget()` and `runReplayUnderBudget()` now provide a pure cooperative
 runner with active-time, step-count, deadline, abort, stale-revision, and explicit over-budget
 outcomes. No production replay path constructs a budget or calls it. Wiring it before the durable
 materialization boundary is safe only if it stages a result and never publishes partial work.
 The runner now contains cleanup failures as failed outcomes and falls back from a suspended
-`requestAnimationFrame`; the remaining blocker is coordinator wiring and publication policy.
+`requestAnimationFrame`; the retired coordinator is not a production integration seam.
 
-**What is needed.** Integrate the runner through the existing `ReplayCoordinator.request()`
-materialization callback, using the coordinator revision token and shared host-yield policy. On an
-over-budget result, prompt for explicit raster-baseline acceptance; never rasterize automatically.
-Close the empty-history baseline failure and asset publication transaction before exposing that
-prompt. Add the user-configurable setting only at the caller boundary.
+**What is needed.** Choose the first durable production surface and give it an explicit materialization
+caller, revision token, user setting, and publication policy. On an over-budget result, prompt for
+explicit raster-baseline acceptance; never rasterize automatically. Close the empty-history baseline
+failure and asset publication transaction before exposing that prompt. Keep the retired coordinator
+and this runner out of production until that surface is staged and failure-safe.
 
 **Files.** `src/contexts/replay-budget.ts` — `runReplayUnderBudget()`;
-`src/contexts/replay-coordinator.ts` — `ReplayCoordinator.request()`;
+`src/contexts/replay-coordinator.ts` — retired reference only;
 `src/contexts/materialization.ts` — `materializeDocument()`; `src/contexts/useHistory.ts`;
 and the empty-history/baseline tests.
 
