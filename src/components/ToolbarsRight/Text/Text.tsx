@@ -5,7 +5,15 @@ import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
-import { FONT_SIZE_MAX, FONT_SIZE_MIN, TRACKING_MAX, TRACKING_MIN, resolveTextStyle } from '../../../tools/text.ts';
+import {
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  MAX_LINE_HEIGHT,
+  MIN_LINE_HEIGHT,
+  TRACKING_MAX,
+  TRACKING_MIN,
+  resolveTextStyle,
+} from '../../../tools/text.ts';
 import {
   ICON_BUTTON,
   PRIMARY_BUTTON,
@@ -47,12 +55,31 @@ const Text: React.FC<{}> = () => {
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
     const requested = Number(event.target.value);
-    // A cleared field reads as 0, and `min`/`max` on a number input only mark it `:invalid` — they
-    // do not stop the value being typed. Adobe's bound is on the FIELD, so clamping here is the
-    // same rule rather than a new one; refusing a non-finite value is what keeps an empty field
-    // from becoming a 0px font.
-    if (!Number.isFinite(requested)) return;
+    // An EMPTY field is not `NaN`. `Number('')` is `0`, which is finite, so the old
+    // `Number.isFinite` guard let it straight through and the clamp below turned it into
+    // `FONT_SIZE_MIN` — publishing `fontSize: 0.01` the instant the user selected the value to
+    // retype it. The comment here used to claim the opposite ("refusing a non-finite value is what
+    // keeps an empty field from becoming a 0px font"), and `e2e/text-tool.spec.ts` repeated the
+    // false reasoning: `fill` cannot produce a value a number input will not accept, but BACKSPACE
+    // can, and a two-digit size can no longer be typed from scratch without passing through empty.
+    //
+    // So an empty field publishes NOTHING. `handleFontSizeBlur` restores the last good value on the
+    // way out, which is what makes the field self-repairing rather than merely inert.
+    if (event.target.value === '' || !Number.isFinite(requested)) return;
     publishStyle({ fontSize: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, requested)) });
+  };
+
+  /**
+   * Put the last published size back when the field is left empty.
+   *
+   * A controlled number input showing `''` while its value is a real number is the one state the
+   * `onChange` guard above cannot resolve on its own: nothing is published, so React re-renders
+   * with the old value and the caret jumps to the end. Restoring on blur leaves the user with the
+   * value they had, which is also what Photoshop does when a Size field is emptied and left.
+   */
+  const handleFontSizeBlur = () => {
+    if (style.fontSize >= FONT_SIZE_MIN && style.fontSize <= FONT_SIZE_MAX) return;
+    publishStyle({ fontSize: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, style.fontSize)) });
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -89,13 +116,32 @@ const Text: React.FC<{}> = () => {
     onChange({ ...toolArgs, color: event.target.value });
   };
 
+  /**
+   * Commit the draft as a layer, and clear it only once the layer exists.
+   *
+   * **The order is the whole point, and it used to be the other way round.** `onChange` writes the
+   * args both imperatively (`_setToolArgs` sets `currentArgsRef`) and into React state, so a clear
+   * that runs first has already destroyed the draft by the time the create is attempted — and
+   * `createLayerFromTool` can throw. `layer-utils`' `createLayerSource` refuses a zero extent with
+   * `Layer width and height must be greater than 0`, and the tool area is `absolute inset-0` over
+   * the whole centred container, so a click in the letterbox margin around the canvas could reach
+   * it. A throw from a React event handler is routed to `window.onerror` and not to an error
+   * boundary — `ToolbarHorizontal` is outside every boundary in the tree — so the failure was
+   * SILENT: the textarea emptied, no layer appeared, Apply disabled itself, and nothing said why.
+   *
+   * Worse on the other route: `useApp`'s `goToTool` calls `commitDirtyTool` and then dispatches
+   * `SET_TOOL_NAME`, so a throw from here escaped before the tool switch and left the app on the
+   * Type tool, where every subsequent switch attempt threw the same way. The user was stuck.
+   *
+   * `commitDirtyTool` in `useLayer` already had this order right — create, then clear — which is why
+   * this function was the odd one out rather than the rule being wrong somewhere.
+   */
   const applyText = () => {
-    if (text && rect) {
-      if (appliedArgsRef.current === toolArgs) return;
-      appliedArgsRef.current = toolArgs;
-      onChange({ ...toolArgs, text: '', rect: null });
-      createLayerFromTool({ args: toolArgs });
-    }
+    if (!text || !rect) return;
+    if (appliedArgsRef.current === toolArgs) return;
+    appliedArgsRef.current = toolArgs;
+    createLayerFromTool({ args: toolArgs });
+    onChange({ ...toolArgs, text: '', rect: null });
   };
 
   const clear = () => {
@@ -153,12 +199,20 @@ const Text: React.FC<{}> = () => {
         </label>
         <input
           id="font-size-input"
+          data-testid="font-size-input"
           type="number"
           min={FONT_SIZE_MIN}
           max={FONT_SIZE_MAX}
-          step={1}
+          // `any`, and NOT `1`. Per the HTML step algorithm the base is `min`, so `step={1}` over
+          // `min={0.01}` yields the grid 0.01, 1.01, 2.01 … and two consequences followed from that:
+          // the seeded 64 sat OFF-grid on first paint, so the spinner took two presses to reach 65,
+          // and the last landable value under the maximum was 1295.01 — Adobe's own 1296 could not
+          // be reached by the spinner or an arrow key at all. `any` is the honest answer for a
+          // continuous quantity typed as a number, and it is what the value itself already was.
+          step="any"
           value={style.fontSize}
           onChange={handleFontSizeChange}
+          onBlur={handleFontSizeBlur}
           className="w-24 h-9 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>
@@ -169,13 +223,20 @@ const Text: React.FC<{}> = () => {
           className="flex mb-2 justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Line Height
-          <span className="font-bold text-gray-900 dark:text-gray-200">{style.lineHeight.toFixed(1)}</span>
+          {/* `aria-hidden`, and moved out of the `<label>`: the readout is the control's LIVE VALUE,
+              so inside the label it became part of the accessible NAME and a screen reader
+              re-announced "Line Height 1.2" on every arrow press. The value is still announced — it
+              is the slider's own `aria-valuenow` — and a `<label>` is the wrong home for it. */}
+          <span aria-hidden="true" className="font-bold text-gray-900 dark:text-gray-200">
+            {style.lineHeight.toFixed(1)}
+          </span>
         </label>
         <input
           id="line-height-slider"
+          data-testid="line-height-slider"
           type="range"
-          min="0.5"
-          max="2.25"
+          min={MIN_LINE_HEIGHT}
+          max={MAX_LINE_HEIGHT}
           step="0.05"
           value={style.lineHeight}
           onChange={handleLineHeightChange}
@@ -194,10 +255,14 @@ const Text: React.FC<{}> = () => {
           className="flex mb-2 justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Tracking
-          <span className="font-bold text-gray-900 dark:text-gray-200">{style.tracking}</span>
+          {/* `aria-hidden` for the same reason as the leading readout above. */}
+          <span aria-hidden="true" className="font-bold text-gray-900 dark:text-gray-200">
+            {style.tracking}
+          </span>
         </label>
         <input
           id="tracking-slider"
+          data-testid="tracking-slider"
           type="range"
           min={TRACKING_MIN}
           max={TRACKING_MAX}
