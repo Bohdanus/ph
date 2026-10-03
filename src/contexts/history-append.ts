@@ -210,7 +210,7 @@ function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayer
   if (durableSource.kind === 'legacy-tool') {
     return `The tool ${source.args.toolName} has no durable source representation`;
   }
-  if (durableSource.kind !== 'text' && durableSource.kind !== 'vector') {
+  if (durableSource.kind !== 'text' && durableSource.kind !== 'vector' && durableSource.kind !== 'paint') {
     return 'the durable layer source kind does not match the legacy source';
   }
   if (

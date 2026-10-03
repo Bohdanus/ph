@@ -2,7 +2,13 @@ import { act, render } from '@testing-library/react';
 import { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { type StoreData, type StoreDispatch, StoreProvider, useStore } from '../StoreContext.tsx';
+import {
+  durablePresentationIsRendererIdentical,
+  type StoreData,
+  type StoreDispatch,
+  StoreProvider,
+  useStore,
+} from '../StoreContext.tsx';
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 import type { HistoryItem } from '../history-types.ts';
@@ -96,6 +102,32 @@ function replayTo(dispatch: StoreDispatch, layers: LayersRecord, deletedLayers: 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('durable render presentation guard', () => {
+  it('accepts a cache only when the renderer would not reapply logical presentation', () => {
+    const existing = createMockLayer({ id: layerId, pos: { x: 10, y: 20, width: 100, height: 50 } });
+    const replayLayer = { operations: [] as readonly [], snapshot: { source: { kind: 'raster' as const } } };
+
+    expect(durablePresentationIsRendererIdentical(replayLayer as never, existing, existing.pos)).toBe(true);
+    expect(
+      durablePresentationIsRendererIdentical(replayLayer as never, existing, { ...existing.pos, width: 101 })
+    ).toBe(false);
+    expect(
+      durablePresentationIsRendererIdentical(
+        { ...replayLayer, operations: [{ kind: 'apply-filter' }] } as never,
+        existing,
+        existing.pos
+      )
+    ).toBe(false);
+    expect(
+      durablePresentationIsRendererIdentical(
+        { ...replayLayer, snapshot: { source: { kind: 'vector' as const } } } as never,
+        existing,
+        existing.pos
+      )
+    ).toBe(false);
+  });
 });
 
 describe('PROMOTE_LAYER_PRESENTATIONS', () => {

@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 
 import { replayDurableDocument } from '../durable-replay.ts';
-import { legacyHistoryToDurable } from '../history-adapter.ts';
+import { durableSourceKindForTool, legacyHistoryToDurable } from '../history-adapter.ts';
 import type { DurableOperation } from '../history-model.ts';
 import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
@@ -272,7 +272,7 @@ function replayDependencies(): HistoryReplayDependencies {
 function sourceKind(source: LayerSource | undefined): string {
   if (!source) return 'materialized';
   if (source.kind === 'image') return 'raster';
-  if (source.kind === 'tool') return source.args.toolName === 'text' ? 'text' : 'legacy-tool';
+  if (source.kind === 'tool') return durableSourceKindForTool(source.args.toolName) ?? 'legacy-tool';
   return source.kind;
 }
 

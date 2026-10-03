@@ -885,43 +885,6 @@ for mobile rather than copied across.
 
 ---
 
-## 58. Brush/Pencil source layers remain un-materializable in the durable compositor
-
-**Problem.** `convertSource` (`history-adapter.ts` — `convertSource()`) routes a layer source's
-`args.toolName` to `text` or `vector` for exactly two cases — `'text'`, and the six shape names —
-and to `legacy-tool` for everything else. `materialization.ts` — `sourceBitmap()` throws on
-`legacy-tool`, and `materializeDocument` records the refusal while omitting that layer. The durable
-compositor now refuses a visible missing layer rather than publishing a partial bitmap, so the
-remaining defect is an explicit unavailable surface rather than silent pixel loss.
-
-`useLayer.ts` — `createLayerFromTool()` writes `args: { ...args }` from the concrete tool, so
-`args.toolName` is `'brush' | 'pencil'` for the Draw tool's created painting layers. The active-layer
-Color Replacement path does not use `createLayerFromTool()`.
-
-The irony worth recording: `toolProcessors.draw` in `toolProcessors.ts` — the `draw` entry of
-`toolProcessors` — is a genuine `creator: true`, so a
-deterministic creator for exactly this exists and is simply unreachable, because the adapter never
-routes to it.
-
-**Latent today** — `materializeLayer`/`materializeDocument` have no production caller outside the
-isolated compositor. That is the only reason this is P1 rather than P0, and it is the same reason
-the first durable surface must not be treated as one wiring step.
-
-**Fix.** Route Brush/Pencil source layers to a typed source via the existing `draw` creator, or add
-an explicit durable source adapter. Keep the compositor's fail-closed visible-layer check; a partial
-document must never be published as a successful durable presentation.
-
-**Test that fails without the fix.** A brush history item through `legacyHistoryToDurable` must not
-yield `source.kind === 'legacy-tool'`. And `composeDurableDocument` over a replay containing a
-visible brush layer plus two good layers must refuse rather than publish a partial composite.
-
-**Files.** `src/contexts/history-adapter.ts` — `convertSource()`,
-`src/contexts/materialization.ts` — `sourceBitmap()` and `materializeDocument()`,
-`src/contexts/useLayer.ts` — `createLayerFromTool()`,
-`src/tools/toolProcessors.ts` — the `draw` entry
-
----
-
 ## 59. Five selection tools claim `creator: true` and cannot create anything
 
 **Problem.** `materializeLayer` trusts the `creator` flag as its only gate

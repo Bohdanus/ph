@@ -133,7 +133,7 @@ export function layersDifferOnlyByPresentation(current: LayersRecord, next: Laye
  */
 export class DocumentPresentationScope {
   private readonly published = new Map<string, Set<BitmapSource>>();
-  private readonly leases = new Map<string, Map<BitmapSource, () => void>>();
+  private readonly leases = new Map<string, Map<BitmapSource, Set<() => void>>>();
   private disposed = false;
 
   /** Records a bitmap the store just published, keyed by owning document. */
@@ -154,8 +154,10 @@ export class DocumentPresentationScope {
       return;
     }
     this.trackPublished(documentId, bitmap);
-    const documentLeases = this.leases.get(documentId) ?? new Map<BitmapSource, () => void>();
-    documentLeases.set(bitmap, release);
+    const documentLeases = this.leases.get(documentId) ?? new Map<BitmapSource, Set<() => void>>();
+    const bitmapLeases = documentLeases.get(bitmap) ?? new Set<() => void>();
+    bitmapLeases.add(release);
+    documentLeases.set(bitmap, bitmapLeases);
     this.leases.set(documentId, documentLeases);
   }
 
@@ -194,9 +196,9 @@ export class DocumentPresentationScope {
     if (!owned.size) this.published.delete(documentId);
     if (documentLeases && !owned.size) this.leases.delete(documentId);
     for (const bitmap of departed) {
-      const release = documentLeases?.get(bitmap);
+      const releases = documentLeases?.get(bitmap);
       documentLeases?.delete(bitmap);
-      if (release) release();
+      if (releases) for (const release of releases) release();
       else closePresentationBitmap(bitmap);
     }
   }
@@ -209,8 +211,8 @@ export class DocumentPresentationScope {
     const documentLeases = this.leases.get(documentId);
     this.leases.delete(documentId);
     for (const bitmap of owned) {
-      const release = documentLeases?.get(bitmap);
-      if (release) release();
+      const releases = documentLeases?.get(bitmap);
+      if (releases) for (const release of releases) release();
       else closePresentationBitmap(bitmap);
     }
   }
@@ -265,8 +267,8 @@ export class DocumentPresentationScope {
     for (const [documentId, owned] of this.published) {
       const documentLeases = this.leases.get(documentId);
       for (const bitmap of owned) {
-        const release = documentLeases?.get(bitmap);
-        if (release) release();
+        const releases = documentLeases?.get(bitmap);
+        if (releases) for (const release of releases) release();
         else closePresentationBitmap(bitmap);
       }
     }

@@ -191,9 +191,16 @@ function registerRaster(registry: AssetRegistry, documentId: string, bitmap: Bit
  * and which legacy source a source edit is allowed to install. A tool added here
  * becomes editable by the conversion and the source edit together.
  */
-export function editableDurableSourceKind(toolName: string): 'text' | 'vector' | null {
+export function durableSourceKindForTool(toolName: string): 'text' | 'vector' | 'paint' | null {
   if (toolName === 'text') return 'text';
-  return ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(toolName) ? 'vector' : null;
+  if (['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(toolName)) return 'vector';
+  if (['draw', 'brush', 'pencil'].includes(toolName)) return 'paint';
+  return null;
+}
+
+export function editableDurableSourceKind(toolName: string): 'text' | 'vector' | null {
+  const kind = durableSourceKindForTool(toolName);
+  return kind === 'text' || kind === 'vector' ? kind : null;
 }
 
 /**
@@ -212,7 +219,7 @@ function convertToolSource(source: ToolLayerSource, layer: Layer): DurableLayerS
   const size = sourceSize(source);
   const isBedrock = !!source.isBedrock;
   const args = plainObject(source.args, `layer:${layer.id}.source.args`);
-  const kind = editableDurableSourceKind(source.args.toolName) ?? 'legacy-tool';
+  const kind = durableSourceKindForTool(source.args.toolName) ?? 'legacy-tool';
   if (kind === 'legacy-tool') {
     return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
   }

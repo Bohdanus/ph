@@ -304,6 +304,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   brush: {
     commit: 'raster',
+    creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
       const [canvas] = draw(params)(buildDrawArgs(args, 'pen'));
@@ -312,6 +313,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   pencil: {
     commit: 'raster',
+    creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
       // `??` guards only `undefined` and `null`, so a non-numeric string reaches

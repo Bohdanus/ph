@@ -6,6 +6,7 @@ import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.t
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
+import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentation,
@@ -257,7 +258,15 @@ export async function materializeLayer(
           };
           size = { width: processed.width, height: processed.height };
         }
-        await renderRetainedSegment(retainedOperations, true);
+        const area = size.width * size.height;
+        const requiresSurface =
+          retainedOperations.length > 0 ||
+          request.frame !== undefined ||
+          !Number.isFinite(area) ||
+          size.width <= 0 ||
+          size.height <= 0 ||
+          area <= MAX_AFFINE_PIXELS;
+        await renderRetainedSegment(retainedOperations, requiresSurface);
         const presentation = bitmap;
         const presentationIsOwned = ownsBitmap;
         ownsBitmap = false;
@@ -311,6 +320,7 @@ export async function materializeDocument(
   try {
     for (const layer of Object.values(replay.layers)) {
       if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+      if (!layer.snapshot.visible) continue;
       try {
         materialized[layer.snapshot.id] = await materializeLayer(layer, request);
       } catch (error) {
