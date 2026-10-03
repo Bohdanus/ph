@@ -700,7 +700,11 @@ layer')` case in `LayersTab.test.tsx` pinning that as _intended_. **The canvas r
   bedrock layer
   and the panel will happily drag it**, which is the one place the panel is looser than the canvas —
   and it is a contradiction inside the app, not a missing Photoshop feature.
-- `GAP` — there is no `isBackground` concept, no conversion, and no opacity rule.
+- `HAVE` — the desktop panel exposes `convertBedrockLayer()` for a lone bedrock record and records
+  the conversion through the existing history boundary; the tonal tools still refuse the backing
+  layer until that explicit action is taken.
+- `GAP` — there is no `isBackground` concept or Photoshop Background-layer opacity rule, and
+  multi-layer conversion remains intentionally refused.
 
 ---
 

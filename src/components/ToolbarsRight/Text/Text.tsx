@@ -1,9 +1,10 @@
 import React, { type ChangeEvent, useRef } from 'react';
-import { calculateNewRect } from '../../../util/rect.ts';
+import { calculateNewRect, sortRect, sortedRectToPos } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { isTextToolArgs } from '../../../util/typeGuards.ts';
+import { canvasToDocumentPos, documentFrameFromSize } from '../../../contexts/document-frame.ts';
 import FontSelect from './FontSelect.tsx';
 import {
   FONT_SIZE_MAX,
@@ -23,7 +24,8 @@ import {
 } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, textareaRef, totalSize, activeLayerId, layers }] = useStore();
+  const [{ canvasRef, textareaRef, totalSize, documentFrame: currentDocumentFrame, activeLayerId, layers }] =
+    useStore();
   const { createLayerFromTool, replaceLayerSource } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
   const appliedArgsRef = useRef<typeof toolArgs | null>(null);
@@ -140,9 +142,12 @@ const Text: React.FC<{}> = () => {
     if (!text || !rect) return;
     if (appliedArgsRef.current === toolArgs) return;
     appliedArgsRef.current = toolArgs;
+    const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
     const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
     if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
-      replaceLayerSource(activeLayer.id, { kind: 'tool', args: { ...toolArgs }, pos: { ...activeLayer.pos } });
+      const localPos = sortedRectToPos(sortRect(measuredRect));
+      const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+      replaceLayerSource(activeLayer.id, { kind: 'tool', args: { ...toolArgs, rect: measuredRect }, pos });
     } else {
       createLayerFromTool({ args: toolArgs });
     }

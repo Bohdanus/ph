@@ -77,7 +77,9 @@ const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.f
  *    whose `after` was invented would clear the selection on every durable
  *    replay, so an unusable next selection state yields no durable entry.
  * 5. A boundary failure can never reject or undo a legacy-valid edit. Every
- *    failure is reported as a durable-unavailable diagnostic.
+ *    failure is reported as a durable-unavailable diagnostic, and an
+ *    error-severity timeline diagnostic withholds the durable plan because the
+ *    durable append point is undefined.
  * 6. A source edit is the one source-backed action this boundary translates, and
  *    it is translated because its durable form needs no asset: the payload type
  *    admits only `text` and `vector`, whose conversion registers nothing. So the
@@ -596,7 +598,7 @@ export function planHistoryAppend({
   if (!timelineDiagnostic) return result;
   return {
     entry: result.entry,
-    durableEntry: result.durableEntry,
+    durableEntry: timelineDiagnostic.severity === 'error' ? null : result.durableEntry,
     diagnostics: [...result.diagnostics, timelineDiagnostic],
   };
 }

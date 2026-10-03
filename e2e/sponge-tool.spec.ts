@@ -680,6 +680,26 @@ test.describe('Sponge tool', () => {
   });
 
   /**
+   * The refusal is intentional: a tonal tool never silently converts the backing layer or writes a
+   * history entry. Conversion is a separate Layers-panel action, covered by the next test.
+   */
+  test('refuses a Sponge stroke on the Background without changing pixels or history', async ({ page }) => {
+    const geometry = await selectSponge(page, 'desaturate');
+    const before = await readWindow(page, geometry, { x: BAND_MID_X, y: BAND_Y });
+
+    await spongeStroke(page, geometry);
+
+    await expectWindow(
+      page,
+      geometry,
+      { x: BAND_MID_X, y: BAND_Y },
+      before,
+      'a bedrock stroke must leave the backing pixels unchanged'
+    );
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+  });
+
+  /**
    * 6. A BEDROCK-ONLY DOCUMENT HAS AN EXPLICIT EDITABLE-LAYER ROUTE.
    *
    * The tonal tools keep refusing the backing image. The Layers panel's conversion action is the

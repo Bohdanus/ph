@@ -27,7 +27,7 @@ import {
   type ToolResult,
 } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
-import { reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
+import { calculateNewRect, reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
   type ActionType,
@@ -464,7 +464,12 @@ export const useLayers = () => {
 
       const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
-        const source: ToolLayerSource = { kind: 'tool', args: { ...args }, pos: { ...activeLayer.pos } };
+        const measuredRect = calculateNewRect(args, canvasRef, totalSize) ?? args.rect;
+        const source: ToolLayerSource = {
+          kind: 'tool',
+          args: { ...args, rect: measuredRect },
+          pos: canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame),
+        };
         const replaced = replaceLayerSource(activeLayer.id, source);
         if (replaced) {
           const cleared = { ...args, text: '', rect: null };
@@ -767,7 +772,12 @@ export const useLayers = () => {
 
     const [canvas, positionPatch] = result;
 
-    const bakedPresentation = processor.commit === 'raster' && input !== null && input.operations.length > 0;
+    // Trapezoid transforms use the same raster boundary as pixel processors even though the
+    // shared processor registry labels them `affine-operation` for ordinary transforms. Replay
+    // already routes this branch through `applyRasterTool`; the live preview must publish the
+    // same baked bounds and drop the retained operations or undo/redo will diverge.
+    const rasterBoundary = processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
+    const bakedPresentation = rasterBoundary && input !== null && input.operations.length > 0;
     const publishedPosition = bakedPresentation && input ? input.bounds : layer.pos;
     const previewLayer = {
       ...layer,

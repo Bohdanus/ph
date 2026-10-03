@@ -6076,29 +6076,29 @@ textarea — which is where it will be, because the tool area focuses the textar
 Escape inside a `<textarea>` is a normal key. Getting that wrong makes Escape clear the text the user
 is typing, which is worse than the missing feature.
 
-## 197. Bedrock-only documents make the tonal and raster tools unreachable
+## 197. Multi-layer bedrock conversion remains intentionally unavailable
 
 **Problem.** New documents and opened images begin with one bedrock layer. The enabled predicates
 in `SpongeToolArea()`, `DodgeToolArea()`, `BurnToolArea()`, `SmudgeToolArea()`,
 `CloneStampToolArea()`, `GradientToolArea()`, `EraserToolArea()` and `FillToolArea()` refuse that
 layer, and `usePaintStroke()` returns without preview or commit when disabled. The desktop Layers
-panel has no conversion action that produces an editable layer. The result is a silent no-op for a
-user who opens a photo and chooses Burn, Sponge, or a sibling pixel tool.
+panel now exposes `convertBedrockLayer()` for the lone-bedrock case, but refuses to flatten a
+multi-layer stack. A user who opens a multi-layer document and chooses Burn, Sponge, or a sibling
+pixel tool still gets the intentional no-op until a safe atomic conversion exists.
 
-`e2e/sponge-tool.spec.ts` pins this refusal intentionally. The pin must be
-removed in the same change that makes the tool reachable; it must not be
-skipped, widened, or re-recorded.
+`e2e/sponge-tool.spec.ts` pins the refusal on the backing layer and the explicit
+conversion route separately. Neither may be weakened into an implicit flatten.
 
 The pixel processors and the durable `apply-raster-processor` operation are not the blocker: the
 same tools work on a non-bedrock layer, and the durable model already has the generic operation
 shape. `mergeAllLayers()` is an explicit Flatten-like command, not an automatic tool prerequisite.
 
-**What is needed.** Implement a deliberate Photoshop-faithful conversion action, such as Layer from
-Background or an equivalent duplicate-to-editable-layer command, and record it in history. Keep
-the bedrock refusal and do not auto-merge from a rejected pointer gesture. The conversion must be
-durable-replayable and must not depend on a mutable presentation canvas. If the product instead
-chooses to relax the refusal or require flattening, that is an operator decision and must be recorded
-in `docs/OVERRIDES.md` before implementation; an agent must not make that deviation.
+**What is needed.** Add an atomic durable conversion for a multi-layer stack without silently
+destroying layers. Keep the bedrock refusal and do not auto-merge from a rejected pointer gesture.
+The conversion must be durable-replayable and must not depend on a mutable presentation canvas. If
+the product instead chooses to relax the refusal or require flattening, that is an operator decision
+and must be recorded in `docs/OVERRIDES.md` before implementation; an agent must not make that
+deviation.
 
 The safe first slice is the one-layer case: `convertBedrockLayer()` uses the existing
 `merge-document` replay contract while preserving the Background name and refuses to flatten a
@@ -6112,36 +6112,26 @@ stack.
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
 
-## 198. Raster strokes double-apply retained layer operations
+## 198. Raster edits remain unavailable at the durable append boundary
 
-**Problem.** A raster tool on a layer with an affine transform or retained filter receives a
-presentation raster from `transformedProcessorInput()`. That raster already contains
-`presentationOperations(layer)`, but the preview keeps the layer's `operations` and the layer's
-original `pos`. The replay twin, `replayProcessorInput()`, preserves the same operations after
-creating its raster. `getLayerBitmap()` then prefers the temporary raster and
-`drawLayerSource()` evaluates the retained operations again. A transform or filter followed by
-Burn, Sponge, Smudge, Clone Stamp, or any other raster processor can therefore be transformed or
-filtered twice, with the wrong bounds and layer-local coordinates. PSD export inherits the same
-presentation mismatch.
+**Problem.** The runtime/replay presentation boundary now stages retained operations once and
+publishes the baked bounds, but the durable append boundary still refuses raster operations. The
+former presentation path kept retained operations after baking and could therefore apply a
+transform or filter twice. That runtime/replay mismatch is now closed by staged bounds and operation
+trimming; it must not be reintroduced when the durable raster operation is enabled.
 
-This is already reachable today: any editable layer can be transformed or filtered and then
-receive a raster stroke. Background conversion widens the blast radius, but does not create the
-defect.
-It affects both the legacy commit path and the durable replay/materialization path, so changing only
-the tool kernels or the bedrock gate cannot close it.
+The remaining defect is the durable shadow's refusal to record the raster edit, not the runtime
+presentation boundary.
 
-**What is needed.** Choose one representation boundary: either bake the retained operations and
-clear/replace the retained operation list plus update the layer position, or keep the canonical layer
-operations and pass the unbaked source and correct transformed coordinate space to the processor.
-Apply the same choice in `transformedProcessorInput()`, `replayProcessorInput()`,
-`getLayerBitmap()`/`drawLayerSource()`, and PSD export. Prove a transform-then-raster and
-filter-then-raster round trip, including undo/redo and document-space brush coordinates, before
-lifting the raster append refusal.
+**What is needed.** Make `apply-raster-processor` appendable for every supported processor, with
+legacy/durable parity for transform/filter-then-raster, undo/redo, document-space coordinates, and
+asset release. Keep unsupported processors refused with a diagnostic rather than publishing a
+partial durable entry.
 
-**Files.** `src/contexts/useLayer.ts` — `transformedProcessorInput()`;
-`src/contexts/useHistory.ts` — `replayProcessorInput()`; `src/contexts/layer-renderer.ts` —
-`getLayerBitmap()` and `drawLayerSource()`; `src/contexts/export-canvas.ts`; raster tool areas;
-and the corresponding durable replay/materialization tests.
+**Files.** `src/contexts/history-append.ts` — raster translation and boundary diagnostics;
+`src/contexts/history-adapter.ts` — `operationForTool()`; `src/contexts/materialization.ts` —
+asset-backed raster replay; and the corresponding StoreContext, legacy replay, export, and durable
+parity tests.
 
 ## 199. Replay budget runner is dormant until the coordinator owns it
 
@@ -6149,6 +6139,8 @@ and the corresponding durable replay/materialization tests.
 runner with active-time, step-count, deadline, abort, stale-revision, and explicit over-budget
 outcomes. No production replay path constructs a budget or calls it. Wiring it before the durable
 materialization boundary is safe only if it stages a result and never publishes partial work.
+Before wiring, contain a throwing `release()` callback as a failed outcome and make the default host
+yield fall back when `requestAnimationFrame` is present but suspended in a hidden tab.
 
 **What is needed.** Integrate the runner through the existing `ReplayCoordinator.request()`
 materialization callback, using the coordinator revision token and shared host-yield policy. On an

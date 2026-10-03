@@ -26,6 +26,8 @@ const { liveStore, subscribe, getSnapshot, noopDispatch } = vi.hoisted(() => {
   };
 });
 
+const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
   EyeIcon: ({ open }: { open: boolean }) => <span data-testid="eye-icon" data-open={open} />,
 }));
@@ -48,6 +50,10 @@ const layerActions = {
 };
 
 vi.mock('@/contexts/useLayer.ts', () => ({ useLayers: () => layerActions }));
+
+vi.mock('@/contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
+}));
 
 function updateStore(mutate: (snapshot: typeof liveStore.snapshot) => typeof liveStore.snapshot) {
   liveStore.snapshot = mutate(liveStore.snapshot);

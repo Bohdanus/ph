@@ -119,6 +119,45 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
     processor.mockRestore();
   });
 
+  it('publishes trapezoid transforms at the staged bounds without retaining the baked affine', () => {
+    const raster = new OffscreenCanvas(80, 20);
+    const source = makeLayer('edited', 0, {
+      operations: [
+        {
+          id: 'scale',
+          kind: 'affine-transform',
+          transform: { a: 2, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+    });
+    const processor = vi.spyOn(toolProcessors.transform, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: {
+          toolName: 'transform',
+          rotate: 0,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 12,
+          resizeX: 100,
+          resizeY: 100,
+        } as ToolArgs,
+      });
+    });
+
+    const preview = result.current.store.previewLayers.current.edited!.layer;
+    expect(preview.pos).toEqual({ x: 0, y: 0, width: 80, height: 20 });
+    expect(preview.operations).toEqual([]);
+    expect(preview.source).toBeUndefined();
+    processor.mockRestore();
+  });
+
   it('materialises a tool-less preview canvas onto the committed layer without a history entry', async () => {
     // A preview can be staged by a document-scoped consumer that only owns a
     // raster draft (no replayable tool args). Promoting it is a presentation

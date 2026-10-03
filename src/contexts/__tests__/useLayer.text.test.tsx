@@ -228,7 +228,7 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(Object.values(result.current.store.layers).map((layer) => layer.id)).toEqual(['mock-layer-1']);
     expect(Object.values(result.current.store.layers)[0]?.source).toMatchObject({
       kind: 'tool',
-      args: argsB,
+      args: { ...argsB, rect: { ...(argsB as TextToolArgs).rect, y2: 80.4 } },
     });
     expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
     expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);

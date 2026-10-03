@@ -422,6 +422,10 @@ function cloneOperation(operation: DurableOperation): DurableOperation {
       });
     case 'remove-layer':
       return Object.freeze({ ...operation });
+    default: {
+      const exhaustive: never = operation;
+      return exhaustive;
+    }
   }
 }
 

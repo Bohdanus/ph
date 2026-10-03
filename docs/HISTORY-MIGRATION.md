@@ -87,17 +87,17 @@ fallback are not overrides.
 
 ## Tool reachability consequence
 
-Burn, Sponge, Dodge, Smudge, Clone Stamp, Gradient, Eraser, and Fill currently
+Burn, Sponge, Dodge, Smudge, Clone Stamp, Gradient, Eraser, and Fill still
 refuse a bedrock layer through their tool-area enabled predicates and
 `usePaintStroke()`'s disabled path. New and opened documents start with one
-bedrock layer, while the desktop Layers panel has no conversion affordance.
-Their pixel kernels and generic durable `apply-raster-processor` representation
-are not the blocker.
+bedrock layer, and the desktop Layers panel now exposes an explicit conversion
+action for a lone bedrock record. Their pixel kernels and generic durable
+`apply-raster-processor` representation are not the blocker.
 
-The recommended product path is Photoshop's editable-layer conversion model:
-provide a deliberate `Layer from Background` or equivalent conversion/duplicate
-action, record it as history, and let the existing non-bedrock gate continue to
-protect the backing image. Do not auto-merge from a refused pointer gesture.
+The implemented product path is Photoshop's editable-layer conversion model:
+`convertBedrockLayer()` records a deliberate conversion through the existing
+history boundary, and the existing non-bedrock gate continues to protect the
+backing image. Do not auto-merge from a refused pointer gesture.
 `mergeAllLayers()` remains a separate explicit Flatten-like command. Relaxing
 the bedrock gate or requiring flatten before every tonal edit would be a product
 deviation and cannot be implemented without an operator decision.
@@ -111,17 +111,15 @@ a separate source-replacement requirement.
 
 1. Record the operator rulings below and make the requirements document part of
    the tracked architecture map.
-2. Close the current migration boundary defects and make all existing durable
-   operation kinds replayable and appendable, including raster processors,
-   without changing production authority.
-   Close the retained-operation double-application defect recorded in
-   `HANDOFF.md` §198 before declaring raster tools safe; lifting the raster
-   append refusal remains a separate later step.
-3. Implement source-edit history and source rehydration together for text and
-   shape correction. Add independent legacy/durable parity for creation, edit,
+2. Close the current migration boundary defects and keep every currently
+   appendable durable operation replayable without changing production
+   authority. The runtime retained-operation boundary is closed; lifting the
+   raster append refusal remains the separate `HANDOFF.md` §198 step.
+3. Verify source-edit history and source rehydration together for text and
+   shape correction. Keep independent legacy/durable parity for creation, edit,
    undo, redo, and navigation.
-4. Implement the explicit bedrock conversion UX and its history operation. Keep
-   merge/flatten explicit and separate from a tool gesture.
+4. Preserve the explicit bedrock conversion UX and its history operation while
+   keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
 6. Wire one durable materialization/compositor boundary for render, export, and
