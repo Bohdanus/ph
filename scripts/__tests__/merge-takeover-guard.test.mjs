@@ -75,10 +75,32 @@ function mergeAndInspect(ref, { resolve, args = [] } = {}) {
   return { ...findings, conflicted: existsSync(join(dir, '.git', 'MERGE_HEAD')) };
 }
 
+/** Everything report() writes to stderr for a refusal, as one string. */
+function captureStderr(run) {
+  const lines = [];
+  const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  try {
+    run();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.join('');
+}
+
 /** `--theirs` then stage, as a block. Never `git(...) && git(...)`: git prints nothing on
  * some paths, an empty string is falsy, and the second command silently never runs. */
 function takeTheirs(...paths) {
   for (const path of paths) git(['checkout', '--theirs', path]);
+  git(['add', '-A']);
+}
+
+/** `--ours` then stage. The mirror of takeTheirs, and a shape-3 producer with no strategy
+ * flag at all: a hand resolution that keeps this side for one path. */
+function takeOurs(...paths) {
+  for (const path of paths) git(['checkout', '--ours', path]);
   git(['add', '-A']);
 }
 
@@ -395,13 +417,13 @@ describe('the shape the original scan set could not reach', () => {
     expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
     expect(seen.takeovers[0].kind).toBe('discarded-incoming-change');
     expect(seen.takeovers[0].deleted).toBeGreaterThan(0);
-    expect(seen.takeovers[0].reason).toMatch(/kept this side/);
+    expect(seen.takeovers[0].reason).toMatch(/kept the merged-into side's version/);
     // The whole point, asserted rather than described: the line is really gone.
     expect(git(['show', ':0:f.txt'])).not.toContain('BRANCH');
     expect(git(['show', ':0:f.txt'])).toContain('MAIN');
   });
 
-  it('reports a `-s ours` merge, which is the documented idiom and the worse case', () => {
+  it('reports a `-s ours` merge, which is the worse case', () => {
     // `git merge -s ours <ref>` records that the branch was merged and takes none of its
     // content. It is a real command people run on purpose, and it is how a whole payload
     // disappears while the merge reports success.
@@ -501,6 +523,156 @@ describe('the shape the original scan set could not reach', () => {
 
     expect(seen.takeovers).toEqual([]);
     expect(git(['show', ':0:f.txt'])).toContain('branch-line');
+  });
+
+  it('reports the WHOLE `-s ours` payload, including paths HEAD never touched', () => {
+    // Found in review, and it is the claim the commit message made and did not deliver.
+    // `-s ours` applies nothing at all, so a branch's ADDED files vanish too — and a pass
+    // that walked only the paths HEAD had changed reported those as clean while the branch's
+    // work was simply gone. Measured before this test: takeovers=[] with both files absent
+    // from the result.
+    write('a.txt', 'base\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('brand-new.ts', 'export const x = 1;\n');
+    write('also-new.ts', 'export const y = 2;\n');
+    commit('branch adds two files');
+
+    git(['checkout', '-q', 'main']);
+    write('a.txt', 'main moved on\n');
+    commit('main edits an unrelated file');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['also-new.ts', 'brand-new.ts']);
+    for (const t of seen.takeovers) expect(t.kind).toBe('discarded-incoming-change');
+    // The precondition, so this is not a vacuous pass: both files really are absent.
+    expect(existsSync(join(dir, 'brand-new.ts'))).toBe(false);
+    expect(existsSync(join(dir, 'also-new.ts'))).toBe(false);
+  });
+
+  it('reports a `-s ours` merge where HEAD deleted the path the incoming side modified', () => {
+    // Found in review. The skip on a missing RESULT blob swallowed this, because HEAD
+    // deleting the file makes the result's blob missing too — and the branch's committed
+    // modification went with it, markerlessly.
+    write('f.txt', 'a\nb\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'a\nb\nBRANCH\n');
+    commit('branch modifies f');
+
+    git(['checkout', '-q', 'main']);
+    git(['rm', '-q', 'f.txt']);
+    commit('main deletes f');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].kind).toBe('discarded-incoming-change');
+    expect(seen.takeovers[0].deleted).toBe(3);
+    expect(existsSync(join(dir, 'f.txt'))).toBe(false);
+  });
+
+  it('counts a REPEATED line as a multiset, not a set', () => {
+    // Found in review as an unpinned behaviour. A set says "x" is present and loses
+    // nothing; a multiset says one of the branch's two copies is gone. The second reading is
+    // the correct one, and this is what stops a future rewrite of `lostLineCount` back to a
+    // Set silently changing what the guard refuses.
+    write('f.txt', 'x\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'x\nx\n');
+    commit('branch writes x twice');
+
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'x\nMAIN\n');
+    commit('main keeps one x');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(git(['show', ':0:f.txt']).match(/^x$/gm)).toHaveLength(1);
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+
+  it('reports a gitlink pointer bump, which has no lines to compare', () => {
+    // Found in review as correct but untested. A submodule entry is a pointer, so the content
+    // measure has nothing to work with; without an explicit branch the pointer difference
+    // would be read as "zero lines lost" and a bumped submodule would land as a no-op.
+    const at = (rev, path) => git(['rev-parse', `${rev}:${path}`]).slice(0, 40);
+    write('a.txt', 'base\n');
+    commit('base');
+    // `--cacheinfo` stages the pointer, and the index is then committed AS IS: a `git add -A`
+    // would see no `sub` directory on disk and drop the entry again.
+    const baseSha = sha();
+    git(['update-index', '--add', '--cacheinfo', `160000,${baseSha},sub`]);
+    git(['commit', '-qm', 'base gains a gitlink']);
+
+    git(['checkout', '-qb', 'feat']);
+    git(['update-index', '--add', '--cacheinfo', `160000,${sha()},sub`]);
+    git(['commit', '-qm', 'branch bumps the pointer']);
+    const bumped = at('feat', 'sub');
+
+    git(['checkout', '-q', 'main']);
+    write('a.txt', 'main moved on\n');
+    commit('main edits an unrelated file');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['sub']);
+    expect(seen.takeovers[0].kind).toBe('discarded-incoming-change');
+    // The precondition: the pointer really is not the branch's in the result.
+    expect(at('HEAD', 'sub')).not.toBe(bumped);
+  });
+
+  it('reports a `checkout --ours` resolution, which is shape 3 with no strategy flag', () => {
+    // Found in review and previously untested: the most reachable producer of this shape is
+    // a person resolving one path of a conflicted merge by hand. Before this shape existed
+    // the guard was silent on it.
+    write('f.txt', 'alpha\nbeta\ngamma\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nBRANCH\ngamma\n');
+    commit('branch edits the same lines');
+
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nMAIN\ngamma\n');
+    commit('main edits the same lines');
+
+    const seen = mergeAndInspect('feat', { resolve: () => takeOurs('f.txt') });
+
+    expect(seen.conflicted).toBe(true);
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].kind).toBe('discarded-incoming-change');
+    expect(git(['show', ':0:f.txt'])).not.toContain('BRANCH');
+  });
+
+  it('stays silent on a REORDERED superset, which a line-count measure misreports', () => {
+    // Found in review, and the reason string it produced was false at the same time:
+    // `--numstat` bills a moved line as one deletion plus one insertion, so main holding
+    // the branch's line at a different position read as a loss, and the guard then claimed
+    // the commit "landed as a no-op" while the line sat in the result untouched.
+    write('f.txt', 'a\nb\n');
+    commit('base');
+
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'a\nb\nBRANCH\n');
+    commit('branch adds a line');
+
+    git(['checkout', '-q', 'main']);
+    // Same content as a superset, different line order.
+    write('f.txt', 'a\nBRANCH\nb\nMAIN\n');
+    commit('main carries the branch line, reordered');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    // The precondition: nothing of the branch's is lost.
+    expect(git(['show', ':0:f.txt'])).toContain('BRANCH');
+    expect(seen.takeovers).toEqual([]);
   });
 
   it('stays silent on `-X ours` where the two sides touched DIFFERENT files', () => {
@@ -604,6 +776,137 @@ describe('the shape the original scan set could not reach', () => {
     const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
 
     expect(seen.scanned).toBeGreaterThan(0);
+  });
+});
+
+describe('what the operator is actually told', () => {
+  // Found in review as a surviving mutation: deleting the whole `discarded-incoming-change`
+  // hint block from report() left every test green, because nothing here asserted anything
+  // about report()'s output at all. A refusal whose advice is the only thing an operator
+  // reads is worth testing on its own terms.
+  it('names the strategy when it refuses a `-s ours` merge', () => {
+    write('f.txt', 'alpha\nbeta\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbeta\nBRANCH\n');
+    commit('branch adds a line');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nbeta\nMAIN\n');
+    commit('main adds a line');
+    gitOk(['merge', '--no-commit', '-s', 'ours', 'feat']);
+
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+
+    expect(stderr).toContain('discarded-incoming-change');
+    expect(stderr).toContain('-X ours');
+    expect(stderr).toContain('-s ours');
+    // The refusal must still offer the documented way out.
+    expect(stderr).toContain('--no-verify');
+    // And must not claim the commit was a no-op, which a reordered superset made a lie.
+    expect(stderr).not.toMatch(/landed as a no-op/);
+  });
+
+  it('withholds the strategy hint on a `--theirs` refusal, where it would not apply', () => {
+    write('f.txt', 'alpha\nbeta\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nBRANCH\nbeta\n');
+    commit('branch edits');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nMAIN\nbeta\n');
+    commit('main edits');
+    gitOk(['merge', '--no-edit', 'feat']);
+    takeTheirs('f.txt');
+
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+
+    expect(stderr).toContain('whole-file-takeover');
+    expect(stderr).not.toContain('discarded-incoming-change');
+  });
+
+  it('bounds the listing without bounding the count or the refusal', () => {
+    // A `-s ours` merge of a wide branch is ONE refusal. Printing two lines per path buried
+    // the advice that says what to do about it, and an unreadable refusal is how a gate gets
+    // `--no-verify`'d. So the prose is capped and nothing else is.
+    write('base.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    for (let i = 0; i < 40; i++) write(`added-${i}.ts`, `export const v${i} = ${i};\n`);
+    commit('branch adds forty files');
+    git(['checkout', '-q', 'main']);
+    write('unrelated.txt', 'main moved on\n');
+    commit('main edits something else');
+
+    // `--no-commit` because `main()` has to be able to identify the merge afterwards, and a
+    // self-committing `-s ours` leaves neither MERGE_HEAD nor a ref to name.
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '-s', 'ours', 'feat']);
+    const seen = findTakeovers({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+      resultTree: git(['write-tree']),
+    });
+
+    // Every path is still found.
+    expect(seen.takeovers).toHaveLength(40);
+    expect(seen.takeovers.every((t) => t.kind === 'discarded-incoming-change')).toBe(true);
+
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+
+    // The headline count is the true one, not the listed one.
+    expect(stderr).toContain('REFUSING this merge — 40 path(s)');
+    expect(stderr).toContain('and 20 more path(s)');
+    // And the advice is still readable at the end of it.
+    expect(stderr).toContain('--no-verify');
+    // Fewer than 40 paths spelled out, so the cap is real.
+    expect((stderr.match(/\[discarded-incoming-change\]/g) ?? []).length).toBe(20);
+  });
+
+  it('counts paths EXAMINED rather than paths moved, so a `-s ours` clean line is honest', () => {
+    // A `-s ours` merge of a branch that changed nothing on paths main also changed moves
+    // nothing, and reporting "0 path(s) moved" beside a decision that examined real paths
+    // is the sentence that hid the original hole.
+    write('a.txt', 'base\n');
+    write('u.txt', 'base\n');
+    write('v.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('u.txt', 'base\nbranch\n');
+    commit('branch edits u');
+    git(['checkout', '-q', 'main']);
+    write('v.txt', 'base\nmain\n');
+    commit('main edits v');
+    // Disjoint, so the merge is clean, and `--no-commit` so it does not COMMIT itself. That
+    // is the hook's precondition: `pre-merge-commit` runs with MERGE_HEAD written and HEAD
+    // still on the pre-merge tip. A self-committing clean merge would leave neither, and the
+    // guard would refuse rather than answer — correctly, and for a different reason.
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    expect(existsSync(join(dir, '.git', 'MERGE_HEAD'))).toBe(true);
+    expect(git(['write-tree'])).not.toBe(git(['rev-parse', 'HEAD^{tree}']));
+
+    const stdout = [];
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    let code;
+    try {
+      code = main(['--manual'], { cwd: dir });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(code).toBe(0);
+    const out = stdout.join('');
+    expect(out).toMatch(/clean — [1-9]\d* path\(s\) examined/);
+    expect(out).not.toMatch(/path\(s\) moved by the merge/);
   });
 });
 

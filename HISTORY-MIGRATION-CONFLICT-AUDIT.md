@@ -4,6 +4,14 @@
 number below was measured then; re-derive before trusting it. `docs/README.md` names it under
 "Not maintained here" for that reason.
 
+- Audited at: `main` @ `33f9e960` (2026-10-03, ~17:07 local). `main` moved again while this was
+  being written, so treat any count that involves `main`'s position as already stale.
+- Previous audit: [`MIGRATION_NEXT_STEPS_SUNDAY.md`](../MIGRATION_NEXT_STEPS_SUNDAY.md) at
+  `main` @ `f7757cf` (2026-09-28). **Many commits have landed since**; most of what that document
+  said about the durable path has been replaced.
+- Line numbers drift — **re-verify from the sentence that makes the claim, never from an old
+  number.**
+
 Its job is to hand an audit a map: four artifacts were built against the same subsystem without
 coordinating, they now disagree, and the disagreement is _semantic_ — two designs for one module,
 not two patches to one file. This document says what each artifact holds and which questions the
@@ -48,9 +56,12 @@ for w in .kilo/worktrees/*/; do
   git -C "$w" rev-list --left-right --count main...HEAD
   git -C "$w" status --short | head -30
 done
-# an operation in progress leaves one of these behind:
-ls -d .git/worktrees/*/rebase-merge .git/worktrees/*/rebase-apply 2>/dev/null
-ls .git/worktrees/*/MERGE_HEAD .git/worktrees/*/CHERRY_PICK_HEAD 2>/dev/null
+# An operation in progress leaves one of these behind. `find`, not a glob: zsh aborts at
+# glob-expansion time when a pattern matches nothing, so `ls -d .git/worktrees/*/rebase-merge`
+# errors out and lists NOTHING on a shell where some other pattern did match — which is
+# exactly the state this document describes. `2>/dev/null` cannot suppress that.
+find .git/worktrees -maxdepth 2 \( -name MERGE_HEAD -o -name CHERRY_PICK_HEAD \) -print
+find .git/worktrees -maxdepth 2 \( -name rebase-merge -o -name rebase-apply \) -print
 ```
 
 ## 2. What A holds, and what it costs to land
@@ -95,10 +106,17 @@ settled fact — the collision table below does not depend on it, and that table
 rests on.
 
 The structural reason the conflicts are semantic: `main` never touched `materialization.ts` or
-`durable-compositor.ts` at all since the fork, so that payload is 100% unlanded — while `main` added
-+358 lines to `history-append.ts`, +146 to `presentation-evaluator.ts` and +114 to `layer-renderer.ts`,
-which are the exact files the branch most heavily rewrites. The branch is working from a pre-fork
-snapshot of the modules it replaces.
+`durable-compositor.ts` at all since the fork, so that payload is 100% unlanded — while `main` moved
+underneath the branch in the exact files the branch most heavily rewrites. Measured from the fork
+(`git diff --numstat 1ab3377e main`):
+
+| File                                     | `main` since the fork |
+| ---------------------------------------- | --------------------- |
+| `src/contexts/history-append.ts`         | +358 −4               |
+| `src/contexts/presentation-evaluator.ts` | +130 −16              |
+| `src/contexts/layer-renderer.ts`         | +93 −21               |
+
+The branch is working from a pre-fork snapshot of those modules.
 
 Collisions, both directions:
 
@@ -109,7 +127,8 @@ Collisions, both directions:
 | `validateBounds`              | `getLayerFilter`                                           |
 | `layerPresentationOperations` | `FilterArgumentUnrenderableError`, `registryResolvesAsset` |
 
-Merging would also delete **20 tests `main` owns** and revert main's `never` arm in
+Merging would also drop **20 `it(...)` titles `main` owns across the 5 test files both sides
+have** (a merge restores the files only `main` has) and revert main's `never` arm in
 `collectDurableAssetIds`, where an unclassified `DurableOperation` kind would again compile and
 silently release a live asset. **Any `-X ours` / `-X theirs` here picks one design and reverts the
 other**, which is why the conflicts are not the interesting part.
@@ -142,10 +161,22 @@ Two facts distinguish it from every other artifact here.
 remain in the files; the index still lists five as `UU`. So `git merge --abort` there would destroy
 real resolution work. Handle it deliberately, or do not touch it.
 
-**The resolution took the branch's side wholesale, and it compiles.** Against `main` it nets −51
-lines in `layer-renderer.ts` and −130 in `presentation-evaluator.ts`, deleting `getLayerFilter`,
-`enabledFilterOperations` and `evaluatePresentationForDraw` and reinstating the branch's
-`PresentationFilterRefusal`. `npm run tsc` **passes** on it.
+**The resolution took the branch's side wholesale, and it compiles.** `getLayerFilter`,
+`enabledFilterOperations` and `evaluatePresentationForDraw` are all absent from `src/` in that
+worktree, and `PresentationFilterRefusal` is reinstated. `npm run tsc` **passes** on it.
+
+Two different diffs are easy to confuse here, and only one of them describes the resolution.
+`git diff --numstat main integration/sweep-land` — the branch **tip** against `main` — shows 20
+insertions / 51 deletions in `layer-renderer.ts` and 16 / 130 in `presentation-evaluator.ts`. The
+worktree's actual unstaged resolution nets the other way: +153 −98 and +176 −111, because it is a
+rewrite rather than a deletion. Read the symbols, not the line counts:
+
+```bash
+cd .kilo/worktrees/sweep-land
+for s in getLayerFilter enabledFilterOperations evaluatePresentationForDraw PresentationFilterRefusal; do
+  printf '%-34s in src/: %s\n' "$s" "$(rg -l "$s" ../../src 2>/dev/null | wc -l | tr -d ' ')"
+done
+```
 
 That is the exact shape `scripts/merge-takeover-guard.mjs` exists to catch, and it would very likely
 have refused it: `sweep-land` has `MERGE_HEAD` set, so `pre-commit` fires on commit. It had no
@@ -194,8 +225,10 @@ paths** with the sentence "so it needs a rebase first". The merge "discovered" t
 surprise roughly two hours later.
 
 The inventory had **53 records and omitted both worktrees carrying the entire migration payload** —
-it was generated before either existed. It is also stale against `main` (`mainHead` two commits
-behind) and **nothing regenerates it**: no hook, no script, no CI job.
+it was generated before either existed. Its `mainHead` also names a commit `main` has since left
+behind, by a number that grows every time another session lands work; re-derive it rather than
+trusting any figure here. And **nothing regenerates it**: no husky hook, no `package.json` script and no CI job
+invokes `scripts/worktree-inventory.mjs`, so it is re-derived by hand or not at all.
 
 `HANDOFF.md` §179 — "`fix/migration-review-sweep` cannot merge" — is on `main`, in prose, with the
 `rev-list` and `comm -12` commands inline, and it independently names all three collisions above. The
@@ -205,8 +238,10 @@ ignorance, but an unsearchable artifact — the one entry that governed the bran
 whose only access path is reading it end to end.
 
 Board file locks are correct, cross-session and keyed by branch, which would have named the other
-writer — and hold **zero rows** for either branch. `.kilo/agent-manager.json` records **no session** on
-any of its 85 worktrees.
+writer — and hold **zero source-file locks** for either branch. The twelve rows that name these
+branches are all on the virtual e2e queue path, which `docs/ORCHESTRATION.md` says is a run rather
+than an authorship claim, and all are released; the table has no live rows at all.
+`.kilo/agent-manager.json` records **no session** on any of its 85 worktrees.
 
 ## 7. What the audit should do, in order
 

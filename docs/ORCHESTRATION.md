@@ -136,15 +136,32 @@ status` and `git diff` before staging.
   this catches every path the merge resolved by copying one whole side's content. Three
   shapes, none of which produces a conflict marker: the result is the pre-divergence
   content (the `-A` case above), it is the incoming side's file verbatim
-  (`checkout --theirs <path>`, or `git merge -X theirs`), or it is THIS side's file
-  verbatim having dropped the incoming side's lines (`git merge -X ours`, or `-s ours`).
+  (`checkout --theirs <path>`, or `git merge -X theirs`), or it is THIS side's version of
+  a path having dropped the incoming side's content (`git merge -X ours`,
+  `git merge -s ours`, or `git checkout --ours <path>` on one path of a conflicted merge).
   The third was a hole rather than a decision: it is the one shape whose result is HEAD's
   own file, so the guard's scan set — paths the merge moved relative to HEAD — was empty by
   construction and `git merge -s ours` reported `clean — 0 path(s) moved by the merge`
   while deleting the branch's commit. `docs/DOCUMENTATION.md`'s one-home rule is why the
   asymmetry survived: `-X theirs` was documented and its inverse was simply never written
-  down, so there was nothing to contradict. It now finds that shape through a second scan
-  over paths BOTH sides changed, asking the mirror question.
+  down, so there was nothing to contradict.
+
+  It finds that shape through a second scan over **the paths the INCOMING side changed**,
+  not the paths HEAD changed, and that distinction is load-bearing: `-s ours` applies
+  nothing at all, so a branch's added files vanish too, and a scan over HEAD's changes
+  finds only the contested subset and reports the rest of a dropped commit as clean.
+
+  All three shapes are measured the same way — by asking whether a line the losing side
+  committed is **absent** from the result, not by counting a diff. `--numstat` bills a
+  moved line as one deletion plus one insertion, so a result that is a superset in content
+  but not in line order reads as a loss; measuring content is what makes "this side's
+  version won" mean that something was actually dropped. A resolution that is neither
+  side's blob is deliberately NOT reported — see the boundary note in the script.
+
+  `git merge -s ours <ref>` is the standard git idiom for recording that a branch was merged
+  without taking any of its content. It is legitimate and deliberate, and it is refused here
+  like any other silent discard; `git merge --no-verify <ref>` is how an operator says they
+  meant it.
 
   **Its limits, because a gate that claims more than it has is the failure it replaces:**
   git runs no hook for a **fast-forward**, so that landing shape is uncovered — safe by
