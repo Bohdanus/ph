@@ -40,6 +40,10 @@ Evidence, all four current:
 `src/contexts/materialization.ts` and `src/contexts/replay-coordinator.ts` have no
 importer outside `__tests__/`.
 
+The requirements and staged cutover sequence are owned by
+[`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current
+implementation boundary and does not duplicate the migration contract.
+
 ## The store
 
 `src/contexts/StoreContext.tsx`, a `useReducer`. Its length moves with every

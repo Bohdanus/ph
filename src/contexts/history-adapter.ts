@@ -14,6 +14,7 @@ import {
   type DurableLayerSource,
   type DurableOperation,
   type PlainObject,
+  type ReplaceLayerSourceOperation,
   type SelectionSnapshot,
   type AssetId,
   cloneDurableDocument,
@@ -23,7 +24,7 @@ import {
   toLayerSnapshot,
 } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
-import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
+import type { Layer, LayerId, LayerSource, LayersRecord, ToolLayerSource } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
@@ -181,6 +182,50 @@ function registerRaster(registry: AssetRegistry, documentId: string, bitmap: Bit
   return registry.registerBaseline(documentId, bitmap, { ownership: 'borrow' });
 }
 
+/**
+ * The tool names whose layer source is an editable, typed source, and the kind
+ * each becomes.
+ *
+ * One rule, because two decisions depend on it and must not disagree: which
+ * sources {@link convertSource} may type rather than leaving as `legacy-tool`,
+ * and which legacy source a source edit is allowed to install. A tool added here
+ * becomes editable by the conversion and the source edit together.
+ */
+export function editableDurableSourceKind(toolName: string): 'text' | 'vector' | null {
+  if (toolName === 'text') return 'text';
+  return ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(toolName) ? 'vector' : null;
+}
+
+/**
+ * The tool arm of {@link convertSource}, with no document id and no registry in
+ * reach — because it needs neither.
+ *
+ * An extraction, not a second copy of the rule: a `kind: 'tool'` source's durable
+ * form is derived entirely from the source itself and the layer box it was
+ * authored against, so the raster registration the other two arms perform has no
+ * call site here. Keeping that structural is what lets
+ * `deriveReplaceLayerSourceEntry` plan a source edit with no store in reach at
+ * all, and it is also what would stop a future `tool` arm from quietly acquiring
+ * a registry dependency — the extraction is where that would have to be undone.
+ */
+function convertToolSource(source: ToolLayerSource, layer: Layer): DurableLayerSource {
+  const size = sourceSize(source);
+  const isBedrock = !!source.isBedrock;
+  const args = plainObject(source.args, `layer:${layer.id}.source.args`);
+  const kind = editableDurableSourceKind(source.args.toolName) ?? 'legacy-tool';
+  if (kind === 'legacy-tool') {
+    return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
+  }
+  return Object.freeze({
+    kind,
+    toolName: source.args.toolName,
+    args,
+    size,
+    sourcePos: Object.freeze({ ...layer.pos }),
+    isBedrock,
+  });
+}
+
 function convertSource(
   source: LayerSource,
   layer: Layer,
@@ -201,26 +246,8 @@ function convertSource(
         ...(source.name ? { name: source.name } : {}),
         isBedrock,
       });
-    case 'tool': {
-      const args = plainObject(source.args, `layer:${layer.id}.source.args`);
-      const kind =
-        source.args.toolName === 'text'
-          ? 'text'
-          : ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(source.args.toolName)
-            ? 'vector'
-            : 'legacy-tool';
-      if (kind === 'legacy-tool') {
-        return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
-      }
-      return Object.freeze({
-        kind,
-        toolName: source.args.toolName,
-        args,
-        size,
-        sourcePos: Object.freeze({ ...layer.pos }),
-        isBedrock,
-      });
-    }
+    case 'tool':
+      return convertToolSource(source, layer);
   }
 }
 
@@ -488,6 +515,93 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
 export function deriveRemoveLayerEntry(item: HistoryItem): DurableHistoryEntry<RemoveLayerOperation> | null {
   if (item.actionName !== REMOVE_ACTION) return null;
   const operation: RemoveLayerOperation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
+  return entry(item.id, operation, isEntryEnabled(item));
+}
+
+/**
+ * The legacy carrier of a source edit: the REPLACEMENT source under
+ * `args.source`, which is where `updateLayer(id, patch, actionName)` already puts
+ * a layer patch.
+ *
+ * `null` for every shape that is not an installable editable source, and each
+ * refusal is a rule rather than a missing arm:
+ *
+ * - A `layerSource` on the item means the entry carries a source of its own, and
+ *   `NEW_LAYER` / `MERGE` / a `TOOL_ACTION` source own that. A source edit
+ *   describes the source of a layer that already exists, so an entry that also
+ *   carries a creation source is not one.
+ * - A `kind: 'tool'` source whose tool has no editable durable representation is
+ *   the `legacy-tool` case `convertSource` already refuses to type.
+ * - A bedrock source is refused because a bedrock source's SIZE IS THE DOCUMENT.
+ *   `replayHistory` honours it as the frame only for the entry that opened the
+ *   document and refuses it mid-history, and this operation cannot write the
+ *   frame at all — only `set-document-frame` does. So a bedrock replacement is
+ *   not expressible here, and the product path that does replace a background
+ *   layer's content is an explicit conversion, not a source edit.
+ *
+ * This is the single reader of the legacy shape. The derivation below and the
+ * append-boundary grading in `history-append.ts` both go through it, the way
+ * `legacyToolArgs` is shared there, so neither restates the carrier.
+ */
+export function editableSourceReplacementFromEntry(item: HistoryItem): ToolLayerSource | undefined {
+  if (item.layerSource) return undefined;
+  const candidate = (item.args as { source?: unknown } | undefined)?.source;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+  if ((candidate as { kind?: unknown }).kind !== 'tool') return undefined;
+  const source = candidate as ToolLayerSource;
+  const toolName = (source.args as { toolName?: unknown } | undefined)?.toolName;
+  if (typeof toolName !== 'string' || !editableDurableSourceKind(toolName)) return undefined;
+  if (source.isBedrock) return undefined;
+  return source;
+}
+
+/**
+ * The single derivation of the source-edit operation, shared by conversion AND
+ * the Phase 1 append boundary, for the reason every other derivation here is
+ * shared: a published entry and a converted entry for one legacy item must be the
+ * same entry, or the shadow and the authority stop describing the same edit.
+ *
+ * It takes NO store context — no document id, no registry — and that is the load-
+ * bearing property rather than an omission. The reader admits only a `kind:
+ * 'tool'` source, and `convertToolSource` is the one arm of layer-source
+ * conversion that registers nothing, so there is nothing here for a registry to
+ * resolve or a transaction to own. That is what makes the derivation callable
+ * from `translate()`, which sees no store, and therefore what makes a source edit
+ * APPENDABLE instead of conversion-only: `planHistoryAppend` can plan one from
+ * nothing but the entry and its live arguments, exactly as it plans a rename.
+ *
+ * The two consistency requirements of the payload therefore hold by construction
+ * rather than by review: a non-bedrock source's `size` is `sourceSize(source)` —
+ * the box's width and height — and its `sourcePos` is the box the replacement was
+ * authored against, which is the `pos` this operation carries.
+ *
+ * The layer map handed to `sourceToRuntimeLayer` is empty deliberately. That
+ * helper derives an `order` from the layers it is given; this operation replaces
+ * the source of a layer that already exists, so the layer's order is the existing
+ * layer's, the derived one is discarded, and requiring the caller to supply the
+ * layer set would buy a field nothing reads.
+ */
+export function deriveReplaceLayerSourceEntry(
+  item: HistoryItem
+): DurableHistoryEntry<ReplaceLayerSourceOperation> | null {
+  const replacement = editableSourceReplacementFromEntry(item);
+  if (!replacement) return null;
+  const runtime = sourceToRuntimeLayer(item.layerId, replacement, new Map());
+  // `convertToolSource` rather than `convertLayer`, and that is the whole reason
+  // the derivation needs no store: it is the one arm of source conversion that
+  // registers no asset, so there is no registry here to fake and no document id to
+  // invent. Reaching for `convertLayer` instead would require a throw-only
+  // registry stub, which would only make the same claim less checkably.
+  const source = convertToolSource(replacement, runtime);
+  // Unreachable while this function and `editableDurableSourceKind` agree, and
+  // stated so that loosening either one cannot silently widen the payload type.
+  if (source.kind !== 'text' && source.kind !== 'vector') return null;
+  const operation: ReplaceLayerSourceOperation = Object.freeze({
+    kind: 'replace-layer-source',
+    layerId: item.layerId,
+    source,
+    pos: Object.freeze({ ...runtime.pos }),
+  });
   return entry(item.id, operation, isEntryEnabled(item));
 }
 
@@ -881,7 +995,33 @@ export function legacyHistoryToDurable(
           if (enabled) currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, pos }));
         }
       } else {
-        throw new UnsupportedHistoryFeatureError(`Unsupported legacy action ${item.actionName}`, item.id);
+        // The tail is where a source edit is recognized, and its position is the
+        // guarantee that it claims nothing another arm owns: every action a
+        // creation, a merge, a layer property, a removal, a reorder, a frame, a
+        // selection or a tool argument already handles has returned above, so
+        // anything still here is an action this converter does not have a rule
+        // for. A new action carrying a replacement source lands here; an action
+        // carrying no replacement source still reports `Unsupported legacy
+        // action`, which is the pre-existing behaviour for every unknown action.
+        const replaceEntry = deriveReplaceLayerSourceEntry(item);
+        if (!replaceEntry) {
+          throw new UnsupportedHistoryFeatureError(`Unsupported legacy action ${item.actionName}`, item.id);
+        }
+        operation = replaceEntry.operation;
+        if (replaceEntry.enabled) {
+          // The fold advances so the entries derived after this one see the source
+          // and box the legacy timeline would produce — the affine-geometry
+          // derivation reads `layer.pos`, and a reorder reads the layer set. The
+          // layer's absence is not a refusal, matching `replayHistory`, which
+          // skips a property change to an id it does not hold.
+          const layer = currentLayers.get(item.layerId);
+          if (layer) {
+            currentLayers.set(
+              item.layerId,
+              cloneLayerSnapshot({ ...layer, source: replaceEntry.operation.source, pos: replaceEntry.operation.pos })
+            );
+          }
+        }
       }
     } catch (error) {
       diagnostics.push(diagnosticFromError(error, item));

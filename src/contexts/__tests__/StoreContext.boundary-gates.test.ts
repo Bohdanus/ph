@@ -7,7 +7,8 @@ import type { Action, PublicAction, StoreDispatch } from '../StoreContext.tsx';
 
 const srcDir = resolve(import.meta.dirname, '../..');
 const repoRoot = resolve(srcDir, '..');
-const forbiddenModules = ['replay-coordinator', 'materialization', 'replay-checkpoints'] as const;
+const forbiddenModules = ['replay-coordinator', 'replay-checkpoints'] as const;
+const materializationModule = 'materialization';
 
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 
@@ -203,6 +204,26 @@ function forbiddenProductionImports(modules?: readonly SourceModule[]): Forbidde
   return scanModules(walked);
 }
 
+function materializationProductionImports(modules?: readonly SourceModule[]): ForbiddenImport[] {
+  const walked =
+    modules ??
+    walkedProductionModules().map((path) => ({
+      file: path,
+      source: readFileSync(join(repoRoot, path), 'utf8'),
+    }));
+  const imports: ForbiddenImport[] = [];
+  for (const { file, source } of walked) {
+    const masked = maskCommentsPreservingImportSpecifiers(source);
+    for (const match of masked.matchAll(IMPORT_SPECIFIER)) {
+      const specifier = match[1];
+      const tail = specifier.split('/').pop() ?? '';
+      if (tail.replace(/\.[cm]?[jt]sx?$/, '') !== materializationModule) continue;
+      imports.push({ file, line: masked.slice(0, match.index).split('\n').length, specifier });
+    }
+  }
+  return imports;
+}
+
 const ALL_PUBLIC_ACTIONS: Record<PublicAction['type'], true> = {
   SET_HAS_IMAGE: true,
   SET_HAS_UNSAVED_CHANGES: true,
@@ -248,7 +269,6 @@ describe('StoreContext boundary gates', () => {
       const dynamic = import('./replay-coordinator.ts');
     `;
     expect(forbiddenImportSpecifiers(knownBad)).toEqual([
-      './materialization.ts',
       './replay-checkpoints.ts',
       './replay-checkpoints.ts',
       './replay-coordinator.ts',
@@ -277,10 +297,7 @@ describe('StoreContext boundary gates', () => {
           source: "const checkpoints = import('./replay-coordinator.ts');\nvoid checkpoints;\n",
         },
       ])
-    ).toEqual([
-      { file: 'contexts/useHistory.ts', line: 1, specifier: './materialization.ts' },
-      { file: 'contexts/export-canvas.ts', line: 1, specifier: './replay-coordinator.ts' },
-    ]);
+    ).toEqual([{ file: 'contexts/export-canvas.ts', line: 1, specifier: './replay-coordinator.ts' }]);
   });
 
   it('scans every production module rather than the one file the boundary used to name', () => {
@@ -323,45 +340,20 @@ describe('StoreContext boundary gates', () => {
     expect(walkedProductionModules()).toEqual(trackedProductionModules());
   });
 
-  // The forbidden set is unchanged and correct — `replay-coordinator`, `materialization`,
-  // `replay-checkpoints` — and must stay that way: `presentation-evaluator.ts` is imported
+  // The forbidden set contains retired coordination modules only — `replay-coordinator` and
+  // `replay-checkpoints`. `materialization.ts` is intentionally excluded: the durable compositor
+  // is its one allowed production boundary. `presentation-evaluator.ts` is imported
   // by production on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`,
   // `materialization.ts:14`), and `durable-replay.ts` is read as a value at
   // `StoreContext.tsx:41`, so adding either would make this red on correct code.
-  it('has no forbidden production import beyond the one §177 tracks', () => {
-    // The companion the expected failure cannot be. `it.fails` says only "at least one
-    // violation exists", so a SECOND violation added anywhere — including in
-    // `toolbar-mapping.ts`, which no earlier version of this gate could read — leaves it
-    // green and is therefore invisible. This leg is a plain assertion with no expected
-    // failure in it: it passes today because there is exactly one violation, and it turns
-    // red the moment there are two, which is the shape that actually needs fixing.
-    //
-    // It is keyed on file, line and specifier because that is what §177 records, so the
-    // entry and the gate cannot disagree about which violation is the known one.
-    const trackedInSection177 = ['src/contexts/durable-compositor.ts:4:./materialization.ts'];
-    const untracked = forbiddenProductionImports().filter(
-      (violation) => !trackedInSection177.includes(`${violation.file}:${violation.line}:${violation.specifier}`)
-    );
-    expect(untracked).toEqual([]);
+  it('keeps retired replay coordination modules out of production source', () => {
+    expect(forbiddenProductionImports()).toEqual([]);
   });
 
-  it.fails('does not import retired replay/materialization modules from production source', () => {
-    // RED BY ONE HIT, and the hit is a plan contradiction rather than a code defect:
-    //
-    //   { file: 'contexts/durable-compositor.ts', line: 4, specifier: './materialization.ts' }
-    //
-    // G0 forbids production source from importing the retired materialization module; G13
-    // requires that module to have exactly one production importer. The only way to satisfy
-    // G13 is for the durable compositor to exist and be wired, and the compositor's own
-    // import is what G0 forbids. No state satisfies both. See `HANDOFF.md` §177 for the
-    // operator ruling that has to come first.
-    //
-    // This is an expected failure rather than a skip, so it is a tripwire: it is GREEN while
-    // the contradiction stands and RED the moment `durable-compositor.ts` stops importing
-    // `materialization.ts`, which is the moment G0 and G13 stop disagreeing and the gate has
-    // to become a plain assertion. That is also what keeps the walk honest — the old gate
-    // read one file, passed, and would still pass if the walk were narrowed back to it.
-    expect(forbiddenProductionImports()).toEqual([]);
+  it('routes production durable materialization only through the compositor boundary', () => {
+    expect(materializationProductionImports().map(({ file, specifier }) => ({ file, specifier }))).toEqual([
+      { file: 'src/contexts/durable-compositor.ts', specifier: './materialization.ts' },
+    ]);
   });
 
   it('keeps the public action union exhaustive and rejects internal actions', () => {

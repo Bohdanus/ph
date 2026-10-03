@@ -6075,3 +6075,88 @@ whether Escape clears the draft or only the in-flight gesture, and what it does 
 textarea — which is where it will be, because the tool area focuses the textarea on commit, and
 Escape inside a `<textarea>` is a normal key. Getting that wrong makes Escape clear the text the user
 is typing, which is worse than the missing feature.
+
+## 197. Bedrock-only documents make the tonal and raster tools unreachable
+
+**Problem.** New documents and opened images begin with one bedrock layer. The enabled predicates
+in `SpongeToolArea()`, `DodgeToolArea()`, `BurnToolArea()`, `SmudgeToolArea()`,
+`CloneStampToolArea()`, `GradientToolArea()`, `EraserToolArea()` and `FillToolArea()` refuse that
+layer, and `usePaintStroke()` returns without preview or commit when disabled. The desktop Layers
+panel has no conversion action that produces an editable layer. The result is a silent no-op for a
+user who opens a photo and chooses Burn, Sponge, or a sibling pixel tool.
+
+`e2e/sponge-tool.spec.ts` pins this refusal intentionally. The pin must be
+removed in the same change that makes the tool reachable; it must not be
+skipped, widened, or re-recorded.
+
+The pixel processors and the durable `apply-raster-processor` operation are not the blocker: the
+same tools work on a non-bedrock layer, and the durable model already has the generic operation
+shape. `mergeAllLayers()` is an explicit Flatten-like command, not an automatic tool prerequisite.
+
+**What is needed.** Implement a deliberate Photoshop-faithful conversion action, such as Layer from
+Background or an equivalent duplicate-to-editable-layer command, and record it in history. Keep
+the bedrock refusal and do not auto-merge from a rejected pointer gesture. The conversion must be
+durable-replayable and must not depend on a mutable presentation canvas. If the product instead
+chooses to relax the refusal or require flattening, that is an operator decision and must be recorded
+in `docs/OVERRIDES.md` before implementation; an agent must not make that deviation.
+
+The safe first slice is the one-layer case: `convertBedrockLayer()` uses the existing
+`merge-document` replay contract while preserving the Background name and refuses to flatten a
+multi-layer stack. A future multi-layer Background conversion needs its own source-replacement
+operation or an equivalent atomic history action; reusing Flatten for it would silently destroy the
+stack.
+
+**Files.** `src/components/Main/SpongeToolArea.tsx`, `DodgeToolArea.tsx`, `BurnToolArea.tsx`,
+`SmudgeToolArea.tsx`, `CloneStampToolArea.tsx`, `GradientToolArea.tsx`, `EraserToolArea.tsx`,
+`FillToolArea.tsx`; `src/hooks/usePaintStroke.ts`; `src/components/SidebarRight/LayersTab.tsx`;
+`src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
+`DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
+
+## 198. Raster strokes double-apply retained layer operations
+
+**Problem.** A raster tool on a layer with an affine transform or retained filter receives a
+presentation raster from `transformedProcessorInput()`. That raster already contains
+`presentationOperations(layer)`, but the preview keeps the layer's `operations` and the layer's
+original `pos`. The replay twin, `replayProcessorInput()`, preserves the same operations after
+creating its raster. `getLayerBitmap()` then prefers the temporary raster and
+`drawLayerSource()` evaluates the retained operations again. A transform or filter followed by
+Burn, Sponge, Smudge, Clone Stamp, or any other raster processor can therefore be transformed or
+filtered twice, with the wrong bounds and layer-local coordinates. PSD export inherits the same
+presentation mismatch.
+
+This is already reachable today: any editable layer can be transformed or filtered and then
+receive a raster stroke. Background conversion widens the blast radius, but does not create the
+defect.
+It affects both the legacy commit path and the durable replay/materialization path, so changing only
+the tool kernels or the bedrock gate cannot close it.
+
+**What is needed.** Choose one representation boundary: either bake the retained operations and
+clear/replace the retained operation list plus update the layer position, or keep the canonical layer
+operations and pass the unbaked source and correct transformed coordinate space to the processor.
+Apply the same choice in `transformedProcessorInput()`, `replayProcessorInput()`,
+`getLayerBitmap()`/`drawLayerSource()`, and PSD export. Prove a transform-then-raster and
+filter-then-raster round trip, including undo/redo and document-space brush coordinates, before
+lifting the raster append refusal.
+
+**Files.** `src/contexts/useLayer.ts` — `transformedProcessorInput()`;
+`src/contexts/useHistory.ts` — `replayProcessorInput()`; `src/contexts/layer-renderer.ts` —
+`getLayerBitmap()` and `drawLayerSource()`; `src/contexts/export-canvas.ts`; raster tool areas;
+and the corresponding durable replay/materialization tests.
+
+## 199. Replay budget runner is dormant until the coordinator owns it
+
+**Problem.** `defineReplayBudget()` and `runReplayUnderBudget()` now provide a pure cooperative
+runner with active-time, step-count, deadline, abort, stale-revision, and explicit over-budget
+outcomes. No production replay path constructs a budget or calls it. Wiring it before the durable
+materialization boundary is safe only if it stages a result and never publishes partial work.
+
+**What is needed.** Integrate the runner through the existing `ReplayCoordinator.request()`
+materialization callback, using the coordinator revision token and shared host-yield policy. On an
+over-budget result, prompt for explicit raster-baseline acceptance; never rasterize automatically.
+Close the empty-history baseline failure and asset publication transaction before exposing that
+prompt. Add the user-configurable setting only at the caller boundary.
+
+**Files.** `src/contexts/replay-budget.ts` — `runReplayUnderBudget()`;
+`src/contexts/replay-coordinator.ts` — `ReplayCoordinator.request()`;
+`src/contexts/materialization.ts` — `materializeDocument()`; `src/contexts/useHistory.ts`;
+and the empty-history/baseline tests.

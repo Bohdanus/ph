@@ -23,8 +23,8 @@ import {
 } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, textareaRef, totalSize }] = useStore();
-  const { createLayerFromTool } = useLayers();
+  const [{ canvasRef, textareaRef, totalSize, activeLayerId, layers }] = useStore();
+  const { createLayerFromTool, replaceLayerSource } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
   const appliedArgsRef = useRef<typeof toolArgs | null>(null);
 
@@ -140,7 +140,12 @@ const Text: React.FC<{}> = () => {
     if (!text || !rect) return;
     if (appliedArgsRef.current === toolArgs) return;
     appliedArgsRef.current = toolArgs;
-    createLayerFromTool({ args: toolArgs });
+    const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+    if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
+      replaceLayerSource(activeLayer.id, { kind: 'tool', args: { ...toolArgs }, pos: { ...activeLayer.pos } });
+    } else {
+      createLayerFromTool({ args: toolArgs });
+    }
     onChange({ ...toolArgs, text: '', rect: null });
   };
 

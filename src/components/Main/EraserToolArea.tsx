@@ -6,6 +6,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point } from '../../contexts/general-types.ts';
+import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type EraserToolAreaProps = {
@@ -79,16 +80,20 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
   const isEnabled = Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock);
 
   /**
-   * The processor addresses the LAYER's own raster, whose pixel (0, 0) is `activeLayer.pos`, so a
-   * document point becomes `point - activeLayer.pos` and a layer at the origin passes through
-   * unchanged. The same translation is applied to the preview and to the commit: a preview in canvas
-   * space against a commit in layer space would show the stroke at one place and put it somewhere
-   * else the moment the pointer came up.
+   * The processor addresses the PRESENTED LAYER's own raster, whose pixel (0, 0) is the origin of
+   * that presentation: `pos` for a layer that presents nothing, its EVALUATED extent for one
+   * carrying a transform or a filter, since the processor is handed that presentation rather than
+   * the raw layer. So a document point becomes `point - rasterBounds` and a layer at the origin
+   * passes through unchanged. The same translation is applied to the preview and to the commit: a
+   * preview in canvas space against a commit in layer space would show the stroke at one place and
+   * put it somewhere else the moment the pointer came up.
    */
+  const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : { x: 0, y: 0 };
+
   const toLayerPoints = (points: Point[]): Point[] =>
     points.map((point) => {
       const document = canvasToDocumentPoint(point, documentFrame);
-      return { x: document.x - activeLayer!.pos.x, y: document.y - activeLayer!.pos.y };
+      return { x: document.x - rasterBounds.x, y: document.y - rasterBounds.y };
     });
 
   /**

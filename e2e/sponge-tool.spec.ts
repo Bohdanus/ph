@@ -680,37 +680,23 @@ test.describe('Sponge tool', () => {
   });
 
   /**
-   * 6. A BEDROCK-ONLY DOCUMENT REFUSES THE GESTURE.
+   * 6. A BEDROCK-ONLY DOCUMENT HAS AN EXPLICIT EDITABLE-LAYER ROUTE.
    *
-   * The only layer on a fresh document is the bedrock one from `DEFAULT_BLANK_IMAGE`
-   * (`src/App.tsx:16-21`), and `SpongeToolArea.tsx:54` computes `enabled` as
-   * `args && activeLayerId && activeLayer && !activeLayer.isBedrock`, which `usePaintStroke`
-   * turns into every handler being a no-op. So the drag must change no pixels AND write no history
-   * item: the second half is the half a tool that merely repainted the same colour would pass,
-   * and the undo button is disabled on a fresh document for exactly that reason.
+   * The tonal tools keep refusing the backing image. The Layers panel's conversion action is the
+   * Photoshop-faithful route out of that state, and it must be a history edit rather than an
+   * implicit merge triggered by a refused pointer gesture.
    */
-  test('a drag on a bedrock-only document changes no pixels and writes no history entry', async ({ page }) => {
-    const geometry = await workspaceGeometry(page);
-    const before = await readWindow(page, geometry, { x: 400, y: 300 });
+  test('converts a lone Background into an editable layer before a tonal gesture', async ({ page }) => {
+    const convert = page.getByTestId('layers-convert-background-button');
+    await expect(convert, 'a fresh document exposes the Background conversion route').toBeVisible();
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+
+    await convert.click();
+    await expect(convert).toHaveCount(0);
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
 
     await selectTonal(page, SPONGE_ITEM);
-    await expect(modeSelect(page), 'the Sponge is selectable with no editable layer').toBeVisible();
-    await setMode(page, 'desaturate');
-    await setSlider(page, 'Flow', FLOW_FULL);
-    await setSlider(page, 'Size', SPONGE_SIZE);
-
-    const armed = await workspaceGeometry(page);
-    await strokeDocument(page, armed, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
-
-    expect
-      .soft(await readWindow(page, armed, { x: 400, y: 300 }), 'a bedrock drag must not move a pixel')
-      .toEqual(before);
-    expect
-      .soft(
-        await page.getByTestId('undo-button').isDisabled(),
-        'a refused gesture must not have written a TOOL_ACTION history item'
-      )
-      .toBe(true);
+    await expect(modeSelect(page), 'the converted layer keeps the Sponge available').toBeVisible();
   });
 
   /**

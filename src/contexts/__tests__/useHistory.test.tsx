@@ -13,7 +13,7 @@ import {
 } from '../../util/constants.ts';
 import { useHistory } from '../useHistory.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayerSource, LayersRecord, ToolLayerSource } from '../layer-types.ts';
+import type { Layer, LayerOperationArgs, LayerSource, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { getSortedLayersArray } from '../layer-utils.ts';
@@ -558,6 +558,52 @@ describe('useHistory undo replay', () => {
     expect(vi.mocked(surface.drawImage).mock.calls[0]).toEqual([bitmap, 0, 0, 40, 20]);
     expect(surface.transform).toHaveBeenCalledWith(2, 0, 0, 2, 5, 3);
     expect(state.layers.top.tmpCanvas).toBe(processed);
+    // Published at the bounds that baked raster occupies, with the baked operation gone from the
+    // list the renderer evaluates again. Keeping both was the double application: `getLayerBitmap`
+    // prefers this canvas, and `drawLayerSource` then re-evaluated a transform it already carried,
+    // at `pos` instead of at the extent. This is the durable contract too —
+    // `materialization.ts` advances `origin`/`size` to the evaluated bounds for exactly this
+    // reason, so the two replay paths now publish the same layer.
+    expect(state.layers.top.pos).toEqual({ x: 15, y: 8, width: 80, height: 40 });
+    expect(state.layers.top.operations).toEqual([]);
+  });
+
+  it('keeps a disabled operation on a layer whose enabled ones it baked into the raster', () => {
+    // A disabled entry contributed to no presentation, so it is not in the baked raster and
+    // dropping it would remove it from `toggleDisabled()`'s reach: the user could never switch
+    // their own adjustment back on.
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(40, 20);
+    vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 40, height: 20 },
+        operations: [
+          {
+            id: 'op-blur-off',
+            kind: 'filter',
+            enabled: false,
+            args: { toolName: 'blur', radius: 3 } as LayerOperationArgs,
+          },
+        ],
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    expect(state.layers.top.operations.map((operation) => operation.id)).toEqual(['op-blur-off']);
+    // Nothing was presented, so nothing moved: the layer is published where it already was.
+    expect(state.layers.top.pos).toEqual({ x: 10, y: 5, width: 40, height: 20 });
   });
 
   it('leaves the store completely untouched when toggleDisabled names an entry the timeline does not hold', () => {

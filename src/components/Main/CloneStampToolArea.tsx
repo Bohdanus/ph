@@ -4,6 +4,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointToLayerLocal, documentPointsToLayerLocal } from '../../util/layer-space.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
@@ -302,7 +303,10 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
     const source = args.source;
     if (!source || !activeLayer) return null;
 
-    const origin = activeLayer.pos;
+    // The presented raster's origin, not `pos`: a layer carrying a transform is handed a
+    // buffer staged at its evaluated extent, and a rebase against `pos` would address a
+    // point in that buffer the layer is not drawn at.
+    const origin = processorPresentationBounds(activeLayer);
 
     return {
       ...args,

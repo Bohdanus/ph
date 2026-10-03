@@ -26,9 +26,9 @@ type ShapeHandlerProps = {
 };
 
 export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize, documentFrame: currentFrame }] = useStore();
+  const [{ containerRef, toolOverlayRef, totalSize, documentFrame: currentFrame, activeLayerId, layers }] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { createLayerFromTool } = useLayers();
+  const { createLayerFromTool, replaceLayerSource } = useLayers();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as ShapeToolArgs;
@@ -233,7 +233,12 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       args: newArgs,
       pos: pos,
     };
-    createLayerFromTool(fullArgs);
+    const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+    if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'shape') {
+      replaceLayerSource(activeLayer.id, { kind: 'tool', args: newArgs, pos });
+    } else {
+      createLayerFromTool(fullArgs);
+    }
   };
 
   const handleDialogCreate = ({ width, height, fromCenter, cornerRadius }: CreateShapeParams) => {

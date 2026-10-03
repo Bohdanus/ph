@@ -296,6 +296,7 @@ function durableLayerIds(durable: DurableDocument): string[] {
       case 'remove-layer':
       case 'set-layer-properties':
       case 'reposition-layer':
+      case 'replace-layer-source':
       case 'apply-filter':
       case 'apply-affine-transform':
       case 'apply-raster-processor':

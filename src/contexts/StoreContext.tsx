@@ -1,5 +1,11 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
-import { DEFAULT_TOOL, MERGE_ACTION, NEW_LAYER_ACTION, REORDER_ACTION } from '../util/constants.ts';
+import {
+  DEFAULT_TOOL,
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  REORDER_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
+} from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
@@ -27,6 +33,7 @@ import {
 } from './history-model.ts';
 import {
   convertLegacyHistorySafely,
+  deriveReplaceLayerSourceEntry,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
@@ -1107,7 +1114,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const sourceContext = sourceBackedEntryContext(currentState, action.payload.historyItem, registry);
       let plannedEntry = action.payload.durableEntry;
       let plannerTransaction: DocumentAssetTransaction | undefined;
-      if (plannedEntry == null && sourceContext) {
+      if (plannedEntry == null && action.payload.historyItem.actionName === REPLACE_LAYER_SOURCE_ACTION) {
+        plannedEntry = deriveReplaceLayerSourceEntry(action.payload.historyItem);
+      } else if (plannedEntry == null && sourceContext) {
         try {
           plannerTransaction = registry.beginDocumentAssetTransaction(currentState.documentId);
           plannedEntry =

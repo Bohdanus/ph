@@ -12,9 +12,11 @@ import type { DocumentFrame } from './document-frame.ts';
 import { getAssetRegistry, type AssetRegistry } from './asset-registry.ts';
 import {
   deriveRemoveLayerEntry,
+  deriveReplaceLayerSourceEntry,
   deriveSetDocumentFrameEntry,
   deriveSetLayerPropertiesEntry,
   deriveSetSelectionEntry,
+  editableSourceReplacementFromEntry,
   isSetLayerPropertiesAction,
   isEntryEnabled,
   layerPropertyKeyFor,
@@ -32,13 +34,14 @@ import {
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
   type DurableOperation,
+  type ReplaceLayerSourceOperation,
   type SelectionSnapshot,
 } from './history-model.ts';
 import { isTrapezoidOnlyTransform, multiplyAffineTransforms, type AffineTransform } from './affine-transform.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
-import type { Layer, LayerId, LayerSource } from './layer-types.ts';
+import type { Layer, LayerId, LayerSource, ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ToolName } from './tool-types.ts';
 
@@ -75,6 +78,12 @@ const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.f
  *    replay, so an unusable next selection state yields no durable entry.
  * 5. A boundary failure can never reject or undo a legacy-valid edit. Every
  *    failure is reported as a durable-unavailable diagnostic.
+ * 6. A source edit is the one source-backed action this boundary translates, and
+ *    it is translated because its durable form needs no asset: the payload type
+ *    admits only `text` and `vector`, whose conversion registers nothing. So the
+ *    derivation needs neither a document id nor a registry, and the append is
+ *    publishable from this module alone rather than only through the store-boundary
+ *    planners. Its grading still refuses a plan carrying any other source kind.
  */
 export type AppendBoundaryInput = Readonly<{
   item: NewHistoryItem;
@@ -366,6 +375,24 @@ function translate(
       return unavailableFromError(entry, error);
     }
   }
+
+  // The source-edit arm, immediately before the terminal refusal, and its
+  // position is the guarantee: every action above claims its own by name, and the
+  // reader refuses any entry carrying a creation `layerSource`, so what arrives
+  // here with a readable replacement source is an action this boundary has no
+  // other rule for.
+  //
+  // It is here rather than in `deriveCreateLayerEntry` at the store boundary
+  // because `deriveReplaceLayerSourceEntry` needs no store: the source it installs
+  // is derived from the entry alone and registers nothing. That is what makes a
+  // source edit publishable from `planHistoryAppend` — the one gate RQ-2's
+  // "appendable, not conversion-only" turns on. `preLayerOrder`, `preLayers` and
+  // the registry are the other three source-backed preconditions and none of them
+  // applies: the operation states the layer's source outright and re-measures the
+  // box from it, so there is nothing to read off the pre-append state and no asset
+  // whose liveness needs proving.
+  const replaceEntry = deriveReplaceLayerSourceEntry(entry);
+  if (replaceEntry) return { entry, durableEntry: replaceEntry, diagnostics: [] };
 
   return unavailable(
     entry,
@@ -1024,6 +1051,87 @@ function retainedToolOperationProblem(
 }
 
 /**
+ * The own keys an installed source must have, exactly.
+ *
+ * `isBedrock` is among them because `convertSource` always writes it, false
+ * included. The count is what does the work: a source that also carried a
+ * `bitmap` or an `assetId` — the shape a plan must never publish, because it
+ * would put a copy of the pixels in the timeline and name an asset id nothing
+ * here can prove resolves — has one key too many, and the operation's own type
+ * already excludes such a source, so this is the second line rather than the
+ * guarantee.
+ */
+const REPLACE_SOURCE_KEYS = ['kind', 'toolName', 'args', 'size', 'sourcePos', 'isBedrock'];
+
+/**
+ * The source-edit grading, read off the legacy item rather than re-derived from
+ * the plan.
+ *
+ * Four separate facts are checked because the operation is the one durable
+ * operation whose payload is a whole source:
+ *
+ * 1. The operation is the source-edit kind and carries only its four own keys.
+ * 2. The source is an editable typed source, and exactly the canonical keys — so
+ *    no bitmap is aliased into a document that owns its pixels elsewhere.
+ * 3. The source's arguments are the legacy source's arguments, structurally and
+ *    key-order independently. This is the whole edit: the text content, the font,
+ *    the shape's geometry live here.
+ * 4. `pos`, `source.size` and `source.sourcePos` agree with each other and with
+ *    the legacy box. `convertSource` derives the last two from the first, so a
+ *    plan that states a box the source was not authored against is one whose
+ *    materialization would scale the source from a stale rectangle.
+ */
+function replaceLayerSourceProblem(
+  operation: DurableOperation,
+  entry: HistoryItem,
+  replacement: ToolLayerSource
+): string | null {
+  // The reader already refuses a bedrock replacement, so this test cannot fire. It
+  // is here because this function must narrow the source's `NewLayerData` union to
+  // read `pos` at all, and a grading that trusted the reader's RETURN TYPE to have
+  // done that narrowing would be one refactor away from reading a bedrock box off
+  // a union that does not promise one.
+  if (replacement.isBedrock) return 'a bedrock source cannot be installed by a source edit';
+  const legacyPos = replacement.pos;
+  if (operation.kind !== 'replace-layer-source') {
+    return `a source edit produced a "${operation.kind}" operation`;
+  }
+  const planned: ReplaceLayerSourceOperation = operation;
+  if (!hasCanonicalKeys(planned, ['kind', 'layerId', 'source', 'pos'])) {
+    return 'the durable replace-layer-source operation does not have the canonical shape';
+  }
+  if (planned.layerId !== entry.layerId) return 'the durable layer id does not match the legacy entry';
+  // `EditableDurableLayerSource` admits only `text` and `vector`, so this test is
+  // false for every value the type admits. It exists for a planned entry that
+  // arrived from outside the type system, and reading the kind through `unknown`
+  // is what lets the refusal NAME the kind it refused instead of printing a type
+  // the compiler has already proved cannot occur.
+  const installedKind: unknown = planned.source.kind;
+  if (installedKind !== 'text' && installedKind !== 'vector') {
+    return `the durable source edit installs a "${String(installedKind)}" source`;
+  }
+  const source = planned.source;
+  if (!hasCanonicalKeys(source, REPLACE_SOURCE_KEYS)) {
+    return 'the durable replacement source does not have the canonical shape';
+  }
+  if (source.isBedrock) return 'the durable replacement source declares a bedrock source';
+  if (source.toolName !== replacement.args.toolName) {
+    return 'the durable replacement source tool name does not match the legacy entry';
+  }
+  if (!sameJsonValue(source.args, replacement.args)) {
+    return 'the durable replacement source arguments do not match the legacy entry';
+  }
+  if (!sameJsonValue(planned.pos, legacyPos)) return 'the durable layer position does not match the legacy entry';
+  if (!sameJsonValue(source.size, { width: legacyPos.width, height: legacyPos.height })) {
+    return 'the durable replacement source size does not match the legacy layer box';
+  }
+  if (!sameJsonValue(source.sourcePos, legacyPos)) {
+    return 'the durable replacement source position does not match the legacy layer box';
+  }
+  return null;
+}
+
+/**
  * Proves the planned entry is the entry this legacy item must produce. A
  * disagreement is a defect in the writer, not a reason to reject the edit, so
  * the caller still falls back to the conversion and reports it.
@@ -1233,6 +1341,20 @@ export function validatePlannedDurableEntry(
       return `no retained durable translation is published for the tool action on "${String(legacyArgs.toolName)}" yet`;
     }
     return retainedToolOperationProblem(planned.operation, entry, legacyArgs, expectedKind);
+  }
+
+  // The source-edit arm, after every arm that claims an action by name: creation,
+  // merge, the tool path, and the four named actions above have all returned, so
+  // reaching here with a readable replacement source means the entry is a source
+  // edit. Reached through `editableSourceReplacementFromEntry` — the reader of
+  // the legacy carrier, shared with the derivation in `history-adapter.ts` — and
+  // graded field by field against the caller's own source object rather than by
+  // re-deriving it, for the same reason the tool arm re-implements the dispatch.
+  const editableReplacement = editableSourceReplacementFromEntry(entry);
+  if (editableReplacement) {
+    const replaceProblem = replaceLayerSourceProblem(planned.operation, entry, editableReplacement);
+    if (replaceProblem) return replaceProblem;
+    return null;
   }
 
   return `no durable translation is published for "${entry.actionName}" yet`;

@@ -7,14 +7,15 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Read this first
 
-|                                        |                                                                                            |
-| -------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`DOCUMENTATION.md`](DOCUMENTATION.md) | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
-| [`OVERRIDES.md`](OVERRIDES.md)         | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
-| [`FEATURES.md`](FEATURES.md)           | What the app can and cannot do, system-wide, against Photoshop                             |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)   | What the code is and how it fits together                                                  |
-| [`../AGENTS.md`](../AGENTS.md)         | The rules an agent reads first: delegation, worktrees, gates, no browser windows           |
-| [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)   | The product requirement for the Tools rail, and its open violations                        |
+|                                                |                                                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`DOCUMENTATION.md`](DOCUMENTATION.md)         | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
+| [`OVERRIDES.md`](OVERRIDES.md)                 | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
+| [`FEATURES.md`](FEATURES.md)                   | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)           | What the code is and how it fits together                                                  |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | Durable-history requirements, sequencing, and operator gates                               |
+| [`../AGENTS.md`](../AGENTS.md)                 | The rules an agent reads first: delegation, worktrees, gates, no browser windows           |
+| [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)           | The product requirement for the Tools rail, and its open violations                        |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -43,10 +44,11 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## System
 
-| Document                             | Its one job                                                                   |
-| ------------------------------------ | ----------------------------------------------------------------------------- |
-| [`FEATURES.md`](FEATURES.md)         | Capability inventory against Photoshop, including what the platform cannot do |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | The store, the layer model, both history systems, rendering, file I/O         |
+| Document                                       | Its one job                                                                   |
+| ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`FEATURES.md`](FEATURES.md)                   | Capability inventory against Photoshop, including what the platform cannot do |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)           | The store, the layer model, both history systems, rendering, file I/O         |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | The durable-history migration contract and cutover sequence                   |
 
 ## Working practice
 
