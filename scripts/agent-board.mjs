@@ -805,6 +805,14 @@ export async function run(
               : '  files: none locked',
             deps.length ? `  depends on: ${deps.map((dep) => dep.depends_on).join(', ')}` : null,
             dependents.length ? `  blocks: ${dependents.map((dep) => dep.issue_id).join(', ')}` : null,
+            // A body is a document, and it is the one place a finding of any length
+            // can live: the board refuses a log line over the limit rather than
+            // truncating it, so an issue body is where a long report goes. Printing
+            // it here is what makes "post the issue id" a complete instruction —
+            // `board_post` cannot carry the document itself, so the reader needs
+            // one command, not `show --json` and a JSON path.
+            issue.body ? '  body:' : null,
+            ...(issue.body ? issue.body.split('\n') : []),
             '',
             ...thread.map(eventLine),
           ]

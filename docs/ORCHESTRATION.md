@@ -763,15 +763,39 @@ tails. That is why these are not optional politeness:
   the sessions a fan-out spawned, so a post about work in a worktree usually has
   **no recipient in the room** and returns `total: 0, active: 0` with an explicit
   warning that nothing was delivered. Treat that response as the answer.
-- **A post that does not fit is a note of the finding's PATH, not a shorter
-  finding.** Kilo's `board_post` rejects a body over 4096 characters, and the
-  rejection kills the turn mid-report: the review that was verified, the mutation
-  that was run, the evidence that was gathered — all of it unwritten, and the
-  session's last act is a tool error rather than an answer. A Kilo chat died here
-  on a review it had already finished. Write the finding to a handoff document and
-  post its path; the repo board caps a message at the same 4096 characters and
-  refuses rather than truncating, so neither channel can hold a document and
-  neither will quietly pretend it did.
+- **The cap is on the FORMATTED message, in BYTES — and "under 4096 characters" is
+  the rule that was failing.** `board_post` enforces two limits over two
+  different counters. Its argument schema refuses a `body` over 4096 **UTF-16
+  units**; `BoardStore.post` then measures `Buffer.byteLength` of
+  `JSON.stringify({id, timestamp, from, to, type, body, reply_to})` against
+  **4096 bytes**. The envelope costs 191–253 bytes depending on the session ids
+  and whether the post is a reply, so a 4090-character body clears the schema and
+  is refused a moment later with `Formatted board message exceeds 4096 bytes` —
+  37 recorded posts died exactly there, having been written to a limit that did
+  not exist. Non-ASCII dies twice over: 1000 emoji are 2000 units and 4000 bytes.
+  **A body has about 3840 bytes: 3800 ASCII characters, or 1200 characters if any
+  of them may be non-ASCII.** Both figures are measured against the worst
+  envelope, reply included.
+- **It ends the STEP, not the turn, and the difference is 13%.** Of 134 recorded
+  rejections, 117 continued in the same turn — nearly all by retrying shorter —
+  and 17 ended it for good: 13 subagents, 9 of those sessions never speaking
+  again. The claim that a rejection ends the whole turn stood in this file and in
+  `AGENTS.md`, and it was false. An overclaim in the direction that tells an
+  agent the failure is unrecoverable is worth as much as the missing number was.
+- **So a long finding is a POINTER, and the pointer has a channel with no cap.**
+  An issue body is not an event and is not capped (the next subsection says by
+  what), the board database lives in the git common directory, so one command
+  hands a peer a document of any length from any worktree:
+
+  ```sh
+  npm run swarm -- new "short title" --body "$(cat /abs/path/finding.md)"
+  ```
+
+  `swarm show <id>` prints that body, so the peer needs no second command. Then
+  `board_post` the issue id plus one clause on what it says. Do not compress the
+  finding to fit: the repo board refuses rather than truncating for the same
+  reason, so a document belongs in a body and a log line stays a log line.
+
 - **An unclaimed path looks free; claim or hold it before editing.** A held file is
   a queue, not a deadlock: do not edit it or wait on the lease. Note the file and
   change, hand it over, or work elsewhere and merge `main` in first.
