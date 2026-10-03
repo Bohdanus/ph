@@ -11,6 +11,7 @@ import {
   getTextWidth,
   layoutText,
   renderText,
+  requiredHeightForLines,
   resolveTextKind,
   resolveTextStyle,
   text,
@@ -59,15 +60,88 @@ const metricMeasure = (value: string): TextMetrics =>
  * property present and fully functional, so a prototype-deletion test of the manual fallback is a
  * FALSE PASS on the real browser. Omitting the key is what exercises the fallback, and that is the
  * default here for exactly that reason.
+ *
+ * `save` and `restore` are modelled over the properties `applyTextStyle` writes, rather than being
+ * left as bare spies. Every bracket in this file — `renderText`'s and the three measurers' — is
+ * load-bearing, because each of them is handed the live tool overlay, and a spy cannot tell a
+ * bracket that works from a bracket that was never written. Modelling them HERE rather than in the
+ * shared `canvas-mock` keeps the change inside this file: the shared mock's no-op brackets are
+ * asserted by call COUNT elsewhere, and giving them state would be a wider change than this
+ * assertion needs.
  */
+const RESTORED_BY_SAVE = [
+  'font',
+  'textBaseline',
+  'textAlign',
+  'letterSpacing',
+  'fontVariantCaps',
+  'fillStyle',
+  'globalAlpha',
+] as const;
+
+/** Per-context log of the style state at each measurement, written by `makeTextCtx`. */
+const appliedDuring = new WeakMap<CanvasRenderingContext2D, Record<string, unknown>[]>();
+
 const makeTextCtx = ({
   measure = widthOnlyMeasure,
   modern = false,
-}: { measure?: (value: string) => TextMetrics; modern?: boolean } = {}): CanvasRenderingContext2D =>
-  makeMockCtx({
+}: { measure?: (value: string) => TextMetrics; modern?: boolean } = {}): CanvasRenderingContext2D => {
+  const ctx = makeMockCtx({
     measureText: vi.fn(measure),
     ...(modern ? { letterSpacing: '0px', fontVariantCaps: 'normal' } : {}),
+  }) as unknown as CanvasRenderingContext2D & Record<string, unknown>;
+
+  const stack: Partial<Record<(typeof RESTORED_BY_SAVE)[number], unknown>>[] = [];
+  // A union-keyed write into the intersection type resolves the target to the intersection of every
+  // property's type, which `unknown` is not assignable to. The writes are string-keyed at runtime.
+  const target = ctx as unknown as Record<string, unknown>;
+  ctx.save = vi.fn(() => {
+    // Only the keys the context ACTUALLY carries, and presence is what is recorded: restoring an
+    // absent key by assigning `undefined` would CREATE it, which is precisely what
+    // `it('never creates a letterSpacing property on a context that lacks one')` exists to catch —
+    // a test helper that manufactures the property it is guarding against would be worse than none.
+    const frame: Partial<Record<(typeof RESTORED_BY_SAVE)[number], unknown>> = {};
+    for (const key of RESTORED_BY_SAVE) {
+      if (Object.hasOwn(ctx, key)) frame[key] = target[key];
+    }
+    stack.push(frame);
   });
+  ctx.restore = vi.fn(() => {
+    const frame = stack.pop();
+    if (!frame) return;
+    for (const key of RESTORED_BY_SAVE) {
+      if (Object.hasOwn(frame, key)) target[key] = frame[key];
+    }
+  });
+
+  // Every property value in effect at each `measureText`, which is the one moment guaranteed to be
+  // inside the bracket: the style is applied before the first measurement and restored after the
+  // last. Anything the renderer APPLIED has to be asserted against this, because by the time
+  // `renderText` returns the context is back to its seed — which is the fix, and reading the
+  // post-return value instead is how two cases here came to pin the value the renderer used to
+  // LEAK into a shared context as though it were the feature.
+  const log: Record<string, unknown>[] = [];
+  appliedDuring.set(ctx, log);
+  vi.mocked(ctx.measureText).mockImplementation((value: string) => {
+    log.push(Object.fromEntries(RESTORED_BY_SAVE.map((key) => [key, target[key]])) as Record<string, unknown>);
+    return measure(value);
+  });
+
+  return ctx;
+};
+
+/**
+ * The context state as it stood during the LAST measurement the renderer made.
+ *
+ * Empty until something measured, so a test that consults it without drawing reads `{}` rather than
+ * a plausible-looking value — an assertion that can pass without the renderer having run at all is
+ * the failure mode this whole file has been audited for.
+ */
+const applied = (ctx: CanvasRenderingContext2D, key: string): unknown => {
+  const log = appliedDuring.get(ctx);
+  const last = log?.[log.length - 1];
+  return last ? last[key] : undefined;
+};
 
 /** Every string the renderer handed to `measureText`, in call order. */
 const measured = (ctx: CanvasRenderingContext2D): string[] =>
@@ -309,6 +383,53 @@ describe('resolveTextStyle', () => {
     expect(Object.hasOwn(args, 'tracking')).toBe(false);
     expect(Object.hasOwn(args, 'underline')).toBe(false);
   });
+
+  // A MISSING field and a CORRUPT one are different failures, and `??` only answered the first. A
+  // hand-edited or forward-version settings record is an input this resolver's own contract
+  // promises to survive, and every way it broke was silent rather than loud.
+  const nonFinite = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+
+  it.each(nonFinite)('folds a non-finite fontSize (%p) into a drawable size', (bad) => {
+    // `fontSize: NaN` built the shorthand `'NaNpx Arial'`, which the CSS grammar REJECTS — and
+    // Chrome does not throw on a rejected `ctx.font`, it keeps the previous one. So the drawing
+    // context carried on using an older face while `fontSize` itself still reached
+    // `calculateNewRect`, and the two halves disagreed about the size of the type.
+    const style = resolveTextStyle({ ...baseArgs, fontSize: bad });
+
+    expect(Number.isFinite(style.fontSize)).toBe(true);
+    expect(fontShorthand(style)).not.toContain('NaN');
+    expect(fontShorthand(style)).not.toContain('Infinity');
+  });
+
+  it.each(nonFinite)('folds a non-finite lineHeight (%p) into a drawable leading', (bad) => {
+    // `lineHeight: NaN` made every baseline `NaN`, and `fillText` at a `NaN` y draws NOTHING at
+    // all — an empty layer, with no error thrown anywhere.
+    const style = resolveTextStyle({ ...baseArgs, lineHeight: bad });
+
+    expect(Number.isFinite(style.lineHeight)).toBe(true);
+    expect(style.lineHeight).toBe(AUTO_LEADING);
+  });
+
+  it.each(nonFinite)('folds a non-finite tracking (%p) into zero', (bad) => {
+    // `tracking: NaN` produced `'NaNpx'`, which `ctx.letterSpacing` also rejects silently, and sent
+    // `inkWidth` down its per-cluster fallback with a `NaN` cursor.
+    expect(resolveTextStyle({ ...baseArgs, tracking: bad }).tracking).toBe(0);
+  });
+
+  it('clamps a fontSize to the Adobe bounds rather than only rejecting a bad type', () => {
+    // `0.01` and `1296` are Adobe's own `CharacterStyle.size` range, so folding to them is the same
+    // rule the options bar applies on entry rather than a second policy. `NaN` is not in either
+    // list, which is why the two are separate cases above.
+    expect(resolveTextStyle({ ...baseArgs, fontSize: 1e9 }).fontSize).toBe(FONT_SIZE_MAX);
+    expect(resolveTextStyle({ ...baseArgs, fontSize: -12 }).fontSize).toBe(FONT_SIZE_MIN);
+  });
+
+  it('leaves a leading of zero alone, because zero is finite and drawable', () => {
+    // The guard is about DRAWABILITY, not about the bar's range: `MIN_LINE_HEIGHT` belongs to the
+    // slider, and folding 0 up to 0.5 would have silently changed the arithmetic that
+    // `it('stacks lines on top of each other for a zero line height')` pins.
+    expect(resolveTextStyle({ ...baseArgs, lineHeight: 0 }).lineHeight).toBe(0);
+  });
 });
 
 describe('resolveTextKind', () => {
@@ -334,6 +455,50 @@ describe('textWrapWidth', () => {
     expect(textWrapWidth({ x1: 10, y1: 0, x2: 110, y2: 120 })).toBe(90);
     expect(textWrapWidth({ x1: 100, y1: 0, x2: 200, y2: 120 })).toBe(90);
     expect(textWrapWidth(narrowRect)).toBe(30);
+  });
+});
+
+describe('requiredHeightForLines', () => {
+  // The box has to contain the INK, and the ink is taller than the line SPACING whenever the
+  // leading is under the font's own ascent: the first baseline sits at `y1 + TEXT_PADDING + ascent`,
+  // so a step shorter than the ascent put that baseline below the box the layer is sized from. The
+  // committed layer's canvas IS the box, so this was missing pixels in the FILE rather than a
+  // drawing artifact — and the leading slider's floor is far under the threshold, so every draft
+  // at a low leading hit it.
+  const context = makeTextCtx({ measure: metricMeasure });
+  const style = (lineHeight: number) => resolveTextStyle({ ...baseArgs, fontSize: 20, lineHeight });
+
+  it('holds the ascent and the descent when the leading is below the ascent', () => {
+    // metricMeasure reports 58px of ascent and no descent, so the fallback descent applies:
+    // 58 + 0.2 * 20 = 62 of ink against a step of 20 * 0.5 = 10.
+    const height = requiredHeightForLines(context, style(0.5), 1);
+
+    expect(height).toBe(Math.max(10, 58 + 4) + TEXT_PADDING * 2);
+    // And the box is tall enough that a baseline at `y1 + PAD + ascent` still lands inside it.
+    expect(height - TEXT_PADDING).toBeGreaterThan(58);
+  });
+
+  it('uses the line step when the leading is the generous one', () => {
+    // 4 lines at 20px and 1.2 is 96 of step, well over the 62 of ink, so nothing changes for an
+    // ordinary leading — which is why this was only ever visible at the bottom of the slider.
+    expect(requiredHeightForLines(context, style(1.2), 4)).toBe(4 * 20 * 1.2 + TEXT_PADDING * 2);
+  });
+
+  it('never reports a height smaller than one line of ink, whatever the count', () => {
+    for (const lineHeight of [0, 0.5, 1, 1.2, 2.25]) {
+      expect(requiredHeightForLines(context, style(lineHeight), 1)).toBeGreaterThan(58);
+    }
+  });
+
+  it('grows with the line count once the ink stops being the binding term', () => {
+    // Both ends have to sit ABOVE the ink height of 62, or the difference is not the step: at one
+    // line and 1.2 the box is ink-bound (72) while at four it is step-bound (106), and their
+    // difference is 34 rather than three steps of 24 — which is exactly why the ink term exists.
+    const five = requiredHeightForLines(context, style(1.2), 5);
+    const eight = requiredHeightForLines(context, style(1.2), 8);
+
+    expect(five).toBe(5 * 20 * 1.2 + TEXT_PADDING * 2);
+    expect(eight - five).toBe(3 * 20 * 1.2);
   });
 });
 
@@ -450,6 +615,72 @@ describe('layoutText', () => {
     expect(layoutText(ctx, style, body, 5 * CH, 60).lines).toHaveLength(3);
     expect(layoutText(ctx, style, body, 5 * CH, 60).overflow).toBe(true);
   });
+
+  it('reports an overflow for a line too WIDE for the box, not only for one too tall', () => {
+    // Adobe's condition is "more text than can fit within a paragraph boundary", which is about the
+    // BOUNDARY rather than about the number of lines. A single token too wide for the box overflows
+    // it sideways while the line count stays at one and the height fits perfectly — so the height
+    // comparison alone could never raise the icon for the very case Adobe documents as the expected
+    // outcome of his off-by-default hyphenation, and the icon is the only signal the user gets.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+    // 'Photoshop' is one token; a box two characters wide cannot hold it and must not break it.
+    const tooNarrow = 2 * CH;
+
+    const layout = layoutText(ctx, style, 'Photoshop', tooNarrow, 1000);
+
+    expect(layout.lines).toEqual(['Photoshop']);
+    expect(layout.lines).toHaveLength(1);
+    // A box a thousand tall, so the height cannot be what is reporting this.
+    expect(layout.overflow).toBe(true);
+    // And the same text in a box that holds it reports nothing.
+    expect(layoutText(ctx, style, 'Photoshop', 20 * CH, 1000).overflow).toBe(false);
+  });
+
+  it('breaks at a tab and at a run of spaces, and not at a non-breaking space', () => {
+    // A pattern rather than `split(' ')`, because Photoshop breaks paragraph type at a whitespace
+    // RUN: three tab-separated columns are one U+0020-free token under the old rule, so they could
+    // never be broken, were emitted alone, overflowed by hundreds of pixels and reported nothing.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+    // Three characters wide, so a two-word candidate (five characters) cannot fit and every word
+    // has to start a line of its own.
+    const wrap = 3 * CH;
+
+    expect(layoutText(ctx, style, 'ab\tcd\tef', wrap).lines).toEqual(['ab', 'cd', 'ef']);
+    expect(layoutText(ctx, style, 'ab   cd   ef', wrap).lines).toEqual(['ab', 'cd', 'ef']);
+    // NBSP is in `\s`, so it is excluded by character class rather than stripped afterwards —
+    // `1 kg` is one token, and the line overflows rather than breaking at the space.
+    expect(layoutText(ctx, style, '1 kg', wrap).lines).toEqual(['1 kg']);
+    // Whatever the run, the words survive: the breaker splits between tokens and never inside one.
+    const rejoined = layoutText(ctx, style, 'ab\tcd\tef', wrap).lines.join(' ');
+    expect(rejoined).toBe('ab cd ef');
+  });
+
+  it('keeps a whitespace-only body to one line rather than one line per space', () => {
+    // Three spaces split into four empty tokens under the old rule, and each was measured and
+    // emitted as its own line — three blank lines of height for a body with no ink in it.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    expect(layoutText(ctx, style, '   ', 5 * CH).lines).toHaveLength(1);
+  });
+
+  it('does not trim a non-breaking space out of the fit test', () => {
+    // `String.prototype.trimEnd` deletes U+00A0 — it is in the ES `WhiteSpace` production — so the
+    // old trim measured the fit against a line one space narrower than the one `fillLine` drew, an
+    // overflow the layout could not see and the box could not grow to cover.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    // 'ab' plus a trailing NBSP is three characters, which is wider than the two-character
+    // box that holds the plain 'ab' exactly. The escape is SPELLED OUT rather than pasted, because
+    // an invisible NBSP in a source file is indistinguishable from the very space this case is
+    // about — and it is the collapsible space's behaviour that is the control.
+    expect(layoutText(ctx, style, 'ab\u00A0', 2 * CH).overflow).toBe(true);
+    expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(false);
+    expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(true);
+  });
 });
 
 describe('renderText', () => {
@@ -552,7 +783,13 @@ describe('renderText', () => {
 
       renderText(ctx, { ...baseArgs, italic: true, bold: true });
 
-      expect(ctx.font).toBe('italic bold 20px Arial');
+      // Read DURING the draw, through `applied`. `renderText` brackets itself, so by the time it
+      // returns the context is back to its seed — and reading it then would measure the restore
+      // rather than the drawing, which is how this case came to pin the value the renderer used to
+      // LEAK into the shared overlay as though the leak were the feature.
+      expect(applied(ctx, 'font')).toBe('italic bold 20px Arial');
+      // And the seed is what the caller gets back, which is the other half of the same fix.
+      expect(ctx.font).toBe('10px sans-serif');
     });
 
     it('anchors every line at "start" and measures every y from the alphabetic baseline', () => {
@@ -571,6 +808,46 @@ describe('renderText', () => {
         expect(ctx.textBaseline).toBe('alphabetic');
         expect(ctx.textAlign).toBe('start');
       }
+    });
+
+    it("leaves the caller's typography alone when it returns", () => {
+      // The one assertion that would have caught the leak. `applyTextStyle` is not a measurement, it
+      // writes `font`, `textBaseline`, `textAlign`, `letterSpacing` and `fontVariantCaps` onto the
+      // caller's context — and `renderText` is handed the LIVE tool overlay, the same object
+      // `overlayCtxRef` and `toolOverlayRef` resolve to, which lives for the whole session. So an
+      // unbracketed version left the overlay wearing the draft's typeface, tracking and caps variant
+      // after the user left the Type tool, for every later overlay painter to inherit. The three
+      // measurers in this file were bracketed for exactly this reason and this one was not.
+      //
+      // `makeTextCtx` models `save`/`restore` as bare spies, so the bracket has to be asserted
+      // through its EFFECT on a real property rather than by counting the calls.
+      const ctx = makeTextCtx();
+      ctx.font = '10px sans-serif';
+
+      renderText(ctx, { ...baseArgs, tracking: 250, allCaps: true });
+
+      expect(ctx.font).toBe('10px sans-serif');
+      // And the state `applyTextStyle` wrote is visible while the type is being drawn, which is what
+      // makes the restore above a restore rather than a no-op that never applied anything.
+      expect(ctx.fontVariantCaps).not.toBe('normal');
+      expect(ctx.letterSpacing).not.toBe('0px');
+    });
+
+    it("restores the caller's alpha after rendering a draft", () => {
+      // `resetOverlayAlpha` is a WRITE and not a restore, so it has to sit OUTSIDE the bracket —
+      // `restore()` would undo it — and it has to stay after the `!text || !rect` guard so a no-op
+      // draft leaves the shared alpha as it found it. Both directions are pinned below.
+      const ctx = makeTextCtx();
+      ctx.globalAlpha = 0.2;
+
+      renderText(ctx, baseArgs);
+
+      expect(ctx.globalAlpha).toBe(1);
+
+      const untouched = makeTextCtx();
+      untouched.globalAlpha = 0.2;
+      renderText(untouched, { ...baseArgs, text: '' });
+      expect(untouched.globalAlpha).toBe(0.2);
     });
   });
 
@@ -794,8 +1071,15 @@ describe('renderText', () => {
       // The icon is chrome, not ink, so it is drawn in the TYPE colour and bracketed by
       // save/restore — an unbracketed `strokeStyle` would leave the shared overlay wearing it for
       // the next tool, and the order is what proves the bracket rather than a trailing restore.
+      //
+      // Two brackets, not one, and both are load-bearing. The INNER pair is this function's own; the
+      // OUTER one is `renderText`'s, which every context-touching function in this file now has
+      // because `applyTextStyle` writes the draft's `font`, `textAlign`, `letterSpacing` and
+      // `fontVariantCaps` onto the caller's context and `renderText` is handed the LIVE tool
+      // overlay. The nesting is the assertion: a stroke outside both brackets, or a bracket opened
+      // and not closed, would both change this sequence.
       expect(styleAtStroke).toBe('#ff0000');
-      expect(order).toEqual(['save', 'stroke', 'restore']);
+      expect(order).toEqual(['save', 'save', 'stroke', 'restore', 'restore']);
     });
 
     it('draws no indicator on the default call, even for text that overflows', () => {
@@ -828,8 +1112,11 @@ describe('renderText', () => {
 
       renderText(ctx, { ...baseArgs, tracking });
 
-      expect(ctx.letterSpacing).toBe(expected);
-      expect(ctx.letterSpacing).toMatch(/^-?\d+(\.\d+)?px$/);
+      // `applied`, not `ctx.letterSpacing`: the renderer restores the context before it returns, so
+      // the value that proves the string was WRITTEN is the one in effect while it drew. Reading the
+      // property afterwards read the seed and this case pinned a leak.
+      expect(applied(ctx, 'letterSpacing')).toBe(expected);
+      expect(applied(ctx, 'letterSpacing')).toMatch(/^-?\d+(\.\d+)?px$/);
     });
 
     it('never creates a letterSpacing property on a context that lacks one', () => {
@@ -889,10 +1176,13 @@ describe('renderText', () => {
   });
 
   describe('caps', () => {
-    const capsFor = (overrides: Partial<TextToolArgs>): string => {
+    // Read DURING the draw, not after it: `renderText` restores the context before returning, so
+    // the property afterwards is the seed and every case here would have read `'normal'`. `applied`
+    // is the value in effect while the glyphs were drawn, which is what the caps question is about.
+    const capsFor = (overrides: Partial<TextToolArgs>): unknown => {
       const ctx = makeTextCtx({ modern: true });
       renderText(ctx, { ...baseArgs, ...overrides });
-      return ctx.fontVariantCaps;
+      return applied(ctx, 'fontVariantCaps');
     };
 
     it('caps the whole line for All Caps, only the lowercase for Small Caps, and nothing otherwise', () => {
@@ -929,7 +1219,16 @@ describe('renderText', () => {
 
       renderText(ctx, { ...baseArgs, italic: true, bold: true, allCaps: true });
 
-      expect(assignments).toEqual([{ value: 'all-small-caps', fontAtAssignment: 'italic bold 20px Arial' }]);
+      // TWO writes, and the second is the point as much as the first. The first is the renderer
+      // applying the style, and `fontAtAssignment` proves the ORDER the whole feature hangs on. The
+      // second is the renderer's own restore putting the context back — and `fontAtAssignment` is
+      // the seed there, which is the other half of the bracket: the font is restored before the
+      // caps value is, so the overlay is left with the face it started the draft with rather than
+      // the draft's.
+      expect(assignments).toEqual([
+        { value: 'all-small-caps', fontAtAssignment: 'italic bold 20px Arial' },
+        { value: 'normal', fontAtAssignment: '10px sans-serif' },
+      ]);
     });
 
     it('never creates a fontVariantCaps property on a context that lacks one', () => {
@@ -1110,8 +1409,10 @@ describe('getTextWidth', () => {
 
     getTextWidth(ctx, { ...baseArgs, italic: true, bold: true, tracking: 100, text: 'x' });
 
-    expect(ctx.font).toBe('italic bold 20px Arial');
-    expect(ctx.letterSpacing).toBe('2px');
+    // `applied`, because `getTextWidth` brackets its own style writes and the context is back to its
+    // seed by the time it returns. The question this case asks is what the measurer measured IN.
+    expect(applied(ctx, 'font')).toBe('italic bold 20px Arial');
+    expect(applied(ctx, 'letterSpacing')).toBe('2px');
   });
 
   it('brackets its style writes in save/restore, because the caller owns the context', () => {

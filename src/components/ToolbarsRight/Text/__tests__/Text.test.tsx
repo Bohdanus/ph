@@ -513,7 +513,12 @@ describe('Text toolbar', () => {
       // `!text` early return, which is load-bearing for exactly this case.
       const rect = lastToolArgs().rect as { x1: number; y1: number; x2: number; y2: number };
       expect(Object.keys(rect).sort()).toEqual(['x1', 'x2', 'y1', 'y2']);
-      expect(rect).toMatchObject({ x1: -1, y1: 0, x2: 11 });
+      // `x1` is 0 and not -1. The one-pixel widening is what makes a zero-area press visible
+      // pre-typing, and it used to be returned UNCLAMPED — so a drag starting at the document's left
+      // edge published a box that began a pixel outside the document, while `useRect`'s `drawMask`
+      // painted it clamped to `[0, 1]`. The frame the user was looking at and the box the first
+      // keystroke grew from were therefore different boxes, and the frame jumped on that keystroke.
+      expect(rect).toMatchObject({ x1: 0, y1: 0, x2: 11 });
       expect(rect.y2).toBeCloseTo(64 * 1.1 + 2 * 5, 10);
     });
   });
