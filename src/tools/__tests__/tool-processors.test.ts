@@ -262,6 +262,16 @@ describe('toolProcessors registry', () => {
     }
   });
 
+  it('marks only fresh-canvas paint processors as unable to composite onto input', () => {
+    expect(findToolProcessor('brush')?.compositesOntoInput).toBe(false);
+    expect(findToolProcessor('pencil')?.compositesOntoInput).toBe(false);
+    for (const toolName of processorNames) {
+      const processor = findToolProcessor(toolName)!;
+      if (processor.commit !== 'raster' || toolName === 'brush' || toolName === 'pencil') continue;
+      expect(processor.compositesOntoInput, toolName).not.toBe(false);
+    }
+  });
+
   it('only labels source-creating tools as creators, and each creator commits as a source', () => {
     const creators = processorNames.filter((toolName) => findToolProcessor(toolName)!.creator);
 

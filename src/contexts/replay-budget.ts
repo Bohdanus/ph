@@ -110,8 +110,7 @@ export type ReplayRunRequest<T> = Readonly<{
  * A non-`completed` outcome carries no value at all, not an optional one: there is no `result`
  * key to read as `undefined` and mistake for a document.
  */
-export type ReplayRunOutcome<T> =
-  | Readonly<{ status: 'completed'; measurement: ReplayMeasurement; result: T }>
+type ReplayStoppedOutcome<T> =
   | Readonly<{
       status: 'over-budget';
       reason: ReplayOverBudgetReason;
@@ -123,7 +122,16 @@ export type ReplayRunOutcome<T> =
     }>
   | Readonly<{ status: 'aborted'; measurement: ReplayMeasurement; nextStep: number }>
   | Readonly<{ status: 'stale'; measurement: ReplayMeasurement; nextStep: number }>
-  | Readonly<{ status: 'failed'; measurement: ReplayMeasurement; nextStep: number; error: unknown }>;
+  | Readonly<{
+      status: 'failed';
+      measurement: ReplayMeasurement;
+      nextStep: number;
+      error: unknown;
+      superseded?: ReplayStoppedOutcome<T>;
+    }>;
+
+export type ReplayRunOutcome<T> =
+  Readonly<{ status: 'completed'; measurement: ReplayMeasurement; result: T }> | ReplayStoppedOutcome<T>;
 
 type StopReason =
   | Readonly<{ status: 'aborted' }>
@@ -175,11 +183,24 @@ function defaultNow(): number {
 
 function defaultYieldToHost(): Promise<void> {
   return new Promise((resolve) => {
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(() => resolve());
-    } else {
+    const frameAvailable =
+      typeof window !== 'undefined' &&
+      typeof window.requestAnimationFrame === 'function' &&
+      (typeof document === 'undefined' || document.visibilityState !== 'hidden');
+    if (!frameAvailable) {
       setTimeout(resolve, 0);
+      return;
     }
+    let settled = false;
+    const fallback = { id: undefined as number | undefined };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (fallback.id !== undefined) window.clearTimeout(fallback.id);
+      resolve();
+    };
+    fallback.id = window.setTimeout(finish, 100);
+    window.requestAnimationFrame(finish);
   });
 }
 
@@ -308,6 +329,18 @@ export async function runReplayUnderBudget<T>(request: ReplayRunRequest<T>): Pro
   }
   // One call, on every path that leaves partial work behind. A completed run owns nothing to
   // release, and a run that already released must not release twice.
-  if (outcome.status !== 'completed') request.release?.(outcome);
+  if (outcome.status !== 'completed') {
+    try {
+      request.release?.(outcome);
+    } catch (error) {
+      outcome = {
+        status: 'failed',
+        measurement: outcome.measurement,
+        nextStep: outcome.nextStep,
+        error,
+        superseded: outcome,
+      };
+    }
+  }
   return outcome;
 }

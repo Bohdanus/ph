@@ -6112,26 +6112,23 @@ stack.
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
 
-## 198. Raster edits remain unavailable at the durable append boundary
+## 198. Brush and Pencil raster edits have no durable retained form
 
 **Problem.** The runtime/replay presentation boundary now stages retained operations once and
-publishes the baked bounds, but the durable append boundary still refuses raster operations. The
-former presentation path kept retained operations after baking and could therefore apply a
-transform or filter twice. That runtime/replay mismatch is now closed by staged bounds and operation
-trimming; it must not be reintroduced when the durable raster operation is enabled.
+publishes the baked bounds. The durable append boundary records the supported raster processors as
+asset-free `apply-raster-processor` operations, but Brush and Pencil create a fresh canvas from
+their stroke instead of compositing onto the layer input. Replaying either operation would discard
+the base pixels, so the boundary correctly refuses those two tools rather than publishing a hole.
 
-The remaining defect is the durable shadow's refusal to record the raster edit, not the runtime
-presentation boundary.
+**What is needed.** Either make Brush and Pencil processors composite onto their input bitmap, with
+legacy/durable parity for transformed layers, undo/redo, document-space coordinates, and asset
+release, or add a separate source-backed raster result operation with an explicit ownership
+contract. Keep the current refusal until one of those representations is proven.
 
-**What is needed.** Make `apply-raster-processor` appendable for every supported processor, with
-legacy/durable parity for transform/filter-then-raster, undo/redo, document-space coordinates, and
-asset release. Keep unsupported processors refused with a diagnostic rather than publishing a
-partial durable entry.
-
-**Files.** `src/contexts/history-append.ts` — raster translation and boundary diagnostics;
+**Files.** `src/tools/toolProcessors.ts` — the input-compositing contract;
+`src/contexts/history-append.ts` — raster translation and boundary diagnostics;
 `src/contexts/history-adapter.ts` — `operationForTool()`; `src/contexts/materialization.ts` —
-asset-backed raster replay; and the corresponding StoreContext, legacy replay, export, and durable
-parity tests.
+raster replay; and the corresponding StoreContext, legacy replay, export, and durable parity tests.
 
 ## 199. Replay budget runner is dormant until the coordinator owns it
 
@@ -6139,8 +6136,8 @@ parity tests.
 runner with active-time, step-count, deadline, abort, stale-revision, and explicit over-budget
 outcomes. No production replay path constructs a budget or calls it. Wiring it before the durable
 materialization boundary is safe only if it stages a result and never publishes partial work.
-Before wiring, contain a throwing `release()` callback as a failed outcome and make the default host
-yield fall back when `requestAnimationFrame` is present but suspended in a hidden tab.
+The runner now contains cleanup failures as failed outcomes and falls back from a suspended
+`requestAnimationFrame`; the remaining blocker is coordinator wiring and publication policy.
 
 **What is needed.** Integrate the runner through the existing `ReplayCoordinator.request()`
 materialization callback, using the coordinator revision token and shared host-yield policy. On an

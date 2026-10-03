@@ -83,8 +83,45 @@ describe('history append retained tool translation', () => {
     });
   });
 
+  it('retains a raster processor from canonical tool arguments without a bitmap snapshot', () => {
+    const args = { toolName: 'sponge', mode: 'desaturate', size: 4 };
+    const result = plan(args);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry?.operation).toEqual({
+      kind: 'apply-raster-processor',
+      layerId: 'layer-1',
+      processorId: 'sponge',
+      version: 1,
+      args,
+    });
+  });
+
+  it('refuses a raster processor whose sparse array argument cannot survive durable cloning', () => {
+    const lineDash: number[] = [];
+    lineDash[0] = 4;
+    lineDash[2] = 2;
+    const result = plan({ toolName: 'brush', color: '#123456', size: 4, lineDash });
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'invalid-history-entry', severity: 'warning' })
+    );
+    expect(result.diagnostics[0]?.message).toContain('lineDash[1]');
+  });
+
   it.each([
-    ['a raster-commit brush', { toolName: 'brush', color: '#123456', size: 4 }],
+    ['brush', { toolName: 'brush', color: '#123456', size: 4 }],
+    ['pencil', { toolName: 'pencil', color: '#123456', lineWidth: 3 }],
+  ])('refuses %s because its processor does not composite onto the input bitmap', (_label, args) => {
+    const result = plan(args);
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics[0]).toMatchObject({ code: 'unsupported-history-feature', severity: 'warning' });
+    expect(result.diagnostics[0]?.message).toContain('creates a raster from its own input');
+  });
+
+  it.each([
     ['a document-operation crop', { toolName: 'crop' }],
     ['a selection tool', { toolName: 'magic-wand' }],
     ['a reposition with no movement or resize', { toolName: 'reposition' }],
@@ -436,7 +473,6 @@ describe('decideDurableAppend: a wrong retained tool operation is still refused'
   });
 
   it.each([
-    ['a raster-commit brush', { toolName: 'brush', color: '#123456', size: 4 }],
     ['a document-operation crop', { toolName: 'crop' }],
     ['a selection tool', { toolName: 'magic-wand' }],
     ['a reposition that moved nothing', { toolName: 'reposition' }],
@@ -449,19 +485,17 @@ describe('decideDurableAppend: a wrong retained tool operation is still refused'
     );
   });
 
-  it('refuses a raster-commit brush the legacy args do not publish at all', () => {
-    const args = { toolName: 'brush', color: '#123456', size: 4 };
+  it('accepts a raster-processor plan when its canonical legacy args match', () => {
+    const args = { toolName: 'sponge', mode: 'desaturate', size: 4 };
     const planned = rewriteNarrow<ProcessorOperation>({ toolName: 'transform', trapezoid: 20 }, () => ({
       kind: 'apply-raster-processor',
       layerId: 'layer-1',
-      processorId: 'brush',
+      processorId: 'sponge',
       version: 1,
       args,
     }));
 
-    expect(reasonFor(args, planned)).toBe(
-      'no retained durable translation is published for the tool action on "brush" yet'
-    );
+    expect(decide(args, { planned }).outcome).toBe('published');
   });
 
   it('refuses a trapezoid whose legacy args also carry affine values', () => {

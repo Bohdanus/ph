@@ -59,6 +59,12 @@ export type ToolCommitKind =
 export type ToolProcessorDefinition = {
   creator?: boolean;
   /**
+   * Whether the processor reads the existing layer bitmap before producing its
+   * raster result. Omitted means true; draw-backed paint processors are the
+   * explicit exceptions because they create a fresh canvas from their stroke.
+   */
+  compositesOntoInput?: boolean;
+  /**
    * The tool's pixels or its retained presentation depend on `CanvasRenderingContext2D.filter`,
    * which is not Baseline: caniuse records Safari 3.1 - 17.6 as unsupported (WebKit bug 198416,
    * since resolved) and MDN states the feature is not Baseline. Set this on every such tool so the
@@ -298,6 +304,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   brush: {
     commit: 'raster',
+    compositesOntoInput: false,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
       const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen'));
@@ -306,6 +313,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   pencil: {
     commit: 'raster',
+    compositesOntoInput: false,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
       // `??` guards only `undefined` and `null`, so a non-numeric string reaches

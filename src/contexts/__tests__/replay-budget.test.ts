@@ -665,4 +665,67 @@ describe('runReplayUnderBudget', () => {
     expect(outcome.measurement.steps).toBe(2);
     expect(outcome.measurement.activeMs).toBeGreaterThanOrEqual(0);
   });
+
+  it('reports a failed cleanup when release throws without losing the stopped outcome', async () => {
+    const clock = fakeClock();
+    const release = vi.fn(() => {
+      throw new Error('release failed');
+    });
+    const outcome = await runReplayUnderBudget({
+      budget: generous({ maxActiveMs: 10 }),
+      stepCount: 2,
+      runStep: () => clock.advance(11),
+      collect: () => 'document',
+      release,
+      now: clock.now,
+      yieldToHost: yieldCosting(clock, 0),
+    });
+
+    expect(outcome.status).toBe('failed');
+    if (outcome.status !== 'failed') return;
+    expect(outcome.error).toEqual(new Error('release failed'));
+    expect(outcome.superseded).toMatchObject({ status: 'over-budget', reason: 'active-ms', limit: 10 });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a timer instead of a suspended frame in a hidden tab', async () => {
+    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    try {
+      const outcome = await runReplayUnderBudget({
+        budget: generous({ maxSteps: 2 }),
+        stepCount: 2,
+        runStep: () => undefined,
+        collect: () => 'document',
+      });
+
+      expect(outcome.status).toBe('completed');
+      expect(requestAnimationFrame).not.toHaveBeenCalled();
+    } finally {
+      requestAnimationFrame.mockRestore();
+      visibility.mockRestore();
+    }
+  });
+
+  it('uses the frame scheduler while the tab is visible', async () => {
+    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    try {
+      const outcome = await runReplayUnderBudget({
+        budget: generous({ maxSteps: 2 }),
+        stepCount: 2,
+        runStep: () => undefined,
+        collect: () => 'document',
+      });
+
+      expect(outcome.status).toBe('completed');
+      expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+    } finally {
+      requestAnimationFrame.mockRestore();
+      visibility.mockRestore();
+    }
+  });
 });

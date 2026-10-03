@@ -256,7 +256,8 @@ function translate(
   entry: HistoryItem,
   currentFrame: DocumentFrame,
   currentSelections: SelectionSnapshot,
-  currentLayer: Layer | undefined
+  currentLayer: Layer | undefined,
+  compaction: { paths: string[] }
 ): AppendBoundaryResult {
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
     if (entry.documentSource) {
@@ -334,7 +335,14 @@ function translate(
       // append boundary deliberately passes the store's live record instead of
       // converting it through a registry, which keeps retained operations
       // asset-free and validates affine bounds against current geometry.
-      const operation = operationForTool(entry, currentLayer as unknown as DurableLayerSnapshot);
+      const operation = operationForTool(entry, currentLayer as unknown as DurableLayerSnapshot, compaction);
+      if (compaction.paths.length > 0) {
+        return unavailable(
+          entry,
+          `The tool arguments contain sparse array holes at ${compaction.paths.join(', ')}, which durable replay cannot preserve faithfully.`,
+          'invalid-history-entry'
+        );
+      }
       if (!operation) {
         return unavailable(
           entry,
@@ -351,16 +359,18 @@ function translate(
       }
       if (operation.kind === 'apply-raster-processor') {
         const processor = findToolProcessor(operation.processorId as ToolName);
-        if (!processor || processor.commit === 'raster') {
+        if (!processor || (processor.commit === 'raster' && processor.compositesOntoInput === false)) {
           return unavailable(
             entry,
-            `Tool ${operation.processorId} commits raster pixels and has no retained append translation.`,
+            !processor
+              ? `Tool ${operation.processorId} is not registered and has no durable append translation.`
+              : `Tool ${operation.processorId} creates a raster from its own input and cannot replay as a retained processor.`,
             'unsupported-history-feature'
           );
         }
-        // `transform` with a trapezoid is the one raster-shaped durable
-        // operation whose processor is declared affine-operation. Keep it on
-        // the boundary; only commit:'raster' is refused here.
+        // Raster processors replay from their canonical tool arguments against
+        // the durable layer source. Their output is materialized on demand, so
+        // the timeline carries no bitmap snapshot or registry-owned result.
       } else if (
         operation.kind !== 'apply-filter' &&
         operation.kind !== 'apply-affine-transform' &&
@@ -593,7 +603,7 @@ export function planHistoryAppend({
   id,
 }: AppendBoundaryInput): AppendBoundaryResult {
   const entry = createHistoryItem(item, id);
-  const result = translate(entry, currentFrame, currentSelections, currentLayer);
+  const result = translate(entry, currentFrame, currentSelections, currentLayer, { paths: [] });
   const timelineDiagnostic = validateTimeline(entry, timeline);
   if (!timelineDiagnostic) return result;
   return {
@@ -833,8 +843,7 @@ function legacyToolArgs(entry: HistoryItem): Record<string, unknown> | null {
  * exists to catch.
  *
  * `null` is the one answer it refuses, and it means the append has no retained
- * translation at all: no tool name, an unregistered tool, a `commit: 'raster'`
- * tool (a brush stroke, which the boundary does not publish), a `document` or
+ * translation at all: no tool name, an unregistered tool, a `document` or
  * `selection` tool, or a geometry tool that moved and resized nothing. Every one
  * of those is refused by `translate` before a plan exists, so reaching `null` from
  * a plan means the plan was not made here.
@@ -858,6 +867,7 @@ function retainedToolOperationKind(legacyArgs: Record<string, unknown>): Retaine
   if (processor.commit === 'geometry') {
     return legacyArgs.move || legacyArgs.resize ? 'reposition-layer' : null;
   }
+  if (processor.commit === 'raster' && processor.compositesOntoInput !== false) return 'apply-raster-processor';
   return null;
 }
 
