@@ -137,7 +137,7 @@ const makeTextCtx = ({
  * a plausible-looking value — an assertion that can pass without the renderer having run at all is
  * the failure mode this whole file has been audited for.
  */
-const applied = (ctx: CanvasRenderingContext2D, key: string): unknown => {
+const styledDuringDraw = (ctx: CanvasRenderingContext2D, key: string): unknown => {
   const log = appliedDuring.get(ctx);
   const last = log?.[log.length - 1];
   return last ? last[key] : undefined;
@@ -787,7 +787,7 @@ describe('renderText', () => {
       // returns the context is back to its seed — and reading it then would measure the restore
       // rather than the drawing, which is how this case came to pin the value the renderer used to
       // LEAK into the shared overlay as though the leak were the feature.
-      expect(applied(ctx, 'font')).toBe('italic bold 20px Arial');
+      expect(styledDuringDraw(ctx, 'font')).toBe('italic bold 20px Arial');
       // And the seed is what the caller gets back, which is the other half of the same fix.
       expect(ctx.font).toBe('10px sans-serif');
     });
@@ -1120,8 +1120,8 @@ describe('renderText', () => {
       // `applied`, not `ctx.letterSpacing`: the renderer restores the context before it returns, so
       // the value that proves the string was WRITTEN is the one in effect while it drew. Reading the
       // property afterwards read the seed and this case pinned a leak.
-      expect(applied(ctx, 'letterSpacing')).toBe(expected);
-      expect(applied(ctx, 'letterSpacing')).toMatch(/^-?\d+(\.\d+)?px$/);
+      expect(styledDuringDraw(ctx, 'letterSpacing')).toBe(expected);
+      expect(styledDuringDraw(ctx, 'letterSpacing')).toMatch(/^-?\d+(\.\d+)?px$/);
     });
 
     it('never creates a letterSpacing property on a context that lacks one', () => {
@@ -1187,7 +1187,7 @@ describe('renderText', () => {
     const capsFor = (overrides: Partial<TextToolArgs>): unknown => {
       const ctx = makeTextCtx({ modern: true });
       renderText(ctx, { ...baseArgs, ...overrides });
-      return applied(ctx, 'fontVariantCaps');
+      return styledDuringDraw(ctx, 'fontVariantCaps');
     };
 
     it('caps the whole line for All Caps, only the lowercase for Small Caps, and nothing otherwise', () => {
@@ -1419,8 +1419,8 @@ describe('getTextWidth', () => {
 
     // `applied`, because `getTextWidth` brackets its own style writes and the context is back to its
     // seed by the time it returns. The question this case asks is what the measurer measured IN.
-    expect(applied(ctx, 'font')).toBe('italic bold 20px Arial');
-    expect(applied(ctx, 'letterSpacing')).toBe('2px');
+    expect(styledDuringDraw(ctx, 'font')).toBe('italic bold 20px Arial');
+    expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('2px');
   });
 
   it('brackets its style writes in save/restore, because the caller owns the context', () => {

@@ -5741,3 +5741,94 @@ ends up claiming a tip it is not.
 ref of this repository; `.skills/photoshop-tool-creation.md` records that the underlying material
 has since landed and that these claims are mainline. The finding outlived the branch, and the
 branch's own entry died with it, which is how it came to have no entry at all.
+
+## 184. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
+
+**Problem.** `calculateNewRect`'s paragraph arm returns `trimRect2(newRect, imageSize)`, so every
+edge of a paragraph box is clamped into the document. That clamp is what makes Adobe's overflow icon
+reachable — the icon reports the lines against the box's height, and a box that could grow past the
+document's bottom edge could never outgrow its own height — and `e2e/text-tool.spec.ts` pins it.
+
+The consequence is that a paragraph box whose content needs more height than the document has is
+clamped to the document, and the lines below that edge are cropped rather than overflowing. The layer's
+canvas IS the box (`createLayerFromTool` takes `pos` from the rect and `layer-utils`' `createLayerSource`
+sizes the creator's canvas at `size: pos`), so the committed layer is the one-line-tall file the type
+was laid out in. A point box does not have this problem: it clamps its ORIGIN and lets its extent be
+whatever the content needs, so ink past the document edge belongs to the layer.
+
+**Affected.** `src/util/rect.ts` — `calculateNewRect`'s paragraph arm and its final
+`trimRect2(newRect, imageSize)`. Pinned by `e2e/text-tool.spec.ts` — the overflow-icon test.
+
+**What would close it.** One of three, and they are mutually exclusive, so this is a product decision
+rather than a bug fix:
+
+- Let the paragraph box grow past the document's bottom edge. Closes the crop, and makes the
+  overflow icon unreachable — a box that always grows to fit cannot overflow — which deletes a
+  shipped Photoshop feature and its e2e.
+- Keep the clamp and disable Apply while the draft overflows. Keeps the icon, costs the user a
+  control they cannot use until they make room, and invents a gate Adobe does not document.
+- Report the overflow against the box the user DRAGGED rather than the grown one, so the icon
+  survives a growing box. `renderText` is handed only the final rect and has no knowledge of the
+  drag, so `calculateNewRect`'s return type would have to carry it.
+
+**Provenance.** Found by review of the Type tool against its own requirements document, not by a
+failing test: no current run trips it, which is exactly why the clamp was allowed to stand.
+
+## 185. Every button built on `buttonStyles.ts` has no keyboard focus indicator
+
+**Problem.** `PRIMARY_BUTTON`, `PRIMARY_BUTTON_LARGE`, `SECONDARY_BUTTON`, `SECONDARY_BUTTON_LARGE`
+and `ICON_BUTTON` all carry `focus:outline-none` and none carries a `focus-visible` replacement. Tailwind's
+`focus:` compiles to `:focus`, which outranks the user agent's `:focus-visible` outline, so the ring is
+removed and nothing restores it. A keyboard user tabbing through any panel that uses these styles gets
+no visible focus at all. `FontSelect`'s trigger gets it right in the same bar, which is what makes the
+omission look like an oversight rather than a deliberate style.
+
+**Affected.** `src/components/ToolbarsRight/buttonStyles.ts`. `SECONDARY_BUTTON`'s missing `disabled:`
+variant was a separate half of this and is fixed; the focus ring is not.
+
+**What would close it.** Add `focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2`
+(or an outline equivalent) to the five styles. Do NOT do it as a drive-by inside a feature change: it
+alters how every focused control renders, across panels that have nothing to do with each other, and
+the visual-regression baselines are recorded per panel. It wants its own change and its own check.
+
+## 186. Alignment does nothing for point type, and the bar does not say so
+
+**Problem.** `renderText` anchors `align` INSIDE the box: for a point box, `boxLeft` is `x1 + TEXT_PADDING`
+and `boxRight` is `x2 - TEXT_PADDING`, and a point box is exactly `inkWidth + 2 * TEXT_PADDING` by
+construction. All three settings therefore compute the same `x`, so Left, Centre and Right render
+pixel-identically for every point draft — the control is live, focusable, and does nothing.
+
+This was investigated as a `calculateNewRect` defect and is NOT one. The growth arm in
+`calculateNewRect` is correctly gated on `requiredWidth > currentWidth`: it places the growth when the
+text outgrows a box that has no slack to distribute, and leaves the box alone when there is slack —
+because `renderText` then anchors within it. Moving that arm outside the guard was tried and reverted:
+it moves the box AND lets `renderText` anchor inside the moved box, so the ink shifts by twice the
+slack. The defect is the interaction, and there is nothing to fix in the geometry.
+
+**Affected.** `src/util/rect.ts` (`calculateNewRect`'s point arm) and `src/tools/text.ts`
+(`renderText`'s anchor). Both carry comments describing the division of labour. No test pins the
+no-op, which is why it survived.
+
+**What would close it.** A decision about the control, and it needs Adobe before it needs code: either
+Photoshop also renders alignment as a no-op for point type — in which case the honest fix is to
+disable the control while the draft is point type and say why in the bar — or it re-flows the box, in
+which case the box has to gain room to align within, which contradicts "the line expands or shrinks as
+you edit it". Do not resolve this by making the box honour `align` without settling that question
+first.
+
+## 187. Escape does not abort an uncommitted text draft
+
+**Problem.** `TextToolArea` has no abort route. A draft is left by Clear, by Apply, by switching tools,
+or by nothing at all; there is no Escape, and the gesture has no `pointercancel` handler of its own.
+`useRect`'s own pointer capture IS released on `pointercancel` and on unmount, so the capture cannot
+leak — what is missing is a way to abandon a draft the user has decided against. Photoshop's `Esc` on
+an uncommitted type box removes it.
+
+**Affected.** `src/components/Main/TextToolArea.tsx`, and `src/hooks/useRect.ts` if the abort is
+implemented as a `releasePointer` call rather than a draft reset.
+
+**What would close it.** A product decision on two questions this entry cannot answer from the code:
+whether Escape clears the draft or only the in-flight gesture, and what it does when focus is in the
+textarea — which is where it will be, because the tool area focuses the textarea on commit, and
+Escape inside a `<textarea>` is a normal key. Getting that wrong makes Escape clear the text the user
+is typing, which is worse than the missing feature.
