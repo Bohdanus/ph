@@ -110,7 +110,8 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
 
     const atTip = replayDurableDocument(document);
     expect(atTip.layers[layer2Id]).toBeDefined();
-    expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank');
+    expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank 1');
+    expect(atTip.layers[layer2Id]?.snapshot.order).toBe(1);
     expect(atTip.layers[layer2Id]?.operations).toHaveLength(0);
     expect(atTip.activeLayerId).toBe(layer2Id);
 

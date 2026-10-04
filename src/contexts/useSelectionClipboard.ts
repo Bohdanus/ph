@@ -67,9 +67,11 @@ export const useSelectionClipboard = () => {
     try {
       const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
       const height = selectionClipboard.pos.height || selectionClipboard.bitmap.height;
+      // Pasted layer positions are in document space; the renderer applies the
+      // document-frame translation separately.
       const centerPos = {
-        x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2)),
-        y: documentFrame.y + Math.max(0, Math.round((totalSize.height - height) / 2)),
+        x: Math.max(0, Math.round((totalSize.width - width) / 2)),
+        y: Math.max(0, Math.round((totalSize.height - height) / 2)),
         width,
         height,
       };
