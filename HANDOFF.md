@@ -18,15 +18,15 @@ and the verification is `git log`, not this file.
 
 ## 1. P0 — the durable replay path is only mounted as a navigation presentation cache
 
-**Problem.** Four of the five modules the migration was built around are imported by nothing outside
-`src/contexts/__tests__/`:
+**Problem.** Two modules the migration was built around — `replay-coordinator.ts` and
+`replay-checkpoints.ts` — were imported by nothing outside `src/contexts/__tests__/`, and have
+been deleted rather than left as an unimported coordination layer that a later surface could
+mount by accident. The two durable modules that remain:
 
-| module                               | non-test importing files                                              |
-| ------------------------------------ | --------------------------------------------------------------------- |
-| `src/contexts/materialization.ts`    | 1 — `durable-compositor.ts`                                           |
-| `src/contexts/replay-coordinator.ts` | **0**                                                                 |
-| `src/contexts/replay-checkpoints.ts` | **0**                                                                 |
-| `src/contexts/durable-replay.ts`     | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
+| module                            | non-test importing files                                              |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `src/contexts/materialization.ts` | 1 — `durable-compositor.ts`                                           |
+| `src/contexts/durable-replay.ts`  | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
 
 Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
 `useHistory.ts`) for logical navigation and runtime `Layer` state. `StoreContext.tsx` now composes
@@ -99,24 +99,28 @@ severity check too.
 
 ---
 
-## 10. `ReplayRevisionToken` cannot be invalidated by a frame change
+## 10. `DurableLayerSnapshot` carries no frame, so a frame change cannot invalidate a replay
 
-**Problem.** `ReplayRevisionToken` (`replay-coordinator.ts`) carries `documentId`,
-`documentRevision`, `durableRevision`, `branchRevision`, `cursor`, `baselineAssetGeneration`,
-`operationSetRevision`, `sourceGeneration`. There is no `frameRevision`, so a document-frame change
-cannot invalidate a token. `DurableLayerSnapshot` likewise has no `frame` field, which contradicts
-the consolidated handoff's own drift note.
+**Problem.** `DurableLayerSnapshot` carries `id`, `name`, `isBedrock`, `visible`, `opacity`,
+`locked`, `blendMode`, `order`, `pos` and `source`. There is no `frame`, which contradicts the
+consolidated handoff's own drift note: a snapshot says nothing about the document frame it was
+taken against, so a frame change cannot invalidate it.
 
-`isCurrent` was already hardened to fail closed (it no longer trusts a self-check), so the guard
-works — it is the token's _inputs_ that are incomplete. An in-flight durable replay can complete
-against a document whose frame has since changed.
+The revision token that used to carry this half of the defect is gone — `replay-coordinator.ts`,
+which declared `ReplayRevisionToken` with no `frameRevision` either, was deleted as dead code
+rather than left unimported. What it was for survives the deletion: whoever schedules the first
+durable replay needs both halves, and this is the half that still has a file.
 
-Latent only while nothing schedules replays (item 1), but it is a required input for item 1.
+**Why it matters.** An in-flight durable replay can complete against a document whose frame has
+since changed. Latent only while nothing schedules replays (item 1), but it is a required input
+for item 1.
 
-**Fix.** Add `frameRevision` to the token and `frame` to `DurableLayerSnapshot`, and bump
-`documentRevision` on every frame change so the existing comparison covers it.
+**Fix.** Add `frame` to `DurableLayerSnapshot`, and bump `documentRevision` on every frame change
+so the existing comparison covers it. The first durable scheduler must take a token carrying a
+`frameRevision` too — re-derive that token's fields when the surface is chosen rather than
+restoring the deleted module.
 
-**Files.** `src/contexts/replay-coordinator.ts`, `src/contexts/history-model.ts`
+**Files.** `src/contexts/history-model.ts` — `DurableLayerSnapshot`
 
 ---
 
@@ -574,14 +578,13 @@ the session store instead — every `apply_patch` / `edit` / `write` target in a
 
 Re-derive the table from the entries this file still carries rather than reading it off this entry —
 the entries it was built from have been deleted. Collecting every `src/` path named in the `Files`
-paragraph of a numbered entry and comparing it against the manifest returns **82** the manifest does
+paragraph of a numbered entry and comparing it against the manifest returns **81** the manifest does
 not list — one of them a directory rather than a file, `src/components/ToolbarHorizontal/`, which §134
 names in that form — and the omissions are exactly where the migration's own boundary lives:
 
 | not in the manifest                                           | live entries whose `Files` line names it |
 | ------------------------------------------------------------- | ---------------------------------------- |
 | `src/contexts/history-model.ts`                               | 10, 56, 172, 197                         |
-| `src/contexts/replay-coordinator.ts`                          | 10, 199                                  |
 | `src/contexts/presentation-evaluator.ts`                      | 1, 159, 163                              |
 | `src/contexts/durable-replay.ts`                              | 94                                       |
 | `src/contexts/psd-utils.ts`                                   | 45, 56, 147, 166, 169, 172               |
@@ -616,11 +619,11 @@ only there.
 ```bash
 awk '/^## [0-9]/{f=0;s=0;next} f&&/^\*\*[A-Z]/{f=0} !s&&/^\*\*Files\.\*\*/{f=1;s=1} f' HANDOFF.md \
   | grep -o '`src/[^`]*`' | tr -d '`' | sort -u > /tmp/handoff_paths.txt
-comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 82
+comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 81
 ```
 
-Those paragraphs name 132 distinct `src/` paths, 50 of them in the manifest. `sort -u` is what makes
-the answer a count of paths rather than of entry-path pairs, which is 260. Two `Files` paragraphs in
+Those paragraphs name 131 distinct `src/` paths, 50 of them in the manifest. `sort -u` is what makes
+the answer a count of paths rather than of entry-path pairs, which is 258. Two `Files` paragraphs in
 the file are deliberately outside the extraction and neither changes the count: §142 carries a second
 one that names no `src/` path at all, and §159's section ends in a `**Problem.**` / `**Files.**` pair
 that no heading opens — its `src/tools/usePaintStroke.ts` is a path that does not exist, the real file
@@ -5901,16 +5904,15 @@ runner with active-time, step-count, deadline, abort, stale-revision, and explic
 outcomes. No production replay path constructs a budget or calls it. Wiring it before the durable
 materialization boundary is safe only if it stages a result and never publishes partial work.
 The runner now contains cleanup failures as failed outcomes and falls back from a suspended
-`requestAnimationFrame`; the retired coordinator is not a production integration seam.
+`requestAnimationFrame`.
 
 **What is needed.** Choose the first durable production surface and give it an explicit materialization
 caller, revision token, user setting, and publication policy. On an over-budget result, prompt for
 explicit raster-baseline acceptance; never rasterize automatically. Close the empty-history baseline
-failure and asset publication transaction before exposing that prompt. Keep the retired coordinator
-and this runner out of production until that surface is staged and failure-safe.
+failure and asset publication transaction before exposing that prompt. Keep this runner out of
+production until that surface is staged and failure-safe.
 
 **Files.** `src/contexts/replay-budget.ts` — `runReplayUnderBudget()`;
-`src/contexts/replay-coordinator.ts` — retired reference only;
 `src/contexts/materialization.ts` — `materializeDocument()`; `src/contexts/useHistory.ts`;
 and the empty-history/baseline tests.
 

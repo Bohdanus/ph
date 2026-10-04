@@ -26,7 +26,7 @@ The corollary is the one that bites: **`store.history` is the only thing that
 rendering, export and undo read, and it stores args, never pixels.** Undo re-runs
 the tool processors. It is not an inverse operation and it is not incremental.
 
-Evidence, all four current:
+Evidence, all three current:
 
 - `src/contexts/StoreContext.tsx` — the doc comment on `StoreData`'s
   `durableDocument` field — _"Diagnostic shadow only; legacy history/runtime
@@ -37,10 +37,6 @@ Evidence, all four current:
 - `src/contexts/useHistory.ts` — inside `resetHistoryTo()` — _"Navigation
   therefore replays the legacy runtime representation and lets StoreContext
   rebuild the sidecar."_
-- `src/contexts/replay-coordinator.ts` — the `ReplayCoordinator` class JSDoc —
-  _"No production path mounts a coordinator… and this module must not be imported
-  by a navigation or rendering path while the legacy runtime stays
-  authoritative."_
 
 `src/contexts/materialization.ts` has one production importer,
 `src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
@@ -54,7 +50,6 @@ guard refuses any logical movement. `publishDurableNavigationPresentation()` als
 returns early while any snapshot in the replay carries a `'legacy-tool'` source,
 so the durable presentation is skipped outright for a document still holding a
 legacy tool snapshot.
-`src/contexts/replay-coordinator.ts` still has no importer outside `__tests__`.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current
@@ -311,7 +306,7 @@ as a sequence against the reorder being planned. `publishDurableNavigationPresen
 adds a third durable read, through `replayDurableAtCursor()`. `materializeDocument` has one
 production caller, `composeDurableDocument()` in `durable-compositor.ts`;
 `materializeLayer` is reached only from inside `materializeDocument()` and has no
-importer of its own; `ReplayCoordinator` has none.
+importer of its own.
 
 ## The tool registry
 

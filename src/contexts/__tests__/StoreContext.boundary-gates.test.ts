@@ -10,6 +10,17 @@ const repoRoot = resolve(srcDir, '..');
 const forbiddenModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints'] as const;
 const materializationModule = 'materialization';
 
+/**
+ * Two of the three forbidden modules were deleted as dead code — they had no importer
+ * outside `__tests__` — so the names survive here for the opposite reason to the one they
+ * were added with. A gate that dropped them with the files would forbid nothing, and a
+ * later reintroduction of a module that once existed would be unreported. The forbidden
+ * set is therefore a RETIREMENT list: it names what must not come back, and
+ * `it('keeps the deleted coordination modules deleted')` is what makes the retirement
+ * verifiable rather than assumed.
+ */
+const deletedModules = ['replay-coordinator', 'replay-checkpoints'] as const;
+
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 
 /**
@@ -341,13 +352,35 @@ describe('StoreContext boundary gates', () => {
   });
 
   // The forbidden set contains retired coordination and budget modules — `replay-budget`,
-  // `replay-coordinator`, and `replay-checkpoints`. `materialization.ts` is intentionally excluded: the durable compositor
-  // is its one allowed production boundary. `presentation-evaluator.ts` is imported
-  // by production on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`,
-  // `materialization.ts:14`), and `durable-replay.ts` is read as a value at
-  // `StoreContext.tsx:41`, so adding either would make this red on correct code.
+  // `replay-coordinator`, and `replay-checkpoints`. The last two no longer exist as files;
+  // they are kept in the set so the gate still reports a reintroduction, which is what the
+  // synthetic specifiers in `it('reports a forbidden module from any module…')` exercise.
+  // `materialization.ts` is intentionally excluded: the durable compositor is its one allowed
+  // production boundary. `presentation-evaluator.ts` is imported by production on purpose
+  // (`layer-renderer.ts` and `useLayer.ts` — `operationsRetainedAfterBake()`, and
+  // `materialization.ts` — `evaluatePresentation()`), and `durable-replay.ts` is read as a
+  // value by `StoreContext.tsx` — `replayDurableAtCursor()`, so adding either would make this
+  // red on correct code.
   it('keeps retired replay coordination modules out of production source', () => {
     expect(forbiddenProductionImports()).toEqual([]);
+  });
+
+  // The gate above is blind to the deletion itself: a forbidden-basename match never asks
+  // whether the module exists, so the set would pass unchanged with both files restored and
+  // only their importers added. This is the leg that fails in that case, and it is the one
+  // that makes the two entries in `deletedModules` mean "retired" rather than merely
+  // "unimported". Reading git rather than the filesystem is what makes it exact — an
+  // untracked leftover on disk is caught by the walk-equality case above, not here.
+  it('keeps the deleted coordination modules deleted', () => {
+    const tracked = new Set(
+      execFileSync('git', ['ls-files', '-z', '--', 'src'], { cwd: repoRoot, encoding: 'utf8' })
+        .split('\0')
+        .filter((path) => path.length > 0)
+    );
+    const resurrected = [...deletedModules]
+      .map((module) => `src/contexts/${module}.ts`)
+      .filter((path) => tracked.has(path));
+    expect(resurrected).toEqual([]);
   });
 
   it('routes production durable materialization only through the compositor boundary', () => {
