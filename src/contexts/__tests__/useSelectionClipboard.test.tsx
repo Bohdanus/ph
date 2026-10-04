@@ -197,7 +197,7 @@ describe('pasteSelectionClipboard', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
-  it('clones the clipboard bitmap and centers the new layer inside the document frame', async () => {
+  it('clones the clipboard bitmap and centers the new layer in document space', async () => {
     vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas);
     storeState.documentFrame = { x: 12, y: 7, width: 100, height: 100 };
     const clipboardBitmap = createMockImageBitmap(30, 40);
@@ -210,14 +210,16 @@ describe('pasteSelectionClipboard', () => {
     expect(clonedCanvases[0].drawImage).toHaveBeenCalledExactlyOnceWith(clipboardBitmap, 0, 0);
     expect(clonedCanvases[0].width).toBe(30);
     expect(clonedCanvases[0].height).toBe(40);
+    // The frame origin must not enter the centre: `createLayerFromBitmap` hands this `pos`
+    // to `createLayerSource`, whose non-bedrock arm copies it onto the layer verbatim.
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith({
       bitmap: clonedCanvases[0],
       name: 'Layer 1',
-      pos: { x: 47, y: 37, width: 30, height: 40 },
+      pos: { x: 35, y: 30, width: 30, height: 40 },
     });
   });
 
-  it('clamps a clipboard larger than the document to the document frame origin', async () => {
+  it('clamps a clipboard larger than the document to the document origin', async () => {
     storeState.documentFrame = { x: 12, y: 7, width: 100, height: 100 };
     storeState.selectionClipboard = createClipboard({
       bitmap: createMockImageBitmap(300, 400),
@@ -227,14 +229,16 @@ describe('pasteSelectionClipboard', () => {
 
     await expect(paste()).resolves.toBe(true);
 
+    // The floor is DOCUMENT (0, 0), not the frame origin.
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        pos: { x: 12, y: 7, width: 300, height: 400 },
+        pos: { x: 0, y: 0, width: 300, height: 400 },
       })
     );
   });
 
   it('prefers the clipboard position size over the bitmap size', async () => {
+    storeState.documentFrame = { x: 40, y: 25, width: 100, height: 100 };
     storeState.selectionClipboard = createClipboard({
       bitmap: createMockImageBitmap(99, 99),
       pos: { x: 10, y: 20, width: 30, height: 40 },
@@ -243,11 +247,32 @@ describe('pasteSelectionClipboard', () => {
 
     await expect(paste()).resolves.toBe(true);
 
+    // A non-zero frame origin, so the size preference is asserted in document space rather
+    // than passing by accident: the 99x99 bitmap would centre at {1, 1} with itself.
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         pos: { x: 35, y: 30, width: 30, height: 40 },
       })
     );
+  });
+
+  it('does not shift the pasted layer by a non-zero document frame origin', async () => {
+    storeState.documentFrame = { x: 12, y: 7, width: 100, height: 100 };
+    storeState.selectionClipboard = createClipboard();
+    const { rerender } = render(<ClipboardProbe />);
+
+    await expect(paste()).resolves.toBe(true);
+    const withFrameOrigin = createLayerFromBitmapMock.mock.calls[0][0].pos;
+
+    createLayerFromBitmapMock.mockReset();
+    storeState.documentFrame = undefined;
+    rerender(<ClipboardProbe />);
+
+    await expect(paste()).resolves.toBe(true);
+    const withoutFrameOrigin = createLayerFromBitmapMock.mock.calls[0][0].pos;
+
+    expect(withFrameOrigin).toEqual({ x: 35, y: 30, width: 30, height: 40 });
+    expect(withFrameOrigin).toEqual(withoutFrameOrigin);
   });
 
   it('falls back to the bitmap size when the clipboard position size is zero on both axes', async () => {
