@@ -15,6 +15,26 @@ import {
 } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import type { CreatorToolParams } from '../toolProcessors.ts';
+import { defaultSettings } from '../settings.ts';
+
+/**
+ * The six tool names the shape family registers under, as an INDEPENDENT literal.
+ *
+ * Sourced from `defaultSettings` in the assertions below rather than imported from the module
+ * under test, so a list that lost a name fails here instead of quietly shrinking the sweep. The
+ * tool name and the figure are different vocabularies — `ellipse` is the tool and `oval` is its
+ * figure — so neither can be derived from `FigureType`.
+ */
+const SHAPE_FAMILY_TOOL_NAMES = ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
+
+/**
+ * Every seeded default that carries a `figure`, which is the shape family and nothing else:
+ * a tool with a figure of its own is one of these six.
+ */
+const seededShapeToolNames = Object.entries(defaultSettings)
+  .filter(([, args]) => 'figure' in args)
+  .map(([name]) => name)
+  .sort();
 
 const baseArgs: ShapeToolArgs = {
   toolName: 'shape',
@@ -421,6 +441,24 @@ describe('shapeGeometryBounds', () => {
       expect(point.x + pad).toBeLessThanOrEqual(bounds.x + bounds.width);
       expect(point.y + pad).toBeLessThanOrEqual(bounds.y + bounds.height);
     }
+  });
+});
+
+describe('the shape family', () => {
+  it('is exactly the set of tools the seeded defaults give a figure', () => {
+    // The cross-check that makes the sweeps below mean something: `toolsMap` registers one image
+    // processor for all six names, so the family is also what one options bar and one commit path
+    // serve. A tool added here and to the defaults without the other list would be missed.
+    expect(seededShapeToolNames).toEqual([...SHAPE_FAMILY_TOOL_NAMES].sort());
+    expect(seededShapeToolNames).toHaveLength(6);
+  });
+
+  it('separates tool names from figures, which are a different list', () => {
+    // `oval` is the figure and `ellipse` the tool; neither list contains the other's odd member,
+    // which is the trap a guard derived from `FigureType` would fall into.
+    expect(seededShapeToolNames).not.toContain('oval');
+    expect(isFigureType('ellipse')).toBe(false);
+    expect(isFigureType('oval')).toBe(true);
   });
 });
 
@@ -878,12 +916,19 @@ function createBracketedCtx() {
   const stack: State[] = [];
   /**
    * The writer state in effect at the moment a paint op ran. A bracket bounds the state without
-   * neutralising the paint, so the alpha a stroke was committed at can only be read here — after
-   * the call the context holds the caller's value whether or not anything was written.
+   * neutralising the paint, so the alpha and the colours a stroke was committed at can only be read
+   * here — after the call the context holds the caller's value whether or not anything was written,
+   * so a post-hoc read of `strokeStyle` is always `''` and would pass for any colour at all.
    */
-  const observedAtPaint: { globalAlpha: number } = { globalAlpha: 1 };
+  const observedAtPaint: { globalAlpha: number; strokeStyle: string; fillStyle: string } = {
+    globalAlpha: 1,
+    strokeStyle: '',
+    fillStyle: '',
+  };
   const recordPaint = () => {
     observedAtPaint.globalAlpha = state.globalAlpha;
+    observedAtPaint.strokeStyle = state.strokeStyle;
+    observedAtPaint.fillStyle = state.fillStyle;
   };
 
   const ctx = {
@@ -1013,5 +1058,66 @@ describe('shape processor', () => {
     expect(state.strokeStyle).toBe('');
     expect(state.lineWidth).toBe(1);
     expect(state.dash).toEqual([]);
+  });
+
+  /**
+   * The committed layer is what the options bar's mirrored colours are FOR, so this is the end of
+   * the chain the mirror effect starts: whatever the panel publishes as `color`/`backgroundColor`
+   * has to reach the paint, for all six tool names and not only for the one the panel was opened
+   * under. Swept rather than asserted once, because a case naming only `shape` passes while the
+   * other five commit black.
+   *
+   * Each colour is read at the paint op, never after the call: `shape()` brackets the writer, so a
+   * post-call `strokeStyle` is `''` for every input and the assertion would pass for a processor
+   * that ignored its arguments entirely.
+   */
+  describe('paints with the colours carried in the arguments of all six tools', () => {
+    const STROKE = '#ff8800';
+    const FILL = '#0044ff';
+
+    it.each(SHAPE_FAMILY_TOOL_NAMES)('strokes %s in its own colour rather than the seeded black', (toolName) => {
+      const { ctx, observedAtPaint } = createBracketedCtx();
+      stubOffscreenCanvas(ctx);
+      const args = {
+        ...baseArgs,
+        toolName,
+        color: STROKE,
+        backgroundColor: FILL,
+        hasFill: true,
+        start: { x: 4, y: 6 },
+        end: { x: 30, y: 28 },
+      } as ShapeToolArgs;
+
+      shape(creatorParams)(args);
+
+      expect(observedAtPaint.strokeStyle).toBe(STROKE);
+      // The colour every one of the six defaults is seeded with, so a processor that fell back to
+      // it — or to a constant of its own — cannot pass by painting something merely non-default.
+      expect(observedAtPaint.strokeStyle).not.toBe('#000000');
+      // The fill half, read at the same paint op. `line` never fills, but `setShapeCtx` writes the
+      // fill style before the figure branch, so the colour a filled sibling would use is here.
+      expect(observedAtPaint.fillStyle).toBe(FILL);
+    });
+
+    it.each(SHAPE_FAMILY_TOOL_NAMES)('does not fill %s whose arguments carry no background colour', (toolName) => {
+      // The colourless half of the pair above, on every tool: a fill with nothing to fill with is
+      // the stale fill the `save`/`restore` bracket exists around, and it must stay suppressed.
+      const { ctx } = createBracketedCtx();
+      stubOffscreenCanvas(ctx);
+      const args = {
+        ...baseArgs,
+        toolName,
+        color: STROKE,
+        backgroundColor: null,
+        hasFill: true,
+        start: { x: 4, y: 6 },
+        end: { x: 30, y: 28 },
+      } as ShapeToolArgs;
+
+      shape(creatorParams)(args);
+
+      expect(ctx.fill).not.toHaveBeenCalled();
+      expect(ctx.fillRect).not.toHaveBeenCalled();
+    });
   });
 });
