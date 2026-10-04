@@ -841,10 +841,51 @@ test.describe('Text tool in-place editing', () => {
     await layerRows.nth(0).dblclick();
     await expect(overlay(page), 'double-clicking the committed text row did not reopen the editor').toBeVisible();
     expect(await overlayText(page), 're-entry did not hydrate the committed characters').toBe('Reenter');
+
+    // The style is read HERE, while the Type bar is certainly mounted: after the commit the tool is
+    // not the text tool any more, so `#font-size-input` is gone and reading it later times out.
+    const fit = await readFit(page);
+    const fontSize = await toolFontSize(page);
+    // `Edited`, not `ReenterEdited`: entry selects every character, which is Adobe's documented
+    // behaviour for entering a type layer from its `T` thumbnail, so typing replaces the text rather
+    // than appending to it. All four re-entry routes share one hydration path, so they share this too.
+    const references = await referenceInkWidths(page, ['Edited', 'Reenter'], {
+      fontSize,
+      fontFamily: 'Arial',
+      scale: fit.scale,
+    });
+
+    await expect(overlay(page), 'the editor did not stay open across the re-entry').toBeVisible();
     await page.keyboard.type('Edited');
+    // Adobe's `T`-thumbnail entry arrives with every character selected, so typing REPLACES the
+    // committed text rather than appending to it. This is also the only assertion that can see a
+    // re-entry which opens an editor the keystrokes never reach.
+    expect(await overlayText(page), 'the re-entered editor did not receive the keystrokes').toBe('Edited');
     await page.keyboard.press('Escape');
     await expect(overlay(page)).toHaveCount(0);
     await expect(layerRows, 're-entry created a replacement layer').toHaveCount(2);
+
+    /**
+     * THE EDIT LANDED, which the three assertions above cannot see.
+     *
+     * All of them describe the ROUTE — the editor reopened, it held the old characters, the row count
+     * did not change — and every one of them is satisfied by an edit that was then thrown away. The
+     * mutation that proves it is small: hand `replaceLayerSource` the previous `text` back instead of
+     * the edited one, so the replacement re-renders the ORIGINAL string. The overlay still closes, the
+     * row is still the same row, and every assertion above is still green.
+     *
+     * So the committed layer's own ink is measured, the way the Escape-commit case measures it: the
+     * width of `Edited` and not the width of `Reenter`.
+     */
+    const measured = await inkWidthIn(page, box, FIRST_BOX_REGION, 20, 'the re-entry commit');
+    expect(
+      Math.abs(measured - references.Edited),
+      `the committed ink is ${measured.toFixed(1)} CSS px wide, which is not the width of "Edited" (${references.Edited.toFixed(1)})`
+    ).toBeLessThanOrEqual(INK_WIDTH_TOLERANCE_CSS_PX);
+    expect(
+      Math.abs(measured - references.Reenter),
+      'the committed ink is the width of the string before the edit, so the re-entry discarded it'
+    ).toBeGreaterThan(INK_WIDTH_TOLERANCE_CSS_PX);
   });
 
   test('a click elsewhere on the canvas COMMITS the open draft and then places a new box', async ({ page }) => {
