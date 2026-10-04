@@ -927,10 +927,13 @@ English, not a product name, and `types.ts` requires the name verbatim, so `phot
 an Adobe name at all** — and the label went out with the entry. The flyout that carried `color`,
 `levels` and `transform` is gone from `toolbarMap`; `extraTools` in `toolbar-mapping.ts` is
 where the three ids are recorded as carrying no Tools-rail entry, and `color` is reached now from
-`Image ▸ Adjustments ▸ Photo Filter` (the `Photo Filter` entry of `ADJUSTMENTS_ITEMS` in
+`Image ▸ Adjustments ▸ Desaturate` (the `Desaturate` entry of `ADJUSTMENTS_ITEMS` in
 `DesktopHeader.tsx`). Nothing in `src/` spells it
-"Colors" any more, so `appNotes` records the rail absence and the Photo Filter host rather than the
-old name.
+"Colors" any more, so `appNotes` records the rail absence and the Desaturate host rather than the
+old name. It read `Photo Filter` until the mislabel was corrected: Adobe's Photo Filter is a lens
+filter with a Density slider and a Preserve Luminosity option, and this bar computes
+`grayscale(%) sepia(%) saturate(%)`, so an enabled `Photo Filter` opened a bar its own label did
+not describe.
 
 **The `On-image adjustment icon` row moved up two positions, and its detail was wrong about the
 mechanism while it was wrong about the position.** It was listed last, after `Reset`; the control

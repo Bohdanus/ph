@@ -394,10 +394,10 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
 ```
 
 `grayscale()` is a flat luminance average with no hue dependence at all, and `sepia()` is a fixed
-one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Photo Filter`,
+one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Desaturate`,
 where **Black and White is a disabled item** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`'s
 `{ label: 'Black and White' }` entry) because nothing computes it — see the operator-decision section
-below for why `Photo Filter` is the name the enabled item carries.
+below for why `Desaturate` is the name the enabled item carries.
 
 **Why it is too hard.** No CSS filter chain can express a per-hue weighting; the filter primitives are
 whole-image and order-dependent, and six independent sextant weights are neither. A faithful
@@ -705,13 +705,13 @@ rule costs a real capability in one case, and what an enabled menu item is allow
 naming decision in another. They are recorded here so they are not re-derived, and so nobody
 implements them as if they were engineering judgements.
 
-### The two enabled `Image ▸ Adjustments` items are named for capabilities the app does not have
+### What an enabled `Image ▸ Adjustments` item may promise
 
 `color`, `levels` and `transform` left the Tools rail on 2026-10-01 — the operator's ruling, recorded
 in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Transform`
 **commands**, and `toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
-rail entry. What is still open is not where they live but **what the two enabled items are called**,
-because both names are a partial match and neither is a match.
+rail entry. **What the two enabled items are called was settled on 2026-10-01 and is implemented:**
+`Brightness/Contrast` and `Desaturate`.
 
 `ADJUSTMENTS_ITEMS` (`DesktopHeader.tsx`) carries Adobe's list in
 a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
@@ -728,16 +728,34 @@ emits one `brightness(…) contrast(…)` filter (`functions.ts` — `buildLevel
 Adobe's Brightness / Contrast. **Adobe's Levels is unbuilt**: three control points, a histogram, a
 channel selector, output levels and Auto. That capability has its own entry below.
 
-**`color` is `Photo Filter`, and `grayscale` is a control Photo Filter does not have.** Its three
-controls are grayscale, sepia and saturation (`functions.ts` — `ColorsFilterArgs`). Adobe's Photo
+**`color` is `Desaturate`, because its leading control is the computation Adobe's Desaturate
+performs.** Its three controls are grayscale, sepia and saturation (`functions.ts` —
+`ColorsFilterArgs`). Adobe's Desaturate "converts a color image to grayscale values, but leaves the
+image in the same color mode", and "assigns equal red, green, and blue values to each pixel in an RGB
+image" (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>) — which is what `grayscale(100%)` does, and `e2e/adjustments.spec.ts` asserts the
+three channels come out **equal** rather than close. Adobe adds that the command "has the same effect as
+setting Saturation to minus (-)100 in the Hue/Saturation adjustment", which is the bar's `saturation`
+slider, so two of the three controls are the command it is named for. **`sepia` is the bounded
+divergence**: it belongs to neither command, and Adobe's Desaturate is a one-shot command with no dialog
+where this bar is three continuous sliders.
+
+**The naming rule, which the operator settled and which now binds every adjustment command.** An item
+takes Adobe's name, and takes it **only if it computes that command**: "use naming that photoshop has",
+2026-10-01. An item whose computation does not match its Adobe name is a falsehood and does not get
+enabled — which is why `Levels` and `Black and White` are `disabled` items rather than relabelled ones,
+and why an app-invented name (`Colors`) is not available as a fallback. Applied to `color` it is what
+moved the item below.
+
+**`Photo Filter` used to be the enabled item and was the falsehood this corrects.** Adobe's Photo
 Filter is a hue adjustment from a preset filter or a custom colour, with a Density slider and
 Preserve Luminosity
-(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — so `sepia` picks
-the kind of colour Adobe's presets pick and `saturation` is the trim Preserve Luminosity performs, but
-**`grayscale` is a conversion to luminance that Photo Filter never performs**. The alternative name is
-worse: the app's `color` is not Adobe's Black and White either (that entry, below), so the honest
-options were a bounded partial match or a wrong name. The open question is whether to drop the
-`grayscale` control or move it to `Desaturate`, which is the operator's to make — `HANDOFF.md` §168.
+(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — the bar
+reproduced **none** of those three, and `grayscale` is a conversion to luminance that Photo Filter never
+performs, so the enabled item opened a bar its own label did not describe. It is a `disabled` item now,
+which is this menu's rule applied: the capability is unbuilt. The row cannot simply have been dropped,
+because `color` is in `extraTools` and this submenu is the only surface the Colors panel is reachable
+from — and the app's `color` is not Adobe's Black and White either (that entry, below), so `Desaturate`
+is the one Adobe command in this submenu the bar's leading control actually computes.
 
 **The rest of `Image ▸ Adjustments` is disabled, and that is the accurate state of this app.** The app
 has no adjustment-layer machinery at all: `psd-utils.ts` — the `visit()` walk inside

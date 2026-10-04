@@ -57,7 +57,7 @@ platform limit.
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
 | Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
 | View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
-| Keyboard          | `partial`   | 44 bindings against Photoshop's ~200                                           |
+| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                           |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                              |
 | Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all        |
@@ -268,7 +268,7 @@ plus `PanelGroup.tsx`), and Window has Reset Workspace
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
 (`SidebarLeft.tsx` — its `color-pickers` cluster); the closest analogues to
-Color and Character are the Photo Filter command's three sliders and the Type options bar,
+Color and Character are the Desaturate command's three sliders and the Type options bar,
 which are options bars, not panels.
 
 ## Menu bar
@@ -279,7 +279,7 @@ Help.
 **This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
 (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
-Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Desaturate` — and
 twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
 records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,
@@ -330,7 +330,7 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 44. Thirty-five registrations in
+**This app:** 45. Thirty-six registrations in
 `AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
 `useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
@@ -338,10 +338,15 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 **Status:** `partial`
 
 **Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`; `[` and `]` for brush size; `0` and `1`
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `[` and `]` for brush size; `0` and `1`
 for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
 Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
 and the Burn, so the Sponge must be the active tool.
+
+Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
+only save is Save As, which is what `File > Save` opens
+(`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
+`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two.
 
 **Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
 Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
