@@ -87,7 +87,7 @@ describe('history append source-backed create planning', () => {
     }
   });
 
-  it('refuses a legacy-tool source and names the tool', () => {
+  it('publishes a paint source for a pencil layer', () => {
     const registry = new AssetRegistry();
     try {
       const source: LayerSource = {
@@ -97,9 +97,10 @@ describe('history append source-backed create planning', () => {
         pos: position,
       };
 
-      expect(() => deriveCreateLayerEntry(createItem('pencil-layer', source), context(registry))).toThrow(
-        /Tool pencil/
-      );
+      const entry = deriveCreateLayerEntry(createItem('pencil-layer', source), context(registry));
+      expect(entry?.operation.kind).toBe('create-layer');
+      if (!entry || entry.operation.kind !== 'create-layer') return;
+      expect(entry.operation.layer.source).toMatchObject({ kind: 'paint', toolName: 'pencil', sourcePos: position });
     } finally {
       registry.shutdown();
     }
@@ -245,7 +246,7 @@ describe('history append raster asset liveness', () => {
           activeLayerId: null,
         },
         history: [],
-        cursor: 0,
+        cursor: -1,
       } as unknown as DurableDocument;
       const input: DurableAppendInput = {
         documentId,

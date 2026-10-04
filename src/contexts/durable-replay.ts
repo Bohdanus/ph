@@ -122,6 +122,27 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
       case 'set-document-frame':
         frame = Object.freeze({ ...operation.next });
         break;
+      case 'replace-layer-source': {
+        const layer = layers.get(operation.layerId);
+        // Absent layer is a no-op, the same answer `remove-layer`,
+        // `set-layer-properties` and `reposition-layer` give for an id the
+        // document does not hold.
+        if (!layer) break;
+        // The retained operations SURVIVE a source rewrite. A source edit is an
+        // edit of the layer's arguments, not of the edits already applied to it:
+        // Photoshop keeps a live filter or transform on a type layer whose text is
+        // retyped, and `materializeLayer` renders the new source and then applies
+        // `layer.operations`, which is what makes the two agree. Clearing them
+        // would drop a user's blur on the next edit to their type.
+        layers.set(
+          operation.layerId,
+          layerWithSnapshot(
+            layer,
+            cloneLayerSnapshot({ ...layer.snapshot, pos: { ...operation.pos }, source: operation.source })
+          )
+        );
+        break;
+      }
       case 'merge-document':
         for (const id of operation.removedLayerIds) layers.delete(id);
         layers.set(

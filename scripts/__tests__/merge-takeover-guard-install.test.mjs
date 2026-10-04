@@ -73,7 +73,19 @@ describe('the silent-revert gate is installed, not merely written', () => {
     // A gate whose header claims more than it does is the failure this whole change was
     // made to stop. If the FF limit is ever removed from the comment, git behaviour has
     // to have changed first.
-    expect(hook.toUpperCase()).toContain('FAST-FORWARD');
+    //
+    // Read the whole bullet, not just the line naming it: the claim and its correction sit
+    // on different lines, and an assertion that only saw the heading could not tell them
+    // apart. `toContain('FAST-FORWARD')` was exactly that assertion — it passed for "fires
+    // no hook at all" and for "fires no gating hook" alike, so it sat green over the false
+    // claim for as long as the false claim was on main.
+    const bullet = hook.split('\n# - ').find((chunk) => chunk.toUpperCase().includes('FAST-FORWARD')) ?? '';
+    expect(bullet).not.toBe('');
+    // A fast-forward reaches `post-merge`, which cannot block. Verified against raw git,
+    // not read off a document, so the bullet has to name the hook rather than deny one.
+    expect(bullet).toContain('post-merge');
+    expect(bullet.toUpperCase()).not.toContain('NO HOOK AT ALL');
+    expect(bullet.toUpperCase()).not.toContain('FIRES NO HOOK');
   });
 });
 

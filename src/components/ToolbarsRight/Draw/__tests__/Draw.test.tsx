@@ -723,16 +723,35 @@ describe('Draw toolbar', () => {
       expect(gapSlider).toHaveFocus();
     });
 
-    it('enter and space on select opens options', () => {
+    it('leaves the pen type popup to the browser, so Enter and Space change nothing here', () => {
       render(<Draw />);
-      const penTypeSelect = screen.getByLabelText('Pen Type');
+      const penTypeSelect = getPenTypeSelect();
+
+      // Opening the popup is the platform's, not this component's: Draw.tsx renders a bare
+      // `<select>` with no `onKeyDown`, and jsdom has no native popup to observe, so the two
+      // `toBeInTheDocument()` calls this replaces could never fail — `getByLabelText` had
+      // already thrown if the control were gone, so both passed whatever the keys did. The
+      // `tagName` is the part that keeps the claim honest: replace the native control with a
+      // `div role="combobox"` and opening the options becomes the app's own job, at which point
+      // this test is measuring the wrong thing and says so.
+      expect(penTypeSelect.tagName).toBe('SELECT');
 
       penTypeSelect.focus();
+      expect(penTypeSelect).toHaveFocus();
+
       fireEvent.keyDown(penTypeSelect, { key: 'Enter' });
-      expect(penTypeSelect).toBeInTheDocument();
+
+      // What the component does own: the key presses pass through untouched — no value change,
+      // nothing published to the tool, no lost focus.
+      expect(penTypeSelect).toHaveFocus();
+      expect(penTypeSelect).toHaveValue('pen');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
 
       fireEvent.keyDown(penTypeSelect, { key: ' ' });
-      expect(penTypeSelect).toBeInTheDocument();
+
+      expect(penTypeSelect).toHaveFocus();
+      expect(penTypeSelect).toHaveValue('pen');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
     });
 
     it('escape key does not close anything (no popovers)', () => {

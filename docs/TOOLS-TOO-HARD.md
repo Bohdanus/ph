@@ -4,8 +4,8 @@
 architecture, we skip the implementation and record it here rather than shipping a fake or a
 half-version. A capability listed here is a decision, not a backlog item: nobody re-audits it, nobody
 estimates it, and nobody treats its absence as a defect. An entry is deleted only when the capability
-lands — see the lifecycle rule in `docs/DOCUMENTATION.md:170-183`: **fixed and verified DELETES the
-entry**, never rewrites it into a closed one.
+lands — see the lifecycle rule in `docs/DOCUMENTATION.md` — "Lifecycle": **fixed and verified
+DELETES the entry**, never rewrites it into a closed one.
 
 **Photoshop's documentation is the source of truth for what Photoshop does.** Every "What Photoshop
 does" line below cites the Adobe page. Where this app's behaviour and Adobe's disagree, Adobe is
@@ -22,9 +22,9 @@ entry remains the record of the defect, and this file records only that it is to
 ## Revalidate before trusting any citation
 
 Line-number citations into a growing source file go stale, and the prose at a stale line still reads
-plausibly, which is why a `grep` sweep does not catch it. `AGENTS.md` records the measurement: on one
-branch, inserting lines into `StoreContext.tsx` left nearly every citation below the insertion point
-wrong. **Re-derive a citation from the sentence that contains it, never from the old number.**
+plausibly, which is why a `grep` sweep does not catch it. `.skills/hard-merge.md` records the
+measurement: on one branch, inserting lines into a central context file left nearly every citation
+below the insertion point wrong. **Re-derive a citation from the sentence that contains it, never from the old number.**
 
 To check one without moving through the file by eye, print the line and its neighbours and read them
 against the claim the sentence makes:
@@ -49,7 +49,7 @@ spreading across everything of a similar tone.
 <https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html>
 
 **What this app does.** Each dab runs a contiguous flood fill and nothing else
-(`src/tools/quickSelection.ts:165`):
+(`quickSelection.ts` — the `floodFill()` call inside `growAlongStroke()`):
 
 ```ts
 const result = floodFill(imageData, seed, { tolerance, contiguous: true });
@@ -76,13 +76,14 @@ Alt/Option and Shift+Alt/Option held during the drag set the same four modes.
 
 **What this app does.** No selection tool's bar renders any of the four. A second selection appends
 and activates. The union is not a missing control over a present model — it is a change to the model.
-`Selection` is a single point path (`src/contexts/general-types.ts:61-64`):
+`Selection` is a single point path (`general-types.ts` — `Selection`):
 
 ```ts
 export type Selection = {
   id: string;
   points: Point[];
   isActive: boolean;
+  // …pos, lifecycle, geometry, sourceTool, metadata
 ```
 
 Union and intersect are per-pixel operations, and a single point path cannot express them without
@@ -106,9 +107,8 @@ Contrast, Shift Edge and Decontaminate Colors, then output as a selection, a lay
 a new document. <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 
 **What this app does.** There is no `Select` menu. The menu bar exists and has five menus — File,
-Tools, Image, Edit, Window (`src/components/DesktopHeader/DesktopHeader.tsx:322`, `:423`, `:452`,
-`:472`, `:512`) — and `Select` is not one of them, so there is nothing for Select and Mask to hang
-from.
+Tools, Image, Edit, Window (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses) — and
+`Select` is not one of them, so there is nothing for Select and Mask to hang from.
 
 **Why it is too hard.** Select and Mask is not a dialog over the existing model — it is the workspace
 where most of a selection tool's real accuracy actually lives, and it consumes the missing combination
@@ -129,11 +129,12 @@ Contract are the three every selection workflow depends on. Feather and Grow in 
 reachable from the same Select menu Select and Mask is.
 
 **What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
-that exist are File, Tools, Image, Edit and Window
-(`src/components/DesktopHeader/DesktopHeader.tsx:322`, `:423`, `:452`, `:525`, `:559`) — and no
-selection operation implements them: `src/util/selection.ts`
-exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection, though
-it does compute a feathered alpha for the outline it draws.
+that exist are File, Tools, Image, Edit and Window (`DesktopHeader.tsx`'s five `menuHostRefs` hosts) —
+and no selection operation implements them: `src/util/selection.ts`
+exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection. It
+does compute a feathered alpha, but only on the clipboard copy path
+(`copyFeatheredPolygonSelectionToCanvas()` calling `createFeatheredAlphaMask()`); the outline it draws
+on the canvas is not feathered.
 
 **Why it is too hard.** Every one of these is a whole-image operation on a selection the app stores as
 a polygon. Feathering a polygon is not feathering its outline; a correct Feather is a distance
@@ -151,14 +152,15 @@ from the marquee's bar.
 material inside the region, and the enclosed background inside it stays unselected.
 
 **What this app does.** Refuses. The boundary tracer classifies loops and then rejects the whole
-region if any of them is a hole (`src/util/magicWand.ts:218`):
+region if any of them is a hole (`magicWand.ts` — `createMagicWandSelectionFromImageData()`):
 
 ```ts
 if (holes.length > 0) return null;
 ```
 
 The quick selection reaches the same conclusion by a different route and reports it rather than
-resolving it. `hasHoles` is carried on the result and explained at `src/tools/quickSelection.ts:455-463`:
+resolving it. `hasHoles` is carried on the result and explained in `quickSelection.ts` —
+`createQuickSelectionPolygon()`'s doc comment:
 
 > `hasHoles` is reported rather than resolved, because this data model cannot resolve it: a
 > `Selection` carries one point path, so committing the outer contour of a region with a hole would
@@ -166,7 +168,7 @@ resolving it. `hasHoles` is carried on the result and explained at `src/tools/qu
 > select the handle's background with it.
 
 The tool area acts on the flag and drops the stroke, logging the reason
-(`src/components/Main/QuickSelectionToolArea.tsx:204-208`):
+(`QuickSelectionToolArea.tsx` — the `polygon.hasHoles` guard in `handlePointerUp()`):
 
 ```ts
 if (polygon?.hasHoles) {
@@ -194,9 +196,9 @@ handles, with Auto Add/Delete and Rubber Band controlling how the next click lan
 path can be stroked, filled or converted to a selection.
 <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/overview-of-pen-tool-settings.html>
 
-**What this app does.** All six are `commit: 'unimplemented'` in the processor registry
-(`src/tools/toolProcessors.ts:343-368`), against a shared null-bitmap stub declared at
-`src/tools/toolProcessors.ts:118`:
+**What this app does.** All six are `commit: 'unimplemented'` in the `toolProcessors` registry
+(`toolProcessors.ts`), against a shared null-bitmap stub declared as `unimplemented` in the same
+file:
 
 ```ts
 const unimplemented = () => () => [null as never] as ToolResult;
@@ -204,8 +206,8 @@ const unimplemented = () => () => [null as never] as ToolResult;
 
 They are in the rail, with Adobe's names, because the rail is a clone and the grouping is the
 specification. None of them has a gesture surface: `Main`'s tool-area dispatch has no branch for any
-of them, so the default handler stands (`src/components/Main/Main.tsx:225`) and the same fallback
-closes the dispatch (`src/components/Main/Main.tsx:250`), which is the inert `display: none` surface
+of them, so the default handler stands (`Main.tsx` — `renderContent()`'s `EventHandler` dispatch)
+and that same dispatch closes on `DummyToolArea`, which is the inert `display: none` surface
 every unrouted tool gets.
 
 **Why it is too hard.** A work path is a first-class document object: anchors, bezier direction
@@ -224,16 +226,16 @@ Photoshop grouping and naming are the specification, and the stub bar is the deb
 can add to it with Edit ▸ Define Custom Shape and manage it in the Preset Manager. Star is the
 seventh entry in the shape flyout alongside Rectangle, Ellipse, Triangle, Polygon and Line.
 
-**What this app does.** `commit: 'unimplemented'` at `src/tools/toolProcessors.ts:374-378`, the same
-null-bitmap stub, and no gesture surface. The tool is in the rail under Adobe's name.
+**What this app does.** `commit: 'unimplemented'` at `toolProcessors.ts` — its `'custom-shape'`
+entry — the same null-bitmap stub, and no gesture surface. The tool is in the rail under Adobe's name.
 
 **Why it is too hard.** It is three things, not one: a parser for the shape-preset format, the preset
 library itself, and the authoring and management surfaces. None of the format's structure is present,
 and shipping a hardcoded star would be exactly the fake this policy refuses.
 
 **What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts:114-121`) and Star is the missing one, which `AGENTS.md` records as a
-requirement rather than an omission to be filled by a placeholder.
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the missing one, which `AGENTS.md`
+records as a requirement rather than an omission to be filled by a placeholder.
 
 ### Live type
 
@@ -241,9 +243,9 @@ requirement rather than an omission to be filled by a placeholder.
 the box is resized, can be re-typed in place, and carries an on-canvas caret. Scaling it up is not a
 resample; it re-renders.
 
-**What this app does.** Text is baked to pixels at commit. The renderer writes the string with
-`fillText` (`src/tools/text.ts:55`) into a layer-sized raster, and the processor returns that raster
-as the tool's whole result (`src/tools/text.ts:72-81`):
+**What this app does.** Each committed text presentation is rasterized. The renderer writes the
+string with `fillText` (`text.ts` — `fillLine()`) into a layer-sized raster, and the `text` processor
+returns that raster as the tool's whole result (the same file's `text` processor):
 
 ```ts
 export const text =
@@ -258,8 +260,14 @@ export const text =
   };
 ```
 
-`renderText` is a measure-and-draw function over a string (`src/tools/text.ts:28`), and nothing
-re-runs it against the committed pixels.
+`renderText` is a measure-and-draw function over a string (`text.ts` — `renderText()`), and the
+**durable** engine does re-run it: `materialization.ts` — `sourceBitmap()` re-runs the creator for a
+`kind: 'text'` durable source, classified by `history-adapter.ts` — `convertSource()`. Only the
+RUNTIME path skips it — `layer-renderer.ts`'s `vectorToolNames` lists six tools with `text` absent,
+so a live layer draws from `layer.bitmap`. Stating the skip without the qualifier is what made this
+paragraph wrong when the Type tool was in scope: it told a reader the committed characters could not
+be reproduced from the args, when one of the two engines can. `docs/TOOLS.md`'s two-engine section
+has it right.
 
 **Why it is too hard.** It needs a text layout engine, font shaping and rasterisation, and an
 on-canvas editing surface with a caret, selection and IME input. The app also has a replay contract
@@ -267,8 +275,13 @@ that makes this harder than it looks: `HistoryItem[]` is the production replay a
 replayed type entry has to reproduce the same pixels from its args on any host. A live text object is
 not a raster and does not survive that unchanged.
 
-**What the app does instead.** A raster that cannot be edited after the fact. Changing the text
-commits a new layer.
+**What the app does instead.** The production path retains the text source arguments and supports
+Photoshop-style panel re-entry: selecting an existing text row with the Type tool active (`LayersTab.tsx`
+— `selectLayer()`), or double-clicking its row, hydrates those arguments into the contenteditable
+overlay. `Text.tsx` — `applyText()` and the dirty-tool commit arm call `replaceLayerSource()`, so the
+edit is recorded and replayable. Canvas-click re-entry remains open. The runtime renderer still uses
+the committed raster for text, so runtime scaling resamples it. The remaining gaps are canvas entry and
+live vector rendering rather than retention of the text arguments.
 
 ### Free Transform as an interactive bounding box
 
@@ -280,10 +293,12 @@ commit on Enter. <https://helpx.adobe.com/photoshop/using/free-transformations-i
 `tempUpdateLayer`, and the geometry is committed when the gesture ends: a drag previews until the
 pointer is released and then lands as one history entry, bound to the browser's native `change`
 event rather than to React's `onChange`, which is the per-frame `input` event
-(`src/components/ToolbarsRight/Transform/Transform.tsx:54-69` and `:80`). Switching tool
-(`src/hooks/useApp.ts:167`) and exporting still commit too. The bar carries no commit control and no
+(`Transform.tsx` — the native `change` listener its `useEffect` registers, and the
+`throttledOnChange()` that publishes each frame). Switching tool (`useApp.ts` — `goToTool()`) and
+exporting still commit too. The bar carries no commit control and no
 discard control; the whole right-hand column is the two mirror toggles, centered in the slack the
-removed links left behind (`:314`), and Escape — handled at `:31-39` — is the only route that
+removed links left behind (`Transform.tsx` — the `toggleMirrorH` / `toggleMirrorV` pair), and Escape
+— handled by the `useEffect` that calls `cancel()` — is the only route that
 discards a preview.
 
 **Why it is too hard.** The bounding box is a gesture surface that owns the pointer for its duration
@@ -304,8 +319,8 @@ image behind a stationary crop box.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/straighten-tilted-photos.html>
 
 A **Fill** dropdown on the same bar decides what fills the canvas a crop adds outside the image edge —
-"Go to the Fill dropdown in the Options bar and select Content-Aware Fill" — with Generative Expand the
-cloud value described below.
+"Go to the Fill dropdown in the Options bar and select Content-Aware Fill". Generative Expand is a
+separate action in the Contextual Task Bar, not a value in that dropdown.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/apply-content-aware-fill-while-cropping-images.html>
 
 **The bar carries no Curve, and Adobe does not claim that it does.** Adobe's own enumeration of the
@@ -316,32 +331,34 @@ and the Curve Photoshop documents is the separate Curves adjustment, recorded un
 [Curves — a spline over the tonal range](#curves--a-spline-over-the-tonal-range) below.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html>
 
-**Generative Expand** is the value that flow is built around: "From the Tools panel, select Crop tool
-and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and select
-Generate to let Photoshop extend the image" and "Choose a variation from the Properties panel". The
-model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in the added band
-are computed by a cloud service and arrive on a layer of their own.
+**Generative Expand** is the separate action that flow is built around: "From the Tools panel, select
+Crop tool and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and
+select Generate to let Photoshop extend the image" and "Choose a variation from the Properties
+panel". The model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in
+the added band are computed by a cloud service and arrive on a layer of their own.
 <https://helpx.adobe.com/photoshop/desktop/create-open-import-images/create-images/explore-beyond-the-canvas-with-generative-expand.html>
 
 **What this app does.** The frame grows and nothing is filled. `applyDocumentCrop` takes the gesture
-rect **unclamped** — `sortRoundRect` (`src/util/rect.ts:84`) sorts it and rounds each edge once, with
-no clamp to the document — so a rect dragged past an edge produces a larger `documentFrame`
-(`src/contexts/useLayer.ts:839`, the next frame computed at `:840` and compared against the current
-one):
+rect **unclamped** — `sortRoundRect` (`rect.ts` — `sortRoundRect()`) sorts it and rounds each edge
+once, with no clamp to the document — so a rect dragged past an edge produces a larger
+`documentFrame` (`useLayer.ts` — `applyDocumentCrop()`, which computes the next frame and compares it
+against the current one):
 
 ```ts
 const { x, y, width, height } = sortRoundRect(rect);
 ```
 
-The crop is registered as a `document-operation` (`src/tools/toolProcessors.ts:157-162`), so the
-commit is a frame edit and not a raster: it dispatches no fill of any kind, and the band the growth
-adds is covered by no layer and left transparent whatever the bottom layer is — the operator's
+The crop is registered as a `document-operation` (`toolProcessors.ts` — its `crop` entry's
+`commit: 'document-operation'`), so the commit is a frame edit and not a raster: it dispatches no
+fill of any kind, and the band the growth adds is covered by no layer and left transparent whatever
+the bottom layer is — the operator's
 decision, recorded as OVR-1 in [`OVERRIDES.md`](./OVERRIDES.md).
 
 The **Fill** control is not rendered at all: the bar carries an `Aspect Ratio` select and two buttons,
-`Apply` and `Clear` (`src/components/ToolbarsRight/Crop/Crop.tsx:55-95`), and the only file under
+`Apply` and `Clear` (`Crop.tsx` — the `Crop` options bar), and the only file under
 `src/` naming Content-Aware or Generative is the generated tool description
-(`src/tools/descriptions/type-crop.ts:241-245`), which is documentation data rather than code.
+(`type-crop.ts` — the `Fill` control entry, whose detail names Content-Aware Fill), which is
+documentation data rather than code.
 
 **Why it is too hard.** Straighten alone is a rotation, which the app has elsewhere, but it is the
 gesture and the box relationship that is the feature. Content-Aware is a patch-based synthesis model
@@ -349,19 +366,20 @@ with no analogue in this codebase at all, and Generative Expand is a cloud gener
 server answers with three variations that land on a new generative layer. Neither is a gap in the crop
 processor — it is a gap in what the app is. The app has no network surface anywhere under `src/`, and
 a tool commit is a synchronous call returning `[BitmapSource, Partial<Pos>?]`
-(`src/tools/toolProcessors.ts:37`, the processor signature at `:75`), which is the shape a server round
-trip and three returned variations cannot take.
+(`toolProcessors.ts` — `ToolResult`, whose `ToolProcessorDefinition` carries the `imageProcessor`
+processor signature), which is the shape a server round trip and three returned variations cannot
+take.
 
 **What the app does instead.** An axis-aligned rect with a ratio lock, which may be dragged past the
 image edge: the canvas grows and the added band is transparent. The commit path is honest about what
 it takes — a rect, the current frame, and one document edit — and it says so by writing no fill.
 
-**The frame growth is not this entry's capability, so the growth deletes nothing here.** What this
-entry records is Straighten, Content-Aware and Generative Expand. Growing the canvas is a fourth thing,
-and the cheapest of Adobe's Fill values, decided by the operator rather than synthesised. Patch-based
-synthesis and a cloud generative call are not landing, so this entry stays open under the lifecycle
-rule in the preamble, and what survives the growth is Adobe's behaviour, which a transparent band does
-not change.
+**The frame growth is not this entry's missing capability.** The app can grow the document frame and
+leaves the added band transparent; that current behaviour is recorded by OVR-1 in
+`docs/OVERRIDES.md`. Frame growth is not a Photoshop Fill choice. What this entry records is the
+missing Straighten gesture, Content-Aware Fill, and Generative Expand. Patch-based synthesis and a
+cloud generative call are not landing, so this entry stays open under the lifecycle rule in the
+preamble.
 
 ### Black and White as a hue-sextant weighted mix
 
@@ -371,7 +389,7 @@ push one family of hues toward white and another toward black.
 <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/convert-a-color-image-to-black-and-white.html>
 
 **What this app does.** A three-filter CSS chain over the whole layer
-(`src/tools/functions.ts:60-62`):
+(`functions.ts` — `buildColorsFilter()`):
 
 ```ts
 export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilterArgs): string {
@@ -381,10 +399,10 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
 ```
 
 `grayscale()` is a flat luminance average with no hue dependence at all, and `sepia()` is a fixed
-one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Photo Filter`,
-where **Black and White is a disabled item** (`src/components/DesktopHeader/DesktopHeader.tsx:193`)
-because nothing computes it — see the operator-decision section below for why `Photo Filter` is the
-name the enabled item carries.
+one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Desaturate`,
+where **Black and White is a disabled item** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`'s
+`{ label: 'Black and White' }` entry) because nothing computes it — see the operator-decision section
+below for why `Desaturate` is the name the enabled item carries.
 
 **Why it is too hard.** No CSS filter chain can express a per-hue weighting; the filter primitives are
 whole-image and order-dependent, and six independent sextant weights are neither. A faithful
@@ -414,17 +432,19 @@ is configurable in the Auto Color Correction Options dialog.
 <https://helpx.adobe.com/photoshop/using/levels-adjustment.html>
 
 **What this app does.** There is no Levels. `Image ▸ Adjustments ▸ Levels` is a **disabled** menu
-item (`src/components/DesktopHeader/DesktopHeader.tsx:208`), and the tool registered under the id
-`levels` is not Levels either: `LevelsToolArgs` is `{ brightness, contrast }`
-(`src/tools/levels.ts:5`) and the processor emits a single `brightness(%) contrast(%)` string
-(`src/tools/functions.ts:66-70`). It is the app's `Brightness/Contrast`, reached at
-`Image ▸ Adjustments ▸ Brightness/Contrast` (`DesktopHeader.tsx:187`).
+item (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`'s `{ label: 'Levels' }` entry), and the tool
+registered under the id `levels` is not Levels either: `LevelsToolArgs` is `{ brightness, contrast }`
+(`levels.ts` — `LevelsToolArgs`) and the processor emits a single `brightness(%) contrast(%)` string
+(`functions.ts` — `buildLevelsFilter()`). It is the app's `Brightness/Contrast`, reached at
+`Image ▸ Adjustments ▸ Brightness/Contrast` (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`'s
+`{ label: 'Brightness/Contrast', toolName: 'levels' }` entry).
 
 **Why it is too hard.** Levels is a per-channel **lookup table**: three control points map an input
 level to an output level, and every pixel in the selected channel is then a table index. The app has no
-per-channel pixel path to build the table against — what it owns is a CSS `ctx.filter` string handed to
-the canvas by `getLayerFilter` (`src/contexts/layer-renderer.ts:32`, applied at `:99`), and a filter
-string cannot express an arbitrary LUT. The histogram is a second, separable piece: it is a 256-bucket
+per-channel pixel path to build the table against — what it owns is a CSS `ctx.filter` string handed
+to the canvas by `getLayerFilter` (`layer-renderer.ts` — `getLayerFilter()`, applied by
+`drawLayerSource()`), and a filter string cannot express an arbitrary LUT. The histogram is a second,
+separable piece: it is a 256-bucket
 count per channel over the composited image, which means reading back what the renderer just wrote.
 
 **What the app does instead.** Two global CSS filters. It moves brightness and contrast; it cannot move
@@ -445,8 +465,8 @@ presets, an on-image adjustment tool, and a histogram behind the graph.
 <https://helpx.adobe.com/photoshop/using/curves-adjustment.html>
 
 **What this app does.** Nothing. `Image ▸ Adjustments ▸ Curves` is a **disabled** menu item
-(`src/components/DesktopHeader/DesktopHeader.tsx:191`). There is no curve type, no control-point
-model, and no evaluator anywhere in `src`.
+(`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`'s `{ label: 'Curves' }` entry). There is no curve type, no
+control-point model, and no evaluator anywhere in `src`.
 
 **Why it is too hard.** Curves is the same missing primitive as Levels with a worse control surface: a
 monotone spline through N points, evaluated per input level, per channel. The evaluator is a day; the
@@ -466,13 +486,14 @@ is created from `Layer > New Adjustment Layer`.
 <https://helpx.adobe.com/photoshop/desktop/create-manage-layers/color-adjustment-fill-layers/work-with-adjustment-and-fill-layers.html>
 
 **What this app does.** No adjustment layer exists as a type, a layer kind or an import path.
-`src/contexts/psd-utils.ts:88-106` warns that `adjustment`, `mask` and `clipping` are "unsupported and
-not preserved" on import, so a PSD written by Photoshop loses them on the way in. There is no Properties
-panel (`PanelId = 'history' | 'layers'`, `src/contexts/PanelLayout.tsx:89`). What exists is a
+`psd-utils.ts` — the `visit()` walk inside `loadPsd()` — warns that `adjustment`, `mask` and
+`clipping` are "unsupported and not preserved" on import, so a PSD written by Photoshop loses them on
+the way in. There is no Properties panel (`PanelId = 'history' | 'layers'`, `PanelLayout.tsx` —
+`PanelId`). What exists is a
 **retained per-layer operation stack** — `FilterLayerOperation | AffineLayerOperation`
-(`src/contexts/layer-types.ts:31-46`) — which retains an adjustment and re-renders it, and cannot
-re-edit it: the only writer is the tool that created it, and the stack is a list, not a settings object
-with a UI.
+(`layer-types.ts` — the `LayerOperation` union) — which retains an adjustment and re-renders it, and
+cannot re-edit it: the only writer is the tool that created it, and the stack is a list, not a
+settings object with a UI.
 
 **Why it is too hard.** An adjustment layer is not a rendering feature; it is a **document-model** one.
 It needs a layer kind, a settings payload that survives serialization, a mask, and a Properties panel
@@ -486,13 +507,12 @@ operation stack that can re-render but not re-edit. It is non-destructive in ret
 narrower thing than the word means and must not be described as smart objects — `docs/FEATURES.md`'s
 Non-destructive editing section is where that distinction is already drawn.
 
-### Dodge, Burn and Smudge build-up while the button is held
+### Dodge, Burn, Sponge and Smudge build-up while the button is held
 
 **Not a handoff item.** The gap is real but it is recorded here as a capability decision, and per
-this file's own policy nobody treats its absence as a defect. The rail entries for the two ids are
-`HANDOFF.md` §170's, which is a separate decision.
-
-### Dodge, Burn, Sponge and Smudge build-up while the button is held
+this file's own policy nobody treats its absence as a defect. The rail entries for these ids are
+`HANDOFF.md` §74's — the rail-clone decision, which names Sponge among the entries to replace —
+which is a separate decision.
 
 **What Photoshop does.** Dodge, Burn, Sponge and Smudge accumulate for as long as the button is
 held. The result depends on how long the cursor rested in each place, which is the entire point of
@@ -503,8 +523,8 @@ retouches with a low Flow and repeated passes, so a one-shot commit at Flow 50% 
 a setting — it is half the whole effect in one pass.
 
 **What this app does.** One commit per stroke, on pointer-up. The reason is written down where the
-implementation is (`src/tools/dodgeBurn.ts:248-252`, and the same paragraph restated at
-`src/tools/sponge.ts:351-356`):
+implementation is (`dodgeBurn.ts` — `applyDodgeBurn()`'s doc comment, and the same paragraph restated
+in `sponge.ts` — `applySponge()`'s doc comment):
 
 > There is no build-up. Photoshop's dodge and burn accumulate for as long as the button is held, which
 > is a per-frame effect with no single end value; a one-shot commit has to be a pure function of its
@@ -521,8 +541,9 @@ half-version this file's policy refuses.
 **Smudge is a different case and must not be folded into this entry's evidence.** The app's Smudge
 _does_ accumulate, along the stroke rather than over dwell time: `smudgeStroke` is a read-modify-write
 because "`blendPixel` composites over what is already there, and a smudge accumulates along the
-stroke" (`src/tools/smudge.ts:170-174`). What it has no build-up for is the same dwell half — how long
-the cursor rests in one place while the button is held — and that is the half this entry is about. The
+stroke" (`smudge.ts` — `smudgeStroke()`'s doc comment). What it has no build-up for is the same dwell
+half — how long the cursor rests in one place while the button is held — and that is the half this entry
+is about. The
 per-dab path accumulation is why the Smudge entry's own cost is memory, not commit discipline.
 
 **Why it is too hard, and the constraint is architectural rather than incidental.** This is the one
@@ -530,10 +551,13 @@ entry in this file where the obstacle is not the algorithm — accumulating ligh
 replay contract. A `commit: 'raster'` tool's commit must be a pure function of its args, because
 `HistoryItem[]` is the production replay authority and `requiresRaster: true` replay has to
 reconstruct the same pixels from the recorded args. Dwell accumulation makes the commit a function of
-wall-clock time as well, so the same args replay to a different image. The app already has the
-converse recorded: `saveLayerCanvas()` promoting cached canvases outside reducer publication is a
-reason not to start the single-writer cutover. Changing the commit discipline for dwell tools is a
-history-architecture change with a migration attached, not a processor edit.
+wall-clock time as well, so the same args replay to a different image. That is a different half of
+the replay contract from the one the presentation boundary covers — a promoted cache reaches a
+published layer only inside the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm
+(`StoreContext.tsx`), and `AGENTS.md`'s Architecture status section is the one
+home for that — so what dwell accumulation breaks is commit purity, not cache publication. Changing
+the commit discipline for dwell tools is a history-architecture change with a migration attached,
+not a processor edit.
 
 **What the app does instead.** One application of the effect at the tool's Exposure value — or, on the
 Sponge, at its Flow value — committed on release. Both are per-stroke settings, which is what the bar
@@ -545,13 +569,14 @@ shows and what the commit can honour.
 interior and strokes the outline, creating a work path instead of pixels, and a Paths panel holds
 those paths so they can be edited, saved, and used as vector masks.
 
-**What this app does.** It clears `hasFill` and stops there (`src/tools/shape.ts:196`):
+**What this app does.** It drops the interior and stops there (`shape.ts` — `drawShape()`):
 
 ```ts
-const hasFill = args.toolMode !== 'path' && args.hasFill;
+const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor;
 ```
 
-The shape is still rasterised. What the user gets in Path mode is the same filled-or-not polygon,
+That third term is a separate, later fix — a figure with no background colour is not filled, so a
+Path-mode selection is not the only way to get an unfilled polygon. The shape is still rasterised. What the user gets in Path mode is the same filled-or-not polygon,
 drawn as pixels.
 
 **Why it is too hard.** It is the same missing work-path object the Pen family needs, plus the Panels
@@ -570,7 +595,7 @@ foreground colour.
 <https://helpx.adobe.com/photoshop/using/fill-and-stroke-shapes.html>
 
 **What this app does.** One `Filled` checkbox over the global foreground/background pair
-(`src/components/ToolbarsRight/Figures/Shape.tsx:209-222`):
+(`Shape.tsx` — the `filled-toggle` checkbox):
 
 ```tsx
 <input
@@ -605,16 +630,17 @@ and the Eraser, and it mirrors every dab live as the stroke is drawn.
 <https://helpx.adobe.com/photoshop/using/paint-symmetry.html>
 
 **What this app does.** The names appear in `src/`, but only as strings in the generated description
-data — `src/tools/descriptions/paint.ts:91` lists `control: 'Symmetry'` in a table the docs
+data — `paint.ts` carries `control: 'Symmetry'` in a table the docs
 generator reads. There is no Symmetry symbol in any implementation, and no settings panel. The
 `Symmetry` identifier being greppable in `src/` is a property of the descriptions, not evidence of
-anything: the only other hit outside `src/tools/descriptions/` is
-`src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx:157`, which asserts Symmetry's
+anything: the only other hit outside `src/tools/descriptions/` is `Paint.test.tsx` — the
+`it('no longer renders the TODO placeholder it replaced')` case, whose
+`['Flow', 'Airbrush', 'Symmetry', 'Auto Erase']` loop asserts Symmetry's
 **absence**.
 
 **Why it is too hard.** The panel is a per-dab pipeline: jitter and dynamics are evaluated at each
 stamp, not at commit. The app's paint commit is a single `stroke()` per stroke
-(`src/components/Main/DrawToolArea.tsx:143`), which has no per-dab step to jitter or mirror at. The
+(`DrawToolArea.tsx` — `handlePointerUp()`), which has no per-dab step to jitter or mirror at. The
 Eraser's own documentation already records this consequence for a much simpler control — Flow is
 rendered with Photoshop's label and disabled, because Flow is a per-dab alpha ramp and a single
 `stroke()` cannot honour one. Symmetry is the same constraint at ten times the scope.
@@ -630,7 +656,8 @@ for the length of the drag. Airbrush erases continuously while the button is hel
 <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/erase-parts-of-an-image-with-the-eraser-tool.html>
 
 **What this app does.** Neither control is rendered, and the Eraser's tests pin the absence
-(`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:201`):
+(`Eraser.test.tsx` — the
+`it('does not render an Erase-to-History control, which has no history source here')` case):
 
 ```ts
 expect(screen.queryByLabelText(/Erase to History/i)).toBeNull();
@@ -650,15 +677,16 @@ never creates a layer, unlike the Brush.
 into the layer that is already there.
 
 **What this app does.** Layer opacity has no writer: `Layer.opacity` is a required field
-(`src/contexts/layer-types.ts:58`), PSD import populates it (`src/contexts/psd-utils.ts:159,229`) and
+(`layer-types.ts` — `Layer.opacity`), PSD import populates it (`psd-utils.ts` — the layer record
+`loadPsd()`'s `visit()` walk builds) and
 materialization applies it, and nothing in the app ever writes it. The defect and its
-blast radius are `HANDOFF.md` §56 (`HANDOFF.md:816`); it is recorded here only because closing it is
+blast radius are `HANDOFF.md` §56; it is recorded here only because closing it is
 not a small change.
 
 The paint model is the larger half. A brush stroke commits as a **new layer** rather than painting the
 active one. `DrawToolArea` calls `createLayerFromTool` on commit
-(`src/components/Main/DrawToolArea.tsx:143`), and the contrast with a tool that edits in place is
-written down at `src/components/Main/EraserToolArea.tsx:18-20`:
+(`DrawToolArea.tsx` — `handlePointerUp()`), and the contrast with a tool that edits in place is
+written down in `EraserToolArea.tsx` — its doc comment:
 
 > `DrawToolArea` commits through `createLayerFromTool`, which is right for a painting tool: a new
 > layer is the paint. It is wrong for the eraser, which subtracts alpha from the layer that is already
@@ -682,40 +710,64 @@ rule costs a real capability in one case, and what an enabled menu item is allow
 naming decision in another. They are recorded here so they are not re-derived, and so nobody
 implements them as if they were engineering judgements.
 
-### The two enabled `Image ▸ Adjustments` items are named for capabilities the app does not have
+### What an enabled `Image ▸ Adjustments` item may promise
 
 `color`, `levels` and `transform` left the Tools rail on 2026-10-01 — the operator's ruling, recorded
 in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Transform`
 **commands**, and `toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
-rail entry (`toolbar-mapping.ts:172-189`). What is still open is not where they live but **what the two
-enabled items are called**, because both names are a partial match and neither is a match.
+rail entry. **What the two enabled items are called was settled on 2026-10-01 and is implemented:**
+`Brightness/Contrast` and `Desaturate`.
 
-`ADJUSTMENTS_ITEMS` (`src/components/DesktopHeader/DesktopHeader.tsx:186-209`) carries Adobe's list in
+`ADJUSTMENTS_ITEMS` (`DesktopHeader.tsx`) carries Adobe's list in
 a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
-`toolName` and nothing else (`DesktopHeader.tsx:147-150`, `:488`), so a disabled item is a recorded
-absence rather than a fake.
+`toolName` and nothing else, and the rule has two halves rather than one: the optional `toolName?` on
+the `MenuHostItem` type declares it (`DesktopHeader.tsx` — `MenuHostItem`), and the
+`disabled={toolName === undefined}` on each button of the `ADJUSTMENTS_ITEMS` submenu render enforces
+it (`DesktopHeader.tsx` — that submenu's `ADJUSTMENTS_ITEMS.map()`), so a disabled item is a
+recorded absence rather than a fake. The type alone does not enforce it — an optional field states no
+such rule — and the gate alone does not explain it, which is why the claim needs both.
 
 **`levels` is `Brightness/Contrast`, not Levels — and that is honest, not a dodge.**
-`LevelsToolArgs` is `{ brightness, contrast }` (`src/tools/levels.ts:5`) and the processor emits one
-`brightness(…) contrast(…)` filter (`src/tools/functions.ts:66-70`), which is Adobe's Brightness /
-Contrast. **Adobe's Levels is unbuilt**: three control points, a histogram, a channel selector, output
-levels and Auto. That capability has its own entry below.
+`LevelsToolArgs` is `{ brightness, contrast }` (`levels.ts` — `LevelsToolArgs`) and the processor
+emits one `brightness(…) contrast(…)` filter (`functions.ts` — `buildLevelsFilter()`), which is
+Adobe's Brightness / Contrast. **Adobe's Levels is unbuilt**: three control points, a histogram, a
+channel selector, output levels and Auto. That capability has its own entry below.
 
-**`color` is `Photo Filter`, and `grayscale` is a control Photo Filter does not have.** Its three
-controls are grayscale, sepia and saturation (`src/tools/functions.ts:60-63`). Adobe's Photo Filter is a
-hue adjustment from a preset filter or a custom colour, with a Density slider and Preserve Luminosity
-(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — so `sepia` picks
-the kind of colour Adobe's presets pick and `saturation` is the trim Preserve Luminosity performs, but
-**`grayscale` is a conversion to luminance that Photo Filter never performs**. The alternative name is
-worse: the app's `color` is not Adobe's Black and White either (that entry, below), so the honest
-options were a bounded partial match or a wrong name. The open question is whether to drop the
-`grayscale` control or move it to `Desaturate`, which is the operator's to make — `HANDOFF.md` §168.
+**`color` is `Desaturate`, because its leading control is the computation Adobe's Desaturate
+performs.** Its three controls are grayscale, sepia and saturation (`functions.ts` —
+`ColorsFilterArgs`). Adobe's Desaturate "converts a color image to grayscale values, but leaves the
+image in the same color mode", and "assigns equal red, green, and blue values to each pixel in an RGB
+image" (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>) — which is what `grayscale(100%)` does, and `e2e/adjustments.spec.ts` asserts the
+three channels come out **equal** rather than close. Adobe adds that the command "has the same effect as
+setting Saturation to minus (-)100 in the Hue/Saturation adjustment", which is the bar's `saturation`
+slider, so two of the three controls are the command it is named for. **`sepia` is the bounded
+divergence**: it belongs to neither command, and Adobe's Desaturate is a one-shot command with no dialog
+where this bar is three continuous sliders.
+
+**The naming rule, which the operator settled and which now binds every adjustment command.** An item
+takes Adobe's name, and takes it **only if it computes that command**: "use naming that photoshop has",
+2026-10-01. An item whose computation does not match its Adobe name is a falsehood and does not get
+enabled — which is why `Levels` and `Black and White` are `disabled` items rather than relabelled ones,
+and why an app-invented name (`Colors`) is not available as a fallback. Applied to `color` it is what
+moved the item below.
+
+**`Photo Filter` used to be the enabled item and was the falsehood this corrects.** Adobe's Photo
+Filter is a hue adjustment from a preset filter or a custom colour, with a Density slider and
+Preserve Luminosity
+(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — the bar
+reproduced **none** of those three, and `grayscale` is a conversion to luminance that Photo Filter never
+performs, so the enabled item opened a bar its own label did not describe. It is a `disabled` item now,
+which is this menu's rule applied: the capability is unbuilt. The row cannot simply have been dropped,
+because `color` is in `extraTools` and this submenu is the only surface the Colors panel is reachable
+from — and the app's `color` is not Adobe's Black and White either (that entry, below), so `Desaturate`
+is the one Adobe command in this submenu the bar's leading control actually computes.
 
 **The rest of `Image ▸ Adjustments` is disabled, and that is the accurate state of this app.** The app
-has no adjustment-layer machinery at all: `src/contexts/psd-utils.ts:88-106` warns that `adjustment`,
+has no adjustment-layer machinery at all: `psd-utils.ts` — the `visit()` walk inside
+`loadPsd()` — warns that `adjustment`,
 `mask` and `clipping` are unsupported and not preserved on import. What exists instead is a retained
 per-layer operation stack — `layer.operations[]` re-rendered as a CSS filter string by
-`getLayerFilter` (`src/contexts/layer-renderer.ts:32`, applied at `:99`) — which retains an adjustment
+`getLayerFilter` (`layer-renderer.ts`, applied by `drawLayerSource()`) — which retains an adjustment
 but cannot re-edit it and has no properties panel. That capability has its own entry below.
 
 **The operator has put this family back on the list**, 2026-10-01: Levels, Colors and the other
@@ -739,12 +791,12 @@ different claims.
 
 Photoshop's Magnetic Lasso bar carries `Stylus Pressure` and `Select and Mask`. This app puts three
 controls there instead: `Snap`, `Smooth` and `Preview feather`
-(`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:323-358` — `Snap` at `:323-335`,
-`Smooth` at `:337-348`, and `Preview feather` at `:355-358`).
+(`FeatherMagneticLasso.tsx` — the three controls, by their bar labels).
 
 **They are wired, and they work.** `Snap` is the cursor-pull strength: the weight given to the
 gradient search that picks the edge point the path locks onto
-(`src/util/magneticLasso.ts:420`), which is the closest thing here to Photoshop's
+(`magneticLasso.ts` — the `options.snapStrength` `createMagneticSegment()` hands
+`findStrongestGradientPoint()`), which is the closest thing here to Photoshop's
 pressure-driven behaviour. `Smooth` is path simplification in pixels. `Preview feather` renders the
 outline the feather would produce. All three write real args; none is inert.
 
@@ -760,9 +812,9 @@ The rail does not carry a number of Adobe tools. The full roster, keyed by Adobe
 identity for each tool — name, group, shortcut, headline options, and a source — is
 [`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md), which took this list over. That file also records
 the roster counts that disagree — the 30 names this section used to carry against "34 to
-add" in `HANDOFF.md` §74 (`HANDOFF.md:1271`) — and leaves the discrepancy unresolved for
-the operator. **One addition to its arithmetic, from this pass:** `HANDOFF.md` §74 names a
-**sixth** absent tool the 30 never listed, **Content-Aware Move** (`HANDOFF.md:1325`), so the
+add" in `HANDOFF.md` §74 — and leaves the discrepancy unresolved for the operator. **One addition to
+its arithmetic, from this pass:** `HANDOFF.md` §74 names a **sixth** absent tool the 30 never listed,
+**Content-Aware Move**, so the
 union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` now carries
 that name, at its Selection row.
 
@@ -771,8 +823,9 @@ list itself.
 
 **Star is the notable one**, because it is not a missing tool so much as a missing entry: the
 shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts:114-121`) and Star is the shape Adobe's list has that the flyout does
-not. It is listed there rather than filed here separately because the same custom-shape work is
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the shape Adobe's list has that the
+flyout does not. It is listed there rather than filed here separately because the same custom-shape
+work is
 recorded as too hard above, and a hardcoded star would be the fake this policy refuses.
 
 **The rest follow from this file.** The Pen family and Path Type are the work-path object that
@@ -781,4 +834,4 @@ segmentation comparable to the Quick Selection entry. History Brush and Art Hist
 need the retained-raster history model that Erase to History needs. Perspective Crop is the
 Crop entry's transform work. Zoom is worth one note of accuracy: the app has a zoom
 _interaction mode_ on the canvas, and no Zoom _tool_ — the registry at
-`src/contexts/tool-types.ts:30-89` has no entry for it, and the rail has none either.
+`tool-types.ts` — the `ToolArgsByName` map — has no entry for it, and the rail has none either.

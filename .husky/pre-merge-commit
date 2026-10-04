@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # A merge may not silently delete the other side's committed work.
 # ---------------------------------------------------------------------------
-# This hook closes a gap that four documents and no code had closed. The rule —
+# This hook closes a gap that several documents and no code had closed. The rule —
 # "a merge must not hand `main` back its own older content" — was written down in
 # `docs/ORCHESTRATION.md`, copied verbatim into two `.skills/` files, pointed at from
 # three more, and asserted nowhere. The one automated check it had was a `comm -13`
@@ -20,10 +20,11 @@
 # reports success while deleting another branch's work is worse than one that stops.
 #
 # WHAT IT CANNOT COVER, stated here so nobody relies on it:
-# - A FAST-FORWARD landing fires no hook at all. That path is safe by construction —
+# - A FAST-FORWARD landing fires no gating hook. That path is safe by construction —
 #   the branch tip contains main as an ancestor, so the result IS the branch tree and
 #   every difference from main is a change the branch made on purpose. Verified with
-#   raw git, not assumed.
+#   raw git, not assumed. The one hook it does reach is `post-merge`, which cannot
+#   block a landing.
 # - `--no-verify` bypasses this, as it bypasses every other gate in this repository.
 #   CI is the backstop for that, and this is the floor under it rather than the ceiling.
 # - The incoming ref is read from GIT_REFLOG_ACTION because MERGE_HEAD is not yet

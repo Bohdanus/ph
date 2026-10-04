@@ -28,7 +28,7 @@ export function saveLastSettings(args: ToolArgs) {
   if (toolName === 'draw') {
     lastSavedSettings.draw = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'text') {
-    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect'));
+    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect', 'kind', 'placeholderUntouched'));
   } else if (toolName === 'shape') {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
@@ -55,10 +55,11 @@ export function saveLastSettings(args: ToolArgs) {
     // tick the tool is switched away from. The point list goes the way `draw`'s does.
     lastSavedSettings.eraser = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
-    // Same reasoning, and `pos`/`size` are the per-gesture geometry the `draw` and `crop` arms
-    // also drop: persisting them would restore the last click's position into the next fill.
+    // Same reasoning, and `pos` is the per-gesture geometry the `draw` and `crop` arms also drop:
+    // persisting it would restore the last click's position into the next fill. It is the only
+    // omission key left because `FillToolArgs` no longer declares a `size` for the arm to drop.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
-      omit(args as unknown as FillToolArgs, 'pos', 'size')
+      omit(args as unknown as FillToolArgs, 'pos')
     ) as ToolArgs;
   } else if (toolName === 'color-replacement') {
     // A typed arm, NOT the bare-`{ toolName }` group below. That group discarded every setting
@@ -67,7 +68,7 @@ export function saveLastSettings(args: ToolArgs) {
     // the tool's state.
     //
     // `points` and `sampleColor` are dropped for the reason `draw` drops `points` and the fill arm
-    // drops `pos`/`size`: they describe one gesture, not a setting. Restoring the last drag's path
+    // drops `pos`: they describe one gesture, not a setting. Restoring the last drag's path
     // would paint where the user last let go, and restoring the last click's colour would arm the
     // tool with a sample the user never chose for this session — Photoshop returns the tool to
     // asking when you switch away and back, and so does this.

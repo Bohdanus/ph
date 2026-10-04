@@ -228,10 +228,22 @@ describe('planning the import', () => {
   });
 
   it('files an origin the board already holds as skipped, never as created', () => {
-    const second = planImport([handoff.parsed], new Set(['HANDOFF.md#12']));
-    expect(second.skip).toEqual(['HANDOFF.md#12']);
-    expect(second.create.map((item) => item.origin)).not.toContain('HANDOFF.md#12');
-    expect(second.create).toHaveLength(liveItems(handoff.parsed).length - 1);
+    // The origin is DERIVED, not hardcoded. It used to be `HANDOFF.md#12`, and §12 was deleted
+    // by the lifecycle rule while this branch was open — which failed this test for a reason that
+    // has nothing to do with what it is about. A fixture pinned to a section number is a fixture
+    // that dies with the next deletion, and it dies by asserting something FALSE about the code
+    // under test, which is the one failure mode a test must not have.
+    //
+    // What is under test is the routing, not the number: an origin the board already holds as
+    // skipped must land in `skip` and never in `create`. Deriving a live origin keeps that
+    // assertion exact and removes the coupling to which sections happen to exist today.
+    const live = liveItems(handoff.parsed).map((item) => item.origin);
+    expect(live.length).toBeGreaterThan(0);
+    const held = live[0];
+    const second = planImport([handoff.parsed], new Set([held]));
+    expect(second.skip).toEqual([held]);
+    expect(second.create.map((item) => item.origin)).not.toContain(held);
+    expect(second.create).toHaveLength(live.length - 1);
   });
 
   it('never puts one origin in both buckets', () => {

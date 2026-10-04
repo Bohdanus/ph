@@ -3,6 +3,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
+import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointsToLayerLocal } from '../../util/layer-space.ts';
 import type { DodgeBurnToolArgs } from '../../tools/dodgeBurn.ts';
 
@@ -40,12 +41,11 @@ type DodgeToolAreaProps = {
  *
  * The canvas-to-document conversion is `usePaintStroke`'s job
  * (`src/hooks/usePaintStroke.ts:25-31`), so `points` arrives in document space. The
- * layer-local conversion is this file's: the processor is handed a buffer in the layer's OWN
- * space (`src/contexts/useLayer.ts:730-734`), so the frame the
- * processor addresses starts at `activeLayer.pos` and carries no document origin, and a
- * document point has to become `point - activeLayer.pos` before it is used as a pixel
- * address. `src/util/layer-space.ts` states the two spaces and why the conversion is made
- * at this callback boundary rather than in the hook or in the processor.
+ * layer-local conversion is this file's: the processor is handed a buffer in the PRESENTED
+ * layer's own space, so the frame the processor addresses starts at that presentation's origin
+ * and carries no document origin, and a document point has to become `point - origin` before
+ * it is used as a pixel address. `src/util/layer-space.ts` states the two spaces and why the
+ * conversion is made at this callback boundary rather than in the hook or in the processor.
  */
 export const DodgeToolArea = ({ className }: DodgeToolAreaProps) => {
   const [{ containerRef, activeLayerId, layers, totalSize }] = useStore();
@@ -57,6 +57,9 @@ export const DodgeToolArea = ({ className }: DodgeToolAreaProps) => {
   // Bedrock is the document's background and is not addressable by a raster tool: there
   // is no layer to commit onto, so a stroke over it would have nowhere to go.
   const enabled = Boolean(args && activeLayerId && activeLayer && !activeLayer.isBedrock);
+  // The origin of the raster the processor is handed, which is `pos` for a layer that
+  // presents nothing and its EVALUATED extent for one carrying a transform or a filter.
+  const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
     { imageSize: totalSize, containerRef, enabled },
@@ -64,26 +67,26 @@ export const DodgeToolArea = ({ className }: DodgeToolAreaProps) => {
       onMove: (points) => {
         if (!args || !activeLayerId) return;
         /**
-         * The invariant this establishes: the processor addresses the LAYER's own raster,
-         * whose pixel (0, 0) is `activeLayer.pos`, so a document point becomes
-         * `point - activeLayer.pos` and a layer at the origin passes through unchanged. The
+         * The invariant this establishes: the processor addresses the PRESENTED layer's own
+         * raster, whose pixel (0, 0) is `rasterBounds`, so a document point becomes
+         * `point - rasterBounds` and a layer at the origin passes through unchanged. The
          * live array is read here and never retained — the rebase allocates a fresh array,
          * so the hook's own accumulator is left alone and the processor runs synchronously
          * over the copy.
          */
         tempUpdateLayer({
           id: activeLayerId,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, activeLayer?.pos) },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
       // A fresh copy, so the history entry retains a stroke that will not keep growing, and
       // the same rebase as the preview, so what history retains is what the processor
-      // addresses on replay (`src/contexts/useHistory.ts:98-108`).
+      // addresses on replay (`src/contexts/useHistory.ts` — `applyRasterTool`).
       onCommit: (points) => {
         if (!args || !activeLayerId) return;
         void updateLayerByTool({
           id: activeLayerId,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, activeLayer?.pos) },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
     }

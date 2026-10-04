@@ -1,5 +1,16 @@
 # HISTORY MIGRATION — STATE OF PLAY
 
+> **SUPERSEDED. Do not work from this document.** It is a point-in-time report and
+> `docs/README.md` lists it under "Not maintained here", so its numbers are not
+> refreshed. The maintained contract is [`docs/HISTORY-MIGRATION.md`](docs/HISTORY-MIGRATION.md);
+> the current code shape is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); open
+> defects are in [`HANDOFF.md`](HANDOFF.md).
+> [`HISTORY-MIGRATION-CONFLICT-AUDIT.md`](HISTORY-MIGRATION-CONFLICT-AUDIT.md), the
+> next audit, records that "most of what that document said about the durable path
+> has been replaced", and it names this file as its predecessor. Claims below are
+> left as written so the audit trail stays readable; where they contradict the three
+> documents above, those win.
+
 **The current map of the history-machinery migration: what is in production, what is still a
 shadow, what is broken, and what must not be "fixed".**
 

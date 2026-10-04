@@ -1,5 +1,12 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
-import { DEFAULT_TOOL, MERGE_ACTION, NEW_LAYER_ACTION, REORDER_ACTION } from '../util/constants.ts';
+import { isEqual } from 'lodash-es';
+import {
+  DEFAULT_TOOL,
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  REORDER_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
+} from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
@@ -27,6 +34,7 @@ import {
 } from './history-model.ts';
 import {
   convertLegacyHistorySafely,
+  deriveReplaceLayerSourceEntry,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
@@ -38,7 +46,8 @@ import {
   durableAppendDiagnostic,
   type SourceBackedEntryContext,
 } from './history-append.ts';
-import { replayDurableDocument } from './durable-replay.ts';
+import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
+import { composeDurableDocument } from './durable-compositor.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -96,7 +105,20 @@ type DurableProjection = {
   document: DurableDocument | null;
   status: DurableDocumentStatus;
   diagnostics: readonly MigrationDiagnostic[];
+  legacyCursorToDurableCursor?: readonly number[];
 };
+
+export function durablePresentationIsRendererIdentical(
+  replayLayer: DurableReplayLayer,
+  existing: Layer,
+  bounds: Layer['pos']
+): boolean {
+  return (
+    replayLayer.operations.length === 0 &&
+    isEqual(bounds, existing.pos) &&
+    (replayLayer.snapshot.source.kind === 'raster' || replayLayer.snapshot.source.kind === 'blank')
+  );
+}
 
 export type StoreData = {
   // refs
@@ -104,7 +126,6 @@ export type StoreData = {
   toolOverlayRef: RefObject<HTMLCanvasElement | null>;
   rectOverlayRef: RefObject<HTMLCanvasElement | null>;
   containerRef: RefObject<HTMLDivElement | null>;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
 
   currentArgs: React.RefObject<ToolArgs>;
   clearPreviewLayers: () => void;
@@ -324,7 +345,6 @@ const initialState: StoreData = {
   toolOverlayRef: { current: null },
   rectOverlayRef: { current: null },
   containerRef: { current: null },
-  textareaRef: { current: null },
 
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
@@ -822,6 +842,7 @@ function buildDurableDocument(
       status: converted.status,
       document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
       diagnostics: converted.diagnostics,
+      legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
     };
   } catch (error) {
     return {
@@ -834,6 +855,7 @@ function buildDurableDocument(
           message: error instanceof Error ? error.message : String(error),
         },
       ],
+      legacyCursorToDurableCursor: [],
     };
   }
 }
@@ -915,7 +937,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const toolOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const rectOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
   const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
@@ -940,6 +961,73 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     latestStateRef.current = storeState;
   }, [storeState]);
+
+  const publishDurableNavigationPresentation = async (
+    state: StoreData,
+    document: DurableDocument,
+    durableCursor: number
+  ): Promise<void> => {
+    const replay = replayDurableAtCursor(document, durableCursor);
+    // Legacy-tool sources remain an explicitly unsupported durable source. Keep
+    // navigation on the legacy presentation until that source adapter exists.
+    if (Object.values(replay.layers).some(({ snapshot }) => snapshot.source.kind === 'legacy-tool')) return;
+
+    const registry = getAssetRegistry();
+    let composite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
+    let detached: ReturnType<NonNullable<typeof composite>['takeLayers']> | undefined;
+    try {
+      composite = await composeDurableDocument(replay, {
+        documentId: state.documentId,
+        baselineAssetGeneration: registry.getDocumentGeneration(state.documentId),
+        operationSetRevision: document.durableRevision,
+        assetRegistry: registry,
+      });
+      detached = composite.takeLayers();
+      const latest = latestStateRef.current;
+      if (
+        latest.documentId !== state.documentId ||
+        latest.historyIndex !== state.historyIndex ||
+        latest.branchRevision !== state.branchRevision
+      ) {
+        throw new Error('Durable navigation presentation became stale before publication');
+      }
+      const nextLayers = { ...latest.layers };
+      const declined: Record<string, Awaited<ReturnType<typeof composeDurableDocument>>['layers'][string]> = {};
+      for (const [layerId, materialized] of Object.entries(detached.layers)) {
+        const existing = nextLayers[layerId];
+        if (!existing) throw new Error(`Durable navigation layer ${layerId} is absent from legacy replay`);
+        const replayLayer = replay.layers[layerId];
+        const isRendererIdentical = durablePresentationIsRendererIdentical(replayLayer, existing, materialized.bounds);
+        if (!isRendererIdentical) {
+          declined[layerId] = materialized;
+          continue;
+        }
+        nextLayers[layerId] = { ...existing, tmpCanvas: materialized.bitmap };
+      }
+      if (!layersDifferOnlyByPresentation(latest.layers, nextLayers)) {
+        throw new Error('Durable navigation presentation became stale before publication');
+      }
+
+      for (const materialized of Object.values(declined)) materialized.lease.release();
+      for (const [layerId, materialized] of Object.entries(detached.layers)) {
+        if (declined[layerId]) continue;
+        presentationScope.trackPublishedLease(state.documentId, materialized.bitmap, materialized.lease.release);
+      }
+      const action: Extract<InternalAction, { type: 'PUBLISH_RUNTIME_PRESENTATION' }> = {
+        type: 'PUBLISH_RUNTIME_PRESENTATION',
+        payload: { layers: nextLayers },
+      };
+      latestStateRef.current = reducer(latest, action);
+      rawDispatch(action);
+      retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
+      detached = undefined;
+    } catch {
+      detached?.release();
+    } finally {
+      composite?.release();
+    }
+  };
+
   const dispatchAction = (action: StoreAction) => {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
@@ -1107,7 +1195,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const sourceContext = sourceBackedEntryContext(currentState, action.payload.historyItem, registry);
       let plannedEntry = action.payload.durableEntry;
       let plannerTransaction: DocumentAssetTransaction | undefined;
-      if (plannedEntry == null && sourceContext) {
+      if (plannedEntry == null && action.payload.historyItem.actionName === REPLACE_LAYER_SOURCE_ACTION) {
+        plannedEntry = deriveReplaceLayerSourceEntry(action.payload.historyItem);
+      } else if (plannedEntry == null && sourceContext) {
         try {
           plannerTransaction = registry.beginDocumentAssetTransaction(currentState.documentId);
           plannedEntry =
@@ -1278,6 +1368,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       });
+      if (converted.status === 'current' && converted.document) {
+        const durableCursor = converted.legacyCursorToDurableCursor?.[action.payload.timeline.cursor] ?? -1;
+        void publishDurableNavigationPresentation(nextState, converted.document, durableCursor);
+      }
       // Replay is the other way a cache leaves the record, and the identity case
       // is the common one: navigating back over a removal re-creates the layer
       // under the same id with no cache at all, or with a different one. The
@@ -1377,7 +1471,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     toolOverlayRef,
     rectOverlayRef,
     containerRef,
-    textareaRef,
     currentArgs: currentArgsRef,
     clearPreviewLayers,
     promoteLayerPresentation,

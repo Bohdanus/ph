@@ -292,7 +292,7 @@ function functionBody(source: string, declaration: string): string {
  */
 describe('durable operation kind exhaustiveness', () => {
   const REACHES_EVERY_KIND =
-    /case '(create-layer|remove-layer|set-layer-properties|reposition-layer|reorder-layers|apply-filter|apply-affine-transform|apply-raster-processor|set-document-frame|merge-document|set-selection)'/g;
+    /case '(create-layer|remove-layer|set-layer-properties|reposition-layer|reorder-layers|apply-filter|apply-affine-transform|apply-raster-processor|set-document-frame|replace-layer-source|merge-document|set-selection)'/g;
   const ASSET_FREE_KINDS = [
     'remove-layer',
     'set-layer-properties',
@@ -302,6 +302,7 @@ describe('durable operation kind exhaustiveness', () => {
     'apply-affine-transform',
     'apply-raster-processor',
     'set-document-frame',
+    'replace-layer-source',
     'set-selection',
   ];
 
@@ -330,7 +331,7 @@ describe('durable operation kind exhaustiveness', () => {
     // stripped to nothing.
     const body = functionBody(source, 'export function collectDurableAssetIds');
 
-    // The two kinds that carry a bitmap, and the nine that provably do not. A new
+    // The two kinds that carry a bitmap, and the ten that provably do not. A new
     // kind has to be placed on one side or the other deliberately.
     expect(body).toContain("case 'create-layer':");
     expect(body).toContain("case 'merge-document':");
@@ -340,11 +341,31 @@ describe('durable operation kind exhaustiveness', () => {
     expect(body).toContain('const _exhaustive: never = kind;');
   });
 
-  it('declares exactly the kinds both switches name', () => {
-    // The guard above is only as good as this list: it is derived from the union,
-    // so a kind added to `DurableOperation` without being added here fails here
-    // rather than silently weakening the other two assertions.
-    expect(KIND_NAMES).toHaveLength(11);
+  it('declares exactly the kinds the DurableOperation union declares', () => {
+    // The two guards above are only as good as this list, and a hand-written list
+    // is not tied to the union at all: adding a kind to `DurableOperation` leaves
+    // this file untouched, so a count assertion over a literal can never notice —
+    // which is what `expect(KIND_NAMES).toHaveLength(11)` was, and it passed for
+    // every union it was supposed to police while its comment claimed otherwise.
+    // Typing the map as `Record<DurableOperation['kind'], true>` is what ties it: a
+    // kind added to the union without an entry here is a typecheck error, which is
+    // the only moment the omission is cheap to fix, and an entry the union does not
+    // declare is one too. The assertion then only has to say the two agree.
+    const UNION_KINDS: Record<DurableOperation['kind'], true> = {
+      'create-layer': true,
+      'remove-layer': true,
+      'set-layer-properties': true,
+      'reposition-layer': true,
+      'reorder-layers': true,
+      'apply-filter': true,
+      'apply-affine-transform': true,
+      'apply-raster-processor': true,
+      'set-document-frame': true,
+      'replace-layer-source': true,
+      'merge-document': true,
+      'set-selection': true,
+    };
+    expect(Object.keys(UNION_KINDS).sort()).toEqual([...KIND_NAMES].sort());
   });
 });
 
@@ -358,6 +379,7 @@ const KIND_NAMES = [
   'apply-affine-transform',
   'apply-raster-processor',
   'set-document-frame',
+  'replace-layer-source',
   'merge-document',
   'set-selection',
 ] as const;

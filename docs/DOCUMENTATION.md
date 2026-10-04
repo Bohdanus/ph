@@ -195,21 +195,75 @@ not neutral — the next session spends a full investigation on a bug that is al
 gone — and a missing entry loses the only record of a real one.
 
 Point-in-time reports — an investigation of one tree on one date — are not
-maintained, so they do not belong in this directory. Five sit at the repository
-root and `docs/README.md` names them, with two more it holds here; when one can be
+maintained, so they do not belong in this directory. Some sit at the repository
+root and `docs/README.md` names them, with more it holds here; when one can be
 moved without breaking a lookup key, it goes. Moving them is a separate change,
 because `scripts/lib/worktree-inventory/curated.mjs` keys on their paths.
 
 ## Citations
 
 **A citation is a claim about the tree you are standing in.** Re-derive it from the
-sentence that needs it. Never copy one forward from a document you just read, and
-never regenerate it mechanically: a `file.ts:NNN` off by three is a review finding,
-but an audit of the citations in this repository found 60 resolving to the wrong
-code and 30 to a blank line, a comment, a closing brace or an import — uniformly,
-in whole clusters, which is exactly what copying does.
+sentence that needs it. Never copy one forward from a document you just read.
 
-Cite a file path, and a line only when you have just read the line.
+**Cite the unit, never the line.** A line number is a position in a file that
+everything above it moves. An audit of `HANDOFF.md` found 36% of its hand-checked
+`file.ts:NNN` citations pointing at the wrong code — mostly off by one or two, some
+by 146 — and a 42-minute session once burned chasing nothing but that drift, one
+reviewer finding a stale citation per round. So the format is banned in tracked
+documents, and what replaces it is a name that can be re-derived onto the code:
+
+| Instead of                                                  | Write                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------ |
+| `` `history-adapter.ts:‹line›` ``                           | `` `history-adapter.ts` — `durableLayerForSource()` `` |
+| `` `materialization.ts:‹lines›` ``                          | `` `materialization.ts` — `materializeDocument()` ``   |
+| `` `durable-compositor.refusal.test.ts:‹line›` ``           | the `it('...')` title, in backticks                    |
+| `` `PUBLISH_RUNTIME_PRESENTATION` at `reducer.ts:‹line›` `` | `` `PUBLISH_RUNTIME_PRESENTATION` ``                   |
+
+The left column is written with a `‹line›` placeholder rather than a real number, so
+this document obeys the rule it states and the check below reads it.
+
+**The order of preference**, first that resolves:
+
+1. A **declared identifier**, called in the call form: `` `materializeDocument()` ``.
+2. A **string literal the program dispatches on** — an action type, a source kind,
+   a commit kind. `'legacy-tool'` is a real anchor; it is a value, not a place.
+3. A **`it('...')` title** for a test, which is stable while the file's line count
+   is not.
+4. The **file alone**, when the claim is about the file as a whole.
+
+A range names **one** enclosing unit, not two endpoints. A claim too vague to name a
+unit has not been located yet, and citing a line number is how that was hidden.
+
+**Why a name and not a number.** A number cannot be checked: a test that fails on a
+number having moved trains people to regenerate citations instead of re-deriving
+them, which is what produced the clusters. A name can be checked, and this
+repository checks it — `scripts/__tests__/agents-citations.test.mjs` reads every
+tracked markdown document and fails on a backticked call the program does not
+contain, a retired symbol named in any of them, a `§N` that is not a live
+`HANDOFF.md` heading, and a `file.ext:‹line›` citation anywhere outside a fence.
+
+**The one exemption is quotation.** A finding whose SUBJECT is a drifted line-number
+citation cannot be stated without one — "`history-replay.ts` cites 47 lines past its
+first `switch` arm and all 47 are off by twenty" is the number. Put those in a
+fenced code block, quoting the drifted form verbatim.
+
+The check strips fences before it looks, so a fence is a claim about the FORM
+rather than a claim about the code. That is the difference from an exemption list,
+which is unfalsifiable and reads as checked. A fence is visible, a fence is
+quotation, and the prose on either side of it is still checked — so the fence buys
+nothing to smuggle a real citation with. Note that a fence cannot be nested inside
+another fence to show the shape, which is why this paragraph describes it instead of
+printing one: the outer fence is stripped first and the inner one is then read as
+an opening delimiter, so an example of the exemption written as an example is the
+one thing that trips the rule it is illustrating.
+
+**Everything else is migrated.** There is no per-occurrence exemption and no
+threshold, because an exemption is a number that gets refreshed and then outlives
+its reason. `scripts/resolve-citations.mjs` is the migration's worklist: it reads
+each cited file's AST and proposes the enclosing declaration, `it('...')` title or
+`switch` case for each position, and reports the positions it cannot resolve —
+those are the sentences where the author never had a unit in mind, which is the
+finding the ban was written to surface.
 
 **A description without a source is a rumour.** That covers Adobe claims and this
 project's own claims equally. `docs/TOOLS.md` fails its test on an empty

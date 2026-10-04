@@ -324,7 +324,10 @@ const figurePresets: readonly [FigureType, Record<string, unknown>][] = [
   ['rectangle', { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' }],
   ['oval', { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' }],
   ['triangle', { alpha: 1, lineWidth: 5, toolMode: 'shape' }],
-  ['polygon', { alpha: 1, lineWidth: 5, toolMode: 'shape' }],
+  // `sides` is here rather than defaulted at the renderer, so the assertion names
+  // the seed: 5 is Adobe's Polygon-tool default, and a store that arrives
+  // without the key must still draw a pentagon.
+  ['polygon', { alpha: 1, lineWidth: 5, sides: 5, toolMode: 'shape' }],
 ];
 
 /** Walks nested settings values (e.g. `reposition.move`) looking for non-finite numbers. */

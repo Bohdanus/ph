@@ -3,7 +3,15 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Shape from '../Shape.tsx';
 import { isFigureType, type FigureType } from '../../../../tools/shape.ts';
-import { savedArgsPerFigure } from '../../../../tools/settings.ts';
+import { defaultSettings, savedArgsPerFigure } from '../../../../tools/settings.ts';
+
+/**
+ * The tool names this panel is mounted under, as an INDEPENDENT literal rather than an import:
+ * the component keeps its membership list module-local, and a sweep built from the component's own
+ * list would shrink with it. Cross-checked against `defaultSettings` in the test below, so the two
+ * vocabularies cannot drift apart unnoticed.
+ */
+const FAMILY_TOOL_NAMES = ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
 
 const containerRef = { current: null as HTMLDivElement | null };
 const storeState = {
@@ -489,6 +497,64 @@ describe('Shape toolbar', () => {
   });
 
   describe('colour synchronisation', () => {
+    /**
+     * Swept over the family list rather than asserted once, because a test that names only `shape`
+     * passes with the `args.toolName === 'shape'` guard in place — which is how all five figure
+     * tools kept the black `defaultSettings` seeds for their `color` however the foreground swatch
+     * was set, while the preview (which reads the store colour directly) showed the right outline.
+     */
+    const withToolName = (toolName: string) => {
+      (baseToolArgs as { toolName: string }).toolName = toolName;
+    };
+
+    it('sweeps exactly the tools the seeded defaults give a figure', () => {
+      // The cross-check that makes the sweeps below mean something. A `figure` of its own is what
+      // marks a default as a shape tool, and the membership list this panel gates on has to be the
+      // same six: a name added to one list and not the other is a tool whose colour never arrives.
+      const seededShapeTools = Object.entries(defaultSettings)
+        .filter(([, args]) => 'figure' in args)
+        .map(([name]) => name)
+        .sort();
+
+      expect(seededShapeTools).toEqual([...FAMILY_TOOL_NAMES].sort());
+      expect(seededShapeTools).toHaveLength(6);
+    });
+
+    it.each(FAMILY_TOOL_NAMES)('adopts the store stroke colour for %s, not its seeded black', (toolName) => {
+      withToolName(toolName);
+      storeState.color = '#ff0000';
+      const view = render(<Shape />);
+
+      expect(setToolArgsMock, toolName).toHaveBeenCalled();
+      expect(lastCallArgs(setToolArgsMock), toolName).toMatchObject({ toolName, color: '#ff0000' });
+      view.unmount();
+    });
+
+    it.each(FAMILY_TOOL_NAMES)('adopts the store background colour for %s as its fill colour', (toolName) => {
+      withToolName(toolName);
+      storeState.backgroundColor = '#00ff00';
+      const view = render(<Shape />);
+
+      expect(lastCallArgs(setToolArgsMock), toolName).toMatchObject({ toolName, backgroundColor: '#00ff00' });
+      view.unmount();
+    });
+
+    it.each(FAMILY_TOOL_NAMES)(
+      'republishes nothing for %s once its args already carry the store colours',
+      (toolName) => {
+        withToolName(toolName);
+        baseToolArgs.color = storeState.color;
+        baseToolArgs.backgroundColor = storeState.backgroundColor;
+        const view = render(<Shape />);
+
+        // The equality half of the guard, swept per tool: without it the effect republishes on every
+        // render, so the mirror would churn tool args that no swatch moved.
+        expect(setToolArgsMock, toolName).not.toHaveBeenCalled();
+        view.unmount();
+        baseToolArgs.color = '#000000';
+      }
+    );
+
     it('adopts the store stroke and background colours when they diverge', () => {
       storeState.color = '#ff0000';
       storeState.backgroundColor = '#00ff00';
@@ -510,17 +576,34 @@ describe('Shape toolbar', () => {
       expect(setToolArgsMock).not.toHaveBeenCalled();
     });
 
-    it('does not publish anything for args that belong to a different tool (Shape.tsx:32)', () => {
-      (baseToolArgs as { toolName: string }).toolName = 'draw';
+    it.each(['draw', 'brush', 'eraser', 'text', 'custom-shape'])(
+      'does not publish anything for args that belong to a different tool (%s)',
+      (toolName) => {
+        withToolName(toolName);
+        storeState.color = '#ff0000';
+        // No inline restore: `afterEach` puts `toolName` back, so this test cannot leave
+        // the module-scoped args naming another tool for the line-cap suite below.
+        const view = render(<Shape />);
+
+        // The membership half of the guard, and it is load-bearing rather than tidiness: the args
+        // under a panel are whatever the current tool carries, so a panel mounted with a seventh
+        // tool's arguments must not overwrite them with the shape family's colours.
+        expect(setToolArgsMock, toolName).not.toHaveBeenCalled();
+        view.unmount();
+      }
+    );
+
+    it("leaves a non-family tool's own colour arguments alone even when it declares a figure", () => {
+      // A `figure` key is not a family membership: only the tool name decides, so an argument object
+      // that carries a figure while naming another tool is still left alone.
+      withToolName('draw');
+      (baseToolArgs as { figure: string }).figure = 'oval';
       storeState.color = '#ff0000';
-      // No inline restore: `afterEach` puts `toolName` back, so this test cannot leave
-      // the module-scoped args naming another tool for the line-cap suite below.
       const view = render(<Shape />);
 
-      // The guard is the `args.toolName !== 'shape'` half: a shape toolbar mounted with another
-      // tool's args must not overwrite them with the store colours.
       expect(setToolArgsMock).not.toHaveBeenCalled();
       view.unmount();
+      (baseToolArgs as { figure: string }).figure = 'rectangle';
     });
   });
 
@@ -558,6 +641,176 @@ describe('Shape toolbar', () => {
       render(<Shape />);
 
       expect(screen.queryByRole('slider', { name: 'Radius' })).toBeNull();
+    });
+  });
+
+  describe('polygon sides', () => {
+    beforeEach(() => {
+      baseToolArgs.figure = 'polygon';
+    });
+
+    afterEach(() => {
+      baseToolArgs.figure = 'rectangle';
+    });
+
+    it('offers Sides on a polygon figure only, seeded at 5', () => {
+      const view = render(<Shape />);
+
+      const sides = screen.getByRole('spinbutton', { name: 'Sides' }) as HTMLInputElement;
+      // `sides` is absent from these args, so this is the destructuring default
+      // rather than a value the fixture happened to carry.
+      expect(sides).toHaveValue(5);
+      // The attributes are not decoration: they are what bounds the field, and
+      // they must say Adobe's 3, not 0 or 1.
+      expect(sides).toHaveAttribute('min', '3');
+      expect(sides).toHaveAttribute('max', '100');
+      expect(sides).toHaveAttribute('step', '1');
+      view.unmount();
+
+      baseToolArgs.figure = 'triangle';
+      const triangle = render(<Shape />);
+      expect(screen.queryByRole('spinbutton', { name: 'Sides' })).toBeNull();
+      triangle.unmount();
+
+      baseToolArgs.figure = 'polygon';
+      const again = render(<Shape />);
+      expect(screen.getByRole('spinbutton', { name: 'Sides' })).toBeInTheDocument();
+      again.unmount();
+    });
+
+    /**
+     * The field COMMITS, it does not stream. Three tests below used to assert the
+     * opposite — that a typed `1` immediately stored 3 — and that is exactly what
+     * made the control unable to do the one thing it exists for. They are rewritten
+     * here against what is now true, not deleted.
+     */
+    /**
+     * DIGIT BY DIGIT, which is the whole point.
+     *
+     * A single `fireEvent.change(input, {value: '12'})` hands the control a
+     * finished '12' in one go and cannot reproduce per-keystroke corruption: it is
+     * a paste, not a typist. The bug lived between two keystrokes, so this walks
+     * them the way a hand does — set '1', let React repaint, then set '12'.
+     */
+    const typeSidesDigitByDigit = (input: HTMLElement, digits: string) => {
+      for (let length = 1; length <= digits.length; length += 1) {
+        fireEvent.change(input, { target: { value: digits.slice(0, length) } });
+      }
+    };
+
+    /** A finished value in one event: a paste, or an assistive technology's fill. */
+    const pasteSides = (input: HTMLElement, value: string) => {
+      fireEvent.change(input, { target: { value } });
+    };
+
+    it('accepts a two-digit count, which clamping on every keystroke made unreachable', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
+
+      // `12` and `10` are the counts the old handler could never produce: it stored
+      // 3 on the `1`, repainted the field as 3, and the `2` landed in a field
+      // showing 3, yielding 32. Both are ordinary values for this tool.
+      typeSidesDigitByDigit(input, '12');
+      expect(input).toHaveValue(12);
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 12 });
+
+      typeSidesDigitByDigit(input, '10');
+      expect(input).toHaveValue(10);
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 10 });
+
+      // And `1x` counts, because the field working only for values that were
+      // already valid on the first keystroke would be no field at all.
+      typeSidesDigitByDigit(input, '42');
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 42 });
+
+      // A pasted count commits the same way, which is the path a single `change`
+      // event actually models.
+      pasteSides(input, '7');
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 7 });
+    });
+
+    it('keeps the draft in the field while it is typed, and stores nothing until commit', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' }) as HTMLInputElement;
+
+      pasteSides(input, '9');
+      // The field shows the USER's text, not the stored count: this is the whole
+      // mechanism, and a control that repaints mid-keystroke cannot be typed into.
+      expect(input).toHaveValue(9);
+      // Nothing dispatched yet. A draft is not a tool argument.
+      expect(lastCallArgs(setToolArgsMock)).not.toMatchObject({ sides: 9 });
+
+      fireEvent.blur(input);
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 9 });
+      // The persistence half is the one a reviewer cannot see from the render:
+      // `handleChange` writes an EXPLICIT key list, so a `sides` missing from it
+      // renders correctly and then evaporates on the next figure switch.
+      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 9 });
+    });
+
+    it('commits on Enter, because blur alone is not reachable by keyboard alone', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
+
+      pasteSides(input, '8');
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 8 });
+      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 8 });
+    });
+
+    it('abandons the draft on Escape, leaving the stored count untouched', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' }) as HTMLInputElement;
+
+      pasteSides(input, '77');
+      fireEvent.keyDown(input, { key: 'Escape' });
+      // No dispatch, and the field is back to showing the stored 5 rather than the
+      // abandoned draft.
+      expect(lastCallArgs(setToolArgsMock)).not.toMatchObject({ sides: 77 });
+      expect(input).toHaveValue(5);
+      expect(savedArgsPerFigure.polygon).not.toMatchObject({ sides: 77 });
+    });
+
+    it('stores the floor rather than the typed value when the count is below it', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
+
+      pasteSides(input, '1');
+      fireEvent.blur(input);
+
+      // Normalized at COMMIT, not per keystroke, so the store never holds a value
+      // the renderer would have to defend against a second time.
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 3 });
+      expect(savedArgsPerFigure.polygon).toMatchObject({ sides: 3 });
+    });
+
+    it('commits the ceiling rather than the typed value when the count is above it', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
+
+      pasteSides(input, '4000');
+      fireEvent.blur(input);
+
+      // `min`/`max` do not do this. They are constraint-validation metadata: the
+      // browser marks a `type="number"` out of range invalid and dispatches
+      // `onChange` anyway, so the normalizer at commit is the only bound.
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 100 });
+    });
+
+    it('falls back to 5 when the field is emptied, not to a zero-sided polygon', () => {
+      render(<Shape />);
+      const input = screen.getByRole('spinbutton', { name: 'Sides' });
+
+      // An emptied number input reports '', and Number('') is 0 — which floors to 3
+      // and would silently turn a pentagon into a triangle on commit.
+      pasteSides(input, '');
+      fireEvent.blur(input);
+
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ sides: 5 });
     });
   });
 });

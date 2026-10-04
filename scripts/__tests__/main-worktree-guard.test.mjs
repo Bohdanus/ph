@@ -110,7 +110,7 @@ describe('the refusal is a redirect, not an obstacle', () => {
     expect(text).toContain('Not git stash');
     // The landing path must be stated, or the natural reading is that a merge
     // into main is also refused, and it is not: pre-merge-commit is a different
-    // hook and a fast-forward runs none.
+    // hook and a fast-forward runs none of the blocking ones.
     expect(text).toContain('pre-merge-commit');
   });
 

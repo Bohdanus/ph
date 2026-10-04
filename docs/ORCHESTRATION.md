@@ -4,6 +4,34 @@ How concurrent agents stay out of each other's way. `AGENTS.md` keeps the
 short form — create a worktree, one root agent per worktree, claim what you
 touch — and this file is the detail behind it.
 
+## Find the trap you are in
+
+This file is over a thousand lines and **97 of 3,244 sessions — 3.0% — have ever opened it
+with a real read**, so reading it front to back is not a strategy and arriving at the right
+section by scrolling is not either. Start from the symptom. Every row is a trap that has
+actually cost time in this repository, and the right-hand column is the paragraph that will
+save you the next one.
+
+| You are                                                             | Go to                                                                                                          |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| about to commit in the main checkout                                | [The rule is enforced at the commit, not by the reader](#the-rule-is-enforced-at-the-commit-not-by-the-reader) |
+| about to `git add -A`, or the index holds changes you did not stage | [Worktrees](#worktrees), the two staging bullets                                                               |
+| about to remove a worktree or a branch                              | [Removal goes through one program](#removal-goes-through-one-program)                                          |
+| being refused by `npm run dispose`                                  | [Removal goes through one program](#removal-goes-through-one-program)                                          |
+| landing a branch, or resolving a merge                              | [Worktrees](#worktrees), the `merge-takeover-guard` limits                                                     |
+| holding a file lock, or losing one                                  | [Resource locking and releasing](#resource-locking-and-releasing)                                              |
+| putting work on the board                                           | [The swarm board](#the-swarm-board)                                                                            |
+| refused by `swarm resolve` or `swarm close`                         | [The swarm board](#the-swarm-board), the sequence table                                                        |
+| wondering which model or provider a subagent ran on                 | [Which provider did a subagent run on?](#which-provider-did-a-subagent-run-on)                                 |
+| inheriting a stalled or dead session's work                         | [Unexpected agent recovery](#unexpected-agent-recovery)                                                        |
+| reading a worktree list                                             | [The list of worktrees: `WORKTREES.json`](#the-list-of-worktrees-worktreesjson)                                |
+
+**Most of the rules below were written after the incident that motivated them**, so
+"documented but still violated" is usually the wrong diagnosis — the rule did not exist yet.
+The two that were genuine compliance failures against auto-injected `AGENTS.md` both needed
+programs rather than paragraphs, and both are described where they live: a `release --force`
+that dropped the caller's own locks, and a weakened assertion.
+
 ## Worktrees
 
 **HARD RULE: 100% of work that changes a tracked file is done in its own
@@ -36,8 +64,10 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   whichever checkout the root chat happens to sit in.
 - **One task = one worktree and one branch**, created **before** the first edit.
   Lowercase prefix (`fix/`, `feat/`, `e2e/`, `cleanup/`, `audit/`), for example:
-  `git worktree add -b fix/task .kilo/worktrees/task`. A second worktree for the
-  same task is a fork you reconcile by hand.
+  `git worktree add -b fix/task "$MAIN/.kilo/worktrees/task"`, where `$MAIN` is the main
+  checkout's absolute path as [`../AGENTS.md`](../AGENTS.md) under **Worktree FIRST** derives it.
+  Use the absolute path — a relative one nests the worktree inside whichever checkout you are
+  standing in. A second worktree for the same task is a fork you reconcile by hand.
 - **One writer per worktree; readers may share it.** A root-level agent is one a
   human started as a Kilo chat. Two of them never _write_ the same worktree, and
   one does not take over a worktree another is writing in. **Read-only agents may
@@ -48,7 +78,8 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   works inside _that_ root's worktree and splits by file, which is the whole
   reason `task` exists.
   **The board cannot enforce this, and the reason matters.** Board identity is the
-  git branch (`identity.mjs:43-47`), and `holdFiles` refuses only a _foreign_ lock,
+  git branch (the `agentId` derivation in `resolveIdentity()`, `identity.mjs`), and `holdFiles`
+  refuses only a _foreign_ lock,
   so two writers in one worktree are the same agent to the board: both holds are
   granted, and the file reads as uncontended. It is a discipline, not a lock.
   When two writers do collide in one worktree, neither sees it in the board — the
@@ -83,9 +114,11 @@ under it.
 
 Three things stay allowed, each deliberately:
 
-- **A landing.** `git merge` into `main` runs `pre-merge-commit`, and a
-  fast-forward runs no hook at all, so the documented landing flow never reaches
-  this file.
+- **A landing.** A clean non-fast-forward `git merge` into `main` runs
+  `pre-merge-commit`; a fast-forward invokes no gating hook, so the documented
+  landing flow never reaches this file. It still invokes the non-blocking
+  `post-merge` hook, which attempts to release claims and locks for merged
+  worktrees whose branch, directory, and working tree are all eligible.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
@@ -118,6 +151,25 @@ Three things stay allowed, each deliberately:
 - **Stage only your own paths, everywhere.** The main worktree is not stable
   while you work — other sessions commit into it concurrently. Re-read `git
 status` and `git diff` before staging.
+- **An index that was ALREADY foreign is the harder half, and nothing here or in
+  `AGENTS.md` covered it.** The two bullets above are about your own `git add`. This
+  is about arriving at a staged tree you did not stage. `git diff --cached` is the only
+  evidence that exists — there is no "who staged this" and no way to ask. Four sessions hit
+  exactly this between 2026-09-29 and 2026-10-01: _"the index now has both my changes and the
+  other session's changes staged"_, _"The index was staged by something else — my last check
+  showed unstaged"_, and twelve files went ` M` → `M ` between two consecutive `git status`
+  calls in one of them. **All four probed `.git/index.lock` and all four found nothing**,
+  because an in-flight commit holds it only for the seconds it takes and a finished one leaves
+  no trace at all. So the repository cannot distinguish the two states, and the procedure is
+  the whole of the answer:
+  1. **`git diff --cached --stat` before every `git add`**, not after. Once your own paths are
+     staged, an intruder is indistinguishable from your own work.
+  2. **Never `git add -A` in a checkout other sessions use.** Name your paths.
+  3. **A `git commit -a` is worse**, because it sweeps the whole working tree rather than the
+     index and gives you no pause in which to look.
+  4. If `git status` shows a staged path you do not recognise, **leave it staged**, commit only
+     your paths with `git commit -- <paths>`, and report it. Unstaging somebody else's staged
+     work destroys the only copy of their intent that exists.
 - **`git add -A` in a worktree is not a neutral staging step when the root
   checkout is dirty.** The root is a _different checkout_ of a _different HEAD_,
   so a file the branch never touched can be sitting in the worktree's working
@@ -132,15 +184,82 @@ status` and `git diff` before staging.
   `pre-commit` (when `MERGE_HEAD` is set, which is a conflicted merge being completed) and
   from `pre-merge-commit` (a clean `git merge` that commits itself), and it refuses the merge
   rather than reporting it. A reviewer only catches the files its brief happened to mention;
-  this catches every path the merge resolved by copying one whole side's content. Two
-  shapes, neither of which produces a conflict marker: the result is the pre-divergence
-  content (the `-A` case above), or it is the incoming side's file verbatim
-  (`checkout --theirs <path>`, or `git merge -X theirs`).
+  this catches every path the merge resolved by copying one whole side's content. Three
+  shapes, none of which produces a conflict marker: the result is the pre-divergence
+  content (the `-A` case above), it is the incoming side's file verbatim
+  (`checkout --theirs <path>`, or `git merge -X theirs`), or it is THIS side's version of
+  a path having dropped the incoming side's content (`git merge -X ours`,
+  `git merge -s ours`, or `git checkout --ours <path>` on one path of a conflicted merge).
+  The third was a hole rather than a decision: it is the one shape whose result is HEAD's
+  own file, so the guard's scan set — paths the merge moved relative to HEAD — was empty by
+  construction and `git merge -s ours` reported `clean — 0 path(s) moved by the merge`
+  while deleting the branch's commit. `docs/DOCUMENTATION.md`'s one-home rule is why the
+  asymmetry survived: `-X theirs` was documented and its inverse was simply never written
+  down, so there was nothing to contradict.
 
-  **Its limit, because a gate that claims more than it has is the failure it replaces:** git
-  runs no hook for a **fast-forward**, so that landing shape is uncovered — safe by
-  construction, since the branch tip contains main as an ancestor, but uncovered. And
-  `--no-verify` bypasses it, as it bypasses every gate here.
+  It finds that shape through a second scan over **the paths the INCOMING side changed**,
+  not the paths HEAD changed, and that distinction is load-bearing: `-s ours` applies
+  nothing at all, so a branch's added files vanish too, and a scan over HEAD's changes
+  finds only the contested subset and reports the rest of a dropped commit as clean.
+
+  All three shapes are measured the same way — by asking whether a line the losing side
+  committed is **absent** from the result, not by counting a diff. `--numstat` bills a
+  moved line as one deletion plus one insertion, so a result that is a superset in content
+  but not in line order reads as a loss; measuring content is what makes "this side's
+  version won" mean that something was actually dropped. A resolution that is neither
+  side's blob is deliberately NOT reported — see the boundary note in the script.
+
+  `git merge -s ours <ref>` is the standard git idiom for recording that a branch was merged
+  without taking any of its content. It is legitimate and deliberate, and it is refused here
+  like any other silent discard; `git merge --no-verify <ref>` is how an operator says they
+  meant it.
+
+  **Its limits, because a gate that claims more than it has is the failure it replaces:**
+  git runs no **gating** hook for a **fast-forward**, so that landing shape is uncovered — safe
+  by construction, since the branch tip contains main as an ancestor, but uncovered. The
+  non-blocking `post-merge` hook still runs and releases only eligible merged worktrees;
+  dirty worktrees remain held and are reported. `--no-verify` bypasses the gating hooks,
+  but not `post-merge`.
+
+  **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
+  about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
+  repository, driven through `findTakeovers` with the real index. All seven destroyed
+  committed work and reported success. **Replayed over the 407 merges on `main` before and
+  after the fixes, the same 36 merges are refused, with the same kinds and the same paths** —
+  every change was a shape that was _invisible_, never a verdict that moved:
+
+  | Shape                                              | What it destroyed                                   | How it slipped through                                                                                                                                                                                           |
+  | -------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | add/add resolved by `-X theirs`                    | main's whole committed file, **no conflict marker** | the shape asked for a base blob, which an add/add has none of, before it would look                                                                                                                              |
+  | a modify/delete resolution                         | nothing — it **crashed**                            | the losing side was HEAD's, and HEAD had deleted the path; `main()` catches `GuardError` only, so the hook exited 1 with a stack trace and no verdict                                                            |
+  | an added **empty** file under `-s ours`            | the file                                            | it has no non-blank lines, so "no lines lost" answered for a file that no longer existed                                                                                                                         |
+  | an added **gitlink** under `-s ours`               | the submodule pointer                               | the gitlink measure read `losing.oid !== resultBlob.oid` behind a `resultBlob &&`, so an absent entry answered zero                                                                                              |
+  | a commit that is only **indentation**              | the whole commit                                    | lines were trimmed before comparing, and `npm run format` produces exactly this commit                                                                                                                           |
+  | `-s ours` whose result then had a **mode bit** set | the branch's rewrite                                | `headWon()` was documented as exactly `!moved.has(path)`; a mode-only difference makes a path "move" while HEAD's content still won, and three successive proxies for "already judged" each failed to exclude it |
+  | suspect blobs past the **batch buffer**            | six large assets                                    | `maxBuffer` was 256 MiB, `execFileSync` threw `ENOBUFS`, and the `catch` returned an empty map — so every measure returned 0. **Fail-open, on the path where the loss is largest**                               |
+
+  Two of these are worth reading twice, because they are different in kind. The crash is the
+  worst _failure mode_ in the file: the most common conflict resolution in git produced a stack
+  trace and an exit 1 with no verdict, which is precisely the pressure that ends in
+  `--no-verify`. And the batch buffer is the worst _silently passing_ one, in a repository
+  whose subject matter is images — an unread blob measures as no loss, so the largest possible
+  silent pass was also the most likely one. Both now refuse, and the second raises rather than
+  returning an empty map: an unread blob must never be a zero.
+
+  **One shape it still cannot see, and it is not a merge defect.** `git merge --squash -X ours`
+  produces a staged tree identical to HEAD's, so `git commit` answers "nothing to commit", there
+  is no commit, there is no `MERGE_HEAD`, and neither hook fires — the branch's payload
+  disappears with no event to hang a check on. Plain `--squash` is fine and does not need the
+  guard: it stages the real merge result. The fix belongs in a `pre-push` check, where a
+  branch's own diff against `main` has two sides to compare.
+
+  **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
+  conflict runs no hook at all, so an operation left open is invisible to it — which is how
+  `integration/sweep-land` sat for a day holding a resolved, compiling, silently-reverting
+  merge that this guard would have refused the moment anyone ran `git commit`. Nothing else
+  detects that state either: `scripts/worktree-inventory.mjs` has no notion of an operation
+  in progress, and no hook, script or CI job regenerates its output. The guard is the floor
+  under the rule, not a substitute for noticing.
 
   The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
   reported hundreds of innocent paths when run at the only moment it could act (before the
@@ -164,6 +283,17 @@ status` and `git diff` before staging.
   (cd /tmp/verify-main && npx tsc -b && npx vitest run <suite>)
   git worktree remove --force /tmp/verify-main
   ```
+  **The scratch worktree is yours to delete, and the recipe's own last line is the only
+  thing that deletes it** — which is why two of them outlived their creators.
+  `/private/tmp/verify-dpr` and `/private/tmp/verify-exporacle` were both on disk, both
+  detached, both clean, neither named `verify-main`, so no run of the recipe's cleanup step ever
+  claimed them; both were removed on 2026-10-03 once their HEADs were confirmed to be ancestors
+  of `main`. Two failure directions, and the second is the dangerous one: a leak when the
+  subagent dies first, and **collateral force-removal** when a sweep globs `verify-*` and cannot
+  tell its own leftovers from a live peer's. Note that `git worktree list` prints
+  `/private/tmp`, so a check written as `git worktree list | grep /tmp` matches nothing and
+  reports a clean machine. Either put the scratch worktree under `.kilo/` so the inventory sees
+  it, or delete it in the same turn you created it and accept that a dead agent leaks one.
   This happened on the commit that followed the fix above, and the same `git add
 -A` also tried to sweep a third agent's in-flight tests into the commit — which
   is the previous bullet, one hour later, in the same worktree.
@@ -207,7 +337,8 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   fails. It is a **virtual** path: it never exists on disk, so an agent editing `e2e/*.spec.ts`
   holds those files separately and does not collide with it.
   - **The holder is a RUN, not a branch.** Board identity is the branch and the conflict test is
-    `lock.agent_id !== who` (`db.mjs:1163` in `holdFiles`, `db.mjs:1554` in `lockFile`), so a branch never conflicts with itself: with branch
+    `lock.agent_id !== who` (in `holdFiles` and `lockFile`, both in `db.mjs`), so a branch never
+    conflicts with itself: with branch
     identity, two runs in one worktree both "acquire" and the second one's `unlock` releases the
     row the first still believes it holds. Every board call therefore passes
     `--agent e2e-run/<branch>/<pid>`, and `swarm status` shows that while a suite runs — the
@@ -226,7 +357,8 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     only on the path that uses it, and a bad lease is reported and replaced.
   - **A holder this wrapper did not create is never reclaimed.** The reclaim unlocks AS the holder
     it is reclaiming, so a wrong liveness answer releases a real agent's slot. Board identity is
-    the sanitized branch and `sanitize` preserves `/` (`scripts/lib/agent-board/identity.mjs:28`),
+    the sanitized branch and `sanitize` preserves `/` (it is in `sanitize()`'s allowed-character
+    class, `scripts/lib/agent-board/identity.mjs`),
     so a holder on `fix/1234` — or anyone who passed `--agent 2026` — has an identity whose last
     segment parses as a pid. Only `e2e-run/<…>/<digits>` is probed. `E2E_SKIP_LOCK=1` (or `--no-lock`)
     skips the queue, and `E2E_LOCK_TIMEOUT`, `E2E_LOCK_POLL` and `E2E_LOCK_LEASE` tune the wait.
@@ -336,95 +468,69 @@ one that matters: `session.directory` records where a chat was **opened**, so it
 absence is never evidence of abandonment, and the board's `agents` table is what
 covers a chat that was opened in `main` and driven into a task worktree.
 
+**The refusal you will actually hit is about you.** Two of those conditions name no
+actor, they name the **caller**: `collectOwnership()` keys every signal on the worktree's
+absolute path and never calls `resolveIdentity` — verified, zero references in the program —
+so there is no "unless the holder is me" anywhere. Liveness is recency-only over recorded
+writes, so the chat that wrote in a worktree is its own live writer for the whole window.
+**Run `npm run dispose` on a worktree you have been working in and it refuses itself**, with
+text addressed to somebody else: _"only the operator may stop a writing chat"_, _"Held locks
+are released by the agent that took them, not taken from it"_, or a `derived-live-writer`
+finding naming the chats that wrote inside the live window — which includes yours.
+
+**There is no escape from inside the agent.** No `--force` exists — the CLI rejects the flag
+outright, because a dirty tree is a finding rather than something to override — and
+`--max-age-minutes` is ceiling-clamped to the same 15 minutes the inventory-freshness check
+imposes. The only exit is `npm run swarm -- release <issue> --force --reason …`, which is the
+operator's move. Measured over the program's own refusal line: **24 sessions on 2026-10-01
+and 2026-10-02, 35 to date.** Read it as a statement about the operator, not about the
+worktree: the verdict is right — you _were_ writing there — and the remedy belongs to whoever
+can stop your session. The half that is wrong is that an agent cannot release its own recorded
+ownership, which is a gap in the program and is filed as one.
+
 **A signal that could not be read is not an empty signal.** A `git status` that
 fails refuses as `dirty-tree-unreadable` rather than leaving the counts at zero,
-a board database that is present but unreadable refuses, and a bare name that is
-the basename of two worktrees refuses rather than disposing the first match —
+a board database that is present but unreadable refuses, and a bare name that
+is the basename of two worktrees refuses rather than disposing the first match —
 git guarantees two worktrees cannot share a _path_, which is not the same thing.
 Each of those three was a direction where a failed lookup produced the same
 value as a clean answer.
 
-Then it **anchors** the branch at `refs/keep/disposed/<name>` before deleting
-anything, so no `git gc` can make a disposed branch unreachable, and it
-**salvages** uncommitted work to `.git/worktree-salvage/<name>/` — a
-`git diff HEAD --binary` patch plus a `tar` of the untracked and the gitignored
-files, because no diff mentions a file git does not track. That salvage is a
-backstop for a caller that reaches `dispose()` directly; **the CLI does not rely
-on it**, because it refuses a dirty or ignored-content tree first and there is no
-override. Finally it removes the worktree with **no `--force`** and deletes the
-branch with **`git branch -d`**, which refuses an unmerged branch.
+### `derived-live-writer` can refuse the session that is asking
 
-**There is no `--force`, deliberately.** `git worktree remove` already refuses a
-dirty tree and prints the modified and untracked paths — the cheapest inventory of
-uncommitted work in the repository, delivered before the only irreversible step.
-Re-running it with `--force` discards exactly what it just named. Treat that
-refusal as a finding: commit the work, carry it to a worktree as a patch, or leave
-it and file it.
+**The refusal most likely to be hit by a reader who did nothing wrong.** `dispose` refuses
+`derived-live-writer` when the record's `derivedLive` is true or `writeHistory.derivedChatIds` is
+non-empty. `derivedLive` is an **or** of four arms, and only three of them are records of a call
+inside the directory:
 
-`kilo.jsonc` denies `git worktree remove --force` and `rm -rf` against a path
-containing `kilo/`, and puts `git branch -D` behind a prompt. The documented
-throwaway recipe (`git worktree remove --force /tmp/verify-main`) does not match
-those patterns and keeps working: that worktree was created minutes earlier by
-the same command and holds nothing but a checkout.
+| arm         | what it actually is                                                   | window                     | names a chat?      |
+| ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
+| `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
+| `ioLive`    | recent `shellHistory` **and `readHistory`** — a reader counts         | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
+| `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
 
-**A merge subject naming a branch is not evidence that the branch is landed.**
-This is worth stating separately because it is what a sweep did on 2026-10-01: it
-read `git log --grep=fix/stale-citations`, found a fourteen-hour-old
-`merge(fix/stale-citations): …` of an unrelated dead branch, and disposed of a
-live worktree whose tip was not an ancestor of `main`. Every record now carries
-`nameCollisions` — the merges on `main` whose subject already carried that
-branch's name — as an advisory flag that changes no verdict. The fact is
-`mergedIntoMain`, and it is already computed. The name is the only thing that
-misleads, so the inventory now shows the name's history next to the fact.
+So "a chat ran the gates in there" is only one of the ways in, and the wide arm counts **reads**. A
+session arm makes it worse than it looks: `writes.mjs` argues in its own header that attributing a
+call to a worktree by the session's directory is wrong in both directions, and this arm then does
+exactly that. `classify()` deliberately keeps `derivedLive` beside the suppressed `live` rather than
+letting `--no-live-writers` erase its own evidence, and `dispose` reads `derivedLive`, so **the
+documented suppression flag does not clear this refusal.**
 
-**Do not flag a worktree for holding work on no ref — that case is derived.** A
-branch at 0 ahead of main, already on it, with a dirty working tree is reported
-`uncommitted-only` and is never prunable whatever the curated table says, and
-`worktree-inventory.test.mjs` re-derives the set from the live worktrees and
-asserts the generator's verdict on it. A flag on such an entry protected nothing
-and went stale on its own: the moment its owner committed, the claim was false and
-the list had to be re-derived by hand. Anything a human must decide lives in
-`scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
-entries are not interchangeable: `tsc-guard` has a `note` but no `issues` and no
-`landed`, while `paint-easy` carries an `issues` ref and a claimed `landed` state.
-Read the source file rather than copying a prose example. **Curation is worth
-writing when you know something git cannot see**, which today means exactly one
-field: `mustNotPrune` on a branch git already calls disposable. Nothing else in
-an entry moves a verdict, and a test enforces that — `summary`, `note`,
-`liveNote`, `issues` and `landed` are documentation.
+The refusal message names a chat only when `derivedChatIds` is non-empty — the write arm. **Every
+other arm prints "a chat"**, so an anonymous refusal is the normal case, not a sign of something
+else.
 
-**An uncurated worktree is not at risk**, and there is deliberately no rule that
-demands an entry for one. There was: every live worktree holding work had to
-have an entry, which is what an in-flight task looks like for the whole of its
-life, so it was red from an agent's first edit to its merge — in every other
-checkout too, since the generator reads the repository's worktrees and not the
-caller's. The table was re-derived by hand four times in one session against a
-fleet that kept moving. What protects that work is `classify`, on git's facts
-alone, and `worktree-inventory.test.mjs` asserts it over the live worktrees with
-the curated entry removed. Measured on 2026-09-30: 160 curated keys, 102 live
-in-repo worktrees, 26 with no entry, 13 holding work on no ref — every one of
-them reported `at-risk`. Write an entry when you have a judgement to record; the
-suite does not ask you for one per worktree.
+The ordinary shape of a harvest is: gate the branch inside its worktree, land it, and find the
+worktree you just gated cannot be disposed. **Treat that as the tool working, not a flag to find.**
+The same `io` signal is the one that caught a worktree with agents editing it an hour earlier
+carrying `action: "dispose"` and `prunable: true` with every git fact correct. Land the work, leave
+the directory, and **say in the report that the removal is pending** — a harvest that reports its
+landing and silently leaves the directory is indistinguishable from one that forgot.
 
-`readyToLand`, `disposalCandidates`, `atRisk`, `readUnfinished`, `workOnNoRef` and
-`readLostWorktree` are named at the top of the file so you do not have to filter
-the whole list to find them, and `node scripts/worktree-inventory.mjs` prints the
-first two before the evidence. `readLostWorktree` matters most of those: it is
-the only list that names a session whose worktree was **deleted**, which no
-computed signal can produce, and it cannot be derived from the worktree record it
-used to live on — the loop that fills it only visits worktrees that still exist,
-so it was structurally always false.
-
-**"merges cleanly" is VERIFIED, not assumed.** `mergeConflict` comes from
-`git merge-tree --write-tree`, which performs the merge in a scratch object store
-and touches no working tree, index or ref. `mergeConflictFiles` names the files
-that collide. It is `null` — never `false` — when the merge could not be
-attempted, because an unknown is not a licence to land. **`mergeChecked: false`
-means _no answer_, and does not say which of the two reasons applied; treat
-unknown as unknown and re-run the check yourself before acting on it.**
-`prunable: true` remains the strict disposal test: not the main worktree, the
-branch is an ancestor of `main`, the tree is clean, and no curated finding
-protects it.
+**A flag does clear it, which is why a sweep must not reach for one.** `HANDOFF.md` §224 has the
+mechanism and the reproduction; the short form is that `--now` moves the clock every window is
+measured against, and a clock in the future expires them all.
 
 ### "0 commits ahead of main" is NOT evidence that a worktree is disposable
 
@@ -450,7 +556,7 @@ Re-check read-derived lists against the live tree before removing a worktree: a
 read-derived count is a claim about a moment, which is why `workOnNoRef` carries
 `stillOnNoRef`.
 
-`chats.unfinished` holds **six** states (`chats.mjs:57-64`): `active`,
+`chats.unfinished` holds **six** states (`UNFINISHED_STATES` in `chats.mjs`): `active`,
 `abandoned-midflight` (a stale session whose last turn ended on a tool call),
 `blocked` (waiting on a human answer), `died-at-birth`, `rejected-credits` and
 `orphaned` (the worktree directory no longer exists). `chats.dead` holds the
@@ -624,11 +730,71 @@ heartbeat` still exists and is still correct — it is the only thing that can
   somebody else holds it, so a shell can gate on it. `swarm claim --files a.ts b.ts`
   takes both, and gives back **only the ones it took** if the claim is then
   refused.
+- **`check` answers TWO questions, and reading only the first is how three agents
+  end up in one file.** `free` means no live **LOCK**. It does not mean nobody's
+  business. The line then names **every open issue that references the path**,
+  including the ones that reserve nothing — an issue imported from a handoff
+  document, or filed with `--files` by an agent whose lease has since run out.
+  Read both halves; `held by <agent>` is exit 1, and an issue that is open, claimed
+  or deferred is not.
+- **A reference NEVER moves that exit code, and that is deliberate rather than
+  incidental.** A gate that failed on every file any handoff document has ever
+  mentioned would fail on nearly every path in the repository and train every
+  agent to pass `--force`. Whether a reference should ever block is the operator's
+  call, not a side effect of a query.
+- **`issue_files` is the index that makes that answerable, and it is durable.**
+  It is written by `new` and by `holdFiles` whether or not a lease is taken, and
+  rebuilt from the event log by the v2 → v3 migration, so a board on disk gains
+  it without re-importing (the import is idempotent by `origin` and would file
+  nothing). Before it, only an issue that reserved **nothing** kept its files solely
+  inside an event's `data` JSON; an issue that took a lease was queryable, through
+  `issue_locks`, by the agent who held it.
+- **`swarm list --files` asks about the PATH, not about the caller.** It used to
+  join `file_locks` and require the row to belong to whoever ran it, so the one
+  command an agent runs before opening a file could only answer "which of my own
+  locks is on this path" — and returned an empty set for every unlocked file,
+  which is indistinguishable from a file nobody cares about.
 - **The fixer's claim is not its verification.** `swarm resolve` needs the live
   claim; `swarm close` refuses the agent that resolved the issue. Exit code 5 is
-  that refusal. **There is no `--verified-by`**, and that is the point: a flag
+  that refusal, **and exit 5 is only that refusal** — one `code: 5` in the program.
+  **There is no `--verified-by`**, and that is the point: a flag
   naming somebody else is a name the caller supplies about an agent that is not in
   the room. A reviewer closes an issue by being the reviewer.
+- **The sequence is `claim → resolve → close`, and each refusal names the step you
+  skipped.** The order is documented nowhere else and the error text is the only
+  interface, so it costs three turns to learn:
+
+  | You ran                               | It says                                                                            | Exit |
+  | ------------------------------------- | ---------------------------------------------------------------------------------- | ---- |
+  | `resolve` with no claim               | `<id> is not claimed; claim it before resolving`                                   | 3    |
+  | `resolve` on a peer's claim           | `<id> is claimed by <agent>; only the claim holder resolves it`                    | 3    |
+  | `close` on an unresolved issue        | `<id> is open; only a resolved issue can be closed`                                | 3    |
+  | `close` as the agent that resolved it | `<agent> resolved <id> and cannot also verify it; verification is somebody else's` | 5    |
+
+  **The one that surprises is the third**: closing an issue nobody claimed reports
+  `is open`, not a claiming error, because `closeIssue` checks the status before it checks the
+  resolver. Exit 3 there means "not in the right state", never "somebody else has it" — reading
+  3 as a contention signal sends you looking for a rival agent that does not exist. Note also
+  that `resolve` takes a `--force` that `close` does not, so a claim that cannot be resolved
+  can be taken but an issue nobody else will verify cannot be closed by you at all — and
+  **typing `swarm close <id> --force` is not an error**: `parseArgs` keeps an unknown bare
+  flag as `true` rather than rejecting it, so it is silently ignored and you get the same
+  refusal, which reads as the flag having been considered and rejected.
+
+- **`--force` on a release hands back locks, and it hands back YOURS.** `release
+--force` skips exactly one guard — `claim.agent_id !== who` — and the claim's file
+  locks go with it, because they are released **by issue pairing rather than by actor**: every
+  `issue_locks` row for that issue is dropped, and a lock is freed whenever no other issue
+  that is not yet closed still pairs that same `(path, agent_id)`. One identity can therefore
+  release locks another identity acquired, and nothing checks who owns the pairing. Recorded
+  shape, in one minute in one shell: five paths taken as `main`, then
+  `AGENT_BOARD_AGENT=fix/… release` refused with `is claimed by main, not by fix/…`, and
+  `release --force` dropped the five locks the same session had taken twenty-three seconds
+  earlier. **Set `AGENT_BOARD_AGENT` once in the shell's environment**, not per command, so
+  every invocation in it is the same agent — `resolveIdentity` reads the variable _before_ the
+  branch, and the only time-varying terms in that chain (`KILO_RUN_ID`, `process.pid`) are
+  unreachable inside a checkout that has one. `--force` on `unlock` is the same trade on files,
+  with no pairing table to soften it.
 - **`--agent <id>` is unauthenticated, and it DEFEATS the self-close check.** The
   guard compares the string you pass, not who you are, so `npm run swarm -- close
 <id> --agent somebody-else` closes an issue you resolved yourself. **Use `--agent`
@@ -661,8 +827,9 @@ heartbeat` still exists and is still correct — it is the only thing that can
 
 It is a command, not a gate, and no commit may be blocked on it. Exactly one thing
 calls it: `.husky/post-merge` runs `scripts/merge-release.mjs`, which releases the
-claims and locks of every worktree the merge put on `main` — non-blocking, because
-the merge is already recorded by the time a post-merge hook runs. Nothing else in
+claims and locks of eligible worktrees the merge put on `main`, while reporting
+merged worktrees blocked by dirty state or other release conditions — non-blocking,
+because the merge is already recorded by the time a post-merge hook runs. Nothing else in
 `.husky/` reads the board, and nothing runs it on worktree creation or on a chat
 stopping.
 
@@ -680,7 +847,7 @@ never read — the one process-level signal the schema carries is consulted nowh
 
 **The two readers disagree about a malformed timestamp, and the board side is the
 dangerous one.** `board.mjs:isLive` treats one as **live**; `liveLocks`
-(`db.mjs:1065`) treats it as **free**, because `NaN > at` is false — so the
+(`db.mjs`) treats it as **free**, because `NaN > at` is false — so the
 inventory can show a file held while `swarm check` calls it free. Unreachable
 today, since every writer goes through `msFromNow`, but a resource's safety rests
 on an invariant the code does not hold. Claims fail the other way: `doctor` tests
@@ -698,17 +865,39 @@ branch, two agents on one branch in different worktrees share an `agent_id`, and
 when renewal asked about the caller while `doctor` asked about the row, a live
 agent extended a dead colleague's lease and released it in one invocation.
 
-**A file lock has no renewal at all.** Every write to `file_locks` is an acquire,
-a release, or the expiry sweep, so a lock is a hard `DEFAULT_LEASE_MS` (45 min)
-TTL, and `doctor` — which runs on every command — strips an expired one whether or
-not its holder is working. Worse, that sweep calls `releaseFiles(..., {force:
-true})`, whose `force` skips the `agent_id !== who` guard and so releases **every**
-holder of the path, including one who acquired it after the first row lapsed. Holding a
-file past the TTL therefore loses it silently and hands it to a third agent; the
-log shows the pressure, 456 `lock.hold` against 832 `lock.deny`. Renewing on
-worktree presence is the obvious fix and the wrong one — a lock means _an agent is
-in this file_, not _this branch owns this directory_. It needs an activity
-signal.
+**A file lock renews exactly as a claim does, and its residual limit is much narrower than
+"it does not renew".** `renewOwnLocks` extends the caller's own `file_locks` rows and
+`autoSweep` calls it before it sweeps, on every command except `doctor` — `help` and
+`--version` return before the board is even built. Four things are worth knowing, because each
+is a way to hold a lock and lose it:
+
+- **Your own rows only.** The `WHERE` clause names your `agent_id`. A lock cannot be kept
+  alive by a peer, and `acquired_at` is deliberately left alone so the log records when the
+  lock was taken rather than when it was last touched.
+- **A worktree path must resolve.** `renewOwnLocks` bails when `identity.worktree` is falsy.
+  **That is not the `main`-checkout or detached case**, which is what this section claimed for
+  years: `resolveIdentity` fills the field from `git rev-parse --show-toplevel`, which succeeds
+  in every checkout. `main` renews, and a detached HEAD renews under the identity
+  `detached@<short-sha>`. The only caller that gets no renewal is a `swarm` command run
+  **outside any git repository at all**. Measured 2026-10-03 across four working directories —
+  and the wrong version was copied out of a source comment into this file as fact before anyone
+  checked it against the function.
+- **Renewal fires only when a `swarm` command runs**, and only for a row already inside the
+  half-lease threshold. That threshold is what makes it safe to reason about: a lock is never
+  extended before it is half gone, so a stale row cannot be kept alive by a command that has
+  nothing to do with the file.
+- **The sweep is no longer the hazard it was.** `doctor` releases each expired row through
+  `releaseFiles([finding.path], { agent: finding.agent, reason: 'swept' })` — with **no
+  `force`** — so the `agent_id !== who` guard still applies and a live holder on the same path
+  is not swept out from under itself. The key is `(path, agent_id)`, so two live rows on one
+  path are schema-legal, and `doctor` iterates every live row rather than the first.
+
+What is left is the same limit a claim has: an agent that stops running `swarm` for a
+half-lease loses its locks, and the fix is an activity signal rather than a longer TTL.
+Renewing on worktree presence alone would be the wrong fix — a lock means _an agent is in this
+file_, not _this branch owns this directory_. The log shows the pressure this replaced, and the
+pressure is the striking number: **1,179 `lock.hold` against 18,992 `lock.deny`** in the live
+board's 22,103 events, with 11 renewals. Sixteen denies per held file.
 
 Hand-driven release is careful: `releaseClaim` walks the `issue_locks` pairing
 table so a file another live issue needs survives. The board is currently clean —
@@ -737,17 +926,44 @@ tails. That is why these are not optional politeness:
   anyway — a claimed path it must `check`, and a `swarm note` naming its own files.
 - **`board_post` is a different channel and it is not a substitute.** It reaches
   the sessions a fan-out spawned, so a post about work in a worktree usually has
-  **no recipient in the room** and returns `total: 0, active: 0` with an explicit
-  warning that nothing was delivered. Treat that response as the answer.
-- **A post that does not fit is a note of the finding's PATH, not a shorter
-  finding.** Kilo's `board_post` rejects a body over 4096 characters, and the
-  rejection kills the turn mid-report: the review that was verified, the mutation
-  that was run, the evidence that was gathered — all of it unwritten, and the
-  session's last act is a tool error rather than an answer. A Kilo chat died here
-  on a review it had already finished. Write the finding to a handoff document and
-  post its path; the repo board caps a message at the same 4096 characters and
-  refuses rather than truncating, so neither channel can hold a document and
-  neither will quietly pretend it did.
+  **no recipient in the room**, and the strings it refuses with are `Board recipient is
+not a participant in this board` and `Board messages cannot be sent to yourself`. A reader
+  grepping for a documented response shape finds neither, and neither string exists anywhere in
+  this repository, because the program is not here — `board_post` is Kilo's built-in, not
+  `npm run swarm`. Treat either refusal as the answer: nothing was delivered.
+- **The cap is on the FORMATTED message, in BYTES — and "under 4096 characters" is
+  the rule that was failing.** `board_post` enforces two limits over two
+  different counters. Its argument schema refuses a `body` over 4096 **UTF-16
+  units**; `BoardStore.post` then measures `Buffer.byteLength` of
+  `JSON.stringify({id, timestamp, from, to, type, body, reply_to})` against
+  **4096 bytes**. The envelope costs 191–253 bytes depending on the session ids
+  and whether the post is a reply, so a 4090-character body clears the schema and
+  is refused a moment later with `Formatted board message exceeds 4096 bytes` —
+  37 recorded posts died exactly there, having been written to a limit that did
+  not exist. Non-ASCII dies twice over: 1000 emoji are 2000 units and 4000 bytes.
+  **A body has about 3840 bytes: 3800 ASCII characters, or 1200 characters if any
+  of them may be non-ASCII.** Both figures are measured against the worst
+  envelope, reply included.
+- **It ends the STEP, not the turn, and the difference is 13%.** Of 134 recorded
+  rejections, 117 continued in the same turn — nearly all by retrying shorter —
+  and 17 ended it for good: 13 subagents, 9 of those sessions never speaking
+  again. The claim that a rejection ends the whole turn stood in this file and in
+  `AGENTS.md`, and it was false. An overclaim in the direction that tells an
+  agent the failure is unrecoverable is worth as much as the missing number was.
+- **So a long finding is a POINTER, and the pointer has a channel with no cap.**
+  An issue body is not an event and is not capped (the next subsection says by
+  what), the board database lives in the git common directory, so one command
+  hands a peer a document of any length from any worktree:
+
+  ```sh
+  npm run swarm -- new "short title" --body "$(cat /abs/path/finding.md)"
+  ```
+
+  `swarm show <id>` prints that body, so the peer needs no second command. Then
+  `board_post` the issue id plus one clause on what it says. Do not compress the
+  finding to fit: the repo board refuses rather than truncating for the same
+  reason, so a document belongs in a body and a log line stays a log line.
+
 - **An unclaimed path looks free; claim or hold it before editing.** A held file is
   a queue, not a deadlock: do not edit it or wait on the lease. Note the file and
   change, hand it over, or work elsewhere and merge `main` in first.
@@ -865,9 +1081,15 @@ Six ways to get an answer that looks right and is not:
 - **`part.session_id` is the CALLER, not the child.** Joining `session.parent_id`
   to it credits every child to every `task` call in the parent's session, so a
   "the correct pair still landed elsewhere" finding appears out of nothing. It is
-  genuinely the caller and not merely close to it: 65 of the 2,053 `task` parts sit
-  in sessions that are themselves children, because a subagent launches
-  subagents.
+- **`task` is not exposed to a subagent, so "a subagent launches subagents" is not
+  a thing that happens here.** A `task` part sitting in a session that is itself a
+  child is a `task` call made _by that child_, recorded against it — and every one
+  of them fails: **242** such calls, 240 with `Model tried to call unavailable tool
+'task'` and 2 aborted, against a session tree of **518 roots and 2,713 children and
+  zero grandchildren**. **Write the fan-out as your own calls.** A brief that delegates
+  the delegation is unexecutable, and the agent that wrote it reports back as though it
+  had run. The failures are not spread evenly — **82 of them landed on 2026-10-03
+  alone** — so this is a live cost, not a historical footnote.
 - **`session.model` is the session's CURRENT model.** A child switched later is
   counted at its latest model, not the one it was launched on. Worse, a name the
   provider does not carry can resolve onto a different family entirely:
@@ -896,11 +1118,14 @@ not assumed.** Of the joinable children of calls that passed neither field, 331 
 GPTs; every one of those 32 had a caller already on `openai`. The remainder spread
 over the gateway's free models. So the hazard of omitting both is not "a provider
 nobody chose" — it is "whatever this turn is running on", which is free only if
-this turn is. **The provider is inherited separately**: exactly 106 of those
-children reached the same `stealth/space-bunny-alpha` through `openrouter` instead
-of `kilo`, which is `subagent_model` in `~/.config/kilo/kilo.jsonc` winning the
-provider while the model stayed put. Reproduce it by grouping the join on the
-caller's turn model alongside the child's.
+this turn is. **The provider is inherited separately**: **144** of the children of calls that
+passed neither field reached the same `stealth/space-bunny-alpha` through `openrouter` instead
+of `kilo`, where 118 reached it correctly. That is `subagent_model` in
+`~/.config/kilo/kilo.jsonc` winning the provider while the model stayed put. **Measured
+2026-10-03 over the whole store, and it is a floor** — it counts one resolved model id, and
+`session.model` records only a session's _current_ model, so a child switched since launch is
+counted at its latest one. Reproduce it by adding `WHERE model IS NULL AND provider IS NULL` to
+the join above and grouping on the child's `providerID`.
 
 **The calls that cost money are the ones the join above cannot reach — and the
 children exist.** A launch that fails on credits emits no `<task id="ses_…">`, so
@@ -908,12 +1133,27 @@ it is invisible there, yet the child session was still created and its resolved 
 is recorded in `session.model`. The error text carries the handle that finds it:
 
 ```sh
-sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT datetime(time_created/1000,'unixepoch'), json_extract(data,'$.state.input.model'), coalesce(json_extract(data,'$.state.input.provider'),'(none)'), substr(json_extract(data,'$.state.error'),1,60) FROM part WHERE json_extract(data,'$.tool')='task' AND json_extract(data,'$.state.error') LIKE '%Add credits%' ORDER BY time_created"
+sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT datetime(time_created/1000,'unixepoch'), json_extract(data,'$.state.input.model'), coalesce(json_extract(data,'$.state.input.provider'),'(none)'), json_extract(data,'$.state.error') FROM part WHERE json_extract(data,'$.tool')='task' AND (json_extract(data,'$.state.error') LIKE '%Add credits%' OR json_extract(data,'$.state.error') LIKE '%free-models-per-day%') ORDER BY time_created"
 ```
 
-…then take the `task_id="ses_…"` out of that row and read `session.model` for it.
-All four exist, all four are `cost = 0` and `tokens_input = 0`, and read across the
-result both failure modes are visible in one pass: a name the provider does not
+**Match both strings, and do not truncate the error.** The two failure modes have different
+texts — `Add credits to continue, or switch to a free model` and
+`Rate limit exceeded: free-models-per-day-stealth.` — and a query filtering only one of them
+measures **4 rows out of 44** while the class it is meant to size is eleven times that. The
+truncation is the same mistake one step later: the instruction below is to take the
+`task_id="ses_…"` out of the row, and `substr(…, 1, 60)` cuts the handle off before you can
+reach it, so the recipe could not be followed with the recipe. Return the whole error and read
+the tail. (Extract it at `instr(e,'task_id="')+9`: offsetting on `'task_id="ses_'` and adding
+10 silently drops the `ses_` prefix and matches none of the 44.)
+
+…then take the `task_id="ses_…"` out of that row and read `session.model` for it. Measured
+2026-10-03: **44 rows, 4 of them `Add credits` and 40 `free-models-per-day`** — the dominant
+class is the one a single-string filter misses. **All 44 resolve to a live child session**,
+across 43 distinct ids, which is the half the join above cannot reach and the reason this
+recipe is worth having; **all 44 are `cost = 0`, 36 at `tokens_input = 0`**, and the eight that
+spent tokens are subagents that had already run and hit the limit on a later launch. Read
+across the `Add credits` four and both failure modes are visible in one pass: a name the
+provider does not
 carry (`GPT Luna Latest` on `kilo` — it is `openrouter`'s, and the child resolved
 to `~openai/gpt-luna-latest`), and a name it carries but must not serve
 (`OpenAI: GPT-6 Sol (new)` on `kilo` — resolved `openai/gpt-6-sol`, paid).
