@@ -76,8 +76,14 @@ export const useApp = (): UseAppType => {
   }
 
   function setBlankImage(params: NewDocumentBlankParams) {
-    handleImageCreate(params.size);
+    // Same ordering as `setImageFromUpload`'s raster arm, and for the same reason. A blank document's
+    // layer is built synchronously, so there is no microtask boundary here — but
+    // `createBlankLayer` throws from `createLayerSource` when the extent is not positive, and a
+    // canvas already resized to that extent is a document-sized canvas around a document that was
+    // never adopted. Sizing the canvas after the layer exists cannot be wrong in the other
+    // direction: nothing between the two reads it.
     createBlankLayer({ ...params }, true);
+    handleImageCreate(params.size);
   }
 
   async function setImageFromUpload(data: ImageUploadResponse) {

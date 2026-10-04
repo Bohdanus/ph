@@ -629,6 +629,28 @@ describe('creating a new image kills the outgoing document history and layers', 
     expect(result.current.store.activeLayerId).not.toBe(firstLayerId);
     expect(result.current.store.totalSize).toEqual({ width: 100, height: 100 });
   });
+
+  /**
+   * The blank arm's half of the ordering `opening an image kills the outgoing document history and
+   * layers` pins for the raster arm. Both calls in `setBlankImage` are synchronous, so a resize
+   * placed before the layer build is invisible to any event-order assertion — and there is no
+   * forward tripwire to write either, because this harness never renders `Main`, so the store's
+   * own render never runs and the canvas has exactly one writer. The failure path is therefore the
+   * tripwire: `createLayerSource` refuses an extent that is not positive, and it throws from
+   * INSIDE `createBlankLayer`. With the resize placed first, `expectOutgoingDocumentIntact`'s canvas
+   * assertion sees the incoming extent; with it after, it sees the outgoing one.
+   */
+  it('leaves the canvas at the outgoing extent when the blank layer cannot be built', async () => {
+    const result = setup();
+    await seedOutgoingDocument(result);
+    const intact = { history: [...result.current.store.history], layers: { ...result.current.store.layers } };
+
+    expect(() => result.current.app.setBlankImage({ ...BLANK, size: { width: 0, height: 0 } })).toThrow(
+      /width and height must be greater than 0/i
+    );
+
+    expectOutgoingDocumentIntact(result, intact);
+  });
 });
 
 describe('opening an image kills the outgoing document history and layers', () => {
