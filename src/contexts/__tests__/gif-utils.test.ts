@@ -464,7 +464,7 @@ describe('GIF encoding error paths', () => {
     const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 0, height: 1 }));
     vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
 
-    await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions must be greater than zero');
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF image has invalid dimensions (0×1)');
     expect(getImageData).not.toHaveBeenCalled();
   });
 
@@ -475,7 +475,7 @@ describe('GIF encoding error paths', () => {
     const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 1, height: 0 }));
     vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
 
-    await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions must be greater than zero');
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF image has invalid dimensions (1×0)');
     expect(getImageData).not.toHaveBeenCalled();
   });
 
@@ -489,6 +489,21 @@ describe('GIF encoding error paths', () => {
     vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
 
     await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions cannot exceed 65535 pixels');
+    expect(getImageData).not.toHaveBeenCalled();
+  });
+
+  it('refuses a geometry that is not a positive integer, rather than pricing it', async () => {
+    // `!width` and `> 65535` are both false for a fraction, so the range comparisons alone admit
+    // one and hand it to `getCanvasImageData`. `canvas.width` is an unsigned long so this cannot
+    // arrive from a real canvas; it is pinned so the guard matches `avif-utils.ts` and
+    // `ico-utils.ts` rather than being the one sibling that checks size only.
+    const canvas = document.createElement('canvas');
+    Object.defineProperty(canvas, 'width', { value: 4.5, configurable: true });
+    Object.defineProperty(canvas, 'height', { value: 4, configurable: true });
+    const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 4.5, height: 4 }));
+    vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF image has invalid dimensions (4.5×4)');
     expect(getImageData).not.toHaveBeenCalled();
   });
 

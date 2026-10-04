@@ -22,11 +22,16 @@ export async function encodeGif(canvas: HTMLCanvasElement): Promise<Blob> {
   // above the read loses no case, and the dimensions written into the logical screen descriptor
   // below now come from the one authority instead of from two that could drift.
   const { width, height } = canvas;
-  if (!width || !height) {
-    throw new Error('GIF dimensions must be greater than zero');
+  // The shape of the geometry is checked before its size, separately, and as in `avif-utils.ts`
+  // and `ico-utils.ts`: `!width` and `> 65535` are both false for `-5`, `4.5` and `NaN`, so a
+  // range-only guard waves all three through to `getCanvasImageData`, which hands them to
+  // `createImageData`. `canvas.width`/`canvas.height` are unsigned longs so no real canvas
+  // arrives that way; this is the same rule as its two siblings rather than a reachable case.
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`GIF image has invalid dimensions (${width}×${height}).`);
   }
   if (width > MAX_AXIS || height > MAX_AXIS) {
-    throw new Error('GIF dimensions cannot exceed 65535 pixels');
+    throw new Error(`GIF dimensions cannot exceed ${MAX_AXIS} pixels`);
   }
 
   const { data } = getCanvasImageData(canvas);

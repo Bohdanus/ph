@@ -5,10 +5,10 @@ type IfdTags = Record<string, unknown>;
 
 /**
  * The largest document this app can create, not a round number: `NewImageDialog` clamps each
- * axis to 10000 px (`NewImageDialog.tsx:111-112` when a preset is chosen and `:144-145` when the
- * DPI changes, with `max="10000"` on both inputs at `:198` and `:217`), so every preset at
- * every DPI the dialog offers lands at or below
- * 10000 × 10000. A budget under that number makes the app refuse files it just wrote.
+ * axis to 10000 px — in `computePixelsFromPreset`'s callers, when a preset is chosen and again when
+ * the DPI changes, with `max="10000"` on both inputs — so every preset at every DPI the dialog
+ * offers lands at or below 10000 × 10000. A budget under that number makes the app refuse files it
+ * just wrote.
  */
 const MAX_CREATABLE_DOCUMENT_PIXELS = 100_000_000;
 
@@ -50,12 +50,21 @@ function assertPixelBudget(width: number, height: number, action: 'open' | 'save
  * instead — see the comment above its call.
  */
 function assertByteBudget(bytes: number | null, width: number, height: number) {
-  // `null` is "the IFD does not yield a finite prediction", which is not evidence of a small
-  // image, so it is refused on the same terms as one over the ceiling.
-  if (bytes === null || bytes > MAX_TIFF_BYTES) {
+  if (bytes !== null && bytes > MAX_TIFF_BYTES) {
     throw new Error(
       `TIFF image is too large to open (${width}×${height}). ` +
         `Decoding it would need more than ${MAX_TIFF_BYTES / 1_000_000} MB, over the TIFF budget.`
+    );
+  }
+  // `null` is "the IFD does not yield a finite size", and that is a statement about the header
+  // rather than about the image: an unreadable `BitsPerSample` makes every product below it
+  // `NaN`. Reporting that as too large would tell the reader their image exceeds a budget when
+  // the file is corrupt, which is not actionable and sends them looking for a size problem they
+  // do not have. `assertSamplesAgree` refuses a mismatched count with a format message; this is
+  // the same class of fault and is worded as one.
+  if (bytes === null) {
+    throw new Error(
+      `TIFF file is malformed: its headers do not determine a finite size for a ${width}×${height} page.`
     );
   }
 }
@@ -72,7 +81,8 @@ function tagValue(page: IfdTags, tag: string): number | undefined {
 /**
  * `BitsPerSample` (258) carries one entry per sample, so its count is `SamplesPerPixel` (277).
  * A page declaring 200 of them next to `t277 = 4` is not a wide-gamut image, it is the factor
- * UTIF multiplies the row length by (`Math.min(32, t258[0]) * t258.length`, `UTIF.js:116`).
+ * UTIF multiplies the row length by (`Math.min(32, t258[0]) * t258.length` — `UTIF.js`,
+ * `UTIF.decodeImage()`).
  * This is refused on format grounds, so it holds whatever geometry the file also declares.
  */
 function assertSamplesAgree(page: IfdTags) {
@@ -94,13 +104,12 @@ function assertSamplesAgree(page: IfdTags) {
 /**
  * A tiled page's tile geometry has to be usable before it can be costed, and the test is a format
  * one rather than a budget one: refused here as malformed, not as too large, because a tile below
- * `MIN_TILE` is not a large file — it is a page whose loop count is unbounded.
+ * `MIN_TILE` is not a large file — it is a page whose loop count UTIF's own division cannot bound,
+ * since `tx = floor((width + tw - 1) / tw)` is `Infinity` at `tw === 0`.
  *
- * The floor alone is not the whole guarantee, and the gap is worth stating: a page can sit on the
- * pixel ceiling with one axis at 1 and the other at 200000000, which passes both ceilings here and
- * spends `ceil(200000000 / 16)` = 12.5 million iterations in the tile loop. That costs a couple of
- * seconds, not a freeze, and closing it needs a page-aspect rule rather than a tile rule, so it is
- * not this assertion's job.
+ * The floor bounds the loop only to the extent that tiles are at least one pixel wide; a page much
+ * narrower than its tile still wastes the whole tile per row, which no tile-size rule can see.
+ * `predictTileWorkBytes` prices that separately rather than leaving it to this assertion.
  */
 function assertTilesAreUsable(page: IfdTags) {
   const tileWidth = tagValue(page, 't322');
@@ -111,18 +120,41 @@ function assertTilesAreUsable(page: IfdTags) {
   if (tileWidth < MIN_TILE || tileLength === undefined || tileLength < MIN_TILE) {
     const declared = tileLength === undefined ? 'absent' : tileLength;
     throw new Error(
-      `TIFF file is malformed: it declares a ${tileWidth}×${declared} tile. ` +
-        `TileWidth and TileLength are multiples of ${MIN_TILE}.`
+      `TIFF file is malformed: it declares a ${tileWidth}×${declared} tile, ` +
+        `and no TIFF tile is narrower or shorter than ${MIN_TILE}.`
     );
   }
 }
 
 /**
- * The exact `new Uint8Array` sizes `UTIF.decodeImage` reaches, from the fields it reads in
- * `UTIF.js` — `UTIF.decodeImage()`:
+ * The bits UTIF will bill per pixel, from the same fields it reads in `UTIF.js` —
+ * `UTIF.decodeImage()`:
  *
- *   bipp  = t258 ? Math.min(32, t258[0]) * t258.length : (t277 ? t277[0] : 1)
- *   bipp  = Math.round(t279[0] * 8 / (width * t278[0]))   // uncompressed, t262 === 32803
+ *   bipp = t258 ? Math.min(32, t258[0]) * t258.length : (t277 ? t277[0] : 1)
+ *   bipp = Math.round(t279[0] * 8 / (width * t278[0]))   // uncompressed, t262 === 32803
+ *
+ * Both the allocation and the work term are priced from this one function, so the `t262` rewrite
+ * cannot be applied to one and forgotten in the other.
+ */
+function predictBitsPerPixel(page: IfdTags, width: number): number {
+  const bitsPerSample = Array.isArray(page.t258) ? page.t258 : undefined;
+  const compression = tagValue(page, 't259') ?? 1;
+  const rowsPerStrip = tagValue(page, 't278');
+  const stripBytes = tagValue(page, 't279');
+  const bitsPerPixel = bitsPerSample
+    ? Math.min(32, bitsPerSample[0]) * bitsPerSample.length
+    : (tagValue(page, 't277') ?? 1);
+
+  if (compression === 1 && stripBytes !== undefined && rowsPerStrip !== undefined && tagValue(page, 't262') === 32803) {
+    return Math.round((stripBytes * 8) / (width * rowsPerStrip));
+  }
+  return bitsPerPixel;
+}
+
+/**
+ * The `new Uint8Array` sizes `UTIF.decodeImage` reaches, up to its 32-bit coercion, from the
+ * fields it reads:
+ *
  *   bipl  = Math.ceil(width * bipp / 8) * 8
  *   bytes = height * (bipl >>> 3)
  *   tiles = Math.ceil(t322[0] * t323[0] * bipp / 8)        // only when t322 is present
@@ -146,42 +178,72 @@ function assertTilesAreUsable(page: IfdTags) {
  * finite.
  */
 function predictDecodeBytes(page: IfdTags, width: number, height: number): number | null {
-  const bitsPerSample = Array.isArray(page.t258) ? page.t258 : undefined;
-  const compression = tagValue(page, 't259') ?? 1;
-  const rowsPerStrip = tagValue(page, 't278');
-  const stripBytes = tagValue(page, 't279');
-  let bitsPerPixel = bitsPerSample
-    ? Math.min(32, bitsPerSample[0]) * bitsPerSample.length
-    : (tagValue(page, 't277') ?? 1);
-
-  if (compression === 1 && stripBytes !== undefined && rowsPerStrip !== undefined && tagValue(page, 't262') === 32803) {
-    bitsPerPixel = Math.round((stripBytes * 8) / (width * rowsPerStrip));
-  }
-
+  const bitsPerPixel = predictBitsPerPixel(page, width);
   const pageBytes = height * Math.ceil((width * bitsPerPixel) / 8);
   const tileWidth = tagValue(page, 't322');
   if (tileWidth === undefined) {
     return Number.isFinite(pageBytes) ? pageBytes : null;
   }
-  // Read after the `t262` branch above, deliberately: that branch replaces `bitsPerPixel` with the
-  // row length the file's own strip byte counts imply, and UTIF sizes the tile buffer by the same
-  // replaced value.
   const tileLength = tagValue(page, 't323') ?? Number.NaN;
   const bytes = pageBytes + Math.ceil((tileWidth * tileLength * bitsPerPixel) / 8);
   return Number.isFinite(bytes) ? bytes : null;
 }
 
 /**
+ * The bytes a tiled page makes UTIF **move**, which is a different quantity from the peak it
+ * allocates, and the peak budget cannot see it.
+ *
+ * `UTIF.decodeImage` runs `ceil(width / tw) × ceil(height / th)` iterations, and each one starts
+ * by clearing the whole tile buffer — `for (var j = 0; j < tbuff.length; j++) tbuff[j] = 0;` is
+ * the loop's first statement, not a prologue. So the work is that count times
+ * `ceil(tw * th * bipp / 8)`: the **tile-aligned** raster, `ceil(width / tw) * tw` across by
+ * `ceil(height / th) * th` down, rather than the page's own.
+ *
+ * The distance between the two is the whole reason this is a second guard. A 1 × 200000000 page in
+ * legal 16 × 16 tiles aligns to 16 × 200000000, so it clears 1024 bytes 12.5 million times — 12.8 GB
+ * of memset out of a ~200-byte IFD — while its page buffer is 800 MB and its tile buffer 1 KB, both
+ * comfortably inside the ceiling. `MIN_TILE` cannot help either: 16 is exactly the floor it
+ * enforces, and the waste comes from the page being narrower than one tile, not from the tile being
+ * small.
+ *
+ * Priced against the same `MAX_TIFF_BYTES` as the peak, and for the same reason: it is the buffer
+ * the loader would otherwise have to move. It is stricter than the pixel budget only where tile
+ * alignment wastes more than a factor of two, which is the pathological case and no other.
+ */
+function predictTileWorkBytes(page: IfdTags, width: number, height: number): number | null {
+  const tileWidth = tagValue(page, 't322');
+  if (tileWidth === undefined) {
+    return null;
+  }
+  const tileLength = tagValue(page, 't323');
+  if (tileLength === undefined) {
+    return null;
+  }
+  const alignedWidth = Math.ceil(width / tileWidth) * tileWidth;
+  const alignedHeight = Math.ceil(height / tileLength) * tileLength;
+  const bytes = (alignedWidth * alignedHeight * predictBitsPerPixel(page, width)) / 8;
+  return Number.isFinite(bytes) ? bytes : null;
+}
+
+/**
  * Everything the budget can know before the decode: the page's own pixel count, the sample
- * counts, the tile geometry, and the size of the buffer `UTIF.decodeImage` is about to allocate
- * from them. The tile geometry is checked before it is costed, so the byte figure below is always
- * a real allocation and never an unbounded loop count.
+ * counts, the tile geometry, the size of the buffer `UTIF.decodeImage` is about to allocate from
+ * them, and — for a tiled page — the amount it would have to move through that buffer. The tile
+ * geometry is checked before either is computed, so the byte figure is always a real allocation
+ * and never an unbounded loop count.
  */
 function assertIfdWithinBudget(page: IfdTags, width: number, height: number) {
   assertPixelBudget(width, height, 'open');
   assertSamplesAgree(page);
   assertTilesAreUsable(page);
   assertByteBudget(predictDecodeBytes(page, width, height), width, height);
+  const tileWork = predictTileWorkBytes(page, width, height);
+  if (tileWork !== null && tileWork > MAX_TIFF_BYTES) {
+    throw new Error(
+      `TIFF image's tile layout is too expensive to open (${width}×${height}). ` +
+        `Processing it would need more than ${MAX_TIFF_BYTES / 1_000_000} MB, over the TIFF budget.`
+    );
+  }
 }
 
 /**

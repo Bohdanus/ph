@@ -381,7 +381,11 @@ read at 8 bytes per pixel, so the two agree by construction rather than by coinc
 derivation is what makes a different number defensible if the ceiling is ever revisited. It is a
 budget on the page term, though, not on every byte UTIF can allocate: a tiled page adds a second
 buffer sized by `t322`/`t323`, so what the ceiling is compared against is the page and tile together
-and a page nowhere near this figure can still exceed it.
+and a page nowhere near this figure can still exceed it. It is compared against a **second** figure
+as well, because the amount a tiled page makes the loader _move_ is the tile-aligned raster rather
+than the page's own — the loop is driven by tile geometry, and a page much narrower than one tile
+moves the whole tile per row. Same constant, same derivation, different quantity, and the two are not
+redundant: a page can sit far inside the peak and still be unbounded in work.
 
 **Five ceilings exist and three are below what the dialog can create:**
 
