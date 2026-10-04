@@ -290,6 +290,42 @@ const toPage = (box: BoundingBox, rect: Rect): Required<ClipOptions> => ({
 });
 
 /**
+ * `HANDLE_SIZE` (`src/util/constants.ts`), copied rather than imported because nothing under
+ * `e2e/` may import from `src/` — `paint-options.spec.ts` states the rule and `text-edit.spec.ts`
+ * follows it for `PLACEHOLDER_TEXT`. There is no runtime channel to equality-check a constant
+ * against, so a change to the source has to change this copy with it.
+ */
+const HANDLE_SIZE = 12;
+
+/**
+ * The tool overlay's selection chrome at REST, as a rect to compare a `selectionBlue` read against.
+ *
+ * `selectionBlue` screenshots the tool overlay for `#007bff`, and what is on that overlay once a
+ * marquee has been committed is `useRect`'s four corner HANDLES, not a border:
+ * `borderMode: 'while-dragging'` keeps the dashed stroke for the drag the ants stood down for and
+ * drops it when the gesture closes, because the committed border is the marching ants on
+ * `selection-ants-canvas` and two outlines of one selection is worse than either.
+ *
+ * `useRect` draws each handle as `fillRect(x - h1, y - h1, h1, h1)` and so on (`useRect.ts` —
+ * `drawMask()`), with `h1` being `HANDLE_SIZE / scale`. The handles therefore sit OUTSIDE every
+ * corner rather than inside it, and the box they bound is the committed rect grown by
+ * `HANDLE_SIZE` on all four sides — not the rect itself. Asserting the handle box against the bare
+ * rect fails on the two containment edges by exactly that margin, which is why this grows the
+ * expectation instead of leaving `OUTLINE_SLACK_PX` to absorb it: the allowance is a measured
+ * geometry, not a tolerance, and folding it into the slack would hide the same 2px on any future
+ * regression.
+ */
+const overlayChromeAtRest = (box: BoundingBox, rect: Rect): Required<ClipOptions> => {
+  const page = toPage(box, rect);
+  return {
+    x: page.x - HANDLE_SIZE,
+    y: page.y - HANDLE_SIZE,
+    width: page.width + HANDLE_SIZE * 2,
+    height: page.height + HANDLE_SIZE * 2,
+  };
+};
+
+/**
  * `expectOutlineAround` adds a clip origin to the bounds it is given. A screenshot read is
  * clip-relative, so it passes the clip it captured; the ants read is already in page coordinates,
  * so it passes a zero origin. Saying that explicitly keeps the two coordinate spaces from being
@@ -406,7 +442,7 @@ test.describe('Selection tools', () => {
     // selection where the drag was", which is this test's intent and which the handles prove — and
     // it would still pass if the ants were switched off entirely. Asserting the border itself needs
     // `committedAntsOutline`, which the wand and the polygon below already use.
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
   });
 
   test('Clear removes the selection outline', async ({ page }) => {
@@ -424,7 +460,7 @@ test.describe('Selection tools', () => {
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
     await waitForSelectionBlue(page, clip, 'a selection outline before Clear');
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
 
     const clearButton = page.getByRole('button', { name: 'Clear', exact: true });
     await expect(clearButton).toBeEnabled();
@@ -467,7 +503,7 @@ test.describe('Selection tools', () => {
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
     await waitForSelectionBlue(page, clip, 'a selection outline before the tool switch');
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
 
     // This is what makes the "and its darkening mask" half of the test non-vacuous: it proves
     // the region WAS inside the mask, so a later "the mask is gone" cannot pass because the
@@ -520,7 +556,7 @@ test.describe('Selection tools', () => {
     );
 
     await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
     await expect(copyButton, 'Copy with a committed selection').toBeEnabled();
     await expect(clearButton, 'Clear with a committed selection').toBeEnabled();
 
