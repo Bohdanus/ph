@@ -5937,3 +5937,37 @@ guard fix rather than alongside it.
 **Provenance.** Found by review. An earlier correction in this area added a blur handler that turned
 out to be dead code — its guard tested a value `resolveTextStyle` had already clamped — and while
 establishing that it was dead, the intermediate-value problem became visible.
+
+## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
+
+**Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) now drives Adobe's Brightness and Contrast
+proportionately over Adobe's own travels — Brightness ‑150..+150, Contrast ‑50..+100 — and that fixed the
+clipping the old exponential curve caused. It is still not Adobe's curve. Adobe pairs the two words
+itself: "In normal mode, Brightness/Contrast applies proportionate (nonlinear) adjustments to the image
+layer, as with Levels and Curves adjustments." The **nonlinear** half is absent, and no formula for it is
+published by Adobe or by any reverse-engineering source found. What is measurable is that it is not any
+affine map: a `+20` brightness reads `10→11`, `128→145`, `250→253`, and those three deltas are
+mutually inconsistent with any constant scale and with any constant offset.
+
+Two consequences, both in the positive half of both controls, because the negative half is exact. A CSS
+`brightness(f)` is a clamped pure multiply, so it can never CREATE a white that was not already white, and
+`contrast(f)` clamps, so every `f > 1` clips every input past `0.5 + 0.5/f`. At `Contrast +50` the knee
+is 212.5 and a channel above it loses its tonal separation for good. The app's `e2e/levels.spec.ts` pins
+`244` there specifically because it is a NON-clipped reading; raising the contrast factor turns that pin
+into a saturated `255` that proves only that the channel saturated.
+
+**Affected.** `src/tools/functions.ts` — `buildLevelsFilter()` and `proportionateFactor()`; the boundary
+is stated on `buildLevelsFilter()`'s doc comment and in `src/tools/descriptions/transform.notes.md`, which
+`npm run docs:tools` carries into `docs/TOOLS.md`.
+
+**What would close it.** A per-channel lookup table applied per pixel, which is the same mechanism
+`docs/TOOLS-TOO-HARD.md` records as absent for Adobe's real Levels — a CSS filter string cannot express an
+arbitrary LUT. That is a new raster path, not an edit to this one: `presentation-evaluator.ts` builds the
+string and `layer-renderer.ts` assigns it to `ctx.filter` on an ordinary canvas, so the operation would
+have to carry a table instead of a filter and gain a read-back it does not currently have. Whoever takes
+it should re-derive the curve from Photoshop measurements rather than from this entry, because the entry's
+contribution is the boundary and not the shape.
+
+**Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
+travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
+This entry is only the part that did not.
