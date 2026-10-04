@@ -56,7 +56,7 @@ platform limit.
 | History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                                 |
 | Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                               |
-| View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                               |
+| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                             |
 | Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                      |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                                   |

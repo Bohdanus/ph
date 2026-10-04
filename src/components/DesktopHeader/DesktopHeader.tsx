@@ -91,6 +91,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
   { toolName: 'eraser', label: 'Eraser Tool' },
   { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
+  { toolName: 'ruler', label: 'Ruler Tool' },
   { toolName: 'sharpen', label: 'Sharpen Tool' },
   { toolName: 'smudge', label: 'Smudge Tool' },
   { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },

@@ -47,10 +47,11 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * | Draw (test fixture)     | Size            | `<input type=range>`          | `size-slider`                   | `Size 10px`       | `Size 10px`     | 0.5..500, step 0.5                  |
  * | Draw (test fixture)     | Opacity         | `<input type=range>`          | `alpha-slider`                  | `Opacity 90%`     | `Opacity 90%`   | 0..1, step 0.01                    |
  *
- * Toolbar placement (`toolbar-mapping.ts`): `eyedropper` is its OWN single-tool tile, and at the
+ * Toolbar placement (`toolbar-mapping.ts`): `eyedropper` is the tile of the `I` family and at the
  * suite's 1280x720 the rail fills its slot, so its seven visible tiles are the first seven of its
  * fifteen groups and the eyedropper — the fifth — is one of them: `clickToolButton(page,
- * 'eyedropper')` selects it directly and there is no flyout to open. The other three share ONE
+ * 'eyedropper')` selects it directly. Its flyout now exists (the Ruler joined it) but nothing here
+ * needs it, because the Eyedropper is its own first entry and a tile click selects that. The other three share ONE
  * flyout whose primary tool is `brush` (six entries: brush, pencil, color-replacement, eraser,
  * magic-eraser, paint-bucket), so `clickToolButton(page, 'brush')` only ever selects the Brush
  * and the other three need `openToolFlyout` + `selectFromFlyout` — through the BRUSH TILE at that
@@ -762,9 +763,9 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
-    // The eyedropper is a single-tool group, so there is no flyout to open — and it has a tile of
-    // its own here too: the rail fills its slot, so the seven tiles at the suite's 1280x720 are
-    // its first seven groups and the eyedropper is the fifth. So the bar below is confirmed
+    // The eyedropper tile's own click selects it, so this fixture opens no flyout — and it has a
+    // tile of its own here too: the rail fills its slot, so the seven tiles at the suite's 1280x720
+    // are its first seven groups and the eyedropper is the fifth. So the bar below is confirmed
     // because it is the element the tool itself drives, not because the tile is missing: the
     // three-dots tile stands for nothing here. That the tile is on the rail is
     // `e2e/selection-tools.spec.ts`'s claim to own, so it is linked rather than restated.

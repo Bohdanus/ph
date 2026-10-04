@@ -324,8 +324,8 @@ importer of its own.
 
 Two registries with different key sets, which is easy to misread as one:
 
-- **`src/tools/toolsMap.ts`** — **44** entries, and **exactly one per `ToolName`**:
-  `ToolName` is `keyof ToolArgsByName`, which has **44** members, and the two key
+- **`src/tools/toolsMap.ts`** — **45** entries, and **exactly one per `ToolName`**:
+  `ToolName` is `keyof ToolArgsByName`, which has **45** members, and the two key
   sets are **identical** — only the declaration order differs. Prove the equality by
   `diff`-ing two sorted key lists:
   `awk '/^export type ToolArgsByName = \{/,/^\};/' src/contexts/tool-types.ts | grep -oE "^  '?[a-zA-Z][a-zA-Z0-9-]*'?:" | tr -d " ':" | sort`
@@ -336,8 +336,8 @@ Two registries with different key sets, which is easy to misread as one:
   `add-anchor-point`, `custom-shape` and fifteen more) — 44 − 19 = 25, which is how a
   44-entry map came to be documented as 25 members and as "not one per `ToolName`".
   Each entry spreads its processor and adds an `icon` and a `toolboxComponent`. The
-  whole-tool map therefore includes the `eyedropper` entry, which has _only_ icon and
-  component, and **seven** `placeholderTool` entries — the six-key `pen` group
+  whole-tool map therefore includes the two pixel-free entries, `eyedropper` and
+  `ruler`, which have _only_ icon and component, and **seven** `placeholderTool` entries — the six-key `pen` group
   (`pen`, `freeform-pen`, `curvature-pen`, `add-anchor-point`,
   `delete-anchor-point`, `convert-point`) plus `custom-shape`, which uses its own
   `custom-shape` group. Count them with
@@ -346,8 +346,8 @@ Two registries with different key sets, which is easy to misread as one:
 - **`src/tools/toolProcessors.ts`** — **43** entries, `PixelToolName` derived by
   `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which
   is how a tool that needs
-  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper']`, the
-  one member, which is why the two registries differ by exactly one. Each entry is
+  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper',
+'ruler']`, its two members, which is why the two registries differ by exactly two. Each entry is
   curried: `(params) => (args) => pixels`, where `params` carries the layer's
   raster and size and `args` the stroke — the shape `ToolProcessorDefinition.imageProcessor` declares.
   `commit` is one of eight kinds, `ToolCommitKind`, and `replay` is a typed

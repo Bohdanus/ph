@@ -630,6 +630,7 @@ describe('paint tool raster processors', () => {
  */
 const realBarNames = [
   'eyedropper',
+  'ruler',
   'elliptical-selection',
   'quick-selection',
   'eraser',
@@ -696,6 +697,10 @@ const PLACEHOLDER_DESCRIPTION = 'TODO: tool behavior not implemented yet.';
  */
 const realBarControlIds: readonly (readonly [ToolName, readonly string[]])[] = [
   ['eyedropper', ['eyedropper-sample-size']],
+  // The Ruler's bar is readouts, not controls, so its id set is the seven readout outputs plus the
+  // one button. Pinned exactly for the reason above: a readout that stopped rendering would
+  // otherwise be invisible to this suite.
+  ['ruler', ['ruler-x', 'ruler-y', 'ruler-w', 'ruler-h', 'ruler-a', 'ruler-d1', 'ruler-d2', 'ruler-clear']],
   // The seeded `style` is `'normal'`, and `EllipticalSelection.tsx` renders Ratio only for
   // `fixed-ratio` and Width/Height only for `fixed-size`, so the Style select is the whole bar at
   // the defaults. Pinning the gated controls as ABSENT is the other half: a Style select rendered
@@ -1119,6 +1124,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
+    ['ruler', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -1444,6 +1450,7 @@ describe('toolsMap exhaustiveness', () => {
     ['burn', 'burn'],
     ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
+    ['ruler', 'ruler'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],
     ['curvature-pen', 'curvature-pen'],
