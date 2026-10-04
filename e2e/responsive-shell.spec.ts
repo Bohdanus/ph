@@ -21,8 +21,8 @@ const DESKTOP = { width: 1280, height: 800 };
  *
  * It is the height the rail's reachability has to be proven at because it is where the
  * three-dots tile stops being the exception. At 1280 wide the budget is the whole tools slot —
- * 528px at an 800px window, which keeps nine of the sixteen tool tiles, and 328px here, which
- * keeps five — so by 600 the tile holds the other ELEVEN groups, the Type group among them.
+ * 528px at an 800px window, which keeps nine of the fifteen tool tiles, and 328px here, which
+ * keeps five — so by 600 the tile holds the other TEN groups, the Type group among them.
  * The rail and the tile are both on screen at 800 too; at 600 the tile is where most of the
  * rail went, and that is the state the tests below are about.
  */
@@ -42,10 +42,14 @@ const leftRail = (page: Page) => page.getByTestId('left-sidebar');
  * Select a tool through the header's Tools menu.
  *
  * `clickToolButton` looks for a sidebar tile, and a tile exists only for a group's PRIMARY
- * tool and only while the group is not collapsed: `transform` is the second member of
- * `[Colors, Levels, Transform]`, and the Type group is the fifteenth of sixteen, so it is one
- * of the eleven the fit folds into the three-dots tile at 600px. The header menu lists every
- * tool, and the header is visible at every width this spec uses.
+ * tool and only while the group is not collapsed. The Type group is the fourteenth of the
+ * rail's fifteen, so it is one of the ten the fit folds into the three-dots tile at 600px. The
+ * header menu lists every tool, and the header is visible at every width this spec uses.
+ *
+ * It is NOT a route to `color`, `levels` or `transform`: they are `Image ▸ Adjustments` and
+ * `Edit ▸ Free Transform` commands, they are in `MENUS_EXCLUDE` because a command is not a tool,
+ * and no rail group or Tools-menu row exists for any of them. `e2e/levels.spec.ts` and
+ * `e2e/adjustments.spec.ts` select them through their own three-click menu sequence.
  *
  * Addressed by the menu's OWN test id, taking the tool's name — which is what it was not.
  * It used to be addressed by accessible name, and the menu and the rail are two different
@@ -55,10 +59,29 @@ const leftRail = (page: Page) => page.getByTestId('left-sidebar');
  * The tile then collapsed, and the same call became a 60-second wait for a button that was
  * never coming. A name that the menu does not use is a selector that resolves somewhere
  * unintended or nowhere, and both look like a pass or a hang rather than a mistake.
+ *
+ * ONLY the tools that have a Tools-menu entry. `color`, `levels` and `transform` are
+ * `Image ▸ Adjustments` and `Edit ▸ Transform` COMMANDS in Photoshop, have no Tools-panel
+ * entry, and are gone from this menu along with the `[Colors, Levels, Transform]` rail
+ * flyout that used to hold them — so there is no `tools-menu-transform-button` for
+ * `selectToolFromMenu` to address. {@link selectFreeTransform} is the path for that one.
  */
 async function selectToolFromMenu(page: Page, toolName: string) {
   await page.getByTestId('header-tools-menu-button').click();
   await page.getByTestId(`tools-menu-${toolName}-button`).click();
+}
+
+/**
+ * Selects the transform tool through `Edit ▸ Free Transform`.
+ *
+ * Two clicks, both necessary: `header-edit-menu-button` opens the menu, and
+ * `Free Transform` is the only item in it. Its options bar is the subject of the test that
+ * calls this, so the same reason it lives on a header command rather than a rail tile — the
+ * panel is not a Tools-panel surface — is why this cannot be `selectToolFromMenu`.
+ */
+async function selectFreeTransform(page: Page) {
+  await page.getByTestId('header-edit-menu-button').click();
+  await page.getByTestId('edit-menu-free-transform-button').click();
 }
 const railWidth = async (page: Page) => await leftRail(page).evaluate((el) => el.getBoundingClientRect().width);
 
@@ -131,8 +154,8 @@ test.describe('Left tool rail reachability', () => {
    * through the three-dots tile.
    *
    * THE CONTRACT SINCE THE TILES COLLAPSE. `getByTestId('tool-button-text')` is not a
-   * contract any more: at 600px the rail keeps five of its sixteen tool tiles and the Type
-   * group — the fifteenth — is one of the eleven the fit folds into the three-dots tile, and
+   * contract any more: at 600px the rail keeps five of its fifteen tool tiles and the Type
+   * group — the fourteenth — is one of the ten the fit folds into the three-dots tile, and
    * the version of this test that waited for that tile spent 60 seconds waiting for a button
    * that was never coming. What the layout guarantees instead is a PARTITION — every group is
    * either a visible tile or offered by the three-dots flyout, never both and never neither —
@@ -170,12 +193,9 @@ test.describe('Left tool rail reachability', () => {
       expect(box.bottom, `${box.name} must not sit below the window`).toBeLessThanOrEqual(SHORT_DESKTOP.height);
     }
 
-    // And the tile is not decoration at this height: eleven of the sixteen groups are in it.
+    // And the tile is not decoration at this height: ten of the fifteen groups are in it.
     const overflowTile = page.getByTestId('tool-overflow-tile');
-    await expect(
-      overflowTile,
-      'a 600px window must fold eleven of sixteen groups into the three-dots tile'
-    ).toBeVisible();
+    await expect(overflowTile, 'a 600px window must fold ten of fifteen groups into the three-dots tile').toBeVisible();
     await overflowTile.click({ button: 'right' });
 
     const menu = page.getByTestId('tool-flyout-overflow');
@@ -216,13 +236,13 @@ test.describe('Left tool rail reachability', () => {
     // that is at the bottom of the rail now.
     //
     // **THE MENU IS A SCROLL CONTAINER, NOT A CLIPPED ONE**, and that is the claim the rest of
-    // this block earns. At 600px the eleven folded groups are 31 items at a 24.5px pitch — the row
+    // this block earns. At 600px the ten folded groups are 29 items at a 24.5px pitch — the row
     // height `SidebarLeft.tsx:828` documents for every flyout — so the overlay opens at y=8, clamps
     // itself to `max-height: 584px` and scrolls its own overflow, and the last item ends at
-    // y≈767, well off a 600px window, and is reached by scrolling the menu rather than
+    // y≈721, well off a 600px window, and is reached by scrolling the menu rather than
     // being lost. It used to be described here as 34 items standing 1374px tall with nothing to
-    // scroll, which was stale twice over: the eleven folded groups are 31 tools (a four-tile rail
-    // would have made it 32, so 34 was never either), and the height belonged to an overlay that
+    // scroll, which was stale twice over: the ten folded groups are 29 tools (a four-tile rail
+    // would have made it 30, so 34 was never either), and the height belonged to an overlay that
     // was never clamped. That description named the far end of the list a defect in the app, and
     // on the measured behaviour it is not one — which is why it is worth pinning, not repeating.
     //
@@ -358,7 +378,7 @@ test.describe('Tool option popovers are not clipped', () => {
   // as an 8px strip: the text tool's font family was unselectable and no test noticed.
   //
   // The Type tool is selected from the header menu rather than from a tile, because at these
-  // heights the Type group — the fifteenth of sixteen — is one of the groups the fit folds into
+  // heights the Type group — the fourteenth of fifteen — is one of the groups the fit folds into
   // the three-dots tile: an 800px window keeps nine tiles, a 400px window keeps one, and neither
   // reaches the fifteenth. And because what is under test here is the OPTION ROW's overflow, not
   // the rail. A popover that cannot be opened is not a popover that is not clipped.
@@ -554,7 +574,7 @@ test.describe('Desktop band is unchanged', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
-    await selectToolFromMenu(page, 'transform');
+    await selectFreeTransform(page);
     const toolbar = page.locator('[class*="grid-area:toolbar"]').first();
     const overflowX = await toolbar.evaluate((el) => getComputedStyle(el).overflowX);
     expect(overflowX, 'desktop must not become a scroll container').toBe('visible');
@@ -649,16 +669,60 @@ test.describe('Mobile shell does not leak onto the desktop path', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, MOBILE);
 
+    // The Type tool, and it is load-bearing rather than incidental: the panel at risk is the
+    // ACTIVE tool's panel, and the app boots on Draw (`DEFAULT_TOOL`), whose ids are
+    // `pen-type`/`size-slider`. With Draw selected, every id below counted ZERO — the sheet was
+    // duplicating a panel nobody was naming — and `toBeLessThanOrEqual(1)` accepts zero, so the
+    // whole assertion was passing vacuously. Selecting Type puts the two ids that DO belong to
+    // the active panel in the document, which is what makes the count below a measurement.
+    //
+    // Selected at the DESKTOP width and then narrowed back, because the desktop header is
+    // `max-md:hidden` and the rail is `md:hidden`: at MOBILE there is no tile to click and no
+    // Tools menu to open, and `selectToolFromMenu` hangs for the full timeout on a control that
+    // is mounted and merely hidden. The tool selection is state, not layout, so it survives the
+    // crossing in both directions — which is the property the crossing is supposed to preserve.
+    await page.setViewportSize(DESKTOP);
+    await selectToolFromMenu(page, 'text');
+    await expect(page.locator('#font-family-select'), 'the desktop toolbar owns the Type panel').toHaveCount(1);
+
+    await page.setViewportSize(MOBILE);
     await page.getByRole('button', { name: 'Tool options' }).click();
     await expect(page.locator('#mobile-tool-options')).toBeVisible();
+    // The duplication itself, asserted while it is still true. `MobileToolSheet` renders the
+    // active tool's real `ToolComponent` alongside `ToolbarHorizontal`'s, so this is two live
+    // instances — and saying so makes the post-resize count a claim about a state that existed
+    // rather than a number that was always zero.
+    await expect(page.locator('#font-family-select'), 'the open sheet renders a second copy').toHaveCount(2);
 
     await page.setViewportSize(DESKTOP);
     // The desktop toolbar now owns the panel; a duplicate would make every id in it
     // ambiguous, and `getElementById` and `<label for>` both resolve to the first match.
-    const ids = ['text-input', 'font-family-select', 'blur-slider', 'rotate-slider'];
+    //
+    // `font-size-input` replaced `text-input`, which the Type bar no longer renders at all: the
+    // tool has no text field, the draft is typed into a `div[contenteditable]` on the canvas that
+    // does not exist until a placement, and the old id would have counted zero exactly like
+    // `blur-slider` and `rotate-slider` do — a second vacuous entry rather than a check. The
+    // font-size field is always mounted on the Type bar with or without a draft, which is what
+    // this test needs: a control that cannot be narrowed to "exists only once you have typed".
+    // `blur-slider` and `rotate-slider` are Blur's and Transform's and are kept as the
+    // cross-bar sample they were — neither is mounted under Type, so neither is what the claim
+    // rests on.
+    const ids = ['font-size-input', 'font-family-select', 'blur-slider', 'rotate-slider'];
     for (const id of ids) {
-      const count = await page.locator(`#${id}`).count();
-      expect(count, `#${id} must not be duplicated by the mobile shell`).toBeLessThanOrEqual(1);
+      // POLLED, not read once. `AppContainer` closes the mobile surfaces by adjusting state during
+      // render off a media-query change, so the duplicate survives until that change is delivered;
+      // a bare `count()` immediately after `setViewportSize` raced it and saw two. Polling keeps the
+      // assertion identical — still "at most one" — and waits for the state the claim is about
+      // instead of for the resize.
+      await expect
+        .poll(async () => page.locator(`#${id}`).count(), {
+          message: `#${id} must not be duplicated by the mobile shell`,
+        })
+        .toBeLessThanOrEqual(1);
     }
+    // The two Type ids are in the document, so the bound above is a bound rather than a
+    // tautology: a resize that unmounted the panel entirely would have been caught by `toBe(1)`.
+    await expect(page.locator('#font-family-select'), 'the panel survived the crossing').toHaveCount(1);
+    await expect(page.locator('#font-size-input'), 'the panel survived the crossing').toHaveCount(1);
   });
 });

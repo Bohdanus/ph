@@ -1,7 +1,8 @@
 # Eyedropper and Draw — research notes
 
-Family: `eyedropper`, `draw`. Data: `src/tools/descriptions/eyedropper-draw.ts`. Every `file:line`
-below was re-derived against the tree in this worktree, not copied from the research corpus.
+Family: `eyedropper`, `draw`. Data: `src/tools/descriptions/eyedropper-draw.ts`. Every source
+reference below names a unit — a declaration, a field, an `it(...)` title, a section — and each was
+re-derived against the tree in this worktree, not copied from the research corpus.
 
 **Two passes, two verdicts, and the second one moved three of this file's load-bearing facts.** The
 first pass found the Eyedropper's Sample Size truncated to three entries and its `Sample All Layers`
@@ -16,21 +17,21 @@ against the code before any prose moved.
 Four of the four divergence claims the `eyedropper` record asserted were checked against the code,
 and **two are false, one is true, and one is true**:
 
-| Claim                                                             | Verdict   | Evidence                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sample is taken at pointer-down alone; no move or up handler      | **TRUE**  | `EyedropperToolArea.tsx:59` is the only handler; wired at `:137` as `onPointerDown`; grep for `onPointerMove`/`onPointerUp`/`onPointerCancel` in the file finds nothing                                                                            |
-| `Sample All Layers` is a permanently unchecked, disabled checkbox | **FALSE** | The bar renders one `<select>`. `Eyedropper.test.tsx:77-88` pins the absence: "renders no Sample All Layers control at all, disabled or otherwise"                                                                                                 |
-| No modifier can redirect the sample to the background swatch      | **FALSE** | `EyedropperToolArea.tsx:133` dispatches `event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR'`. Only the **layer** half of the claim survives                                                                                                       |
-| `I` selects outright and `Shift+I` re-selects                     | **TRUE**  | Two plain `i` registrations at `AppKeyboardShortcuts.tsx:309` and `:455`, no `shift: true`; `useKeyboardEvents.tsx:72` skips the matcher when `shift` is undeclared, and the hook has no key-up listener at all, so there is no spring-load either |
+| Claim                                                             | Verdict   | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sample is taken at pointer-down alone; no move or up handler      | **TRUE**  | `EyedropperToolArea.tsx` — `handlePointerDown()` is the only handler in the file, wired as `onPointerDown` on the root `<div>`; a grep for `onPointerMove`/`onPointerUp`/`onPointerCancel` in the file finds nothing                                                                                                                                                                                                                  |
+| `Sample All Layers` is a permanently unchecked, disabled checkbox | **FALSE** | The bar renders one `<select>`. `Eyedropper.test.tsx` — the `it('renders no Sample All Layers control at all, disabled or otherwise')` title — pins the absence                                                                                                                                                                                                                                                                       |
+| No modifier can redirect the sample to the background swatch      | **FALSE** | The `dispatch()` inside `EyedropperToolArea.tsx` — `handlePointerDown()` reads `event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR'`. Only the **layer** half of the claim survives                                                                                                                                                                                                                                                   |
+| `I` selects outright and `Shift+I` re-selects                     | **TRUE**  | Two plain `i` registrations in `AppKeyboardShortcuts.tsx` — the one beside the `v` registration, and the second under the comment explaining that the three single-tool tiles get one plain registration each — with no `shift: true`; `useKeyboardEvents.tsx` — the `shift` arm of `matchesShortcut()` — skips the matcher when `shift` is undeclared, and the hook has no key-up listener at all, so there is no spring-load either |
 
 Two of those are the shape this review exists to catch: an unverified divergence claim is as wrong as
 an unverified fidelity claim, and both of the false ones were pointing at a **working** feature (a
 seven-entry Sample Size list that was recorded as three entries, an Alt modifier recorded as absent)
 while a third pointed at a defect that had already been fixed in the tree.
 
-`Sample Size` moved `partial` → **`present`** on that first finding, and the whole family's `file:line`
+`Sample Size` moved `partial` → **`present`** on that first finding, and the whole family's source
 citations were re-derived rather than nudged — thirty-one of them were stale, and the drift table at
-the end lists each with what is actually at the cited line now.
+the end lists each with the unit it points at now.
 
 ## What the corpus already had: nothing
 
@@ -39,7 +40,7 @@ Searched `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/01-photoshop-reference.
 `Alt/Option = temporary Eyedropper` as a Brush modifier, and line 624 counts three eyedroppers in
 an unrelated list. There is **no Eyedropper Tool section and no Draw Tool section in the corpus**.
 
-`03-ui-chrome-spec.md:175` is the options-bar contents table. It has rows for Move, Rect. Marquee,
+`03-ui-chrome-spec.md` is the options-bar contents table. It has rows for Move, Rect. Marquee,
 Lasso, Magic Wand, Crop, Brush, Pencil, Color Replacement, Blur, Shape, Pen, Horizontal Type and
 Adjustments. **Neither the Eyedropper nor the Draw appears as a row**, so the table gave no control
 list for this family either. This family is 100% fresh research, on both the Photoshop side and the
@@ -47,8 +48,8 @@ control census.
 
 One correction to the brief: the mapping file is `toolbar-mapping.ts` at the **repository root**,
 not under `src/`. The test that imports it reaches it as `../../../../toolbar-mapping.ts`. Its
-Eyedropper line number is the one the brief names (`:57`, and it resolves), but its Draw line is
-`:97`, not `:96`.
+Eyedropper entry is the tile the brief names, `[{ label: 'Eyedropper Tool', name: 'eyedropper',
+shortcut: 'I' }]`, and its Draw entry is the Draw Tool tile at the end of the tonal group.
 
 ## Eyedropper Tool
 
@@ -98,26 +99,28 @@ starker form — "As you select and drag the Eyedropper tool, the foreground col
 "Release the mouse button to pick the new color" — so the behaviour is not a 2026 addition.
 
 The app really is click-only, and that is now a divergence rather than agreement: see the
-`appNotes` sentence citing `EyedropperToolArea.tsx:59`, and the only pointer handler in the file is
-the `onPointerDown` at `:137`. Nothing above is a claim about the app.
+`appNotes` sentence citing `EyedropperToolArea.tsx` — `handlePointerDown()`, and the only pointer
+handler in the file is the `onPointerDown` on its root `<div>`. Nothing above is a claim about the
+app.
 
 **The Alt half is implemented in the app, and the first pass of this file listed it as a divergence.**
 That was wrong, and it was wrong in the direction an unverified divergence claim hides a working
-feature: `EyedropperToolArea.tsx:133` reads `dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' :
-'SET_COLOR', payload: sampledColor })`. Alt (Windows) or Option (macOS) therefore reaches the
-background swatch here exactly as Adobe specifies, with no platform branch because `altKey` carries
-Option in the DOM on macOS too. The claim it was folded into — "the sample is always read from the
-composited canvas, with no modifier that can redirect it to the background swatch or to a single
-layer" — is now split, because only the second half survives: the **read** is composited-only and
-nothing can narrow it to one layer, while the **write target** is switchable. The `modifiers` array
-needed no change, since it is a Photoshop-claim field and the app matches Photoshop here.
+feature: the `dispatch()` inside `EyedropperToolArea.tsx` — `handlePointerDown()` — reads
+`dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR', payload: sampledColor })`. Alt
+(Windows) or Option (macOS) therefore reaches the background swatch here exactly as Adobe specifies,
+with no platform branch because `altKey` carries Option in the DOM on macOS too. The claim it was
+folded into — "the sample is always read from the composited canvas, with no modifier that can
+redirect it to the background swatch or to a single layer" — is now split, because only the second
+half survives: the **read** is composited-only and nothing can narrow it to one layer, while the
+**write target** is switchable. The `modifiers` array needed no change, since it is a
+Photoshop-claim field and the app matches Photoshop here.
 
-One thing the split exposed, which is a defect in the tree and not in the docs:
-`EyedropperToolArea.tsx:124-127` cites "Alt-click (Windows) / Command-Option-click (Mac) to sample
-to the background color" against Adobe's tool-techniques URL. Adobe's **current** set-colors page says
-"Alt (Windows) or Option (macOS)" with no Command, and Adobe's own Photoshop Elements shortcuts page
-gives the same pair in a table — "Select background color | Eyedropper tool + Alt-click | Eyedropper
-tool + Option-click"
+One thing the split exposed, which is a defect in the tree and not in the docs: the comment above
+that same `dispatch()` in `EyedropperToolArea.tsx` — `handlePointerDown()` — cites "Alt-click
+(Windows) / Command-Option-click (Mac) to sample to the background color" against Adobe's
+tool-techniques URL. Adobe's **current** set-colors page says "Alt (Windows) or Option (macOS)"
+with no Command, and Adobe's own Photoshop Elements shortcuts page gives the same pair in a table —
+"Select background color | Eyedropper tool + Alt-click | Eyedropper tool + Option-click"
 (`https://helpx.adobe.com/photoshop-elements/using/keys-painting-brushes.html`). The Command-Option
 form is the older CS-era binding and the code comment inherits it. Product code is out of this
 family's scope, so the comment is **not** edited; it is flagged in the report, and the data file
@@ -153,15 +156,17 @@ that used to be necessary here is gone; see `Unverified` item 1 for what is now 
 **And the app now matches that list exactly, which this file's census said it did not.** The census
 recorded `partial` on the grounds that "the list is three entries long: Point Sample, 3 by 3 Average,
 5 by 5 Average". That was true of an older tree. `EYEDROPPER_SAMPLE_SIZE_OPTIONS`
-(`src/tools/eyedropper.ts:34-42`) now carries **all seven** of Adobe's values with Adobe's own
-labels in Adobe's order, the union at `src/tools/eyedropper.ts:7` is `1 | 3 | 5 | 11 | 31 | 51 |
-101`, and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:39-54` pins all
-seven labels and all seven values plus the fact that none is disabled. The sampling arithmetic
-matches Photoshop too: odd-sided square, centred on the click (`EyedropperToolArea.tsx:95`), clipped
-at the canvas edge rather than shifted inward (`:96-99`), reduced by an arithmetic mean (`:112-119`).
-`status` is therefore **`present`**, the only one in this description, and the `appNotes` sentence
-asserting a truncated list is deleted rather than softened — it was naming a defect that had already
-been fixed in the tree the description describes.
+(`src/tools/eyedropper.ts`) now carries **all seven** of Adobe's values with Adobe's own labels in
+Adobe's order, the union at `src/tools/eyedropper.ts` — `EyedropperSampleSize` — is `1 | 3 | 5 | 11 |
+31 | 51 | 101`, and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx` — the
+`it('offers Photoshop all seven Sample Size options in Photoshop order')` title — pins all seven
+labels and all seven values plus the fact that none is disabled. The sampling arithmetic matches
+Photoshop too: odd-sided square, centred on the click (`EyedropperToolArea.tsx` — the `half`
+computation in `handlePointerDown()`), clipped at the canvas edge rather than shifted inward (the
+`left`/`top`/`right`/`bottom` clamp beside it), reduced by an arithmetic mean (the `red`/`green`/`blue`
+accumulation loop further down the same handler). `status` is therefore **`present`**, the only one in
+this description, and the `appNotes` sentence asserting a truncated list is deleted rather than
+softened — it was naming a defect that had already been fixed in the tree the description describes.
 
 The same page also settles the `Sample` menu's membership: "Select a sampling option from the Sample
 menu in the Options bar: **All Layers : Sample color from all layers.**" and so on through Current
@@ -232,56 +237,63 @@ switch — nothing that records history. A second audit reached the same conclus
 rule.
 
 **No single Adobe sentence stating this was found**, and the two audits' agreement is agreement on a
-deduction, not on a quotation. `purpose` is a Photoshop-claim field per `types.ts` — it "describes
-_Photoshop's_ tool" — and an unsourced deduction about Adobe's history panel does not belong there,
-so **it has been removed from `purpose` outright rather than hedged.** It survives in `appNotes`,
-where it is a statement about what this app does and the reason is in the tree: "A click dispatches
-a color change and nothing else, so the app records no history entry for a sample and a sample is
-not undoable — the same class as a zoom, a panel move or a tool switch." Nothing was lost by the
-move — the second half of the same sentence pair was always about the app — and it is item 4 in
-`Unverified`.
+deduction, not on a quotation. `purpose` is a Photoshop-claim field per
+`src/tools/descriptions/types.ts` — `ToolDescription.purpose` — it "describes _Photoshop's_ tool" —
+and an unsourced deduction about Adobe's history panel does not belong there, so **it has been
+removed from `purpose` outright rather than hedged.** It survives in `appNotes`, where it is a
+statement about what this app does and the reason is in the tree: "A click dispatches a color change
+and nothing else, so the app records no history entry for a sample and a sample is not undoable — the
+same class as a zoom, a panel move or a tool switch." Nothing was lost by the move — the second half of
+the same sentence pair was always about the app — and it is item 4 in `Unverified`.
 
-The app implements exactly that: `src/components/Main/EyedropperToolArea.tsx:133` is the only
-dispatch in the file, and it is a `SET_COLOR` or a `SET_BACKGROUND_COLOR` depending on `altKey` —
-neither of which touches a pixel, a layer or a history entry. The reason is written down in the tree
-at `src/tools/toolProcessors.ts:70-79` and again at `src/components/Main/EyedropperToolArea.tsx:32-47`,
-and both attribute it to Adobe's rule.
+The app implements exactly that: the `dispatch()` inside
+`src/components/Main/EyedropperToolArea.tsx` — `handlePointerDown()` — is the only dispatch in the
+file, and it is a `SET_COLOR` or a `SET_BACKGROUND_COLOR` depending on `altKey` — neither of which
+touches a pixel, a layer or a history entry. The reason is written down in the tree in the doc
+comment above `PIXEL_FREE_TOOLS` in `src/tools/toolProcessors.ts` and again in the doc comment above
+`EyedropperToolArea` in `src/components/Main/EyedropperToolArea.tsx`, and both attribute it to
+Adobe's rule.
 
 ### Options bar — control census
 
-| #   | Photoshop control | Status    | App rendering                                                                                                             | Note                                                                                                                                                                                                   |
-| --- | ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | `Sample Size`     | `present` | `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22`, list at `src/tools/eyedropper.ts:34`                         | All seven of Adobe's entries, Adobe's labels, Adobe's order; odd-sided square centred on the click, clipped at the border, arithmetic mean. Was `partial` on a three-entry list that no longer exists. |
-| 2   | `Sample`          | `inert`   | **no control rendered**; field at `src/tools/settings.ts:217`, refusal at `src/components/Main/EyedropperToolArea.tsx:65` | The checkbox is **gone from the bar**, not rendered-but-disabled. The field persists, no writer exists, and a click that found it set refuses loudly. Pinned by `Eyedropper.test.tsx:77-88`.           |
+| #   | Photoshop control | Status    | App rendering                                                                                                                                                                                                                                           | Note                                                                                                                                                                                                                                                                          |
+| --- | ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `Sample Size`     | `present` | `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx` — the Sample Size `<select>` in `Eyedropper`, list at `src/tools/eyedropper.ts` — `EYEDROPPER_SAMPLE_SIZE_OPTIONS`                                                                             | All seven of Adobe's entries, Adobe's labels, Adobe's order; odd-sided square centred on the click, clipped at the border, arithmetic mean. Was `partial` on a three-entry list that no longer exists.                                                                        |
+| 2   | `Sample`          | `inert`   | **no control rendered**; field at `src/tools/settings.ts` — the `eyedropper` block of `defaultSettings` (`sampleAllLayers: false`), refusal at `src/components/Main/EyedropperToolArea.tsx` — the `args.sampleAllLayers` guard in `handlePointerDown()` | The checkbox is **gone from the bar**, not rendered-but-disabled. The field persists, no writer exists, and a click that found it set refuses loudly. Pinned by `Eyedropper.test.tsx` — the `it('renders no Sample All Layers control at all, disabled or otherwise')` title. |
 
 **Counts: present 1 · partial 0 · inert 1 · missing 0.**
 
 **The `Sample` status is `inert` rather than `missing`, and that is the one judgement in this
-description worth re-deriving.** `types.ts:22` defines `missing` as "The app does not render this
-control", which is now literally true — the bar renders one `<select>` and nothing else. But
-`types.ts:24-27` defines `inert` as "declared **or** displayed, and nothing is wired behind it",
-naming "state in `src/tools/settings.ts` that persists and drives nothing" as a qualifying shape, and
-that shape is exact here: `sampleAllLayers: false` is seeded at `src/tools/settings.ts:217`, a grep of
-`sampleAllLayers` across `src/` and `e2e/` finds no writer anywhere (only the seed, the type
-declaration, the refusal read, and tests), and the only `patchToolArgs` call in the bar writes
-`sampleSize` (`Eyedropper.tsx:15`). The `types.ts` rationale for preferring `inert` — "the control is
-on screen, which is exactly what makes it dangerous" — no longer applies, because it is not on
-screen. **If the operator prefers `missing` here, the only thing lost is the pointer at the
-unwritten field**, and the status is a one-word change. It is left `inert` because the brief's own
-instruction for this pass was "`inert` = declared in `src/tools/settings.ts` or displayed with NOTHING
-wired behind it … Check BOTH before declaring anything `missing`", and the settings declaration is
-there. The `appRef` was repointed at that declaration for the same reason: `Eyedropper.tsx:37`, which
-the previous pass cited, is a `};` and never contained the control.
+description worth re-deriving.** `src/tools/descriptions/types.ts` — the `'missing'` member of
+`ToolControlStatus` — defines `missing` as "The app does not render this control", which is now
+literally true — the bar renders one `<select>` and nothing else. But `src/tools/descriptions/types.ts`
+— the `'inert'` member of the same union — defines `inert` as "declared **or** displayed, and
+nothing is wired behind it", naming "state in `src/tools/settings.ts` that persists and drives
+nothing" as a qualifying shape, and that shape is exact here: `sampleAllLayers: false` is seeded in
+the `eyedropper` block of `defaultSettings` in `src/tools/settings.ts`, a grep of `sampleAllLayers`
+across `src/` and `e2e/` finds no writer anywhere (only the seed, the type declaration, the refusal
+read, and tests), and the only `patchToolArgs` call in the bar writes `sampleSize`
+(`src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx` — `handleSampleSizeChange()`). The
+`src/tools/descriptions/types.ts` rationale for preferring `inert` — "the control is on screen, which
+is exactly what makes it dangerous" — no longer applies, because it is not on screen. **If the
+operator prefers `missing` here, the only thing lost is the pointer at the unwritten field**, and the
+status is a one-word change. It is left `inert` because the brief's own instruction for this pass was
+"`inert` = declared in `src/tools/settings.ts` or displayed with NOTHING wired behind it … Check BOTH
+before declaring anything `missing`", and the settings declaration is there. The `appRef` was
+repointed at that declaration for the same reason: the site the previous pass cited, the end of the
+`Eyedropper` component in `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx`, is a `};` and
+never contained the control.
 
 **The first pass asserted a rendered, permanently-disabled checkbox, and that is refuted.** It is
 worth stating plainly because the sentence had three components and all three are false of the tree:
 the bar does not render a `Sample All Layers` control, there is no `checked={false}` node to be
 disabled, and there is no placeholder for one. `Eyedropper.tsx` is 39 lines and renders a single
-labelled `<select>`; `Eyedropper.test.tsx:77-88` exists specifically to pin the absence and says why
-in its own comment — "The checkbox used to sit on the bar permanently `disabled` and unchecked. It
-needs a composite read of every visible layer and the tool area only has the composited canvas, so it
-was a promise the app could not keep on screen". The refusal survived the deletion on purpose, which
-is why the field is still seeded and still read.
+labelled `<select>`; `Eyedropper.test.tsx` — the
+`it('renders no Sample All Layers control at all, disabled or otherwise')` title — exists specifically
+to pin the absence and says why in its own comment — "The checkbox used to sit on the bar permanently
+`disabled` and unchecked. It needs a composite read of every visible layer and the tool area only has
+the composited canvas, so it was a promise the app could not keep on screen". The refusal survived the
+deletion on purpose, which is why the field is still seeded and still read.
 
 **The sampling ring is omitted on purpose, and the decision is recorded in `appNotes` so it is not
 silently missing.** Adobe's current page names only `Sample Size` and `Sample`, so the ring is **not
@@ -308,10 +320,12 @@ Three judgement calls worth stating, because each could reasonably have gone the
   reading that `inert` meant "rendered by no component", which is not what the contract says, and then
   filed `inert` on the further reading that the checkbox was on the bar. It is now `inert` for the
   reason the contract gives and the rendering no longer contradicts: `sampleAllLayers` has state in
-  `src/tools/settings.ts:217` that persists and drives nothing, and no writer exists. The defence for
-  the refusal path is at `src/components/Main/EyedropperToolArea.tsx:65`, which reports a named reason
-  instead of quietly sampling the active layer, and a test drives the field true to prove that path
-  (`src/components/Main/__tests__/EyedropperToolArea.test.tsx:314`).
+  the `eyedropper` block of `defaultSettings` in `src/tools/settings.ts` that persists and drives
+  nothing, and no writer exists. The defence for the refusal path is the `args.sampleAllLayers` guard
+  in `handlePointerDown()` in `src/components/Main/EyedropperToolArea.tsx`, which reports a named
+  reason instead of quietly sampling the active layer, and a test drives the field true to prove that
+  path (`src/components/Main/__tests__/EyedropperToolArea.test.tsx` — the
+  `it('refuses loudly instead of silently ignoring a Sample All Layers value')` title).
 - **The tool-preset picker is not a row.** Every bar in the corpus's own table leads with
   `tool-preset`, and tool presets are a real Photoshop feature, but the Adobe page that was opened
   does not establish that a preset picker leads _this_ bar, so the row would be an unsourced claim.
@@ -319,43 +333,50 @@ Three judgement calls worth stating, because each could reasonably have gone the
 
 ### App-side facts the census depends on
 
-- **No processor, by design.** `src/tools/toolProcessors.ts:81` —
+- **No processor, by design.** `src/tools/toolProcessors.ts` — `PIXEL_FREE_TOOLS` —
   `export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[]`. The
-  doc block above it (`:70-79`) states the reason: rasterizes nothing, commits no pixels, records no
-  history state. `src/tools/toolsMap.ts:127` is the consequence —
-  `eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper }`, no `...toolProcessors.eyedropper`
-  spread, and the comment at `:125-126` says why.
-- **The click.** `src/components/Main/EyedropperToolArea.tsx:59` (`handlePointerDown`) → `:102`
-  (`getImageData`) → `:133` (`dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR',
-… })`). Sample All Layers is refused at `:65`. The sample block is built and clipped at `:94-100`,
-  read at `:102`, and averaged at `:112-119`. A fully transparent center pixel returns without
-  dispatching at `:110`. The handler is wired at `:137` and nowhere else — grep for `onPointerMove`,
-  `onPointerUp` and `onPointerCancel` in the file returns nothing, which is what settles the drag
-  divergence.
-- **The accelerator.** `toolbar-mapping.ts:57` — `{ label: 'Eyedropper Tool', name: 'eyedropper',
-shortcut: 'I' }`, its own single-tool tile. The runtime binding is
-  `src/components/Common/AppKeyboardShortcuts.tsx:309-314` and again at `:455-460`; the second
-  registration is deliberate (the comment at `:451-454` explains that a single-tool tile gets no Shift
-  twin), and `src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx:679-693` pins that a
-  shifted `I` still selects the eyedropper. **The mechanism behind that is the matcher, not the
-  omission**:
-  `src/hooks/useKeyboardEvents.tsx:72` is `if (shortcut.shift !== undefined && event.shiftKey !==
-shortcut.shift) return false;` — an undeclared `shift` skips the test entirely rather than
-  requiring Shift to be up, so Shift+I falls through to the plain registration. And there is no
-  key-up listener anywhere in `useKeyboardEvents.tsx` (grep for `keyup` / `onKeyUp` returns nothing),
-  which is the mechanical reason the app cannot spring-load: the hook is key-down only.
-  **The app therefore has no `Shift+I` cycle and no spring-loaded temporary `I`** — both are
-  divergences, and both are stated in `appNotes`. The `Shift+I` row is **kept** in `shortcuts`: the
-  binding is real in Photoshop, and this file's rule is to record Photoshop's behaviour and disclose
-  the app's divergence in `appNotes` rather than delete the claim. The same check applies to the four
-  tools Photoshop cycles to — Color Sampler, Ruler, Note and Count are in none of the `ToolName`
-  union (`src/contexts/tool-types.ts`), so the group has no members in the app to cycle through.
-- Defaults: `sampleSize: 1`, `sampleAllLayers: false` at `src/tools/settings.ts:215-218`, pinned by
-  `src/tools/__tests__/eyedropper.test.ts:12-18`. **The app's defaults are not claimed to be
-  Photoshop's.** This line previously read "Defaults match Photoshop's", which was a claim about
-  Photoshop that nothing sourced — Adobe states the `Sample` menu but no default for it (item 10), and
-  states no default for `Sample Size` either (item 12, now closed). What is true and is what the line
-  now says is that the app's two defaults are these values.
+  doc comment above it states the reason: rasterizes nothing, commits no pixels, records no
+  history state. `src/tools/toolsMap.ts` — the `eyedropper` map entry — is the consequence —
+  `eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper }`, no
+  `...toolProcessors.eyedropper` spread, and the comment above that entry says why.
+- **The click.** In `src/components/Main/EyedropperToolArea.tsx`, `handlePointerDown()` reads the
+  pixels with `ctx.getImageData()` and then dispatches the result
+  (`dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR', … })`). Sample All Layers
+  is refused by the `args.sampleAllLayers` guard at the top of the same handler. The sample block is
+  built and clipped by the `half`/`left`/`top`/`right`/`bottom` statements, read by
+  `ctx.getImageData()`, and averaged by the `red`/`green`/`blue` accumulation loop. A fully
+  transparent center pixel returns without dispatching on the alpha check. The handler is wired as
+  `onPointerDown` on the root `<div>` and nowhere else — a grep for `onPointerMove`, `onPointerUp`
+  and `onPointerCancel` in the file returns nothing, which is what settles the drag divergence.
+- **The accelerator.** `toolbar-mapping.ts` — the
+  `{ label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' }` tile, its own single-tool tile.
+  The runtime binding is the `key: 'i'` registration beside the `v` one in
+  `src/components/Common/AppKeyboardShortcuts.tsx` and again the second `key: 'i'` registration under
+  the comment explaining that the three single-tool tiles get one plain registration each rather than
+  a `shift: true` twin, and
+  `src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx` — the
+  `it('selects %s with a bare %s and with Shift+%s')` case inside
+  `describe('AppKeyboardShortcuts tool cycling')` — pins that a shifted `I` still selects the
+  eyedropper. **The mechanism behind that is the matcher, not the omission**: the `shift` arm of
+  `matchesShortcut()` in `src/hooks/useKeyboardEvents.tsx` is
+  `if (shortcut.shift !== undefined && event.shiftKey !== shortcut.shift) return false;` — an
+  undeclared `shift` skips the test entirely rather than requiring Shift to be up, so Shift+I falls
+  through to the plain registration. And there is no key-up listener anywhere in
+  `useKeyboardEvents.tsx` (grep for `keyup` / `onKeyUp` returns nothing), which is the mechanical
+  reason the app cannot spring-load: the hook is key-down only. **The app therefore has no `Shift+I`
+  cycle and no spring-loaded temporary `I`** — both are divergences, and both are stated in
+  `appNotes`. The `Shift+I` row is **kept** in `shortcuts`: the binding is real in Photoshop, and
+  this file's rule is to record Photoshop's behaviour and disclose the app's divergence in
+  `appNotes` rather than delete the claim. The same check applies to the four tools Photoshop cycles
+  to — Color Sampler, Ruler, Note and Count are in none of the `ToolName` union
+  (`src/contexts/tool-types.ts`), so the group has no members in the app to cycle through.
+- Defaults: `sampleSize: 1`, `sampleAllLayers: false` in the `eyedropper` block of `defaultSettings`
+  in `src/tools/settings.ts`, pinned by `src/tools/__tests__/eyedropper.test.ts` — the
+  `it('seeds the Photoshop defaults: a point sample, and every layer off')` title. **The app's
+  defaults are not claimed to be Photoshop's.** This line previously read "Defaults match Photoshop's",
+  which was a claim about Photoshop that nothing sourced — Adobe states the `Sample` menu but no
+  default for it (item 10), and states no default for `Sample Size` either (item 12, now closed).
+  What is true and is what the line now says is that the app's two defaults are these values.
 
 ### Sources — Eyedropper
 
@@ -452,41 +473,46 @@ have been citing an absence.
 or annotation tool, not a distinct painting mode, and not a pen in the Photoshop sense. The chain
 that settles it, in order:
 
-1. `toolbar-mapping.ts:97` — `[{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }]`, its own
-   single-tool tile, in the tonal group after Dodge/Burn. (`:95` is Burn and `:96` closes the
-   preceding group, so the `:96` this file used to cite is the closing bracket.)
-2. `src/contexts/tool-types.ts:35` — `draw: DrawToolArgs`, and `:2` imports both `DrawToolArgs` and
-   `PaintToolArgs`, so the two are separate arg types rather than one shared paint type. The split is
-   real: `src/tools/draw.ts:69` defines `PaintToolArgs` as `Omit<DrawToolArgs, 'toolName' |
-'smoothing' | 'blendMode'> & PaintSettings`, i.e. the paint tools are the draw args plus required
-   paint settings, and `smoothing`/`blendMode` are exactly what they add.
-3. `src/tools/draw.ts:6` — `export type PenType = 'pen' | 'pen-dashed' | 'spray';`. Three renderers,
-   selected by a dropdown, not a brush tip.
-4. `src/util/draw.ts:85-104` — `drawLine` smooths the sampled path once and dispatches: `pen` and
-   `pen-dashed` to `drawPen` (`:142`, a `beginPath`/`moveTo`/bezier/`stroke` of the path), `spray`
-   to `drawSpray` (`:190`, a radial gradient per sampled point). There are no anchors, no handles and
-   no fill, so it is not a path tool; and there is no tip, no hardness and no flow, so it is not a
-   brush. **The path is not resampled.** `drawLine` reads `args.points` and hands it to
-   `smoothStrokePoints` (`src/tools/brush.ts:109`), which returns _the same array instance_ whenever
-   the pull is zero and otherwise emits exactly one output point per input point. For the legacy draw
-   tool it always returns the same array: `defaultSettings.draw` (`settings.ts:68-74`) carries no
-   `smoothing` key, so the argument is `0`. The raw samples are whatever `handlePointerMove` pushed
-   (`DrawToolArea.tsx:103`), and the curve through them is drawn by `bezierSmoothedLine`
-   (`src/util/draw.ts:29`, called at `:153`). The data file's `purpose` used to say "a drag is
-   resampled as a path, bezier-smoothed, and stroked" — the bezier half is real, the resampling half
-   was not, and it has been corrected.
-5. `src/tools/toolProcessors.ts:152-158` — `draw: { commit: 'source', creator: true, ... }`. The
-   `creator: true` is the decisive flag: **every stroke creates a layer.** Compare `:255-262`
-   (`brush`, `commit: 'raster'`, no `creator`) and `:263-` (`pencil`, `commit: 'raster'`), which
-   composite onto the active layer. The commit happens at `src/components/Main/DrawToolArea.tsx:143`
-   (`createLayerFromTool(fullArgs)`) on pointer-up (`:110`), with the points accumulated at `:93`
-   and `:103` and the bounding box computed at `:134`.
-6. `src/components/ToolbarsRight/Draw/Draw.tsx:14` — the options bar. In bar order it renders
-   **Pen Type** (select, three options, `:126-135`), **Size** (0.5–500 px, step 0.5, `:142-158`),
-   **Dash** and **Gap** (1–100 px each, `:163-200`, rendered only when the pen is `pen-dashed`), and
-   **Opacity** (0–100%, `:203-221`), then a live 96×48 stroke preview (`:223-234`, the file's last
-   lines). Per-pen settings are remembered in `savedDrawPerPen` (`src/tools/settings.ts:37-41`), keyed
-   by `PenType`, written by `Draw.tsx:38-42`.
+1. `toolbar-mapping.ts` — the `[{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }]` tile, its own
+   single-tool tile, at the end of the tonal group after Dodge, Burn and the Sponge. (The
+   `{ label: 'Burn Tool', name: 'burn' }` entry is in that same group, and the group closes just after
+   the `{ label: 'Sponge Tool', name: 'sponge' }` entry, so the closing bracket this file used to
+   cite is the one after the Sponge.)
+2. `src/contexts/tool-types.ts` — `ToolArgsByName` maps `draw: DrawToolArgs`, and the file imports
+   both `DrawToolArgs` and `PaintToolArgs`, so the two are separate arg types rather than one shared
+   paint type. The split is real: `PaintToolArgs` in `src/tools/draw.ts` is
+   `Omit<DrawToolArgs, 'toolName' | 'smoothing' | 'blendMode'> & PaintSettings`, i.e. the paint tools
+   are the draw args plus required paint settings, and `smoothing`/`blendMode` are exactly what they
+   add.
+3. `src/tools/draw.ts` — `PenType`, `export type PenType = 'pen' | 'pen-dashed' | 'spray';`. Three
+   renderers, selected by a dropdown, not a brush tip.
+4. `src/util/draw.ts` — `drawLine()` smooths the sampled path once and dispatches: `pen` and
+   `pen-dashed` to `drawPen()` (a `beginPath`/`moveTo`/bezier/`stroke` of the path), `spray` to
+   `drawSpray()` (a radial gradient per sampled point). There are no anchors, no handles and no fill,
+   so it is not a path tool; and there is no tip, no hardness and no flow, so it is not a brush. **The
+   path is not resampled.** `drawLine()` reads `args.points` and hands it to `smoothStrokePoints()`
+   (`src/tools/brush.ts`), which returns _the same array instance_ whenever the pull is zero and
+   otherwise emits exactly one output point per input point. For the legacy draw tool it always returns
+   the same array: `defaultSettings.draw` (`src/tools/settings.ts`) carries no `smoothing` key, so
+   the argument is `0`. The raw samples are whatever `handlePointerMove()` pushed
+   (`src/components/Main/DrawToolArea.tsx`), and the curve through them is drawn by
+   `bezierSmoothedLine()` (`src/util/draw.ts`), called from `drawPen()`. The data file's `purpose` used
+   to say "a drag is resampled as a path, bezier-smoothed, and stroked" — the bezier half is real, the
+   resampling half was not, and it has been corrected.
+5. `src/tools/toolProcessors.ts` — the `draw` entry in `toolProcessors`:
+   `draw: { commit: 'source', creator: true, ... }`. The `creator: true` is the decisive flag:
+   **every stroke creates a layer.** Compare the `brush` entry (`commit: 'raster'`, no `creator`) and
+   the `pencil` entry (`commit: 'raster'`), which composite onto the active layer. The commit happens
+   in `src/components/Main/DrawToolArea.tsx` — the `createLayerFromTool(fullArgs)` call in
+   `handlePointerUp()` — with the points accumulated in `handlePointerDown()` and
+   `handlePointerMove()` and the bounding box computed by `pointsBoundingPos()`.
+6. `src/components/ToolbarsRight/Draw/Draw.tsx` — `Draw`, the options bar. In bar order it renders
+   **Pen Type** (the `#pen-type` `<select>` with its three `<option>`s), **Size** (the `#size-slider`
+   range, 0.5–500 px, step 0.5), **Dash** and **Gap** (the `#dash-size` and `#gap-size` ranges,
+   1–100 px each, rendered only when the pen is `pen-dashed`), and **Opacity** (the `#alpha-slider`
+   range, 0–100%), then a live 96×48 stroke preview (the `<canvas ref={previewRef}>` at the end of
+   the bar, the file's last lines). Per-pen settings are remembered in `savedDrawPerPen`
+   (`src/tools/settings.ts`), keyed by `PenType`, written by `handleChange()` in `Draw.tsx`.
 
 So: a drag becomes a path, the path becomes ink, the ink becomes a layer. It is a **freehand stroke
 tool this app owns**, and the phrase is not a hedge.
@@ -494,26 +520,27 @@ tool this app owns**, and the phrase is not a hedge.
 **The ink is the foreground colour, and that half of the old claim survived re-derivation.** It was
 worth checking rather than assuming, because the paint family records the same-sounding claim as
 false for Color Replacement. Here it is true, and two independent lines decide it: the bar reads the
-store's foreground out of `useStore()` (`Draw.tsx:15`) and writes it into the tool args in an effect
-whenever the two disagree (`Draw.tsx:31-35`), and the renderers consume `args.color` —
-`ctx.strokeStyle = color` for the two pen types (`src/tools/draw.ts:87`) and
-`hexToRgb(args.color)` inside `drawSpray` (`src/util/draw.ts:194`). So `appNotes` and `purpose` keep
-the foreground-colour statement and only the resampling clause was cut.
+store's foreground out of `useStore()` (in `src/components/ToolbarsRight/Draw/Draw.tsx` — `Draw`) and
+writes it into the tool args in an effect whenever the two disagree (the foreground-colour sync
+`useEffect()` in the same component), and the renderers consume `args.color` — `ctx.strokeStyle =
+color` for the two pen types (`src/tools/draw.ts` — `setupDrawCtx()`) and `hexToRgb(args.color)`
+inside `drawSpray()` (`src/util/draw.ts`). So `appNotes` and `purpose` keep the foreground-colour
+statement and only the resampling clause was cut.
 
 **One consequence of the one-stroke-per-layer design, which the data file now records.** The
 renderers issue a single `beginPath`/`moveTo`/`stroke()` per stroke at the tool's `globalAlpha`
-(`src/util/draw.ts:151-154`, `src/tools/draw.ts:91`), so a stroke that crosses itself does not
-compound within that stroke. That is the whole of the `Opacity` divergence, and it is the one an
-earlier pass stated wrongly: it also claimed that "a second stroke lays a second semi-transparent
-layer over the first rather than adding to the same one", and a second Photoshop stroke is _also_ a
-separate compositing pass over the same pixels that reaches the same value, so that clause named a
-difference that is not one. The `Opacity` row's build-up sentence is Photoshop's, and `appNotes` is
-where the divergence is stated. **The row's status was `present` while this paragraph said the
-behaviour diverges, and that contradiction is now closed in the direction the paragraph already
-picked**: `partial`, because Adobe states the build-up rule as part of what the control does — "the
-opacity does not exceed the set level no matter how many times you move the pointer over the area,
-until you release the mouse button" — and a single `stroke()` over the whole path does not hold that
-within a self-crossing stroke.
+(`src/util/draw.ts` — `drawPen()`, and `src/tools/draw.ts` — `setupDrawCtx()`), so a stroke that
+crosses itself does not compound within that stroke. That is the whole of the `Opacity` divergence,
+and it is the one an earlier pass stated wrongly: it also claimed that "a second stroke lays a second
+semi-transparent layer over the first rather than adding to the same one", and a second Photoshop
+stroke is _also_ a separate compositing pass over the same pixels that reaches the same value, so
+that clause named a difference that is not one. The `Opacity` row's build-up sentence is Photoshop's,
+and `appNotes` is where the divergence is stated. **The row's status was `present` while this
+paragraph said the behaviour diverges, and that contradiction is now closed in the direction the
+paragraph already picked**: `partial`, because Adobe states the build-up rule as part of what the
+control does — "the opacity does not exceed the set level no matter how many times you move the
+pointer over the area, until you release the mouse button" — and a single `stroke()` over the whole
+path does not hold that within a self-crossing stroke.
 
 ### Modifiers, and the bracket keys that are bound but inert
 
@@ -530,15 +557,17 @@ file no longer asserts either.
   family uses for its unbound keys.
 - **`[` and `]` for brush size.** These are real Photoshop bindings and the rows are kept, with the
   absence disclosed in `appNotes`. **This file previously claimed the brackets were unbound anywhere
-  in `src/`, and that is refuted.** `src/components/Common/AppKeyboardShortcuts.tsx:517-531` registers
+  in `src/`, and that is refuted.** `src/components/Common/AppKeyboardShortcuts.tsx` registers
   `key: '['` and `key: ']'`, both `mod: false` and `repeat: true`, each gated on
-  `enabled: hasImage && tipSizeTool(toolName) !== null`. The gates are two `Partial<Record<ToolName,
-…>>` tables — `tipSizeField` (`:44-53`, naming brush, pencil, eraser, color-replacement, smudge,
-  dodge, burn and clone-stamp) and `opacityField` (`:56-62`) — and **`draw` is in neither.** So the
+  `enabled: hasImage && tipSizeTool(toolName) !== null`. The gates are two
+  `Partial<Record<ToolName, …>>` tables — `tipSizeField` (naming brush, pencil, eraser,
+  color-replacement, smudge, dodge, burn and clone-stamp) and `opacityField` — and **`draw` is in
+  neither.** So the
   correct statement is not "no bracket key is bound" but "`[` and `]` are inert for this tool". The
   `appNotes` sentence is corrected to that, and it names the sharper fact underneath: draw's Size
-  control writes the same `lineWidth` field the brush's does (`Draw.tsx:46-49` →
-  `args.lineWidth`), so one entry in `tipSizeField` would have made the keys work here. The same
+  control writes the same `lineWidth` field the brush's does
+  (`src/components/ToolbarsRight/Draw/Draw.tsx` — `handleSizeChange()` → `args.lineWidth`), so one
+  entry in `tipSizeField` would have made the keys work here. The same
   holds for Adobe's `0`/`1` opacity keys, which are gated on `opacityField` and are likewise inert
   for draw despite draw carrying an `alpha`. Both are reported to the operator as gaps rather than
   changed: `tipSizeField` and `opacityField` are product code.
@@ -584,20 +613,20 @@ behavior", never "Photoshop's Draw tool has this".
 
 ### Options-bar control census (reference bar: the Photoshop Brush Tool)
 
-| #   | Brush bar control     | Status    | App rendering                                                      | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| --- | --------------------- | --------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `Brush Preset picker` | `missing` | —                                                                  | No tip, no hardness, no presets. The per-pen records in `settings.ts:37-41` are three hardcoded strokes, not a preset system.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 2   | `Size`                | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx:149`, handler `:46-49` | Wired and applied verbatim (`src/tools/draw.ts:87`), but the range diverges at **both** ends: 0.5–500 px, step 0.5, against Photoshop's 1–5000.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 3   | `Mode`                | `inert`   | declared `src/tools/draw.ts:43`                                    | Declared on the args, set by no Draw-bar control, absent from `defaultSettings.draw` (`settings.ts:68-74`) — **and refused even if set**: `src/contexts/layer-utils.ts:149` returns `source-over` for any `toolName` other than `brush`/`pencil`/`color-replacement`, so a draw stroke's layer is forced to Normal.                                                                                                                                                                                                                                                                                                                                |
-| 4   | `Opacity`             | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx:211`, handler `:51-53` | 0–100% on `args.alpha`, applied as `ctx.globalAlpha` (`src/tools/draw.ts:91`). Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`settings.ts:38-40`). The build-up behavior Adobe documents for this control is not reproduced, so the row is `partial` and not `present`: see the one-stroke, one-layer paragraph above.                                                                                                                                                                                                                                                                                                                      |
-| 5   | `Flow`                | `missing` | —                                                                  | The app has a single `alpha` and no flow concept.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 6   | `Airbrush`            | `missing` | —                                                                  | The bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing else. The `spray` pen is the nearest thing and it diverges twice: it is reached from a Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer moves and a held press adds nothing after the single dot it laid. The old `partial` here carried an `appRef` into `Draw.tsx:129`, which is a Pen Type `<option>`, not an airbrush control — a citation to a line that does not contain the control the row is about.                                                                 |
-| 7   | `Smoothing`           | `inert`   | declared `src/tools/draw.ts:38`                                    | The seventh row, and the one this table was missing. Adobe's stroke-smoothing page puts the control on the options bar for "the Brush, Pencil, Mixer Brush, and Eraser" and gives its range: "Smoothing amount: Set a value between 0 and 100"; higher values "may slightly delay the stroke preview". Declared on the draw args, written by no Draw-bar control, absent from `defaultSettings.draw` (`settings.ts:68-74`), and `PaintToolArgs` at `src/tools/draw.ts:69` exists precisely by `Omit`-ing `smoothing` out — so the field is the paint family's and this bar never exposes it. `inert` for the same reason as `Mode`, one row above. |
+| #   | Brush bar control     | Status    | App rendering                                                                                           | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --- | --------------------- | --------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `Brush Preset picker` | `missing` | —                                                                                                       | No tip, no hardness, no presets. The per-pen records in `savedDrawPerPen` (`src/tools/settings.ts`) are three hardcoded strokes, not a preset system.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2   | `Size`                | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#size-slider` range, handler `handleSizeChange()`   | Wired and applied verbatim (`src/tools/draw.ts` — `setupDrawCtx()`), but the range diverges at **both** ends: 0.5–500 px, step 0.5, against Photoshop's 1–5000.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 3   | `Mode`                | `inert`   | declared `src/tools/draw.ts` — `DrawToolArgs.blendMode`                                                 | Declared on the args, set by no Draw-bar control, absent from `defaultSettings.draw` (`src/tools/settings.ts`) — **and refused even if set**: `src/contexts/layer-utils.ts` — `toolLayerBlendMode()` — returns `source-over` for any `toolName` other than `brush`/`pencil`/`color-replacement`, so a draw stroke's layer is forced to Normal.                                                                                                                                                                                                                                                                                                      |
+| 4   | `Opacity`             | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#alpha-slider` range, handler `handleAlphaChange()` | 0–100% on `args.alpha`, applied as `ctx.globalAlpha` (`src/tools/draw.ts` — `setupDrawCtx()`). Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`savedDrawPerPen` in `src/tools/settings.ts`). The build-up behavior Adobe documents for this control is not reproduced, so the row is `partial` and not `present`: see the one-stroke, one-layer paragraph above.                                                                                                                                                                                                                                                                              |
+| 5   | `Flow`                | `missing` | —                                                                                                       | The app has a single `alpha` and no flow concept.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 6   | `Airbrush`            | `missing` | —                                                                                                       | The bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing else. The `spray` pen is the nearest thing and it diverges twice: it is reached from a Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer moves and a held press adds nothing after the single dot it laid. The old `partial` here carried an `appRef` into the Pen Type `<select>`'s `<option>`s in `src/components/ToolbarsRight/Draw/Draw.tsx`, not an airbrush control — a citation to a site that does not contain the control the row is about.                           |
+| 7   | `Smoothing`           | `inert`   | declared `src/tools/draw.ts` — `DrawToolArgs.smoothing`                                                 | The seventh row, and the one this table was missing. Adobe's stroke-smoothing page puts the control on the options bar for "the Brush, Pencil, Mixer Brush, and Eraser" and gives its range: "Smoothing amount: Set a value between 0 and 100"; higher values "may slightly delay the stroke preview". Declared on the draw args, written by no Draw-bar control, absent from `defaultSettings.draw` (`src/tools/settings.ts`), and `PaintToolArgs` in `src/tools/draw.ts` exists precisely by `Omit`-ing `smoothing` out — so the field is the paint family's and this bar never exposes it. `inert` for the same reason as `Mode`, one row above. |
 
 **Counts: present 0 · partial 2 · inert 2 · missing 3.**
 
 `Size` and the airbrush toggle were both `present`/`partial` on the strength of "it does something
-nearby". Neither is that any more. `Size` is `partial` because `types.ts` defines the status as
+nearby". Neither is that any more. `Size` is `partial` because `src/tools/descriptions/types.ts` — `ToolControlStatus` — defines the status as
 "its behaviour **or range** diverges", and both of this control's bounds diverge from Photoshop's
 1–5000; the sibling paint family files the same control `partial` for the same class of reason. The
 airbrush toggle is `missing` because the Draw bar contains no control that answers to it at all, and
@@ -606,12 +635,13 @@ Its old `detail` was the sharper defect: it ended "Click the button to toggle it
 told a user to click a control that does not exist.
 
 `Opacity` was `present` and was **also** wrong, in the direction `present` most easily hides: it
-contradicted this file's own `appNotes`, which said the build-up story diverges. `types.ts` defines
+contradicted this file's own `appNotes`, which said the build-up story diverges.
+`src/tools/descriptions/types.ts` — `ToolControlStatus` — defines
 `present` as "The app renders this control and it does what Photoshop's does", and Adobe's Opacity
 text makes the build-up rule part of the control rather than an extra: "As you paint over an area,
 the opacity does not exceed the set level no matter how many times you move the pointer over the
 area, until you release the mouse button." A single `beginPath`/`stroke()` over the whole path at
-`globalAlpha` (`src/util/draw.ts:151-154`, `src/tools/draw.ts:91`) does not hold that within a
+`globalAlpha` (`src/util/draw.ts` — `drawPen()`, and `src/tools/draw.ts` — `setupDrawCtx()`) does not hold that within a
 self-crossing stroke, so the behaviour diverges and the status is `partial`.
 
 **`Smoothing` was absent from a table that declares itself the Brush-bar census, and its own
@@ -619,8 +649,8 @@ self-crossing stroke, so the behaviour diverges and the status is `partial`.
 Smoothing are declared on the draw args but unreachable from this bar" was true while the census
 listed only `Mode`. Both halves of that sentence now have a row, and both are `inert` for the same
 reason: declared, written by nothing. Bar order puts `Smoothing` last, after `Airbrush`, which is
-where Adobe's Brush bar puts it and where the sibling paint family puts it (`paint.ts:72`, after its
-`Airbrush` at `:54`).
+where Adobe's Brush bar puts it and where the sibling paint family puts it (the `Smoothing` row of the
+Brush's `options` in `src/tools/descriptions/paint.ts`, after its `Airbrush` row).
 
 **Two defaults were removed rather than sourced (`Opacity` and `Flow`).** Both rows ended
 "Default: 100%." Adobe's page says "Opacity of 100 percent is opaque" — a value, not a default — and
@@ -628,22 +658,24 @@ states **no default for Flow at all**. This file's own `Unverified` item 10 says
 cheapest claim in the file for anyone to disprove", and these two were exactly that, so removing them
 costs nothing: the `Opacity` row now quotes the value sentence and says outright that Adobe states no
 default, and `Flow` says the same. The app's own per-pen defaults stay, because those are verifiable
-in the tree. Note the sibling `paint.ts:127` still says the bar "seeds it at 90 percent where
+in the tree. Note the sibling `src/tools/descriptions/paint.ts` — the Brush's `appNotes` — still says the bar "seeds it at 90 percent where
 Photoshop's is 100" — **that half is the same unsourced default and is out of this family's scope to
 change**; flagged here so a later pass does not treat the two files as agreeing.
 
 **`Airbrush` is Adobe's own name, and the longer string this file used was not.** The row was
 `Enable airbrush-style build-up effects`. Adobe's painting-tools page heads the section "Airbrush"
 and describes it as "Simulates painting with an airbrush… Click the button to turn on or off this
-option." No Adobe page carrying the longer string could be opened, and the sibling `paint.ts:54`
-records the same control as `Airbrush`, so this file was the outlier and is now aligned with both.
+option." No Adobe page carrying the longer string could be opened, and the sibling
+`src/tools/descriptions/paint.ts` — the Brush's `Airbrush` row — records the same control as
+`Airbrush`, so this file was the outlier and is now aligned with both.
 The longer form reads as a description of what the toggle does rather than as a label printed on the
 bar, which is the likeliest route by which it entered the file; that is an inference and is recorded
 as one.
 
 **One control name in this table is Adobe-verbatim while the sibling family capitalises it, and it is
-this file that is right.** `Brush Preset picker` here, `Brush Preset Picker` in `paint.ts:15` and
-`:151`. Adobe's own sentence is "You can quickly choose presets from the **Brush Preset picker** in
+this file that is right.** `Brush Preset picker` here, `Brush Preset Picker` in the sibling
+`src/tools/descriptions/paint.ts` — the `Brush Preset Picker` row of the Brush's `options` and of the
+Pencil's `options`. Adobe's own sentence is "You can quickly choose presets from the **Brush Preset picker** in
 the options bar, which lets you temporarily modify the size and hardness of a brush preset", so the
 lower-case `p` is Adobe's and the sibling is the outlier. Deliberately **not** changed, and flagged so
 a future pass harmonises in this direction rather than the other.
@@ -651,58 +683,63 @@ a future pass harmonises in this direction rather than the other.
 `Mode` is the one row where `inert` and `missing` were genuinely contestable. `inert` was chosen
 because the field exists on the args type and is read on the commit path, so the app _has_ the
 control and this bar simply does not expose it — which is what `inert` exists to name. It is
-reproduced correctly: the app's own paint bar renders a working `Mode` select at
-`src/components/ToolbarsRight/Paint/Paint.tsx:182-196`, and the brush family in this same repo
+reproduced correctly: the app's own paint bar renders a working `Mode` `<select>` (the
+`${toolName}-mode` select in `PaintToolbar`, `src/components/ToolbarsRight/Paint/Paint.tsx`), and the
+brush family in this same repo
 therefore has the control the Draw bar lacks. The qualification recorded here is now settled rather
-than open: `types.ts` words `inert` as "declared **or displayed**, and nothing is wired behind it",
+than open: `src/tools/descriptions/types.ts` — the `'inert'` member of `ToolControlStatus` — words
+`inert` as "declared **or displayed**, and nothing is wired behind it",
 and names two qualifying shapes, so a field that is neither persisted in `src/tools/settings.ts`
-(`defaultSettings.draw` at `settings.ts:68-74` has neither `blendMode` nor `smoothing`) nor rendered
+(`defaultSettings.draw` there has neither `blendMode` nor `smoothing`) nor rendered
 by this bar still qualifies on the display side — the declared `blendMode` is the paint family's
 control, and the blend-mode gate refuses it for this tool anyway
-(`src/contexts/layer-utils.ts:149`). The row stays `inert`.
+(`src/contexts/layer-utils.ts` — `toolLayerBlendMode()`). The row stays `inert`.
 
 The tablet-pressure toggles that the corpus's Brush row lists are **not** enumerated. The Adobe
 page that was opened does not name them, so a row asserting them would be an unsourced claim. They
 are in `Unverified`.
 
 App-only controls with no Photoshop counterpart in the paint bar, listed here because they are part
-of what the bar actually renders: **Pen Type** (three pens, `Draw.tsx:126-135`), **Dash** and
-**Gap** (`Draw.tsx:163-200`), and the live stroke preview (`Draw.tsx:223-234`).
+of what the bar actually renders: **Pen Type** (three pens), **Dash** and **Gap**, and the live stroke
+preview — all in the `Draw` options bar in `src/components/ToolbarsRight/Draw/Draw.tsx`.
 
 ### The `B` badge — and what the `shortcut` field actually does
 
 Two separate facts, and the second is sharper than the first.
 
 **The `shortcut` field on a toolbar entry is display-only.** Its only two consumers in the whole of
-`src/` are `src/components/SidebarLeft/SidebarLeft.tsx:621` (`shortcut={… primaryTool.shortcut}`,
-handed to `ToolTooltip`) and `:951` (`{tool.shortcut && <kbd …>}` inside the flyout item). Nothing
-derives a key binding from it. **This file has now carried two wrong pairs for these two lines** —
-`:209` and `:368`, then `:258` and `:431` — both moved, and the current pair was re-derived from the
+`src/` are the `shortcut={identity === undefined ? primaryTool.shortcut : undefined}` prop handed to
+`ToolTooltip`, and the `{tool.shortcut && <kbd …>}` element inside the flyout item, both in
+`src/components/SidebarLeft/SidebarLeft.tsx`. Nothing
+derives a key binding from it. **This file has now carried two wrong pairs for these two sites** — the
+`ToolTooltip` prop and the flyout `<kbd>` — both moved, and the current pair was re-derived from the
 `shortcut` property with `grep -n shortcut src/components/SidebarLeft/SidebarLeft.tsx` rather than
 nudged. It is the second time a `SidebarLeft` citation in this file has been wrong by more than 350
-lines, which is worth knowing about the file as a whole rather than about these two lines.
+lines, which is worth knowing about the file as a whole rather than about these two sites.
 
 **One correction to the addendum's framing, verified against the tree.** The app _does_ implement
 single-letter tool activation, and it does not implement the spring-loaded _temporary_ switch. The
 bindings are a separate hand-written table in `src/components/Common/AppKeyboardShortcuts.tsx`, not
-derived from the map: `b` at `:240-245` and `Shift+b` at `:247-251`, `i` at `:224-228` and again at
-`:348-353`, and so on. The table's own header (`:9-17`) says the group arrays are "the mapping's
-groups, not a guess", which is the intent — but the binding is a hand copy, so the map and the table
+derived from the map: the `key: 'b'` registration and its `shift: true` twin, the `key: 'i'`
+registration and the second one further down, and so on. The table's own header — the comment above
+`brushGroup` — says the group arrays are "the mapping's groups, not a guess", which is the intent
+— but the binding is a hand copy, so the map and the table
 can disagree, and here they do. The precise, verifiable statement is therefore not "the letter binds
 nothing"; it is **"the letter is taken by the Brush"**.
 
-**`B` is bound to the brush group** — `src/components/Common/AppKeyboardShortcuts.tsx:18`:
-`const brushGroup = ['brush', 'pencil', 'color-replacement', 'eraser']` — and `draw` is not in it.
-`selectBrushTool` (`:47-56`) resolves a plain `B` to the Brush and a `Shift+B` to the next member of
-that group. **A grep of `goToTool(` across `src/` finds no call with `'draw'`**, so no key anywhere
-selects this tool. The `B` badged on the Draw Tool is therefore wrong twice over, which is what the
-keyboard/UX audit recorded: in Photoshop `B` is the Brush, and in this app the letter is bound to the
-Brush as well, leaving the Draw Tool reachable by pointer only. Because no key reaches it, Photoshop's
-spring-loaded hold-and-switch cannot reach it either.
+**`B` is bound to the brush group** — `src/components/Common/AppKeyboardShortcuts.tsx` —
+`brushGroup`: `const brushGroup = ['brush', 'pencil', 'color-replacement', 'eraser']` — and `draw` is
+not in it. `selectBrushTool` (in the same file) resolves a plain `B` to the Brush and a `Shift+B` to
+the next member of that group. **A grep of `goToTool(` across `src/` finds no call with `'draw'`**,
+so no key anywhere selects this tool. The `B` badged on the Draw Tool is therefore wrong twice over,
+which is what the keyboard/UX audit recorded: in Photoshop `B` is the Brush, and in this app the
+letter is bound to the Brush as well, leaving the Draw Tool reachable by pointer only. Because no key
+reaches it, Photoshop's spring-loaded hold-and-switch cannot reach it either.
 
-The collision the brief asked about is still real and still in the data:
-`toolbar-mapping.ts:73` (Brush, `'B'`) and `toolbar-mapping.ts:97` (Draw, `'B'`), two
-different tiles in the same `toolbarMap`. `bruceblinn`'s CS3 table gives `B, Shift-B` to "Brush,
+The collision the brief asked about is still real and still in the data: the
+`{ label: 'Brush Tool', name: 'brush', shortcut: 'B' }` tile and the Draw tile (`'B'`) in
+`toolbar-mapping.ts`, two different tiles in the same
+`toolbarMap`. `bruceblinn`'s CS3 table gives `B, Shift-B` to "Brush,
 pencil, and color replacement tools", and `thedigitalprocess` says the same in prose: "You can
 activate the brush, pencil or replacement brush at any time by pressing the letter B, and cycle
 through these tools by pressing Shift+B."
@@ -789,11 +826,13 @@ is listed with the URL that came closest.
 4. **That Photoshop's eyedropper records no history state — derived from the rule, not quoted.** The
    recovered audit finding is that a sample mutates no pixel and therefore needs no durable history
    entry, belonging with a zoom, a panel move or a tool switch; a second audit reached the same
-   conclusion from the governing rule. The tree asserts the rule at `src/tools/toolProcessors.ts:73-74`
-   and `src/components/Main/EyedropperToolArea.tsx:30-44`, but **no single Adobe sentence stating it
+   conclusion from the governing rule. The tree asserts the rule in the doc comment above `PIXEL_FREE_TOOLS`
+   in `src/tools/toolProcessors.ts` and in the doc comment above `EyedropperToolArea` in
+   `src/components/Main/EyedropperToolArea.tsx`, but **no single Adobe sentence stating it
    was found**, and two audits agreeing on a deduction is not a citation. **It is now recorded in
    `appNotes` only** — removed from `purpose` outright, because `purpose` is a Photoshop-claim field
-   per `types.ts` and an unsourced deduction about Adobe's history panel does not belong in one. It
+   per `src/tools/descriptions/types.ts` and an unsourced deduction about Adobe's history panel does
+   not belong in one. It
    is not dressed as a sourced claim anywhere. Closest:
    https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html
 5. **That the Tools panel has no freehand-annotation or pen-stroke tool "in any released version."**
@@ -818,14 +857,16 @@ is listed with the URL that came closest.
    out of the census rather than filed as `missing` on the strength of a 2018 blog, because `missing`
    would assert a control Adobe's current page does not show — that page names only `Sample Size` and
    `Sample`. **The decision, recorded so it cannot be read as an oversight:** no row, because
-   `types.ts` requires `control` to be Adobe's name verbatim and no Adobe page supplies one; the
+   `src/tools/descriptions/types.ts` — `ToolControl.control` — requires `control` to be Adobe's name verbatim
+   and no Adobe page supplies one; the
    omission and its reason are stated in the data file's `appNotes` instead, which also notes that the
    app has no ring either way — the ring is a cursor and this repo has no cursor registry at all.
    A later pass that finds an Adobe name for the control should add the row;
    this item then closes the way item 1 did. Closest:
    https://jkost.com/blog/2018/03/the-eyedropper-color-samplers-and-info-panel-in-photoshop-cc.html
 8. **A tool-preset picker leading the eyedropper's options bar.** The corpus's own table gives every
-   bar a leading `tool-preset` (`03-ui-chrome-spec.md:182-194`), and tool presets are a documented
+   bar a leading `tool-preset` (the corpus's own options-bar table in `03-ui-chrome-spec.md`), and tool
+   presets are a documented
    Photoshop feature, but the Adobe page that was opened does not establish that a preset picker
    leads this bar. Excluded from the census rather than filed as `missing`.
    Closest: https://helpx.adobe.com/photoshop/using/painting-tools.html
@@ -900,105 +941,116 @@ The `draw` family's `Opacity` and `Flow` rows both ended "Default: 100%." Adobe 
 100 percent is opaque" — a value, not a default — and states no default for Flow at all, so both
 sentences are gone from the data file and the rows now say outright that Adobe states no default.
 The `Smoothing` row added this pass states the 0–100 range from Adobe's own page and claims no
-default, and the sibling `paint.ts:74` claims "Default 10" on the same control with nothing here to
+default, and the sibling `src/tools/descriptions/paint.ts` — the `Smoothing` row's `detail` in the Brush's
+`options` — claims "Default 10" on the same control with nothing here to
 support it. That is out of this family's scope to change and is flagged for whichever pass owns the
 paint family.
 
 ## Citation drift corrected in this pass
 
-Two passes have re-derived the `file:line` citations in this file, and both found drift. The first
-pass's table is kept above; the second pass's is here. **Every citation drifted in the same direction:
-the cited file grew above the citation and nothing below it moved.** None of these is caught by a
-`grep` sweep, because the text at the stale line still reads plausibly — `:132` and `:137` are both
-inside a `return` statement, and `Eyedropper.tsx:37` is a `};`.
+Two passes have re-derived this file's source citations, and both found drift. The first pass's table
+is kept above; the second pass's is here. **Every citation drifted in the same direction: the cited
+file grew above the citation and nothing below it moved.** None of these is caught by a `grep` sweep,
+because the text at the stale line still reads plausibly — the two `EyedropperToolArea.tsx` lines this
+file read as "inside a `return` statement" were, and the end of the `Eyedropper` component in
+`Eyedropper.tsx` is a `};`.
+
+The two columns below are **where the stale citation pointed** and **the anchor that replaces it**,
+named rather than numbered: reproducing the stale number is the form this migration removes, so the
+first column names the unit the drifted line sat inside — or inside the wrong thing — and the drift
+itself is what the row records.
 
 ### Second pass — Eyedropper
 
-| Was                            | Now                            | What is there                                                           |
-| ------------------------------ | ------------------------------ | ----------------------------------------------------------------------- |
-| `Eyedropper.tsx:23`            | `Eyedropper.tsx:22`            | the `<select>` whose options are the Sample Size list                   |
-| `Eyedropper.tsx:37`            | `settings.ts:217`              | `sampleAllLayers: false` — the cited line was a `};`, never a control   |
-| `EyedropperToolArea.tsx:46`    | `EyedropperToolArea.tsx:59`    | `handlePointerDown`                                                     |
-| `EyedropperToolArea.tsx:57`    | `EyedropperToolArea.tsx:102`   | `ctx.getImageData(...)` — the read                                      |
-| `EyedropperToolArea.tsx:121`   | `EyedropperToolArea.tsx:133`   | the `SET_COLOR` / `SET_BACKGROUND_COLOR` dispatch                       |
-| `EyedropperToolArea.tsx:63`    | `EyedropperToolArea.tsx:65`    | the `sampleAllLayers` refusal                                           |
-| `EyedropperToolArea.tsx:132`   | `EyedropperToolArea.tsx:137`   | `onPointerDown` — the only pointer wiring in the file                   |
-| `eyedropper.ts:28`             | `eyedropper.ts:34`             | `EYEDROPPER_SAMPLE_SIZE_OPTIONS` (and `:7` for the seven-value union)   |
-| `settings.ts:208-212`          | `settings.ts:215-218`          | the `eyedropper` defaults block                                         |
-| `settings.ts:210`              | `settings.ts:217`              | `sampleAllLayers: false`                                                |
-| `toolProcessors.ts:80`         | `toolProcessors.ts:81`         | `PIXEL_FREE_TOOLS`                                                      |
-| `toolsMap.ts:126`              | `toolsMap.ts:127`              | the `eyedropper` map entry                                              |
-| `AppKeyboardShortcuts.tsx:224` | `AppKeyboardShortcuts.tsx:309` | the first `i` registration                                              |
-| `AppKeyboardShortcuts.tsx:348` | `AppKeyboardShortcuts.tsx:455` | the second `i` registration (comment at `:451`)                         |
-| `useKeyboardEvents.tsx` —      | `useKeyboardEvents.tsx:72`     | the `shift` matcher that makes Shift+I fall through — **was not cited** |
-| `HANDOFF.md:1017`              | `HANDOFF.md:1080`              | §51; the `:1017` was a whole section early                              |
-| `EyedropperToolArea.test:291`  | `EyedropperToolArea.test:314`  | the test that drives `sampleAllLayers` true                             |
-| `eyedropper.test.ts:12-18`     | `eyedropper.test.ts:12-18`     | already right; kept                                                     |
-| `SidebarLeft.tsx:258` / `:431` | `SidebarLeft.tsx:621` / `:951` | the two `shortcut` consumers — the **third** pair this file has carried |
+| Where the stale citation pointed                               | The anchor that replaces it                                                                                                                           | What is there                                                               |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| the `Eyedropper` component in `Eyedropper.tsx`                 | `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx` — the Sample Size `<select>` in `Eyedropper`                                                 | the `<select>` whose options are the Sample Size list                       |
+| `Eyedropper.tsx` — the end of the `Eyedropper` component       | `src/tools/settings.ts` — the `eyedropper` block of `defaultSettings`                                                                                 | `sampleAllLayers: false` — the cited site was a `};`, never a control       |
+| `EyedropperToolArea.tsx` — above the component                 | `src/components/Main/EyedropperToolArea.tsx` — `handlePointerDown()`                                                                                  | `handlePointerDown`                                                         |
+| `EyedropperToolArea.tsx` — the `getLocalCoords` call           | `src/components/Main/EyedropperToolArea.tsx` — `handlePointerDown()`                                                                                  | `ctx.getImageData(...)` — the read                                          |
+| `EyedropperToolArea.tsx` — the sampled-colour arithmetic       | `src/components/Main/EyedropperToolArea.tsx` — `handlePointerDown()`                                                                                  | the `SET_COLOR` / `SET_BACKGROUND_COLOR` dispatch                           |
+| `EyedropperToolArea.tsx` — the handler's first guard           | `src/components/Main/EyedropperToolArea.tsx` — `handlePointerDown()`                                                                                  | the `sampleAllLayers` refusal                                               |
+| `EyedropperToolArea.tsx` — the end of the handler              | `src/components/Main/EyedropperToolArea.tsx` — the root `<div>` in the `return`                                                                       | `onPointerDown` — the only pointer wiring in the file                       |
+| `src/tools/eyedropper.ts` — the module doc comment             | `src/tools/eyedropper.ts` — `EYEDROPPER_SAMPLE_SIZE_OPTIONS` (and `EyedropperSampleSize` for the union)                                               | `EYEDROPPER_SAMPLE_SIZE_OPTIONS`                                            |
+| `src/tools/settings.ts` — the `transform` defaults block       | `src/tools/settings.ts` — the `eyedropper` block of `defaultSettings`                                                                                 | the `eyedropper` defaults block                                             |
+| `src/tools/settings.ts` — the same defaults block              | `src/tools/settings.ts` — the `eyedropper` block of `defaultSettings`                                                                                 | `sampleAllLayers: false`                                                    |
+| `src/tools/toolProcessors.ts` — the doc comment                | `src/tools/toolProcessors.ts` — `PIXEL_FREE_TOOLS`                                                                                                    | `PIXEL_FREE_TOOLS`                                                          |
+| `src/tools/toolsMap.ts` — the `pen` map entry                  | `src/tools/toolsMap.ts` — the `eyedropper` map entry                                                                                                  | the `eyedropper` map entry                                                  |
+| `AppKeyboardShortcuts.tsx` — an earlier table row              | `src/components/Common/AppKeyboardShortcuts.tsx` — the first `key: 'i'` registration                                                                  | the first `i` registration                                                  |
+| `AppKeyboardShortcuts.tsx` — a later table row                 | `src/components/Common/AppKeyboardShortcuts.tsx` — the second `key: 'i'` registration                                                                 | the second `i` registration (under the comment about the single-tool tiles) |
+| `useKeyboardEvents.tsx` — **not cited at all**                 | `src/hooks/useKeyboardEvents.tsx` — the `shift` arm of `matchesShortcut()`                                                                            | the `shift` matcher that makes Shift+I fall through — **was not cited**     |
+| `HANDOFF.md` §51                                               | `HANDOFF.md` §60                                                                                                                                      | §60; the stale citation was a whole section early                           |
+| `EyedropperToolArea.test` — an earlier case                    | `src/components/Main/__tests__/EyedropperToolArea.test.tsx` — the `it('refuses loudly instead of silently ignoring a Sample All Layers value')` title | the test that drives `sampleAllLayers` true                                 |
+| `src/tools/__tests__/eyedropper.test.ts` — the defaults case   | `src/tools/__tests__/eyedropper.test.ts` — the `it('seeds the Photoshop defaults: a point sample, and every layer off')` title                        | already right; kept                                                         |
+| `src/components/SidebarLeft/SidebarLeft.tsx` — two stale sites | `src/components/SidebarLeft/SidebarLeft.tsx` — the `ToolTooltip` prop and the flyout `<kbd>`                                                          | the two `shortcut` consumers — the **third** pair this file has carried     |
 
-**One row of that table no longer resolves, and must not be followed.** The `HANDOFF.md:1017` ->
-`HANDOFF.md:1080` row pointed at §51, the eyedropper entry. **§51 was deleted** by `4833e740`, and
-`HANDOFF.md:1080` now lands inside an unrelated entry, so the pointer is struck rather than followed.
+**One row of that table no longer resolves, and must not be followed.** The `HANDOFF.md` §51 -> §60
+row pointed at §51, the eyedropper entry. **§51 was deleted** by `4833e740`, and the nearest surviving
+section is an unrelated entry, so the pointer is struck rather than followed.
 The defect it recorded — no `Sample All Layers` control, a `sampleAllLayers` value refused with a
 named error, no sampling ring, no Color Sampler — is still live and still stated in full in
 `appNotes`, which is what `docs/TOOLS.md` is generated from.
 
-**The two that were not drift but wrong content.** `EyedropperToolArea.tsx:121` was cited as the only
-dispatch in the file, which is right in kind but wrong in content: the dispatch at `:133` is a
+**The two that were not drift but wrong content.** The `EyedropperToolArea.tsx` site this file cited
+as the only dispatch in the file was right in kind but wrong in content: that `dispatch()` is a
 **ternary**, `event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR'`, so the citation was hiding the
-implementation of Photoshop's Alt modifier. And `Eyedropper.tsx:37` was cited as the app's rendering
-of a `Sample All Layers` **checkbox** when the bar renders no such control — a citation that resolved
+implementation of Photoshop's Alt modifier. And the end of the `Eyedropper` component in
+`Eyedropper.tsx` was cited as the app's rendering of a `Sample All Layers` **checkbox** when the bar
+renders no such control — a citation that resolved
 to a `};` and would have kept reading as true on every later pass. Both are the reason this pass
 opened the code rather than re-running `grep`.
 
 ### Second pass — Draw
 
-| Was                     | Now                     | What is there                                          |
-| ----------------------- | ----------------------- | ------------------------------------------------------ |
-| `Draw.tsx:13`           | `Draw.tsx:14`           | the `Draw` component (`:13` is a blank line)           |
-| `Draw.tsx:142`          | `Draw.tsx:149`          | the Size `<input type="range">`                        |
-| `Draw.tsx:204`          | `Draw.tsx:211`          | the Opacity `<input type="range">`                     |
-| `DrawToolArea.tsx:110`  | `DrawToolArea.tsx:143`  | `createLayerFromTool(fullArgs)` — the commit           |
-| `toolProcessors.ts:151` | `toolProcessors.ts:152` | `draw: {`                                              |
-| `settings.ts:32`        | `settings.ts:37`        | `savedDrawPerPen`                                      |
-| `toolbar-mapping.ts:96` | `toolbar-mapping.ts:97` | the Draw tile (`:96` closes the tonal group)           |
-| `brush.ts:101`          | `brush.ts:109`          | `smoothStrokePoints`                                   |
-| `util/draw.ts:157`      | `util/draw.ts:190`      | `drawSpray` (`:157` is a doc comment)                  |
-| `Draw.tsx:122-131`      | `Draw.tsx:126-135`      | the Pen Type select                                    |
-| `Draw.tsx:154-194`      | `Draw.tsx:163-200`      | the Dash and Gap sliders                               |
-| `Draw.tsx:204-213`      | `Draw.tsx:203-221`      | the Opacity control                                    |
-| `Draw.tsx:216-222`      | `Draw.tsx:223-234`      | the live preview (the file's last lines)               |
-| `Draw.tsx:35-42`        | `Draw.tsx:38-42`        | the `savedDrawPerPen` write                            |
-| `Draw.tsx:44-47`        | `Draw.tsx:46-49`        | `handleSizeChange`                                     |
-| `Draw.tsx:49-52`        | `Draw.tsx:51-53`        | `handleAlphaChange`                                    |
-| `Draw.tsx:29-33`        | `Draw.tsx:31-35`        | the foreground-colour sync effect                      |
-| `Paint.tsx:168-182`     | `Paint.tsx:182-196`     | the paint bar's working `Mode` select (`:168` is Size) |
-| `toolbar-mapping.ts:72` | `toolbar-mapping.ts:73` | the Brush tile                                         |
+| Where the stale citation pointed                          | The anchor that replaces it                                                                      | What is there                                                  |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| `Draw.tsx` — the blank line above the component           | `src/components/ToolbarsRight/Draw/Draw.tsx` — `Draw`                                            | the `Draw` component (the stale site is a blank line)          |
+| `Draw.tsx` — the preview-size constants                   | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#size-slider` range                          | the Size `<input type="range">`                                |
+| `Draw.tsx` — the end of the Opacity control               | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#alpha-slider` range                         | the Opacity `<input type="range">`                             |
+| `DrawToolArea.tsx` — inside `handlePointerUp()`           | `src/components/Main/DrawToolArea.tsx` — the `createLayerFromTool(fullArgs)` call in it          | `createLayerFromTool(fullArgs)` — the commit                   |
+| `src/tools/toolProcessors.ts` — the `crop` entry above it | `src/tools/toolProcessors.ts` — the `draw` entry in `toolProcessors`                             | `draw: {`                                                      |
+| `src/tools/settings.ts` — the `PenSettings` alias         | `src/tools/settings.ts` — `savedDrawPerPen`                                                      | `savedDrawPerPen`                                              |
+| `toolbar-mapping.ts` — the tonal group's closing bracket  | `toolbar-mapping.ts` — the Draw tile                                                             | the Draw tile (the stale site closes the tonal group)          |
+| `src/tools/brush.ts` — an earlier smoothing helper        | `src/tools/brush.ts` — `smoothStrokePoints`                                                      | `smoothStrokePoints`                                           |
+| `src/util/draw.ts` — a doc comment                        | `src/util/draw.ts` — `drawSpray`                                                                 | `drawSpray` (the stale site is a doc comment)                  |
+| `Draw.tsx` — the Pen Type label                           | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#pen-type` select                            | the Pen Type select                                            |
+| `Draw.tsx` — the top of the Dash/Gap region               | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#dash-size` and `#gap-size` ranges           | the Dash and Gap sliders                                       |
+| `Draw.tsx` — the Opacity label                            | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#alpha-slider` range                         | the Opacity control                                            |
+| `Draw.tsx` — the start of the preview block               | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `<canvas ref={previewRef}>`                   | the live preview (the file's last lines)                       |
+| `Draw.tsx` — the effect above `handleChange`              | `src/components/ToolbarsRight/Draw/Draw.tsx` — `handleChange`                                    | the `savedDrawPerPen` write                                    |
+| `Draw.tsx` — the Size handler                             | `src/components/ToolbarsRight/Draw/Draw.tsx` — `handleSizeChange`                                | `handleSizeChange`                                             |
+| `Draw.tsx` — the Opacity handler                          | `src/components/ToolbarsRight/Draw/Draw.tsx` — `handleAlphaChange`                               | `handleAlphaChange`                                            |
+| `Draw.tsx` — the `useStore()` call                        | `src/components/ToolbarsRight/Draw/Draw.tsx` — the foreground-colour sync `useEffect()`          | the foreground-colour sync effect                              |
+| `Paint.tsx` — the Size label                              | `src/components/ToolbarsRight/Paint/Paint.tsx` — the `${toolName}-mode` select in `PaintToolbar` | the paint bar's working `Mode` select (the stale site is Size) |
+| `toolbar-mapping.ts` — the tile above the Brush group     | `toolbar-mapping.ts` — the `{ label: 'Brush Tool', … }` tile                                     | the Brush tile                                                 |
 
 The first pass's table follows, unchanged:
 
-| Was                 | Now                 | What is there                             |
-| ------------------- | ------------------- | ----------------------------------------- |
-| `draw.ts:55`        | `draw.ts:69`        | the `PaintToolArgs` `Omit`                |
-| `draw.ts:74`        | `draw.ts:87`        | `ctx.strokeStyle = color`                 |
-| `draw.ts:77`        | `draw.ts:91`        | `ctx.globalAlpha = alpha`                 |
-| `util/draw.ts:162`  | `util/draw.ts:194`  | `hexToRgb(args.color)` inside `drawSpray` |
-| `settings.ts:32-36` | `settings.ts:37-41` | the `savedDrawPerPen` record              |
-| `settings.ts:33-35` | `settings.ts:38-40` | the three per-pen alphas                  |
-| `settings.ts:63-69` | `settings.ts:68-74` | the `defaultSettings.draw` block          |
+| Where the stale citation pointed                  | The anchor that replaces it                      | What is there                             |
+| ------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| `src/tools/draw.ts` — the args type               | `src/tools/draw.ts` — `PaintToolArgs`            | the `PaintToolArgs` `Omit`                |
+| `src/tools/draw.ts` — an earlier renderer line    | `src/tools/draw.ts` — `setupDrawCtx()`           | `ctx.strokeStyle = color`                 |
+| `src/tools/draw.ts` — the same region             | `src/tools/draw.ts` — `setupDrawCtx()`           | `ctx.globalAlpha = alpha`                 |
+| `src/util/draw.ts` — a doc comment                | `src/util/draw.ts` — `drawSpray`                 | `hexToRgb(args.color)` inside `drawSpray` |
+| `src/tools/settings.ts` — the per-pen type alias  | `src/tools/settings.ts` — `savedDrawPerPen`      | the `savedDrawPerPen` record              |
+| `src/tools/settings.ts` — the per-pen records     | `src/tools/settings.ts` — `savedDrawPerPen`      | the three per-pen alphas                  |
+| `src/tools/settings.ts` — above `defaultSettings` | `src/tools/settings.ts` — `defaultSettings.draw` | the `defaultSettings.draw` block          |
 
 The `draw.ts` drift matters more than the rest, because two of those citations are load-bearing for
-this pass: the E4 finding's own evidence is `src/util/draw.ts:151-154` plus `src/tools/draw.ts:91`,
-and the table previously cited `:77` for the `globalAlpha` the divergence turns on. A `file.ts:NNN`
-in a handoff is only useful if it still resolves, and a `grep` sweep does not catch this — the text
-at the stale line still reads plausibly.
+this pass: the E4 finding's own evidence is `src/util/draw.ts` — `drawPen()` — plus
+`src/tools/draw.ts` — `setupDrawCtx()`, and the table previously cited a different line for the
+`globalAlpha` the divergence turns on. A source coordinate in a handoff
+is only useful if it still resolves, and a `grep` sweep does not catch this — the text
+at the stale site still reads plausibly.
 
 ## Incidental observation, not fixed here
 
-`src/tools/draw.ts:15-16` contains a duplicated `/**` — two consecutive block-comment openers, the
+`src/tools/draw.ts` — the doc comment above the `composite` field in `DrawToolArgs` — contains a
+duplicated `/**`, two consecutive block-comment openers, the
 first of which swallows the second as comment text. It parses (JavaScript block comments do not
 nest), so nothing fails; the effect is that the `composite` field's doc comment is malformed from
-its first line. Line numbers are unaffected, so no citation into this file moves. Flagged because
+its first line. The surrounding declarations are unaffected, so no reference into this file moves.
+Flagged because
 this file is load-bearing for the Draw description and for the `PaintToolArgs` derivation, and the
 malformed comment is the kind of thing an agent re-deriving a citation from a doc comment would
 trip over.

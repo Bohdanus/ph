@@ -42,6 +42,13 @@ const EXPECTED_WRITERS: readonly WriterSite[] = [
   },
   {
     file: 'src/contexts/useLayer.ts',
+    symbol: '_addLayer',
+    action: 'COMMIT_DOCUMENT_EDIT',
+    writerClass: 'conversion-only',
+    reason: 'Background conversion replaces the lone bedrock record through legacy replay',
+  },
+  {
+    file: 'src/contexts/useLayer.ts',
     symbol: 'updateLayerByTool',
     action: 'COMMIT_DOCUMENT_EDIT',
     writerClass: 'conversion-only',
@@ -91,7 +98,7 @@ const EXPECTED_WRITERS: readonly WriterSite[] = [
   },
   {
     file: 'src/contexts/useLayer.ts',
-    symbol: 'mergeAllLayers',
+    symbol: 'mergeLayers',
     action: 'COMMIT_DOCUMENT_EDIT',
     writerClass: 'conversion-only',
     reason: 'the raster merge is source-backed but can fall back to conversion',
@@ -335,7 +342,7 @@ describe('history writer census', () => {
       'conversion-only': writers.filter((writer) => writer.writerClass === 'conversion-only').length,
       'reconverts entirely': writers.filter((writer) => writer.writerClass === 'reconverts entirely').length,
     };
-    expect(counts).toEqual({ 'durable-routed': 6, 'conversion-only': 7, 'reconverts entirely': 3 });
+    expect(counts).toEqual({ 'durable-routed': 6, 'conversion-only': 8, 'reconverts entirely': 3 });
     console.info(`S9 history-writer census: ${writers.length} writers`, counts);
   });
 

@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_POLYGON_SIDES,
   drawShape,
   isFigureType,
+  MAX_POLYGON_SIDES,
+  MIN_POLYGON_SIDES,
+  polygonSides,
   normalizeFigure,
   normalizeShapeGeometry,
   setShapeCtx,
@@ -11,6 +15,26 @@ import {
 } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import type { CreatorToolParams } from '../toolProcessors.ts';
+import { defaultSettings } from '../settings.ts';
+
+/**
+ * The six tool names the shape family registers under, as an INDEPENDENT literal.
+ *
+ * Sourced from `defaultSettings` in the assertions below rather than imported from the module
+ * under test, so a list that lost a name fails here instead of quietly shrinking the sweep. The
+ * tool name and the figure are different vocabularies — `ellipse` is the tool and `oval` is its
+ * figure — so neither can be derived from `FigureType`.
+ */
+const SHAPE_FAMILY_TOOL_NAMES = ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
+
+/**
+ * Every seeded default that carries a `figure`, which is the shape family and nothing else:
+ * a tool with a figure of its own is one of these six.
+ */
+const seededShapeToolNames = Object.entries(defaultSettings)
+  .filter(([, args]) => 'figure' in args)
+  .map(([name]) => name)
+  .sort();
 
 const baseArgs: ShapeToolArgs = {
   toolName: 'shape',
@@ -420,6 +444,24 @@ describe('shapeGeometryBounds', () => {
   });
 });
 
+describe('the shape family', () => {
+  it('is exactly the set of tools the seeded defaults give a figure', () => {
+    // The cross-check that makes the sweeps below mean something: `toolsMap` registers one image
+    // processor for all six names, so the family is also what one options bar and one commit path
+    // serve. A tool added here and to the defaults without the other list would be missed.
+    expect(seededShapeToolNames).toEqual([...SHAPE_FAMILY_TOOL_NAMES].sort());
+    expect(seededShapeToolNames).toHaveLength(6);
+  });
+
+  it('separates tool names from figures, which are a different list', () => {
+    // `oval` is the figure and `ellipse` the tool; neither list contains the other's odd member,
+    // which is the trap a guard derived from `FigureType` would fall into.
+    expect(seededShapeToolNames).not.toContain('oval');
+    expect(isFigureType('ellipse')).toBe(false);
+    expect(isFigureType('oval')).toBe(true);
+  });
+});
+
 describe('drawShape', () => {
   it('draws nothing without start or end', () => {
     const ctx = createCtx();
@@ -596,6 +638,73 @@ describe('drawShape', () => {
     expect(ctx.closePath).toHaveBeenCalled();
   });
 
+  /*
+   * The side count is the one shape argument the renderer used to hardcode, so
+   * these two describes are the whole reason the field can be trusted: the
+   * normalizer bounds what reaches the loop, and the loop's vertex count is what
+   * proves the argument arrived.
+   */
+
+  describe("the Polygon's Sides", () => {
+    it('draws as many vertices as the field asks for', () => {
+      // 8 sides means 7 lineTo calls plus the moveTo, because the loop starts at
+      // -PI/2 and the closing vertex is the one already on the path.
+      for (const sides of [3, 5, 6, 8, 12]) {
+        const ctx = createCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'polygon',
+          sides,
+          start: { x: 0, y: 0 },
+          end: { x: 20, y: 20 },
+        });
+        expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+        expect(ctx.lineTo).toHaveBeenCalledTimes(sides - 1);
+      }
+    });
+
+    it('leaves the triangle at three whatever the field says', () => {
+      // The field is offered on the polygon figure only, but the value is
+      // persisted per figure in one shared table, so a sides that survives a
+      // figure switch must not be able to bend the triangle.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'triangle',
+        sides: 9,
+        start: { x: 0, y: 0 },
+        end: { x: 20, y: 20 },
+      });
+      expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to the seeded count when the field is absent or unusable', () => {
+      // Absent is the pre-field document and a store written before Sides existed.
+      expect(polygonSides(undefined)).toBe(DEFAULT_POLYGON_SIDES);
+      // Unusable is every way a persisted or hand-edited value can be nonsense,
+      // and the loop divides by this result, so each would be a wrong polygon or
+      // a NaN path rather than a default.
+      expect(polygonSides(Number.NaN)).toBe(DEFAULT_POLYGON_SIDES);
+      expect(polygonSides(Number.POSITIVE_INFINITY)).toBe(DEFAULT_POLYGON_SIDES);
+      expect(polygonSides(0)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(-4)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(2)).toBe(MIN_POLYGON_SIDES);
+      expect(polygonSides(10_000)).toBe(MAX_POLYGON_SIDES);
+      // And a fractional count rounds, because the loop indexes an angle with it.
+      expect(polygonSides(5.4)).toBe(5);
+      expect(polygonSides(5.6)).toBe(6);
+    });
+
+    it('draws the fallback rather than throwing when the field is absent', () => {
+      // The normalizer is not the only thing standing between a bad value and the
+      // loop: a field the renderer ignored entirely would satisfy the normalizer's
+      // tests and still draw a pentagon for every input.
+      const ctx = createCtx();
+      drawShape(ctx, { ...baseArgs, figure: 'polygon', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
+      expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
+    });
+  });
+
   it('fills only when hasFill is set and toolMode is not path', () => {
     const filled = createCtx();
     drawShape(filled, {
@@ -653,6 +762,32 @@ describe('drawShape', () => {
       expect(ctx.fillRect, figure).not.toHaveBeenCalled();
     });
 
+    it('does not fill a corner-rounded rectangle marked filled that has no background colour', () => {
+      // The `it.each` above reaches the rectangle only through the axis-aligned fast path, where
+      // `cornerRadius` is absent and `radius` is 0, so it never enters the rounded branch. That
+      // branch gates its fill separately (`shape.ts`: `if (hasFill) ctx.fill();` after
+      // `roundedRectPath`), so the `hasFill` guard there is a second, independently removable line
+      // that nothing else in this file exercises: every other cornerRadius case draws an unfilled
+      // rectangle, and an unfilled one cannot tell a suppressed fill from a fill it never wanted.
+      const ctx = createCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'rectangle',
+        cornerRadius: 8,
+        hasFill: true,
+        backgroundColor: null,
+        start: { x: 0, y: 0 },
+        end: { x: 10, y: 10 },
+      });
+
+      expect(ctx.fill).not.toHaveBeenCalled();
+      expect(ctx.fillRect).not.toHaveBeenCalled();
+      // The outline is still drawn, and only through the path primitive: `strokeRect` here would be
+      // the fast path, which a positive radius must never take.
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+      expect(ctx.strokeRect).not.toHaveBeenCalled();
+    });
+
     it.each(firableFigures)('still fills a %s marked filled that has a background colour', (figure) => {
       // A radius-0 rectangle fills through `fillRect` and the rest through `fill`, so the method
       // is named per figure rather than asserted as a set -- a rectangle passing on `fill` alone
@@ -676,7 +811,9 @@ describe('drawShape', () => {
       // it takes the axis-aligned fast path at `shape.ts` and strokes with `strokeRect`, so an
       // assertion on `ctx.stroke` here would pass for the wrong reason on three figures and fail
       // on the fourth. A guard that removed the whole figure would be caught by this, not by the
-      // two above.
+      // two above. Asserting the named primitive alone is one-sided, though: a mutation that made
+      // a figure outline BOTH primitives, or stroke twice, would still pass, so each case pins the
+      // count on its own primitive and the absence of the other.
       const cases = [
         { figure: 'rectangle', cornerRadius: 0, strokeMethod: 'strokeRect' },
         { figure: 'rectangle', cornerRadius: 4, strokeMethod: 'stroke' },
@@ -697,7 +834,14 @@ describe('drawShape', () => {
           end: { x: 10, y: 10 },
         });
 
-        expect(ctx[strokeMethod], `${figure} r=${cornerRadius}`).toHaveBeenCalled();
+        // The one primitive this case does not outline. Naming the unused half of the pair rather
+        // than leaving it to the reader is what makes the absence an assertion instead of an
+        // inference from which method happened to be listed.
+        const otherStrokeMethod = strokeMethod === 'strokeRect' ? 'stroke' : 'strokeRect';
+        const label = `${figure} r=${cornerRadius}`;
+
+        expect(ctx[strokeMethod], label).toHaveBeenCalledTimes(1);
+        expect(ctx[otherStrokeMethod], label).not.toHaveBeenCalled();
       }
     });
   });
@@ -772,12 +916,19 @@ function createBracketedCtx() {
   const stack: State[] = [];
   /**
    * The writer state in effect at the moment a paint op ran. A bracket bounds the state without
-   * neutralising the paint, so the alpha a stroke was committed at can only be read here — after
-   * the call the context holds the caller's value whether or not anything was written.
+   * neutralising the paint, so the alpha and the colours a stroke was committed at can only be read
+   * here — after the call the context holds the caller's value whether or not anything was written,
+   * so a post-hoc read of `strokeStyle` is always `''` and would pass for any colour at all.
    */
-  const observedAtPaint: { globalAlpha: number } = { globalAlpha: 1 };
+  const observedAtPaint: { globalAlpha: number; strokeStyle: string; fillStyle: string } = {
+    globalAlpha: 1,
+    strokeStyle: '',
+    fillStyle: '',
+  };
   const recordPaint = () => {
     observedAtPaint.globalAlpha = state.globalAlpha;
+    observedAtPaint.strokeStyle = state.strokeStyle;
+    observedAtPaint.fillStyle = state.fillStyle;
   };
 
   const ctx = {
@@ -907,5 +1058,66 @@ describe('shape processor', () => {
     expect(state.strokeStyle).toBe('');
     expect(state.lineWidth).toBe(1);
     expect(state.dash).toEqual([]);
+  });
+
+  /**
+   * The committed layer is what the options bar's mirrored colours are FOR, so this is the end of
+   * the chain the mirror effect starts: whatever the panel publishes as `color`/`backgroundColor`
+   * has to reach the paint, for all six tool names and not only for the one the panel was opened
+   * under. Swept rather than asserted once, because a case naming only `shape` passes while the
+   * other five commit black.
+   *
+   * Each colour is read at the paint op, never after the call: `shape()` brackets the writer, so a
+   * post-call `strokeStyle` is `''` for every input and the assertion would pass for a processor
+   * that ignored its arguments entirely.
+   */
+  describe('paints with the colours carried in the arguments of all six tools', () => {
+    const STROKE = '#ff8800';
+    const FILL = '#0044ff';
+
+    it.each(SHAPE_FAMILY_TOOL_NAMES)('strokes %s in its own colour rather than the seeded black', (toolName) => {
+      const { ctx, observedAtPaint } = createBracketedCtx();
+      stubOffscreenCanvas(ctx);
+      const args = {
+        ...baseArgs,
+        toolName,
+        color: STROKE,
+        backgroundColor: FILL,
+        hasFill: true,
+        start: { x: 4, y: 6 },
+        end: { x: 30, y: 28 },
+      } as ShapeToolArgs;
+
+      shape(creatorParams)(args);
+
+      expect(observedAtPaint.strokeStyle).toBe(STROKE);
+      // The colour every one of the six defaults is seeded with, so a processor that fell back to
+      // it — or to a constant of its own — cannot pass by painting something merely non-default.
+      expect(observedAtPaint.strokeStyle).not.toBe('#000000');
+      // The fill half, read at the same paint op. `line` never fills, but `setShapeCtx` writes the
+      // fill style before the figure branch, so the colour a filled sibling would use is here.
+      expect(observedAtPaint.fillStyle).toBe(FILL);
+    });
+
+    it.each(SHAPE_FAMILY_TOOL_NAMES)('does not fill %s whose arguments carry no background colour', (toolName) => {
+      // The colourless half of the pair above, on every tool: a fill with nothing to fill with is
+      // the stale fill the `save`/`restore` bracket exists around, and it must stay suppressed.
+      const { ctx } = createBracketedCtx();
+      stubOffscreenCanvas(ctx);
+      const args = {
+        ...baseArgs,
+        toolName,
+        color: STROKE,
+        backgroundColor: null,
+        hasFill: true,
+        start: { x: 4, y: 6 },
+        end: { x: 30, y: 28 },
+      } as ShapeToolArgs;
+
+      shape(creatorParams)(args);
+
+      expect(ctx.fill).not.toHaveBeenCalled();
+      expect(ctx.fillRect).not.toHaveBeenCalled();
+    });
   });
 });

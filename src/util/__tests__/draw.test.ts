@@ -33,6 +33,21 @@ describe('pointsBoundingPos', () => {
     });
     expect(result).toEqual({ x: -3, y: -3, width: 16, height: 16 });
   });
+
+  // The degenerate input, and the only reachable one: a click with the Draw tool pushes exactly
+  // one point on pointerdown (`DrawToolArea.tsx:129`) and bounds that array on release
+  // (`:133`-`:134`), so `pos` is the whole layer crop of a single-point gesture. The extent is
+  // therefore `0 + 2 * lineWidth` on both axes — the stroke's own diameter, and nothing else.
+  //
+  // Broken by: a guard that treats one point as "no extent" and returns a zero-sized box, which
+  // is the shape such a guard is usually written in. The layer would commit with
+  // `width: 0, height: 0` and the click-dot would be invisible, while every other case in this
+  // describe stays green — the two above pass three and two points, and
+  // `DrawToolArea.test.tsx`'s `createLayerFromTool` assertions use strokes of 3 and 2 points.
+  it('pads a single point by the stroke diameter rather than reporting no extent', () => {
+    const result = pointsBoundingPos({ points: [{ x: 50, y: 50 }], lineWidth: 2 });
+    expect(result).toEqual({ x: 48, y: 48, width: 4, height: 4 });
+  });
 });
 
 describe('bezierSmoothedLine', () => {

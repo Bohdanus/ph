@@ -12,6 +12,10 @@ export type DurableComposite = Readonly<{
   bitmap: BitmapSource;
   frame: DocumentFrame;
   layers: Readonly<Record<string, MaterializedLayer>>;
+  takeLayers: () => Readonly<{
+    layers: Readonly<Record<string, MaterializedLayer>>;
+    release: () => void;
+  }>;
   release: () => void;
 }>;
 
@@ -72,7 +76,10 @@ export async function composeDurableDocument(
     for (const layerId of orderedLayers(replay)) {
       const replayLayer = replay.layers[layerId];
       const layer = materialized.layers[layerId];
-      if (!replayLayer || !layer || !replayLayer.snapshot.visible) continue;
+      if (!replayLayer || !replayLayer.snapshot.visible) continue;
+      if (!layer) {
+        throw new Error(`Unable to compose durable layer ${layerId}: materialization was refused`);
+      }
 
       context.save();
       try {
@@ -96,15 +103,26 @@ export async function composeDurableDocument(
   }
 
   let released = false;
+  let layersDetached = false;
+  let layersReleased = false;
+  const releaseLayers = () => {
+    if (layersReleased) return;
+    layersReleased = true;
+    materialized.release();
+  };
   return {
     bitmap,
     frame,
     layers: materialized.layers,
+    takeLayers: () => {
+      layersDetached = true;
+      return { layers: materialized.layers, release: releaseLayers };
+    },
     release: () => {
       if (released) return;
       released = true;
       closeOwnedBitmap(bitmap);
-      materialized.release();
+      if (!layersDetached) releaseLayers();
     },
   };
 }

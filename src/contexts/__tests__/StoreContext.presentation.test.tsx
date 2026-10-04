@@ -2,13 +2,19 @@ import { act, render } from '@testing-library/react';
 import { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { type StoreData, type StoreDispatch, StoreProvider, useStore } from '../StoreContext.tsx';
+import {
+  durablePresentationIsRendererIdentical,
+  type StoreData,
+  type StoreDispatch,
+  StoreProvider,
+  useStore,
+} from '../StoreContext.tsx';
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { BitmapSource } from '../general-types.ts';
-import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -80,9 +86,48 @@ async function promote(store: StoreData, requests: Parameters<StoreData['promote
   });
 }
 
+/** Navigates history: the second way a layer can leave the live record. */
+function replayTo(dispatch: StoreDispatch, layers: LayersRecord, deletedLayers: LayersRecord, cursor = 0) {
+  act(() => {
+    dispatch({
+      type: 'APPLY_HISTORY_REPLAY',
+      payload: {
+        updates: { layers, deletedLayers, activeLayerId: null },
+        timeline: { entries: [baselineItem(layers, 'baseline')], cursor, branchRevision: 0 },
+      },
+    });
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('durable render presentation guard', () => {
+  it('accepts a cache only when the renderer would not reapply logical presentation', () => {
+    const existing = createMockLayer({ id: layerId, pos: { x: 10, y: 20, width: 100, height: 50 } });
+    const replayLayer = { operations: [] as readonly [], snapshot: { source: { kind: 'raster' as const } } };
+
+    expect(durablePresentationIsRendererIdentical(replayLayer as never, existing, existing.pos)).toBe(true);
+    expect(
+      durablePresentationIsRendererIdentical(replayLayer as never, existing, { ...existing.pos, width: 101 })
+    ).toBe(false);
+    expect(
+      durablePresentationIsRendererIdentical(
+        { ...replayLayer, operations: [{ kind: 'apply-filter' }] } as never,
+        existing,
+        existing.pos
+      )
+    ).toBe(false);
+    expect(
+      durablePresentationIsRendererIdentical(
+        { ...replayLayer, snapshot: { source: { kind: 'vector' as const } } } as never,
+        existing,
+        existing.pos
+      )
+    ).toBe(false);
+  });
 });
 
 describe('PROMOTE_LAYER_PRESENTATIONS', () => {
@@ -241,6 +286,152 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
 
     expect(store().layers[layerId].bitmap).toBe(bitmap);
     expect(store().layers[layerId].tmpCanvas).toBeNull();
+  });
+
+  it('retires a published cache when its layer is removed, and leaves a borrowed raster alone', async () => {
+    // Layer removal nulls both presentation fields on the record it files under
+    // `deletedLayers`, so the presentation scope's set is the only remaining owner
+    // of the bitmap it published. A promote → delete cycle otherwise strands one
+    // full-raster ImageBitmap per layer for the lifetime of the provider, because
+    // a later promotion builds `superseded` from the *current* layer and can never
+    // reach a deleted one.
+    const owned = createMockImageBitmap(100, 80);
+    const borrowed = createMockImageBitmap(10, 10);
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => owned)
+    );
+    const staged = canvas();
+    const { store, dispatch } = renderWithProbe();
+    const published = { ...layerWithCanvas(layerId, staged), bitmap: borrowed };
+    replaceDocument(dispatch(), { [layerId]: published });
+    await promote(store(), { layerId, canvas: staged });
+    expect(store().layers[layerId].bitmap).toBe(owned);
+
+    const removed = store().layers[layerId];
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: {
+            layers: {},
+            deletedLayers: { [layerId]: { ...removed, bitmap: null, tmpCanvas: null } },
+            activeLayerId: null,
+          },
+          historyItem: { id: 'remove-1', actionName: REMOVE_ACTION, layerId, args: {} },
+        },
+      });
+    });
+
+    expect(store().layers[layerId]).toBeUndefined();
+    expect(owned.close).toHaveBeenCalledTimes(1);
+    // A borrowed raster from an import or a replay is not owned by this boundary.
+    expect(borrowed.close).not.toHaveBeenCalled();
+  });
+
+  it('does not close a restored layer cache when a later removal re-files it', async () => {
+    // `deletedLayers` accumulates across removals AND survives undo: `useHistory`
+    // forwards it verbatim while replay re-creates the removed layer. So it keeps
+    // naming a layer that is live again, with a freshly promoted cache. Retiring by
+    // name would close exactly that bitmap, and a closed ImageBitmap makes
+    // `ctx.drawImage` throw, which stops the layer rendering. Retirement is
+    // therefore driven off the live set, not off `deletedLayers`.
+    const firstA = createMockImageBitmap(100, 80);
+    const restoredA = createMockImageBitmap(100, 80);
+    const firstB = createMockImageBitmap(60, 40);
+    const queue = [firstA, firstB, restoredA];
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => queue.shift())
+    );
+    const canvasA = canvas();
+    const canvasB = canvas(60, 40);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), {
+      [layerId]: layerWithCanvas(layerId, canvasA),
+      'layer-2': layerWithCanvas('layer-2', canvasB),
+    });
+    await promote(store(), [
+      { layerId, canvas: canvasA },
+      { layerId: 'layer-2', canvas: canvasB },
+    ]);
+    expect(store().layers[layerId].bitmap).toBe(firstA);
+
+    const removedA = store().layers[layerId];
+    const removal = { [layerId]: { ...removedA, bitmap: null, tmpCanvas: null } };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: {
+            layers: { 'layer-2': store().layers['layer-2'] },
+            deletedLayers: removal,
+            activeLayerId: null,
+          },
+          historyItem: { id: 'remove-a', actionName: REMOVE_ACTION, layerId, args: {} },
+        },
+      });
+    });
+    expect(firstA.close).toHaveBeenCalledTimes(1);
+
+    // Undo re-creates layer-1, and the accumulated `deletedLayers` still names it.
+    const revived = { ...removedA, bitmap: null, tmpCanvas: canvas() };
+    replayTo(dispatch(), { [layerId]: revived, 'layer-2': store().layers['layer-2'] }, removal);
+    expect(store().layers[layerId]).toBeDefined();
+
+    await promote(store(), { layerId, canvas: revived.tmpCanvas });
+    expect(store().layers[layerId].bitmap).toBe(restoredA);
+
+    // Removing a DIFFERENT layer re-files layer-1 in `deletedLayers` again.
+    const removedB = store().layers['layer-2'];
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: {
+            layers: { [layerId]: store().layers[layerId] },
+            deletedLayers: { ...removal, 'layer-2': { ...removedB, bitmap: null, tmpCanvas: null } },
+            activeLayerId: layerId,
+          },
+          historyItem: { id: 'remove-b', actionName: REMOVE_ACTION, layerId: 'layer-2', args: {} },
+        },
+      });
+    });
+
+    // The departed layer's cache is KEPT, because the history entry the undo
+    // landed still aliases it: `collectLivePresentationBitmaps` walks
+    // `entry.documentSource.layers`, and `history-replay` reads that record back,
+    // so closing it would be a use-after-close on the replay authority rather
+    // than a leak. Liveness, not the name in `deletedLayers`, decides.
+    expect(store().layers['layer-2']).toBeUndefined();
+    expect(firstB.close).not.toHaveBeenCalled();
+    // ...and the live, restored layer keeps a usable cache. This is the half a
+    // name-driven retirement gets wrong: `deletedLayers` still names layer-1, so
+    // retiring by name would close the cache of a layer that is live again.
+    expect(restoredA.close).not.toHaveBeenCalled();
+    expect(store().layers[layerId].bitmap).toBe(restoredA);
+  });
+
+  it('closes a layer cache that a redo drops from the record', async () => {
+    // A replay is the other way a layer leaves the live record. Without the same
+    // retirement on `APPLY_HISTORY_REPLAY`, a redo past a removal strands the
+    // bitmap exactly the way a delete does.
+    const owned = createMockImageBitmap(100, 80);
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => owned)
+    );
+    const staged = canvas();
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, staged) });
+    await promote(store(), { layerId, canvas: staged });
+    expect(store().layers[layerId].bitmap).toBe(owned);
+
+    // A redo whose cursor predates the layer's creation drops it from the record.
+    replayTo(dispatch(), {}, {}, -1);
+
+    expect(store().layers[layerId]).toBeUndefined();
+    expect(owned.close).toHaveBeenCalledTimes(1);
   });
 });
 

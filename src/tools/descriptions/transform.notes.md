@@ -20,8 +20,9 @@ way. Three reasons not to change it here. The strings are not contortions: "Leve
 `Image > Adjustments` command, not a Tools panel Tool" is an accurate, informative sentence, and
 the capital `T` is what distinguishes Photoshop's own "Tool" from the app's generic tile label. And
 the three strings are **consumed by a generated artifact outside this family's ownership**:
-`docs/TOOLS.md` prints them verbatim, and
-`scripts/__tests__/tool-descriptions.test.mjs:111` byte-compares that file against the generator's
+`docs/TOOLS.md` prints them verbatim, and the
+`it('writes docs/TOOLS.md exactly as the generator produces it')` case in
+`scripts/__tests__/tool-descriptions.test.mjs` byte-compares that file against the generator's
 output, so editing the string without regenerating the doc is a failing test rather than a tidy-up.
 `docs/TOOLS.md` has to be regenerated for the substantive edits in this pass anyway, so if the
 coordinator wants the wording changed it should be changed there, once, deliberately — not as a
@@ -120,10 +121,11 @@ sentence anyone has written about it: the spring-loaded trick "is a great way to
 reset a tool if perhaps the tool's blend mode, feather, or other option was changed the last time
 you used it" — which only makes sense if the state is per-tool and persistent.
 
-**The app matches Photoshop on the stickiness.** `useCurrentTool.tsx:62` calls `saveLastSettings`
-on every argument write and `useCurrentTool.tsx:32-34` reads `lastSavedSettings[toolName]` back,
-so a tool's sliders are exactly where you left them when you switch away and return. That is a
-genuine match, and it is worth saying so rather than only listing absences. What the app lacks is
+**The app matches Photoshop on the stickiness.** `_setToolArgs()` in `useCurrentTool.tsx` calls
+`saveLastSettings` on every argument write and `cloneSavedToolArgs()` in the same file reads
+`lastSavedSettings[toolName]` back, so a tool's sliders are exactly where you left them when you
+switch away and return. That is a genuine match,
+and it is worth saying so rather than only listing absences. What the app lacks is
 the _reset hatch_: there is no Tool Preset Picker, and no per-tool reset outside the three
 adjustment panels that carry their own Reset button. So a tool can get into a state Photoshop would
 let you escape in one click, and the app offers no equivalent.
@@ -140,14 +142,14 @@ Adobe's, not the third-party figure it was previously filed as
 milliseconds"). **The number still is not in the data file**, and that is a separate decision from
 whether it is sourced: the `V` row describes the gesture, and a preference's delay is not part of
 what the key does. In this app the `shortcut` field on a toolbar entry is **display-only and
-binds nothing**: its only two consumers in all of `src/` are `SidebarLeft.tsx:621`, which passes
-it to `ToolTooltip`, and `SidebarLeft.tsx:951`, which renders it as a `<kbd>` badge. (Both numbers
-were wrong in the previous version of this file — `:258` is a comment inside the `railLayout`
-block and `:431` is the start of `closeFlyout`; a `grep -rn "\.shortcut\b"` over `src`, `e2e` and
-`toolbar-mapping.ts` confirms those two are the whole set.) The app does
-implement letter-key activation, but from a separate hand-written table in
-`AppKeyboardShortcuts.tsx` where `V` is the registration at `:302-307`, whose handler
-(`:306`) is `() => goToTool('reposition')` — and that registration has no keyup half, so
+binds nothing**: its only two consumers in all of `src/` are both inside `renderToolGroup()` in
+`SidebarLeft.tsx` — the `shortcut` prop it passes to `ToolTooltip`, and the `<kbd>` badge it
+renders on the flyout row. (Both citations were wrong in the previous version of this file — the
+first was a comment inside the `railLayout` block and the second the start of `closeFlyout`; a
+`grep -rn "\.shortcut\b"` over `src`, `e2e` and `toolbar-mapping.ts` confirms those two are the
+whole set.) The app does implement letter-key activation, but from a separate hand-written table in
+`AppKeyboardShortcuts.tsx` where `V` is a `useKeyDownShortcut` registration whose handler is
+`() => goToTool('reposition')` — and that registration has no keyup half, so
 there is no spring-loaded behaviour to have, and therefore no delay to configure.
 
 ## `ctx.filter` — the string, and which canvas it lands on
@@ -155,85 +157,127 @@ there is no spring-loaded behaviour to have, and therefore no delay to configure
 The research corpus dated 2026-09-26 called a `ctx.filter` implementation a shipping blocker.
 **One thing about it changed, one thing was never true, and one is unchanged.**
 
-Changed: the template is not copied. `src/tools/functions.ts:60` and `:66` own the two filter
-strings, and every consumer routes through them, so there is one string per tool rather than
-several that could drift.
+Changed: the template is not copied. `buildColorsFilter()` and `buildLevelsFilter()` in
+`src/tools/functions.ts` own the two filter strings, and every consumer routes through them, so
+there is one string per tool rather than several that could drift.
 
 **Never true, and this is the correction that matters: the `OffscreenCanvas` processors are not on
 the editing, preview or commit path for `levels` or `color`.** Both are registered
-`commit: 'layer-operation'` (`src/tools/toolProcessors.ts:126` and `:132`), and
-`src/contexts/useLayer.ts:568-577` handles that kind by appending an operation to the layer's
-`operations` array, nulling `tmpCanvas` and **returning** — the append itself is at `:571` — while
-the `processor.imageProcessor(...)` call is at `:603`, past that return, and nothing in the editing
-path reaches it. Undo and redo
-take the same route (`src/contexts/history-replay.ts:172-181`, which appends the same operation
+`commit: 'layer-operation'` (the `color` and `levels` entries of `toolProcessors` in
+`src/tools/toolProcessors.ts`), and the `commit: 'layer-operation'` branch of `tempUpdateLayer()`
+in `src/contexts/useLayer.ts` handles that kind by appending an operation to the layer's
+`operations` array, nulling `tmpCanvas` and **returning** — the append being that branch's
+`createLayerOperation` spread — while the `processor.imageProcessor(...)` call further down the
+same function is past that return, and nothing in the editing path reaches it. Undo and redo
+take the same route (the `commit: 'layer-operation'` branch of `replayHistory()` in
+`src/contexts/history-replay.ts`, which appends the same operation
 and continues), so a committed Levels or Colors adjustment is **retained, not destroyed**: the
 layer's own bitmap is never touched, the renderer re-derives the filter from the operations array
-on every frame (`src/contexts/layer-renderer.ts:77`), and no raster of the adjustment is stored
-anywhere. The earlier text in this file called this "the destructive half (research decision D3)"
+on every frame (`drawLayerSource()` in `src/contexts/layer-renderer.ts`), and no raster of the
+adjustment is stored anywhere. The earlier text in this file called this "the destructive half (research decision D3)"
 and described a Safari-inert write on the editing path; both were wrong, and the destructive claim
 was the most user-damaging sentence in the family — it told a user their pixels were gone when
 they are not. **Every `useLayer.ts` line number in the previous version of this paragraph was
-drifted**: it cited `:536-545` for the branch that is at `:568-577`, and `:571` for the
-`imageProcessor` call that is at `:603`.
+drifted**: it cited the wrong place for the `commit: 'layer-operation'` branch, and the wrong place
+for the `imageProcessor` call.
 
-**What the editing path actually uses is an ordinary canvas element.** `drawLayersToCanvas`
-builds a staging canvas with `document.createElement('canvas')`
-(`src/contexts/layer-renderer.ts:120`) and `drawLayerSource` assigns `ctx.filter` from
-`getLayerFilter(layer.operations)` at `:77`, on that `HTMLCanvasElement`'s 2D context. The
-document canvas itself is an `HTMLCanvasElement` (`src/contexts/StoreContext.tsx:84`,
-`useRef<HTMLCanvasElement | null>` at `:771`).
+**What the editing path actually uses is an ordinary canvas element.** `drawLayersToCanvas()` in
+`src/contexts/layer-renderer.ts` builds a staging canvas with `document.createElement('canvas')`
+and `drawLayerSource()` in the same file assigns `ctx.filter` from `getLayerFilter(layer.operations)`
+on that `HTMLCanvasElement`'s 2D context. The document canvas itself is an `HTMLCanvasElement` (the
+`canvasRef: RefObject<HTMLCanvasElement | null>` field of the context value in
+`src/contexts/StoreContext.tsx`, declared as `useRef<HTMLCanvasElement | null>`).
 
 Unchanged, and now correctly scoped: the `OffscreenCanvas` surface is the **durable materializer**
-only. `src/contexts/materialization.ts:52-63` prefers `new OffscreenCanvas(...)` wherever one
-exists, and `filterForOperation` at `:73-89` applies the same string there. The
+only. `createCanvas()` in `src/contexts/materialization.ts` prefers `new OffscreenCanvas(...)`
+wherever one exists, and `filterForOperation()` applies the same string there — the materializer
+reaches it through `evaluatePresentation()` in `src/contexts/presentation-evaluator.ts`. The
 `OffscreenCanvasRenderingContext2D.filter` support Safari has never shipped is therefore a property
-of that surface, not of the canvas the user is editing on. Note also that **no module outside
-`src/contexts/__tests__/` imports `materialization.ts`** — the durable document is a shadow, and
-that materializer is currently reached by its own tests only. `src/tools/levels.ts:12` and
-`src/tools/colors.ts:12` still build the same string into an `OffscreenCanvas` 2D context, and
-both are unreached processors for these two commit kinds; they are cited in the data file because
+of that surface, not of the canvas the user is editing on. Note also that the durable document is
+still a shadow, but the materializer is **no longer reached by its own tests only**: exactly one
+production module imports `materialization.ts`, which is `src/contexts/durable-compositor.ts`, and
+`src/contexts/StoreContext.tsx` mounts that compositor through `composeDurableDocument()` for
+navigation presentation. The single-importer rule is pinned by
+`src/contexts/__tests__/StoreContext.boundary-gates.test.ts`'s `it('routes production durable
+materialization only through the compositor boundary')`. The `levels` processor in
+`src/tools/levels.ts` and the `colors` processor in `src/tools/colors.ts` still build the same
+string into an `OffscreenCanvas` 2D context, and both are unreached processors for these two
+commit kinds; they are cited in the data file because
 they are the registered processors, not because editing runs them.
 
-**The Brightness mapping, stated exactly, because the old note had it inverted.** The re-anchored
-exponential in `src/tools/functions.ts:36-39` is a table, and the table is:
+**The Brightness mapping, stated exactly, because the old note had it inverted.** The
+proportionate curve in `proportionateFactor()` (`src/tools/functions.ts`) is a table over
+Adobe's own travels for this adjustment, and the table is:
 
-| `val`  | factor | emitted  |
-| ------ | ------ | -------- |
-| `-100` | `0`    | `0%`     |
-| `0`    | `1`    | `100%`   |
-| `+100` | `> 1`  | `> 100%` |
+| control    | slider | factor | emitted |
+| ---------- | ------ | ------ | ------- |
+| Brightness | `-150` | `0`    | `0%`    |
+| Brightness | `0`    | `1`    | `100%`  |
+| Brightness | `+150` | `2`    | `200%`  |
+| Contrast   | `-50`  | `0.5`  | `50%`   |
+| Contrast   | `0`    | `1`    | `100%`  |
+| Contrast   | `+100` | `2`    | `200%`  |
 
-So **0 is the neutral**, emitting exactly `brightness(100%) contrast(100%)`, and it is the
-**minimum** of −100 that emits `brightness(0%)`. `src/tools/__tests__/functions.test.ts:31-36`
-pins both literals by name ("emits the neutral as brightness(100%) contrast(100%)", "reaches black:
--100 brightness emits brightness(0%)"). `defaultSettings.levels` is `{ brightness: 0, contrast: 0 }`
-(`src/tools/settings.ts:54`), so the panel at rest applies nothing.
+So **0 is the neutral** on both controls, emitting exactly `brightness(100%) contrast(100%)`, and it is
+**Brightness's** minimum of −150 that emits `brightness(0%)`. The `levels` entry of
+`defaultSettings` in `src/tools/settings.ts` is `{ brightness: 0, contrast: 0 }`, so the panel at
+rest applies nothing.
 
-The test harness defect the corpus also flagged **is** fixed. `src/test/setup.ts:317-320` replaces
+The two spans are not the same number, and the difference is the whole point of the table.
+Brightness divides by its own negative travel, so −150 lands on a factor of exactly `0` — a
+multiply to zero is the one thing `brightness()` does exactly right. Contrast divides by `100`,
+**not** by its own `−50` travel, because its two ends are not the same kind of endpoint:
+Photoshop's own Legacy contrast at `+100` is a measured gain of exactly `2`, and `1 + c/100`
+puts `+100` on that same `2` while leaving `−50` on `0.5`. Dividing by `50` instead would put
+`−50` on a factor of `0`, which is `contrast(0%)` — every pixel becomes the same mid-grey and
+the image carries no information at all. That is precisely the failure Adobe names when it
+warns against Legacy: "this can cause clipping or loss of image detail in highlight or shadow
+areas."
+
+**What "proportionate" is, and where the curve stops.** Adobe's sentence for this adjustment's
+default mode is "In normal mode, Brightness/Contrast applies proportionate (nonlinear)
+adjustments to the image layer, as with Levels and Curves adjustments."
+(<https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html>) Two halves of
+that are claimed here and one is not. **Claimed:** the linear response — a constant factor step
+per slider step, so the same drag feels the same everywhere on the travel rather than gentle at
+one end and abrupt at the other — and the **non-clipping negative half**, which the CSS pipeline
+reproduces exactly on both controls. `brightness(0%..100%)` is a monotone contraction toward
+black and `contrast(0%..100%)` is a monotone contraction about the mid-grey pivot, and neither
+can move a value outside `[0, 1]`. **Not claimed: the nonlinearity.** Adobe pairs "proportionate"
+with "(nonlinear)" and compares the adjustment to Levels and Curves, and its measured response is
+an S — a `+20` brightness reads `10→11`, `128→145`, `250→253`, a set no constant scale and no
+constant offset can produce. CSS `brightness()` is a clamped pure multiply and `contrast()` a
+clamped affine pivot, so every factor above `1` clips: `contrast(f)` clips every input past
+`0.5 + 0.5/f`, and `brightness(f)` cannot create a white that was not already white. Reproducing
+the real curve needs a per-channel lookup table applied per pixel, which is the same absent
+mechanism this file's Levels entry rests on. **That gap is a follow-up, not a claim of parity.**
+
+The test harness defect the corpus also flagged **is** fixed. The `filter` data property in
+`createMockCanvasContext()` (`src/test/setup.ts`) replaces
 the old swallowing setter with a real data property, with the reason in the comment — a getter
 that always returned `''` made every assertion about filter application assert nothing. The
 emitted string is now observable, and `src/tools/__tests__/functions.test.ts` pins the exact
 literals for both tools. What the mock still cannot do is rasterize: the globally installed
-context has no read-back at all (`src/test/setup.ts:327-331`), and the opt-in pixel context
-returns a zero-filled array (`:337`). So the string is pinned and the pixels are not.
+context has no read-back at all (the `createPixelCanvasContext()` doc comment in
+`src/test/setup.ts`), and that opt-in pixel context's `getImageData` returns a zero-filled array.
+So the string is pinned and the pixels are not.
 
 Net for the descriptions: `levels` and `color` are `partial`, and the divergence recorded for each
 is not "the app has fewer controls" but "the app has a different engine in a different color
 space, on a surface that is a plain canvas element rather than the `OffscreenCanvas` the durable
-shadow would use".
+materializer uses".
 
 ## Census
 
 | tool         | options rows | present | partial | inert | missing |
 | ------------ | ------------ | ------- | ------- | ----- | ------- |
 | `reposition` | 9            | 0       | 2       | 0     | 7       |
-| `transform`  | 13           | 1       | 6       | 0     | 6       |
+| `transform`  | 13           | 0       | 6       | 0     | 7       |
 | `levels`     | 12           | 0       | 1       | 0     | 11      |
 | `color`      | 7            | 0       | 1       | 0     | 6       |
 
 **No status changed in this pass, and three summaries did.** `reposition` keeps 9 rows at 2
-`partial`, `transform` 13 at 1 `present` / 6 `partial` / 6 `missing`, `levels` 12 at 1 `partial`,
+`partial`, `transform` 13 at 0 `present` / 6 `partial` / 7 `missing`, `levels` 12 at 1 `partial`,
 `color` 7 at 1 `partial`; every `partial` and `missing` was re-derived against
 `src/tools/settings.ts` and the four `ToolbarsRight` panels rather than carried over, and none of
 them moved. The summaries were rewritten because each asserted something the source does not say.
@@ -257,8 +301,9 @@ the layer under the pointer, and the shared `useRect` overlay does draw corner h
 active layer — without noticing that the behaviour is _unconditional_, which is the whole point.
 A later pass then swung both to `missing` on the reading that the app does not render them. That
 is the opposite error, and the contract settles it: `types.ts` names "a control welded to one of its
-states" as an explicit marker of `partial` on the `implementation` value, and
-`src/tools/descriptions/__tests__/toolDescriptions.test.ts:86` only withholds the `appRef`
+states" as an explicit marker of `partial` on the `implementation` value, and the
+`it('describes every control with a real status and a reference wherever one exists')` case in
+`src/tools/descriptions/__tests__/toolDescriptions.test.ts` only withholds the `appRef`
 requirement from a `missing` row. A checkbox that is permanently on is a behaviour the app has and
 the user cannot turn off, which is a divergence from Photoshop's default, not a capability the app
 lacks. Both rows are therefore `partial` again.
@@ -267,8 +312,9 @@ The Move options bar renders three items (`src/components/ToolbarsRight/Move/Rep
 active layer's name, a Merge all button and a hint), and a search of `src/` and `e2e/` for
 `auto-select` / `autoSelect` / `showTransformControls` finds no control anywhere — the only matches
 are this family's own prose. So there is no _control_ to cite, and the `appRef` on each row is the
-behaviour the app performs instead: `MoveToolArea.tsx:178` for the hit test that resolves and
-activates the layer under the pointer, and `MoveToolArea.tsx:123` for the `useRect({ isMoveTool: true })` call that draws
+behaviour the app performs instead: `MoveToolArea.tsx` — `handlePointerDown()`, at the
+`layerUnderPointerId` hit test that resolves and activates the layer under the pointer, and
+`MoveToolArea.tsx` — at the `useRect({ isMoveTool: true })` call that draws
 the handles. `appNotes` says so on the record, because an `appRef` that is not a rendering of a
 control is otherwise indistinguishable from a mis-derived one.
 
@@ -280,9 +326,10 @@ black point, and its Contrast slider is not the white point, so neither row is a
 and diverges. The table below is corrected to match.
 
 No row is `inert`. `inert` is for state declared in `src/tools/settings.ts` and rendered by no
-component, and all four of these tools' declared state is read by a component that renders it —
-`settings.ts:53` (color), `:54` (levels), `:55-66` (transform) and `:95` (reposition) each back a
-control that exists. The interesting result is the other direction: `levels` and `color` have
+component, and all four of these tools' declared state is read by a component that renders it — the
+`color`, `levels`, `transform` and `reposition` entries of `defaultSettings` in
+`src/tools/settings.ts` each back a control that exists.
+The interesting result is the other direction: `levels` and `color` have
 **zero** `present` rows, which is the honest reading — the app's Levels panel shares no control
 with Photoshop's Levels, and its Colors panel shares none with Black and White.
 
@@ -296,17 +343,17 @@ Distribution**, to get the effect you want." Everything else in the bar has to b
 align, transform and keyboard pages, which is why half of this tool's rows are sourced from pages
 about other features.
 
-| control                    | what it is in Photoshop                                                                                                                       | status  | appRef                                     |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------ |
-| Tool Preset Picker         | Tool icon + flyout at the far left; Control-click for Reset Tool / Reset All Tools. The escape hatch from per-tool stickiness                 | missing |                                            |
-| Auto-Select                | Checkbox; resolves the target by hit test to the topmost layer with pixels under the cursor, rather than moving the active layer              | partial | `src/components/Main/MoveToolArea.tsx:178` |
-| Auto-Select: Group / Layer | Menu beside the checkbox: Layer takes the individual layer, Group takes the whole group it belongs to                                         | missing |                                            |
-| Show Transform Controls    | Checkbox that puts the transform box and handles on the selected layer _without_ entering transform mode; dragging a handle is what starts it | partial | `src/components/Main/MoveToolArea.tsx:123` |
-| Align                      | Six buttons at 2+ selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers, Right Edges                            | missing |                                            |
-| Distribute                 | The distribute row at 3+ selected: the same six commands to space layers evenly, plus the Horizontally and Vertically spacing buttons         | missing |                                            |
-| Align to                   | Selection or Canvas — the control that chooses what the six align buttons align to, reached from the three-dot More control                   | missing |                                            |
-| Width                      | Numeric percent text box for layer width, with the Link icon on by default since 21.0                                                         | missing |                                            |
-| Height                     | Numeric percent text box for layer height, linked to Width                                                                                    | missing |                                            |
+| control                    | what it is in Photoshop                                                                                                                       | status  | appRef                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------ |
+| Tool Preset Picker         | Tool icon + flyout at the far left; Control-click for Reset Tool / Reset All Tools. The escape hatch from per-tool stickiness                 | missing |                                                                                |
+| Auto-Select                | Checkbox; resolves the target by hit test to the topmost layer with pixels under the cursor, rather than moving the active layer              | partial | `MoveToolArea.tsx` — `handlePointerDown()`, the `layerUnderPointerId` hit test |
+| Auto-Select: Group / Layer | Menu beside the checkbox: Layer takes the individual layer, Group takes the whole group it belongs to                                         | missing |                                                                                |
+| Show Transform Controls    | Checkbox that puts the transform box and handles on the selected layer _without_ entering transform mode; dragging a handle is what starts it | partial | `MoveToolArea.tsx` — the `useRect({ isMoveTool: true })` call                  |
+| Align                      | Six buttons at 2+ selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers, Right Edges                            | missing |                                                                                |
+| Distribute                 | The distribute row at 3+ selected: the same six commands to space layers evenly, plus the Horizontally and Vertically spacing buttons         | missing |                                                                                |
+| Align to                   | Selection or Canvas — the control that chooses what the six align buttons align to, reached from the three-dot More control                   | missing |                                                                                |
+| Width                      | Numeric percent text box for layer width, with the Link icon on by default since 21.0                                                         | missing |                                                                                |
+| Height                     | Numeric percent text box for layer height, linked to Width                                                                                    | missing |                                                                                |
 
 **Show Transform Controls** is the row that is easiest to get backwards, and the row that this pass
 corrected. The _Photoshop_ formulation is the one to keep: checking the box does _not_ start a
@@ -317,17 +364,18 @@ Then select Show Transform Controls in the options bar").
 
 The **app** renders no such checkbox, so the behaviour is welded on and the row is `partial` on
 that, not on a control it can point at. It was previously `partial` on the reasoning that "the
-overlay and its handles do render (`MoveToolArea.tsx:123`)" — which conflates the control with the
-overlay, and then a later pass swung it to `missing`, which is the opposite error: `types.ts` names
+overlay and its handles do render (`MoveToolArea.tsx` — the `useRect({ isMoveTool: true })` call)"
+— which conflates the control with the overlay,
+and then a later pass swung it to `missing`, which is the opposite error: `types.ts` names
 "a control welded to one of its states" as a `partial` marker, and a row whose behaviour is
-permanently on is not a capability the app lacks. What renders at `MoveToolArea.tsx:123` is the
-`useRect({ isMoveTool: true })` call that draws a **plain resize rectangle** on whichever layer is
-active, unconditionally: no checkbox gates it, so the citation is the behaviour and not a control,
-and that is what the row's `appRef` names. It is a resize rect — no rotation outside the box, no
+permanently on is not a capability the app lacks. What renders in that same place
+(`MoveToolArea.tsx` — the `useRect({ isMoveTool: true })` call) is a **plain resize rectangle** on
+whichever layer is active, unconditionally: no checkbox gates it, so the citation is the behaviour
+and not a control, and that is what the row's `appRef` names. It is a resize rect — no rotation outside the box, no
 numeric W/H, no reference point. The geometric half of the tool is gone, and with it the two
 things `Cmd+T` and Move are supposed to share. **Auto-Select** is the same shape and is argued at
-length further down: the hit test at `MoveToolArea.tsx:178` always runs, and its `appRef` is that
-line for the same reason.
+length further down: the `layerUnderPointerId` hit test in `handlePointerDown()` always runs, and
+its `appRef` is that call for the same reason.
 
 **The align buttons** are where the pre-existing corpus had a single row of widget names and no
 behaviour, and the behaviour is the interesting part:
@@ -439,11 +487,12 @@ that come closest.
 **The locked-layer claim was inverted, and this is the correction that matters most in this file.**
 It previously said the app "does not consult the locked flag that its own layer model carries, so a
 layer marked locked is still draggable", and called the flag "a PSD round-trip field rather than an
-editing constraint". **Both sentences are false against the current tree.** `isLayerLocked`
-(`src/contexts/useLayer.ts:101`) is the guard, its own doc comment states what the flag means —
-"this layer's PIXELS and POSITION may not change" — and it is checked at **`:334`**, above every
-commit kind, on the commit path, and at **`:535`**, above every commit kind, on the preview path.
-`src/contexts/psd-utils.ts:267-268` writes `locked` back out as composite **and position**
+editing constraint". **Both sentences are false against the current tree.** `isLayerLocked()`
+(`src/contexts/useLayer.ts`) is the guard, its own doc comment states what the flag means —
+"this layer's PIXELS and POSITION may not change" — and it is checked in `updateLayerByTool()`,
+above every commit kind, on the commit path, and in `tempUpdateLayer()`, above every commit kind,
+on the preview path.
+`savePsd()` in `src/contexts/psd-utils.ts` writes `locked` back out as composite **and position**
 protection, so a layer a PSD protected cannot be dragged or resized by the Move tool. **The app
 refuses exactly what Photoshop refuses.** The guard's own sentence "Nothing consulted it" is the
 historical note of the bug the guard was added to fix; the guard is there now.
@@ -452,17 +501,19 @@ What survives, and is the real (smaller) divergence, is **reachability and feedb
 refusal. **No panel renders a lock control**, so the flag only ever arrives on a layer imported from
 a PSD — the user cannot set it in the app. And the refusal is **silent**, where Photoshop names the
 lock (see Unverified #8). The Move path's second refusal is unrelated to `locked`: a press on a
-bedrock layer is dropped and the selection cleared (`MoveToolArea.tsx:199-205`), which is the app's
+bedrock layer is dropped and the selection cleared (the `layer.isBedrock` branch of
+`handlePointerDown()` in `MoveToolArea.tsx`), which is the app's
 stand-in for the background layer Photoshop will not move.
 
 **Implementation: `partial`.** This section previously said `implemented` and the data file says
 `partial`; the data file is the contract and the note was stale. The gesture itself is a single
-committed history entry — `MoveToolArea.tsx:150` calls `updateLayerByTool` once on change-end (the
-`:132` that an earlier version of this file cited is `tempUpdateLayer`, the transient preview, and
-the two are not the same call), and `src/tools/reposition.ts:12` returns `[bitmap, move]` without
-rasterizing, so a move is a position patch and nothing is resampled.
-`src/tools/toolProcessors.ts:114` declares `commit: 'geometry'`,
-which is the right kind for a tool whose output is a rectangle. What holds it back from
+committed history entry — the `onChangeEnd` callback in `MoveToolArea.tsx` calls
+`updateLayerByTool` once on change-end (the `tempUpdateLayer` call an earlier version of this file
+cited is the transient preview, and the two are not the same call), and `reposition` in
+`src/tools/reposition.ts` returns `[bitmap, move]` without rasterizing, so a move is a position
+patch and nothing is resampled. The `reposition` entry of `toolProcessors` in
+`src/tools/toolProcessors.ts` declares `commit: 'geometry'`, which is the right kind for a tool
+whose output is a rectangle. What holds it back from
 `implemented` is the one overlay the app does draw: it renders a resize rect where Photoshop renders
 a transform box, which is a control that contradicts Photoshop rather than one that is merely
 absent. Every _absent_ control on its own is a gap, and gaps do not make a tool `partial`.
@@ -511,21 +562,21 @@ that applies several at once. The app's own grouping is the same idea with a dif
 a set of fixed parameters for the six modes, and the label it happens to carry is not a Photoshop
 menu path.
 
-| control                                      | what it is in Photoshop                                                                     | status  | appRef                                                     |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------- |
-| Width                                        | Numeric percent text box                                                                    | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:254` |
-| Height                                       | Numeric percent text box, linked to Width                                                   | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:269` |
-| Maintain Aspect Ratio (Link)                 | Proportional-scaling toggle, on by default since 21.0; Shift is bound to the same state     | missing |                                                            |
-| Reference point location                     | 3×3 pivot grid, hidden by default; transforms start from the object center                  | missing |                                                            |
-| Rotation                                     | Numeric degrees text box; the same angle comes from dragging outside the box                | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:183` |
-| H                                            | Adobe's H (horizontal skew) degrees text box                                                | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:203` |
-| V                                            | Adobe's V (vertical skew) degrees text box                                                  | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:218` |
-| Switch Between Free Transform And Warp Modes | Button that swaps the box for a warp mesh, plus the Warp pop-up of predefined styles        | missing |                                                            |
-| X                                            | Numeric text box for the horizontal position of the transform reference point               | missing |                                                            |
-| Y                                            | Numeric text box for the vertical position of that same reference point                     | missing |                                                            |
-| Relative Positioning                         | Button that makes X and Y a displacement from the current position rather than a coordinate | missing |                                                            |
-| Commit                                       | The checkmark; Adobe also prints Enter, and the single-mode bar prints `Done`               | partial | `src/components/ToolbarsRight/Transform/Transform.tsx:303` |
-| Cancel                                       | The cancel button; also Esc                                                                 | present | `src/components/ToolbarsRight/Transform/Transform.tsx:306` |
+| control                                      | what it is in Photoshop                                                                     | status  | appRef                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------- |
+| Width                                        | Numeric percent text box                                                                    | partial | `Transform.tsx` — the `resize-x-slider` input   |
+| Height                                       | Numeric percent text box, linked to Width                                                   | partial | `Transform.tsx` — the `resize-y-slider` input   |
+| Maintain Aspect Ratio (Link)                 | Proportional-scaling toggle, on by default since 21.0; Shift is bound to the same state     | missing |                                                 |
+| Reference point location                     | 3×3 pivot grid, hidden by default; transforms start from the object center                  | missing |                                                 |
+| Rotation                                     | Numeric degrees text box; the same angle comes from dragging outside the box                | partial | `Transform.tsx` — the `rotate-slider` input     |
+| H                                            | Adobe's H (horizontal skew) degrees text box                                                | partial | `Transform.tsx` — the `skew-x-slider` input     |
+| V                                            | Adobe's V (vertical skew) degrees text box                                                  | partial | `Transform.tsx` — the `skew-y-slider` input     |
+| Switch Between Free Transform And Warp Modes | Button that swaps the box for a warp mesh, plus the Warp pop-up of predefined styles        | missing |                                                 |
+| X                                            | Numeric text box for the horizontal position of the transform reference point               | missing |                                                 |
+| Y                                            | Numeric text box for the vertical position of that same reference point                     | missing |                                                 |
+| Relative Positioning                         | Button that makes X and Y a displacement from the current position rather than a coordinate | missing |                                                 |
+| Commit                                       | The checkmark; Adobe also prints Enter, and the single-mode bar prints `Done`               | missing |                                                 |
+| Cancel                                       | The cancel button; also Esc                                                                 | partial | `Transform.tsx` — the Escape `keydown` listener |
 
 **`Maintain Aspect Ratio` is now named by Peachpit as well as by the Adobe blog, and the "on by
 default since 21.0" reading survives.** Julieanne Kost's 2019 post is the source for the version —
@@ -574,22 +625,25 @@ text box, and the ranges are the app's own. Rotation is clamped to ±90° with 9
 only through three separate buttons, skew to ±45°, scale to 10–300%. Photoshop's fields accept
 any value in those units, and the Link icon that couples Width and Height has no counterpart at
 all, so the app can scale a layer non-proportionally by dragging one slider and cannot be
-coupled. `Cancel` is the single `present` in the family because the app binds both the button and
-Escape, which is exactly Photoshop's pair.
+coupled. `Cancel` is the only control in the family with a partial app verdict, and the partial is
+the button: the app binds Escape alone, so the discard route exists and is invisible. Adobe's bar
+pairs that Cancel with a Commit; the app's Commit row is `missing` for the separate reason recorded
+below — there is no commit control, because a finished gesture commits itself.
 
 The `Trapezoid` slider is the app's own addition and has no Photoshop options-bar counterpart.
 Its nearest Photoshop relative is Free Transform's Perspective mode, which is reached by
 `Cmd+Option+Shift`-drag, not by a percentage, and the two are not interchangeable: `Trapezoid` is
 a projective taper about the horizontal centerline, and the app makes it **mutually exclusive**
 with everything else — moving it resets rotation, both skews and both scales to their defaults
-(`Transform.tsx:128-141`), and the processor refuses a trapezoid combined with a retained affine
-transform rather than composing them (`src/tools/transform.ts:153`,
-`src/contexts/affine-transform.ts:216`). It is also the one path that rasterizes, by solving a
-homography and resampling through it (`resampleThroughHomographyRowByRow` at
-`src/tools/transform.ts:113`, fed the `solveHomography` result from `:104`), while every other
-parameter stays a retained affine. **The earlier citation for that solve was
-`src/contexts/affine-transform.ts:173`, which is `transformToolArgsToAffine` — the function that
-builds the _retained affine_ and the exact opposite of the rasterizing path.**
+(`Transform.tsx` — `handleTrapezoidChange()`), and the processor refuses a trapezoid combined with
+a retained affine transform rather than composing them (the `isTrapezoidOnlyTransform()` refusal
+in `transform()` in `src/tools/transform.ts`, and `isTrapezoidOnlyTransform()` in
+`src/contexts/affine-transform.ts`). It is also the one path that rasterizes, by solving a
+homography and resampling through it (`renderTrapezoid()` in `src/tools/transform.ts`, at its
+`resampleThroughHomographyRowByRow` call and fed the `solveHomography` result beside it), while
+every other parameter stays a retained affine. **The earlier citation for that solve was
+`transformToolArgsToAffine()` in `src/contexts/affine-transform.ts` — the function that builds the
+_retained affine_ and the exact opposite of the rasterizing path.**
 
 Modifiers, all six from Adobe's Free Transform page except the last, which is the Adobe Elements
 modifier table:
@@ -609,9 +663,12 @@ modifier table:
 | `Enter`        | commit                                              |
 
 The app binds none of the three. `t` alone selects the Text tool
-(`src/components/Common/AppKeyboardShortcuts.tsx:384-389`; the `:277-282` an earlier version cited is
-inside the `Cmd+C` copy handler) and there is no `Cmd+T` registration
-anywhere; the tool has no accelerator at all in `toolbar-mapping.ts:64`.
+(the `t` registration in `AppKeyboardShortcuts.tsx`; what an earlier version cited is inside the
+`Cmd+C` copy handler) and there is no `Cmd+T` registration
+anywhere; the tool has no accelerator at all, and no rail entry to declare one on —
+`extraTools` in `toolbar-mapping.ts` is where `color`, `levels` and `transform` are recorded as
+carrying no Tools-rail entry, and `Edit ▸ Free Transform` in the header is what reaches the id
+instead (the `Edit` menu's `Free Transform` item in `DesktopHeader.tsx`).
 
 **`Enter` is now Adobe's, and it was third-party before this pass.** Adobe's Free Transform page
 does not print it, but the Feb 23 2026 reference-point page does, in the imperative: "Press **Enter
@@ -631,24 +688,68 @@ click the **Commit button** in the Options bar") and from the glyphs Photoshop a
 have been a checkmark and a cancel cross since 22.0. The `Commit` and `Cancel` row names are kept,
 and `Commit`'s detail now says which routes are Adobe's and which is not.
 
-**The commit routes are Apply, tool switch and export — Escape is not one of them, and an earlier
-version of this file said it was.** The `Escape` handler at
-`src/components/ToolbarsRight/Transform/Transform.tsx:35-43` calls the same `cancel` the Cancel
-button calls (`:30-33`), and `cancel` runs `cancelLayerPreview?.()` and resets the panel args. It
-dispatches nothing: it deletes the pending preview, so what survives is the last committed state.
-That is the discard route, and it is the exact counterpart of the commit route —
-`commitDirtyTool` (`src/contexts/useLayer.ts:348`) is what bakes the preview into a layer plus one
-history entry, and its callers are the Apply button (`Transform.tsx:303`), `goToTool`
-(`src/hooks/useApp.ts:167-169`, which is the tool-switch path every toolbar click and letter
-shortcut runs through) and the export handlers (`src/components/DesktopHeader/DesktopHeader.tsx:249`,
-`src/components/Mobile/MobileHeader.tsx:70`, `src/components/Mobile/MobileMenuDrawer.tsx:71`).
-(`DesktopHeader.tsx:243`, which an earlier version cited, is inside the export menu's own JSX; the
-call is at `:249`.) Enter and the click-outside-the-box route are both absent, and so is Adobe's
-in-transform `Edit > Undo`.
+**The commit route is the end of a gesture, and the discard route is Escape.** A drag PREVIEWS
+while the pointer is down and commits as exactly one history entry when the pointer is released.
+The commit signal is the browser's native `change` event on the range input, bound as a plain
+listener on the bar (the `onValueCommitted` listener in `Transform`,
+`src/components/ToolbarsRight/Transform/Transform.tsx`) — React's own
+`onChange` cannot be used for it, because React binds `onChange` to the native `input` event,
+which fires on every frame of a drag. That distinction is the whole feature: binding the commit to
+the input stream would write one history entry per frame. The five discrete controls — three
+rotate buttons, two mirror toggles — call the same commit from their `onClick` (`commitPreview()`,
+same component), because a button press is a finished gesture too and a panel where a slider lands
+in history but a mirror flip does not is a panel whose history nobody can reason about.
+
+`commitDirtyTool()` (`src/contexts/useLayer.ts`) is what bakes the preview into a layer plus one
+history entry. It consumes the pending preview out of `previewLayersRef.current`, so it is a no-op
+when there is nothing pending, and `normalizeCommittedToolArgs()` drops an identity transform
+before the args reach history, so a release that moved nothing writes nothing. Those two are why a
+second release cannot double-write and why a click that lands where it started costs no history
+entry.
+
+The other commit routes still exist: `goToTool()` (`src/hooks/useApp.ts`), which every
+toolbar click and letter shortcut runs through, and the export handlers
+(the header's save handler in `src/components/DesktopHeader/DesktopHeader.tsx`, `handleExport` in
+`src/components/Mobile/MobileHeader.tsx`, `handleSave` in
+`src/components/Mobile/MobileMenuDrawer.tsx`). Escape is the only route that goes the other way,
+and it is the ONLY caller of `cancel()` (in `Transform`,
+`src/components/ToolbarsRight/Transform/Transform.tsx`), whose listener is the `keydown` effect in
+that same component: it runs `cancelLayerPreview?.()` and resets the panel args, and
+dispatches nothing, so what survives is the last committed state.
+
+**An earlier version of the app had four children stacked in that column — the mirror-toggle pair and
+three text links — and it now has two buttons and nothing else.** The column used to be `Reset All`,
+`Apply` and `Cancel` under the mirror toggles. All three were removed across two steps, `Cancel`
+last, which leaves the bar with no text control at all — no commit, no discard, no reset.
+
+**The reason was HEIGHT, and the first version of this entry said width, which is wrong in a way
+that sends the next session after a defect that does not exist.** The column is a `flex flex-col`
+under the mirror toggles, so those controls were stacked rather than laid out across. Measured
+headlessly in Chromium at 1280x800 with `Edit > Free Transform` open: with all four children the
+column was **85px** inside the strip's fixed `h-[50px]`
+(`TOOLBAR_BASE_CLASS` in `src/components/ToolbarHorizontal/ToolbarHorizontal.tsx`), spilling ~35px
+above and below the bar — and `overflow-y` is `visible` from 1024px up, so the spill painted over
+the header and the workspace rather than scrolling. The bar's **width never changed by a pixel** through any of it:
+548px before and after, and no horizontal overflow at any viewport width from 769 to 1440. The
+column was always 68px wide because the mirror row's two `w-8` buttons and their `gap-1` set it and
+every text link stretched to that width rather than sizing itself by its glyphs. So the number of
+links was never a width lever; `w-24`, `w-10` and `gap-4` are. With the last text control gone the
+column is `flex flex-1 items-center justify-center` (the mirror-toggle column in `Transform.tsx`),
+so it absorbs the slack the removed links left behind and centers the two mirror toggles in it.
+
+`Reset All` was redundant in a second way: its handler was `cancel` verbatim (the `Reset All`
+link's own handler, since removed from `Transform.tsx`), so it was a second name for the button
+below it.
+`Apply` was not redundant in the same way, which is why removing it without replacing it lost the
+only in-bar commit; that is what the gesture commit above restores, and it restores it where the
+value is edited rather than on a separate control. The `Commit` row above is `missing` because there
+is no checkmark on the bar, and its citation is gone rather than repointed, since there is nothing
+left to point at; `Cancel`'s is repointed to the Escape listener, which is now the whole of it.
 
 **Implementation: partial.** The declared composite order is fixed — scale, then rotation, then
-skew, all about the untransformed layer center (`src/contexts/affine-transform.ts:212`, whose doc
-comment at `:166-172` is the declaration) —
+skew, all about the untransformed layer center (the `multiplyAffineTransforms` composition inside
+`transformToolArgsToAffine()` in `src/contexts/affine-transform.ts`, whose own doc comment is the
+declaration) —
 where Photoshop composes handle drags in the order they happen. Nothing in the panel is
 handle-driven, so the app's transform is a parameter set applied at once rather than a continuous
 operation, which is the property the command exists for.
@@ -676,39 +777,44 @@ Levels is the tonal tool, and the app's `levels` is Brightness/Contrast under it
 the corpus's Note B and it survives inspection of the current tree unchanged: two sliders, no
 histogram, and a filter string of `brightness() contrast()`.
 
-| control                     | what it is in Photoshop                                                                                                                                                   | status  | appRef                                               |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------- |
-| Preset                      | Menu of saved settings, with Save Preset beside it. Adobe states the round trip and no count: "You can save Levels settings as a preset, then apply them to other images" | missing |                                                      |
-| Channel                     | RGB, or an individual Red / Green / Blue channel, or a combination selected in the Channels panel. Defaults to RGB                                                        | missing |                                                      |
-| Histogram                   | The distribution graph drawn behind the three input sliders; the guide you read to decide where the points belong                                                         | missing |                                                      |
-| Input Levels: black point   | Left slider on the 0–255 domain, at 0 — a default Adobe does not state. **Adobe prints the level-5 case itself**: at that setting everything at 5 and below maps to 0     | missing |                                                      |
-| Input Levels: midtone gamma | Middle slider, "adjusts the gamma in the image" and "moves the midtone (level 128)"; at 1.00, a default Adobe does not state; left lightens, right darkens                | missing |                                                      |
-| Input Levels: white point   | Right slider, at 255 — a default Adobe does not state. Adobe's own case: at 243, everything at 243 and above maps to 255                                                  | missing |                                                      |
-| Output Levels: black        | Left output slider, default 0 — Adobe's stated Output-slider default; the level the black point maps to                                                                   | missing |                                                      |
-| Output Levels: white        | Right output slider, default 255 — the other half of Adobe's stated Output-slider defaults                                                                                | missing |                                                      |
-| Auto                        | Clips a small fraction of shadows and highlights per channel and maps the remaining extremes to pure black and white. Adobe: 0.1% clipping, 0–255 domain                  | missing |                                                      |
-| Auto Options                | Opens Auto Color Correction Options: chooses the algorithm and sets the clipping percentages. Adobe recommends 0.0%–1%. Three of four algorithm names are Adobe's         | missing |                                                      |
-| Eyedroppers                 | Set Black Point, Set Gray Point, Set White Point. Using them discards any adjustment already made, so Adobe advises using them first                                      | missing |                                                      |
-| Reset                       | Returns the adjustment to its original settings                                                                                                                           | partial | `src/components/ToolbarsRight/Levels/Levels.tsx:140` |
+| control                     | what it is in Photoshop                                                                                                                                                   | status  | appRef                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------- |
+| Preset                      | Menu of saved settings, with Save Preset beside it. Adobe states the round trip and no count: "You can save Levels settings as a preset, then apply them to other images" | missing |                                                                 |
+| Channel                     | RGB, or an individual Red / Green / Blue channel, or a combination selected in the Channels panel. Defaults to RGB                                                        | missing |                                                                 |
+| Histogram                   | The distribution graph drawn behind the three input sliders; the guide you read to decide where the points belong                                                         | missing |                                                                 |
+| Input Levels: black point   | Left slider on the 0–255 domain, at 0 — a default Adobe does not state. **Adobe prints the level-5 case itself**: at that setting everything at 5 and below maps to 0     | missing |                                                                 |
+| Input Levels: midtone gamma | Middle slider, "adjusts the gamma in the image" and "moves the midtone (level 128)"; at 1.00, a default Adobe does not state; left lightens, right darkens                | missing |                                                                 |
+| Input Levels: white point   | Right slider, at 255 — a default Adobe does not state. Adobe's own case: at 243, everything at 243 and above maps to 255                                                  | missing |                                                                 |
+| Output Levels: black        | Left output slider, default 0 — Adobe's stated Output-slider default; the level the black point maps to                                                                   | missing |                                                                 |
+| Output Levels: white        | Right output slider, default 255 — the other half of Adobe's stated Output-slider defaults                                                                                | missing |                                                                 |
+| Auto                        | Clips a small fraction of shadows and highlights per channel and maps the remaining extremes to pure black and white. Adobe: 0.1% clipping, 0–255 domain                  | missing |                                                                 |
+| Auto Options                | Opens Auto Color Correction Options: chooses the algorithm and sets the clipping percentages. Adobe recommends 0.0%–1%. Three of four algorithm names are Adobe's         | missing |                                                                 |
+| Eyedroppers                 | Set Black Point, Set Gray Point, Set White Point. Using them discards any adjustment already made, so Adobe advises using them first                                      | missing |                                                                 |
+| Reset                       | Returns the adjustment to its original settings                                                                                                                           | partial | `Levels.tsx` — the `Reset` button's `discardAdjustment` handler |
 
 Every one of those eleven rows is `missing`, and the two that were `partial` until this pass were
 `partial` by association rather than by resemblance. The app's nearest analogue to the black point
-is its **Brightness** slider, which is a flat linear multiply with a re-anchored exponential
-response (`src/tools/functions.ts:14-16`, `:36-39`, `:66-70`), and the nearest analogue to the white
-point is its **Contrast** slider, which pivots around mid-gray in encoded space where Photoshop's
-curve is piecewise-linear through three control points with its midpoint fixed at level 128.
-**Neither app slider is a Photoshop Levels control.** An association between two things is not a
-control that exists and diverges, which is what `partial` means, so the count of `present` rows here
-is zero and the count of `partial` rows is one: the table describes Photoshop's panel, and the app's
-panel and Photoshop's share no rows in it.
+is its **Brightness** slider, which is a flat linear multiply — proportionate, no exponent, one
+constant factor step per slider step (`proportionateFactor()` in `src/tools/functions.ts` and
+`buildLevelsFilter()`, which emits the string) — and the nearest analogue to the white point is
+its **Contrast** slider, which pivots around mid-gray in encoded space where Photoshop's curve is
+nonlinear and, for Levels itself, piecewise-linear through three control points with its midpoint
+fixed at level 128. **Neither app slider is a Photoshop Levels control.** An association between two
+things is not a control that exists and diverges, which is what `partial` means, so the count of
+`present` rows here is zero and the count of `partial` rows is one: the table describes
+Photoshop's panel, and the app's panel and Photoshop's share no rows in it.
 
-**And the mapping, which this file previously had inverted.** 0 on the Brightness slider is the
-**neutral** — the re-anchoring makes it emit exactly `brightness(100%) contrast(100%)`, so the panel
-at its defaults (`src/tools/settings.ts:54`) applies nothing at all. It is the **minimum**, −100,
-that emits `brightness(0%)` and multiplies the layer to black. The earlier sentence here said "at
-zero it makes the image darker without clipping anything"; that is false, and the table in
-`src/tools/functions.ts:22-30` and the two named literals in
-`src/tools/__tests__/functions.test.ts:31-36` are the correction.
+**And the mapping, which this file previously had inverted.** 0 on both sliders is the
+**neutral** — proportionality makes it emit exactly `brightness(100%) contrast(100%)`, so the panel
+at its defaults (the `levels` entry of `defaultSettings` in `src/tools/settings.ts`) applies nothing
+at all. It is Brightness's **minimum**, −150,
+that emits `brightness(0%)` and multiplies the layer to black.
+The earlier sentence here said "at
+zero it makes the image darker without clipping anything"; that is false, and the contract table on
+`proportionateFactor()` in `src/tools/functions.ts` and the named literals in the
+`it('emits the neutral as brightness(100%) contrast(100%), so the default args apply nothing')` and
+`it('reaches black: the -150 end of the Brightness slider emits brightness(0%)')` cases in
+`src/tools/__tests__/image-processors.test.ts` are the correction.
 
 Two version- and space-dependent facts are load-bearing and are in the prose. Levels operates on
 the document profile's **encoded** values; Adobe draws the contrast with Exposure, which
@@ -718,16 +824,18 @@ the document profile's **encoded** values; Adobe draws the contrast with Exposur
 **And the destructive / non-destructive split, which this file also previously had backwards.**
 `Image > Adjustments > Levels` discards image information — Adobe verbatim, "Choosing Image >
 Adjustments > Levels makes direct adjustments to the image layer and discards image information" —
-while the adjustment layer stays
-editable, and **this app is the non-destructive half, not the destructive one** (the earlier
+while the adjustment layer stays editable,
+and **this app is the non-destructive half, not the destructive one** (the earlier
 "research decision D3" said the opposite, and was wrong). A committed adjustment is a retained
-layer operation: `useLayer.ts:571` appends it to `layer.operations` and `:576` returns before any
-pixel is produced, `useLayer.ts:348` publishes that layer plus one `TOOL_ACTION` history entry, and
-`history-replay.ts:172-181` replays the operation rather than a stored raster, so undo and redo
-both work. What the app does not have is the _re-editability_ half: a committed adjustment cannot
+layer operation: the `commit: 'layer-operation'` branch of `tempUpdateLayer()` in `useLayer.ts`
+appends it to `layer.operations` and returns before any pixel is produced, `updateLayerByTool()` in
+the same file publishes that layer plus one `TOOL_ACTION` history entry, and the
+`commit: 'layer-operation'` branch of `replayHistory()` in `history-replay.ts` replays the
+operation rather than a stored raster, so undo and redo both work. What the app does not have is
+the _re-editability_ half: a committed adjustment cannot
 be reopened, so it can only be taken back with undo. That is also what the Reset button is not —
-it is disabled unless an uncommitted preview is live (`Levels.tsx:63`, `:141`) and restores the
-panel's own defaults, so it is a preview cancel and not an adjustment reset.
+it is disabled unless an uncommitted preview is live (the `hasLivePreview` guard in `Levels.tsx`)
+and restores the panel's own defaults, so it is a preview cancel and not an adjustment reset.
 
 **Four rows of the table above are now fully Adobe-sourced, which the table did not say.** The
 `levels-adjustment.html` page (2023-05-24) prints, in order: the Channel route ("choose an option
@@ -755,7 +863,10 @@ work with grayscale images**". Both rows were already right; they are now right 
 | ------- | ----------------------------------------------------------------------------------------------- |
 | `Cmd+L` | apply Levels; `Cmd+Option+L` re-applies with the last settings used; `Cmd+Shift+L` is Auto Tone |
 
-The app binds no shortcut for `levels` (`toolbar-mapping.ts:63`).
+The app binds no shortcut for `levels`. The id has no Tools-rail entry to badge one on —
+`extraTools` in `toolbar-mapping.ts` is where `color`, `levels` and `transform` are recorded as
+carrying none — and `Image ▸ Adjustments` in the header is what reaches it
+(the `ADJUSTMENTS_ITEMS` submenu in `DesktopHeader.tsx`).
 
 **The `Cmd+Shift+L` claim in that row was wrong and is corrected above.** Adobe's shipped sheets do
 not put Levels on `Shift+Cmd`; see `## Unverified` #15. This is the one place in this family where
@@ -797,24 +908,32 @@ The corpus left this tool's identity open and the research corpus README records
 fourth correction already folded into the brief is respected throughout — **six sextants, not ten**
 — with the 9-range CMYK model attributed to Selective Color rather than here.
 
-| control                  | what it is in Photoshop                                                                                                 | status  | appRef                                              |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------- |
-| Preset                   | Menu of predefined grayscale mixes and saved custom mixes, with Save Black & White Preset beside it                     | missing |                                                     |
-| On-image adjustment icon | The Targeted Adjustment tool, directly under Preset at the top of the panel; select it and drag onto the image          | missing |                                                     |
-| Auto                     | Sets a grayscale mix based on the image's own color values                                                              | missing |                                                     |
-| Tint                     | Checkbox that lays a uniform tone color over the monochrome result                                                      | missing |                                                     |
-| Tint Color               | The swatch beside Tint; opens the Color Picker, and the tone it applies is called Tint Color                            | missing |                                                     |
-| Color sliders            | Six sliders, in bar order: Reds, Yellows, Greens, Cyans, Blues, Magentas. Names, order and defaults are all third-party | missing |                                                     |
-| Reset                    | The reset icon that returns the sliders to their defaults                                                               | partial | `src/components/ToolbarsRight/Colors/Color.tsx:185` |
+| control                  | what it is in Photoshop                                                                                                 | status  | appRef                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------- |
+| Preset                   | Menu of predefined grayscale mixes and saved custom mixes, with Save Black & White Preset beside it                     | missing |                                                                |
+| On-image adjustment icon | The Targeted Adjustment tool, directly under Preset at the top of the panel; select it and drag onto the image          | missing |                                                                |
+| Auto                     | Sets a grayscale mix based on the image's own color values                                                              | missing |                                                                |
+| Tint                     | Checkbox that lays a uniform tone color over the monochrome result                                                      | missing |                                                                |
+| Tint Color               | The swatch beside Tint; opens the Color Picker, and the tone it applies is called Tint Color                            | missing |                                                                |
+| Color sliders            | Six sliders, in bar order: Reds, Yellows, Greens, Cyans, Blues, Magentas. Names, order and defaults are all third-party | missing |                                                                |
+| Reset                    | The reset icon that returns the sliders to their defaults                                                               | partial | `Color.tsx` — the `Reset` button's `discardAdjustment` handler |
 
 **The name is `Black & White`, with the ampersand, and the data file said `Black and White`.** Adobe
 writes the command, the panel and the adjustment layer with an ampersand — `Image > Adjustments >
 Black & White`, the Properties icon, `Layer > New Adjustment Layer > Black & White` — and its own
 help text says "choose **Black & White** from the list". The phrase without the ampersand is prose
 English, not a product name, and `types.ts` requires the name verbatim, so `photoshopName`, the
-`summary` and `purpose` now use the ampersand. **`Colors` is this app's own tile label and is not an
-Adobe name at all** — `toolbar-mapping.ts:62` and the Tools menu both spell it "Colors", and
-`appNotes` now says so on the record rather than only implying it by naming the entry.
+`summary` and `purpose` now use the ampersand. **`Colors` was this app's own tile label and was not
+an Adobe name at all** — and the label went out with the entry. The flyout that carried `color`,
+`levels` and `transform` is gone from `toolbarMap`; `extraTools` in `toolbar-mapping.ts` is
+where the three ids are recorded as carrying no Tools-rail entry, and `color` is reached now from
+`Image ▸ Adjustments ▸ Desaturate` (the `Desaturate` entry of `ADJUSTMENTS_ITEMS` in
+`DesktopHeader.tsx`). Nothing in `src/` spells it
+"Colors" any more, so `appNotes` records the rail absence and the Desaturate host rather than the
+old name. It read `Photo Filter` until the mislabel was corrected: Adobe's Photo Filter is a lens
+filter with a Density slider and a Preserve Luminosity option, and this bar computes
+`grayscale(%) sepia(%) saturate(%)`, so an enabled `Photo Filter` opened a bar its own label did
+not describe.
 
 **The `On-image adjustment icon` row moved up two positions, and its detail was wrong about the
 mechanism while it was wrong about the position.** It was listed last, after `Reset`; the control
@@ -879,8 +998,8 @@ uniform tone color laid over a conversion whose mix you still control, whereas S
 filter stage applied to the whole image, so the two compose into a look neither produces alone.
 Saturation belongs to no part of Black and White at all — it is a Hue/Saturation control, and its
 presence is a leftover from the identity question D1 settled. All three start at 0
-(`src/tools/settings.ts:53`), which is a true no-op: the neutral emits
-`grayscale(0%) sepia(0%) saturate(100%)` and that literal is pinned by test.
+(the `color` entry of `defaultSettings` in `src/tools/settings.ts`), which is a true no-op: the
+neutral emits `grayscale(0%) sepia(0%) saturate(100%)` and that literal is pinned by test.
 
 Black & White binds no modifier, and **it does have a keyboard shortcut** —
 `Opt+Shift+Cmd+B` — which the data file used to deny outright because "none was found in any
@@ -1138,34 +1257,40 @@ the durable materializer — see the `ctx.filter` section above.
     adjustment icon and the reset icon — **no Preview** — which is why the `color` table has seven
     rows and not eight.
 
-## A fourth rail finding this pass turned up, for the coordinator
+## A fourth rail finding this pass turned up — resolved, kept because it shaped the fix
 
-`HANDOFF.md` §117 files that `color`, `levels` and `transform` are live rail tiles and that
-`extraTools` gates nothing. **The same three are also live _Tools menu_ entries, in a second place,
-and that place is not named in §117.** `src/components/DesktopHeader/DesktopHeader.tsx:27-32`
-declares a flat `TOOL_MENU_ITEMS` list — a "Tools" menu — containing `{ toolName: 'color', label:
-'Colors' }`, `{ toolName: 'levels', label: 'Levels' }` and `{ toolName: 'transform', label:
-'Transform' }`, and the comment above it gives the reason a tool missing from that menu is treated
-as a bug: "**a tool missing from the Tools menu is a visible inconsistency the user has to notice
-and work around.**" So the app presents all three as tools in **two** surfaces, and the second one
-exists precisely because the first one was assumed to be the only one. There is **no** Image or
-Edit menu in the application to move them to: `src/components/Menu/Menu.tsx` renders only
-`DesktopHeader` and `ToolbarHorizontal`, and nothing under `src/` matches "Adjustments" as a menu
-group. Any extraction has to build the menu, not just delete three rows from `toolbarMap`.
+The same three were **also** live _Tools menu_ entries, in a second surface, which is the half of
+the problem that made a menu rename necessary rather than a row deletion. `TOOL_MENU_ITEMS` in
+`src/components/DesktopHeader/DesktopHeader.tsx` listed all three beside the comment "**a tool
+missing from the Tools menu is a visible inconsistency the user has to notice and work around.**"
+— so a non-tool in that list is the same defect one level up, and the inverse of the comment's
+invariant, which is why both surfaces had to change together.
 
-The same list also names the Move tool **"Reposition"** (`:28`) where `toolbar-mapping.ts:39` names
-it **"Move Tool"**, so the app already disagrees with itself about one of this family's names. Not
-corrected here — `toolbar-mapping.ts` and the header are other people's files.
+Two conclusions in the original finding were **wrong and did not survive**: that `Edit` was not a
+menu, and that extraction had to build a menu bar. `Edit` existed and already dispatched all three
+through the same handler the rail calls; it was simply carrying tool switches under a command
+menu's name. The extraction added an `Image ▸ Adjustments` submenu and reshaped `Edit` to Adobe's
+own single `Free Transform` item, and it removed `color`, `levels` and `transform` from the Tools
+menu in the same change. A test now pins that absence.
+
+What did survive is the reason the first surface was not the only one: a tool list is not a single
+surface, and "delete three rows from `toolbarMap`" was never going to be sufficient on its own.
+
+The same list also names the Move tool **"Reposition"** (the `Reposition` entry of
+`TOOL_MENU_ITEMS` in `DesktopHeader.tsx`) where `toolbarMap`'s `Move Tool` entry in
+`toolbar-mapping.ts` names it **"Move Tool"**, so the app already disagrees with itself about one
+of this family's names. Not corrected here — `toolbar-mapping.ts` and the header are other people's
+files.
 
 `HANDOFF.md` §120 ("The Move tool has nine documented missing controls") is **stale against the file
 it cites** in two ways, and both were introduced before this pass. First, the nine it enumerates
 are **ten** names — it lists "Tool Preset Picker, Auto-Select, Auto-Select: Group, Auto-Select:
 Layer, Show Transform Controls, Align, Distribute, Align to, Width, Height" — because
 `Auto-Select: Group` and `Auto-Select: Layer` are now **one** row, `Auto-Select: Group / Layer`.
-Second, its file list carries `src/components/ToolbarsRight/Reposition/Reposition.tsx:21`, and the
-path is wrong: the file is `src/components/ToolbarsRight/Move/Reposition.tsx`, and `:21` is right
-for the `Merge all` button inside it. The **real** list, re-derived from Adobe and the tree in this
-pass, is the nine rows in the `reposition` table below — Tool Preset Picker, Auto-Select,
+Second, its file list carries `src/components/ToolbarsRight/Reposition/Reposition.tsx`, and the
+path is wrong: the file is `src/components/ToolbarsRight/Move/Reposition.tsx`, and the `Merge all`
+button it pointed at is right inside it. The **real** list, re-derived from Adobe and the tree in
+this pass, is the nine rows in the `reposition` table below — Tool Preset Picker, Auto-Select,
 Auto-Select: Group / Layer, Show Transform Controls, Align, Distribute, Align to, Width, Height —
 of which **seven are `missing` and two are `partial`**, the two partials being the behaviours welded
 on, plus the four absent modifiers. `reposition` also has no entry in `HANDOFF.md` or

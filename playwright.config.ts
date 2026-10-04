@@ -31,7 +31,25 @@ export default defineConfig({
     timeout: 5_000,
   },
   fullyParallel: true,
-  forbidOnly: !!process.env.CI,
+  // UNCONDITIONAL, and deliberately not `!!process.env.CI`.
+  //
+  // A committed `test.only` is not a CI problem, it is a SILENT SCOPE REDUCTION on
+  // every local run: the suite collects one test, prints it green, and the operator
+  // reads a green run as coverage. The old `!!process.env.CI` guard therefore made
+  // the failure mode worst exactly where it is least visible — a local run reports
+  // one passing test where there should be hundreds, and nothing says so.
+  //
+  // `forbidOnly` costs a developer nothing: a `test.only` in a working tree is a
+  // deliberate act, and the fix is to delete it or commit it as `test.skip`, which
+  // states the intent in a form that survives review.
+  //
+  // This is a STRUCTURAL refusal, like the `headless` default below: it holds for
+  // every invocation whatever started it, and nothing but a reviewable edit to this
+  // file can turn it off. Pinned by the `it('refuses a committed `test.only` on every
+  // run, not only under CI')` guard in src/__tests__/harness-integrity.test.ts, which
+  // reads the config with `CI` deleted AND set, because one reading does not
+  // discriminate — `!!process.env.CI` is already `true` under CI.
+  forbidOnly: true,
   retries: process.env.CI ? 2 : 0,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
@@ -40,11 +58,18 @@ export default defineConfig({
   // longer fight over one app instance. The readability argument for `workers: 1` is
   // gone with headed mode: the local report is the same `list` output either way.
   workers: process.env.CI ? undefined : 1,
-  // Two refusals, and both run for every `playwright test` invocation whatever started
-  // it: a visible browser, and a base URL this run's own dev server is not serving.
-  // The flags bypass `use.headless` entirely, and `PLAYWRIGHT_BASE_URL` is read here,
-  // so neither can be enforced from one caller. See e2e/global-setup.ts.
+  // Three refusals, and all three run for every `playwright test` invocation whatever
+  // started it: a visible browser, a base URL this run's own dev server is not
+  // serving, and an HTML report that would open itself and never let the run exit.
+  // None of the three can be enforced from one caller — the flags bypass
+  // `use.headless` entirely, `PLAYWRIGHT_BASE_URL` is read here, and the reporter
+  // computes its own `open` option in preference to the one below.
+  // See e2e/global-setup.ts.
   globalSetup: './e2e/global-setup.ts',
+  // `open: 'never'` is necessary and NOT sufficient: two undocumented environment
+  // variables and a CLI `--reporter` all outrank it (runner/index.js:3450, 3511,
+  // 5221). The refusal that makes it binding is in e2e/global-setup.ts, which runs
+  // before the reporter's onExit.
   reporter: process.env.CI
     ? [['github'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]]
     : [['list'], ['html', { open: 'never' }]],
@@ -67,25 +92,65 @@ export default defineConfig({
     // indistinguishable from a real race. Both get written down as "flaky" and
     // neither gets fixed.
     //
-    // Headless is better for this suite independently of that hazard: a headed run
-    // fails 5 cdp-helpers.spec.ts tests that pass headless, and instead fails 2
-    // different ones in the devicePixelFactor: 2 block. So if you run headed, expect
-    // those 5. They are not a regression and they are not what CI will report.
-    // Measurements and the underlying defect: e2e/OPEN_PROBLEMS.md.
+    // A headed run is a DIFFERENT MEASUREMENT, not a stricter one, and it is not
+    // evidence about this branch even where it agrees. This paragraph used to tell an
+    // operator to expect "5 failures in cdp-helpers.spec.ts and 2 different ones in the
+    // devicePixelFactor: 2 block". Both sets were real once and neither exists now: the
+    // five derived an expected capture size from `getDevicePixelRatio()`, and that
+    // function is gone from e2e/helpers/cdp-helpers.spec.ts. Quoting counts for defects
+    // that are fixed is worse than quoting nothing — an operator who runs headed, gets
+    // zero failures, and concludes the run is not measuring this branch.
+    //
+    // So: the reason not to run headed is the operator-input hazard above and nothing
+    // else. The measurements, the two fixed defect groups and the shapes the suite must
+    // not drift back into are recorded in e2e/OPEN_PROBLEMS.md; go there for numbers
+    // rather than taking a stale count from here.
     //
     // PLAYWRIGHT_ALLOW_HEADED=1 is the deliberate opt-in, for watching a canvas or
     // WebGL interaction that only reproduces visually. Both earlier names are gone
     // and setting either now does nothing. The one before that,
     // PLAYWRIGHT_HEADLESS, is also gone; PLAYWRIGHT_HEADED is the name a model
     // reaches for first when it wants a visible browser, and a variable that is also
-    // the guard's acknowledgement of a human-authorised run cannot be that name. It
-    // is the one value e2e/global-setup.ts accepts, so the config and the guard can
+    // the guard's acknowledgement of a human-authorised run cannot be that name. It is
+    // the one value e2e/global-setup.ts accepts, so the config and the guard can
     // never disagree about whether this run was authorised.
     //
-    // The variable is not enough on its own: --headed, --ui and --debug override
-    // this value after the config is read, so the globalSetup guard above refuses
-    // them.
+    // The variable is not enough on its own: --headed and --debug override this value
+    // after the config is read, so the globalSetup guard refuses them. `--ui` is NOT
+    // refused there and cannot be: runUIMMode returns before globalSetup is ever
+    // constructed. kilo.jsonc denies that flag on its own pattern instead.
     headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1',
+
+    /* The pixel helpers in e2e/helpers/canvas-helpers.ts classify a pixel with FIXED
+     * thresholds that are only correct against the app's LIGHT theme, and nothing
+     * declared that. DARK_THRESHOLD is 50 and NEAR_WHITE_THRESHOLD is 250
+     * (the `DARK_THRESHOLD` / `NEAR_WHITE_THRESHOLD` constants), and the workspace backdrop the
+     * canvas sits on is a
+     * 20px checkerboard chosen from the resolved theme: `#f3f3f3` over `#fff` for
+     * light, `#121212` over `#000` for dark (the `.chessboard-light` / `.chessboard-dark`
+     * rules in `src/index.scss`, switched by `Main.tsx`). So under dark the backdrop is
+     * itself below
+     * the dark threshold, and under light the letterbox is above the near-white one.
+     * The thresholds are not "roughly right"; they are calibrated to one palette.
+     *
+     * Playwright's own default is 'light', so every already-green test is correct today
+     * and is correct by an inherited value that this file never stated.
+     * `e2e/document-dialogs.spec.ts` no longer pins the theme itself; its own comment
+     * records that as a deletion rather than a demotion, which is what makes this line
+     * the only pin.
+     *
+     * What breaks without it, in the canvas helpers: every `hasDarkPixels` wait can be
+     * satisfied by the dark letterbox alone, and every `getStrokeAnalysis` reads a
+     * backdrop it believes is the page's background. A stroke that never landed passes
+     * its wait and fails later, or passes for the wrong reason.
+     *
+     * This DECLARES a precondition every green test already relies on; it constrains
+     * nothing new. It is deliberately not a variable: an escape hatch on a pixel
+     * threshold is a way to turn the suite's colour measurements off, which is the same
+     * move as raising a threshold, and it would not be greppable as one. A spec that
+     * genuinely needs the dark palette should pin `colorScheme: 'dark'` on itself and
+     * measure the direction it depends on, exactly as document-dialogs.spec.ts did. */
+    colorScheme: 'light',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',

@@ -84,12 +84,42 @@ describe('unhandled rejection visibility', () => {
   });
 
   /**
-   * Node reports an unhandled rejection at the microtask checkpoint after the
-   * rejecting tick, so one macrotask boundary is not enough; drain several
-   * deterministically instead of polling with a timeout.
+   * Resolves on the FIRST real `unhandledRejection` this suite observes.
+   *
+   * A fixed drain of `setTimeout(0)` cannot be the thing that decides a
+   * positive case: Node reports an unhandled rejection at the microtask
+   * checkpoint of the rejecting turn, and `saveImage` performs two further
+   * async hops before it can reject (the dynamic `import('./tiff-utils.ts')`
+   * and the encoder call), so how many turns the signal needs depends on the
+   * call path rather than on a constant. A count that is too short does not
+   * pass quietly — `toHaveLength(1)` reads the empty array and fails — which is
+   * a red that only appears under load, i.e. a flake rather than a defect.
+   *
+   * Waiting on the signal removes the guess entirely: however many hops the
+   * chain needs, the event arrives, and a chain that never rejects parks here
+   * until the per-test timeout, which is a visible failure rather than a pass.
    */
-  const drain = async () => {
-    for (let tick = 0; tick < 4; tick += 1) {
+  const nextRejection = () =>
+    new Promise<unknown>((resolve) => {
+      const listener = (reason: unknown) => resolve(reason);
+      rejectionHook.on('unhandledRejection', listener);
+      // The suite's own `beforeEach` listener pushes into `rejections` first —
+      // it was registered earlier — so the array is already filled by the time
+      // this continuation runs, and the assertions below need no extra await.
+    });
+
+  /**
+   * The negative half: prove nothing reaches the void. There is no signal to
+   * wait for when the expected outcome is silence, so this is a bounded wait
+   * and the bound is stated rather than assumed. Every caller has already
+   * AWAITED the promise under test and attached a handler, so the rejection is
+   * already handled; what remains is Node's reporting checkpoint, which runs at
+   * the end of the microtask drain of the next turn. One macrotask boundary is
+   * therefore the whole requirement, and a second is kept only so the wait
+   * cannot end inside the same checkpoint.
+   */
+  const settleVoid = async () => {
+    for (let turn = 0; turn < 2; turn += 1) {
       await new Promise((resolve) => {
         setTimeout(resolve, 0);
       });
@@ -100,7 +130,7 @@ describe('unhandled rejection visibility', () => {
     it('rejects into the void with the writer error when the caller drops the promise', async () => {
       void saveImage(canvasStub(null), 'drawing.png');
 
-      await drain();
+      await nextRejection();
       expect(rejections).toHaveLength(1);
       expect(String(rejections[0])).toMatch(/Failed to create blob from canvas/);
     });
@@ -108,7 +138,7 @@ describe('unhandled rejection visibility', () => {
     it('reports the identical failure through the returned promise when the caller awaits', async () => {
       await expect(saveImage(canvasStub(null), 'drawing.png')).rejects.toThrow(/Failed to create blob from canvas/);
 
-      await drain();
+      await settleVoid();
       // Awaiting is the documented channel: nothing must ALSO reach the void.
       expect(rejections).toHaveLength(0);
     });
@@ -131,7 +161,7 @@ describe('unhandled rejection visibility', () => {
 
       void saveImage(canvasStub(null), 'drawing', 'image/tiff');
 
-      await drain();
+      await nextRejection();
       expect(rejections).toHaveLength(1);
       expect(String(rejections[0])).toMatch(/Unsupported image format/);
     });
@@ -141,21 +171,36 @@ describe('unhandled rejection visibility', () => {
 
       await expect(saveImage(canvasStub(null), 'drawing', 'image/tiff')).rejects.toThrow(/Unsupported image format/);
 
-      await drain();
+      await settleVoid();
       expect(rejections).toHaveLength(0);
     });
 
     it('gets past the encoder check when the encoder does produce a blob', async () => {
       encodeTiff.mockResolvedValue(new Blob(['tiff'], { type: 'image/tiff' }));
+      const canvas = canvasStub(new Blob(['png']));
+      // The blob is real, so control passes the `if (!blob) throw` guard in
+      // `saveImageToDisk` and reaches `downloadBlob`. The host is what cannot
+      // finish the download: the runner's jsdom `URL.createObjectURL` shim throws
+      // a `TypeError` on a Blob from this realm, and nothing about that message
+      // is a contract worth asserting. Stubbing the primitive makes the download
+      // step complete, so this asserts the encoder's blob actually ARRIVES
+      // instead of only that it did not trip the guard.
+      const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:probe-url');
+      const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+      try {
+        await expect(saveImage(canvas, 'drawing', 'image/tiff')).resolves.toBe(true);
+        // The positive half of "gets past the check": the canvas is the source,
+        // so a blob the encoder never saw cannot be the one that was downloaded.
+        // Asserted inside the try because `mockRestore` discards the call record.
+        expect(encodeTiff).toHaveBeenCalledWith(canvas);
+        expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+      } finally {
+        createObjectURL.mockRestore();
+        revokeObjectURL.mockRestore();
+      }
 
-      // The blob reaches `downloadBlob`, which needs `URL.createObjectURL` and a
-      // user-gesture anchor; jsdom has neither, so the failure surfaces from the
-      // download step instead of from the `Unsupported image format` guard.
-      await expect(saveImage(canvasStub(new Blob(['png'])), 'drawing', 'image/tiff')).rejects.not.toThrow(
-        /Unsupported image format/
-      );
-
-      await drain();
+      await settleVoid();
+      expect(rejections).toHaveLength(0);
     });
 
     it('rejects into the void with the encoder error when the encoder itself throws', async () => {
@@ -163,7 +208,7 @@ describe('unhandled rejection visibility', () => {
 
       void saveImage(canvasStub(null), 'drawing', 'image/tiff');
 
-      await drain();
+      await nextRejection();
       expect(rejections).toHaveLength(1);
       expect(String(rejections[0])).toMatch(/TIFF encoder exploded/);
     });
@@ -178,7 +223,7 @@ describe('unhandled rejection visibility', () => {
 
       void registry.resolve(assetId, controller.signal);
 
-      await drain();
+      await nextRejection();
       expect(rejections).toHaveLength(1);
       expect(String(rejections[0])).toMatch(/Asset resolution aborted/);
 
@@ -208,7 +253,7 @@ describe('unhandled rejection visibility', () => {
       registry.disposeDocument('document-a');
       release(fakeBitmap());
 
-      await drain();
+      await nextRejection();
       expect(rejections).toHaveLength(1);
       expect(String(rejections[0])).toMatch(/invalidated by document disposal/);
 
@@ -236,7 +281,7 @@ describe('unhandled rejection visibility', () => {
       release(fakeBitmap());
       await settled;
 
-      await drain();
+      await settleVoid();
       expect(rejections).toHaveLength(0);
 
       registry.shutdown();
@@ -250,7 +295,7 @@ describe('unhandled rejection visibility', () => {
 
       await expect(registry.resolve(assetId, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
 
-      await drain();
+      await settleVoid();
       expect(rejections).toHaveLength(0);
 
       registry.shutdown();
@@ -265,7 +310,7 @@ describe('unhandled rejection visibility', () => {
       const handled = registry.resolve(assetId, controller.signal).catch((error: unknown) => error);
 
       expect(await handled).toMatchObject({ name: 'AbortError' });
-      await drain();
+      await settleVoid();
       expect(rejections).toHaveLength(0);
 
       registry.shutdown();

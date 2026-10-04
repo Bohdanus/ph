@@ -27,7 +27,7 @@ that other sessions are writing to.
 
 The corollary that decides the whole sweep: **an `action: land` you did not
 generate yourself is a claim about a moment.** `WORKTREES.json` is a snapshot
-(`scripts/lib/worktree-inventory/assemble.mjs:319` stamps `generatedAt`), `main`
+(`scripts/lib/worktree-inventory/assemble.mjs` — `buildInventory()` — stamps `generatedAt`), `main`
 moves underneath it, and the `mergeConflict` answer in particular is the fastest
 field in the file to go stale. Regenerate before you trust it, and re-read `dirty`
 and `mergeConflict` before you act.
@@ -83,11 +83,11 @@ Per worktree, the fields that decide:
 
 - **`action`** — `land` is the target. The values are `land`, `at-risk`,
   `dispose`, `in-use`, `keep`, `undecided`
-  (`scripts/lib/worktree-inventory/classify.mjs:79-92`).
+  (`ACTION` in `scripts/lib/worktree-inventory/classify.mjs`).
 - **`writeHistory.chatCount`** — who wrote a file here, **ever**. This is the
   freedom check that `chats` cannot do. `chats` is keyed on
   `session.directory`, which is where a chat OPENED
-  (`scripts/lib/worktree-inventory/chats.mjs:365-367`): a main-checkout chat that
+  (`auditChats()` in `scripts/lib/worktree-inventory/chats.mjs`): a main-checkout chat that
   drove into a worktree is booked against main for its whole life, and the
   worktree reads as untouched. `writeHistory` is derived from the write calls
   themselves, so it catches that case. **`writeHistory.chatCount === 0` on a
@@ -97,9 +97,9 @@ Per worktree, the fields that decide:
   in there right now. Not a harvest target.
 - **`mustNotPrune`** — a human claim that something unaccounted-for is in that
   directory. It is a **veto on merging**, not only on pruning
-  (`scripts/lib/worktree-inventory/classify.mjs:277-283`): a clean
+  (`classify()` in `scripts/lib/worktree-inventory/classify.mjs`): a clean
   `mergeConflict: false` does not outrank it. Read the `note` before merging, not
-  after. `curatedFor` is at `scripts/lib/worktree-inventory/curated.mjs:1064`.
+  after. `curatedFor()` is in `scripts/lib/worktree-inventory/curated.mjs`.
 - **`dirty` / `untracked`** — uncommitted work is on NO ref. It is the first
   thing to be lost and the last thing git can find. A worktree with
   `dirty > 0` needs its contents committed or saved **before** the merge, not
@@ -110,7 +110,7 @@ Per worktree, the fields that decide:
   `dirty`, `untracked`, `ahead`, `behind` and `commitsAheadTruncated` are already
   on every record, and prose arithmetic goes stale the moment `main` moves.
 - **`mergeConflict` / `mergeConflictFiles`** — and remember `mergeChecked: false`
-  means _no answer_, never "clean" (`classify.mjs:266-272`).
+  means _no answer_, never "clean" (`classify()` in `classify.mjs`).
 - **`summary` / `note` / `issues`** — the curator's claim about the branch. The
   `claimedLanded` / `mergedIntoMain` pair is asserted to agree by a test, so a
   stale `landed: true` fails the suite rather than quietly contradicting git.
@@ -343,8 +343,9 @@ npm run test:e2e          # headless; starts its own dev server on its own port
 
 - **`npm run tsc` is not `npx tsc --noEmit`.** `tsc -b` covers
   `tsconfig.app/node/e2e.json` and therefore the specs and test files. The
-  `--noEmit` form resolves the app config alone, excludes tests, and exits 0
-  while the tests do not compile.
+  `--noEmit` form resolves the root solution stub and type-checks ZERO files; it does
+  not fall back to the app config, and `tsconfig.app.json` has no `exclude`, so it
+  pulls `src/**/__tests__` in anyway.
 - **`npm run test:e2e` only where the change is observable in a browser.** A
   change to a script or a stylesheet does not need a seven-minute suite; a change
   to a tool, a panel, or anything with pixels does. Say which you ran and why.
@@ -533,8 +534,8 @@ skipped its own safety steps.
 - **Weaken a gate.** See step 5.
 - **Open a browser window.** See step 5.
 - **Fan out from the main checkout.** A `task` subagent inherits the working
-  directory; 1,398 of them wrote into `main` in seven days. Create the worktree
-  first and put its absolute path in the brief.
+  directory; 1,398 of them ran with `main` as their working directory in seven days.
+  Create the worktree first and put its absolute path in the brief.
 - **Let a review finding be fixed after the merge.** Then it is a change on `main`
   that no worktree owns.
 
@@ -545,7 +546,7 @@ skipped its own safety steps.
   `land` has to be caught by regenerating. A `landedAt` stamp on the decision
   would close it.
 - `mergeConflict` is computed by `git merge-tree`
-  (`scripts/lib/worktree-inventory/git.mjs:198`) and reported raw, but there is no
+  (`mergeConflict()` in `scripts/lib/worktree-inventory/git.mjs`) and reported raw, but there is no
   check anywhere that the checked merge equals the merge that will actually
   happen after step 6's `git merge main`. Two different merges, two different
   answers, and the second one is the one that ships.

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileShell } from '../MobileShell.tsx';
+import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
 import { setViewportWidth } from '../../../test/setup.ts';
 
 /** A width inside the mobile band, where every surface in this suite is meant to live. */
@@ -33,6 +34,9 @@ const storeStateMock = vi.hoisted(() => ({
   fileName: 'photo.jpg',
   canvasRef: { current: null as HTMLCanvasElement | null },
   currentArgs: { current: {} as Record<string, unknown> },
+  // A REF, like `currentArgs`: `MobileShell` renders `MobileMenuDrawer`, which reads the
+  // discard guard, and the provider consults `previewLayers.current` when it asks.
+  previewLayers: { current: {} as Record<string, unknown> },
   totalSize: { width: 800, height: 600 },
   hasUnsavedChanges: false,
   documentFrame: null as unknown,
@@ -144,17 +148,24 @@ vi.mock('../../../tools/toolsMap.ts', () => ({
  * The props are INITIAL values, not the live ones. Holding `isToolSheetOpen` fixed and
  * passing a no-op toggle — which this harness used to do — makes every assertion about the
  * sheet vacuous, because nothing the shell does can change what it renders.
+ *
+ * The shell owns the menu drawer, and the drawer reads the app's one discard guard, so the
+ * provider is mounted here rather than mocked: it is the shipped one, reading the `useStore`
+ * mock above. Nothing in this suite makes the document dirty, so it never renders a prompt
+ * and the region and dialog counts below describe the shell alone.
  */
 const Harness = ({ layersOpen = false, toolSheetOpen = false }: { layersOpen?: boolean; toolSheetOpen?: boolean }) => {
   const [isLayersOpen, setIsLayersOpen] = useState(layersOpen);
   const [isToolSheetOpen, setIsToolSheetOpen] = useState(toolSheetOpen);
   return (
-    <MobileShell
-      isToolSheetOpen={isToolSheetOpen}
-      onToggleToolSheet={() => setIsToolSheetOpen((open) => !open)}
-      isLayersOpen={isLayersOpen}
-      onToggleLayers={() => setIsLayersOpen((open) => !open)}
-    />
+    <UnsavedChangesProvider>
+      <MobileShell
+        isToolSheetOpen={isToolSheetOpen}
+        onToggleToolSheet={() => setIsToolSheetOpen((open) => !open)}
+        isLayersOpen={isLayersOpen}
+        onToggleLayers={() => setIsLayersOpen((open) => !open)}
+      />
+    </UnsavedChangesProvider>
   );
 };
 
@@ -174,7 +185,10 @@ describe('MobileShell', () => {
     currentToolMock.isToolDirty = false;
   });
 
-  afterEach(() => setViewportWidth(1280));
+  // Teardown is a state change like any other: the crossing back to the desktop band is
+  // delivered to every still-subscribed `useMediaQuery`, and the shell re-renders over it.
+  // `act` is what the two test bodies below already wrap their own crossings with.
+  afterEach(() => act(() => setViewportWidth(1280)));
 
   it('closes the navigation menu when the viewport leaves the mobile band', async () => {
     // The shell is mounted at every width and hidden with `md:hidden`, and `display: none`
@@ -260,7 +274,11 @@ describe('MobileShell', () => {
   });
 
   it('treats a missing open state as closed, so nothing covers the canvas on first paint', () => {
-    render(<MobileShell onToggleToolSheet={vi.fn()} onToggleLayers={vi.fn()} />);
+    render(
+      <UnsavedChangesProvider>
+        <MobileShell onToggleToolSheet={vi.fn()} onToggleLayers={vi.fn()} />
+      </UnsavedChangesProvider>
+    );
 
     // No `isToolSheetOpen` / `isLayersOpen` props at all: the old default of `true`
     // put a 300px panel over the document before any user action.
@@ -321,9 +339,11 @@ describe('MobileShell', () => {
       expect(screen.getByRole('dialog', { name: 'Layers & History Drawer' })).toBeInTheDocument();
 
       // The backdrop is the dialog's first child.
-      screen
-        .getByRole('dialog', { name: 'Layers & History Drawer' })
-        .firstElementChild!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      act(() => {
+        screen
+          .getByRole('dialog', { name: 'Layers & History Drawer' })
+          .firstElementChild!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
 
       await user.click(document.body);
       expect(screen.queryByRole('dialog')).toBeNull();

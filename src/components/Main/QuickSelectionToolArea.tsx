@@ -46,7 +46,12 @@ function readDocumentImageData(canvas: HTMLCanvasElement | null): ImageData | nu
 
   try {
     return ctx.getImageData(0, 0, canvas.width, canvas.height);
-  } catch {
+  } catch (error) {
+    // Same shape as `magicWand.ts` and `magneticLasso.ts`: the `null` propagates
+    // to the paint path at :151, which then has no image data to grow a region
+    // from and produces no selection. Reported per HANDOFF.md §98 rather than
+    // left to be read as a quiet no-op.
+    console.error(error);
     return null;
   }
 }

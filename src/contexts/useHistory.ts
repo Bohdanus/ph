@@ -10,6 +10,7 @@ import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../util/constants.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
+import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -75,7 +76,6 @@ export const useHistory = () => {
     // Durable replay remains a diagnostic shadow until every pixel consumer
     // uses the same materialization contract. Navigation therefore replays the
     // legacy runtime representation and lets StoreContext rebuild the sidecar.
-    clearPreviewLayers?.();
     try {
       const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
       const replay = replayHistory(
@@ -93,10 +93,23 @@ export const useHistory = () => {
             // left exactly as it was rather than replaced with an empty canvas.
             const processor = findToolProcessor(args.toolName);
             if (!processor) return layer;
-            const [canvas, patch] = processor.imageProcessor({ bitmap, size: layer.pos })(args);
+            // The presented raster, not the raw one: a layer carrying a retained affine or filter
+            // is staged at its evaluated extent first, so a stroke commits against the geometry
+            // the screen showed. An evaluator throw here fails the navigation closed through the
+            // `catch` below, exactly as one from the publication does — `drawReplay` runs the same
+            // evaluation over the same layer — so it adds no failure class, only an earlier failure.
+            const staged = stageProcessorInput(layer, bitmap);
+            const [canvas, patch] = processor.imageProcessor({ bitmap: staged.bitmap, size: staged.bounds })(args);
+            // Published at the bounds that raster occupies, with the operations baked into it
+            // dropped from the list the renderer evaluates again. Keeping both was the double
+            // application: `getLayerBitmap()` prefers this canvas and `drawLayerSource()` then
+            // re-evaluated a transform and a filter the canvas already carried, at the layer's
+            // original `pos` instead of the evaluated one. The disabled entries survive, so
+            // `toggleDisabled()` still governs them.
             return {
               ...layer,
-              pos: patch ? { ...layer.pos, ...patch } : layer.pos,
+              pos: patch ? { ...staged.bounds, ...patch } : { ...staged.bounds },
+              operations: operationsRetainedAfterBake(layer),
               source: undefined,
               tmpCanvas: canvas,
             };
@@ -128,6 +141,28 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      // Dropped HERE, after the replay has been published and applied, and not
+      // ahead of it. A navigation that throws — a converter refusal, a tool
+      // processor, a refused publication — leaves the visible canvas and the
+      // store exactly as they were, so clearing first would discard an
+      // in-progress tool draft for a navigation that changed nothing. Once a
+      // replay IS on screen the clear is still required, and `drawAllLayers` in
+      // `useLayer` is the only thing that recomposites a preview over the
+      // layers: left standing, the draft would survive in state while its
+      // pixels were gone from the canvas, so the next `commitDirtyTool()` would
+      // apply a stroke the user could no longer see.
+      clearPreviewLayers?.();
+      // Reported HERE rather than inside `replayHistory`, which collects instead
+      // of logging (see `ReplayDiagnostic`): replay runs on every undo, redo and
+      // history-panel click, so a per-item log inside that loop would re-emit the
+      // same refusal on every navigation. One line per refused entry per replay,
+      // naming the code and passing the error VALUE so the stack survives —
+      // matching the throw report below. HANDOFF.md §98 is why this exists at all:
+      // skipping a malformed entry is correct, and doing it silently is a user
+      // edit that vanished unnoticed.
+      for (const diagnostic of replay.diagnostics) {
+        console.error(`History replay skipped an entry (${diagnostic.code})`, diagnostic.error);
+      }
     } catch (error) {
       const item = _history[targetIndex];
       const reason = error instanceof Error ? error.message : String(error);

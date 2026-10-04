@@ -3,6 +3,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
+import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointToLayerLocal } from '../../util/layer-space.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { GradientToolArgs } from '../../tools/gradient.ts';
@@ -54,14 +55,14 @@ type GradientEndpoints = { from: Point; to: Point };
  *
  * The args are documented as a document-space drag, and they are: `usePaintStroke` converts every
  * pointer sample through `canvasToDocumentPoint` before any callback sees it. They are then
- * rebased onto the active layer's own raster before they reach the processor, because
- * `tempUpdateLayer` hands the processor `size: layer.pos` and the layer's own bitmap with no
- * document origin. A layer at a non-zero document origin would otherwise have its gradient
- * shifted off the layer by that origin. Rebasing happens here rather than in the processor
- * because this is the only place that knows the layer's `pos`, and it is deterministic: the
- * rebased numbers are what the history entry retains, and replay feeds them back to this
- * processor with `size: layer.pos` as well (`src/contexts/useHistory.ts:98-108`), so a replay
- * reproduces the same fill. `src/util/layer-space.ts` states the two spaces; the stroke tools
+ * rebased onto the active layer's own raster before they reach the processor, because the
+ * processor is handed a buffer with no document origin in it. A layer at a non-zero document
+ * origin would otherwise have its gradient shifted off the layer by that origin. Rebasing happens
+ * here rather than in the processor because this is the only place that knows the layer's `pos`,
+ * and it is deterministic: the rebased numbers are what the history entry retains, and replay
+ * feeds them back to this processor over the same layer-local buffer
+ * (`src/contexts/useHistory.ts:169`), so a replay reproduces the same fill.
+ * `src/util/layer-space.ts` states the two spaces; the stroke tools
  * that were missing this rebase are `EraserToolArea`, `SmudgeToolArea`, `DodgeToolArea` and
  * `BurnToolArea`.
  *
@@ -83,11 +84,13 @@ export const GradientToolArea = ({ className }: gradientToolAreaProps) => {
   const args = getToolArgs('gradient');
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
   const isEnabled = !!activeLayer && !activeLayer.isBedrock;
+  const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
 
   /**
-   * The processor's own raster is the LAYER's, addressed from `activeLayer.pos`, so a
-   * document point becomes `point - activeLayer.pos` and a layer at the origin passes
-   * through unchanged. `from` and `to` are the SAME drag as the gesture the hook reports —
+   * The processor's own raster is the PRESENTED layer's, addressed from the origin of
+   * that presentation — `pos` when the layer presents nothing, its evaluated extent when
+   * it carries a transform — so a document point becomes `point - rasterBounds` and a
+   * layer at the origin passes through unchanged. `from` and `to` are the SAME drag as the gesture the hook reports —
    * the first and last of it — so they take the identical rebase; there is no `points`
    * field on `GradientToolArgs`, and these two points are the whole of the stroke geometry
    * the processor sees.
@@ -101,8 +104,8 @@ export const GradientToolArea = ({ className }: gradientToolAreaProps) => {
 
     return {
       ...args,
-      from: documentPointToLayerLocal(first, activeLayer.pos),
-      to: documentPointToLayerLocal(last, activeLayer.pos),
+      from: documentPointToLayerLocal(first, rasterBounds),
+      to: documentPointToLayerLocal(last, rasterBounds),
     };
   };
 

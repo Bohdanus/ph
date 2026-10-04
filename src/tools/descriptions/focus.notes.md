@@ -1,6 +1,6 @@
 # FOCUS AND TONE — research notes
 
-The six tools whose Photoshop names are the Blur, Sharpen and Smudge focus tools, the Dodge and
+The seven tools whose Photoshop names are the Blur, Sharpen and Smudge focus tools, the Dodge and
 Burn tonal tools, and the Gradient tool. Every `file:line` below was re-derived against the
 working tree in this worktree; every Photoshop claim below traces to a URL in that tool's
 **Sources** list, or is admitted as unverified in the `## Unverified` section at the end.
@@ -8,7 +8,7 @@ working tree in this worktree; every Photoshop claim below traces to a URL in th
 **What the re-audit pass changed, so a reader knows what to distrust.** A second pass re-derived
 every `file:line` in the data file against this worktree and re-opened Adobe's current pages for the
 bar enumerations. Two classes of thing turned up. The first is stale line numbers: **six of the
-forty-seven `implementationRefs` in `focus.ts` pointed at the wrong line** — five `settings.ts`
+sixty-six `implementationRefs` in `focus.ts` pointed at the wrong line** — five `settings.ts`
 seeds, all off by a few lines, and the one `toolbar-mapping.ts` line, which was off by one and
 pointed at the `Burn` row's neighbour rather than the `O` declaration it was cited for — and
 **eighteen more in this file's prose**. They are corrected, and the corrections are the point: the
@@ -132,13 +132,13 @@ one-shot commands over a whole selection or layer with no brush and no per-strok
 initial research brief's "Illustrator-only" premise is the error being corrected here; the
 correction itself then over-corrected in the opposite direction.
 
-| Control             | Photoshop behaviour                                                     | Default / range | App status            | App `file:line` |
-| ------------------- | ----------------------------------------------------------------------- | --------------- | --------------------- | --------------- |
-| Brush Preset Picker | The tip, with Size and Hardness                                         | preset library  | `missing`             | —               |
-| Mode                | Blend mode the blurred result composites with                           | Normal          | `missing`             | —               |
-| Strength            | Percent of the blurred result blended per pass                          | 50%, 1–100      | `missing`             | —               |
-| Sample All Layers   | Blur from the composite so the result can be painted onto a blank layer | off             | `missing`             | —               |
-| _Flow_              | _reported on the shared bar; see `## Unverified`_                       | _50%, 1–100_    | _omitted — unsourced_ | —               |
+| Control             | Photoshop behaviour                                                     | Default / range | App status            | App source |
+| ------------------- | ----------------------------------------------------------------------- | --------------- | --------------------- | ---------- |
+| Brush Preset Picker | The tip, with Size and Hardness                                         | preset library  | `missing`             | —          |
+| Mode                | Blend mode the blurred result composites with                           | Normal          | `missing`             | —          |
+| Strength            | Percent of the blurred result blended per pass                          | 50%, 1–100      | `missing`             | —          |
+| Sample All Layers   | Blur from the composite so the result can be painted onto a blank layer | off             | `missing`             | —          |
+| _Flow_              | _reported on the shared bar; see `## Unverified`_                       | _50%, 1–100_    | _omitted — unsourced_ | —          |
 
 **The `Strength` floor is 1%, not 0%, and the range is not Adobe's to state.** No Adobe page gives
 the range on any of the three tools, so it is attributed to the books and reports that do. The CS2
@@ -161,32 +161,35 @@ attributes the seven to third-party walkthroughs and says plainly that no page s
 restricted. See `## Unverified` 13.
 
 **App verdict: not the tool.** The app's blur is a whole-layer filter panel. Its bar is a single
-`Blur Radius` slider (`src/components/ToolbarsRight/Blur/Blur.tsx:101`, range 0–100 px) plus an
-`Undo Blur` button (`:121`), and its only argument is a radius handed to the canvas blur filter
-(`src/tools/blur.ts:11`) — a true Gaussian, so the closest thing in this editor to
-`Filter > Blur > Gaussian Blur`, wearing the Blur tool's name. There is no gesture surface, and
-the surface it gets is **`DummyToolArea`**, not the Sharpen's: `Main`'s tool-area dispatch has no
-`blur` branch, so blur falls through to the default (`src/components/Main/Main.tsx:236`), which
-renders `display: none` (`src/components/Main/DummyToolArea.tsx:15`). The Sharpen is a different
-component that reaches the same rendering on purpose — it mounts its own `SharpenToolArea`
-(`src/components/Main/SharpenToolArea.tsx:46`), and that file's own JSDoc is what says blur "has no
-tool area at all and falls through to `DummyToolArea`" (`:33`). Identical rendering, two
-components; "the same surface the Sharpen uses" was wrong. It is registered as a `layer-operation`,
-not a `raster` (`src/tools/toolProcessors.ts:119`), and its single seeded arg is a radius
-(`src/tools/settings.ts:52`). All four recorded controls are `missing`, none `partial`: there is
-nothing here for a partial rating to attach to. The recovered `Flow` control is missing too, and
+`Blur Radius` slider (`src/components/ToolbarsRight/Blur/Blur.tsx` — `Blur()`'s `Blur Radius`
+slider, range 0–100 px) plus its `Undo Blur` button, and its only argument is a radius handed to
+the canvas blur filter (`src/tools/blur.ts` — `blur()`) — a true Gaussian, so the closest thing in
+this editor to `Filter > Blur > Gaussian Blur`, wearing the Blur tool's name. There is no gesture
+surface, and the surface it gets is **`DummyToolArea`**, not the Sharpen's: `Main`'s tool-area
+dispatch has no `blur` branch, so blur falls through to the default (`src/components/Main/Main.tsx`
+— `renderContent()`, whose last branch is `DummyToolArea`), which renders `display: none`
+(`src/components/Main/DummyToolArea.tsx` — `DummyToolArea()`). The Sharpen is a different component
+that reaches the same rendering on purpose — it mounts its own `SharpenToolArea`
+(`src/components/Main/SharpenToolArea.tsx` — `SharpenToolArea()`), and that component's own JSDoc
+is what says blur "has no tool area at all and falls through to `DummyToolArea`". Identical
+rendering, two components; "the same surface the Sharpen uses" was wrong. It is registered as a
+`layer-operation`, not a `raster` (`src/tools/toolProcessors.ts` — the `toolProcessors` registry's
+`blur` entry), and its single seeded arg is a radius (`src/tools/settings.ts` —
+`defaultSettings.blur`). All four recorded controls are `missing`, none `partial`: there is nothing
+here for a partial rating to attach to. The recovered `Flow` control is missing too, and
 structurally so — the app has no per-dab/per-stroke opacity pair to express one with.
 
-**Why `partial` and not `placeholder`.** `placeholder` is defined (`types.ts:84-85`) as _selectable
-but committing nothing_ — no gesture surface, `commit: 'unimplemented'`, an `imageProcessor` that
-returns `null`. The app's blur does commit: it returns a real convolved canvas
-(`src/tools/blur.ts:14`) under `commit: 'layer-operation'`, and `commitDirtyTool` bakes it into a
-layer plus a history entry. So it is not a placeholder, and it is not `implemented` either, because
-what it commits is a whole-layer Gaussian filter rather than a per-stroke brush. `partial` — "the
-app does something Photoshop's tool also does, but not the same something" — is the only value
-left. The same argument carries the Sharpen and the Gradient, and is now stated in each of their
-`appNotes` too, because three tools inheriting one verdict is exactly where a reviewer should
-expect the reasoning to be written down.
+**Why `partial` and not `placeholder`.** `placeholder` is defined (`src/tools/descriptions/types.ts`
+— the `ToolImplementationStatus` JSDoc's `placeholder` bullet) as _selectable but committing
+nothing_ — no gesture surface, `commit: 'unimplemented'`, an `imageProcessor` that returns `null`.
+The app's blur does commit: it returns a real convolved canvas (`src/tools/blur.ts` — `blur()`)
+under `commit: 'layer-operation'`, and `commitDirtyTool` bakes it into a layer plus a history
+entry. So it is not a placeholder, and it is not `implemented` either, because what it commits is a
+whole-layer Gaussian filter rather than a per-stroke brush. `partial` — "the app does something
+Photoshop's tool also does, but not the same something" — is the only value left. The same argument
+carries the Sharpen and the Gradient, and is now stated in each of their `appNotes` too, because
+three tools inheriting one verdict is exactly where a reviewer should expect the reasoning to be
+written down.
 
 **The `Mode` row is softer than it was, because one page does claim a restriction.** An earlier
 draft said no page claims the list is restricted; one does. The University of Idaho's CS-era
@@ -197,11 +200,12 @@ Wikiversity says the same of "the latest edition". Neither says _to what_, so th
 the list is restricted". See `## Unverified` 13.
 
 **The slider previews; it does not commit.** The bar routes through `tempUpdateLayer`
-(`src/components/ToolbarsRight/Blur/Blur.tsx:36`), the only writer of `previewLayersRef`, and the
-history entry is written later by `commitDirtyTool` (`src/contexts/useLayer.ts:365`) on tool switch
-(`src/hooks/useApp.ts:169`), on export (`src/components/DesktopHeader/DesktopHeader.tsx:249`) and
-in `mergeAllLayers` (`src/contexts/useLayer.ts:674`). "Blurred as soon as the slider moves"
-overstates it: the layer is blurred in a preview, and the undoable edit lands at the commit.
+(`src/components/ToolbarsRight/Blur/Blur.tsx` — `throttledOnChange()`), the only writer of
+`previewLayersRef`, and the history entry is written later by `commitDirtyTool()`
+(`src/contexts/useLayer.ts`) on tool switch (`src/hooks/useApp.ts` — `goToTool()`), on export
+(`src/components/DesktopHeader/DesktopHeader.tsx` — `handleToolSelection()`) and in
+`mergeAllLayers()` (`src/contexts/useLayer.ts`). "Blurred as soon as the slider moves" overstates it:
+the layer is blurred in a preview, and the undoable edit lands at the commit.
 
 **Adobe's own current page is the source now, not the retired one.** The bar's own enumeration —
 Brush Settings for Size and Hardness, Strength with "10–30% for subtle softening, 50% or higher for
@@ -262,14 +266,14 @@ Against `Filter > Sharpen > Sharpen More`: Adobe's filter reference says the Sha
 sharpening effect than does the Sharpen filter". Both are one-shot, neither has a dialog, and
 neither is brushable or buildable.
 
-| Control             | Photoshop behaviour                               | Default / range | App status            | App `file:line` |
-| ------------------- | ------------------------------------------------- | --------------- | --------------------- | --------------- |
-| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `missing`             | —               |
-| Mode                | Blend mode applied as you brush                   | Normal          | `missing`             | —               |
-| Strength            | Sharpen amount per pass                           | 50%, 1–100      | `missing`             | —               |
-| Protect Detail      | Reduce pixelation at the sharpened edge           | on              | `missing`             | —               |
-| Sample All Layers   | Sharpen from the composite, onto a blank layer    | off             | `missing`             | —               |
-| _Flow_              | _reported on the shared bar; see `## Unverified`_ | _50%, 1–100_    | _omitted — unsourced_ | —               |
+| Control             | Photoshop behaviour                               | Default / range | App status            | App source |
+| ------------------- | ------------------------------------------------- | --------------- | --------------------- | ---------- |
+| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `missing`             | —          |
+| Mode                | Blend mode applied as you brush                   | Normal          | `missing`             | —          |
+| Strength            | Sharpen amount per pass                           | 50%, 1–100      | `missing`             | —          |
+| Protect Detail      | Reduce pixelation at the sharpened edge           | on              | `missing`             | —          |
+| Sample All Layers   | Sharpen from the composite, onto a blank layer    | off             | `missing`             | —          |
+| _Flow_              | _reported on the shared bar; see `## Unverified`_ | _50%, 1–100_    | _omitted — unsourced_ | —          |
 
 **`Protect Detail` is on the current desktop bar, and the caveat is gone.** The earlier draft read
 "Documented by Adobe for the Sharpen tool in Photoshop Elements… No 2024+ Adobe desktop page was
@@ -292,10 +296,10 @@ about a version range the desktop bar has long since settled. `## Unverified` 5 
 `Protect Tones` default, not about this control's existence.
 
 **App verdict: the Unsharp Mask filter under the tool's name.** The bar is `Amount`
-(`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:125`, 0–500%, seeded 50% at
-`src/tools/settings.ts:245`) and `Radius` (`:143`, 0–100 px, seeded 1) — the Unsharp Mask's own
-control names, not the tool's — and there is no brush and no gesture
-(`src/components/Main/SharpenToolArea.tsx:46`).
+(`src/components/ToolbarsRight/Sharpen/Sharpen.tsx` — `Sharpen()`'s `Amount` slider, 0–500%, seeded
+50% by `src/tools/settings.ts` — `defaultSettings.sharpen`) and `Radius` (0–100 px, seeded 1 by the
+same `defaultSettings.sharpen`) — the Unsharp Mask's own control names, not the tool's — and there
+is no brush and no gesture (`src/components/Main/SharpenToolArea.tsx` — `SharpenToolArea()`).
 
 **The Radius is a second instance of the Gradient's Opacity defect, and it is the sharper one,
 because Photoshop's tool has no radius control at all.** The write-up on the CS5 rebuild is
@@ -309,8 +313,9 @@ the Sharpen's `appNotes` for that reason. The same page is also the second sourc
 should use it" — which closes half of what `## Unverified` 5 used to cover for the other control.
 
 The kernel is a two-pass separable **box** blur subtracted from the source
-(`src/tools/sharpen.ts:90` is the horizontal pass; `:243` is the `amount / 100` multiplier), and
-`src/tools/sharpen.ts:76` says "THE KERNEL IS A BOX, NOT A GAUSSIAN, AND THAT IS THE POINT" in caps.
+(`src/tools/sharpen.ts` — `horizontalBoxPass()` is the horizontal pass, and `sharpen()`'s `factor`
+is the `amount / 100` multiplier), and `horizontalBoxPass()`'s JSDoc says "THE KERNEL IS A BOX, NOT
+A GAUSSIAN, AND THAT IS THE POINT" in caps.
 That is where this implementation is furthest from the tool it claims to be, **but not for the
 reason a first reading suggests.** It is tempting to write that "a box kernel is the one thing this
 Sharpen does not have" — which is false and self-contradicting, because it has one, deliberately.
@@ -323,7 +328,8 @@ Sharpen from the Blur is exactly what the app does not reproduce, and the Blur/S
 here in radius and magnitude rather than in the shape of the kernel's response. The one thing it
 does better than the reference filter is real: the blur runs on premultiplied colour with alpha
 unsharp-masked on its own 0–255 scale, so a transparent hole cannot bleed a ring into the opaque
-side. Registered as `raster` (`src/tools/toolProcessors.ts:226`).
+side. Registered as `raster` (`src/tools/toolProcessors.ts` — the `toolProcessors` registry's
+`sharpen` entry).
 
 **Why `partial` and not `placeholder`:** the processor returns a real convolved canvas and
 `commitDirtyTool` writes a history entry, so the tool reaches the document and is not a
@@ -339,9 +345,9 @@ that page never mentions a `Mode`. Both facts are recorded here so a reader who 
 twenty-year-old manual does not read the array as a transcription error.
 
 **The slider previews; it does not commit.** Same route as the Blur: `tempUpdateLayer`
-(`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:92`) then `commitDirtyTool` on tool switch, on
-export or in `mergeAllLayers`. "Sharpened when a slider moves" describes the preview; the history
-entry lands at the commit.
+(`src/components/ToolbarsRight/Sharpen/Sharpen.tsx` — `throttledOnChange()`) then `commitDirtyTool`
+on tool switch, on export or in `mergeAllLayers`. "Sharpened when a slider moves" describes the
+preview; the history entry lands at the commit.
 
 **Sources**
 
@@ -382,19 +388,19 @@ the data file: "this option instructs the Smudge tool to grab colors in all visi
 smudge them into the current layer. **Whether the option is on or off, only the current layer is
 affected**" — which is the rule the app's implementation already happens to follow.
 
-| Control             | Photoshop behaviour                                                                           | Default / range | App status            | App `file:line`                                              |
-| ------------------- | --------------------------------------------------------------------------------------------- | --------------- | --------------------- | ------------------------------------------------------------ |
-| Brush Preset Picker | The tip, with Size and Hardness                                                               | preset library  | `partial`             | `src/components/ToolbarsRight/Smudge/Smudge.tsx:138`, `:153` |
-| Mode                | Blend mode the carried colour composites with; Darken and Lighten are the useful ones         | Normal          | `missing`             | —                                                            |
-| Strength            | Percent of the carried colour blended per dab; 100% carries one colour the length of the drag | 50%, 1–100      | `partial`             | `src/components/ToolbarsRight/Smudge/Smudge.tsx:168`         |
-| Finger Painting     | Start each stroke with a drop of the foreground colour ("dipping")                            | off             | `missing`             | —                                                            |
-| Sample All Layers   | Pick colour up from the composite; only the active layer is written either way                | off             | `missing`             | —                                                            |
-| _Flow_              | _reported on the shared bar; see `## Unverified`_                                             | _50%, 1–100_    | _omitted — unsourced_ | —                                                            |
+| Control             | Photoshop behaviour                                                                           | Default / range | App status            | App source                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------------- | --------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| Brush Preset Picker | The tip, with Size and Hardness                                                               | preset library  | `partial`             | `src/components/ToolbarsRight/Smudge/Smudge.tsx` — `Smudge()`'s `Size` and `Hardness` sliders |
+| Mode                | Blend mode the carried colour composites with; Darken and Lighten are the useful ones         | Normal          | `missing`             | —                                                                                             |
+| Strength            | Percent of the carried colour blended per dab; 100% carries one colour the length of the drag | 50%, 1–100      | `partial`             | `src/components/ToolbarsRight/Smudge/Smudge.tsx` — `Smudge()`'s `Strength` slider             |
+| Finger Painting     | Start each stroke with a drop of the foreground colour ("dipping")                            | off             | `missing`             | —                                                                                             |
+| Sample All Layers   | Pick colour up from the composite; only the active layer is written either way                | off             | `missing`             | —                                                                                             |
+| _Flow_              | _reported on the shared bar; see `## Unverified`_                                             | _50%, 1–100_    | _omitted — unsourced_ | —                                                                                             |
 
 **`Strength` moved from `present` to `partial`, and the range is the whole reason.** The bar's
 `Strength` is a real per-dab coverage seeded at 50% as in Photoshop, wired and read by the processor,
-so it was `present`. But the app's minimum is 0 — `SMUDGE_STRENGTH_MIN = 0` at `src/tools/smudge.ts:26`,
-and the module's own comment says "0 is a legal choice: 0% is the identity and is what the slider's
+so it was `present`. But the app's minimum is 0 — `SMUDGE_STRENGTH_MIN = 0` in `src/tools/smudge.ts`
+— and the module's own comment says "0 is a legal choice: 0% is the identity and is what the slider's
 own left end says" — while every source that states a floor for this control puts it at 1%. A
 control the app renders and drives, whose range diverges from Photoshop's, is what `partial` is
 defined to mean in the type contract, so that is what it is now. It is worth being precise about how
@@ -403,26 +409,28 @@ wrong. It is also the only reason the status is not `present`.
 
 **App verdict: the closest match in the family, and `partial` on this file's own bar.** The
 processor reads every covered pixel from the untouched source raster at the texel one dab behind
-along the drag (`src/tools/smudge.ts:149`, called from `smudgeDab` at `:123`) and never from the
-buffer it is writing, so colour travels exactly one segment per dab rather than compounding into a
-single streak; the falloff is the shared engine's `tipAlphaAt`, the same edge every other
-paint-family tool stamps. `Strength` is seeded at 50% (`src/tools/settings.ts:239`), which is
-Photoshop's own default. The transport semantics are right,
-and the app matches Photoshop's layering rule without having been told to. The gesture is a real
-press/move/release on the active layer (`src/components/Main/SmudgeToolArea.tsx:62`), registered
-as `raster` (`src/tools/toolProcessors.ts:232`).
+along the drag (`src/tools/smudge.ts` — `smudgeDab()`, whose `clampPointToSize` read is its only
+source-texel access) and never from the buffer it is writing, so colour travels exactly one segment
+per dab rather than compounding into a single streak; the falloff is the shared engine's
+`tipAlphaAt`, the same edge every other paint-family tool stamps. `Strength` is seeded at 50% by
+`src/tools/settings.ts` — `defaultSettings.smudge`, which is Photoshop's own default. The transport
+semantics are right, and the app matches Photoshop's layering rule without having been told to. The
+gesture is a real press/move/release on the active layer (`src/components/Main/SmudgeToolArea.tsx`
+— `SmudgeToolArea()`), registered as `raster` (`src/tools/toolProcessors.ts` — the
+`toolProcessors` registry's `smudge` entry).
 
 Three controls are `missing` for structural reasons the component itself states. **Mode** is missing
 because **no control anywhere in the app edits a layer's blend mode** — the earlier wording here
 said "a layer's blend mode is a layer property the Layers panel owns", and that was false: a grep
 for `blendMode` across `src/components/` returns only the paint tool's own `Mode` select
-(`src/components/ToolbarsRight/Paint/Paint.tsx:182`), and the Layers panel has no blend-mode control
-at all. `Layer.blendMode` is a data field written from paint-tool args by
-`src/contexts/layer-utils.ts:230` and set by the PSD importer (`src/contexts/psd-utils.ts:161`), and
-nothing else can change it. Finger Painting is missing because `SmudgeToolArgs` has no field for it
-and Sample All Layers because the processor is handed one layer's bitmap. The preset picker is
-`partial` rather than absent because this editor has one tip shape and no presets, though Size and
-Hardness — the preset's two live parameters — are both there. `Alt` is not bound.
+(`src/components/ToolbarsRight/Paint/Paint.tsx` — `PaintToolbar()`), and the Layers panel has no
+blend-mode control at all. `Layer.blendMode` is a data field written from paint-tool args by
+`src/contexts/layer-utils.ts` — `createLayerSource()` — and set by the PSD importer
+(`src/contexts/psd-utils.ts`, on the flattened-composite layer literal), and nothing else can change
+it. Finger Painting is missing because `SmudgeToolArgs` has no field for it and Sample All Layers
+because the processor is handed one layer's bitmap. The preset picker is `partial` rather than
+absent because this editor has one tip shape and no presets, though Size and Hardness — the preset's
+two live parameters — are both there. `Alt` is not bound.
 
 **`R` is on the Smudge's bar, and Adobe's own current page says so.** The page reads "Select the
 Smudge tool (R) from the toolbar" and goes on to enumerate the bar as brush tip, blend mode,
@@ -441,13 +449,12 @@ independent reproductions of Adobe's default-keyboard list all give `Decrease Br
 `Increase Brush Size` = `]`, one pixel per press and repeating
 (<https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>,
 <https://shortcutkeys.net/adobe-photoshop-shortcut-keys/>). The app binds exactly that, on the
-`repeat: true` registrations at `src/components/Common/AppKeyboardShortcuts.tsx:518` and `:526`, and
-the Smudge is in `tipSizeField` (`src/components/Common/AppKeyboardShortcuts.tsx:49`) so both keys
+`repeat: true` `[` and `]` registrations in `src/components/Common/AppKeyboardShortcuts.tsx`, and
+the Smudge is in that file's `tipSizeField` so both keys
 are live while it is selected. Rows for both are therefore in the data file — and the same two rows
-are now on the Dodge and the Burn, which are also `tipSizeField` members
-(`src/components/Common/AppKeyboardShortcuts.tsx:50-51`). The same list gives `{` and `}` to brush
-hardness, which the app does not bind; that is a capability gap, not a claim this file makes, and
-it is not given a row because there is no Photoshop `control` to hang it on.
+are now on the Dodge and the Burn, which are also `tipSizeField` members. The same list gives `{`
+and `}` to brush hardness, which the app does not bind; that is a capability gap, not a claim this
+file makes, and it is not given a row because there is no Photoshop `control` to hang it on.
 
 **`Mode`'s default is no longer claimed.** The row used to say "Normal by default", which no page
 put on this bar. Adobe's own page says only "Choose a brush tip and and blend mode options in the
@@ -455,20 +462,21 @@ options bar" — no default named — so the row now says that, and notes that N
 painting tool starts on.
 
 **Why `partial` and not `implemented`.** There is no build-up while the button is held. The shared
-stroke hook appends a point to the gesture in `handlePointerMove`
-(`src/hooks/usePaintStroke.ts:202`) and nowhere else, and there is no `setInterval`, `setTimeout` or
+stroke hook appends a point to the gesture in `handlePointerMove()`
+(`src/hooks/usePaintStroke.ts`) and nowhere else, and there is no `setInterval`, `setTimeout` or
 rAF dwell in the hook or in `SmudgeToolArea.tsx`, so holding the brush still deposits nothing. (This
 sentence used to cite the Dodge's and the Burn's `appNotes` by line number, which is a citation into
 the very file these notes document, and so moved on every edit above it. The field name is what the
 claim is actually about.) Applying one bar to one absence, the Smudge is `partial` too — but the
 **load-bearing** reason is the `Strength` floor, not the dwell, and it is worth saying which is
-which. `types.ts:90` lists "a wrong default" as a `partial` trigger, and the floor here is wrong: the
-app's minimum is 0 where the sources put it at 1. The dwell is the weaker of the two arguments for
-this tool specifically, because Photoshop's own Smudge semantics are about what happens along a
-drag — at `Strength` 100% the tool "pushes a color from the beginning of your drag until you release
-your mouse button" — rather than about dwelling, and the app's drag reproduces that part exactly.
-The drag itself is otherwise faithful, which is what makes this `partial` and not `placeholder`: the
-processor returns a real raster and the stroke writes a real history entry.
+which. The `ToolImplementationStatus` JSDoc in `src/tools/descriptions/types.ts` lists "a wrong
+default" as a `partial` trigger, and the floor here is wrong: the app's minimum is 0 where the
+sources put it at 1. The dwell is the weaker of the two arguments for this tool specifically, because
+Photoshop's own Smudge semantics are about what happens along a drag — at `Strength` 100% the tool
+"pushes a color from the beginning of your drag until you release your mouse button" — rather than
+about dwelling, and the app's drag reproduces that part exactly. The drag itself is otherwise
+faithful, which is what makes this `partial` and not `placeholder`: the processor returns a real
+raster and the stroke writes a real history entry.
 
 **Sources**
 
@@ -509,9 +517,9 @@ but this ultimately results in some desaturation"
 Opacity or a Flow on the Dodge or Burn bar, and that is the point worth recording: the tonal tools
 build by dwelling, not by the per-dab/per-stroke opacity pair the paint tools use. The app matches
 this correctly by accident — `DodgeBurnToolArgs` has no opacity or spacing field and takes both from
-the shared engine's defaults. The type itself (`src/tools/dodgeBurn.ts:26-33`) has **no `mode`
-field at all**, and `Tonal.tsx` renders only Range, Exposure, Size and Hardness, so the app never
-had the control to remove.
+the shared engine's defaults. The type itself (`src/tools/dodgeBurn.ts` — `DodgeBurnToolArgs`) has
+**no `mode` field at all**, and `Tonal.tsx` renders only Range, Exposure, Size and Hardness, so the
+app never had the control to remove.
 
 **Dodge and Burn are tone operations; the Sponge beside them is a chroma operation.** The CS2
 Bible makes the distinction concrete: "The Sponge tool modifies two things: color saturation in
@@ -527,9 +535,9 @@ for the current label verbatim. The recovered research's `Protect Texture` is a 
 attributed to Adobe's iPad documentation, which I could not open — see `## Unverified`.
 
 `O` selects the Dodge tool and `Shift+O` cycles the flyout, which is confirmed twice independently.
-The app binds `O` the same way — the tile declares it (`toolbar-mapping.ts:94`) and the handler is
-`src/components/Common/AppKeyboardShortcuts.tsx:437`, whose cycle branch is `selectTonalTool` at
-`:177`.
+The app binds `O` the same way — the `Dodge Tool` entry in `toolbar-mapping.ts` declares it, and the
+handler is the plain-`O` `useKeyDownShortcut` registration in
+`src/components/Common/AppKeyboardShortcuts.tsx`, whose cycle branch is `selectTonalTool()`.
 
 **Three more bindings Adobe has and the app does not: `Shift+Alt+S`, `Shift+Alt+M` and
 `Shift+Alt+H` set the tonal range while the tool is held.** They sit in Adobe's
@@ -558,19 +566,19 @@ because a build-up accelerator that shipped on would be the surprise, and hedgin
 in the family would make the table unreadable. It is the same species of claim as `## Unverified` 5
 and it is flagged as such here.
 
-| Control             | Photoshop behaviour                               | Default / range | App status | App `file:line`                                            |
-| ------------------- | ------------------------------------------------- | --------------- | ---------- | ---------------------------------------------------------- |
-| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:156`, `:173` |
-| Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`         |
-| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`         |
-| Protect Tones       | Stop lightening desaturating and clipping         | on              | `missing`  | —                                                          |
-| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                          |
+| Control             | Photoshop behaviour                               | Default / range | App status | App source                                                                                 |
+| ------------------- | ------------------------------------------------- | --------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Size` and `Hardness` sliders |
+| Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Range` dropdown              |
+| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Exposure` slider             |
+| Protect Tones       | Stop lightening desaturating and clipping         | on              | `missing`  | —                                                                                          |
+| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                                                          |
 
 **App verdict: Range and Exposure are real; the defining interaction is absent.** Range writes a
 field the processor reads, and Exposure drives a per-pixel amount rather than a display-only value,
-with the band's **power** driven by the exposure (`tonalWeight` at
-`src/tools/dodgeBurn.ts:125`, `tonalAmount` at `:177`) so a high value narrows the band instead of
-dragging a hard edge across the picture. The band is a quadratic falloff in Rec.709 luma of the
+with the band's **power** driven by the exposure (`src/tools/dodgeBurn.ts` — `tonalWeight()` and
+`tonalAmount()`) so a high value narrows the band instead of dragging a hard edge across the
+picture. The band is a quadratic falloff in Rec.709 luma of the
 **encoded** sRGB the editor stores, split at a flat luma 128. That is a defensible reading, since
 Photoshop also scales stored channel values towards 255, but it is one hard split against a real
 tonal scale, and the three Photoshop bands are not equal halves of the range.
@@ -585,12 +593,13 @@ The largest gap is not a control. **There is no build-up.** One stroke commits o
 full Exposure value in a single pass, because a one-shot commit has to be a pure function of its
 args — which is also what makes the registry's `requiresRaster` replay reproduce it exactly. The
 phrase matters in one respect: the per-pixel amount a commit emits is a **curve** of the Exposure
-value, not the value itself. `tonalAmount` (`src/tools/dodgeBurn.ts:177`) returns
-`band ** (level * EXPOSURE_EXPONENT) * level * EXPOSURE_GAIN * paint` with the exponent at `:87` and
-the gain at `:73`, both 4 and 1, so at the default Exposure of 50 the peak of the chosen band shifts
-a pixel by 0.5 and a quarter of the way down the band by a far smaller amount; the "full Exposure
-value" is the slider's setting being honoured end to end, not the whole value being written to every
-pixel. Holding the button still does nothing — there is no `setInterval`, `setTimeout` or rAF dwell
+value, not the value itself. `tonalAmount()` (`src/tools/dodgeBurn.ts`) returns
+`band ** (level * EXPOSURE_EXPONENT) * level * EXPOSURE_GAIN * paint` with the exponent in
+`EXPOSURE_EXPONENT` and the gain in `EXPOSURE_GAIN`, both 4 and 1, so at the default Exposure of 50
+the peak of the chosen band shifts a pixel by 0.5 and a quarter of the way down the band by a far
+smaller amount; the "full Exposure value" is the slider's setting being honoured end to end, not the
+whole value being written to every pixel. Holding the button still does nothing — there is no
+`setInterval`, `setTimeout` or rAF dwell
 anywhere in `src/hooks/usePaintStroke.ts` or in this file's tool area — and the tool's whole reason
 for existing is what happens while you hold it. Airbrush, which exists precisely to make that
 build-up automatic when you cannot hold still, is missing for the same reason. **This, not any
@@ -614,9 +623,9 @@ it off `placeholder`: a real raster and a real history entry come out of the oth
 
 The Burn tool is the same darkroom move from the other side: let more light onto the print and that
 part of the image deepens. It is the Dodge tool's control set under another name, which is why the
-app gives the two one shared `DodgeBurnToolArgs` and one shared options component — the module says
-so at `src/tools/dodgeBurn.ts:26-33`. The two processors are separate function references by design
-(`dodge` at `:379`, `burn` at `:394`) because a test pins processor identity, and the module is
+app gives the two one shared `DodgeBurnToolArgs` and one shared options component — both in
+`src/tools/dodgeBurn.ts`. The two processors are separate function references by design (`dodge()`
+and `burn()` in that same module) because a test pins processor identity, and the module is
 explicit that **burn is not the inverse of dodge**: with `q` the amount, `burn(dodge(c)) =
 [c + (255 - c)q](1 - q)`, which equals `c` only at `q = 0` and `q = 1`. They are two ends of one
 axis, not a pair that cancels.
@@ -628,24 +637,24 @@ two `missing` controls, the `partial` preset picker, the absent build-up — and
 bindings and the `[`/`]` brush-size pair apply to it exactly as they do to the Dodge. The app binds
 none of the four.
 
-| Control             | Photoshop behaviour                               | Default / range | App status | App `file:line`                                            |
-| ------------------- | ------------------------------------------------- | --------------- | ---------- | ---------------------------------------------------------- |
-| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:156`, `:173` |
-| Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:126`         |
-| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx:139`         |
-| Protect Tones       | Stop darkening raising saturation or clipping     | on              | `missing`  | —                                                          |
-| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                          |
+| Control             | Photoshop behaviour                               | Default / range | App status | App source                                                                                 |
+| ------------------- | ------------------------------------------------- | --------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| Brush Preset Picker | The tip, with Size and Hardness                   | preset library  | `partial`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Size` and `Hardness` sliders |
+| Range               | Shadows / Midtones / Highlights                   | Midtones        | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Range` dropdown              |
+| Exposure            | Strength of each pass; the only intensity control | 50%, 0–100      | `present`  | `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `Tonal()`'s `Exposure` slider             |
+| Protect Tones       | Stop darkening raising saturation or clipping     | on              | `missing`  | —                                                                                          |
+| Airbrush            | Keep building while the brush rests               | off (unsourced) | `missing`  | —                                                                                          |
 
 **App verdict: same processor, other endpoint, same gaps — including the `partial` verdict.** Burn
-is `applyDodgeBurn(..., false)` against the dodge's `true` (`src/tools/dodgeBurn.ts:394`), so the
-pixel rule is `c' = c - c * amount` where the dodge's is `c' = c + (255 - c) * amount`. Range and
+is `applyDodgeBurn(..., false)` against the dodge's `true` (`src/tools/dodgeBurn.ts` — `burn()`), so
+the pixel rule is `c' = c - c * amount` where the dodge's is `c' = c + (255 - c) * amount`. Range and
 Exposure are genuinely wired to per-pixel work through the same band function. Registered as
-`raster` (`src/tools/toolProcessors.ts:244`); the gesture is
-`src/components/Main/BurnToolArea.tsx:56`, a deliberate duplicate of the Dodge's own file. The
-seeded args are `src/tools/settings.ts:255`. The absent build-up is the same absence and gets the
-same phrasing: one stroke, one commit, at the slider's full Exposure value in a single pass, with
-the emitted per-pixel amount a curve of that value rather than the value itself, and no dwell
-anywhere in the stroke hook to accumulate more.
+`raster` (`src/tools/toolProcessors.ts` — the `toolProcessors` registry's `burn` entry); the gesture
+is `src/components/Main/BurnToolArea.tsx` — `BurnToolArea()`, a deliberate duplicate of the Dodge's
+own file. The seeded args are `src/tools/settings.ts` — `defaultSettings.burn`. The absent build-up
+is the same absence and gets the same phrasing: one stroke, one commit, at the slider's full
+Exposure value in a single pass, with the emitted per-pixel amount a curve of that value rather than
+the value itself, and no dwell anywhere in the stroke hook to accumulate more.
 
 **Sources**
 
@@ -764,7 +773,8 @@ Tool Preset picker' button at the **left end** of the Options bar Control panel.
 comes with one 'Circular Rainbow' Gradient Tool preset" — and about what follows it, "from the
 **next drop-down to the right**". So the order is preset picker, then `Tool Mode`, then the swatch,
 and the `Tool Preset Picker` row is now row 1 with status `missing`: the app's bar opens with `Type`
-(`Gradient.tsx:112-125`) and there is no preset recall of any kind, so nothing to point at.
+(`src/components/ToolbarsRight/Gradient/Gradient.tsx` — `Gradient()`'s `Type` select) and there is no
+preset recall of any kind, so nothing to point at.
 
 Five types, per Adobe's help and a CS2 keyboard reference that predates the name change: **Linear,
 Radial, Angular, Reflected, Diamond**. Adobe's current page spells them "Linear, Radial, Angular,
@@ -872,56 +882,61 @@ Adobe's 24.5 announcement put the Tool Mode dropdown in **24.5** (May 2023), and
 which is the same year and a looser version label rather than a contradiction. Noted so a reviewer
 who meets the second phrasing is not surprised; no change.
 
-| Control                    | Photoshop behaviour                                                                                    | Default / range       | App status | App `file:line`                                          |
-| -------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------- | ---------- | -------------------------------------------------------- |
-| Tool Preset Picker         | The saved-tool-preset drop-down at the left end of the bar; ships one, "Circular Rainbow"              | 1 preset              | `missing`  | —                                                        |
-| Tool Mode                  | Live gradient vs Classic gradient; changes which options follow (24.5+)                                | Gradient              | `missing`  | —                                                        |
-| Gradient preset picker     | Click the swatch for the Gradient Editor, its arrow for the presets library                            | the shipped library   | `missing`  | —                                                        |
-| Gradient Type              | Linear, Radial, Angular, Reflected, Diamond                                                            | Linear                | `partial`  | `src/components/ToolbarsRight/Gradient/Gradient.tsx:13`  |
-| Mode                       | Blend mode the gradient composites with — **Classic tool only**                                        | Normal                | `missing`  | —                                                        |
-| Opacity                    | Opacity of the whole fill, multiplied over the gradient's own alpha ramp — **Classic tool only**       | 100%, 0–100           | `partial`  | `src/components/ToolbarsRight/Gradient/Gradient.tsx:129` |
-| Dither                     | Noise the interpolation to break 8-bit banding                                                         | not stated            | `missing`  | —                                                        |
-| Transparency               | Applies the gradient's opacity stops — **Classic tool only**                                           | off                   | `missing`  | —                                                        |
-| Reverse                    | Swap the gradient ends                                                                                 | off                   | `missing`  | —                                                        |
-| Method                     | Perceptual (OKLab) / Linear / Classic interpolation                                                    | Perceptual since 23.0 | `missing`  | —                                                        |
-| On-canvas gradient handles | Two end handles and a midpoint, draggable on canvas; dragging the line itself moves the whole gradient | —                     | `missing`  | —                                                        |
+| Control                    | Photoshop behaviour                                                                                    | Default / range       | App status | App source                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------- | ---------- | -------------------------------------------------------------------------------------- |
+| Tool Preset Picker         | The saved-tool-preset drop-down at the left end of the bar; ships one, "Circular Rainbow"              | 1 preset              | `missing`  | —                                                                                      |
+| Tool Mode                  | Live gradient vs Classic gradient; changes which options follow (24.5+)                                | Gradient              | `missing`  | —                                                                                      |
+| Gradient preset picker     | Click the swatch for the Gradient Editor, its arrow for the presets library                            | the shipped library   | `missing`  | —                                                                                      |
+| Gradient Type              | Linear, Radial, Angular, Reflected, Diamond                                                            | Linear                | `partial`  | `src/components/ToolbarsRight/Gradient/Gradient.tsx` — `GRADIENT_TYPES`                |
+| Mode                       | Blend mode the gradient composites with — **Classic tool only**                                        | Normal                | `missing`  | —                                                                                      |
+| Opacity                    | Opacity of the whole fill, multiplied over the gradient's own alpha ramp — **Classic tool only**       | 100%, 0–100           | `partial`  | `src/components/ToolbarsRight/Gradient/Gradient.tsx` — `Gradient()`'s `Opacity` slider |
+| Dither                     | Noise the interpolation to break 8-bit banding                                                         | not stated            | `missing`  | —                                                                                      |
+| Transparency               | Applies the gradient's opacity stops — **Classic tool only**                                           | off                   | `missing`  | —                                                                                      |
+| Reverse                    | Swap the gradient ends                                                                                 | off                   | `missing`  | —                                                                                      |
+| Method                     | Perceptual (OKLab) / Linear / Classic interpolation                                                    | Perceptual since 23.0 | `missing`  | —                                                                                      |
+| On-canvas gradient handles | Two end handles and a midpoint, draggable on canvas; dragging the line itself moves the whole gradient | —                     | `missing`  | —                                                                                      |
 
 **App verdict: the fill is right, everything around it is thinner, and the handles are gone.** Four
 controls against Photoshop's eleven, and the app's four do not even include the one Photoshop's bar
 opens with. `GradientToolArgs` holds exactly `type`, `from`, `to`,
-`colorA`, `colorB`, `alpha` and nothing else (`src/tools/gradient.ts:5`), which is the structural
-reason for most of the rows above. The `Type` select carries **two** entries, Linear and Radial
-(`src/components/ToolbarsRight/Gradient/Gradient.tsx:13`); Angle, Reflected and Diamond have no
+`colorA`, `colorB`, `alpha` and nothing else (`src/tools/gradient.ts` — `GradientToolArgs`), which is
+the structural reason for most of the rows above. The `Type` select carries **two** entries, Linear
+and Radial (`src/components/ToolbarsRight/Gradient/Gradient.tsx` — `GRADIENT_TYPES`); Angle,
+Reflected and Diamond have no
 representation in a fixed `from`/`to` pair. `Method` is the most consequential omission of the three
 missing options, because the app interpolates the two stops as plain
-per-channel RGB (`src/tools/gradient.ts:36`, one stop sampled at `t` in each channel), which is
+per-channel RGB (`src/tools/gradient.ts` — `sampleStop()`, one stop sampled at `t` in each channel),
+which is
 closest to the Classic behaviour Photoshop stopped defaulting to in 23.0 — so every gradient this
 editor paints is one dropdown away from a different ramp. `Opacity` is the
 one control the app carries that the current tool's bar does not: Photoshop has moved it onto
 the Gradient Fill layer, and the app still shows it as a bar slider, which is what its `partial` status
 records. The preset picker and the Gradient Editor are absent entirely, so there are
 no multi-stop gradients, no per-stop opacity or position, no midpoints, and no gradient styles. The
-two stops are two colour inputs in the bar (`Gradient.tsx:146`, `:159`) rather than a picker, and
+two stops are two colour inputs in the bar (`src/components/ToolbarsRight/Gradient/Gradient.tsx` —
+`Gradient()`'s `Colour A` and `Colour B` inputs) rather than a picker, and
 they are the tool's only gradient state — there is no Foreground-to-Background preset and nothing
 to reset to. **The verdict is `partial` and not `placeholder`** because the fill does reach the
 document as a real raster with a real history entry; what it commits is simply a narrower, uneditable
 gradient than Photoshop's tool commits, which is the definition `partial` is for.
 
 **The handles are genuinely absent, and I checked carefully.** `GradientToolArea` accepts
-`overlayCtxRef` and **never draws to it** — the file says so at
-`src/components/Main/GradientToolArea.tsx:40` ("`overlayCtxRef` is therefore accepted and unused")
-— and `buildArgs` at `:95` writes `from`/`to` from the drag's first and last point and from
+`overlayCtxRef` and **never draws to it** — the `GradientToolArea` JSDoc in
+`src/components/Main/GradientToolArea.tsx` says so ("`overlayCtxRef` is therefore accepted and
+unused") — and `buildArgs()` in the same file writes `from`/`to` from the drag's first and last
+point and from
 nothing else. There is no pointer-down handler for a handle anywhere in the component, and no
 second gesture surface. So once a fill is committed its geometry cannot be changed at all without
 painting a second gradient over it. Photoshop's live-preview gradient is not a refinement of that;
 it is the difference between a fill and an editable object. `Shift` is not bound either — there is
 no `shiftKey` read anywhere in `GradientToolArea.tsx` or in `src/hooks/usePaintStroke.ts` — and
 neither `,` nor `.` is on any keyboard handler. `[` and `]` are registered, but as the shared
-tip-size nudge at `src/components/Common/AppKeyboardShortcuts.tsx:518` and `:526`, gated to
-`tipSizeField` (`:44-53`), and the Gradient is not a member, so both are dead while this tool is
-selected. The only `Delete` bindings belong to the two lasso tool areas
-(`src/components/Main/FeatherMagneticLassoToolArea.tsx:574` and
-`src/components/Main/PolygonClickToolArea.tsx:953`), so no key removes a gradient stop.
+tip-size nudge at the `[` and `]` registrations in `src/components/Common/AppKeyboardShortcuts.tsx`,
+gated to that file's `tipSizeField`, and the Gradient is not a member, so both are dead while this
+tool is selected. The only `Delete` bindings belong to the two lasso tool areas
+(`src/components/Main/FeatherMagneticLassoToolArea.tsx` and
+`src/components/Main/PolygonClickToolArea.tsx` — each file's `Delete` registration for
+`removeLastAnchor`), so no key removes a gradient stop.
 
 **The Radial's "Photoshop mirrors" clause is gone, and the sentence it was attached to was doing two
 jobs.** The data file asserted that the app's Radial "holds its end colour past the circle through
@@ -931,17 +946,19 @@ Photoshop would add a mirror feature". What the app actually does is fall out of
 `from`/`to` pair with a projected `t` clamped to `[0, 1]` has no way to express a mirrored falloff, so
 the clause about Photoshop was doing the explanatory work that the structural clause should have
 done. The claim is now stated as an app fact and the Photoshop half is gone. **The identical
-sentence still lives at `src/tools/gradient.ts:102-103`** — "Photoshop mirrors past that circle;
+sentence still lives in `src/tools/gradient.ts`** — in `gradient()`'s JSDoc, the `RADIAL` bullet:
+"Photoshop mirrors past that circle;
 this does not, and a mirrored radial has no representation in the fixed `from`/`to` args" — and that
 file is outside this family's two, so it is reported rather than fixed.
 
 **`G` does not reach the Gradient on a first press, which the data file used to claim.** A plain `G`
 runs `selectFillTool(false)`, which lands on `'paint-bucket'`
-(`src/components/Common/AppKeyboardShortcuts.tsx:166-175`, handler registered at `:421-426`); the
-Gradient is what the cycle reaches, via the `Shift+G` binding at `:428-434` into `selectFillTool`'s
-cycle branch. The tile declarations agree: the Paint Bucket
-declares `shortcut: 'G'` (`toolbar-mapping.ts:80`) and the Gradient tile declares none at all
-(`toolbar-mapping.ts:92`). The data file's `shortcuts` row now says exactly that rather than
+(`src/components/Common/AppKeyboardShortcuts.tsx` — `selectFillTool()`; its plain-`G` handler is the
+`key: 'g'` `useKeyDownShortcut` registration in the same file); the
+Gradient is what the cycle reaches, via the `Shift+G` binding into `selectFillTool`'s
+cycle branch. The tile declarations agree: the `Paint Bucket Tool` entry in `toolbar-mapping.ts`
+declares `shortcut: 'G'` and the `Gradient Tool` entry declares none at all.
+The data file's `shortcuts` row now says exactly that rather than
 "pressing it again cycles to that tool", which described a first press that selects the other tool.
 Third-party walkthroughs routinely say "`G` selects the Gradient tool", which is the CS-era ordering
 where the Gradient was the tile's own letter; wikihood's 2007 text spells the current behaviour out
@@ -1007,7 +1024,7 @@ a binding is **absent**, which is the stronger form of the same objection.
    established. **This is why the data file's dodge and burn `appNotes` say the app's band "is a
    single hard split against a real tonal scale, and the three Photoshop bands are not equal halves
    of the range", and do not quote 85/170 as Photoshop's values.** The app's own split is luma 128
-   (`TONAL_SPLIT` in `src/tools/dodgeBurn.ts:48`), which is a different proposition and is
+   (`TONAL_SPLIT` in `src/tools/dodgeBurn.ts`), which is a different proposition and is
    verifiable in the tree.
 4. **`Protect Texture` as the desktop control name.** The recovered research states the control is
    **Protect Texture**, and that Adobe's iPad documentation says so explicitly for the equivalent
@@ -1091,8 +1108,9 @@ a binding is **absent**, which is the stronger form of the same objection.
     now only corroborate it. **Still open: the Blur and the Sharpen.** Adobe's current Blur page
     names no letter, and the current Sharpen page could not be opened, so neither carries an `R`
     row — the same rule the other five controls in this file follow, where a claim goes in the data
-    file only if a page puts it on that tool. The app binds none of the three
-    (`toolbar-mapping.ts:86-88`), so this is an accuracy question, not an app-fidelity one.
+    file only if a page puts it on that tool. The app binds none of the three: the `Blur`, `Sharpen`
+    and `Smudge` entries in `toolbar-mapping.ts`'s Focus flyout all declare no `shortcut`, so this
+    is an accuracy question, not an app-fidelity one.
 12. **`Dither`'s and `Reverse`'s defaults, and the removal of `Reverse`'s.** The data file used to
     say "On by default" for `Dither` and "Off by default" for `Reverse`, and both were silence
     dressed as a fact. They are now both gone from the `detail` text and the rows say that no page

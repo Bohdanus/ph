@@ -348,6 +348,118 @@ describe('Color Helpers', () => {
       }
     });
 
+    /**
+     * THE ROUNDING BAND, pinned on both edges.
+     *
+     * `toHexPair` rounds, and rounding is the entire tolerance of this comparison — half an
+     * 8-bit step in each direction. Every other fixture in this file uses an EXACT integer
+     * channel (`rgb(100% 0% 0%)` and `color(srgb 1 0 0)` are both exactly 255), so the band
+     * was unpinned in both directions: change line 19 of `../color-helpers.ts` to
+     * `Math.round(channel + 0.49)` and every case below, plus all twenty `setForegroundColor`
+     * cases and all seven browser cases, stayed green while `rgb(254, 0, 0)` — a whole 8-bit
+     * step of real colour error — verified as `#ff0000`.
+     *
+     * The rows below are what close that. Each one's computed value is written out with its
+     * arithmetic so a reader can check it against `Math.round` rather than take it on trust,
+     * and each sits within a hair of one of the two edges, so neither the value nor the
+     * rounding rule can drift without one of them moving.
+     */
+    describe('the channel rounding band is half an 8-bit step, pinned on both edges', () => {
+      /**
+       * Playwright's own `toBe` semantics, which the permissive stub above deliberately does
+       * not enforce — it records the arguments and returns, so under it nothing is ever
+       * rejected and this whole block would pass whatever `toHexPair` did.
+       *
+       * One poll attempt rather than Playwright's retries, because every value here is a
+       * STEADY wrong colour: a real poll would retry and then fail identically.
+       */
+      const rejectWhenNotEqual = (received: string, expected: string): void => {
+        if (received !== expected) {
+          throw new Error(`expect.poll(received).toBe(expected)\n\nExpected: "${expected}"\nReceived: "${received}"`);
+        }
+      };
+
+      const pageWithSwatch = (computed: string): Page => {
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        return createMockPage({ evaluate: createResolvedEvaluate(), locator });
+      };
+
+      const rejected = [
+        {
+          computed: 'color(srgb 0.998 0 0)',
+          received: '#fe0000',
+          arithmetic: '0.998 x 255 = 254.49, which rounds DOWN to 254',
+        },
+        {
+          computed: 'rgb(99.8% 0% 0%)',
+          received: '#fe0000',
+          arithmetic: '99.8% x 255 = 254.49, the same 254.49 through the percentage notation',
+        },
+        {
+          computed: 'color(srgb 1 0.004 0)',
+          received: '#ff0100',
+          arithmetic: '0.004 x 255 = 1.02, which rounds UP to 1 — the band edge on green',
+        },
+        {
+          computed: 'rgb(50.1% 0% 0%)',
+          received: '#800000',
+          arithmetic: '50.1% x 255 = 127.755, a percentage landing between two integers',
+        },
+      ] as const;
+
+      it.each(rejected)('rejects $computed ($arithmetic)', async ({ computed, received }) => {
+        mockPollAssertion.mockImplementation(rejectWhenNotEqual);
+
+        await expect(setForegroundColor(pageWithSwatch(computed), RED_HEX, true)).rejects.toThrow(
+          `Expected: "${RED_HEX}"\nReceived: "${received}"`
+        );
+        expect(mockPollAssertion).toHaveBeenCalledWith(received, RED_HEX);
+      });
+
+      const accepted = [
+        {
+          computed: 'color(srgb 0.99804 0 0)',
+          arithmetic: '0.99804 x 255 = 254.5002, two ten-thousandths of a step over the midpoint',
+        },
+        {
+          computed: 'rgb(99.9% 0% 0%)',
+          arithmetic: '99.9% x 255 = 254.745, well inside the band above the midpoint',
+        },
+        {
+          computed: 'color(srgb 1 0.001 0)',
+          arithmetic: '0.001 x 255 = 0.255, which rounds DOWN to 0',
+        },
+      ] as const;
+
+      it.each(accepted)('accepts $computed ($arithmetic)', async ({ computed }) => {
+        mockPollAssertion.mockImplementation(rejectWhenNotEqual);
+
+        await setForegroundColor(pageWithSwatch(computed), RED_HEX, true);
+
+        expect(mockPollAssertion).toHaveBeenCalledWith(RED_HEX, RED_HEX);
+      });
+
+      it('brackets the midpoint to within two ten-thousandths of a step', async () => {
+        // The band's whole width, as a single pair of facts rather than as prose: 254.49
+        // rounds down and 254.5002 rounds up, so the boundary sits between them and the
+        // tolerance is half a step — not the "sub-1/255 float" the old comment claimed,
+        // which was 128 times narrower than the truth.
+        //
+        // Sequential, not `Promise.all`: both halves record into the one shared
+        // `mockPollAssertion`, so running them concurrently let the second `mockClear()` wipe
+        // the first half's recorded call and this test read `#fe0000` twice.
+        mockPollAssertion.mockImplementation(rejectWhenNotEqual);
+        const bracket: string[] = [];
+        for (const computed of ['color(srgb 0.998 0 0)', 'color(srgb 0.99804 0 0)']) {
+          mockPollAssertion.mockClear();
+          await setForegroundColor(pageWithSwatch(computed), RED_HEX, true).catch(() => undefined);
+          bracket.push(mockPollAssertion.mock.calls[0][0]);
+        }
+
+        expect(bracket).toEqual(['#fe0000', RED_HEX]);
+      });
+    });
+
     it('reports an unsupported colour notation by name instead of reading its channels', async () => {
       // Chromium preserves a perceptual or wide-gamut declaration verbatim, so
       // these reach the swatch check. None of their numbers are sRGB channels,

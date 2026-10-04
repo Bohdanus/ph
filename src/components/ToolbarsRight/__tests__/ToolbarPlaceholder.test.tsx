@@ -43,8 +43,13 @@ const PLACEHOLDER_TOOLS = [
   // `color-replacement` was here and is gone: it has a real options bar now, so there is no
   // placeholder group left for it to be keyed by.
   { toolName: 'pen', configKey: 'pen', title: 'Pen Tool', showTodoBadge: true },
-  { toolName: 'freeform-pen', configKey: 'pen', title: 'Freeform Pen Tool', showTodoBadge: true },
-  { toolName: 'curvature-pen', configKey: 'pen', title: 'Curvature Pen Tool', showTodoBadge: true },
+  { toolName: 'freeform-pen', configKey: 'freeform-pen', title: 'Freeform Pen Tool', showTodoBadge: true },
+  {
+    toolName: 'curvature-pen',
+    configKey: 'curvature-pen',
+    title: 'Curvature Pen Tool',
+    showTodoBadge: true,
+  },
   { toolName: 'add-anchor-point', configKey: 'pen', title: 'Add Anchor Point Tool', showTodoBadge: true },
   { toolName: 'delete-anchor-point', configKey: 'pen', title: 'Delete Anchor Point Tool', showTodoBadge: true },
   { toolName: 'convert-point', configKey: 'pen', title: 'Convert Point Tool', showTodoBadge: true },
@@ -165,11 +170,20 @@ describe('placeholder tool wiring in toolsMap', () => {
     const usedKeys = new Set<string>(PLACEHOLDER_TOOLS.map((entry) => entry.configKey));
     const unreachableKeys = CONFIG_KEYS.filter((key) => !usedKeys.has(key));
 
-    // toolsMap wires freeform-pen, curvature-pen and rectangle to other groups, so these
-    // three entries in toolbarPlaceholderConfig.ts are currently dead config. Every other
-    // group is reached by its tool, which is what makes this a list of exactly three and not
-    // a growing pile: a group for a tool that has a real bar would land here too.
-    expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle']);
+    // `rectangle` is the one group no tool claims: the rail has no `rectangle` tool name, so
+    // `rectangle`/`ellipse`/`triangle`/`polygon`/`line` all render the real `Shape` bar and the
+    // group survives unused. It is correct for it to be here, and the exact equality is what
+    // keeps this a fixed point rather than a growing pile: a group for a tool that has a real
+    // bar, or one whose tool stopped being a placeholder, lands here too.
+    //
+    // The list is derived from the wiring table above, NOT from `toolsMap` — that table's
+    // fidelity to the registry is what the `it.each` render case pins. The `freeform-pen` and
+    // `curvature-pen` groups were on this list because both `placeholderTool(...)` calls named
+    // the `pen` key, which put the standard Pen's seven chips over Magnetic and Curve Fit, the
+    // controls those two tools exist for. Pointing each call at its own key is what cleared
+    // them, and re-pointing either call back at `pen` fails that render case on the missing
+    // `Magnetic` chip — checked by mutation, not argued.
+    expect(unreachableKeys).toEqual(['rectangle']);
   });
 
   it('keeps a config group for every tool that is still a placeholder', () => {

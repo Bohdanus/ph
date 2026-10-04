@@ -247,19 +247,41 @@ describe('App shell layout', () => {
     render(<App />);
     const before = screen.getByText('Main');
 
-    setViewportWidth(500);
-    expect(screen.getByText('Main')).toBe(before);
+    // `useStore` is a hook of the store tree, so its call count is a lower bound on the
+    // renders that reached it. The node-identity checks below are only worth anything if a
+    // crossing RE-RENDERS: identity is trivially preserved when nothing happened at all,
+    // so a `setViewportWidth` that stopped delivering its `change` event, or a shell
+    // that stopped subscribing, would leave all five of these assertions green while
+    // the boundary stopped doing anything.
+    const renders = () => useStoreMock.mock.calls.length;
 
-    setViewportWidth(1600);
-    expect(screen.getByText('Main')).toBe(before);
+    const step = (width: number, rerendered: boolean) => {
+      const beforeCrossing = renders();
+      act(() => {
+        setViewportWidth(width);
+      });
+      expect({ width, rerendered: renders() > beforeCrossing }).toEqual({ width, rerendered });
+      // Whatever the render count did, the canvas is the same DOM node throughout.
+      expect(screen.getByText('Main')).toBe(before);
+    };
 
-    // Also through the tablet band, in both directions.
-    setViewportWidth(900);
-    expect(screen.getByText('Main')).toBe(before);
-    setViewportWidth(500);
-    expect(screen.getByText('Main')).toBe(before);
-    setViewportWidth(1280);
-    expect(screen.getByText('Main')).toBe(before);
+    step(500, true);
+    step(1600, true);
+
+    // Also through the tablet band, in both directions. 900 is deliberately INERT, but
+    // not because nothing happens there: `RightPanelVisibilityProvider` is not mocked
+    // and subscribes to `TABLET_MEDIA_QUERY`, so crossing into the band re-renders it.
+    // What costs nothing is the canvas tree — `<AppContainer />` is the SAME element
+    // reference across the crossing (App.tsx:145), so React reconciles the provider's
+    // children without rendering them, and `useStore` is not reached again.
+    //
+    // Asserted, because it is what makes the four steps above mean "the boundary was
+    // crossed" rather than "the helper re-renders", and because a provider that stopped
+    // bailing out — or a context consumer added below it — would add a render to every
+    // width change, which is the cost the unconditional mount exists to avoid.
+    step(900, false);
+    step(500, true);
+    step(1280, true);
   });
 
   it('renders the same region set at every width, because hiding is not unmounting', () => {
@@ -286,7 +308,7 @@ describe('App shell layout', () => {
  * work — but `display: none` hides without unmounting. A surface left open on a phone
  * therefore stayed mounted on desktop, and `MobileToolSheet` held a second live instance of
  * the active tool's options panel next to the one `ToolbarHorizontal` owns: duplicate
- * `id="text-input"`, duplicate `id="font-family-select"`, duplicate window Escape listeners.
+ * `id="font-size-input"`, duplicate `id="font-family-select"`, duplicate window Escape listeners.
  *
  * `MobileShell` is mocked here, so the assertions are on the flags this component owns.
  */

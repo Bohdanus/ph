@@ -31,5 +31,5 @@ export default defineConfig({
   // a `test` block below was dead for every default invocation — but it was a live
   // footgun for `vitest --config vite.config.ts` and for any IDE runner pointed at
   // this file, because it could not know about the e2e project's existence and would
-  // load all 21 Playwright specs into jsdom.
+  // load every Playwright spec under `e2e/` into jsdom.
 });

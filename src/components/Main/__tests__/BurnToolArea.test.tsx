@@ -218,4 +218,68 @@ describe('BurnToolArea', () => {
       { x: 100, y: 60 },
     ]);
   });
+
+  it('rebases a stroke through the PRESENTED origin of a transformed layer, not through pos', () => {
+    // A retained affine is evaluated before the processor is handed a raster, so the buffer it
+    // writes is staged at the EVALUATED extent. The layer origin is `pos`; the origin of the
+    // raster is `pos` plus the affine's own offset. Subtracting `pos` addressed the buffer
+    // `(5, 3)` pixels up and left of where the layer is drawn — a stroke that landed on the
+    // wrong pixels of a layer the user could see.
+    storeState.layers = {
+      base: makeLayer('base', {
+        pos: { x: 10, y: 5, width: 200, height: 120 },
+        operations: [
+          {
+            id: 'op-scale',
+            kind: 'affine-transform',
+            enabled: true,
+            transform: { a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 },
+          },
+        ],
+      }),
+    };
+    const toolArea = renderArea();
+
+    stroke(toolArea, [25, 18], [35, 28]);
+
+    // Presented origin (15, 8): (10, 5) plus the affine's (5, 3). Both writers see it.
+    const [preview] = tempUpdateLayerMock.mock.calls[0] as [ToolLayerCall];
+    expect(preview.toolArgs.points).toEqual([
+      { x: 10, y: 10 },
+      { x: 20, y: 20 },
+    ]);
+    const [commit] = updateLayerByToolMock.mock.calls[0] as [ToolLayerCall];
+    expect(commit.toolArgs.points).toEqual([
+      { x: 10, y: 10 },
+      { x: 20, y: 20 },
+    ]);
+  });
+
+  it('leaves a disabled operation out of the rebased origin entirely', () => {
+    // A disabled entry contributes to no presentation, so it must not move the origin either:
+    // this is the identity case with a disabled operation on the layer, and the rebase has to
+    // stay `point - pos` rather than inventing an extent from an operation nothing renders.
+    storeState.layers = {
+      base: makeLayer('base', {
+        pos: { x: 10, y: 5, width: 200, height: 120 },
+        operations: [
+          {
+            id: 'op-off',
+            kind: 'affine-transform',
+            enabled: false,
+            transform: { a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 },
+          },
+        ],
+      }),
+    };
+    const toolArea = renderArea();
+
+    stroke(toolArea, [25, 18], [35, 28]);
+
+    const [commit] = updateLayerByToolMock.mock.calls[0] as [ToolLayerCall];
+    expect(commit.toolArgs.points).toEqual([
+      { x: 15, y: 13 },
+      { x: 25, y: 23 },
+    ]);
+  });
 });

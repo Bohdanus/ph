@@ -1,9 +1,10 @@
 # Code review subagent
 
-**THE REVIEW IS A SUBAGENT, NOT A FEELING.** `AGENTS.md` requires it after every
-non-trivial change; this file is the prompt to run it with and the rules for running
-it. The prompt is short on purpose — do not paraphrase it and never write a review
-brief from memory; put it in the brief verbatim.
+**THE REVIEW IS A SUBAGENT, NOT A FEELING.** [`docs/README.md`](README.md) indexes
+this file and [`docs/KILO.md`](KILO.md) carries its permission profile; `AGENTS.md`
+does not require the review, so this file is both the prompt and the rule. The prompt
+is short on purpose — do not paraphrase it and never write a review brief from memory;
+put it in the brief verbatim.
 
 ## The prompt
 
@@ -19,8 +20,10 @@ improvement opportunities. Be specific and actionable in suggestions.
 ```
 
 Its permission profile is the second half of the prompt: `read: allow`,
-`bash: allow`, **`edit: deny`**, `mcp: deny`. The reviewer reports; it does not fix.
-A reviewer that edits is no longer a review.
+`bash: allow`, **`edit: deny`**, and the mutating Serena tools named one by one
+(`serena_replace_symbol_body: deny` and its siblings). `mcp: deny` was removed because
+it matched nothing. The reviewer reports; it does not fix. A reviewer that edits is no
+longer a review.
 
 ## Why the copy lives here
 

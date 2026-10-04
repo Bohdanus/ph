@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IDENTITY_AFFINE_TRANSFORM } from '../affine-transform.ts';
@@ -260,3 +263,123 @@ describe('collectDurableAssetIds', () => {
     expect([...ids].sort()).toEqual(['asset-created', 'asset-merged']);
   });
 });
+
+/**
+ * One top-level function's text, from its `export function` line to the next one.
+ * Deliberately not a brace matcher: these assertions are about which `case` labels
+ * a specific switch names, and a span that escaped its function would let a
+ * sibling function satisfy them.
+ */
+function functionBody(source: string, declaration: string): string {
+  const start = source.indexOf(declaration);
+  expect(start, `${declaration} is missing from the source under test`).toBeGreaterThan(-1);
+  const next = source.indexOf('\nexport ', start + declaration.length);
+  return source.slice(start, next === -1 ? undefined : next);
+}
+
+/**
+ * A durable kind that nothing can see is not a gap a reviewer will notice: the
+ * union grows, every existing test stays green, and the shadow goes on reporting
+ * `status: 'current'` while quietly mis-replaying. Both switches below are
+ * therefore closed with a `never` arm, and this asserts the closure rather than
+ * the intent — a kind added to `DurableOperation` without a replay arm and
+ * without an asset classification must fail `tsc`, and it is a typecheck error,
+ * so this is the tripwire for a future edit that removes an arm.
+ *
+ * It pins the SOURCE, not a runtime behaviour, because the failure it exists to
+ * prevent never reaches runtime: the arms are unreachable as long as every kind
+ * is handled.
+ */
+describe('durable operation kind exhaustiveness', () => {
+  const REACHES_EVERY_KIND =
+    /case '(create-layer|remove-layer|set-layer-properties|reposition-layer|reorder-layers|apply-filter|apply-affine-transform|apply-raster-processor|set-document-frame|replace-layer-source|merge-document|set-selection)'/g;
+  const ASSET_FREE_KINDS = [
+    'remove-layer',
+    'set-layer-properties',
+    'reposition-layer',
+    'reorder-layers',
+    'apply-filter',
+    'apply-affine-transform',
+    'apply-raster-processor',
+    'set-document-frame',
+    'replace-layer-source',
+    'set-selection',
+  ];
+
+  it('names every declared kind in the durable replay switch, with a never arm', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../durable-replay.ts'), 'utf8');
+    // Bounded to `replayDurableDocument`. Slicing to end-of-file would let a `case` in
+    // any later function satisfy an assertion about this switch, which is how an
+    // assertion stops testing the thing it names.
+    const body = functionBody(source, 'export function replayDurableDocument');
+    const named = [...body.matchAll(REACHES_EVERY_KIND)].map((match) => match[1]);
+
+    // Every kind in the union reaches a replay arm, and each is named once — a
+    // duplicate means an arm was copied rather than classified.
+    expect([...new Set(named)].sort()).toEqual([...KIND_NAMES].sort());
+    expect(named).toHaveLength(new Set(named).size);
+    // And the switch closes rather than falling off its end, which is what turns
+    // a new kind from a silent no-op into a typecheck error.
+    expect(body).toContain('const _exhaustive: never = operation;');
+  });
+
+  it('classifies every declared kind in the asset scan, with a never arm', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../history-model.ts'), 'utf8');
+    // Bounded, and this bound is load-bearing rather than tidy: `cloneOperation`
+    // also spells out `case 'set-selection':` and every other kind, so a body that
+    // ran to end-of-file would find all of them there and pass with this switch
+    // stripped to nothing.
+    const body = functionBody(source, 'export function collectDurableAssetIds');
+
+    // The two kinds that carry a bitmap, and the ten that provably do not. A new
+    // kind has to be placed on one side or the other deliberately.
+    expect(body).toContain("case 'create-layer':");
+    expect(body).toContain("case 'merge-document':");
+    for (const kind of ASSET_FREE_KINDS) {
+      expect(body).toContain(`case '${kind}':`);
+    }
+    expect(body).toContain('const _exhaustive: never = kind;');
+  });
+
+  it('declares exactly the kinds the DurableOperation union declares', () => {
+    // The two guards above are only as good as this list, and a hand-written list
+    // is not tied to the union at all: adding a kind to `DurableOperation` leaves
+    // this file untouched, so a count assertion over a literal can never notice —
+    // which is what `expect(KIND_NAMES).toHaveLength(11)` was, and it passed for
+    // every union it was supposed to police while its comment claimed otherwise.
+    // Typing the map as `Record<DurableOperation['kind'], true>` is what ties it: a
+    // kind added to the union without an entry here is a typecheck error, which is
+    // the only moment the omission is cheap to fix, and an entry the union does not
+    // declare is one too. The assertion then only has to say the two agree.
+    const UNION_KINDS: Record<DurableOperation['kind'], true> = {
+      'create-layer': true,
+      'remove-layer': true,
+      'set-layer-properties': true,
+      'reposition-layer': true,
+      'reorder-layers': true,
+      'apply-filter': true,
+      'apply-affine-transform': true,
+      'apply-raster-processor': true,
+      'set-document-frame': true,
+      'replace-layer-source': true,
+      'merge-document': true,
+      'set-selection': true,
+    };
+    expect(Object.keys(UNION_KINDS).sort()).toEqual([...KIND_NAMES].sort());
+  });
+});
+
+const KIND_NAMES = [
+  'create-layer',
+  'remove-layer',
+  'set-layer-properties',
+  'reposition-layer',
+  'reorder-layers',
+  'apply-filter',
+  'apply-affine-transform',
+  'apply-raster-processor',
+  'set-document-frame',
+  'replace-layer-source',
+  'merge-document',
+  'set-selection',
+] as const;

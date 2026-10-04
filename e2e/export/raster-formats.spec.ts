@@ -1,8 +1,8 @@
 import { test } from '../fixtures/extended-test';
-import { exportFormats, setupExportTest, exportAndVerify } from './helpers';
+import { browserVerifiedFormats, setupExportTest, exportAndVerify } from './helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';
-const rasterFormats = exportFormats.filter((f) => f.comparePixels && !['.svg', '.ico'].includes(f.extension));
+const rasterFormats = browserVerifiedFormats.filter((f) => !['.svg', '.ico'].includes(f.extension));
 
 for (const format of rasterFormats) {
   test(`exports to ${format.label} (${format.extension}) with pixel verification`, async ({ page }, testInfo) => {

@@ -56,6 +56,8 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
   };
 });
 
+const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+
 vi.mock('@/contexts/StoreContext.tsx', async () => {
   const { useSyncExternalStore } = await import('react');
   return {
@@ -65,6 +67,10 @@ vi.mock('@/contexts/StoreContext.tsx', async () => {
 
 vi.mock('@/contexts/useLayer.ts', () => ({
   useLayers,
+}));
+
+vi.mock('@/contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
 }));
 
 function seed(layers: LayersRecord = mockLayers, activeLayerId: LayerId | null = 'layer-2') {
