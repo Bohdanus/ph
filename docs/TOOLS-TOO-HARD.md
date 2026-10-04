@@ -243,9 +243,9 @@ records as a requirement rather than an omission to be filled by a placeholder.
 the box is resized, can be re-typed in place, and carries an on-canvas caret. Scaling it up is not a
 resample; it re-renders.
 
-**What this app does.** Text is baked to pixels at commit. The renderer writes the string with
-`fillText` (`text.ts` — `fillLine()`) into a layer-sized raster, and the `text` processor returns
-that raster as the tool's whole result (the same file's `text` processor):
+**What this app does.** Each committed text presentation is rasterized. The renderer writes the
+string with `fillText` (`text.ts` — `fillLine()`) into a layer-sized raster, and the `text` processor
+returns that raster as the tool's whole result (the same file's `text` processor):
 
 ```ts
 export const text =
@@ -275,8 +275,14 @@ that makes this harder than it looks: `HistoryItem[]` is the production replay a
 replayed type entry has to reproduce the same pixels from its args on any host. A live text object is
 not a raster and does not survive that unchanged.
 
-**What the app does instead.** A raster that cannot be edited after the fact. Changing the text
-commits a new layer.
+**What the app does instead.** The production path retains the text source arguments, but it has no
+Photoshop edit mode. Selecting an existing text row with the Type tool active (`LayersTab.tsx` —
+`selectLayer()`) hydrates those arguments, and `Text.tsx` — `applyText()` can call
+`replaceLayerSource()` when the replacement starts at the existing layer's original position.
+There is still no on-canvas caret, character selection, or double-click entry, and a gesture that
+does not start at that position creates a new layer. The runtime renderer also uses the committed
+raster for text, so runtime scaling resamples it. The gap is Photoshop-style in-place editing, not
+retention of the text arguments.
 
 ### Free Transform as an interactive bounding box
 
@@ -314,8 +320,8 @@ image behind a stationary crop box.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/straighten-tilted-photos.html>
 
 A **Fill** dropdown on the same bar decides what fills the canvas a crop adds outside the image edge —
-"Go to the Fill dropdown in the Options bar and select Content-Aware Fill" — with Generative Expand the
-cloud value described below.
+"Go to the Fill dropdown in the Options bar and select Content-Aware Fill". Generative Expand is a
+separate action in the Contextual Task Bar, not a value in that dropdown.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/apply-content-aware-fill-while-cropping-images.html>
 
 **The bar carries no Curve, and Adobe does not claim that it does.** Adobe's own enumeration of the
@@ -326,11 +332,11 @@ and the Curve Photoshop documents is the separate Curves adjustment, recorded un
 [Curves — a spline over the tonal range](#curves--a-spline-over-the-tonal-range) below.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html>
 
-**Generative Expand** is the value that flow is built around: "From the Tools panel, select Crop tool
-and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and select
-Generate to let Photoshop extend the image" and "Choose a variation from the Properties panel". The
-model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in the added band
-are computed by a cloud service and arrive on a layer of their own.
+**Generative Expand** is the separate action that flow is built around: "From the Tools panel, select
+Crop tool and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and
+select Generate to let Photoshop extend the image" and "Choose a variation from the Properties
+panel". The model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in
+the added band are computed by a cloud service and arrive on a layer of their own.
 <https://helpx.adobe.com/photoshop/desktop/create-open-import-images/create-images/explore-beyond-the-canvas-with-generative-expand.html>
 
 **What this app does.** The frame grows and nothing is filled. `applyDocumentCrop` takes the gesture
@@ -369,12 +375,12 @@ take.
 image edge: the canvas grows and the added band is transparent. The commit path is honest about what
 it takes — a rect, the current frame, and one document edit — and it says so by writing no fill.
 
-**The frame growth is not this entry's capability, so the growth deletes nothing here.** What this
-entry records is Straighten, Content-Aware and Generative Expand. Growing the canvas is a fourth thing,
-and the cheapest of Adobe's Fill values, decided by the operator rather than synthesised. Patch-based
-synthesis and a cloud generative call are not landing, so this entry stays open under the lifecycle
-rule in the preamble, and what survives the growth is Adobe's behaviour, which a transparent band does
-not change.
+**The frame growth is not this entry's missing capability.** The app can grow the document frame and
+leaves the added band transparent; that current behaviour is recorded by OVR-1 in
+`docs/OVERRIDES.md`. Frame growth is not a Photoshop Fill choice. What this entry records is the
+missing Straighten gesture, Content-Aware Fill, and Generative Expand. Patch-based synthesis and a
+cloud generative call are not landing, so this entry stays open under the lifecycle rule in the
+preamble.
 
 ### Black and White as a hue-sextant weighted mix
 

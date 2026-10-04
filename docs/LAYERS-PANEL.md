@@ -311,20 +311,20 @@ Left to right, on a Photoshop layer row:
 7. **Padlock** — to the right of the name, when locked.
 
 What this app renders today, in the same order: eye, drag handle, name, delete. The drag handle has
-no Photoshop counterpart — Photoshop's row is draggable as a whole. That is a divergence to keep
-until drag-to-reorder needs a visible affordance; **the row itself is the drag handle in Photoshop, and
-a `DragHandleIcon` between the eye and the name is a control that Photoshop does not have.**
+no Photoshop counterpart — Photoshop's row is draggable as a whole. This is a fidelity gap, not a
+sanctioned divergence: **the row itself is the drag handle in Photoshop, and a `DragHandleIcon`
+between the eye and the name is a control that Photoshop does not have.**
 
-| Element     | Status    | Evidence                                                                                                                 |
-| ----------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Eye         | `HAVE`    | `LayersTab.tsx` — the row's eye button (`aria-label` `Hide layer`); `toggleVisibility()` in `useLayer.ts`                |
-| Drag handle | `PARTIAL` | Decorative only, `aria-hidden` (`src/components/Icons/DragHandleIcon.tsx` — `DragHandleIcon()`)                          |
-| Thumbnail   | `GAP`     | Nothing renders one. The repo has no layer-thumbnail code.                                                               |
-| `T` badge   | `GAP`     | Even though text layers are baked pixels, so a raster thumbnail would render — see `docs/TOOLS.md` §Horizontal Type Tool |
-| Disclosure  | `GAP`     | No layer has children to disclose                                                                                        |
-| Name        | `HAVE`    | `LayersTab.tsx` — the `layer-name` span; see [§7](#7-rename) for the mousedown divergence                                |
-| `fx`        | `GAP`     | `Layer.operations` (`layer-types.ts` — `LayerOperation`) holds three filter args plus affine, not layer styles           |
-| Padlock     | `GAP`     | `Layer.locked` exists and is never set by the UI                                                                         |
+| Element     | Status | Evidence                                                                                                                            |
+| ----------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Eye         | `HAVE` | `LayersTab.tsx` — the row's eye button (`aria-label` `Hide layer`); `toggleVisibility()` in `useLayer.ts`                           |
+| Drag handle | `GAP`  | Decorative only, `aria-hidden` (`src/components/Icons/DragHandleIcon.tsx` — `DragHandleIcon()`)                                     |
+| Thumbnail   | `GAP`  | Nothing renders one. The repo has no layer-thumbnail code.                                                                          |
+| `T` badge   | `GAP`  | Text source arguments are retained, but the panel renders no type thumbnail or `T` badge; see `docs/TOOLS.md` §Horizontal Type Tool |
+| Disclosure  | `GAP`  | No layer has children to disclose                                                                                                   |
+| Name        | `HAVE` | `LayersTab.tsx` — the `layer-name` span; see [§7](#7-rename) for the mousedown gap                                                  |
+| `fx`        | `GAP`  | `Layer.operations` (`layer-types.ts` — `LayerOperation`) holds three filter args plus affine, not layer styles                      |
+| Padlock     | `GAP`  | `Layer.locked` exists and is never set by the UI                                                                                    |
 
 - `PARTIAL` — the active row. Photoshop distinguishes the **active** layer (the one edits apply to)
   from merely-**selected** layers: "Some actions, like painting or tonal adjustments, **apply only to
@@ -471,11 +471,9 @@ Layer`. (Adobe, primary, twice.)
   block in `LayersTab.test.tsx` and by the `test('renaming a layer commits the new name when Enter is
 pressed')` and `test('abandoning a rename with Escape keeps the original name')` cases in
   `e2e/layers-panel.spec.ts`.
-- `PARTIAL` — a **single mousedown** enters rename mode, not a double-click. That is a divergence from
-  Photoshop's stated gesture, and it is a reasonable one: mousedown-to-edit is unambiguous where
-  double-click-to-edit collides with a drag gesture on the same row. **Record it as a deliberate
-  divergence, not an oversight**, and do not "fix" it to a double-click without replacing the
-  double-click-on-the-thumbnail-opens-Layer-Style rule at the same time.
+- `GAP` — a **single mousedown** enters rename mode, not Photoshop's double-click gesture. The drag
+  collision is an implementation concern, not an override. The row must preserve Photoshop's
+  double-click-on-the-name rename and its separate thumbnail and Layer Style gestures.
 - `GAP` — Tab / Shift-Tab navigation between rows during a rename.
 - **Locator trap, load-bearing.** A layer row's `title` is `"Drag to reorder"` (the row `<div>` in
   `LayersTab.tsx`) and `page.getByTitle` matches on **substring**. That string is a locator used
