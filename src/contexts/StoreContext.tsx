@@ -27,7 +27,7 @@ import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
   collectDurableAssetIds,
-  freezeDurableDocument,
+  refreezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
@@ -891,7 +891,11 @@ function buildDurableDocument(
         : -1;
     return {
       status: converted.status,
-      document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
+      // `converted.document` is already a deep-frozen copy this module froze, and the
+      // cursor is the only field that moves here, so the navigation write reuses the
+      // baseline and the whole timeline instead of deep-copying both to change a
+      // number. Any other base falls back to the full freeze.
+      document: converted.document ? refreezeDurableDocument(converted.document, { cursor }) : null,
       diagnostics: converted.diagnostics,
       legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
     };

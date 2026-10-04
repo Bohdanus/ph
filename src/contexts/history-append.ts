@@ -28,7 +28,7 @@ import {
 } from './history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
-  freezeDurableDocument,
+  refreezeDurableDocument,
   type AssetId,
   type DurableDocument,
   type DurableHistoryEntry,
@@ -1509,13 +1509,16 @@ export function decideDurableAppend({
 
   return {
     outcome: 'published',
-    document: freezeDurableDocument({
-      ...base,
+    // Only `planned` is new here, so the retained timeline is carried across by
+    // reference when `base` is one of `history-model.ts`'s own frozen copies, and
+    // deep-copied when it is not. `planned` is copied either way: it arrives from
+    // the caller and no reuse claim covers it.
+    document: refreezeDurableDocument(base, {
+      history: [...base.history, planned],
+      cursor,
       documentRevision,
       branchRevision: next.branchRevision,
       durableRevision: base.durableRevision + 1,
-      history: [...base.history, planned],
-      cursor,
     }),
   };
 }

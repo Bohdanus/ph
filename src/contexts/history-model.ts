@@ -438,6 +438,47 @@ function cloneOperation(operation: DurableOperation): DurableOperation {
   }
 }
 
+function freezeDurableHistoryEntry(entry: DurableHistoryEntry): DurableHistoryEntry {
+  return Object.freeze({
+    id: entry.id,
+    schemaVersion: entry.schemaVersion,
+    enabled: entry.enabled,
+    operation: cloneOperation(entry.operation),
+  });
+}
+
+/**
+ * Total cursor clamp: a non-finite or non-integer index has no position in the
+ * timeline and refuses to `-1`; a finite integer is clamped into `[-1, tip]`.
+ * Kept byte-identical in `history-model.ts` and `durable-replay.ts`;
+ * `setDurableCursor` refuses with the same `Number.isInteger` predicate.
+ */
+function clampDurableCursor(cursor: number, historyLength: number): number {
+  return Number.isInteger(cursor) ? Math.max(-1, Math.min(cursor, historyLength - 1)) : -1;
+}
+
+/**
+ * Every document this module has produced as its OWN deep-frozen copy, which is
+ * the property `refreezeDurableDocument` reuses.
+ *
+ * Identity membership, deliberately not a marker property. A marker would have to
+ * be either enumerable — so `{ ...document, cursor }` copied it, and a caller-built
+ * document that aliases a frozen baseline and a hand-edited history would then be
+ * declared a deep copy and its caller's mutable entries would be carried into a
+ * frozen document by reference — or non-enumerable, so the copy every writer makes
+ * (`buildDurableDocument`, `appendDurableEntry`, `toggleDurableEntry`) silently lost
+ * it and the reuse would never run. A `WeakSet` cannot be transferred by a spread at
+ * all, cannot be forged from outside this module, adds nothing to `Object.keys`,
+ * `JSON.stringify` or a `toEqual` comparison, and does not keep a released document
+ * alive.
+ *
+ * The membership is therefore the PROOF rather than a comment about it: a document
+ * reaches the reuse path only if this module froze it, and every entry in such a
+ * document is a `freezeDurableHistoryEntry` copy whose operation was deep-cloned and
+ * frozen, by induction over the two writers below.
+ */
+const ownDeepFrozenCopies = new WeakSet<DurableDocument>();
+
 export function freezeDurableDocument(document: DurableDocument): DurableDocument {
   const baseline: DurableBaseline = Object.freeze({
     frame: Object.freeze({ ...document.baseline.frame }),
@@ -445,28 +486,79 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
     selections: cloneSelectionSnapshot(document.baseline.selections),
     activeLayerId: document.baseline.activeLayerId,
   });
-  const history = Object.freeze(
-    document.history.map((entry) =>
-      Object.freeze({
-        id: entry.id,
-        schemaVersion: entry.schemaVersion,
-        enabled: entry.enabled,
-        operation: cloneOperation(entry.operation),
-      })
-    )
-  );
-  return Object.freeze({
+  const history = Object.freeze(document.history.map(freezeDurableHistoryEntry));
+  const frozen = Object.freeze({
     ...document,
     baseline,
     history,
-    /**
-     * Total cursor clamp: a non-finite or non-integer index has no position in the
-     * timeline and refuses to `-1`; a finite integer is clamped into `[-1, tip]`.
-     * Kept byte-identical in `history-model.ts` and `durable-replay.ts`;
-     * `setDurableCursor` refuses with the same `Number.isInteger` predicate.
-     */
-    cursor: Number.isInteger(document.cursor) ? Math.max(-1, Math.min(document.cursor, history.length - 1)) : -1,
+    cursor: clampDurableCursor(document.cursor, history.length),
   });
+  ownDeepFrozenCopies.add(frozen);
+  return frozen;
+}
+
+/**
+ * The changes `refreezeDurableDocument` accepts. Scoped to the four scalars plus
+ * `history` on purpose: a baseline is NOT expressible here, so no caller can reach
+ * the reuse path while replacing the structure the reuse depends on.
+ */
+export type DurableDocumentRefreeze = Readonly<{
+  history?: readonly DurableHistoryEntry[];
+  cursor?: number;
+  documentRevision?: number;
+  branchRevision?: number;
+  durableRevision?: number;
+}>;
+
+/**
+ * `freezeDurableDocument` for the writes that change almost nothing: moving the
+ * cursor, and appending to the tip of a timeline whose retained entries are already
+ * frozen copies. It returns what the full freeze would return, and costs one shallow
+ * freeze plus one copy per entry the change actually adds.
+ *
+ * The saving is unobservable because a frozen object cannot be mutated: the copy a
+ * full freeze would rebuild from a frozen entry is a value-identical twin of it, so
+ * carrying the original across differs ONLY in identity. That is why reuse is not a
+ * performance-only detail that must be re-proved at each call site — the check is
+ * `ownDeepFrozenCopies`, which only `freezeDurableDocument` and this function can
+ * satisfy, so a hand-built, spread or deserialized document falls back to the deep
+ * freeze and keeps exactly the guarantee it had before.
+ *
+ * An entry is reused only when it is, BY IDENTITY, an object `base.history` already
+ * holds. A rebuilt, reordered, edited or truncated entry therefore always takes the
+ * copy path, and the fallback applies to a base that is not an own copy at all.
+ */
+/**
+ * The next history array for a base that already holds the entries it retains: an
+ * entry is carried across when it is, BY IDENTITY, an object `retained` holds, so a
+ * rebuilt, reordered, edited or truncated entry always takes the copy path.
+ */
+function freezeDurableHistory(
+  retained: readonly DurableHistoryEntry[],
+  next: readonly DurableHistoryEntry[]
+): readonly DurableHistoryEntry[] {
+  const kept = new Set(retained);
+  return Object.freeze(next.map((entry) => (kept.has(entry) ? entry : freezeDurableHistoryEntry(entry))));
+}
+
+export function refreezeDurableDocument(base: DurableDocument, changes: DurableDocumentRefreeze): DurableDocument {
+  const history = changes.history ?? base.history;
+  const cursor = changes.cursor ?? base.cursor;
+  if (!ownDeepFrozenCopies.has(base)) {
+    return freezeDurableDocument({ ...base, ...changes, history, cursor });
+  }
+  const frozen = Object.freeze({
+    ...base,
+    ...changes,
+    baseline: base.baseline,
+    // The cursor move passes no `history`, and then the frozen array the base already
+    // holds is the exact one a full freeze would rebuild — carried across whole, so
+    // moving a cursor allocates nothing proportional to the timeline.
+    history: history === base.history ? base.history : freezeDurableHistory(base.history, history),
+    cursor: clampDurableCursor(cursor, history.length),
+  });
+  ownDeepFrozenCopies.add(frozen);
+  return frozen;
 }
 
 export function cloneDurableDocument(document: DurableDocument): DurableDocument {
