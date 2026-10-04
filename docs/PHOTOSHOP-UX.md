@@ -61,13 +61,15 @@ violations on `main`.
     TRUE rather than false; it is not a dodge. It is still an `Image ▸ Adjustments`
     command either way, so the rail verdict does not change; the label was the second
     defect.
-  - **`color` has no honest Adobe name today, and this is the half that is still
-    open.** Its three controls are grayscale, sepia and saturation. `Photo Filter` is
-    the closest single Adobe command and it is a **partial match**: sepia IS its
-    Warming preset and saturation is nearest its Density slider, but grayscale is a
-    control Photo Filter does not have. `Black and White` is not an option at all —
-    it needs per-hue sextant weighting and there is no hue decomposition anywhere in
-    `src`. See `HANDOFF.md` §170, which is an open question with a recorded default.
+  - **`color` is now hosted by `Desaturate`, and `Photo Filter` is disabled.** Its
+    three controls are grayscale, sepia and saturation. `grayscale` is the computation
+    Adobe's `Desaturate` performs — a flat conversion to luminance — so that is the
+    item it is enabled on, and `sepia` and `saturation` are the bounded divergence.
+    `Photo Filter` is not a partial match at all: Adobe's is a lens filter with a
+    Density slider and a Preserve Luminosity option, and the bar reproduces none of
+    the three, so it is an unbuilt command and carries the `disabled` item every
+    unbuilt command carries. `Black and White` is not an option either — it needs
+    per-hue sextant weighting and there is no hue decomposition anywhere in `src`.
   - **The capability is coming back, as real commands, and the requirements do not
     exist yet.** 2026-10-01, after the decision above: Levels, Colors and the other
     `Image ▸ Adjustments` commands "will be implemented". This **does not reopen the

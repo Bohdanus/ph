@@ -280,7 +280,7 @@ describe('DesktopHeader', () => {
     renderHeader();
 
     openAdjustments();
-    fireEvent.click(screen.getByTestId('image-menu-adjustments-photo-filter-button'));
+    fireEvent.click(screen.getByTestId('image-menu-adjustments-desaturate-button'));
     expect(app.goToTool).toHaveBeenCalledWith('color');
 
     vi.clearAllMocks();
@@ -322,7 +322,7 @@ describe('DesktopHeader', () => {
       .getAllByRole('button')
       .filter((button) => !(button as HTMLButtonElement).disabled)
       .map((button) => button.textContent);
-    expect(enabled).toEqual(['Brightness/Contrast', 'Photo Filter']);
+    expect(enabled).toEqual(['Brightness/Contrast', 'Desaturate']);
 
     for (const label of [
       'Levels',
@@ -330,7 +330,7 @@ describe('DesktopHeader', () => {
       'Exposure',
       'Black and White',
       'Hue/Saturation',
-      'Desaturate',
+      'Photo Filter',
       'Invert',
       'Color Balance',
       'Channel Mixer',
@@ -344,11 +344,18 @@ describe('DesktopHeader', () => {
     }
   });
 
-  it('does not select a tool when a disabled adjustment is clicked', () => {
+  /**
+   * `photo-filter` is the second case and it is the load-bearing one: the Colors bar's
+   * controls are grayscale, sepia and saturation, which is what Adobe's `Desaturate`
+   * performs and not what its `Photo Filter` performs, so an enabled `Photo Filter` opened
+   * a bar its own label did not describe. Adobe's real command is unbuilt, which is what a
+   * `disabled` item records.
+   */
+  it.each(['levels', 'photo-filter'])('does not select a tool when the disabled %s adjustment is clicked', (slug) => {
     renderHeader();
 
     openAdjustments();
-    fireEvent.click(screen.getByTestId('image-menu-adjustments-levels-button'));
+    fireEvent.click(screen.getByTestId(`image-menu-adjustments-${slug}-button`));
 
     expect(app.goToTool).not.toHaveBeenCalled();
   });
@@ -512,7 +519,7 @@ describe('DesktopHeader menu commands', () => {
 
   it.each([
     ['image-menu-adjustments-brightness-contrast-button', 'levels'],
-    ['image-menu-adjustments-photo-filter-button', 'color'],
+    ['image-menu-adjustments-desaturate-button', 'color'],
   ] as const)('routes %s to exactly one goToTool call and closes the whole menu', (testId, toolName) => {
     renderHeader();
 

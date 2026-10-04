@@ -268,7 +268,7 @@ plus `PanelGroup.tsx`), and Window has Reset Workspace
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
 (`SidebarLeft.tsx` — its `color-pickers` cluster); the closest analogues to
-Color and Character are the Photo Filter command's three sliders and the Type options bar,
+Color and Character are the Desaturate command's three sliders and the Type options bar,
 which are options bars, not panels.
 
 ## Menu bar
@@ -279,7 +279,7 @@ Help.
 **This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
 (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
-Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Desaturate` — and
 twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
 records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,

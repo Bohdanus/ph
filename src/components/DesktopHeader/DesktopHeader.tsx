@@ -187,16 +187,29 @@ type MenuHostItem = {
  *   `brightness(…) contrast(…)` filter, which is Adobe's Brightness/Contrast and not
  *   Adobe's Levels. Naming it `Levels` under a menu that is supposed to be a clone is the
  *   falsehood this rename removes.
- * - **`Photo Filter` → the `color` id.** Its three controls are grayscale, sepia and
- *   saturation (`src/tools/functions.ts`'s `buildColorsFilter`). Adobe's Photo Filter is a
- *   lens filter with a Density slider and a Preserve Luminosity option, and sepia IS its
- *   Warming preset, but **two of the three controls are a partial match and `grayscale`
- *   has no counterpart in it.** It is a bounded divergence, recorded here rather than
- *   papered over, and it is strictly better than the alternative: `Black and White` needs
- *   per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
+ * - **`Desaturate` → the `color` id.** Its three controls are grayscale, sepia and
+ *   saturation (`src/tools/functions.ts`'s `buildColorsFilter`), and **`grayscale` is the
+ *   computation Adobe's Desaturate performs**: a flat conversion to luminance, on a scale
+ *   inverted against Adobe's own "Blend with Original Color". That is the one control the
+ *   menu item's name covers. The other two are a bounded divergence — `sepia` and
+ *   `saturation` are not part of Desaturate — and it is recorded here rather than papered
+ *   over.
+ *
+ *   **This item used to be `Photo Filter`.** Adobe's Photo Filter is a lens filter
+ *   applied "from a preset filter or a custom color filter", with a **Density** slider and
+ *   a **Preserve Luminosity** option. The app's bar reproduces **none** of those three, and
+ *   its `grayscale` slider is a conversion to luminance that Photo Filter never performs —
+ *   so an enabled item opened a bar whose controls did not contain the command its label
+ *   named. `Photo Filter` is now a `disabled` item, which is this file's own rule applied:
+ *   the capability is unbuilt. `Desaturate` is the Adobe name in the same submenu whose
+ *   computation the bar's leading control actually is, which is what `HANDOFF.md` §170's
+ *   naming rule requires — "an item whose computation does not match its Adobe name is a
+ *   new falsehood and does not get enabled". Relabelling rather than disabling outright is
+ *   what keeps `color` reachable at all: it is in `extraTools`, so it has no rail tile and
+ *   no `tools-menu-color-button`, and this submenu is the only path into the panel.
  *
  * **`Levels`, `Curves`, `Exposure`, `Black and White`, `Hue/Saturation`, `Vibrance`,
- * `Color Balance`, `Channel Mixer`, `Selective Color`, `Desaturate`, `Invert`,
+ * `Color Balance`, `Channel Mixer`, `Selective Color`, `Photo Filter`, `Invert`,
  * `Posterize`, `Threshold`, `Gradient Map`, `Equalize`, `Shadows/Highlights`, `HDR Toning`,
  * `Match Color`, `Replace Color` and `Color Lookup` are all disabled**, which is the
  * accurate state of this app: it has no adjustment layers at all, and
@@ -213,13 +226,13 @@ const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
   { label: 'Hue/Saturation' },
   { label: 'Color Balance' },
   { label: 'Black and White' },
-  { label: 'Photo Filter', toolName: 'color' },
+  { label: 'Photo Filter' },
   { label: 'Channel Mixer' },
   { label: 'Color Lookup' },
   { label: 'Selective Color' },
   { label: 'Shadows/Highlights' },
   { label: 'HDR Toning' },
-  { label: 'Desaturate' },
+  { label: 'Desaturate', toolName: 'color' },
   { label: 'Match Color' },
   { label: 'Replace Color' },
   { label: 'Invert' },

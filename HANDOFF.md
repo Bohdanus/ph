@@ -4934,58 +4934,6 @@ its transient-preview comment, `handleRotateLeft`/`handleRotateRight`, the `180�
 `#rotate-slider` range input), `src/contexts/useCurrentTool.tsx` (`patchToolArgs`, `_setToolArgs`),
 `src/contexts/useLayer.ts` (`tempUpdateLayer`)
 
-## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
-
-**Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
-(the `const ADJUSTMENTS_ITEMS` list in `DesktopHeader.tsx`), and selecting it shows the `color`
-command's options bar, which renders
-three sliders — **Grayscale**, **Sepia**, **Saturation**
-(the three slider rows in `src/components/ToolbarsRight/Colors/Color.tsx`) — wired to
-`buildColorsFilter()`
-(`src/tools/functions.ts`), which emits `grayscale(%) sepia(%) saturate(%)`.
-
-Adobe's Photo Filter is a hue adjustment applied "from a preset filter or a custom color filter", with
-a **Density** slider and a **Preserve Luminosity** option, reachable at `Image > Adjustments > Photo
-Filter`.
-<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html> (200 on 2026-10-01).
-Two of the app's three controls are defensible against that: **`sepia` picks a fixed warm tone**, which
-is what Adobe's colour choice is for — its colour-conversion presets are "Warming Filter (85)" /
-"Cooling Filter (80)" and its light-balancing presets "Warming Filter (81)" / "Cooling Filter (82)"
-(<https://helpx.adobe.com/photoshop-elements/desktop/guided-edits-effects-and-filters/adjustment-filters.html>,
-Adobe's Photo **Elements** page, which is where Adobe still enumerates those preset names) — and
-**`saturation` is the trim that Preserve Luminosity performs**, in a form Adobe does not expose as a
-slider. **`grayscale` has no counterpart in Photo Filter at all**: it is a conversion to luminance, not
-a hue adjustment, and it is the one control on the bar that the menu's own name does not cover. The item
-is enabled under a name that promises a capability its bar does not have, in the one menu a user opens
-precisely to find out what the app can do.
-
-**The control cannot simply be deleted without a decision, and that is the operator's call.** This bar
-is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (the `Desaturate` entry in
-`ADJUSTMENTS_ITEMS`) is
-**disabled**, because no second command owns desaturation. `Black and White` is disabled too (the
-`Black and White` entry, which
-carries no `toolName`) —
-it needs per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
-
-**Exactly two honest answers, and this entry does not pick between them:**
-
-- **Drop the `grayscale` control.** The bar becomes Sepia + Saturation, which is Adobe's colour choice
-  plus its Density and Preserve Luminosity behaviour under different names — a defensible
-  `Photo Filter`. The cost is that desaturating a whole image, which the app does today, becomes
-  unreachable from any menu, because nothing else hosts it.
-- **Move it to `Desaturate`.** Enable `Image ▸ Adjustments ▸ Desaturate` on the `color` id and accept
-  that its bar's three controls do not match Adobe's Photo Filter. That is the same bounded divergence
-  already accepted for the `Black and White` naming decision, and `docs/OVERRIDES.md` is where a
-  deliberate Photoshop deviation belongs — **this entry does not add one and does not ask for one.**
-
-**Do not** give `Photo Filter` Adobe's Density and Preserve Luminosity while it computes
-`grayscale(%) sepia(%) saturate(%)`. That is a fake control dressed in Adobe's words, which is the one
-thing this repo's policy refuses, and doing it in a menu is worse than doing it in a rail.
-
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and
-`ADJUSTMENTS_ITEMS`, and their doc comments), `src/components/ToolbarsRight/Colors/Color.tsx` (the
-three slider rows), `src/tools/functions.ts` (`buildColorsFilter()`), `src/tools/colors.ts`
-
 ## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
 
 **Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
@@ -5033,7 +4981,7 @@ not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args 
 label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
 selects the `color` stand-in and is **a partial match**: sepia IS Photo Filter's Warming preset and
 saturation is nearest its Density slider, but the third control is a `grayscale` slider, and Photo
-Filter performs no luminance conversion. §168 records the narrower version of that.
+Filter performs no luminance conversion.
 
 **This is a question, not a defect, and it is here because two branches implemented opposite answers
 to it.** A branch carried the extraction and enabled both items on the reasoning that a bounded,
@@ -5069,10 +5017,21 @@ menu-launched at all — because `Brightness/Contrast` and `Photo Filter` are bo
 app-invented ones. The alternative this entry was written to choose between is therefore closed:
 `color` stays reachable.
 
-What the answer does **not** settle, and what the merge is carrying: `Photo Filter` remains a partial
-match (two of three controls fit; `grayscale` is not one of them), and the real `Black and White` and
-real `Levels` remain unbuilt and disabled. Those are the §168 capability question, not this naming
-question, and building the real commands is what dissolves them.
+What the answer does **not** settle, and what the merge was carrying: `Photo Filter` was a partial
+match (two of three controls fit; `grayscale` was not one of them), and the real `Black and White` and
+real `Levels` remain unbuilt and disabled. Building the real commands is what dissolves those.
+
+**APPLIED — 2026-10-04.** The binding rule below was applied to `color`, and it moved the item.
+`Photo Filter` is a **disabled** item and `Desaturate` is the enabled one on the `color` id. The
+audit that prompted it found that the `Photo Filter` row opened the Colors bar, whose controls are
+grayscale, sepia and saturation, against Adobe's Photo Filter — a lens filter with a Density slider
+and a Preserve Luminosity option, of which the bar reproduced none. Applying the rule literally gives
+`color` no enabled item at all, because it is not Adobe's Black and White either; disabling the row
+outright was rejected because `color` is in `extraTools`, so that row is the only surface the panel is
+reachable from, and dropping it would have removed a shipped capability and the e2e coverage of it.
+`Desaturate` is the one Adobe command in that submenu the bar's leading control actually computes.
+The residual divergence is `sepia` and `saturation`, and the real `Photo Filter` is now visibly
+unbuilt.
 
 **What the naming rule now binds.** A future adjustment command takes Adobe's name, and takes it only if
 it computes that command. An item whose computation does not match its Adobe name is a new falsehood

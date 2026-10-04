@@ -394,10 +394,10 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
 ```
 
 `grayscale()` is a flat luminance average with no hue dependence at all, and `sepia()` is a fixed
-one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Photo Filter`,
+one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Desaturate`,
 where **Black and White is a disabled item** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`'s
 `{ label: 'Black and White' }` entry) because nothing computes it — see the operator-decision section
-below for why `Photo Filter` is the name the enabled item carries.
+below for why `Desaturate` is the name the enabled item carries.
 
 **Why it is too hard.** No CSS filter chain can express a per-hue weighting; the filter primitives are
 whole-image and order-dependent, and six independent sextant weights are neither. A faithful
@@ -728,16 +728,22 @@ emits one `brightness(…) contrast(…)` filter (`functions.ts` — `buildLevel
 Adobe's Brightness / Contrast. **Adobe's Levels is unbuilt**: three control points, a histogram, a
 channel selector, output levels and Auto. That capability has its own entry below.
 
-**`color` is `Photo Filter`, and `grayscale` is a control Photo Filter does not have.** Its three
-controls are grayscale, sepia and saturation (`functions.ts` — `ColorsFilterArgs`). Adobe's Photo
+**`color` is `Desaturate`, because `grayscale` is the computation Adobe's Desaturate performs.** Its
+three controls are grayscale, sepia and saturation (`functions.ts` — `ColorsFilterArgs`), and
+`grayscale` is a flat conversion to luminance on a scale inverted against Adobe's "Blend with Original
+Color" — which is what `Desaturate` does. `sepia` and `saturation` are the bounded divergence, and
+neither belongs to that command.
+
+**`Photo Filter` used to be the enabled item and was the falsehood this corrects.** Adobe's Photo
 Filter is a hue adjustment from a preset filter or a custom colour, with a Density slider and
 Preserve Luminosity
-(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — so `sepia` picks
-the kind of colour Adobe's presets pick and `saturation` is the trim Preserve Luminosity performs, but
-**`grayscale` is a conversion to luminance that Photo Filter never performs**. The alternative name is
-worse: the app's `color` is not Adobe's Black and White either (that entry, below), so the honest
-options were a bounded partial match or a wrong name. The open question is whether to drop the
-`grayscale` control or move it to `Desaturate`, which is the operator's to make — `HANDOFF.md` §168.
+(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — the bar
+reproduced **none** of those three, and `grayscale` is a conversion Photo Filter never performs, so
+the enabled item opened a bar its own label did not describe. It is a `disabled` item now, which is
+this menu's rule applied: the capability is unbuilt. The label cannot simply have been dropped,
+because `color` is in `extraTools` and this submenu is the only surface the Colors panel is reachable
+from — and the app's `color` is not Adobe's Black and White either (that entry, below), so `Desaturate`
+is the one Adobe command in this submenu whose computation the bar actually contains.
 
 **The rest of `Image ▸ Adjustments` is disabled, and that is the accurate state of this app.** The app
 has no adjustment-layer machinery at all: `psd-utils.ts` — the `visit()` walk inside

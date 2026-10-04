@@ -186,16 +186,19 @@ function besideTheLine(onLine: { x: number; y: number }): { x: number; y: number
  * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
  * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
  * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
- * hold it is gone from `toolbarMap`. `Photo Filter` is the enabled item that selects it, and
- * the slug is `slugifyToolLabel('Photo Filter')` (`toolbar-mapping.ts`).
+ * hold it is gone from `toolbarMap`. `Desaturate` is the enabled item that selects it, and
+ * the slug is `slugifyToolLabel('Desaturate')` (`toolbar-mapping.ts`). It used to be
+ * `Photo Filter`, which named a command whose bar this is not: Adobe's Photo Filter is a
+ * lens filter with Density and Preserve Luminosity, and the app computes
+ * `grayscale(%) sepia(%) saturate(%)`.
  *
- * The other sixteen items in that submenu render `disabled`, so this is the one path in and a
+ * The other twenty items in that submenu render `disabled`, so this is the one path in and a
  * spec cannot reach the panel any other way.
  */
 async function openColorsPanel(page: Page): Promise<void> {
   await page.getByTestId('header-image-menu-button').click();
   await page.getByTestId('image-menu-adjustments-button').click();
-  await page.getByTestId('image-menu-adjustments-photo-filter-button').click();
+  await page.getByTestId('image-menu-adjustments-desaturate-button').click();
 }
 
 test.describe('Adjustment tools', () => {
