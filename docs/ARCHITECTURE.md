@@ -75,18 +75,24 @@ trusting a figure stored here.
   `StoreAction = Action | InternalAction`, with `PublicAction` an alias of
   `Action`; `StoreDispatch` dispatches `PublicAction`, so neither internal type is
   consumer-dispatchable.
-- **The reducer's 29 arms are not the `Action` 29.** `ADOPT_LAYER_BITMAPS` is
-  deliberately arm-less — the dispatcher registers it and returns without
-  forwarding, in its own `dispatchAction()` branch. `SET_ORIGINAL_IMAGE` falls
-  through to the reducer's `default: return state`. `PUBLISH_RUNTIME_PRESENTATION`
-  is the offset the other way: it is an `InternalAction` and it does have an arm.
-  `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
+- **Every `StoreAction` kind has a reducer arm, and the switch says so at compile
+  time.** The `default` arm assigns the action to a `never`, so a kind added to
+  `Action` or `InternalAction` without an arm fails `npm run tsc` instead of
+  becoming a silent no-op. Two arms are deliberate no-ops that return `state`:
+  `ADOPT_LAYER_BITMAPS`, which the dispatcher registers with the presentation
+  scope and never forwards, and `SET_ORIGINAL_IMAGE`, which nothing dispatches.
+  So the reducer's **31** arms cover `StoreAction`'s 31 kinds, and the `Action`
+  29 is the public subset. `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
   the arm count.
 - **The dispatcher is not the reducer.** `dispatchAction()` intercepts seven
-  types, computes `latestStateRef.current = reducer(currentState, action)` _before_
-  dispatching, and only then calls `rawDispatch`: `PROMOTE_LAYER_PRESENTATIONS`,
+  types, named in `INTERCEPTED_STORE_ACTION_TYPES`, and the rest take an explicit
+  default at the top of the chain: one `reducer()` call outside React, so a
+  second dispatch in the same batch is decided against the state the first one
+  produced, then one `rawDispatch`. The seven are `PROMOTE_LAYER_PRESENTATIONS`,
   `ADOPT_LAYER_BITMAPS`, `PUBLISH_RUNTIME_PRESENTATION`, `REORDER_LAYERS`,
-  `COMMIT_DOCUMENT_EDIT`, `APPLY_HISTORY_REPLAY`, `REPLACE_DOCUMENT`.
+  `COMMIT_DOCUMENT_EDIT`, `APPLY_HISTORY_REPLAY`, `REPLACE_DOCUMENT`. An assertion
+  at the end of the chain types the narrowed `action.type` as the complement of
+  that list, so a branch and its name cannot drift apart.
 
 `StoreData` has 35 top-level fields: seven refs, four imperative
 handles, five file/image fields, one tool field, three layer fields, five selection
