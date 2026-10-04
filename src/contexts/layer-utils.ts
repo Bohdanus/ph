@@ -36,7 +36,7 @@ export const minLayerOrder = (layers: LayersRecord) => {
   return values.reduce((min, layer) => Math.min(min, layer.order), Infinity);
 };
 
-export const maxLayerOrder = (layers: LayersRecord) => {
+export const maxLayerOrder = (layers: LayerOrderRecord) => {
   const values = Object.values(layers);
   if (values.length === 0) return 0;
   return values.reduce((max, layer) => Math.max(max, layer.order), -Infinity);
@@ -122,9 +122,11 @@ export function createAffineLayerOperation(transform: AffineTransform, id = uuid
 
 type LayerSourceParams = {
   layerId?: LayerId;
-  layers: LayersRecord;
+  layers: LayerOrderRecord;
   source: LayerSource;
 };
+
+export type LayerOrderRecord = Record<LayerId, { order: number }>;
 
 /**
  * The blend mode a stroke's layer composites with, read off the tool args.
@@ -163,10 +165,15 @@ function getNameFromSource(source: LayerSource) {
   }
 }
 
+export function deriveLayerNameAndOrder(layers: LayerOrderRecord, source: LayerSource) {
+  const order = maxLayerOrder(layers) + 1;
+  return { name: `${getNameFromSource(source)} ${order}`, order };
+}
+
 export function createLayerSource({ layerId: idFromHistory, layers, source }: LayerSourceParams): Layer {
   const { kind, isBedrock } = source;
   const id = idFromHistory ?? uuidv4(); // when layer is re-created from history it should get the saved id
-  const maxOrder = maxLayerOrder(layers) + 1;
+  const { name, order } = deriveLayerNameAndOrder(layers, source);
 
   let pos: Pos;
   if (isBedrock) {
@@ -178,8 +185,6 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     throw new Error('Layer width and height must be greater than 0');
   }
 
-  const name = `${getNameFromSource(source)} ${maxOrder}`;
-
   const layer: Layer = {
     id,
     name,
@@ -187,7 +192,7 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     blendMode: 'source-over',
     locked: false,
     opacity: 1,
-    order: maxOrder,
+    order,
     pos,
     source,
     operations: [],
