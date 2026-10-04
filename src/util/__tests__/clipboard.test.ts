@@ -45,9 +45,10 @@ describe('copyRectToClipboard', () => {
     // `mockContext` is one module-level object and `{ ...mockContext }` copies the SAME
     // `vi.fn()` references into every canvas context, so the whole file shares one call
     // history. `clearAllMocks`, not `restoreAllMocks`: restoring only reinstates spies, and
-    // a bare `vi.fn()` keeps every call it was ever given. This is stated rather than
-    // inherited — it is also what Vitest 5's `clearMocks: true` default does, and this
-    // config never says so, so nothing here should depend on a default that is not written down.
+    // a bare `vi.fn()` keeps every call it was ever given. The guarantee that one test's
+    // calls cannot leak into the next is `clearMocks: true`, written down in vitest.config.ts
+    // instead of inherited from a Vitest default. The `vi.clearAllMocks()` below restates that
+    // guarantee inside this file, so the file does not read as if it were doing the work alone.
     vi.clearAllMocks();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
       return { ...mockContext, canvas: this } as unknown as CanvasRenderingContext2D;
@@ -212,17 +213,13 @@ describe('copyRectToClipboard', () => {
  *   clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null,
  *   ClipboardItemCtor = typeof window !== 'undefined' ? window.ClipboardItem : null,
  *
- * Every case above passes BOTH explicitly, so not one of them evaluates either expression.
- * The defaults are therefore read fresh on every CALL, but a fresh module evaluation is
- * still what makes them observable: this file's static import captured whatever jsdom had
- * when the module body first ran, so arranging the globals afterwards cannot reach it.
+ * Every case in the block above passes BOTH explicitly, so not one of them evaluates either
+ * expression. A default-parameter expression is evaluated on every CALL and is never captured
+ * when the module is evaluated, so the cases below are the only ones that run either one — and
+ * they can run them through the static import at the top of this file: `vi.stubGlobal`
+ * arranges the globals first, and the call is what reads them. Fresh module instances are
+ * therefore not requested, and requesting one would change nothing about what a call sees.
  */
-async function importFreshClipboard(): Promise<typeof copyRectToClipboard> {
-  vi.resetModules();
-  const fresh = await import('../clipboard.ts');
-  return fresh.copyRectToClipboard;
-}
-
 describe('copyRectToClipboard module defaults', () => {
   // `rect {5,5,15,15}` in a 100x100 image trims to x 5, y 5, 10x10 — the same rect the
   // explicit-path success case uses, so the two paths are comparable argument for argument.
@@ -252,7 +249,6 @@ describe('copyRectToClipboard module defaults', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-    vi.resetModules();
   });
 
   /**
@@ -296,10 +292,9 @@ describe('copyRectToClipboard module defaults', () => {
     vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
     expect(window.ClipboardItem).toBe(ClipboardItemCtor);
 
-    const copyRect = await importFreshClipboard();
     const canvas = makeSourceCanvas(100, 100);
 
-    const result = await copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE });
+    const result = await copyRectToClipboard({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE });
 
     expect(result).toBe(true);
     expect(ctorMock).toHaveBeenCalledExactlyOnceWith({ 'image/png': pngBlob });
@@ -317,15 +312,14 @@ describe('copyRectToClipboard module defaults', () => {
     vi.stubGlobal('navigator', { clipboard: { write: defaultWrite } });
     vi.stubGlobal('ClipboardItem', defaultCtor.ClipboardItemCtor);
 
-    const copyRect = await importFreshClipboard();
     const defaultCanvas = makeSourceCanvas(100, 100);
-    expect(await copyRect({ sourceCanvas: defaultCanvas, rect: RECT, imageSize: IMAGE_SIZE })).toBe(true);
+    expect(await copyRectToClipboard({ sourceCanvas: defaultCanvas, rect: RECT, imageSize: IMAGE_SIZE })).toBe(true);
 
     const explicitWrite = vi.fn().mockResolvedValue(undefined);
     const explicitCtor = makeClipboardItemCtor();
     const explicitCanvas = makeSourceCanvas(100, 100);
     expect(
-      await copyRect({
+      await copyRectToClipboard({
         sourceCanvas: explicitCanvas,
         rect: RECT,
         imageSize: IMAGE_SIZE,
@@ -351,10 +345,9 @@ describe('copyRectToClipboard module defaults', () => {
     vi.stubGlobal('navigator', undefined);
     vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
 
-    const copyRect = await importFreshClipboard();
     const canvas = makeSourceCanvas(100, 100);
 
-    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    await expect(copyRectToClipboard({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
     expect(ctorMock).not.toHaveBeenCalled();
     expect(mockContext.drawImage).not.toHaveBeenCalled();
   });
@@ -366,10 +359,9 @@ describe('copyRectToClipboard module defaults', () => {
     vi.stubGlobal('navigator', {});
     vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
 
-    const copyRect = await importFreshClipboard();
     const canvas = makeSourceCanvas(100, 100);
 
-    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    await expect(copyRectToClipboard({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
     expect(ctorMock).not.toHaveBeenCalled();
     expect(mockContext.drawImage).not.toHaveBeenCalled();
   });
@@ -382,10 +374,9 @@ describe('copyRectToClipboard module defaults', () => {
     vi.stubGlobal('navigator', { clipboard: {} });
     vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
 
-    const copyRect = await importFreshClipboard();
     const canvas = makeSourceCanvas(100, 100);
 
-    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    await expect(copyRectToClipboard({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
     expect(ctorMock).not.toHaveBeenCalled();
     expect(mockContext.drawImage).not.toHaveBeenCalled();
   });
@@ -398,10 +389,9 @@ describe('copyRectToClipboard module defaults', () => {
     vi.stubGlobal('ClipboardItem', undefined);
     expect(window.ClipboardItem).toBeUndefined();
 
-    const copyRect = await importFreshClipboard();
     const canvas = makeSourceCanvas(100, 100);
 
-    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    await expect(copyRectToClipboard({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
     expect(writeMock).not.toHaveBeenCalled();
     // The guard returns before the crop, so nothing was rasterised: a default that resolved
     // to a real constructor anyway would get this far and write.

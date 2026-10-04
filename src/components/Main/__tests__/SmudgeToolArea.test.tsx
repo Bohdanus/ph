@@ -153,10 +153,19 @@ const renderArea = (options: { container?: HTMLElement } = {}) => {
  * `currentFrame ?? documentFrameFromSize(totalSize)`, and this store hands it `documentFrame: null`
  * with a 200x120 document, so the frame is `{ x: 0, y: 0, width: 200, height: 120 }`.
  * `canvasToDocumentPoint` then ADDS that origin, and the default layer sits at
- * `pos: { x: 0, y: 0 }`, so `documentPointsToLayerLocal` subtracts nothing. Canvas, document and
- * layer-local therefore coincide HERE, by the arithmetic rather than by luck — which is the one
- * configuration in which a dropped conversion is invisible, and the reason every rebase case below
- * moves the layer or the crop off the origin.
+ * `pos: { x: 0, y: 0 }`, so `documentPointsToLayerLocal` subtracts nothing: client, canvas,
+ * document and layer-local coordinates are all one number here.
+ *
+ * That is not an accident of this store's configuration, it is what the MOCK does. The
+ * `usePointerPosition` double above returns the raw client coordinate, where production returns
+ * `(clientX - offsetX - rect.x) / scale` — and against this store's detached container, jsdom's
+ * all-zero `getBoundingClientRect()` gives `containFit` a zero scale to divide by, so the real
+ * hook could not produce these numbers in this file under any assertion. Every coordinate below
+ * is therefore a product of the double. The coordinate-space conversion itself is covered only by
+ * `src/hooks/__tests__/usePointerPosition.test.ts`, which measures a real rect, and by the e2e
+ * suite. What this file pins is everything downstream of that conversion — the document frame,
+ * the layer rebase, and the two cancelling — which is why every rebase case moves the layer or
+ * the crop off the origin instead of testing the mapping.
  */
 const stroke = (toolArea: HTMLDivElement, from: [number, number], to: [number, number]) => {
   fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: from[0], clientY: from[1] });
@@ -212,11 +221,26 @@ const CONTEXT_METHODS = [
 
 type SpyContext = Record<(typeof CONTEXT_METHODS)[number], ReturnType<typeof vi.fn>> & {
   globalCompositeOperation: GlobalCompositeOperation;
+  /** Every value assigned to `globalCompositeOperation`, in call order. */
+  compositeWrites: GlobalCompositeOperation[];
 };
 
 const makeSpyContext = (): SpyContext => {
-  const context = { globalCompositeOperation: 'source-over' } as SpyContext;
+  const context = { compositeWrites: [] } as unknown as SpyContext;
   for (const method of CONTEXT_METHODS) context[method] = vi.fn();
+  // The composite operation is tracked as a WRITE, not as a value, because a value comparison
+  // against a value the double itself starts on is a comparison the double can satisfy alone: a
+  // component that wrote nothing would read exactly like a component that wrote 'source-over'.
+  // A recording accessor is what separates the two, and it replaces the data property rather than
+  // shadowing it, so an assignment reaches the setter instead of overwriting the recorder.
+  let operation: GlobalCompositeOperation = 'source-over';
+  Object.defineProperty(context, 'globalCompositeOperation', {
+    get: () => operation,
+    set: (next: GlobalCompositeOperation) => {
+      context.compositeWrites.push(next);
+      operation = next;
+    },
+  });
   return context;
 };
 
@@ -654,15 +678,30 @@ describe('SmudgeToolArea', () => {
     // branch and never warns — so the stroke would be un-undoable forever, silently.
     expect(paintedMethods(canvasCtx)).toEqual([]);
     expect(paintedMethods(overlayCtx)).toEqual([]);
-    expect(canvasCtx.globalCompositeOperation).toBe('source-over');
-    expect(overlayCtx.globalCompositeOperation).toBe('source-over');
+    // The composite operation, asserted as the WRITES it received rather than as a value. The
+    // double still starts on the real canvas default, so `toBe('source-over')` is a comparison
+    // the initialiser alone satisfies and no component behaviour can disturb; the recorded
+    // writes are empty only while the component leaves the property alone, so a single
+    // assignment of ANY value — 'source-over' included — fails here.
+    expect(canvasCtx.compositeWrites).toEqual([]);
+    expect(overlayCtx.compositeWrites).toEqual([]);
   });
 
   it('renders a div carrying the supplied className and the crosshair cursor', () => {
-    const { toolArea } = renderArea();
+    const { toolArea, view } = renderArea();
 
+    // The surface, as the source actually builds it: ONE element, directly under the container.
+    // The whole file addresses `firstElementChild`, so a wrapper element inserted here would
+    // silently become the element every case below drives its pointer events at, and nothing else
+    // in this file would notice. The className is compared as the composed STRING the source
+    // interpolates rather than as two presence checks, because presence also survives a dropped
+    // class, a reordered pair and a third class appended to it. The component binds no ref to
+    // this element and sets no `role` or `data-*` on it, so there is nothing further to read off
+    // the DOM: the claim that the gesture handlers are bound to THIS element is carried by the
+    // stroke cases above, which dispatch real pointer events at it and observe the writers fire.
+    expect(view.container.childElementCount).toBe(1);
     expect(toolArea.tagName).toBe('DIV');
-    expect(toolArea).toHaveClass('test-smudge-area', 'cursor-crosshair');
+    expect(toolArea.className).toBe('test-smudge-area cursor-crosshair');
   });
 
   it('binds the gesture to the store container and the store total size', () => {

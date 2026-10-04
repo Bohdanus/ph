@@ -147,11 +147,23 @@ const toolAreaTestId = () => {
 /**
  * The index the routing table expects, so a routing row can assert WHICH area mounted.
  *
- * `screen.getByTestId(...)` already throws when the named marker is absent, so `.toBeTruthy()` on
- * its result was an unreachable failure — and it passed just as happily when `Main` mounted a
- * SECOND area beside the right one. Comparing the index `toolAreaTestId()` actually found against
- * the one the table names pins the whole marker list, so a wrong neighbour or a doubled mount
- * both fail.
+ * `toolAreaTestId()` returns the FIRST index in `TOOL_AREA_IDS` whose marker is mounted, so
+ * comparing it with this one pins WHICH marker came first: a router that sent a tool to some other
+ * area yields that area's index, and a tool that fell through to the hidden dummy yields `-1`,
+ * which is no row's index. The presence of the expected marker rides on the same comparison — an
+ * absent marker can only produce another index or `-1`, neither of which is this row's — so a row
+ * needs no second query to ask it.
+ *
+ * What it does NOT pin is the COUNT. `findIndex` reports the first hit, so a second, DIFFERENT
+ * area mounted BESIDE the expected one leaves that first hit where it is and this comparison still
+ * passes — which is the half of the old claim that was false. A duplicate of the SAME marker is
+ * the one doubled case that surfaces, and it surfaces as `queryByTestId` refusing to choose
+ * between two elements rather than as a comparison failing; the `.toBeTruthy()` on a
+ * `screen.getByTestId` result this replaced could not report even that, because the query throws
+ * before its matcher runs. The count is the neighbouring
+ * `it('mounts exactly one tool area for every tool that has one')` test's claim, and leaving it
+ * there is what keeps this assertion about identity; `magic-eraser` is the one routed tool absent
+ * from that test's list, so its count is pinned nowhere.
  */
 const expectedToolAreaIndex = (name: string) => TOOL_AREA_IDS.findIndex((id) => id === name);
 
@@ -224,9 +236,10 @@ describe('Main tool-area routing', () => {
 
     render(<GuardedMain />);
 
-    // The query is the presence probe — it throws when the area is absent — and the index is the
-    // claim: the ONE marker `Main` mounted is the one this row names, not also a neighbour's.
-    expect(screen.getByTestId(`tool-area-${expected}`)).toBeInTheDocument();
+    // The one claim: the FIRST marker `Main` mounted is the one this row names, so a router that
+    // pointed this tool at a neighbour fails. Presence is carried by the same comparison rather
+    // than by a query of its own — an absent marker can only produce another index or `-1`, and
+    // this row's index is neither — and the COUNT is the neighbouring test's claim.
     expect(toolAreaTestId(), toolName).toBe(expectedToolAreaIndex(expected));
   });
 

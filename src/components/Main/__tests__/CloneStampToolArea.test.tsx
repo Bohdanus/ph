@@ -3,7 +3,6 @@ import { fireEvent, render } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { CloneStampToolArea } from '../CloneStampToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
-import type { Point } from '../../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
@@ -122,8 +121,16 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
  * claims the pointer and only that pointer's move/up are valid. A mock that let everything through
  * would make "a gesture the tool never saw" unobservable, which is exactly the state a disabled
  * `usePaintStroke` produces — and every refusal case below is proved by the claim never being
- * taken. `getLocalCoords` returns the raw client coordinate, so canvas, document and layer-local
- * coincide in the default fixture and every rebase case moves the layer or the crop off the origin.
+ * taken.
+ *
+ * `getLocalCoords` is the IDENTITY function here, not production's
+ * `(clientX - offsetX - rect.x) / scale`. Every expected coordinate in this file is therefore a
+ * product of that mock, and the file consequently covers no client-to-canvas conversion at all:
+ * the contain fit in `src/hooks/usePointerPosition.ts` — the scale, the offset, the rect — is
+ * asserted nowhere below. Production's conversion could not be exercised here even in principle,
+ * because it divides by the measured rect, and this store's `containerRef` is a bare div whose
+ * jsdom rect is all zeroes. The rebase cases below move the LAYER origin or the CROP origin off
+ * zero to keep the crop translation and the layer rebase from cancelling out.
  */
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: (options: { ref: unknown; imageSize: unknown }) => {
@@ -191,18 +198,6 @@ const cloneArgs = (overrides: Partial<CloneStampToolArgs> = {}): CloneStampToolA
   ...overrides,
 });
 
-/**
- * The one subtraction `src/tools/cloneStamp.ts` — `cloneOffset()` — performs: where the copy is
- * read from, relative to the stroke anchor it names. Reproduced here because the arithmetic is
- * exactly what this component's rebase has to leave untouched.
- */
-const cloneOffsetAt = (toolArgs: CloneStampToolArgs, anchorIndex: number): Point => {
-  const source = toolArgs.source;
-  const anchor = toolArgs.points[anchorIndex];
-  if (!source || !anchor) throw new Error(`cloneOffsetAt: no source/anchor at index ${anchorIndex}`);
-  return { x: source.x - anchor.x, y: source.y - anchor.y };
-};
-
 /** Every paint-family method a raster tool or the overlay chrome could reach for, as spies. */
 const CONTEXT_METHODS = [
   'drawImage',
@@ -239,6 +234,14 @@ type SpyContext = Record<(typeof CONTEXT_METHODS)[number], ReturnType<typeof vi.
  * the style left behind, because `drawCloneSourceMarker` paints every stroke twice — a wide dark
  * halo and then a white hairline — so the only way to assert both is to sample at the moment of
  * the call.
+ *
+ * Every own-state field is SEEDED, and the seeds are asserted as seeds. `strokeStyle: ''` and
+ * `lineWidth: 0` are falsifiable already, because `drawCloneSourceMarker` writes both before every
+ * stroke. `lineCap` is seeded `'round'` for the same reason and on purpose: `drawCloneSourceMarker`
+ * assigns `'butt'`, so an assertion of `'butt'` can no longer pass on the seed and now says "wrote
+ * butt" rather than "wrote nothing". `globalCompositeOperation` is the one field NO painting path
+ * here ever writes, so it carries no per-field claim and is asserted only as part of the canvas
+ * double's whole untouched state.
  */
 const makeSpyContext = (): { context: SpyContext; strokes: { strokeStyle: string; lineWidth: number }[] } => {
   const strokes: { strokeStyle: string; lineWidth: number }[] = [];
@@ -247,7 +250,7 @@ const makeSpyContext = (): { context: SpyContext; strokes: { strokeStyle: string
     globalCompositeOperation: 'source-over' as GlobalCompositeOperation,
     strokeStyle: '',
     lineWidth: 0,
-    lineCap: 'butt' as CanvasLineCap,
+    lineCap: 'round' as CanvasLineCap,
   } as SpyContext;
   for (const method of CONTEXT_METHODS) context[method] = vi.fn();
   context.stroke.mockImplementation(() => {
@@ -288,11 +291,11 @@ const renderArea = (
 };
 
 /**
- * One press/move/release on the same pointer id. With `documentFrame: null` over a 200x120
- * document the frame is `{ x: 0, y: 0, width: 200, height: 120 }`, so `canvasToDocumentPoint`
- * adds nothing and a default layer at `pos: { x: 0, y: 0 }` has nothing subtracted: canvas,
- * document and layer-local coincide HERE by the arithmetic, which is why every rebase case below
- * moves the layer or the crop off the origin.
+ * One press/move/release on the same pointer id. The `clientX`/`clientY` given here arrive at the
+ * component as canvas coordinates unchanged, because the mocked `getLocalCoords` is the identity
+ * function described above — NOT because the frames agree. So every expected point in this file is
+ * a mock product, and what the rebase cases below actually measure is the crop translation and the
+ * layer origin, each moved off zero on its own.
  */
 const stroke = (toolArea: HTMLDivElement, from: [number, number], to: [number, number]) => {
   fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: from[0], clientY: from[1] });
@@ -385,7 +388,7 @@ describe('CloneStampToolArea', () => {
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
     });
 
-    it('reproduces the sampled source at every position by carrying one constant aligned offset', () => {
+    it('rebases the source and the stroke by the layer origin, in one translation', () => {
       // The layer sits off the origin, so the rebase has to be applied to the SOURCE as well as
       // the stroke or the copy would be read from the wrong place entirely.
       storeState.layers = { base: makeLayer('base', { pos: { x: 30, y: 20, width: 200, height: 120 } }) };
@@ -397,21 +400,21 @@ describe('CloneStampToolArea', () => {
 
       const [commit] = commitCalls();
       // Document (150, 90) − (30, 20), and the three document samples shifted by the same origin.
+      // The SAME translation on both is the claim: a rebase that moved one and not the other would
+      // leave the pair describing two different points of the document.
       expect(commit.toolArgs.source).toEqual({ x: 120, y: 70 });
       expect(commit.toolArgs.points).toEqual([
         { x: 10, y: 30 },
         { x: 90, y: 60 },
         { x: 120, y: 90 },
       ]);
-      // Aligned anchors on the stroke's OWN START, so the offset is one translation for the whole
-      // stroke — the same pattern continuing, which is what the mode exists for.
-      expect(cloneOffsetAt(commit.toolArgs, 0)).toEqual({ x: 110, y: 40 });
-      // And that is the DOCUMENT-space offset too: (150, 90) − (40, 50) = (110, 40). The rebase
-      // cancelled inside the difference, which is the whole reason it may be applied to both.
-      expect(cloneOffsetAt(commit.toolArgs, 0)).toEqual({ x: 150 - 40, y: 90 - 50 });
+      // Which point the processor anchors on is `cloneOffset`'s business in
+      // `src/tools/cloneStamp.ts`, not this component's: the component's part is that it neither
+      // reorders `points` nor measures anything itself, and `aligned` reaches the processor as it
+      // was stored. Both are pinned by the exact payload assertions above and in the settings test.
     });
 
-    it('anchors an unaligned stroke at its end, which is what the aligned flag selects', () => {
+    it('carries aligned: false through the same rebase unchanged', () => {
       toolState.toolArgs = cloneArgs({ aligned: false });
       storeState.layers = { base: makeLayer('base', { pos: { x: 30, y: 20, width: 200, height: 120 } }) };
       const { toolArea } = renderArea();
@@ -421,12 +424,17 @@ describe('CloneStampToolArea', () => {
       fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 150, clientY: 110 });
 
       const [commit] = commitCalls();
+      // The flag is handed over as stored…
       expect(commit.toolArgs.aligned).toBe(false);
-      // Anchored on the LAST point, so the offset is the source offset minus the drag's own
-      // displacement: (120, 70) − (120, 90) = (0, −20). The start-anchored value is a different
-      // pair of numbers, so this case cannot pass on a stroke that ignored the flag.
-      expect(cloneOffsetAt(commit.toolArgs, 2)).toEqual({ x: 0, y: -20 });
-      expect(cloneOffsetAt(commit.toolArgs, 0)).toEqual({ x: 110, y: 40 });
+      // …and it changes NOTHING about the translation: the payload is the aligned case's, minus
+      // the flag. A component that consumed the flag into a different anchor, a shifted stroke, or
+      // a dropped field would show one of these three numbers move.
+      expect(commit.toolArgs.source).toEqual({ x: 120, y: 70 });
+      expect(commit.toolArgs.points).toEqual([
+        { x: 10, y: 30 },
+        { x: 90, y: 60 },
+        { x: 120, y: 90 },
+      ]);
     });
 
     it('hands the processor the Clone Stamp settings unchanged', () => {
@@ -530,7 +538,9 @@ describe('CloneStampToolArea', () => {
       // doubles the width of a size-varying tip. `cloneStroke` still copies one dab, so the click
       // is a real edit — one point, and no preview for a gesture that never moved.
       expect(commitCalls()[0].toolArgs.points).toEqual([{ x: 70, y: 70 }]);
-      expect(cloneOffsetAt(commitCalls()[0].toolArgs, 0)).toEqual({ x: 80, y: 20 });
+      // The sampled source is handed over untouched: a layer on the origin has nothing to rebase,
+      // so the document point is the point the processor gets.
+      expect(commitCalls()[0].toolArgs.source).toEqual({ x: 150, y: 90 });
       expect(tempUpdateLayerMock).not.toHaveBeenCalled();
     });
 
@@ -807,6 +817,8 @@ describe('CloneStampToolArea', () => {
       // Drawn inside one save/restore pair, so the shared overlay's own state survives.
       expect(overlay.context.save).toHaveBeenCalledTimes(1);
       expect(overlay.context.restore).toHaveBeenCalledTimes(1);
+      // The double seeds `'round'`, so this is the marker's own write and not the seed: deleting
+      // `ctx.lineCap = 'butt'` leaves `'round'` here and fails.
       expect(overlay.context.lineCap).toBe('butt');
       // The overlay is shared, so the marker owns a FULL clear rather than its own bounding box.
       expect(overlay.context.clearRect.mock.calls).toEqual([[0, 0, 640, 480]]);
@@ -1055,7 +1067,22 @@ describe('CloneStampToolArea', () => {
         { x: 100, y: 60 },
       ]);
       expect(paintedMethods(canvasCtx.context)).toEqual([]);
-      expect(canvasCtx.context.globalCompositeOperation).toBe('source-over');
+      // The own-state fields are asserted as the double's SEEDS rather than one field at a time,
+      // so a single write to ANY of them — a composite mode with no paint call after it included
+      // — moves this. Asserting `globalCompositeOperation` on its own could not: nothing in
+      // `drawCloneSourceMarker` writes it, so the seeded value and the asserted value were the
+      // same string and the line passed on the seed.
+      expect({
+        globalCompositeOperation: canvasCtx.context.globalCompositeOperation,
+        strokeStyle: canvasCtx.context.strokeStyle,
+        lineWidth: canvasCtx.context.lineWidth,
+        lineCap: canvasCtx.context.lineCap,
+      }).toEqual({
+        globalCompositeOperation: 'source-over',
+        strokeStyle: '',
+        lineWidth: 0,
+        lineCap: 'round',
+      });
       // The overlay holds chrome only: a clear, and nothing that writes or reads pixels. It is
       // cleared once per render rather than once per mount, because `documentFrameFromSize`
       // allocates a fresh frame object whenever the store has no crop and `redrawMarker` depends

@@ -17,8 +17,6 @@ const BODY_MARKER = 'layer body marker';
 
 type Props = PanelGroupProps;
 
-const HEADER_TITLE_SUFFIX = ' panel — drag this tab to move it, double-click to roll it up';
-
 const setup = (overrides: Partial<Props> = {}) => {
   const callbacks = {
     onToggleRolledUp: vi.fn(),
@@ -98,11 +96,22 @@ describe('PanelGroup', () => {
     it('names the panel in its tooltip, and keeps the layer rows’ locator out of it', () => {
       const { control } = setup({ title: 'Layers' });
 
-      expect(control.getAttribute('title')).toBe(`Layers${HEADER_TITLE_SUFFIX}`);
+      const tooltip = control.getAttribute('title') ?? '';
+      // The panel's own name is load-bearing: with several tabs stacked, the tooltip is what says
+      // which one this is, and it is the only text in the header that can.
+      expect(tooltip).toContain('Layers');
+      // This header owns two gestures, so the tooltip has to teach both. Matched by intent rather
+      // than by sentence: the wording is the component's to choose, the two instructions are the
+      // requirement, and a frozen copy of the string would only fire on rewordings.
+      expect(tooltip).toMatch(/drag/i);
+      expect(tooltip).toMatch(/double-?click/i);
+      expect(tooltip).toMatch(/roll|collapse/i);
       // "Drag to reorder" is the `title` on a LAYER row inside `LayersTab`, and it is a locator
       // five e2e specs and three unit tests use verbatim. `getByTitle` matches on substring, so a
-      // panel tab repeating those words would capture every one of them.
-      expect(control.getAttribute('title')).not.toContain('Drag to reorder');
+      // panel tab repeating those words would capture every one of them. This is the half of the
+      // claim above that the word matches cannot carry: a tooltip of "Drag to reorder" alone would
+      // satisfy every regex above and be the bug.
+      expect(tooltip).not.toContain('Drag to reorder');
     });
 
     it('derives the group, the row and the control from one id, and is focusable', () => {
@@ -408,13 +417,17 @@ describe('PanelGroup', () => {
       });
 
       const action = screen.getByRole('button', { name: 'Collapse panels to icons' });
-      expect(row.contains(action)).toBe(true);
-      // A sibling, not a descendant. A real button nested inside `role="button"` is invalid ARIA
-      // and was not only invalid: the control's own key handler saw the inner button's Enter and
-      // rolled the panel up instead.
-      expect(action.parentElement).toBe(row);
-      expect(control.nextElementSibling).toBe(action);
+      // "Beside, never inside" is a placement claim, and it is asserted as the parts the title
+      // names: the action is a child of the row, it comes AFTER the control in document order, and
+      // the control does not contain it. `compareDocumentPosition` is a direction test only — a
+      // button nested in the control would satisfy it — so the direction and the non-containment
+      // are separate assertions, and none of the three implies another. The `row.contains(action)`
+      // this replaces could not fail: `action.parentElement` being the row already decides it.
       expect(control.contains(action)).toBe(false);
+      expect(control.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      // A real button nested inside `role="button"` is invalid ARIA and was not only invalid: the
+      // control's own key handler saw the inner button's Enter and rolled the panel up instead.
+      expect(action.parentElement).toBe(row);
 
       action.focus();
       expect(press(action, 'keydown', { key: 'Enter' })).toBe(false);
@@ -424,8 +437,10 @@ describe('PanelGroup', () => {
     it('leaves the row holding only the control when no header action is given', () => {
       const { row, control } = setup();
 
-      expect(row.children).toHaveLength(1);
-      expect(row.firstElementChild).toBe(control);
+      // One claim instead of two halves: the row's element children ARE the control, and nothing
+      // else. `toHaveLength(1)` alone would pass on any lone child, and `firstElementChild` alone
+      // would pass with a sibling after it, so neither carried the placement on its own.
+      expect([...row.children]).toEqual([control]);
       expect(screen.queryByRole('button', { name: 'Collapse panels to icons' })).toBeNull();
       // The one button in the tree is the control itself.
       expect(screen.getAllByRole('button')).toHaveLength(1);

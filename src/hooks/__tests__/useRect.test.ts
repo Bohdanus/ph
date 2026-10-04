@@ -281,7 +281,7 @@ describe('useRect', () => {
     it('creates rect from layer when clicking on layer', () => {
       const layer = createMockLayer();
       const onRepaint = vi.fn();
-      const { result, overlayRef, containerRef } = renderUseRect({ onRepaint });
+      const { result, overlayRef } = renderUseRect({ onRepaint });
 
       const event = createPointerEvent({ button: 0, clientX: 150, clientY: 150, target: createMockTarget() });
       act(() => {
@@ -302,8 +302,14 @@ describe('useRect', () => {
       // the REF, by identity, and neither the size it returns nor the `imageSize` prop. A bare
       // `toHaveBeenCalled()` accepted the container ref, a freshly built ref object, or any size.
       // Exactly once, because this hook had no rect on mount and the adoption is the one paint.
+      //
+      // That one line also rules out the container ref, so a `not.toHaveBeenCalledWith(containerRef)`
+      // beside it said nothing the call count and identity had not already said. The claim it did
+      // not reach is the one the sibling suite owns: that the measurement is what CLAMPS the paint
+      // rather than `imageSize`, which `useRect.drag.test.ts` pins in
+      // `clamps the painted geometry to the canvas but reports the unclamped rect` with an
+      // `imageSize` deliberately unlike the canvas.
       expect(rectUtilsMock.getCanvasSize).toHaveBeenCalledExactlyOnceWith(overlayRef);
-      expect(rectUtilsMock.getCanvasSize).not.toHaveBeenCalledWith(containerRef);
     });
 
     it('respects aspect ratio modifier keys on drag start', () => {

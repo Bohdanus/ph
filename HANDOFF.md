@@ -5677,22 +5677,25 @@ rather than relying on the origin match.
 
 ## 209. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
 
-**Problem.** A mutation-checked hardening pass over the suite removed 96 cannot-fail assertions and
-added 96 tests, but four classes of defect remain, and one of them is a source bug the tests can now
-prove.
+**Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
+assertions that pass on any non-null value, but six classes of defect remain, and one of them is a
+source bug the new tests now prove.
 
 `PanelGroup.tsx` emits `aria-controls={panel-body-<id>}` unconditionally while the body it names is
 rendered only when the panel is not rolled up. A collapsed panel therefore points at an id that is not
 in the tree, and `aria-expanded="false"` beside a reference to nothing is the pair the panel's own
-accessibility test claims is dishonest. The new suite asserts the truth and the attribute cannot be
-removed by a test edit.
+accessibility test claims is dishonest. The new suite asserts the truth — the attribute is present,
+and the id it names is absent — so the finding cannot be removed by a test edit.
 
 **Affected.** `src/components/SidebarRight/PanelGroup.tsx` for the dangling reference.
 
 **What would close it.** Make the attribute conditional on the same expression that renders the body,
-and keep the paired assertions in `src/components/SidebarRight/__tests__/PanelGroup.test.tsx`.
+AND replace the two assertions that currently pin the defect: the one that reads
+`aria-controls` off a rolled-up control, and the one that reads the absent body back out of the
+document. They cannot both stay: the second is the defect's proof, so it is the first that has to go.
+Whoever does this is fixing the component, not the test.
 
-The three remaining test defects, each with the fix that was proven to work:
+The remaining test defects, each with the fix that was proven to work:
 
 - `src/components/SidebarLeft/__tests__/SidebarLeft.flyout-hardening.test.tsx` addresses flyout rows by
   position — `screen.getAllByRole('menuitemradio')[0].focus()` and an `items[0]` → `items[1]` pair.
@@ -5700,25 +5703,50 @@ The three remaining test defects, each with the fix that was proven to work:
   and still pass. The sibling `SidebarLeft.keyboard.test.tsx` now addresses the same rows by their
   `aria-label`, which is the tool's own label from `toolbar-mapping.ts`, so the replacement is copied
   from there; the source also renders `data-testid="tool-flyout-item-<name>-<slug>"` already.
-- About 90 layout assertions in eight files assert a Tailwind class string through `toHaveClass`,
-  concentrated in `HistoryTab.test.tsx`, `LayersTab.test.tsx`, `ToolbarHorizontal.test.tsx`,
-  `SidebarLeft.tablet.test.tsx`, `SidebarRight.test.tsx`, `SidebarLeft.workspace.test.tsx`,
-  `SidebarLeft.flyout-hardening.test.tsx` and `ToolTooltip.test.tsx`. jsdom applies no stylesheet, so
-  each claim is that a token is present in the class attribute; two visually identical states can carry
-  different tokens and two visually different states can carry none. `ToolTooltip.test.tsx` is the
-  extreme case: its entire content is class-token assertions. Where the source exposes state — an
-  `aria-expanded`, an `aria-selected`, a `hidden` attribute — assert that instead. Where it exposes
-  nothing, the class string is the only observable and the entry should be closed as a source gap
-  rather than a test gap.
+- Over a hundred layout assertions in eight files assert a Tailwind class string through
+  `toHaveClass`, concentrated in `HistoryTab.test.tsx`, `LayersTab.test.tsx`,
+  `ToolbarHorizontal.test.tsx`, `SidebarLeft.tablet.test.tsx`, `SidebarRight.test.tsx`,
+  `SidebarLeft.workspace.test.tsx`, `SidebarLeft.flyout-hardening.test.tsx` and `ToolTooltip.test.tsx`.
+  jsdom applies no stylesheet, so each claim is that a token is present in the class attribute; two
+  visually identical states can carry different tokens and two visually different states can carry
+  none. `ToolTooltip.test.tsx` is the extreme case: its entire content is class-token assertions.
+  Where the source exposes state — an `aria-expanded`, an `aria-selected`, a `hidden` attribute —
+  assert that instead. Where it exposes nothing, the class string is the only observable and the entry
+  should be closed as a source gap rather than a test gap.
 - `src/__tests__/fixtures/canvas.ts` exports a third `createMockCanvasContext` under the same name as
-  the one in `src/test/setup.ts`, and it is the weaker of the two: no `filter`, no `getImageData`,
-  `putImageData` or `createImageData`, no `quadraticCurveTo`. Eight consumers call it without a
-  `filter` key, so a `ctx.filter` or read-back assertion added to one of them tomorrow silently
-  compares against `undefined`. Aligning it with `src/test/setup.ts` is the fix, and it is not free:
-  adding `getImageData` changes what the production code believes a canvas can do, so each of those
-  eight consumers has to be re-run and read.
+  the one in `src/test/setup.ts`, and it is the narrower of the two: no `filter`, and no
+  `getImageData`, `putImageData` or `createImageData`. It does carry `quadraticCurveTo`, so the
+  earlier claim that it lacked that method was wrong. Because the fixture has no `filter` key at all,
+  every one of its consumers — 28 files under `src/` — receives a context without one, so a
+  `ctx.filter` or read-back assertion added to one of them silently compares against `undefined`.
+  Aligning it with `src/test/setup.ts` is the fix, and it is not free: adding `getImageData` changes
+  what the production code believes a canvas can do, so those consumers have to be re-run and read.
+- The client-to-canvas coordinate conversion is covered in exactly one place. Every tool-area suite
+  mocks `usePointerPosition` with `getLocalCoords` as the identity function, so every expected
+  coordinate in them is a product of that mock, and the mock is not a simplification production could
+  satisfy: against a store whose container is a bare div, jsdom's all-zero `getBoundingClientRect()`
+  gives the contain fit a zero scale to divide by. A wrong zoom or offset conversion — the defect that
+  would misalign every stroke under a crop — is therefore pinned only by
+  `src/hooks/__tests__/usePointerPosition.test.ts` and by e2e. Whoever wants a component suite to
+  reach it has to give the store a measured rect, not another mock.
+- No tool area in `src/components/Main/` gates on a layer's `locked` flag; only bedrock is refused.
+  Clone stamp is the suite that pins this, and it pins it as behaviour, which means a locked layer
+  still accepts a paint commit. Adobe refuses paint tools on a locked layer, so this is an app-wide
+  gap that a passing test now certifies. The gate belongs where `isBedrock` is already checked, in
+  `CloneStampToolArea.tsx` and its siblings, and the test follows the gate.
+- A hand-copied literal table drifts, and one already did. `src/tools/__tests__/tool-processors.test.ts`
+  copied a seven-chip list into every pen-family card; `main` then re-pointed two of those cards at
+  their own groups and the table went stale silently, in the same shape four other hand-copied tables
+  in the same change still have. The surviving shape is a `configKey` column carrying the test's own
+  claim, resolved through `placeholderToolGroups` — the form
+  `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` already uses. Copying the
+  chips instead is the defect, and a comment arguing against importing them is the tell.
 
 **Provenance.** Found 2026-10-04 on `test/harden-units` by a three-way read-only triage of every test
-file, then confirmed by mutating each new assertion and watching it fail. The dangling reference and
-the fixture divergence were both reported by the subagents that wrote the new suites and were left
-unfixed here because the mandate was test files only.
+file. The authors mutated their own new assertions to show they could fail, and two independent
+reviewers who had read neither the triage nor the authors' reasoning then found more: a
+cannot-fail style assertion whose double started on the asserted value, two hand-copied literals with
+no independent derivation, an arithmetic restatement of a sibling assertion, and the stale chip table
+above, which is the only one of them that was a merge artefact rather than a defect present from the
+start. The dangling reference and the fixture divergence were left unfixed because the mandate was
+test files only.

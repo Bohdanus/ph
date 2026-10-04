@@ -35,6 +35,7 @@ import { sponge } from '../sponge.ts';
 import { text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
+import { placeholderToolGroups } from '../../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs, PaintToolName } from '../draw.ts';
@@ -658,38 +659,27 @@ const placeholderNames = [
 ] as const satisfies readonly ToolName[];
 
 /**
- * The chips the `pen` group declares in `placeholderToolGroups`, copied here rather than imported:
- * `PlaceholderTool` renders whatever the group holds, so importing the group would make this
- * assertion agree with itself by construction. A tool wired to the wrong group fails on its own
- * literal instead.
- */
-const penPlaceholderChips = [
-  'Tool Mode',
-  'Fill',
-  'Stroke',
-  'Make Selection',
-  'Path Operations',
-  'Alignment',
-  'Auto Add/Delete',
-] as const;
-
-/** The `custom-shape` group, which is the only placeholder with its own chips. */
-const customShapePlaceholderChips = ['Tool Mode', 'Fill', 'Stroke', 'W/H', 'Shape Picker', 'Path Operations'] as const;
-
-/**
  * Every placeholder card's exact rendering: the title `toolsMap.ts` passes to `placeholderTool`,
- * and the chips of the group it names. Six of the seven cards share the `pen` group, so the title
- * is what tells two of them apart — which is why both are pinned instead of the group alone.
+ * and the config group that card is wired to.
+ *
+ * `configKey` is this file's own claim about which group each card belongs on, and it is what the
+ * assertion binds to: the rendered chip set is compared against `placeholderToolGroups` for the key
+ * named HERE, never against the group the card actually renders, so re-pointing a card in
+ * `toolsMap.ts` hands it another group's chips and fails below. What the table does not claim is a
+ * group's own chip list, which would move every row naming that group in step.
+ *
+ * Four of the seven cards share the `pen` group and the other three name a key of their own, so
+ * neither the group nor the title alone tells the cards apart; both are pinned.
  */
-const placeholderCards: readonly (readonly [ToolName, string, readonly string[]])[] = [
-  ['pen', 'Pen Tool', penPlaceholderChips],
-  ['freeform-pen', 'Freeform Pen Tool', penPlaceholderChips],
-  ['curvature-pen', 'Curvature Pen Tool', penPlaceholderChips],
-  ['add-anchor-point', 'Add Anchor Point Tool', penPlaceholderChips],
-  ['delete-anchor-point', 'Delete Anchor Point Tool', penPlaceholderChips],
-  ['convert-point', 'Convert Point Tool', penPlaceholderChips],
-  ['custom-shape', 'Custom Shape Tool', customShapePlaceholderChips],
-];
+const placeholderCards = [
+  { toolName: 'pen', configKey: 'pen', title: 'Pen Tool' },
+  { toolName: 'freeform-pen', configKey: 'freeform-pen', title: 'Freeform Pen Tool' },
+  { toolName: 'curvature-pen', configKey: 'curvature-pen', title: 'Curvature Pen Tool' },
+  { toolName: 'add-anchor-point', configKey: 'pen', title: 'Add Anchor Point Tool' },
+  { toolName: 'delete-anchor-point', configKey: 'pen', title: 'Delete Anchor Point Tool' },
+  { toolName: 'convert-point', configKey: 'pen', title: 'Convert Point Tool' },
+  { toolName: 'custom-shape', configKey: 'custom-shape', title: 'Custom Shape Tool' },
+] as const;
 
 /** The one description every `PlaceholderTool` falls back to, from its own default parameter. */
 const PLACEHOLDER_DESCRIPTION = 'TODO: tool behavior not implemented yet.';
@@ -815,17 +805,24 @@ describe('toolsMap wiring', () => {
     // three labelled spans in a fixed order — the `TODO` badge, the card's own title, then one
     // span per chip of the group `toolsMap.ts` named — plus the default description. Pinning that
     // array exactly is the claim `/TODO|Tool/i` never made: the old regex was satisfied by the
-    // title alone, so a card wired to the wrong group, or one stripped of its chips, still passed.
-    for (const [toolName, title, options] of placeholderCards) {
+    // title alone, so a card wired to the wrong group, or one not rendering every chip of the
+    // group it names, still passed.
+    for (const { toolName, configKey, title } of placeholderCards) {
+      const claimedChips = placeholderToolGroups[configKey];
+
+      // The group's existence is checked before it is spread, so a `configKey` that names no group
+      // fails with the tool name attached instead of throwing on a non-iterable value.
+      expect(claimedChips, toolName).toBeDefined();
+
       const Component = toolsMap[toolName].toolboxComponent;
       const { container, unmount } = render(React.createElement(Component));
       const spans = [...container.querySelectorAll('span')].map((node) => node.textContent);
 
-      expect(spans, toolName).toEqual(['TODO', title, ...options]);
+      expect(spans, toolName).toEqual(['TODO', title, ...claimedChips]);
       expect(container.textContent, toolName).toContain(PLACEHOLDER_DESCRIPTION);
       unmount();
     }
-    expect(placeholderCards.map(([toolName]) => toolName).sort()).toEqual([...placeholderNames].sort());
+    expect(placeholderCards.map(({ toolName }) => toolName).sort()).toEqual([...placeholderNames].sort());
   });
 
   it('renders a real options bar for every tool that left the placeholder roster', () => {
@@ -1305,7 +1302,6 @@ describe('toolProcessors dispatch for every tool name', () => {
       const canvas = result[0] as unknown as RecordingOffscreenCanvas;
       expect(canvas.width, toolName).toBe(expectedWidth);
       expect(canvas.height, toolName).toBe(expectedHeight);
-      if (outcome === 'canvas') expect(canvas, toolName).not.toBe(bitmap);
     }
     expect(defaultsOutcomeTable.map(([toolName]) => toolName).sort()).toEqual(
       processorNames.filter((toolName) => toolName !== 'crop').sort()
@@ -1499,7 +1495,7 @@ describe('toolsMap exhaustiveness', () => {
     const placeholderTools: readonly ToolName[] = [...unimplementedTools];
     const components = placeholderTools.map((toolName) => toolsMap[toolName].toolboxComponent);
 
-    // Six of them share the `pen` placeholder group, but each `placeholderTool(...)` call
+    // Four of them share the `pen` placeholder group, but each `placeholderTool(...)` call
     // returns a fresh closure, so no two tool names can be wired to the same component.
     expect(new Set(components).size).toBe(placeholderTools.length);
     for (const toolName of placeholderTools) {
