@@ -261,16 +261,22 @@ export const AppKeyboardShortcuts = () => {
   };
 
   /**
-   * The save the `mod+S` chord runs, and it is the header's save verbatim: commit the pending
-   * tool preview, stage the document, open `SaveDialog`, and record the new file name on the
-   * response. One flow rather than two is the point — a keyboard save and a `File > Save` click
-   * that differed by even the `flushSync` would encode the pre-commit layers on one path.
+   * The save the `mod+S` chord runs. It is the header's save, restated rather than shared: the same
+   * four steps `DesktopHeader`, `MobileHeader` and `MobileMenuDrawer` each write out, with the same
+   * `flushSync`, the same staged `ImageSaveInput` and the same `if (data)` guard. **No shared hook
+   * was extracted and none is implied.** Four call sites now spell the sequence rather than three,
+   * and that duplication is the deliberate price of a change that adds a keyboard binding without
+   * re-architecting the save path — extracting a `useSaveDocument` is a separate decision with its
+   * own blast radius (it would have to carry `useStore`, `useLayers`, `useApp` and `useFile` into
+   * one hook and rewrite three components that are each independently tested). Recorded here so the
+   * next reader counts copies deliberately instead of assuming one is hiding.
    *
-   * `flushSync` around `commitDirtyTool` is load-bearing and is not decoration: `commitDirtyTool`
-   * bakes a live preview into a real layer and dispatches, and `exportLayers` has to hold that
-   * result before `openSaveImageDialog` is called. Without it the batch runs after the call, so
-   * the dialog would be handed the un-committed record. `DesktopHeader` and both mobile shells
-   * wrap it identically.
+   * Restating rather than forking is what keeps a keyboard save and a `File > Save` click identical:
+   * the steps are the same three calls in the same order, and the `flushSync` around
+   * `commitDirtyTool` is load-bearing rather than decorative. `commitDirtyTool` bakes a live preview
+   * into a real layer and dispatches, and `exportLayers` has to hold THAT result before
+   * `openSaveImageDialog` is called; without the wrapper the batch runs after the call and the
+   * dialog is handed the un-committed record.
    *
    * `if (data) handleImageSave(data)` is the in-band refusal every other caller of this flow
    * already guards: a cancelled dialog resolves `null` and is not a save, so there is nothing to
@@ -425,11 +431,15 @@ export const AppKeyboardShortcuts = () => {
    * browser's own Save Page in every engine, and an in-app Save that also saved the HTML would be
    * worse than the missing shortcut this replaces.
    *
-   * `enabled: hasImage` alone, deliberately NOT narrowed further, for the reason the Meta+J
-   * comment above gives in full: `useKeyboardEvents.tsx` resolves `enabled` with a `continue`
-   * that runs BEFORE `preventDefault`, so any narrower gate hands the key back to the browser's
-   * Save Page in precisely the case the user pressed Save. The no-document case is answered in the
-   * handler, as a silent no-op, which is the same treatment an empty undo history already gets.
+   * `enabled: hasImage` is the file's uniform gate and nothing more is claimed for it. Unlike the
+   * Meta+J chord above, `saveDocument` has no narrower precondition to lose — there is no selection
+   * to check — so the tempting "claim the key even when there is nothing to save" argument does not
+   * apply. What DOES apply is the ordering: `useKeyboardEvents.tsx` resolves `enabled` with a
+   * `continue` that runs BEFORE `preventDefault`, so with no document loaded this registration is
+   * skipped and the browser's own Save Page is left alone. That consequence is deliberate here, it
+   * matches every other registration in this file, and the save tests pin it as the behaviour rather
+   * than papering over it. Widening the claim to the no-document case would mean answering a
+   * document-less keypress outside the handler, which is a different design than this one.
    *
    * `mutatesDocument` is left at its `true` default and that is deliberate: the handler commits a
    * live tool preview, and `useKeyboardEvents.tsx` refuses a document-committing registration at

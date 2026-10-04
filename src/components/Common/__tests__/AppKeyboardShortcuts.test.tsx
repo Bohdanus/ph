@@ -582,6 +582,12 @@ describe('AppKeyboardShortcuts save', () => {
    * bound only `meta` would leave every Windows and Linux user on the browser's Save Page, and
    * `matchesShortcut` compares `(event.metaKey || event.ctrlKey)` against the single declared
    * `mod`, which is what makes one registration cover both.
+   *
+   * These rows assert against `saveDocument`'s own mocks, not against a shared save hook: the
+   * handler restates the header's four steps rather than calling an extracted `useSaveDocument`,
+   * so a change to that sequence shows up HERE rather than in one place. That is the duplication
+   * the component comment records on purpose, and this block is the fourth place to look when the
+   * save stops matching `File > Save`.
    */
   it.each([
     ['macOS', { metaKey: true }],
