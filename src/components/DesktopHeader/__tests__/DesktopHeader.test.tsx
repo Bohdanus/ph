@@ -345,11 +345,14 @@ describe('DesktopHeader', () => {
   });
 
   /**
-   * `photo-filter` is the second case and it is the load-bearing one: the Colors bar's
-   * controls are grayscale, sepia and saturation, which is what Adobe's `Desaturate`
-   * performs and not what its `Photo Filter` performs, so an enabled `Photo Filter` opened
-   * a bar its own label did not describe. Adobe's real command is unbuilt, which is what a
-   * `disabled` item records.
+   * `photo-filter` is the second case and it is the load-bearing one. The Colors bar's
+   * leading control is what Adobe's `Desaturate` computes; it is not what `Photo Filter`
+   * computes, so an enabled `Photo Filter` opened a bar its own label did not describe, and
+   * Adobe's real command is unbuilt — which is what a `disabled` item records. Two
+   * assertions above are what hold that, and this one only holds that the row does not act:
+   * `expect(enabled).toEqual(['Brightness/Contrast', 'Desaturate'])`, which fails if
+   * `Photo Filter` is enabled again, and the disabled-label loop, which asserts
+   * `Photo Filter` carries `disabled`.
    */
   it.each(['levels', 'photo-filter'])('does not select a tool when the disabled %s adjustment is clicked', (slug) => {
     renderHeader();

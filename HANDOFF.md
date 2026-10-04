@@ -2881,7 +2881,9 @@ rail, and must NEVER be hidden"
      carried forward: the rail half is in `docs/PHOTOSHOP-UX.md`'s open-violations bullet, the
      operator's later "will be implemented" signal and the unanswered adjustment-layer question
      are in `docs/TOOLS-TOO-HARD.md` and `docs/PHOTOSHOP-UX.md`, the unanswered
-     adjustment-layer question is §172, and the open label question is §170. -->
+     adjustment-layer question is §172. The label question was §170; it is resolved and
+     implemented, so it is deleted, and the rule it settled now lives in
+     `docs/TOOLS-TOO-HARD.md`'s enabled-items entry. -->
 
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
@@ -4970,90 +4972,6 @@ at all, and should be decided rather than deferred.
 and their doc comments, and the five menu triggers), `src/util/selection.ts`,
 `src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
-
-## 170. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
-
-**Problem.** `ADJUSTMENTS_ITEMS` enables exactly two items
-(the `const ADJUSTMENTS_ITEMS` list in `src/components/DesktopHeader/DesktopHeader.tsx`), and both
-name a capability the app does
-not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args really are
-`{ brightness, contrast }` and whose processor really does emit `brightness(…) contrast(…)` — so that
-label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
-selects the `color` stand-in and is **a partial match**: sepia IS Photo Filter's Warming preset and
-saturation is nearest its Density slider, but the third control is a `grayscale` slider, and Photo
-Filter performs no luminance conversion.
-
-**This is a question, not a defect, and it is here because two branches implemented opposite answers
-to it.** A branch carried the extraction and enabled both items on the reasoning that a bounded,
-documented partial match beats a wrong name. `main` carries the operator's later signal and argues
-the opposite: "**do not relabel and do not build the stand-in into the menu** — a relabelled stand-in
-is the falsehood, made more permanent by being menu-launched." Both are defensible and **the tree
-cannot settle it**, which is what makes it a question. There is no Adobe page that says which to do,
-because the question is not about Photoshop.
-
-**Evidence, and what it does not settle.** The operator's signal is 2026-10-01, in their words: "some
-tools from photoshop menu will be implemented, like levels, colors, etc (this reqs are very vague yet),
-but letting you know." It is explicitly vague and it does not reopen the rail decision. Read strictly
-it says the real commands are coming and the spec is not written down. Read as direction about the
-interim it also says not to ship a relabelled stand-in from a menu. The first decision's own words
-cut the other way — "the capability is to be restructured, **not dropped**" — and disabling both items
-leaves `color` reachable from nowhere, which is a capability drop. Nothing in the tree decides which
-of those two consequences the operator prefers.
-
-**What was searched before asking.** Adobe's `Image ▸ Adjustments` reference, for an item whose
-definition the three filters satisfy (none exists — this is why `Black and White` and `Desaturate`
-were both rejected); `docs/OVERRIDES.md`, for an entry authorising the divergence (there is none, and
-an agent must not add one); `HANDOFF.md` and the session record, for a later decision superseding
-either (none found — the signal above is the latest). The tree answers every sub-question and is
-silent on this one.
-
-**Needed by:** before the real `Image ▸ Adjustments` work starts, and before anything is built on the
-assumption that these two items are permanent.
-
-**RESOLVED — 2026-10-01. The operator: "use naming that photoshop has."** Both items stay enabled under
-Adobe's own names, which is what the merge had already taken as its default. Read strictly, that answer
-is also a rejection of the one reading `main`'s note offered — that a relabelled stand-in must not be
-menu-launched at all — because `Brightness/Contrast` and `Photo Filter` are both Adobe's names, not
-app-invented ones. The alternative this entry was written to choose between is therefore closed:
-`color` stays reachable.
-
-What the answer does **not** settle, and what the merge was carrying: `Photo Filter` was a partial
-match (two of three controls fit; `grayscale` was not one of them), and the real `Black and White` and
-real `Levels` remain unbuilt and disabled. Building the real commands is what dissolves those.
-
-**APPLIED — 2026-10-04.** The binding rule below was applied to `color`, and it moved the item.
-`Photo Filter` is a **disabled** item and `Desaturate` is the enabled one on the `color` id. The
-audit that prompted it found that the `Photo Filter` row opened the Colors bar, whose controls are
-grayscale, sepia and saturation, against Adobe's Photo Filter — a lens filter with a Density slider
-and a Preserve Luminosity option, of which the bar reproduced none. Applying the rule literally gives
-`color` no enabled item at all, because it is not Adobe's Black and White either; disabling the row
-outright was rejected because `color` is in `extraTools`, so that row is the only surface the panel is
-reachable from, and dropping it would have removed a shipped capability and the e2e coverage of it.
-`Desaturate` is the one Adobe command in that submenu the bar's leading control actually computes.
-The residual divergence is `sepia` and `saturation`, and the real `Photo Filter` is now visibly
-unbuilt.
-
-**What the naming rule now binds.** A future adjustment command takes Adobe's name, and takes it only if
-it computes that command. An item whose computation does not match its Adobe name is a new falsehood
-and does not get enabled — which is why `Levels` and `Black and White` are `disabled` items rather
-than relabelled ones. An app-invented name (`Colors`) is not available as a fallback: it is the defect
-the rail removal fixed.
-
-**Answer (operator writes this line and nothing else):** use naming that Photoshop has.
-
-**Default if unanswered — KEEP BOTH ENABLED, and the divergence stays documented in the code.** The
-merge takes this option so the rail removal — which both sides and the operator agree on — is not
-held hostage to a naming question, and because a `disabled`-only menu is a strictly smaller surface
-than a menu that works. It is recorded as an assumption by the merging agent on 2026-10-01 and can be
-overturned by writing one line above. The cost of taking it is that a user can reach a control under
-an Adobe name that Adobe's dialog does not have; the cost of the alternative is that `color` is
-unreachable until real Black and White is built, which is a larger loss than a documented partial.
-
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and `ADJUSTMENTS_ITEMS`),
-`src/components/DesktopHeader/__tests__/DesktopHeader.test.tsx`, `src/tools/colors.ts`,
-`src/tools/functions.ts` (`buildColorsFilter()`), `docs/TOOLS-TOO-HARD.md` (the enabled-items entry
-and Black and
-White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
 
 ## 171. `color`'s and `levels`' `imageProcessor` is unreachable from every production call site, which leaves two files maintained on a path nothing runs
 

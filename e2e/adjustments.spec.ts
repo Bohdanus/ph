@@ -199,7 +199,7 @@ const isNot =
     !(await predicate(png));
 
 /**
- * Selects the Colors panel through `Image ▸ Adjustments ▸ Photo Filter`.
+ * Selects the Colors panel through `Image ▸ Adjustments ▸ Desaturate`.
  *
  * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
  * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it

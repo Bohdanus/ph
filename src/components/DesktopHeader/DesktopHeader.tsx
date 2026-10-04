@@ -187,26 +187,27 @@ type MenuHostItem = {
  *   `brightness(…) contrast(…)` filter, which is Adobe's Brightness/Contrast and not
  *   Adobe's Levels. Naming it `Levels` under a menu that is supposed to be a clone is the
  *   falsehood this rename removes.
- * - **`Desaturate` → the `color` id.** Its three controls are grayscale, sepia and
- *   saturation (`src/tools/functions.ts`'s `buildColorsFilter`), and **`grayscale` is the
- *   computation Adobe's Desaturate performs**: a flat conversion to luminance, on a scale
- *   inverted against Adobe's own "Blend with Original Color". That is the one control the
- *   menu item's name covers. The other two are a bounded divergence — `sepia` and
- *   `saturation` are not part of Desaturate — and it is recorded here rather than papered
- *   over.
+ * - **`Desaturate` → the `color` id.** Adobe's Desaturate "converts a color image to
+ *   grayscale values, but leaves the image in the same color mode", and "assigns equal red,
+ *   green, and blue values to each pixel in an RGB image" — which is what the bar's
+ *   **Grayscale** slider does at 100. Adobe adds that the command "has the same effect as
+ *   setting Saturation to minus (-)100 in the Hue/Saturation adjustment", which is the bar's
+ *   **Saturation** slider
+ *   (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>). **`Sepia` is the bounded divergence**: it belongs to neither command, and
+ *   Adobe's Desaturate is a one-shot command with no dialog at all, where this bar is three
+ *   continuous sliders.
  *
- *   **This item used to be `Photo Filter`.** Adobe's Photo Filter is a lens filter
- *   applied "from a preset filter or a custom color filter", with a **Density** slider and
- *   a **Preserve Luminosity** option. The app's bar reproduces **none** of those three, and
- *   its `grayscale` slider is a conversion to luminance that Photo Filter never performs —
- *   so an enabled item opened a bar whose controls did not contain the command its label
- *   named. `Photo Filter` is now a `disabled` item, which is this file's own rule applied:
- *   the capability is unbuilt. `Desaturate` is the Adobe name in the same submenu whose
- *   computation the bar's leading control actually is, which is what `HANDOFF.md` §170's
- *   naming rule requires — "an item whose computation does not match its Adobe name is a
- *   new falsehood and does not get enabled". Relabelling rather than disabling outright is
- *   what keeps `color` reachable at all: it is in `extraTools`, so it has no rail tile and
- *   no `tools-menu-color-button`, and this submenu is the only path into the panel.
+ *   **This item used to be `Photo Filter`.** Adobe's Photo Filter is a lens filter applied
+ *   "from a preset filter or a custom color filter", with a **Density** slider and a
+ *   **Preserve Luminosity** option, and the bar reproduced **none** of those three — so an
+ *   enabled item opened a bar whose controls did not contain the command its label named.
+ *   `Photo Filter` is a `disabled` item now, which is this file's own rule applied: the
+ *   capability is unbuilt. `Desaturate` is the Adobe name in the same submenu the bar's
+ *   leading control actually computes, which is what `docs/TOOLS-TOO-HARD.md`'s enabled-items
+ *   entry requires of an adjustment command — an item whose computation does not match its
+ *   Adobe name is a falsehood and does not get enabled. Moving the row rather than dropping
+ *   it is what keeps `color` reachable at all: it is in `extraTools`, so it has no rail tile
+ *   and no `tools-menu-color-button`, and this submenu is the only path into the panel.
  *
  * **`Levels`, `Curves`, `Exposure`, `Black and White`, `Hue/Saturation`, `Vibrance`,
  * `Color Balance`, `Channel Mixer`, `Selective Color`, `Photo Filter`, `Invert`,

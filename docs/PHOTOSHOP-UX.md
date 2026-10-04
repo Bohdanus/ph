@@ -61,10 +61,12 @@ violations on `main`.
     TRUE rather than false; it is not a dodge. It is still an `Image ▸ Adjustments`
     command either way, so the rail verdict does not change; the label was the second
     defect.
-  - **`color` is now hosted by `Desaturate`, and `Photo Filter` is disabled.** Its
-    three controls are grayscale, sepia and saturation. `grayscale` is the computation
-    Adobe's `Desaturate` performs — a flat conversion to luminance — so that is the
-    item it is enabled on, and `sepia` and `saturation` are the bounded divergence.
+  - **`color` is hosted by `Desaturate`, and `Photo Filter` is disabled.** Its three
+    controls are grayscale, sepia and saturation. Adobe's Desaturate "assigns equal red,
+    green, and blue values to each pixel in an RGB image" and "has the same effect as
+    setting Saturation to minus (-)100 in the Hue/Saturation adjustment"
+    (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>), so the leading two controls are the command it is named for and `sepia`
+    is the bounded divergence — Adobe's Desaturate is a one-shot command with no dialog.
     `Photo Filter` is not a partial match at all: Adobe's is a lens filter with a
     Density slider and a Preserve Luminosity option, and the bar reproduces none of
     the three, so it is an unbuilt command and carries the `disabled` item every

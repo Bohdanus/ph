@@ -180,7 +180,7 @@ function besideTheLine(onLine: { x: number; y: number }): { x: number; y: number
 }
 
 /**
- * Selects the Colors panel through `Image ▸ Adjustments ▸ Photo Filter`.
+ * Selects the Colors panel through `Image ▸ Adjustments ▸ Desaturate`.
  *
  * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
  * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
