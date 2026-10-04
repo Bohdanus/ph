@@ -46,6 +46,28 @@ export type UseRectProps = {
    */
   allowOutsideCanvas?: boolean;
 
+  /**
+   * Paint each corner handle WHOLE outside the rect, instead of straddling its corner.
+   *
+   * Opt-in per consumer because this hook is shared, and only the Type tool has a reason. Its
+   * contenteditable overlay occupies the whole box, so a handle centred on a corner puts its inner
+   * half under the editor, where a press places a caret instead of resizing. Crop, the marquee and
+   * the Move tool have no overlay over their box, so a grip straddling its corner is correct for
+   * them — which is what this repository's own description of the overlay records, in
+   * `src/tools/descriptions/transform.ts`, as "four painted corner handles sitting on eight
+   * draggable edges", and what `edgeAtPoint` below still hit-tests: it
+   * takes `HANDLE_SIZE / scale / 2` either side of the corner, so a straddling handle is grabbable
+   * across its whole width and an outside one is grabbable across half of it and invisible across
+   * the rest. Painting them outside for everyone moved the crop, the marquee and the Move tool away
+   * from the geometry this repository documents and out of agreement with their own hit test, which
+   * is the regression `e2e/selection-gestures.spec.ts` and `e2e/select-move.spec.ts` both caught.
+   *
+   * PAINTING ONLY, and the hit test is deliberately untouched: the Type tool's own geometry is
+   * measured off the painted handle by `e2e/text-tool.spec.ts` and `e2e/text-edit.spec.ts`, so
+   * moving the grip and moving the grab target together would change what those read.
+   */
+  handlesOutside?: boolean;
+
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 
@@ -81,6 +103,7 @@ export function useRect({
   constrainToSquare = false,
   fromCentre = false,
   allowOutsideCanvas = false,
+  handlesOutside = false,
 
   containerRef,
   overlayRef,
@@ -310,16 +333,19 @@ export function useRect({
     ctx.strokeRect(x, y, width, height);
     ctx.setLineDash([]);
 
-    // Draw handles
+    // Draw handles. `hIn` is the offset from the rect's LEFT and TOP edge and `hOut` the one added to
+    // its RIGHT and BOTTOM edge, and they differ because a wholly-outside grip ENDS at its corner
+    // rather than straddling it: a whole handle back on the minus sides, none on the plus sides. A
+    // straddling grip is half a handle back on all four, which is what `edgeAtPoint` hit-tests.
+    // See `handlesOutside` for why only the Type tool asks for the other pair.
     const h1 = HANDLE_SIZE / scale;
+    const hIn = handlesOutside ? -h1 : -h1 / 2;
+    const hOut = handlesOutside ? 0 : -h1 / 2;
     ctx.fillStyle = '#007bff';
-    // Keep the handles outside the editor's hit area. The contenteditable overlay occupies the
-    // whole type box, so centering a handle on a corner makes its inner half place a caret instead
-    // of resizing. Hit-testing remains centred on the corner so the full visible handle is usable.
-    ctx.fillRect(x - h1, y - h1, h1, h1);
-    ctx.fillRect(x + width, y - h1, h1, h1);
-    ctx.fillRect(x - h1, y + height, h1, h1);
-    ctx.fillRect(x + width, y + height, h1, h1);
+    ctx.fillRect(x + hIn, y + hIn, h1, h1);
+    ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
+    ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
+    ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
 
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
