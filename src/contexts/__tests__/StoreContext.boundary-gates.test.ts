@@ -32,6 +32,14 @@ const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)
 const LOOKBEHIND = 512;
 
 /**
+ * A `/` here opens a regex literal rather than dividing. The trigger set is the
+ * characters that can precede one — `(`, `,`, `=`, `:`, `[`, `!`, `&`, `|`, `?`, `{`,
+ * `;`, and `>` for an arrow body — and division never follows any of them, because it
+ * follows an identifier, `)` or a number.
+ */
+const REGEX_LITERAL_PREFIX = /[(,=:[!&|?{;>\n]\s*$/;
+
+/**
  * The forbidden set is matched on the specifier's BASENAME, not by substring.
  *
  * A substring test cannot tell `./materialization.ts` from a sibling that merely
@@ -79,6 +87,16 @@ function maskCommentsPreservingImportSpecifiers(source: string): string {
       blankRange(output, source, start, index);
       continue;
     }
+    if (character === '/' && REGEX_LITERAL_PREFIX.test(output.slice(Math.max(0, index - 8), index).join(''))) {
+      // A REGEX literal, not a string: `/["'\\<>]/` would otherwise open a string at the
+      // `"` and blank everything after it, disabling this scanner for the rest of the file
+      // without saying so. Only a `/` that can BEGIN a regex counts -- division follows an
+      // identifier, `)` or a number, none of which are in the trigger set.
+      index += 1;
+      while (index < source.length && !(source[index] === '/' && source[index - 1] !== '\\')) index += 1;
+      index = Math.min(source.length, index + 1);
+      continue;
+    }
     if (character !== "'" && character !== '"' && character !== '`') {
       index += 1;
       continue;
@@ -100,7 +118,8 @@ function maskCommentsPreservingImportSpecifiers(source: string): string {
       .slice(Math.max(0, start - LOOKBEHIND), start)
       .join('')
       .replace(/\s+$/, '');
-    const preserve = quote !== '`' && /(?:\bfrom|\bimport(?:\s*\()?)\s*$/.test(prefix);
+    const preserve =
+      quote !== '`' && /(?:\bfrom|\bimport(?:\s*\()?|\bvi\s*\.\s*(?:mock|doMock|unmock)\s*\()\s*$/.test(prefix);
     if (!preserve) blankRange(output, source, start + 1, end);
     index = Math.min(source.length, end + 1);
   }
@@ -236,14 +255,19 @@ function materializationProductionImports(modules?: readonly SourceModule[]): Fo
 }
 
 /**
- * `vi.mock` takes a SPECIFIER, not a module, so a suite can name a module no
- * `import` statement names — 114 such specifiers exist here. This arm is kept so
- * that such a module is not mistaken for dead code, and it is honest about its own
- * standing: it is currently UNEXERCISED, because every one of those 114 specifiers
- * names a module some import statement also names, which was measured by deleting
- * this arm and re-running rather than assumed. Removing it does not change the
- * gate's verdict today; it would only start doing so if a suite ever mocked a
- * module nothing imports.
+ * `vi.mock` takes a SPECIFIER, not a module, so a suite can name a module no `import`
+ * statement names. This arm exists for that case — and it was DEAD until this change:
+ * it was matched against the MASKED source, whose preserve test recognised only `from`
+ * and `import(`, so every `vi.mock('./x.ts')` literal was blanked to spaces before this
+ * regex ever saw it. `[^'"]+` then matched the spaces and `resolveSpecifier` returned
+ * null, because a run of spaces starts with neither `.` nor `@/`. 0 of 463 call sites
+ * resolved.
+ *
+ * The preserve test above now recognises `vi.mock(`, so 458 of 463 resolve and the
+ * imported set and the orphan set are BYTE-IDENTICAL to before. That is the honest
+ * result to record: the arm changes no verdict today, and the earlier claim that this
+ * was "measured by deleting the arm" was void, because deleting it could not have
+ * changed a thing.
  */
 const MOCK_SPECIFIER = /\bvi\s*\.\s*(?:mock|doMock|unmock)\s*\(\s*['"]([^'"]+)['"]/g;
 
@@ -259,7 +283,13 @@ const MODULE_EXTENSIONS = ['.ts', '.tsx', '/index.ts', '/index.tsx'] as const;
  * gate below demanded 37 allow-list entries for live code. That was measured, not
  * assumed: the first run of this guard failed with exactly those 37.
  */
-function resolveSpecifier(fromPath: string, specifier: string, walked: ReadonlySet<string>): string | null {
+function resolveSpecifier(fromPath: string, rawSpecifier: string, walked: ReadonlySet<string>): string | null {
+  // A Vite query (`?raw`, `?url`, `?worker`) is not part of the module's identity: the
+  // loader resolves `./x.ts?raw` to `x.ts`. Two live imports take that form, and a
+  // resolver that does not strip it reports their targets as unimported — harmless only
+  // because both are also imported normally. This tree imports `.ts`/`.tsx` and omits the
+  // extension; it never maps a `.js` specifier onto a source module.
+  const specifier = rawSpecifier.replace(/\?.*$/, '');
   let base: string | null = null;
   if (specifier.startsWith('.')) {
     base = relative(repoRoot, resolve(repoRoot, dirname(fromPath), specifier))
@@ -286,7 +316,7 @@ function resolveSpecifier(fromPath: string, specifier: string, walked: ReadonlyS
  * `import type`. An inline specifier (`import { value, type Shape }`) counts as a
  * VALUE import, because it binds a value too.
  */
-const TYPED_IMPORT = /(^|\n)[ \t]*import\s+(type\s+)?[^;\n]*?\bfrom\s+['"]([^'"]+)['"]/g;
+const TYPED_IMPORT = /(^|\n)[ \t]*import\s+(type(?=[\s{])\s*)?[^;'"`]*?\bfrom\s+['"]([^'"]+)['"]/g;
 
 type ImportEdge = Readonly<{ file: string; specifier: string; typeOnly: boolean }>;
 
@@ -304,7 +334,9 @@ type ModuleGraph = Readonly<{
  * expensive half. Sharing the pass took this suite from two full walks to one; run
  * separately they did not fit the per-test timeout at all under a full-suite run.
  *
- * The tree cannot change while one test file runs, so a single scan is exact.
+ * Under `--run` the tree is frozen, so a single scan is exact. Watch mode re-runs the
+ * file with this cache intact, which is why every verdict below now reads `walked` from
+ * here rather than taking a second filesystem walk that could disagree.
  */
 let moduleGraphCache: ModuleGraph | null = null;
 
@@ -339,11 +371,6 @@ function moduleGraph(): ModuleGraph {
   return moduleGraphCache;
 }
 
-/** Everything ONE module names, with the kind of each naming. */
-function outboundImportsOf(file: string): readonly Omit<ImportEdge, 'file'>[] {
-  return moduleGraph().outEdges.get(file) ?? [];
-}
-
 /** Every module that names `target`, with the kind of each naming. */
 function importEdges(target: string): ImportEdge[] {
   const { walked, outEdges } = moduleGraph();
@@ -360,13 +387,16 @@ const FILE_IO_LEAF = 'src/contexts/file-types.ts';
 const FILE_IO_PROVIDER = 'src/contexts/useFile.tsx';
 
 /**
- * A production module no module in the repository names.
+ * A production module NO MODULE IN THE REPOSITORY names.
  *
- * This is DEAD code, not merely under-wired production code: a module that only
- * its own tests import is untested-by-production logic, which is a coverage
- * finding and not this gate's business. The distinction is why the allow-list
- * below is a `Map` of one entry rather than the several a "no production
- * importer" rule would need.
+ * That is the rule this implements, and it is deliberately narrower than "dead code".
+ * Thirteen production modules have no production importer but at least one test
+ * importer, and four of those are dead by any reading — but a stricter "no production
+ * importer" rule has to allow-list `src/contexts/replay-budget.ts`, which
+ * `keeps retired replay coordination modules out of production source` below FORBIDS
+ * an importer for. A rule that fights the neighbouring rule is not a rule, so the four
+ * are a `HANDOFF.md` entry instead, where each needs a delete-or-mount decision no
+ * regex can make.
  *
  * Every entry carries its reason, because an unexplained entry is the
  * unfalsifiable flag `scripts/__tests__/agents-citations.test.mjs` is written
@@ -380,8 +410,13 @@ const ALLOWED_UNIMPORTED_MODULES = new Map<string, string>([
 ]);
 
 function unimportedProductionModules(): string[] {
-  const imported = moduleGraph().imported;
-  return walkedProductionModules().filter((path) => !imported.has(path));
+  // Read from the SAME snapshot the imported set came from, so one verdict cannot be
+  // assembled from two walks. The `isProductionModule` filter stays: `moduleGraph().walked`
+  // carries every module including tests, and without the filter this reports all ~330 of
+  // them. `walkedProductionModules()` is left alone because the git-equality case needs
+  // its live filesystem read.
+  const { walked, imported } = moduleGraph();
+  return [...walked].filter((path) => isProductionModule(path) && !imported.has(path));
 }
 
 const ALL_PUBLIC_ACTIONS: Record<PublicAction['type'], true> = {
@@ -563,11 +598,15 @@ describe('StoreContext boundary gates', () => {
     ]);
   });
 
-  // A module nothing names cannot fail a typecheck, cannot fail a test, and cannot be
-  // found by reading the entry points. Five accumulated in this repository at once —
+  // A module nothing names is still typechecked — `tsconfig.app.json` includes `src`
+  // outright, so it is a root of the program whatever imports it — but nothing the
+  // compiler prints ever says it is unreachable, no test loads it, and no entry point
+  // names it. Five accumulated in this repository at once —
   // a fully commented `text.ts` and `ImageContext.tsx`, a two-constant barrel, a
   // six-export fixture nothing imported, and that fixture's own barrel, which nothing
-  // imported either. The guard is what stops the sixth.
+  // imported either. The guard is what stops the sixth PRODUCTION orphan; it cannot see
+  // the two that lived under `src/__tests__/fixtures/`, because `isProductionModule`
+  // excludes `__tests__`.
   //
   // The scan is warmed once here rather than inside the first case: it reads and
   // comment-masks every module under `src/`, suites included, which costs several
@@ -596,6 +635,20 @@ describe('StoreContext boundary gates', () => {
     expect(imported.has('src/components/SidebarLeft/icons/BlurIcon.tsx')).toBe(true);
   });
 
+  it('keeps reading imports after a regex literal, which looks like a string opener', () => {
+    // `/["'\\<>]/` contains a quote, so before the regex-literal skip this mask opened a
+    // string there and blanked the rest of the file — which silently switches the
+    // unimported-module scan off from that point on. `src/components/ToolbarsRight/
+    // __tests__/buttonStyles.test.ts` has that exact literal, so this is not
+    // hypothetical: the failure is invisible in the verdict, it just makes the verdict
+    // mean less than it appears to.
+    const masked = maskCommentsPreservingImportSpecifiers(
+      ["const quoted = value.replace(/[\"'\\<>]/g, '');", "import { secondImport } from './second.ts';"].join('\n')
+    );
+
+    expect(masked).toContain("'./second.ts'");
+  });
+
   it('reports a production module nothing imports, rather than leaving it to rot undeleted', () => {
     const orphans = unimportedProductionModules().filter((path) => !ALLOWED_UNIMPORTED_MODULES.has(path));
 
@@ -607,6 +660,15 @@ describe('StoreContext boundary gates', () => {
     const stale = [...ALLOWED_UNIMPORTED_MODULES.keys()].filter((path) => imported.has(path));
 
     expect(stale).toEqual([]);
+  });
+
+  it('holds no allow-list entry for a module that no longer exists', () => {
+    // The stale-entry case above cannot fail on a DELETED entry, so deleting a module
+    // leaves a permanent exemption: recreate the path and the guard would wave it
+    // through without ever asking why it is exempt.
+    const gone = [...ALLOWED_UNIMPORTED_MODULES.keys()].filter((path) => !moduleGraph().walked.has(path));
+
+    expect(gone).toEqual([]);
   });
 
   it('holds a reason on every allow-list entry, because an unexplained one is unfalsifiable', () => {
@@ -621,25 +683,39 @@ describe('StoreContext boundary gates', () => {
     // provider and the dialog it mounts. Calling `useFile()` is the intended
     // direction and stays legal, which is why this names the TYPE-only edges rather
     // than every edge.
+    //
+    // The property is STATEMENT-shaped: no import STATEMENT naming the provider may be
+    // type-only. `useFile.test.tsx` binds `type FileContextType` alongside two values in
+    // one statement, and that is not a violation — a statement binding a value is erased
+    // at runtime anyway. It is also not expressible more finely than that, because
+    // `TYPED_IMPORT` discards the binding list.
+    //
+    // KNOWN LIMIT: `export … from` is invisible here. A barrel re-exporting `useFile`
+    // would be a genuine runtime edge that `IMPORT_SPECIFIER` counts as an importer but
+    // this case cannot see. None exists today; the leaf case above pins against both
+    // patterns instead, which closes the same hole for the one module whose out-edges
+    // are the property being claimed.
     const typeOnly = importEdges(FILE_IO_PROVIDER).filter((edge) => edge.typeOnly);
 
     expect(typeOnly.map(({ file, specifier }) => ({ file, specifier }))).toEqual([]);
   });
 
-  it('keeps every module that mounts a dialog importing the provider for its hook, never for a shape', () => {
-    // The positive half of the case above. Without it, a resolver that resolved
-    // nothing would report zero type-only edges and pass.
+  it('finds the modules that call the file-IO hook, so a resolver that resolves nothing cannot pass', () => {
+    // The positive half of the case above: a type-only edge into the provider is
+    // invisible if the resolver resolves nothing, so the negative case would pass on a
+    // broken scan. Naming importers is what proves the scan sees them.
+    //
+    // It is deliberately NOT an exact list. Calling `useFile()` from a component is the
+    // intended direction, so an eighth caller must not turn this red — only a resolver
+    // that finds nobody should. The named paths are the known importers, not the
+    // permitted ones.
     const valueEdges = importEdges(FILE_IO_PROVIDER).filter((edge) => !edge.typeOnly);
+    const importers = [...new Set(valueEdges.map(({ file }) => file))];
 
-    expect(valueEdges.map(({ file }) => file).sort()).toEqual([
-      'src/App.tsx',
-      'src/components/Common/AppKeyboardShortcuts.tsx',
-      'src/components/DesktopHeader/DesktopHeader.tsx',
-      'src/components/Main/Main.tsx',
-      'src/components/Mobile/MobileHeader.tsx',
-      'src/components/Mobile/MobileMenuDrawer.tsx',
-      'src/contexts/__tests__/useFile.test.tsx',
-    ]);
+    expect(valueEdges.length).toBeGreaterThan(0);
+    expect(importers).toEqual(
+      expect.arrayContaining(['src/App.tsx', 'src/components/Main/Main.tsx', 'src/contexts/__tests__/useFile.test.tsx'])
+    );
   });
 
   it('keeps the file I/O leaf free of value imports, so a shape cannot smuggle a runtime edge back', () => {
@@ -647,11 +723,16 @@ describe('StoreContext boundary gates', () => {
     // nothing at runtime. Promoting one to a value import would pull a codec's
     // module graph into every dialog that names a shape, so the out-edges are
     // pinned as an exact list with their kinds rather than counted.
-    const edges = outboundImportsOf(FILE_IO_LEAF)
-      .map(({ specifier, typeOnly }) => ({ specifier, typeOnly }))
-      .sort((left, right) => left.specifier.localeCompare(right.specifier));
+    const { outEdges } = moduleGraph();
+    // The UNION of both patterns, deduped by specifier: `IMPORT_SPECIFIER` alone misses
+    // nothing but cannot say whether an edge is type-only, and `TYPED_IMPORT` alone is
+    // blind to a bare `import './x.css'` and to any `export … from` — a real runtime edge.
+    // Every `import type` matches BOTH, so without the dedupe the array doubles.
+    const bySpecifier = new Map<string, boolean>();
+    for (const edge of outEdges.get(FILE_IO_LEAF) ?? []) bySpecifier.set(edge.specifier, edge.typeOnly);
+    const edges = [...bySpecifier.entries()].map(([specifier, typeOnly]) => ({ specifier, typeOnly }));
 
-    expect(edges).toEqual([
+    expect(edges.sort((left, right) => left.specifier.localeCompare(right.specifier))).toEqual([
       { specifier: './document-frame.ts', typeOnly: true },
       { specifier: './general-types.ts', typeOnly: true },
       { specifier: './layer-types.ts', typeOnly: true },

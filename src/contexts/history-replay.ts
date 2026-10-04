@@ -38,7 +38,7 @@ import {
  * loss of a user edit unless something reports it, and HANDOFF.md §98 makes the
  * console the app's only error channel. Collected rather than logged at the
  * throw site because `replayHistory` runs on every undo, redo and history-panel
- * click, and these catches sit inside the per-item loop: logging per item turns
+ * click, and these refusals sit inside the per-item loop: logging per item turns
  * one refused entry into one line per navigation, repeated forever. The caller
  * reports the whole set once per replay.
  */
@@ -219,19 +219,32 @@ export function replayHistory(
       // means the union gained a member this loop does not apply, or the entry carries
       // nothing the handler for its action needs (`OPEN_DOCUMENT_ACTION` is applied by
       // the `documentSource` branch at the top of the loop, so an entry without one
-      // arrives here too). Refusing is right; refusing SILENTLY is not — this is the
-      // one skip in the module that used to report nothing, and a user edit vanishing
-      // unnoticed is exactly what `ReplayDiagnostic` exists to prevent. It is
-      // unreachable in production today: `useApp.ts` is the only writer of an
+      // arrives here too).
+      //
+      // Refusing is right; refusing SILENTLY is not. This is the ONE skip reachable
+      // for an `ActionType` member no arm above applies — not the module's only silent
+      // skip. A `documentSource` carried mid-history, a `NEW_LAYER_ACTION` with no
+      // source, a `MERGE_ACTION` with no source and a `REORDER_ACTION` naming an absent
+      // layer are all refused in silence too, and `history-replay.branches.test.ts`
+      // titles each of them as intended. What separates this branch from those is that
+      // nothing records that the entry was ever seen: the others pin their own
+      // behaviour, this one had no behaviour to pin, so a user edit vanished unnoticed,
+      // which is exactly what `ReplayDiagnostic` exists to prevent.
+      //
+      // Both reasons for arriving are production-unreachable today, which is why this
+      // adds no output on any real timeline: `useApp.ts` is the only writer of an
       // `OPEN_DOCUMENT_ACTION` entry and always attaches a `documentSource`, and
-      // `LAYER_TRANSPARENCY_ACTION` has no production dispatch site at all. Reporting
-      // it costs nothing and makes the union exhaustiveness assertable by
-      // `history-replay.action-census.test.ts`.
+      // `LAYER_TRANSPARENCY_ACTION` has no production dispatch site at all. It is also
+      // reachable with no action NAME at all, since nothing enforces the required
+      // `HistoryItem['actionName']` at runtime — and a nameless entry is the most
+      // reportable thing this loop can meet, because `historyId` and timeline position
+      // are then the only trace of it. It is reported rather than guarded for: a
+      // `if (!actionName) continue;` here would restore the silent skip.
       diagnostics.push({
         historyId: item.id,
         actionName,
         code: 'unhandled-action',
-        error: new Error(`No replay arm applies ${actionName}`),
+        error: new Error(`No replay arm applies ${actionName ?? '(no action name)'}`),
       });
       continue;
     }
