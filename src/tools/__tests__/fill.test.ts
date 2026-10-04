@@ -92,7 +92,6 @@ const fillArgs = (toolName: FillToolName, overrides: Partial<FillToolArgs> = {})
     ...defaultSettings[toolName],
     toolName,
     pos: { x: 0, y: 0 },
-    size: SIZE,
     ...overrides,
   }) as unknown as ToolArgs;
 
@@ -150,6 +149,31 @@ describe('fill tolerance scale', () => {
     expect(FILL_TOLERANCE_DEFAULT).toBe(32);
     expect(defaultSettings['magic-eraser'].tolerance).toBe(FILL_TOLERANCE_DEFAULT);
     expect(defaultSettings['paint-bucket'].tolerance).toBe(FILL_TOLERANCE_DEFAULT);
+  });
+});
+
+/**
+ * The click travels in the args and the geometry does not, and the asymmetry is the contract.
+ *
+ * `pos` is in `FillToolArgs` because a durable `apply-raster-processor` op replays from the stored
+ * args alone. A `size` was there too, and nothing read it: both processors take the geometry from
+ * the curried `ProcessorToolParams` — `fillLayer` destructures `params.size` — and the durable call
+ * site passes `{ bitmap, size }` beside the args. So the seeded `1x1` was the only value that ever
+ * existed in it, which is what made it a trap in both directions: a reader trusting it filled
+ * `1x1`, and a writer forgetting it produced a layer-sized fill with nothing to say so.
+ *
+ * `satisfies FillToolArgs` in `settings.ts` already fails a re-added key, so this is not the check
+ * that catches the regression — it is the statement of which half of the geometry is an argument and
+ * which half is a parameter, in the one place a reader of the args contract will look.
+ */
+describe('fill args geometry', () => {
+  it('seeds both fill tools with the click and with no size, which the processors never read', () => {
+    for (const toolName of ['magic-eraser', 'paint-bucket'] as const) {
+      const args = defaultSettings[toolName];
+
+      expect(Object.hasOwn(args, 'pos')).toBe(true);
+      expect(Object.hasOwn(args, 'size')).toBe(false);
+    }
   });
 });
 

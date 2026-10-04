@@ -80,6 +80,7 @@ const MINIMUM_FACTOR = 3;
 /** The suites this guard knows about, kept so the derived set has something to equal. */
 const BUDGETED = [
   'agent-board.test.mjs',
+  'agents-citations.test.mjs',
   'docs-index.test.mjs',
   'e2e-run.test.mjs',
   'main-worktree-guard.test.mjs',

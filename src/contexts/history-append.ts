@@ -8,13 +8,15 @@ import {
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
-import type { DocumentFrame } from './document-frame.ts';
-import type { AssetRegistry } from './asset-registry.ts';
+import { isValidDocumentFrame, type DocumentFrame } from './document-frame.ts';
+import { getAssetRegistry, type AssetRegistry } from './asset-registry.ts';
 import {
   deriveRemoveLayerEntry,
+  deriveReplaceLayerSourceEntry,
   deriveSetDocumentFrameEntry,
   deriveSetLayerPropertiesEntry,
   deriveSetSelectionEntry,
+  editableSourceReplacementFromEntry,
   isSetLayerPropertiesAction,
   isEntryEnabled,
   layerPropertyKeyFor,
@@ -27,16 +29,19 @@ import {
 import {
   DURABLE_SCHEMA_VERSION,
   freezeDurableDocument,
+  type AssetId,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
   type DurableOperation,
+  type ReplaceLayerSourceOperation,
   type SelectionSnapshot,
 } from './history-model.ts';
+import { isTrapezoidOnlyTransform, multiplyAffineTransforms, type AffineTransform } from './affine-transform.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
-import type { Layer, LayerId, LayerSource } from './layer-types.ts';
+import type { Layer, LayerId, LayerSource, ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ToolName } from './tool-types.ts';
 
@@ -72,7 +77,15 @@ const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.f
  *    whose `after` was invented would clear the selection on every durable
  *    replay, so an unusable next selection state yields no durable entry.
  * 5. A boundary failure can never reject or undo a legacy-valid edit. Every
- *    failure is reported as a durable-unavailable diagnostic.
+ *    failure is reported as a durable-unavailable diagnostic, and an
+ *    error-severity timeline diagnostic withholds the durable plan because the
+ *    durable append point is undefined.
+ * 6. A source edit is the one source-backed action this boundary translates, and
+ *    it is translated because its durable form needs no asset: the payload type
+ *    admits only `text` and `vector`, whose conversion registers nothing. So the
+ *    derivation needs neither a document id nor a registry, and the append is
+ *    publishable from this module alone rather than only through the store-boundary
+ *    planners. Its grading still refuses a plan carrying any other source kind.
  */
 export type AppendBoundaryInput = Readonly<{
   item: NewHistoryItem;
@@ -181,15 +194,23 @@ function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayer
     ) {
       return 'the durable raster layer source does not match the legacy source';
     }
+    // The SHAPE of the asset id, and nothing else. Whether the registry can
+    // actually resolve it is a different question that this function cannot
+    // answer — it holds no registry — so it is asked by the caller through
+    // `registryResolvesAsset`. The message this replaced ("the durable raster
+    // layer source has no registered asset") named a check that existed nowhere
+    // on `main`, so a plan naming an asset that was never registered, or that was
+    // registered and then disposed, validated clean here and published a durable
+    // document whose raster threw at materialization time instead.
     return typeof durableSource.assetId === 'string' && durableSource.assetId.length > 0
       ? null
-      : 'the durable raster layer source has no registered asset';
+      : 'the durable raster layer source names no asset id';
   }
 
   if (durableSource.kind === 'legacy-tool') {
     return `The tool ${source.args.toolName} has no durable source representation`;
   }
-  if (durableSource.kind !== 'text' && durableSource.kind !== 'vector') {
+  if (durableSource.kind !== 'text' && durableSource.kind !== 'vector' && durableSource.kind !== 'paint') {
     return 'the durable layer source kind does not match the legacy source';
   }
   if (
@@ -235,7 +256,8 @@ function translate(
   entry: HistoryItem,
   currentFrame: DocumentFrame,
   currentSelections: SelectionSnapshot,
-  currentLayer: Layer | undefined
+  currentLayer: Layer | undefined,
+  compaction: { paths: string[] }
 ): AppendBoundaryResult {
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
     if (entry.documentSource) {
@@ -313,7 +335,14 @@ function translate(
       // append boundary deliberately passes the store's live record instead of
       // converting it through a registry, which keeps retained operations
       // asset-free and validates affine bounds against current geometry.
-      const operation = operationForTool(entry, currentLayer as unknown as DurableLayerSnapshot);
+      const operation = operationForTool(entry, currentLayer as unknown as DurableLayerSnapshot, compaction);
+      if (compaction.paths.length > 0) {
+        return unavailable(
+          entry,
+          `The tool arguments contain sparse array holes at ${compaction.paths.join(', ')}, which durable replay cannot preserve faithfully.`,
+          'invalid-history-entry'
+        );
+      }
       if (!operation) {
         return unavailable(
           entry,
@@ -330,16 +359,18 @@ function translate(
       }
       if (operation.kind === 'apply-raster-processor') {
         const processor = findToolProcessor(operation.processorId as ToolName);
-        if (!processor || processor.commit === 'raster') {
+        if (!processor || (processor.commit === 'raster' && processor.compositesOntoInput === false)) {
           return unavailable(
             entry,
-            `Tool ${operation.processorId} commits raster pixels and has no retained append translation.`,
+            !processor
+              ? `Tool ${operation.processorId} is not registered and has no durable append translation.`
+              : `Tool ${operation.processorId} creates a raster from its own input and cannot replay as a retained processor.`,
             'unsupported-history-feature'
           );
         }
-        // `transform` with a trapezoid is the one raster-shaped durable
-        // operation whose processor is declared affine-operation. Keep it on
-        // the boundary; only commit:'raster' is refused here.
+        // Raster processors replay from their canonical tool arguments against
+        // the durable layer source. Their output is materialized on demand, so
+        // the timeline carries no bitmap snapshot or registry-owned result.
       } else if (
         operation.kind !== 'apply-filter' &&
         operation.kind !== 'apply-affine-transform' &&
@@ -356,6 +387,24 @@ function translate(
       return unavailableFromError(entry, error);
     }
   }
+
+  // The source-edit arm, immediately before the terminal refusal, and its
+  // position is the guarantee: every action above claims its own by name, and the
+  // reader refuses any entry carrying a creation `layerSource`, so what arrives
+  // here with a readable replacement source is an action this boundary has no
+  // other rule for.
+  //
+  // It is here rather than in `deriveCreateLayerEntry` at the store boundary
+  // because `deriveReplaceLayerSourceEntry` needs no store: the source it installs
+  // is derived from the entry alone and registers nothing. That is what makes a
+  // source edit publishable from `planHistoryAppend` — the one gate RQ-2's
+  // "appendable, not conversion-only" turns on. `preLayerOrder`, `preLayers` and
+  // the registry are the other three source-backed preconditions and none of them
+  // applies: the operation states the layer's source outright and re-measures the
+  // box from it, so there is nothing to read off the pre-append state and no asset
+  // whose liveness needs proving.
+  const replaceEntry = deriveReplaceLayerSourceEntry(entry);
+  if (replaceEntry) return { entry, durableEntry: replaceEntry, diagnostics: [] };
 
   return unavailable(
     entry,
@@ -554,12 +603,12 @@ export function planHistoryAppend({
   id,
 }: AppendBoundaryInput): AppendBoundaryResult {
   const entry = createHistoryItem(item, id);
-  const result = translate(entry, currentFrame, currentSelections, currentLayer);
+  const result = translate(entry, currentFrame, currentSelections, currentLayer, { paths: [] });
   const timelineDiagnostic = validateTimeline(entry, timeline);
   if (!timelineDiagnostic) return result;
   return {
     entry: result.entry,
-    durableEntry: result.durableEntry,
+    durableEntry: timelineDiagnostic.severity === 'error' ? null : result.durableEntry,
     diagnostics: [...result.diagnostics, timelineDiagnostic],
   };
 }
@@ -623,6 +672,22 @@ export type DurableAppendInput = Readonly<{
    * but cannot prove a merge's complete removal set.
    */
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null;
+  /**
+   * The asset registry, for the raster liveness question only.
+   *
+   * A source-backed plan naming a raster registers its asset inside the store's
+   * document asset transaction, so nothing about the plan itself proves the asset
+   * resolves. This is the independent copy of that fact, and it is what turns
+   * `registryResolvesAsset` from an absent predicate into a check.
+   *
+   * Omitted, it defaults to the process registry — the same singleton the store
+   * registers the asset in and the same default `legacyHistoryToDurable` converts
+   * against, so a caller that registered through the normal path is answered
+   * without threading a reference. `null` is the explicit "this store cannot
+   * answer", which `decideDurableAppend` reports as a `preconditions` refusal
+   * rather than as a writer defect.
+   */
+  registry?: AssetRegistryProbe | null;
 }>;
 
 function sameFrame(left: unknown, right: unknown): boolean {
@@ -718,6 +783,367 @@ function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]):
 }
 
 /**
+ * Whether the registry can still resolve `assetId`.
+ *
+ * `AssetRegistry.getRecord` returns `undefined` for an id it never issued AND for
+ * one whose entry has been disposed (`asset-registry.ts:243-246`), so absent here
+ * means exactly "the registry will throw if anything resolves this" — which
+ * covers both an unregistered id and a retired one. That is the liveness half of
+ * the rule; a registry that only tracked a `Set` of issued ids would answer a
+ * disposed asset as present, so the predicate is deliberately expressed through
+ * `getRecord` rather than through any id bookkeeping.
+ *
+ * A missing registry is not absence. It is a store that cannot answer, and the
+ * caller reports it as a `preconditions` refusal rather than as this predicate's
+ * verdict, so it must never be reported as "absent".
+ */
+export function registryResolvesAsset(registry: AssetRegistryProbe | null | undefined, assetId: AssetId): boolean {
+  return registry ? !!registry.getRecord(assetId) : false;
+}
+
+/** The only registry capability the boundary asks for. */
+export type AssetRegistryProbe = Pick<AssetRegistry, 'getRecord'>;
+
+type RetainedToolOperationKind =
+  'apply-filter' | 'apply-affine-transform' | 'apply-raster-processor' | 'reposition-layer';
+
+/** The `commit: 'layer-operation'` tools `operationForTool` names by hand. */
+const DURABLE_FILTER_TOOLS: readonly string[] = ['blur', 'color', 'levels'];
+
+/**
+ * The tool arguments a `TOOL_ACTION` entry publishes from, read off the entry.
+ *
+ * A writer nests the tool args under `args.args` when it also carries something
+ * else beside them, and both shapes reach this boundary, so the unwrap is part of
+ * reading the legacy entry rather than part of the derivation being graded. What
+ * comes back is the caller's own object, unmodified and unnormalized, so a
+ * structural comparison against it cannot be satisfied by a re-derivation.
+ */
+function legacyToolArgs(entry: HistoryItem): Record<string, unknown> | null {
+  const candidate = entry.args;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  const nested = (candidate as { args?: unknown }).args;
+  const args: Record<string, unknown> =
+    nested && typeof nested === 'object' && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : (candidate as Record<string, unknown>);
+  return typeof args.toolName === 'string' ? args : null;
+}
+
+/**
+ * Which retained durable operation these legacy arguments must publish, derived
+ * from the arguments and the tool-processor table alone.
+ *
+ * This is a second implementation of the dispatch `operationForTool` performs,
+ * and it is written the way `reorderOrderAfterIntent` is: deliberately, so a
+ * defect in the plan is visible here rather than reproduced by a second call to
+ * the code that made the plan. Re-running `operationForTool` and comparing its
+ * output with the plan would compare a value with itself, and would accept every
+ * plan that code ever produced — which is the whole class of defect this arm
+ * exists to catch.
+ *
+ * `null` is the one answer it refuses, and it means the append has no retained
+ * translation at all: no tool name, an unregistered tool, a `document` or
+ * `selection` tool, or a geometry tool that moved and resized nothing. Every one
+ * of those is refused by `translate` before a plan exists, so reaching `null` from
+ * a plan means the plan was not made here.
+ */
+function retainedToolOperationKind(legacyArgs: Record<string, unknown>): RetainedToolOperationKind | null {
+  const toolName = legacyArgs.toolName;
+  if (typeof toolName !== 'string') return null;
+  // A trapezoid has no affine matrix, so it is the one transform the boundary
+  // keeps as a raster processor. `isTrapezoidOnlyTransform` gates the mix below
+  // in the derivation; here it refuses a legacy entry whose trapezoid contradicts
+  // its own affine values, which no plan built from it could ever describe.
+  if (toolName === 'transform') {
+    if (!legacyArgs.trapezoid) return 'apply-affine-transform';
+    return isTrapezoidOnlyTransform(legacyArgs as never) ? 'apply-raster-processor' : null;
+  }
+  const processor = findToolProcessor(toolName as ToolName);
+  if (!processor) return null;
+  if (processor.commit === 'layer-operation') {
+    return DURABLE_FILTER_TOOLS.includes(toolName) ? 'apply-filter' : null;
+  }
+  if (processor.commit === 'geometry') {
+    return legacyArgs.move || legacyArgs.resize ? 'reposition-layer' : null;
+  }
+  if (processor.commit === 'raster' && processor.compositesOntoInput !== false) return 'apply-raster-processor';
+  return null;
+}
+
+/** `?? ` rather than a typeof test, so a non-number reaches the finiteness rule as it does. */
+function numericArg(args: Record<string, unknown>, key: string, fallback: number): number {
+  return (args[key] as number | undefined) ?? fallback;
+}
+
+/**
+ * The 2x2 block these legacy transform arguments must produce, and nothing else.
+ *
+ * The linear block of a retained transform is a function of the arguments ALONE:
+ * scale/mirror, then rotation, then skew, all about the untransformed layer
+ * centre, and the centre only enters the translation. So all four of `a`, `b`,
+ * `c` and `d` are independently derivable from `entry.args` without the layer box
+ * this function is not given — which is what makes grading a raw transform
+ * (`{ toolName: 'transform', rotate, resizeX, resizeY }`) possible at all.
+ *
+ * This is a second implementation of the composition `transformToolArgsToAffine`
+ * performs, for the reason given on `retainedToolOperationKind`. The two are
+ * pinned against each other over a matrix of arguments in
+ * `history-append.tool.test.ts`, which is what keeps a second copy from drifting
+ * into a check that refuses correct plans.
+ *
+ * `e` and `f` are NOT derived here, and cannot be: `aroundCenter` needs the layer
+ * box, and the plan was built against the store's LIVE record while the only
+ * layer boxes reaching this module are the durable pre-append snapshots — a
+ * different source that can disagree, and grading against it would report a
+ * writer defect for a correct append. The translation is graded in full for the
+ * normalized form below, where the legacy args already carry the whole matrix.
+ */
+function linearBlockForTransformArgs(
+  legacyArgs: Record<string, unknown>
+): Readonly<{ a: number; b: number; c: number; d: number }> | string {
+  const rotate = numericArg(legacyArgs, 'rotate', 0);
+  const skewXDegrees = numericArg(legacyArgs, 'skewX', 0);
+  const skewYDegrees = numericArg(legacyArgs, 'skewY', 0);
+  const resizeX = numericArg(legacyArgs, 'resizeX', 100);
+  const resizeY = numericArg(legacyArgs, 'resizeY', 100);
+  if (![rotate, skewXDegrees, skewYDegrees, resizeX, resizeY].every(Number.isFinite)) {
+    return 'the retained transform arguments are not finite';
+  }
+  if (resizeX === 0 || resizeY === 0) return 'the retained transform scale is zero';
+  const angle = (rotate * Math.PI) / 180;
+  const skewX = Math.tan((skewXDegrees * Math.PI) / 180);
+  const skewY = Math.tan((skewYDegrees * Math.PI) / 180);
+  if (![angle, skewX, skewY].every(Number.isFinite)) return 'the retained transform angles are too extreme';
+  const scale: AffineTransform = {
+    a: (legacyArgs.mirrorH ? -1 : 1) * (resizeX / 100),
+    b: 0,
+    c: 0,
+    d: (legacyArgs.mirrorV ? -1 : 1) * (resizeY / 100),
+    e: 0,
+    f: 0,
+  };
+  const rotation: AffineTransform = {
+    a: Math.cos(angle),
+    b: Math.sin(angle),
+    c: -Math.sin(angle),
+    d: Math.cos(angle),
+    e: 0,
+    f: 0,
+  };
+  const skew: AffineTransform = { a: 1, b: skewY, c: skewX, d: 1, e: 0, f: 0 };
+  const linear = multiplyAffineTransforms(skew, multiplyAffineTransforms(rotation, scale));
+  return { a: linear.a, b: linear.b, c: linear.c, d: linear.d };
+}
+
+/** Absolute tolerance for the re-derived linear block; far below any visible difference. */
+function nearEnough(left: unknown, right: unknown): boolean {
+  return typeof left === 'number' && typeof right === 'number' && Math.abs(left - right) <= 1e-9;
+}
+
+function sameLinearBlock(
+  planned: Readonly<{ a: number; b: number; c: number; d: number }>,
+  expected: Readonly<{ a: number; b: number; c: number; d: number }>
+): boolean {
+  return (
+    nearEnough(planned.a, expected.a) &&
+    nearEnough(planned.b, expected.b) &&
+    nearEnough(planned.c, expected.c) &&
+    nearEnough(planned.d, expected.d)
+  );
+}
+
+/**
+ * The operation carries exactly these own keys, so a plan cannot smuggle a field
+ * the rest of the durable model never reads. Same rule the remove and source-backed
+ * arms apply to their own operations.
+ */
+function hasCanonicalKeys(operation: object, expected: readonly string[]): boolean {
+  const keys = Object.keys(operation);
+  return keys.length === expected.length && expected.every((key) => keys.includes(key));
+}
+
+function retainedToolOperationProblem(
+  operation: DurableOperation,
+  entry: HistoryItem,
+  legacyArgs: Record<string, unknown>,
+  expectedKind: RetainedToolOperationKind
+): string | null {
+  if (operation.kind !== expectedKind) {
+    return `a tool action produced a "${operation.kind}" operation`;
+  }
+  if (operation.layerId !== entry.layerId) return 'the durable layer id does not match the legacy entry';
+
+  if (operation.kind === 'apply-filter') {
+    if (!hasCanonicalKeys(operation, ['kind', 'layerId', 'filter'])) {
+      return 'the durable apply-filter operation does not have the canonical shape';
+    }
+    const { filter } = operation;
+    if (!hasCanonicalKeys(filter, ['toolName', 'version', 'args'])) {
+      return 'the durable filter does not have the canonical shape';
+    }
+    if (filter.toolName !== legacyArgs.toolName) {
+      return 'the durable filter tool name does not match the legacy entry';
+    }
+    const processor = findToolProcessor(filter.toolName);
+    if (!processor) return 'the durable filter names a tool the processor table does not register';
+    if (filter.version !== processor.replay.version) {
+      return 'the durable filter version does not match the registered processor';
+    }
+    return sameJsonValue(filter.args, legacyArgs) ? null : 'the durable filter arguments do not match the legacy entry';
+  }
+
+  if (operation.kind === 'apply-affine-transform') {
+    if (!hasCanonicalKeys(operation, ['kind', 'layerId', 'transform'])) {
+      return 'the durable apply-affine-transform operation does not have the canonical shape';
+    }
+    const { transform } = operation;
+    // The normalized form (`normalizeTransformHistoryArgs` output) carries the
+    // whole matrix in the legacy args, so all six components are graded exactly:
+    // the plan's transform IS those numbers, re-validated and re-frozen.
+    const retained = legacyArgs.transform;
+    if (retained && typeof retained === 'object' && !Array.isArray(retained)) {
+      const candidate = retained as Partial<AffineTransform>;
+      const planned = [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f];
+      const expected = [candidate.a, candidate.b, candidate.c, candidate.d, candidate.e, candidate.f];
+      if (!expected.every(Number.isFinite)) return 'the retained transform is not a finite matrix';
+      return expected.every((value, index) => value === planned[index])
+        ? null
+        : 'the durable affine transform does not match the retained transform';
+    }
+    const expected = linearBlockForTransformArgs(legacyArgs);
+    if (typeof expected === 'string') return expected;
+    return sameLinearBlock(transform, expected)
+      ? null
+      : 'the durable affine linear block does not match the retained transform arguments';
+  }
+
+  if (operation.kind === 'apply-raster-processor') {
+    if (!hasCanonicalKeys(operation, ['kind', 'layerId', 'processorId', 'version', 'args'])) {
+      return 'the durable apply-raster-processor operation does not have the canonical shape';
+    }
+    if (operation.processorId !== legacyArgs.toolName) {
+      return 'the durable processor id does not match the legacy entry';
+    }
+    const processor = findToolProcessor(operation.processorId as ToolName);
+    if (!processor) return 'the durable processor id is not a registered tool';
+    if (operation.version !== processor.replay.version) {
+      return 'the durable processor version does not match the registered processor';
+    }
+    return sameJsonValue(operation.args, legacyArgs)
+      ? null
+      : 'the durable processor arguments do not match the legacy entry';
+  }
+
+  const expectedKeys = [
+    'kind',
+    'layerId',
+    ...(legacyArgs.move ? ['move'] : []),
+    ...(legacyArgs.resize ? ['resize'] : []),
+  ];
+  if (!hasCanonicalKeys(operation, expectedKeys)) {
+    return 'the durable reposition operation does not have the canonical shape';
+  }
+  // Presence is read with `hasOwn`, not by truthiness: an operation carrying
+  // `move: undefined` has the key and the plan claims a move the legacy args
+  // never made, and a truthiness test would grade that plan as complete.
+  if (Object.hasOwn(operation, 'move') !== !!legacyArgs.move) {
+    return 'the durable reposition movement does not match the legacy entry';
+  }
+  if (Object.hasOwn(operation, 'resize') !== !!legacyArgs.resize) {
+    return 'the durable reposition resize does not match the legacy entry';
+  }
+  if (Object.hasOwn(operation, 'move') && !sameJsonValue(operation.move, legacyArgs.move)) {
+    return 'the durable reposition movement does not match the legacy entry';
+  }
+  if (Object.hasOwn(operation, 'resize') && !sameJsonValue(operation.resize, legacyArgs.resize)) {
+    return 'the durable reposition resize does not match the legacy entry';
+  }
+  return null;
+}
+
+/**
+ * The own keys an installed source must have, exactly.
+ *
+ * `isBedrock` is among them because `convertSource` always writes it, false
+ * included. The count is what does the work: a source that also carried a
+ * `bitmap` or an `assetId` — the shape a plan must never publish, because it
+ * would put a copy of the pixels in the timeline and name an asset id nothing
+ * here can prove resolves — has one key too many, and the operation's own type
+ * already excludes such a source, so this is the second line rather than the
+ * guarantee.
+ */
+const REPLACE_SOURCE_KEYS = ['kind', 'toolName', 'args', 'size', 'sourcePos', 'isBedrock'];
+
+/**
+ * The source-edit grading, read off the legacy item rather than re-derived from
+ * the plan.
+ *
+ * Four separate facts are checked because the operation is the one durable
+ * operation whose payload is a whole source:
+ *
+ * 1. The operation is the source-edit kind and carries only its four own keys.
+ * 2. The source is an editable typed source, and exactly the canonical keys — so
+ *    no bitmap is aliased into a document that owns its pixels elsewhere.
+ * 3. The source's arguments are the legacy source's arguments, structurally and
+ *    key-order independently. This is the whole edit: the text content, the font,
+ *    the shape's geometry live here.
+ * 4. `pos`, `source.size` and `source.sourcePos` agree with each other and with
+ *    the legacy box. `convertSource` derives the last two from the first, so a
+ *    plan that states a box the source was not authored against is one whose
+ *    materialization would scale the source from a stale rectangle.
+ */
+function replaceLayerSourceProblem(
+  operation: DurableOperation,
+  entry: HistoryItem,
+  replacement: ToolLayerSource
+): string | null {
+  // The reader already refuses a bedrock replacement, so this test cannot fire. It
+  // is here because this function must narrow the source's `NewLayerData` union to
+  // read `pos` at all, and a grading that trusted the reader's RETURN TYPE to have
+  // done that narrowing would be one refactor away from reading a bedrock box off
+  // a union that does not promise one.
+  if (replacement.isBedrock) return 'a bedrock source cannot be installed by a source edit';
+  const legacyPos = replacement.pos;
+  if (operation.kind !== 'replace-layer-source') {
+    return `a source edit produced a "${operation.kind}" operation`;
+  }
+  const planned: ReplaceLayerSourceOperation = operation;
+  if (!hasCanonicalKeys(planned, ['kind', 'layerId', 'source', 'pos'])) {
+    return 'the durable replace-layer-source operation does not have the canonical shape';
+  }
+  if (planned.layerId !== entry.layerId) return 'the durable layer id does not match the legacy entry';
+  // `EditableDurableLayerSource` admits only `text` and `vector`, so this test is
+  // false for every value the type admits. It exists for a planned entry that
+  // arrived from outside the type system, and reading the kind through `unknown`
+  // is what lets the refusal NAME the kind it refused instead of printing a type
+  // the compiler has already proved cannot occur.
+  const installedKind: unknown = planned.source.kind;
+  if (installedKind !== 'text' && installedKind !== 'vector') {
+    return `the durable source edit installs a "${String(installedKind)}" source`;
+  }
+  const source = planned.source;
+  if (!hasCanonicalKeys(source, REPLACE_SOURCE_KEYS)) {
+    return 'the durable replacement source does not have the canonical shape';
+  }
+  if (source.isBedrock) return 'the durable replacement source declares a bedrock source';
+  if (source.toolName !== replacement.args.toolName) {
+    return 'the durable replacement source tool name does not match the legacy entry';
+  }
+  if (!sameJsonValue(source.args, replacement.args)) {
+    return 'the durable replacement source arguments do not match the legacy entry';
+  }
+  if (!sameJsonValue(planned.pos, legacyPos)) return 'the durable layer position does not match the legacy entry';
+  if (!sameJsonValue(source.size, { width: legacyPos.width, height: legacyPos.height })) {
+    return 'the durable replacement source size does not match the legacy layer box';
+  }
+  if (!sameJsonValue(source.sourcePos, legacyPos)) {
+    return 'the durable replacement source position does not match the legacy layer box';
+  }
+  return null;
+}
+
+/**
  * Proves the planned entry is the entry this legacy item must produce. A
  * disagreement is a defect in the writer, not a reason to reject the edit, so
  * the caller still falls back to the conversion and reports it.
@@ -728,12 +1154,19 @@ function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]):
  * occur, because it is fed the store's record rather than the plan's own output.
  * It does not make `reorderOrderAfterIntent` self-proving — the parity test
  * against the converter, and the store test against a full conversion, are.
+ *
+ * `registry` is the raster branch's independent source, and it is optional
+ * because the answer it gives is a liveness question the caller owns: a store
+ * that cannot supply one is reported as a `preconditions` refusal by
+ * `decideDurableAppend` rather than as a writer defect here. See
+ * `registryResolvesAsset`.
  */
 export function validatePlannedDurableEntry(
   entry: HistoryItem,
   planned: DurableHistoryEntry,
   preLayerOrder?: readonly LayerId[] | null,
-  preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null
+  preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null,
+  registry?: AssetRegistryProbe | null
 ): string | null {
   if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
   if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
@@ -745,6 +1178,24 @@ export function validatePlannedDurableEntry(
     }
     const args = entry.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
     if (!args?.nextFrame) return 'a document frame change has no next frame';
+    // Whether the planned `next` is a DOCUMENT FRAME is a separate question from
+    // whether it equals the legacy arg, and `sameFrame` cannot answer it: it
+    // compares structure, so a 0x0 next frame matches a 0x0 legacy arg perfectly
+    // well. Every derivation that BUILDS such an entry refuses one
+    // (`history-adapter.ts` — `deriveSetDocumentFrameEntry()`, reached from
+    // `translate()`), so only a SUPPLIED entry reaches this — and durable replay
+    // applies `next` with no validation of its own while `documentFrameSize()`
+    // clamps to a 1x1 minimum, so a published 0x0 crop is visible as a
+    // one-pixel-square document rather than as a degenerate size.
+    //
+    // Checked BEFORE the comparison, so the reason names the invalid frame itself
+    // rather than a disagreement that is only a symptom of it. It is a `mismatch`
+    // rather than a `preconditions` refusal because the store can answer this
+    // question and the answer is a defect in the plan: the two routes over one
+    // legacy item then say the same thing, which is the divergence.
+    if (!isValidDocumentFrame(planned.operation.next)) {
+      return 'the durable next frame is not a document frame';
+    }
     if (!sameFrame(planned.operation.next, args.nextFrame))
       return 'the durable next frame does not match the legacy entry';
     if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
@@ -886,6 +1337,10 @@ export function validatePlannedDurableEntry(
     const sourceProblem = compareDurableSourceToLegacy(source, snapshot);
     if (sourceProblem) return sourceProblem;
 
+    if (snapshot.source.kind === 'raster' && registry && !registryResolvesAsset(registry, snapshot.source.assetId)) {
+      return `the durable raster layer source names asset ${snapshot.source.assetId}, which the asset registry cannot resolve`;
+    }
+
     if (operation.kind === 'merge-document') {
       const removedLayerIds = operation.removedLayerIds;
       if (new Set(removedLayerIds).size !== removedLayerIds.length) {
@@ -903,6 +1358,35 @@ export function validatePlannedDurableEntry(
     return null;
   }
 
+  // A `TOOL_ACTION` whose entry carries a tool SOURCE is a layer creation and was
+  // graded as one above; this arm is the raster-commit tool path — a blur, a
+  // transform, a move — which reaches the tail on main and was reported there as
+  // an untranslated action, so every one of them fell back to a full reconversion
+  // and filed a `durable-append-mismatch` against a writer that did nothing wrong.
+  if (entry.actionName === TOOL_ACTION) {
+    const legacyArgs = legacyToolArgs(entry);
+    if (!legacyArgs) return 'a tool action carries no readable tool arguments';
+    const expectedKind = retainedToolOperationKind(legacyArgs);
+    if (!expectedKind) {
+      return `no retained durable translation is published for the tool action on "${String(legacyArgs.toolName)}" yet`;
+    }
+    return retainedToolOperationProblem(planned.operation, entry, legacyArgs, expectedKind);
+  }
+
+  // The source-edit arm, after every arm that claims an action by name: creation,
+  // merge, the tool path, and the four named actions above have all returned, so
+  // reaching here with a readable replacement source means the entry is a source
+  // edit. Reached through `editableSourceReplacementFromEntry` — the reader of
+  // the legacy carrier, shared with the derivation in `history-adapter.ts` — and
+  // graded field by field against the caller's own source object rather than by
+  // re-deriving it, for the same reason the tool arm re-implements the dispatch.
+  const editableReplacement = editableSourceReplacementFromEntry(entry);
+  if (editableReplacement) {
+    const replaceProblem = replaceLayerSourceProblem(planned.operation, entry, editableReplacement);
+    if (replaceProblem) return replaceProblem;
+    return null;
+  }
+
   return `no durable translation is published for "${entry.actionName}" yet`;
 }
 
@@ -917,6 +1401,7 @@ export function decideDurableAppend({
   preLayerOrder,
   durableLayerOrder,
   preLayers,
+  registry: suppliedRegistry,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
   if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
@@ -929,6 +1414,29 @@ export function decideDurableAppend({
   }
   if (prior.cursor !== prior.entries.length - 1) {
     return { outcome: 'preconditions', reason: 'the append is not at the tip of the legacy timeline' };
+  }
+  // The durable twin of the check above, and the one the legacy cursor cannot
+  // cover: nothing in the other preconditions asks about `base.cursor` at all.
+  //
+  // A base below its own tip describes an undone edit — the entries between its
+  // cursor and its end are redo-only — and the published cursor is
+  // `base.history.length`, NOT `base.cursor + 1`. Appending onto such a base
+  // therefore moves the cursor PAST those entries and turns them applied, so the
+  // shadow replays an edit the user undid and the redo-only state the base
+  // described is gone. It is a silent loss: the base satisfies every other
+  // precondition, so nothing reports it.
+  //
+  // The one cursor guard further down (`cursor > next.cursor`) runs the other way
+  // — it catches a base with too MANY entries — so a base with too few is exactly
+  // the shape it cannot see.
+  //
+  // Unreachable from the store today, and only by accident: a mid-timeline base
+  // is produced by a rebuild that derives the shadow cursor from the LEGACY cursor
+  // (`StoreContext.tsx` — `buildDurableDocument()`), and the same rebuild hands
+  // the boundary a `prior` that is not at its tip, which the check above refuses
+  // first. Nothing in this boundary enforces the invariant; that coupling does.
+  if (base.cursor !== base.history.length - 1) {
+    return { outcome: 'preconditions', reason: 'the durable document is not at the tip of its own history' };
   }
   if (next.entries.length !== prior.entries.length + 1) {
     return { outcome: 'preconditions', reason: 'the append truncated the legacy timeline' };
@@ -969,7 +1477,28 @@ export function decideDurableAppend({
     }
   }
 
-  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder, preLayers);
+  // A raster source is the one thing a planned entry cannot be self-consistent
+  // about: it names an asset that lives in the runtime registry, so nothing in the
+  // entry proves the asset resolves. A store that explicitly withheld its registry
+  // cannot answer, which is the same class of refusal as the reorder arm's three and
+  // is reported as a precondition for the same reason — a store that cannot check is
+  // not a writer that answered wrongly, and the reconversion that replaces it
+  // registers the asset itself.
+  const registry = suppliedRegistry === null ? null : (suppliedRegistry ?? getAssetRegistry());
+  const plannedSnapshot =
+    planned.operation.kind === 'create-layer'
+      ? planned.operation.layer
+      : planned.operation.kind === 'merge-document'
+        ? planned.operation.result
+        : null;
+  if (plannedSnapshot?.source.kind === 'raster' && !registry) {
+    return {
+      outcome: 'preconditions',
+      reason: `the planned durable raster layer names asset ${plannedSnapshot.source.assetId}, which cannot be verified without the asset registry`,
+    };
+  }
+
+  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder, preLayers, registry);
   if (problem) return { outcome: 'mismatch', reason: problem };
 
   const cursor = base.history.length;

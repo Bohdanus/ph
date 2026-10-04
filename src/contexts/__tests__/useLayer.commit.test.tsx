@@ -119,6 +119,45 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
     processor.mockRestore();
   });
 
+  it('publishes trapezoid transforms at the staged bounds without retaining the baked affine', () => {
+    const raster = new OffscreenCanvas(80, 20);
+    const source = makeLayer('edited', 0, {
+      operations: [
+        {
+          id: 'scale',
+          kind: 'affine-transform',
+          transform: { a: 2, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          enabled: true,
+        },
+      ],
+    });
+    const processor = vi.spyOn(toolProcessors.transform, 'imageProcessor').mockReturnValue(() => [raster]);
+    const { result } = setup({ layers: { edited: source }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: {
+          toolName: 'transform',
+          rotate: 0,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 12,
+          resizeX: 100,
+          resizeY: 100,
+        } as ToolArgs,
+      });
+    });
+
+    const preview = result.current.store.previewLayers.current.edited!.layer;
+    expect(preview.pos).toEqual({ x: 0, y: 0, width: 80, height: 20 });
+    expect(preview.operations).toEqual([]);
+    expect(preview.source).toBeUndefined();
+    processor.mockRestore();
+  });
+
   it('materialises a tool-less preview canvas onto the committed layer without a history entry', async () => {
     // A preview can be staged by a document-scoped consumer that only owns a
     // raster draft (no replayable tool args). Promoting it is a presentation
@@ -351,6 +390,98 @@ describe('useLayers commitDirtyTool history boundary', () => {
     expect(Object.keys(returned!)).toEqual(['edited']);
     expect(result.current.store.history).toEqual([]);
     expect(result.current.store.previewLayers.current).toEqual({});
+    processor.mockRestore();
+  });
+});
+
+describe('useLayers deferred commit ownership', () => {
+  /**
+   * Two previews at once: one the committing caller owns, one staged by a different consumer —
+   * a gesture on another layer, or a document-scoped raster draft. `updateLayerByTool` commits
+   * ONE layer, so only that layer's pixels may reach the committed record.
+   */
+  function stageTwoPreviews() {
+    const draftRaster = new OffscreenCanvas(40, 20);
+    const commitRaster = new OffscreenCanvas(40, 20);
+    const processor = vi
+      .spyOn(toolProcessors.brush, 'imageProcessor')
+      .mockReturnValueOnce(() => [draftRaster])
+      .mockReturnValueOnce(() => [commitRaster]);
+    const before = { a: makeLayer('a', 0), b: makeLayer('b', 1) };
+    const { result } = setup({ layers: before, activeLayerId: 'a' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({ id: 'b', toolArgs: { toolName: 'brush', lineWidth: 6 } as ToolArgs });
+    });
+    return { result, processor, before, draftRaster };
+  }
+
+  /** The two steps `useHistory`'s `resetHistoryTo` runs before any navigation replays. */
+  function navigateHistory(result: { current: ReturnType<typeof useLayerHarness> }, cursor: number) {
+    const store = result.current.store;
+    const before = store.layers;
+    act(() => {
+      store.clearPreviewLayers();
+      result.current.dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: {
+          updates: {
+            layers: before,
+            deletedLayers: store.deletedLayers,
+            activeLayerId: store.activeLayerId,
+            totalSize: store.totalSize,
+            documentFrame: store.documentFrame,
+            selections: [],
+            activeSelectionId: null,
+          },
+          timeline: { entries: store.history, cursor, branchRevision: store.branchRevision },
+        },
+      });
+    });
+  }
+
+  it("leaves another layer's live preview pending instead of folding it into the caller's commit", async () => {
+    const { result, processor, before, draftRaster } = stageTwoPreviews();
+    expect(result.current.store.previewLayers.current.b!.layer.tmpCanvas).toBe(draftRaster);
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'a',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+
+    const store = result.current.store;
+    // The caller's own layer committed, with the one history entry that reproduces it.
+    expect(store.history.map((entry) => [entry.actionName, entry.layerId])).toEqual([[TOOL_ACTION, 'a']]);
+    expect(store.previewLayers.current.a).toBeUndefined();
+    expect(store.layers.a!.tmpCanvas).toBeNull();
+
+    // The other layer's draft is still a draft: pending in the preview map, and byte-for-byte
+    // absent from the committed record. Publishing it would leave pixels with no history entry.
+    expect(store.previewLayers.current.b!.layer.tmpCanvas).toBe(draftRaster);
+    expect(store.layers.b).toEqual(before.b);
+    processor.mockRestore();
+  });
+
+  it('leaves the committed record a fixed point of history navigation, so undo cannot drop a preview nothing recorded', async () => {
+    const { result, processor, before } = stageTwoPreviews();
+
+    await act(async () => {
+      await result.current.layers.updateLayerByTool({
+        id: 'a',
+        toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
+      });
+    });
+    const committed = result.current.store.layers;
+    navigateHistory(result, 0);
+
+    // Navigation rebuilds every layer from the timeline, which names no change to `b`, so `b`'s
+    // committed record must be the record the timeline reproduces. An undo that CHANGED `b` would
+    // be reverting pixels that existed only as a preview the commit wrongly consumed: the commit
+    // already cleared it from the preview map, and no history entry could bring those pixels back.
+    expect(result.current.store.layers.b).toEqual(before.b);
+    expect(result.current.store.layers.b).toEqual(committed.b);
     processor.mockRestore();
   });
 });

@@ -38,6 +38,11 @@ const STATE_PAIRS: ReadonlyArray<readonly [active: StyleName, inactive: StyleNam
 const DISABLED_CAPABLE: ReadonlyArray<readonly [name: StyleName, base: StyleName]> = [
   ['PRIMARY_BUTTON', 'PRIMARY_BUTTON'],
   ['TRANSPARENT_DARK_ICON_BUTTON', 'TRANSPARENT_DARK_ICON_BUTTON'],
+  // A disabled secondary button used to render pixel-for-pixel as an enabled one, because no style
+  // in this file that could be disabled carried a `disabled:` variant except the two above — and a
+  // `disabled` attribute is invisible to a sighted user and to a screenshot. The Type tool's Clear
+  // is secondary, and it is disabled for the whole of a session in which no box has been dragged.
+  ['SECONDARY_BUTTON', 'SECONDARY_BUTTON'],
 ];
 
 const classesOf = (name: StyleName) => (buttonStyles[name] as string).trim().split(/\s+/);

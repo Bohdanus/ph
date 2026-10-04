@@ -61,7 +61,7 @@ every push. It says nothing about licences.
 
 ## If this is ever wired up
 
-`github/dependency-review-action` is the mechanism, and it is PR-only by
+`actions/dependency-review-action` is the mechanism, and it is PR-only by
 design: it diffs a pull request's dependency tree against its base, so on a
 push to `main` there has nothing to compare against and the job is a no-op. The
 list above is a transcription of the config file that was removed, so the

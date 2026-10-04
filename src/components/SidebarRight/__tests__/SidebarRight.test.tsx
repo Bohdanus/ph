@@ -30,11 +30,17 @@ const { useStore, storeDispatch, layerActions, historyActions } = vi.hoisted(() 
   };
 });
 
+const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+
 vi.mock('@/contexts/StoreContext.tsx', () => ({
   useStore,
 }));
 
 vi.mock('@/contexts/useLayer.ts', () => ({ useLayers: () => layerActions }));
+
+vi.mock('@/contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
+}));
 
 vi.mock('@/contexts/useHistory.ts', () => ({
   useHistory: () => historyActions,

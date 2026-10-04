@@ -19,6 +19,44 @@ import {
  */
 export type { ClipOptions, CssBounds, BoundingBox };
 
+/**
+ * THE COORDINATE SPACES, and the tag every export below carries.
+ *
+ * This module speaks four of them and the vocabularies collide on the word "canvas": the
+ * `<canvas>` element is `w-full h-full` of its container, so a region of the ELEMENT is not a
+ * region of the DOCUMENT inside it, and the document is letterboxed inside the element. Every
+ * export is therefore tagged on its first JSDoc line, and the tag says which of these it is:
+ *
+ * - `[BOX]`      CSS px from the workspace canvas element's own origin — its `boundingBox()`.
+ *                Box-relative is the space the standard test line is DRAWN in (`drawLine`) and
+ *                the space `LINE_*` and `CANVAS_REDRAW_CLIP` are expressed in.
+ * - `[PAGE]`     CSS px from the viewport origin, which is what `page.screenshot({ clip })`
+ *                and `page.mouse` take. A page rect becomes a viewport rect by subtracting the
+ *                window scroll; `onScreenClip` does that and undoes it.
+ * - `[IMAGE]`    Device pixels of a DECODED CAPTURE, origin at its top-left pixel. Not CSS: a
+ *                capture is `scale: 'device'`, so it is as many pixels per CSS pixel as the
+ *                host has. Divide by `imageWidth / region.width` to get back to `[CSS]`.
+ * - `[DOCUMENT]` Pixels of the app's own document — 800x600 as seeded — with no reference to
+ *                any window. This is the space every export baseline and the export fixture
+ *                are expressed in, and the reason `documentToCanvasOffset` exists.
+ *
+ * A fifth, `[CSS]`, is a size with no origin, and says so. Anything untagged is not a
+ * coordinate: a pixel predicate, a duration, a locator. `getWorkspaceCanvas` is the one
+ * untagged export that matters most — it returns a `Locator`, and the `[BOX]` tag every one of
+ * its results then carries is on the `boundingBox()` the CALLER takes.
+ *
+ * A fifth real hazard is not a tag at all: `CANVAS_REDRAW_CLIP` is `[BOX]` while the clip it
+ * feeds is `[PAGE]`. Two of the four spaces, one function, and the difference is the box
+ * origin. `canvasRedrawClip`'s JSDoc is where that is stated.
+ */
+
+/**
+ * A region found INSIDE a decoded capture. `[IMAGE]`, whole pixels, inclusive at both ends.
+ *
+ * `imageWidth`/`imageHeight` are the capture's own size rather than the region's, and they are
+ * what makes the region convertible: without them a capture taken at 2x and the same capture
+ * taken at 1x are the same bounds with different CSS meanings.
+ */
 export interface ScreenshotBounds {
   left: number;
   top: number;
@@ -28,6 +66,16 @@ export interface ScreenshotBounds {
   imageHeight: number;
 }
 
+/**
+ * Maps a region found in a capture back onto CSS pixels of the captured BOX. `[IMAGE]` in,
+ * `[BOX]` out.
+ *
+ * The two spaces differ by the capture's scale and nothing else, so `bounds.imageWidth` is the
+ * authority for how far apart two pixels are in CSS — which is why it is a required field of
+ * `ScreenshotBounds` rather than something the caller repeats. `page.screenshot` captures at
+ * `scale: 'device'`, so at a 2x host this is the only thing standing between a caller that
+ * measured a mark and a caller that measured the same mark twice as wide.
+ */
 export function screenshotBoundsToCss(bounds: ScreenshotBounds, box: BoundingBox): CssBounds {
   return imageBoundsToCss(
     { width: bounds.imageWidth, height: bounds.imageHeight },
@@ -36,23 +84,30 @@ export function screenshotBoundsToCss(bounds: ScreenshotBounds, box: BoundingBox
   );
 }
 
+/** `[BOX]` — the region `takeLineScreenshot` photographs when the caller names no clip. */
 export const DEFAULT_LINE_CLIP = { x: 120, y: 120, width: 260, height: 80 };
 
 /**
  * Region of the workspace canvas, relative to the canvas box, that contains the
  * standard test line drawn by `drawLine`. Used as the default sampling area when
  * waiting for a stroke to reach the backing store.
+ *
+ * `[BOX]`, and ONLY this constant and the `LINE_*` pair below are: `canvasRedrawClip` is the
+ * one function that turns these `[BOX]` numbers into the `[PAGE]` rect a capture needs, and it
+ * is also the one that clamps them into the letterboxed document. Read either half of this
+ * comment as applying to that function and it is wrong.
  */
 export const CANVAS_REDRAW_CLIP: Required<ClipOptions> = { x: 100, y: 100, width: 300, height: 100 };
 
-/** Standard test-line endpoints, relative to the canvas box. */
+/** `[BOX]` — standard test-line endpoints, relative to the canvas box. */
 export const LINE_START_X = 150;
 export const LINE_START_Y = 150;
 export const LINE_END_X = 350;
 export const LINE_END_Y = 150;
 
 /**
- * The document the app seeds on boot, and the size the export baselines describe.
+ * The document's own pixel size. `[DOCUMENT]` — a size with no origin and no reference to any
+ * window, which is what makes it comparable across viewports.
  *
  * This is a DEFAULT, not a fact about the app. `documentToCanvasOffset` used to hardcode
  * it, which made the document size an assumption every document-space gesture inherited
@@ -65,13 +120,15 @@ export const DEFAULT_DOCUMENT_WIDTH = 800;
 export const DEFAULT_DOCUMENT_HEIGHT = 600;
 export const DEFAULT_DOCUMENT_SIZE = { width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT } as const;
 
+/** `[DOCUMENT]` — a document's pixel size. Sizes only; neither axis is a coordinate. */
 export interface DocumentSize {
   width: number;
   height: number;
 }
 
 /**
- * The contain fit, in ONE place.
+ * The contain fit, in ONE place. `[BOX]` in, `[BOX]` out — `offsetX`/`offsetY` are measured
+ * from the box's own origin, and `scale` is box CSS px per document px.
  *
  * `documentToCanvasOffset` and `canvasOffsetToDocument` used to each carry their own copy
  * of these three lines, and the docstring above the second claimed it was "read off the
@@ -101,7 +158,7 @@ export function containFit(
 }
 
 /**
- * Map a point in DOCUMENT space to an offset within the canvas box.
+ * Map a point in DOCUMENT space to an offset within the canvas box. `[DOCUMENT]` -> `[BOX]`.
  *
  * The canvas element is `w-full h-full` of its grid area, and `usePointerPosition` fits the
  * document into that box and centres it, so a document point lands at a different offset
@@ -118,19 +175,60 @@ export function containFit(
  * only because `<main>` has no padding or border and the canvas is `h-full w-full` of it.
  *
  * `documentSize` defaults to the seeded document; pass the measured size when you have it.
+ *
+ * `documentFrame` exists for the crop case, and NOTHING IN THE SUITE PASSES IT YET — no e2e
+ * spec crops, so `documentFrame` is `{x:0,y:0}` for every current call site and the default
+ * leaves all of them byte-identical. It is here because without it the "DOCUMENT" in this
+ * function's name is only true until the first crop: the app's own path is TWO legs, and
+ * this helper was the forward half of one of them.
+ *
+ *   `usePointerPosition.ts:261-262` maps client -> CANVAS space, then every tool area applies
+ *   `canvasToDocumentPoint(getLocalCoords(event), documentFrame)`
+ *   (`src/contexts/document-frame.ts:32-34`), which ADDS the frame origin. So the app's map
+ *   is `offset + (d - frame) * scale` where this one was `offset + d * scale` — a disagreement
+ *   of exactly `frame * scale`, zero today and proportional to the crop after one. A spec that
+ *   crops and then places a gesture from a document point would put it `frame * scale` CSS px
+ *   off, and `waitForCanvasRedraw` would still pass because the clip is the caller's own.
+ *
+ * It is an ORIGIN, not a rect, and deliberately not the app's `DocumentFrame`: only `x`/`y`
+ * take part in the mapping, and a wider parameter would invite a caller to pass a size and
+ * believe it was being honoured.
  */
 export function documentToCanvasOffset(
   box: { width: number; height: number },
   documentX: number,
   documentY: number,
-  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE,
+  documentFrame: DocumentFrameOrigin = ZERO_DOCUMENT_FRAME
 ): { x: number; y: number } {
   const { scale, offsetX, offsetY } = containFit(box, documentSize);
-  return { x: offsetX + documentX * scale, y: offsetY + documentY * scale };
+  return {
+    x: offsetX + (documentX - documentFrame.x) * scale,
+    y: offsetY + (documentY - documentFrame.y) * scale,
+  };
 }
 
 /**
+ * The ORIGIN of the app's document frame — `documentFrame.x/y` with no size.
+ *
+ * `src/contexts/document-frame.ts` declares the full `DocumentFrame` with a `width`/`height`
+ * that take no part in any point mapping, so requiring the whole rect here would make every
+ * caller fabricate two numbers it then ignores.
+ */
+export interface DocumentFrameOrigin {
+  x: number;
+  y: number;
+}
+
+/**
+ * The frame every uncropped document has, and the default of `documentFrame` below. Frozen
+ * so a caller cannot mutate the default through the object it was handed.
+ */
+const ZERO_DOCUMENT_FRAME: DocumentFrameOrigin = Object.freeze({ x: 0, y: 0 });
+
+/**
  * The inverse of `documentToCanvasOffset`: the document point a canvas offset names.
+ * `[BOX]` -> `[DOCUMENT]`.
  *
  * This is the app's `getLocalCoords` with the box origin dropped — `(clientX - offsetX -
  * rect.x) / scale` — and it shares `containFit` with the forward direction, so the two
@@ -141,15 +239,26 @@ export function documentToCanvasOffset(
  * publishes on the container, and compared against the numbers above: see the
  * "agrees with the app's own contain fit" test in `e2e/export/visual-regression.spec.ts`.
  * That is the only assertion here that can fail if the app's mapping changes.
+ *
+ * `documentFrame` is the same crop origin the forward direction takes, ADDED here rather than
+ * subtracted, because this is the leg that turns canvas space back into document space. It
+ * defaults to `{x:0,y:0}` and no e2e call site passes it, for the reason and with the citation
+ * in `documentToCanvasOffset`'s JSDoc; with the default the two legs are exact inverses at
+ * every box size, which is what `document-mapping.unit.test.ts` pins, and with a non-zero
+ * frame they stay exact inverses of each other by construction.
  */
 export function canvasOffsetToDocument(
   box: { width: number; height: number },
   canvasX: number,
   canvasY: number,
-  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE,
+  documentFrame: DocumentFrameOrigin = ZERO_DOCUMENT_FRAME
 ): { x: number; y: number } {
   const { scale, offsetX, offsetY } = containFit(box, documentSize);
-  return { x: (canvasX - offsetX) / scale, y: (canvasY - offsetY) / scale };
+  return {
+    x: (canvasX - offsetX) / scale + documentFrame.x,
+    y: (canvasY - offsetY) / scale + documentFrame.y,
+  };
 }
 
 /**
@@ -246,9 +355,12 @@ export function documentStrokeBoundaryMargin(
   );
 }
 
+/** `[ms]` — the shared default timeout of every redraw wait below. Not a coordinate. */
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
+/** `[ms]` — the shared default poll interval of every redraw wait below. */
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 
+/** A colour and its population, both read off a capture. `[IMAGE]`-derived, no coordinates. */
 export interface DominantColor {
   red: number;
   green: number;
@@ -256,6 +368,18 @@ export interface DominantColor {
   count: number;
 }
 
+/**
+ * Merges a caller's clip with the default, field by field. A NO-OP on the coordinate space:
+ * it returns every field of `defaultClip` that `clip` omits and every field `clip` names, in
+ * whatever space the caller wrote them.
+ *
+ * That is the whole hazard, and it is why the space is the CALLER's to state: the default is
+ * `[PAGE]` at both call sites (`canvasRedrawClip` and `takeLineScreenshot`) and an explicit
+ * clip is taken exactly as given, so a `[BOX]` clip reaches `page.screenshot` unconverted and
+ * photographs the app's own chrome. This function cannot tell the two apart — the shapes are
+ * identical — which is also why a branded `ClipOptions` per space would be the stronger
+ * signature and why this one is not yet what it is.
+ */
 export function buildClip(clip: ClipOptions | undefined, defaultClip: Required<ClipOptions>): Required<ClipOptions> {
   return {
     x: clip?.x ?? defaultClip.x,
@@ -265,18 +389,34 @@ export function buildClip(clip: ClipOptions | undefined, defaultClip: Required<C
   };
 }
 
+/**
+ * A decoded capture, as RGBA rows. `[IMAGE]` — `data` is `width * height * 4` bytes of DEVICE
+ * pixels, so every index into it is a capture pixel and not a CSS pixel.
+ */
 export interface ImageDataResult {
   width: number;
   height: number;
   data: Uint8ClampedArray;
 }
 
+/** The one overload the helpers take on `Buffer | ImageDataResult`. No coordinate space. */
 export function isBuffer(value: Buffer | ImageDataResult): value is Buffer {
   return Buffer.isBuffer(value);
 }
 
+/**
+ * A predicate over one decoded capture's pixels, in `(r, g, b, a)` order. The channels are
+ * `[IMAGE]`-scale device values; the predicate sees no coordinates and cannot tell where in the
+ * capture it is, which is why `scanPixelsForBounds` keeps the position bookkeeping itself.
+ */
 export type PixelPredicate = (red: number, green: number, blue: number, alpha: number) => boolean;
 
+/**
+ * The bounding box of the pixels a `PixelPredicate` accepted. `[IMAGE]`, whole pixels,
+ * inclusive at both ends. On no match every edge is the not-found sentinel (`left`/`top` at the
+ * image's far corner, `right`/`bottom` at -1) and `found` is false — the edges are meaningless
+ * then, and reading them anyway is how a caller gets `left: 10, right: -1` and calls it a width.
+ */
 export interface BoundsResult {
   left: number;
   top: number;
@@ -285,6 +425,7 @@ export interface BoundsResult {
   found: boolean;
 }
 
+/** The shared pixel scan. `[IMAGE]` in, `[IMAGE]` out; no other space appears here. */
 export async function scanPixelsForBounds(
   imageData: ImageDataResult,
   predicate: PixelPredicate
@@ -316,7 +457,15 @@ export async function scanPixelsForBounds(
   return { left, top, right, bottom, found };
 }
 
-// Stroke analysis constants - extracted from magic numbers for clarity and tuning
+// Stroke analysis constants - extracted from magic numbers for clarity and tuning.
+//
+// Every threshold is in EITHER `[IMAGE]`-space channel values (the colour ones: RGB levels, so
+// no space at all) or `[CSS]` pixels (`SPRAY_VERTICAL_SPREAD_THRESHOLD` and the two gap
+// thresholds, which `getStrokeAnalysis` multiplies by the capture's own scale before it
+// compares). The colour thresholds describe the APP's palette and are named after what they
+// distinguish, not after a fixture: `NEAR_WHITE_THRESHOLD` is the paper of a capture, and
+// `LETTERBOX_LIGHT_CELL` / `LETTERBOX_DARK_CELL` are the workspace backdrop, which is a
+// different grey and had no name until `getStrokeAnalysis` started misreading it as ink.
 export const STROKE_ANALYSIS = {
   // Color thresholds
   DARK_THRESHOLD: 50, // RGB < 50 = dark pixel
@@ -332,9 +481,65 @@ export const STROKE_ANALYSIS = {
   SELECTION_GREEN_MIN: 80, // For getSelectionBounds: green >= 80 (medium green)
   SELECTION_BLUE_MIN: 180, // For getSelectionBounds: blue >= 180 (high blue)
 
+  // Magnetic-lasso draft preview detection (FeatherMagneticLassoToolArea.tsx:106/:113).
+  //
+  // The tool paints its snapped preview path one of two colours and the colour IS the
+  // assertion: `preview.snap.usedMagnetic` selects rgba(0,170,90,0.95) against
+  // rgba(230,130,0,0.95). Both are painted at 0.95 over a light checkerboard, so these
+  // are one channel's slack around each documented value rather than exact triples — an
+  // exact match would be reading the alpha blend, not the colour, and would break on a
+  // host whose compositing rounds differently.
+  //
+  // The red bound is the discriminator that lets the two coexist with the tool's own blue
+  // guide (rgba(0,123,255), :99), which shares this path's geometry: green needs red well
+  // under blue, orange needs red well over it, and a pixel where the guide has blended
+  // towards green still reads red under 60. None of the document's own ink (black or red
+  // strokes) is in either set.
+  MAGNET_SNAP_RED_MAX: 60, // green preview: red <= 60 (separates it from the blue guide)
+  MAGNET_SNAP_GREEN_MIN: 120, // green preview: green >= 120
+  MAGNET_SNAP_BLUE_MAX: 160, // green preview: blue <= 160
+  MANUAL_SNAP_RED_MIN: 180, // Alt-suppressed preview: red >= 180
+  MANUAL_SNAP_GREEN_MIN: 90, // Alt-suppressed preview: green >= 90
+  MANUAL_SNAP_BLUE_MAX: 90, // Alt-suppressed preview: blue <= 90
+
   // Spray detection
   SPRAY_LUMINANCE_THRESHOLD: 200, // Luminance > 200 = bright spray
   SPRAY_SATURATION_THRESHOLD: 30, // Saturation < 30 = grayscale spray
+
+  // The app's OWN WORKSPACE BACKDROP, which `getStrokeAnalysis` must EXCLUDE rather than
+  // read as ink. The numbers are the app's literal palette, not thresholds fitted to a test:
+  // `.chessboard-light` is `#f3f3f3` cells over `#fff` and `.chessboard-dark` is `#121212`
+  // cells over `#000` (`src/index.scss:140-164`), and `Main.tsx:279` picks between them.
+  //
+  // WHY THEY ARE HERE AT ALL. `#f3f3f3` is 243, so it is NOT `> NEAR_WHITE_THRESHOLD` (250),
+  // and it IS above `SPRAY_LUMINANCE_THRESHOLD` (200) with a saturation of 0 — so without
+  // this exclusion the classifier called the app's own backdrop `spray`, and a single
+  // backdrop column produced `{ type: 'spray', segments: 1, verticalSpread: <the whole clip
+  // height> }` over a canvas with nothing drawn on it. `e2e/pen-types.spec.ts:37-40` polls
+  // for exactly that non-null shape, so its wait could be satisfied by the page's own
+  // background. The same backdrop under the dark theme (`#121212` = 18, below
+  // `DARK_THRESHOLD` = 50) is admitted by the `isDark` arm instead, which is why this is an
+  // exclusion of its own rather than a lighter near-white.
+  //
+  // WHY THEY MATCH EXACTLY, and not as a band. A band is the obvious shape and it is wrong
+  // twice over, both times against this suite's own ink fixtures rather than against a
+  // fixture I wrote. Raising the light exclusion to "anything at or above 243" swallows
+  // grey(250) — which `canvas-stroke-analysis.unit.test.ts` declares is a STROKE, one level
+  // below `NEAR_WHITE_THRESHOLD`, and which is what makes that threshold testable at all. And
+  // admitting the dark cell as a band down to 1 swallows `DARK_GRAY` (10,10,10), the ink of
+  // the dispatch table and of two of the gap-threshold fixtures, while the dark theme's `#000`
+  // gaps sit at 0 — and `#000000` is the app's own default pen colour
+  // (`src/contexts/StoreContext.tsx:324`), so nothing may claim black is not ink.
+  //
+  // THE RESIDUAL, stated rather than hidden. This excludes the two CELL colours and nothing
+  // else. The anti-aliased diagonal edge between a cell and its gap is a blend — 244..254 in
+  // the light theme, 1..17 in the dark — and those blends are still read as ink, as are the
+  // dark theme's `#000` gaps. Closing either would mean widening a band the fixtures above
+  // forbid, so it is a KNOWN limit rather than an oversight: a clip that straddles a
+  // letterbox edge is still misread, and no clip this suite takes does (see `canvasRedrawClip`,
+  // which keeps the standard clip out of the letterbox entirely).
+  LETTERBOX_LIGHT_CELL: { red: 243, green: 243, blue: 243 }, // `#f3f3f3`
+  LETTERBOX_DARK_CELL: { red: 18, green: 18, blue: 18 }, // `#121212`
 
   // Classification thresholds. Every length below is in CSS pixels and is compared
   // against a measurement taken in CAPTURE pixels, so `getStrokeAnalysis` scales it by
@@ -351,7 +556,7 @@ export const STROKE_ANALYSIS = {
 } as const;
 
 /**
- * Loads a PNG screenshot buffer into an ImageData object using sharp.
+ * Loads a PNG screenshot buffer into an ImageData object using sharp. Buffer -> `[IMAGE]`.
  * Replaces browser-based decode to eliminate round-trip, memory pressure, and serialization issues.
  */
 export async function loadImageData(screenshot: Buffer): Promise<ImageDataResult> {
@@ -440,7 +645,8 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
 }
 
 /**
- * The window's scroll offset, read at the moment a caller needs it.
+ * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the only
+ * export here that is read out of the live page rather than derived from a box.
  *
  * The one place in the helpers that reads page state rather than deriving geometry from a
  * box: a page function, read at the call site. Caching it would be wrong rather than merely
@@ -453,6 +659,10 @@ export async function getPageScroll(page: Page): Promise<{ x: number; y: number 
 
 /**
  * Returns the workspace canvas locator.
+ *
+ * NOT a coordinate and deliberately not tagged as one: it is a `Locator`, and the `[BOX]` space
+ * arrives one call later, in the `boundingBox()` the caller takes from it. Every `[BOX]` number
+ * in this module is measured through this locator and no other.
  *
  * `data-testid="workspace-canvas"` is the only selector. An earlier version paired it
  * with `page.locator('canvas').nth(1)` via `.or()`, which was never a priority: `.or()`
@@ -468,6 +678,18 @@ export function getWorkspaceCanvas(page: Page): Locator {
   return page.getByTestId('workspace-canvas');
 }
 
+/**
+ * Screenshots the standard test line and attaches it to the test report. PAGE output.
+ *
+ * `box` is BOX-relative geometry — the workspace canvas element's own `boundingBox()` — and is
+ * added to `DEFAULT_LINE_CLIP`, which is BOX-relative, so the DEFAULT clip is PAGE-relative.
+ *
+ * `clip`, when given, is PAGE-relative and is used EXACTLY as given: `buildClip` fills only
+ * the fields the caller omitted from its own default, so a partial clip keeps the default's
+ * origin on the axes it did not name. Passing box-relative numbers here photographs the app's
+ * own chrome 100px down and 100px right of where the caller meant — the same trap
+ * `canvasRedrawClip`'s name invites, and `e2e/export/helpers.ts:354-361` spells out.
+ */
 export async function takeLineScreenshot(
   page: Page,
   box: BoundingBox,
@@ -500,6 +722,11 @@ export async function takeLineScreenshot(
   return screenshot;
 }
 
+/**
+ * The most frequent colour whose red dominates both other channels by `RED_DOMINANCE_FACTOR`.
+ * `[IMAGE]` — the returned channels are 8-bit values off a decoded capture, and `count` is a
+ * pixel count in the same capture, so it scales with the captured area and is not a proportion.
+ */
 export async function dominantRed(screenshot: Buffer | ImageDataResult): Promise<DominantColor | null> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { data } = imageData;
@@ -525,6 +752,11 @@ export async function dominantRed(screenshot: Buffer | ImageDataResult): Promise
   return [...colors.values()].sort((first, second) => second.count - first.count)[0] ?? null;
 }
 
+/**
+ * True when any opaque pixel is below `DARK_PIXEL_THRESHOLD` in all three channels. `[IMAGE]`
+ * — a predicate over a decoded capture, so it reports nothing about WHERE the dark pixel is;
+ * `getDarkPixelBounds` is the export that also says where.
+ */
 export async function hasDarkPixels(screenshot: Buffer | ImageDataResult): Promise<boolean> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { data } = imageData;
@@ -545,6 +777,10 @@ export async function hasDarkPixels(screenshot: Buffer | ImageDataResult): Promi
   return false;
 }
 
+/**
+ * True when any opaque pixel is saturated enough to be the app's red foreground colour.
+ * `[IMAGE]`; see `hasDarkPixels` for why this is a predicate and not a measurement.
+ */
 export async function hasRedPixels(screenshot: Buffer | ImageDataResult): Promise<boolean> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { data } = imageData;
@@ -564,6 +800,56 @@ export async function hasRedPixels(screenshot: Buffer | ImageDataResult): Promis
   }
   return false;
 }
+
+/**
+ * Whether the capture contains a pixel the magnetic lasso painted as its magnet-snapped
+ * preview path: rgba(0, 170, 90, 0.95) at `FeatherMagneticLassoToolArea.tsx:106`/`:113`.
+ *
+ * Takes the same `Buffer | ImageDataResult` union every other predicate here does, so it
+ * composes with `waitForCanvasPixels` (which hands it a Buffer) and can be negated to wait for
+ * the colour to DISAPPEAR — which is how the Escape case is written.
+ *
+ * Green is the tool reporting that its edge detector found an edge to snap to. It is the
+ * positive half of the Alt contract; `hasManualSnapPixels` is the negative half.
+ */
+export const hasMagnetSnapPixels = async (screenshot: Buffer | ImageDataResult): Promise<boolean> => {
+  const { data } = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index + 3] === 0) continue;
+    if (
+      data[index] <= STROKE_ANALYSIS.MAGNET_SNAP_RED_MAX &&
+      data[index + 1] >= STROKE_ANALYSIS.MAGNET_SNAP_GREEN_MIN &&
+      data[index + 2] <= STROKE_ANALYSIS.MAGNET_SNAP_BLUE_MAX
+    )
+      return true;
+  }
+  return false;
+};
+
+/**
+ * Whether the capture contains a pixel the magnetic lasso painted as its NON-magnetic
+ * preview path: rgba(230, 130, 0, 0.95), same two lines, other branch.
+ *
+ * The tool reports this when the magnet did not engage, which under a held Alt is the only
+ * possible reason (`createMagneticSegment` short-circuits `magneticEnabled: false` at
+ * `src/util/magneticLasso.ts:426` before the detector runs at all). So the pair
+ * `hasMagnetSnapPixels` / `hasManualSnapPixels` reads the modifier's effect as two DIFFERENT
+ * colours at one coordinate, rather than as the presence and absence of a thing that might
+ * never have been drawn.
+ */
+export const hasManualSnapPixels = async (screenshot: Buffer | ImageDataResult): Promise<boolean> => {
+  const { data } = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index + 3] === 0) continue;
+    if (
+      data[index] >= STROKE_ANALYSIS.MANUAL_SNAP_RED_MIN &&
+      data[index + 1] >= STROKE_ANALYSIS.MANUAL_SNAP_GREEN_MIN &&
+      data[index + 2] <= STROKE_ANALYSIS.MANUAL_SNAP_BLUE_MAX
+    )
+      return true;
+  }
+  return false;
+};
 
 export interface DrawLineOptions {
   /**
@@ -593,7 +879,16 @@ function interpolationSteps(steps: number): number {
 }
 
 /**
- * Draws a straight stroke on the canvas at box-relative coordinates.
+ * Draws a straight stroke on the canvas at box-relative coordinates. `[BOX]`, both endpoints,
+ * measured from the `box` the caller measured — which is the `boundingBox()` of the element
+ * `getWorkspaceCanvas` returns.
+ *
+ * The result is a PAGE-relative client coordinate, so this is the one place in the module where
+ * `[BOX]` is converted to `[PAGE]`: `box.x + startX` is what `page.mouse.move` takes, and the
+ * app maps it back through `getLocalCoords`. Which document pixel that lands on depends on the
+ * box's contain fit — `documentToCanvasOffset` is the forward statement of the same fact for a
+ * caller that wants to specify the document pixel instead.
+ *
  * Pair with `waitForCanvasRedraw` instead of a fixed timeout to synchronize.
  */
 export async function drawLine(
@@ -616,13 +911,45 @@ export async function drawLine(
 }
 
 /**
- * Clip region of the standard test line, relative to `box`. Use it as the `clip`
- * argument of `waitForCanvasPixels` when waiting for that line to reach the backing store.
+ * Clip region of the standard test line, PAGE-relative.
+ *
+ * PAGE, not BOX: the box is added, and the result is handed straight to `page.screenshot`
+ * (or through `onScreenClip`, which treats a clip as VIEWPORT-relative and re-adds the scroll).
+ * `CANVAS_REDRAW_CLIP` is the only part of it that is box-relative. So the name is a trap for
+ * a reader who takes it literally: passing `{ x: 100, y: 100, ... }` to `waitForCanvasPixels`
+ * photographs PAGE (100,100) — the app's own left rail and top bar — and reports on whatever
+ * happens to be dark there. `e2e/OPEN_PROBLEMS.md` records the hazard. No live call site makes
+ * the mistake today; `buildClip` is what makes it available, because it returns an explicit
+ * clip EXACTLY as given and only its own DEFAULT carries the origin.
+ *
+ * The origin is CLAMPED INTO THE DOCUMENT, and that is the whole reason this is more than an
+ * addition. The document is letterboxed inside the box (`object-fit: contain`), so a fixed
+ * box-relative region photographs the letterbox once the letterbox reaches it — and it does.
+ * At the suite's 1280x720 the box is 974x583 and the horizontal letterbox is 98.33px, so the
+ * clip starts 1.67 CSS px inside the document; at the 1280x1100 `document-dialogs.spec.ts`
+ * uses the box is 974x963 and the VERTICAL letterbox is 116.25px, so the first 16.25 px of the
+ * clip are bare checkerboard. Harmless while the checkerboard is neither dark nor red, which
+ * is the "the wrong region is still a region" shape: nothing fails, and the region silently
+ * stops being the document.
+ *
+ * So the clip starts at `max(CANVAS_REDRAW_CLIP, letterboxOrigin)` and keeps its size. Clamping
+ * can only move the region AWAY from the letterbox, and it cannot move it off the standard
+ * line: nothing can be painted outside the document rect, so no stroke a spec drew there was
+ * ever a stroke on the document. At the two sizes the suite actually uses the clamp is a no-op
+ * (974x583: 100 > 98.33, and 100 > 0; 974x963: 100 > 0, and 100 < 116.25 is the only axis
+ * that moves, to 116.25). It starts to bite when the letterbox reaches 100px on either axis,
+ * i.e. `boxWidth > (4/3)·boxHeight + 200` or `boxHeight > (4/3)·boxWidth + 200`.
+ *
+ * `containFit` is called with the DEFAULT document size, which is the same assumption the rest
+ * of this module makes and the one the standard line is drawn under. It is a default, not a
+ * measurement: a spec working at a different document size must pass its own clip, which is
+ * what `waitForCanvasRedraw`'s `clip` option and `e2e/export/helpers.ts:354-361` both do.
  */
 export function canvasRedrawClip(box: BoundingBox): Required<ClipOptions> {
+  const { offsetX, offsetY } = containFit(box);
   return {
-    x: box.x + CANVAS_REDRAW_CLIP.x,
-    y: box.y + CANVAS_REDRAW_CLIP.y,
+    x: box.x + Math.max(CANVAS_REDRAW_CLIP.x, offsetX),
+    y: box.y + Math.max(CANVAS_REDRAW_CLIP.y, offsetY),
     width: CANVAS_REDRAW_CLIP.width,
     height: CANVAS_REDRAW_CLIP.height,
   };
@@ -646,6 +973,10 @@ export interface WaitForCanvasPixelsOptions {
  * post-draw timeouts: a one-shot screenshot can land before the repaint and make a
  * pixel assertion flaky. Throws with a descriptive message if it never does.
  *
+ * `clip` is `[PAGE]` and is used exactly as given, for all 10 seconds — see the comment inside
+ * the loop, which is the difference between what this function re-reads (the window) and what
+ * it takes on trust (the box).
+ *
  * The single poll loop: every redraw wait below is a specialization of it, so the
  * timeout, the interval and the error wording can only be changed in one place.
  */
@@ -660,9 +991,19 @@ export async function waitForCanvasPixels(
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    // Re-derived every poll rather than hoisted: the window may have moved under us, and a
-    // stale clip photographs the wrong region. `onScreenClip` is a no-op when the region is
-    // already in view, which is every poll in the current layout.
+    // What is re-derived every poll is the WINDOW, not the box. `clip` is a by-value
+    // argument, so the loop reads the same PAGE rect on every attempt for the whole timeout —
+    // `canvas-redraw.unit.test.ts` pins that the identical object reaches `page.screenshot`
+    // each time. That is only correct while the region itself has not moved, and making the
+    // BOX the caller's to re-measure is the arrangement two specs already use:
+    // `erase-fill-eyedropper.spec.ts` threads a freshly measured box through every wait, and
+    // `shape-tools.spec.ts` re-derives its clip after each tool switch, because a tool switch
+    // is what reflows the rail and so the canvas box with it.
+    //
+    // So a caller that measured the box, then ran an action that reflowed the workspace, is
+    // polling a stale region for the full 10s — and the failure is silent, because the region
+    // it photographs is still a region. `onScreenClip` is a no-op when the region is already
+    // in view, which is every poll in the current layout.
     const onScreen = await onScreenClip(page, clip);
     try {
       if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
@@ -680,6 +1021,11 @@ export async function waitForCanvasPixels(
  * Replaces fixed post-draw timeouts: polls a clipped canvas screenshot until the
  * stroke reaches the backing store, then returns. Throws if it never renders.
  * Dark-pixel special case of `waitForCanvasPixels`, so specs can keep calling it.
+ *
+ * `box` is `[BOX]` and is read only to derive the DEFAULT clip, which comes out `[PAGE]`; an
+ * explicit `options.clip` is `[PAGE]` and is used as given. So the two arguments of one call are
+ * in different spaces, and that is deliberate — see `canvasRedrawClip` for what happens when a
+ * caller supplies the box-relative numbers instead.
  */
 export async function waitForCanvasRedraw(
   page: Page,
@@ -693,6 +1039,14 @@ export async function waitForCanvasRedraw(
   });
 }
 
+/**
+ * The bounding box of the dark pixels in a capture. `[IMAGE]`, whole pixels, inclusive.
+ *
+ * `width`/`height` are the ink's span and `imageWidth`/`imageHeight` are the CAPTURE's size —
+ * two different numbers under two different names, because a caller converting to CSS needs
+ * the second and a caller comparing two marks needs the first. `screenshotBoundsToCss` takes
+ * the four edges plus the image size for exactly this.
+ */
 export async function getDarkPixelBounds(screenshot: Buffer | ImageDataResult): Promise<{
   left: number;
   top: number;
@@ -727,6 +1081,13 @@ export async function getDarkPixelBounds(screenshot: Buffer | ImageDataResult): 
   };
 }
 
+/**
+ * A classification of one captured stroke, and the two measurements it was made from.
+ *
+ * MIXED SPACES, and the field docs say which. `type` and `segments` are dimensionless counts.
+ * `verticalSpread` and `pixelCount` are `[IMAGE]` — capture pixels, so a 2x capture reports
+ * twice the pixels of the same physical stroke at the same CSS size.
+ */
 export interface StrokeAnalysis {
   type: 'solid' | 'dashed' | 'spray';
   segments: number;
@@ -741,6 +1102,12 @@ export interface StrokeAnalysis {
   pixelCount: number;
 }
 
+/**
+ * The bounding box of the selection handles in a capture. `[IMAGE]`, whole pixels, inclusive;
+ * `centerX`/`centerY` are the ROUNDED midpoint of that box and are therefore the same space,
+ * not a CSS coordinate. `imageWidth`/`imageHeight` are the capture's size, as in
+ * `getDarkPixelBounds`, and for the same reason.
+ */
 export interface SelectionBounds {
   left: number;
   top: number;
@@ -752,17 +1119,22 @@ export interface SelectionBounds {
   centerY: number;
 }
 
+/**
+ * Detects the selection's blue resize handles in a capture. `[IMAGE]` in, `[IMAGE]` out.
+ *
+ * The default thresholds are tuned for the app's selection colour RGB ≈ (0, 120, 255):
+ * - redMax: 80 (low red)
+ * - greenMin: 80 (medium green)
+ * - blueMin: 180 (high blue)
+ *
+ * Passing `colorThresholds` overrides all three; the returned box is in the CAPTURE's space
+ * either way, because the thresholds are compared against capture pixels and nothing here
+ * knows the capture's CSS size. `screenshotBoundsToCss` is the conversion.
+ */
 export async function getSelectionBounds(
   screenshot: Buffer | ImageDataResult,
   colorThresholds?: { redMax: number; greenMin: number; blueMin: number }
 ): Promise<SelectionBounds | null> {
-  /**
-   * Detects selection bounds (blue resize handles).
-   * Default thresholds tuned for the app's selection color: RGB ≈ (0, 120, 255)
-   * - redMax: 80 (low red)
-   * - greenMin: 80 (medium green)
-   * - blueMin: 180 (high blue)
-   */
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const redMax = colorThresholds?.redMax ?? STROKE_ANALYSIS.SELECTION_RED_MAX;
   const greenMin = colorThresholds?.greenMin ?? STROKE_ANALYSIS.SELECTION_GREEN_MIN;
@@ -790,7 +1162,8 @@ export async function getSelectionBounds(
 /**
  * Averages the opaque pixels within `radius` of the point, ignoring near-white ones when
  * `ignoreNearWhite` is set. Returns null when the point is outside the image or every
- * sampled pixel was skipped.
+ * sampled pixel was skipped. `[IMAGE]` throughout — the point, the radius and the returned
+ * channels are all in the capture's own pixels, and `radius` is NOT in CSS.
  *
  * `radius` is a sampling window, so it is clamped to 0 rather than rejected: a negative
  * window used to select no pixels at all, which reads as "nothing at this point" — a
@@ -870,9 +1243,9 @@ export async function getColorAtPoint(
  * authored for 1x.
  */
 export interface CaptureRegion {
-  /** CSS-pixel width of the clip the caller passed to the capture API. */
+  /** `[CSS]` — pixel width of the clip the caller passed to the capture API. */
   width: number;
-  /** CSS-pixel height of the same clip. */
+  /** `[CSS]` — pixel height of the same clip. */
   height: number;
 }
 
@@ -899,6 +1272,18 @@ export interface CaptureRegion {
  * `__tests__/canvas-stroke-analysis.unit.test.ts` carries the rule at a divergence no real
  * capture produces for exactly that reason.
  */
+/**
+ * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
+ * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
+ */
+function isLetterboxCell(red: number, green: number, blue: number): boolean {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+  return (
+    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
+    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
+  );
+}
+
 function captureScale(imageWidth: number, imageHeight: number, region: CaptureRegion): { x: number; y: number } {
   if (
     !(region.width > 0) ||
@@ -914,7 +1299,16 @@ function captureScale(imageWidth: number, imageHeight: number, region: CaptureRe
 }
 
 /**
- * Classifies a captured stroke as a solid line, a dashed one or a spray.
+ * Classifies a captured stroke as a solid line, a dashed one or a spray. `[IMAGE]` capture in,
+ * `[CSS]` region alongside it; `null` when the capture carries no stroke.
+ *
+ * WHAT IS EXCLUDED, and the two ways a "no stroke" is decided. A pixel is not the paper and not
+ * the app's backdrop if it is near-white (`NEAR_WHITE_THRESHOLD`) or is one of the two letterbox
+ * cell colours, and the second of those is checked FIRST because the dark cell sits below
+ * `DARK_THRESHOLD` and an exclusion that ran after `isDark` would never be reached for it.
+ * What is left is ink: below `DARK_THRESHOLD` in every channel, or a low-saturation grey above
+ * `SPRAY_LUMINANCE_THRESHOLD`. A capture carrying nothing else returns `null`, which is the
+ * answer `e2e/pen-types.spec.ts:37-40` polls on.
  *
  * `region` is the CSS-pixel size of the clip the capture was taken over, and it is what
  * makes the classification independent of the host's pixel density. The thresholds in
@@ -960,6 +1354,12 @@ export async function getStrokeAnalysis(
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
     const saturation = Math.max(r, g, b) - Math.min(r, g, b);
 
+    // The app's own backdrop, in BOTH themes, and skipped BEFORE either arm below — the dark
+    // letterbox cell is below `DARK_THRESHOLD`, so an exclusion that ran after `isDark` would
+    // never be reached for it. See `LETTERBOX_LIGHT_CELL` for the palette, for why the match
+    // is exact, and for the residual this leaves.
+    const isLetterbox = isLetterboxCell(r, g, b);
+
     const isDark =
       r < STROKE_ANALYSIS.DARK_THRESHOLD && g < STROKE_ANALYSIS.DARK_THRESHOLD && b < STROKE_ANALYSIS.DARK_THRESHOLD;
     // Exclude pure white background (255,255,255) and near-white
@@ -972,6 +1372,8 @@ export async function getStrokeAnalysis(
       !isNearWhite &&
       luminance > STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD &&
       saturation < STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD;
+
+    if (isLetterbox) continue;
 
     if (isDark || isSpray) {
       const x = (index / 4) % width;
@@ -1019,13 +1421,12 @@ export async function getStrokeAnalysis(
 }
 
 /**
- * Where a mark's ink sits, and how much of it there is.
- *
- * Every field is in IMAGE pixels, using the pixel-centre convention: the centre of the
- * pixel at index `i` is `i + 0.5`, so an ink centroid of `78.5` means half the ink above
- * the 78th row's midpoint. Every field is ink-WEIGHTED, so anti-aliased edge pixels
- * contribute in proportion to how much ink they carry and the centroid moves
- * sub-pixel-accurately with the mark.
+ * Where a mark's ink sits, and how much of it there is. `[IMAGE]`, using the pixel-centre
+ * convention: the centre of the pixel at index `i` is `i + 0.5`, so an ink centroid of `78.5`
+ * means half the ink above the 78th row's midpoint. Every field is ink-WEIGHTED, so
+ * anti-aliased edge pixels contribute in proportion to how much ink they carry and the centroid
+ * moves sub-pixel-accurately with the mark. `imageWidth`/`imageHeight` are the IMAGE's size,
+ * which is also what makes a capture at 2x and the same capture at 1x comparable.
  */
 export interface InkProfile {
   imageWidth: number;
@@ -1048,7 +1449,7 @@ export interface InkProfile {
 }
 
 /**
- * Luma below which a pixel is paper rather than ink.
+ * Luma below which a pixel is paper rather than ink. 8-bit luma, so no coordinate space.
  *
  * Eight of 255, and the reason is measured, not chosen: on the committed export baselines
  * the paper is EXACTLY 255.0 in every format, so a floor of 0 would admit no background at
@@ -1060,7 +1461,7 @@ export interface InkProfile {
 export const INK_LUMA_FLOOR = 8;
 
 /**
- * Measure a mark's ink geometry, sub-pixel.
+ * Measure a mark's ink geometry, sub-pixel. `[IMAGE]` in, `[IMAGE]` out.
  *
  * THE POINT. `compareScreenshots` counts differing pixels against a budget, and for a long
  * horizontal stroke that budget is wildly asymmetric: shifting a 174x11 band one pixel
@@ -1078,15 +1479,19 @@ export const INK_LUMA_FLOOR = 8;
  *
  * Returns `null` when the image carries no ink at all, which is a legitimate answer (a blank
  * export) and must not be read as "the mark was not found".
+ *
+ * `INK_LUMA_FLOOR` is the only floor, and it used to be a parameter. `options.floor` was dead
+ * from the day it was written: no caller in `e2e/` passed it, so every measurement the export
+ * oracle has ever made went through `INK_LUMA_FLOOR` regardless, and a second place to set it
+ * was a second place for two numbers to disagree. It is deleted rather than kept as an unused
+ * knob, because its whole justification was the docstring claim about JPEG ringing, and that
+ * claim is about the EXPORT formats — which `e2e/export/helpers.ts` decodes and hands here —
+ * not about the callers this helper had.
  */
-export async function measureInk(
-  image: Buffer | ImageDataResult,
-  options: { floor?: number } = {}
-): Promise<InkProfile | null> {
+export async function measureInk(image: Buffer | ImageDataResult): Promise<InkProfile | null> {
   const imageData = isBuffer(image) ? await loadImageData(image) : image;
   const { width, height, data } = imageData;
-  const floor = options.floor ?? INK_LUMA_FLOOR;
-  const paper = 255 - floor;
+  const paper = 255 - INK_LUMA_FLOOR;
 
   let ink = 0;
   let sumX = 0;
@@ -1144,12 +1549,12 @@ export async function measureInk(
   };
 }
 
-/** `right - left + 1`: the width of the ink's column span, in whole image pixels. */
+/** `[IMAGE]` — `right - left + 1`: the width of the ink's column span, in whole image pixels. */
 export function inkWidth(profile: InkProfile): number {
   return profile.right - profile.left + 1;
 }
 
-/** `bottom - top + 1`: the height of the ink's row span, in whole image pixels. */
+/** `[IMAGE]` — `bottom - top + 1`: the height of the ink's row span, in whole image pixels. */
 export function inkHeight(profile: InkProfile): number {
   return profile.bottom - profile.top + 1;
 }

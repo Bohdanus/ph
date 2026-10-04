@@ -53,7 +53,7 @@
  *
  * It is held as a RUN rather than as a branch, for a reason that is a property of the
  * board and not a matter of taste: board identity is the git branch and the conflict
- * test is `lock.agent_id !== who` (`scripts/lib/agent-board/db.mjs:1130`), so a
+ * test is `lock.agent_id !== who` (the holder check in `holdFiles()`), so a
  * branch never conflicts with itself. Two runs in one worktree would both "acquire",
  * and the second one's `unlock` would release the row the first still believes it
  * holds. The holder is therefore `e2e-run/<branch>/<pid>`.
@@ -114,7 +114,7 @@ const BOARD_CLI = path.join(import.meta.dirname, 'agent-board.mjs');
  * where a reader looks for an e2e concern — it claims nothing in that directory, and
  * an agent editing `e2e/*.spec.ts` holds those files separately. A relative path
  * never reaches the filesystem, which is the same property that lets an agent hold a
- * file it is about to create (`scripts/lib/agent-board/db.mjs:1410`).
+ * file it is about to create (`holdFiles()` canonicalises repo-relative paths).
  */
 export const E2E_SENTINEL = 'e2e/.swarm-e2e-runner';
 
@@ -155,7 +155,7 @@ const MIN_RENEW_EVERY_MS = 30_000;
 
 /**
  * The board's own duration grammar, read off `parseDuration`
- * (`db.mjs:267-280`): `45m`, `90s`, `2h`, `500ms`, or a bare number of minutes.
+ * (`parseDuration()`'s own JSDoc): `45m`, `90s`, `2h`, `500ms`, or a bare number of minutes.
  * Copied rather than imported because the board is reached through its CLI, and a
  * lease this wrapper cannot parse is a queue it would silently never join.
  */
@@ -347,7 +347,7 @@ const RUN_IDENTITY_PREFIX = 'e2e-run/';
  * The reclaim path UNLOCKS as the holder it is reclaiming, so a wrong answer here is
  * not a wrong log line: it releases a real agent's queue slot. The board's default
  * identity is the sanitized git branch and `sanitize` preserves `/`
- * (`scripts/lib/agent-board/identity.mjs:28`), so a holder on a branch called
+ * (it keeps `A-Za-z0-9._/@+-`), so a holder on a branch called
  * `fix/1234`, or anyone who passed `--agent 2026`, has an identity whose last segment
  * parses as a pid. Probing pid 1234, finding nothing, and unlocking that agent's row
  * is the failure this guard exists to prevent — an earlier version of this function

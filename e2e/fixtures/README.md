@@ -6,17 +6,20 @@ Two different things live here, and the split is worth keeping in mind.
   `File > Open` path. Nothing is downloaded; every file is produced locally by a
   committed generator and the exact bytes are verified in the spec.
 - **`extended-test.ts`** — the `test` object every spec imports, which carries the
-  `ConsolePolice` fixture described below.
+  `consolePolice` and `pinnedTheme` fixtures described below.
 
 ## `extended-test.ts`
 
-Every one of the 46 specs imports `test` (and `expect`, and the types) from here rather than from
-`@playwright/test`. The module re-exports everything Playwright exports and adds one `auto`
-fixture, `ConsolePolice`, which attaches before the test body and asserts after it: a console
-error or page error that is not in `ACCEPTED_CONSOLE_ERRORS` fails the test.
+Every spec imports `test` (and `expect`, and the types) from here rather than from
+`@playwright/test`. The module re-exports everything Playwright exports and adds two `auto`
+fixtures. `consolePolice` attaches before the test body and asserts after it: a console error or
+page error that is not in `ACCEPTED_CONSOLE_ERRORS` fails the test. `pinnedTheme` seeds
+`localStorage.theme` so the pixel oracles keep the light backdrop they are calibrated for under the
+app's dark default.
 
-It exists because the alternative was 46 opt-in points. A helper each spec calls by hand is
-opt-in, and 46 chances to forget is 46 chances to forget; an `auto` fixture is opt-out, which is
+They exist because the alternative was one opt-in point per spec per check. A helper each spec calls
+by hand is opt-in, and every one of those points is a chance to forget; an `auto` fixture is
+opt-out, which is
 the property that matters for a check whose whole value is that nobody can forget it. Playwright
 has no global listener hook — `globalSetup` runs in another process with no `page` — so a fixture
 is the only mechanism that can be universal.

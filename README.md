@@ -80,9 +80,10 @@ changes reach the page as real input — producing failures that belong to you, 
 the code, and that look like flakiness. `npm run test:e2e:headed` is the deliberate
 opt-in for watching a visual issue.
 
-It is enforced, not just documented: `e2e/global-setup.ts` refuses `--headed`,
-`--ui` and `--debug` before a browser is created, and `kilo.jsonc` denies the
-window-opening commands at the agent permission layer. `AGENTS.md` states the rule
+It is enforced, not just documented: `e2e/global-setup.ts` refuses `--headed` and
+`--debug` before a browser is created, and `kilo.jsonc` denies all the
+window-opening commands — `--ui` included, which Playwright opens before a global
+setup can run — at the agent permission layer. `AGENTS.md` states the rule
 for coding agents.
 
 ## Linting & Formatting
@@ -112,8 +113,9 @@ The project uses GitHub Actions for continuous integration:
   (`tsc -b`, which also builds `tsconfig.e2e.json`), an assertion that every
   tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and the
   production build, on every push/PR.
-- **Integration Tests**: `npm run test:integration` (PSD/file handling), a subset of
-  the Check Job rather than a separate job
+- **Integration Tests**: `npm run test:integration` (PSD/file handling) is a script CI does
+  not invoke; those files are collected by the Check Job's own full-suite run, which is why
+  it needs no job of its own
 - **E2E Unit Job**: unit tests for the e2e helpers, then a coverage run, with
   `coverage-e2e/` uploaded as an artifact. It repeats no type-check: the Check
   Job's `tsc -b` already builds `tsconfig.e2e.json`. This is the **blocking** gate

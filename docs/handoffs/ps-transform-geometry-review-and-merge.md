@@ -62,7 +62,7 @@ A negative taper offsets the quad sideways in proportion to layer width, so the 
 | 8000×6000 (48 MP)          | −85   | **throws**                                 | solved     |
 | identity translated by 1e4 | —     | **not invertible** (det = 1)               | invertible |
 
-`Transform.tsx` puts the slider at `min={-85} max={85}`, so the leftmost stop was reachable. The throw escaped `tempUpdateLayer` through the `try` in `useLayer.ts:469-492`, which caught it and `console.error`'d it — so the visible symptom was **the trapezoid slider silently doing nothing on layers wider than ~6.6 k px**, not a crash. That is why it survived the original session.
+`Transform.tsx` puts the slider at `min={-85} max={85}`, so the leftmost stop was reachable. The throw escaped `tempUpdateLayer` through the `try` around its `processor.imageProcessor(...)` call in `useLayer.ts`, which caught it and `console.error`'d it — so the visible symptom was **the trapezoid slider silently doing nothing on layers wider than ~6.6 k px**, not a crash. That is why it survived the original session.
 
 Fix: `homographyMagnitude` now considers only the entries that decide invertibility (`a, b, d, e, g, h, i`). All rejections are preserved — collinear source points, rank-deficient and singular matrices, `trapezoid ±100`, and the `(99.99999, 100)` non-invertible band.
 

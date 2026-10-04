@@ -211,8 +211,8 @@ describe('GradientToolArea', () => {
     // resolves the frame to `{x:0,y:0}` (`document-frame.ts:5`) and `canvasToDocumentPoint`
     // adds that origin — canvas and document are the same numbers here, by the arithmetic
     // rather than by luck. The layer is the only offset in play, at `pos: {x:20, y:15}`, and
-    // the processor addresses the LAYER's own raster with `size: layer.pos`
-    // (`src/contexts/useLayer.ts:544`), which carries no document origin at all. So a document
+    // the processor addresses the LAYER's own raster in that layer's space
+    // (`src/contexts/useLayer.ts:730-734`), which carries no document origin at all. So a document
     // point has to become `point - activeLayer.pos` at this callback boundary
     // (`src/util/layer-space.ts:74-77`) or the gradient lands 20px right and 15px below where
     // the user dragged it.

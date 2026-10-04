@@ -10,8 +10,9 @@ absent from the rail.
 
 There is no per-tool home for these tools inside the app's own description system. The eight
 family modules under `src/tools/descriptions/` merge into a `Record<ToolName,
-ToolDescription>` at `src/tools/descriptions/index.ts:37`, where `ToolName = keyof
-ToolArgsByName` (`src/contexts/tool-types.ts:91`). A tool the registry has no entry for cannot
+ToolDescription>` — the `toolDescriptions` record in `src/tools/descriptions/index.ts` — where
+`ToolName = keyof ToolArgsByName` (the `ToolName` type in
+`src/contexts/tool-types.ts`). A tool the registry has no entry for cannot
 be given a description in that system at all: adding the key is a TypeScript error at the
 merge, not a tooltip that renders `undefined`. `docs/TOOLS.md` is generated from those
 modules, so it cannot carry them either. This file is the substitute, and it is prose, so it
@@ -36,7 +37,8 @@ flyout, **Line before Star or Star before Line** in the Shape flyout, and whethe
 **Count** sit in the default panel or in Extra Tools.
 
 **This is a compilation, not fresh verification.** Everything here is drawn from research the
-repository already did — [`../.kilo/plans/ps-research/`](../.kilo/plans/ps-research/), the
+repository already did — `.kilo/plans/ps-research/` (gitignored; read it from the main checkout, as
+`TOOLS-RESEARCH-BRIEF.md` records), the
 `.notes.md` files beside `src/tools/descriptions/`, `docs/PHOTOSHOP-UX.md`, and
 `docs/TOOLS.md` — plus six web searches against Adobe's help pages for the tools the repo had
 nothing on. **No tool's option bar was opened and audited**, and the shortcuts are the
@@ -52,7 +54,7 @@ which carried **30** absent tools in six Adobe groups and no longer names them.
 `HANDOFF.md` §74 records the same exercise as **"36 present, 34 to add, 5 to
 delete"** out of a 41-`ToolName` → 70 target, and names absent tools the first list omits.
 **Six of them, not five:** Selection Brush, Adjustment Brush, Remove, Content-Aware Tracing,
-Artboard — and **Content-Aware Move** (`HANDOFF.md:1325`).
+Artboard — and **Content-Aware Move** (`HANDOFF.md` §74).
 
 **30 + 6 = 36 against a stated 34** — the combined list is two over, not one.
 **This file does not resolve it.** An operator should, and this is deliberately left visible
@@ -69,11 +71,11 @@ What makes it unresolvable from the documents alone:
 - The **34 is arithmetic, not an observation.** `HANDOFF.md` §74 states the shape as
   "41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete", and
   `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available.
-  **That 41 is §74's own historical figure, not today's count** — the registry carries 42 now,
-  since the Sponge was added to it. The quotation is left as §74 states it rather than
+  **That 41 is §74's own historical figure, not today's count** — the registry carries 44 now,
+  since the Sponge and the two 1-pixel marquees were added to it. The quotation is left as §74 states it rather than
   silently re-derived, because §74 is a record of an exercise and not a live total. So 34 is forced by
-  the **70-tool target**, not counted off a roster. A combined list of 35 means either the
-  target is 71 or one entry does not belong.
+  the **70-tool target**, not counted off a roster. A combined list of 36 means either the
+  target is 72 or two entries do not belong.
 - Three combined-list entries are **documented as unsettled**, so any of them could be the
   spurious one. **Note** and **Count** may sit in Extra Tools rather than the default panel
   (`HANDOFF.md` §74, fourth unresolved placement). **Content-Aware Tracing** is gated behind
@@ -106,16 +108,17 @@ someone who trusts the source material.
 
 ## Selection
 
-| Adobe tool             | Group                                                | Shortcut                                                                                                                | Headline options                                                                                                         | Source                                                                                                                                                                                                                                                                               |
-| ---------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Star**               | Drawing — shapes flyout, seventh entry               | none of its own; reached by cycling the shapes group                                                                    | Point count, plus inner and outer radii — `TOOLS.md` §Polygon Tool records that Sides is _Polygon_’s control, not Star’s | Adobe's drawing-tools overview lists Star; `docs/TOOLS.md` and `src/tools/descriptions/shape.notes.md` §Star carry the two sources (the overview plus the Adobe page "Select the Star tool from the shapes tool group in the Tools panel")                                           |
-| **Object Selection**   | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched                                                                                                           | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                   |
-| **Selection Brush**    | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched                                                                                                           | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                     |
-| **Content-Aware Move** | Selection                                            | not researched                                                                                                          | not researched                                                                                                           | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md:1807` names it as a large tool needing a generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
+| Adobe tool             | Group                                                | Shortcut                                                                                                                | Headline options                                                                                                         | Source                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Star**               | Drawing — shapes flyout, seventh entry               | none of its own; reached by cycling the shapes group                                                                    | Point count, plus inner and outer radii — `TOOLS.md` §Polygon Tool records that Sides is _Polygon_’s control, not Star’s | Adobe's drawing-tools overview lists Star; `docs/TOOLS.md` and `src/tools/descriptions/shape.notes.md` §Star carry the two sources (the overview plus the Adobe page "Select the Star tool from the shapes tool group in the Tools panel")                                                                                                                      |
+| **Object Selection**   | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched                                                                                                           | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                                                                                              |
+| **Selection Brush**    | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched                                                                                                           | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                                                                                                |
+| **Content-Aware Move** | Selection                                            | not researched                                                                                                          | not researched                                                                                                           | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md` §74 names it, in the list headed "Largest, and they need a primitive the app does not have", beside Remove and its generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
 
 **Star is the notable one**, because it is a missing _entry_ rather than a missing tool. The
 shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts:114-121`) — six of Adobe's seven — and Star is the one it lacks. The
+(`toolbarMap`'s shape flyout, in `toolbar-mapping.ts`) — six of Adobe's seven — and Star is
+the one it lacks. The
 same custom-shape work is filed as too hard in [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md), so a
 hardcoded star is exactly what this repository's policy refuses.
 
@@ -145,9 +148,10 @@ quiet deletion.** It was the third member of this table's `O` toning flyout row,
 ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
 its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
 sources behind it. Deleting the row keeps this file's contract — every row here is absent from
-`src/contexts/tool-types.ts` — and it is the reason this file's tables now show 29 of the 30 absent
-tools this file attributes to `TOOLS-TOO-HARD.md`: 35 rows across the six Adobe groups, less the six
-that group names at the top as coming from `HANDOFF.md` §74 instead. **Two claims the deleted row carried were themselves
+`src/contexts/tool-types.ts` — and the six Adobe-group tables below hold **33 rows** in total
+(Selection 4, Retouch 7, Painting 5, Type 3, Navigation and measuring 11, Path 3), which is
+neither 29 nor the 30 this file attributes to `TOOLS-TOO-HARD.md`: the two lists are counted
+separately and are not reconciled here. **Two claims the deleted row carried were themselves
 wrong**, and they are the reason this note exists rather than a bare `git log` entry:
 
 - It cited "`docs/TOOLS.md` (Sponge section)" as evidence for the `O` cycle. **There was no Sponge
@@ -161,10 +165,12 @@ wrong**, and they are the reason this note exists rather than a bare `git log` e
   and the Sponge as three rows carrying the same `O`, with `Shift+O` cycling the group.
 
 **Healing and Patch are one flyout, not three tools in a row.** All three share `J`, and
-`HANDOFF.md` §74 lists the Healing Brush, Red Eye and Sponge among the cheapest real
-additions because they are geometry and pixel loops rather than new subsystems. **The Sponge was the
-one of those three that has actually been built**; the Healing Brush and Red Eye are still absent,
-and both are larger than the Sponge was.
+`HANDOFF.md` §74 lists **Red Eye and the Sponge** among its cheapest real additions
+because they are geometry and pixel loops rather than new subsystems. **It does not list
+the Healing Brush** — `grep -n "Healing Brush" HANDOFF.md` returns nothing, and §74 puts
+**Spot Healing** in the opposite list, the one headed "Largest, and they need a primitive
+the app does not have". **The Sponge was the one of those two that has actually been
+built**; Red Eye is still absent, and so is the Healing Brush.
 
 ## Painting
 
@@ -190,9 +196,10 @@ name and expensive to build.
 | **Vertical Type Mask**   | Type — the type **mask** flyout            | the type letter, cycled                                | as above                                                                      | Same third-party PDF. Options not researched against Adobe.                                                                                                                                                                                                           |
 
 **All three are candidates for a different reason than the others.** This app's `text` tool is
-raster-at-birth: it is registered `commit: 'source'`, so a text layer is pixels from the
-moment it is created, and Photoshop type layers are live editable objects
-(`.kilo/plans/ps-research/00-tool-inventory.md` §Structural notes). Adding the three missing
+raster-at-birth: it is registered `commit: 'source'` (the `text` entry of `toolProcessors`, in
+`src/tools/toolProcessors.ts`), so a
+text layer is pixels from the moment it is created, and Photoshop type layers are live editable
+objects (`.kilo/plans/ps-research/00-tool-inventory.md` §Structural notes). Adding the three missing
 type tools without fixing that adds three ways to create pixels that Photoshop would have
 kept editable.
 
@@ -220,7 +227,8 @@ individual tool pages. That boundary is preserved here row by row.
 
 **Zoom deserves one note of accuracy, because it is the entry most likely to be
 mis-catalogued.** The app has a zoom **interaction mode** on the canvas and **no Zoom tool**:
-the registry at `src/contexts/tool-types.ts:30-88` has no entry for it and the rail has none
+the registry — the `ToolArgsByName` block in `src/contexts/tool-types.ts` — has no entry for it
+and the rail has none
 either. A zoom mode is not a tool.
 
 ## Path
@@ -270,9 +278,12 @@ essentially every `helpx.adobe.com` path, which is recorded as a research-method
   <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/trace-images-easily-with-the-content-aware-tracing-tool.html>
 - Customize the toolbar — <https://helpx.adobe.com/photoshop/using/tools.html>
 
-**Adobe tools named on the pages above but not separately opened:** Remove, Background Eraser,
-Artboard, Frame, Slice, Slice Select, Perspective Crop, Object Selection. Their membership is
+**Adobe tools named on the pages above but not separately opened:** Remove, Artboard,
+Frame, Slice, Slice Select, Perspective Crop, Object Selection. Their membership is
 established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not open them.
+**Background Eraser is not one of them**: §74 never names it, and neither does any other
+section — `grep -n "Background Eraser" HANDOFF.md` returns nothing — so its row rests on
+the Adobe page named in that row and on nothing else in this repository.
 
 **Third-party, and labelled as such wherever it is relied on**
 
@@ -291,21 +302,21 @@ established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not op
 **This repository**
 
 - `.kilo/plans/ps-research/00-tool-inventory.md` — the registered-tool audit. **Its line 15
-  reads "all 29 in `availableTools`" and that is stale: the registry now carries 42**
+  reads "all 29 in `availableTools`" and that is stale: the registry now carries 44**
   (`src/contexts/tool-types.ts`, counted at the `ToolArgsByName` block). Its **Note A**
   (`color` has no determinate Photoshop identity) and **Note B** (`levels` is actually
   Brightness/Contrast) describe tools this app _has_, so they do not bear on this roster, and
   neither do they change the count.
 - `.kilo/plans/ps-research/01-photoshop-reference.md` — the behaviour reference. **§10
-  (`:888-955`) is a corrections log of 17 disproved premises and 18 unresolved items and must
+  is a corrections log of 17 disproved premises and 18 unresolved items and must
   be read before trusting any Photoshop claim in the document.** Nothing in this file rests on
   a premise §10 lists as disproved.
-- `.kilo/plans/ps-research/03-ui-chrome-spec.md` — options-bar contents per tool at `:175`,
-  and an explicit _"Unverified — do not present as fact"_ section at `:333` which this file
+- `.kilo/plans/ps-research/03-ui-chrome-spec.md` — options-bar contents per tool (§5),
+  and an explicit _"Unverified — do not present as fact"_ section (§10) which this file
   respects.
 - `docs/PHOTOSHOP-UX.md` — which tools are Adobe-table-confirmed and which are not
-  (`:113-143`); the trap list and the naming quirks.
-- `HANDOFF.md` §74 (`:1745`) — the 41 → 70 target, the four inventory corrections, the four
+  (§"Open violations"); the trap list and the naming quirks.
+- `HANDOFF.md` §74 — the 41 → 70 target, the four inventory corrections, the four
   unresolved placements, and the excluded candidates.
 - `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits" — the 30-entry roster this file
   takes over, and the dependencies the absent tools follow from.
@@ -316,7 +327,8 @@ established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not op
   what the deleted row got wrong by citing it as though it already existed.
 - `docs/TOOLS-RESEARCH-BRIEF.md` — the protocol this repository runs research under, including
   the rule that an unsourceable claim goes in an Unverified list rather than into the data.
-- `toolbar-mapping.ts:114-121` — the shape flyout's six entries, and the missing seventh.
+- `toolbarMap`'s shape flyout, in `toolbar-mapping.ts` — its six entries, and the missing
+  seventh.
 - `docs/LAYERS-PANEL.md` — the app side of the Artboard gap.
 
 ## Unverified
@@ -372,8 +384,8 @@ this file; the "not researched" cells in the tables above are the same fact at r
 
 **Open questions this file deliberately did not answer**
 
-- **The 30-vs-34 roster discrepancy.** Which entry is spurious, or whether the 70-tool target
-  should be 71. An operator's call.
+- **The 30-vs-34 roster discrepancy.** Which two entries are spurious, or whether the 70-tool
+  target should be 72. An operator's call.
 - **Note** and **Count** are the two entries most likely to be spurious: `HANDOFF.md` §74
   records their default-panel placement as unresolved.
 - Whether **Content-Aware Tracing** counts toward a Tools-panel roster at all, given that

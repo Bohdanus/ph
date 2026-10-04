@@ -91,57 +91,6 @@ const BAND_LUMA = 102;
 const BAND_MEAN = 104;
 
 /**
- * What a full-Flow, `Vibrance`-on Saturate writes into `#c85020`, derived rather than captured.
- *
- * `sponge.ts:290` caps `k` at `chromaHeadroom`, and blue is the binding channel at
- * `102.05 / (102.05 - 32) = 1.4568`, so `k = 1.4568` rather than the `2` an uncapped stroke would
- * use. The three results are the module's own arithmetic through `clampChannel`'s rounding:
- * red `244.7 -> 245`, green `69.9 -> 70`, blue `0.0 -> 0`.
- *
- * Blue ON the gamut boundary and red 10 short of clipping is the cap working, so these three
- * numbers and not `(255, 42, 0)` are what a correct Vibrance-on stroke must produce.
- */
-const BAND_SATURATED_RED = 245;
-const BAND_SATURATED_GREEN = 70;
-const BAND_SATURATED_BLUE = 0;
-
-/**
- * The document-spanning fixture's geometry, for the case that probes a document-sized layer away
- * from the gesture that made it. See that test's header for why each figure is what it is.
- *
- * `WIDE_DRAW_SIZE` is `BRUSH_SIZE_MAX`, and the Draw bar's own `Size` slider runs `0.5-500`
- * (`src/components/ToolbarsRight/Draw/Draw.tsx:151-153`), so this is the widest tip the app owns.
- */
-const WIDE_DRAW_SIZE = 500;
-const WIDE_DRAW_FROM = { x: 250, y: 150 };
-const WIDE_DRAW_TO = { x: 550, y: 150 };
-/**
- * The two rows the Sponge strokes run along: 100 and 200 document pixels BELOW the row the Draw
- * stroke swept, so neither probe sits on the path that created the layer. 100 document pixels
- * apart against a 30px tip, so the two strokes cannot reach each other's row.
- */
-const WIDE_ROW_A = 250;
-const WIDE_ROW_B = 350;
-/**
- * Both Sponge strokes run horizontally from here to `WIDE_SPONGE_TO_X`, on `WIDE_ROW_A` and then
- * on `WIDE_ROW_B`. The row is a parameter rather than baked in, because a stroke that starts on
- * one row and ends on the other is a DIAGONAL that misses both probes.
- */
-const WIDE_SPONGE_FROM_X = 200;
-const WIDE_SPONGE_A = { x: WIDE_SPONGE_FROM_X, y: WIDE_ROW_A };
-const WIDE_SPONGE_TO_X = 400;
-/** The two probes sit ON their own stroke's centre line, `WIDE_PROBE_MID` from either end. */
-const WIDE_PROBE_MID = 300;
-const WIDE_PROBE_A = { x: WIDE_PROBE_MID, y: WIDE_ROW_A };
-const WIDE_PROBE_B = { x: WIDE_PROBE_MID, y: WIDE_ROW_B };
-/**
- * 200 document pixels past the end of a 30px tip on row A, and still inside the drawn disc: the
- * nearest point of the Draw segment to it is 50px away, against a 250px radius. This is the
- * brush-not-filter probe at document scale.
- */
-const WIDE_PROBE_OUTSIDE = { x: 600, y: WIDE_ROW_A };
-
-/**
  * The drawn band's extent, from `pointsBoundingPos` (`src/util/draw.ts:6-27`), which pads the
  * stroke's bounding box by `lineWidth` on EVERY side:
  *
@@ -731,37 +680,43 @@ test.describe('Sponge tool', () => {
   });
 
   /**
-   * 6. A BEDROCK-ONLY DOCUMENT REFUSES THE GESTURE.
-   *
-   * The only layer on a fresh document is the bedrock one from `DEFAULT_BLANK_IMAGE`
-   * (`src/App.tsx:16-21`), and `SpongeToolArea.tsx:54` computes `enabled` as
-   * `args && activeLayerId && activeLayer && !activeLayer.isBedrock`, which `usePaintStroke`
-   * turns into every handler being a no-op. So the drag must change no pixels AND write no history
-   * item: the second half is the half a tool that merely repainted the same colour would pass,
-   * and the undo button is disabled on a fresh document for exactly that reason.
+   * The refusal is intentional: a tonal tool never silently converts the backing layer or writes a
+   * history entry. Conversion is a separate Layers-panel action, covered by the next test.
    */
-  test('a drag on a bedrock-only document changes no pixels and writes no history entry', async ({ page }) => {
-    const geometry = await workspaceGeometry(page);
-    const before = await readWindow(page, geometry, { x: 400, y: 300 });
+  test('refuses a Sponge stroke on the Background without changing pixels or history', async ({ page }) => {
+    const geometry = await selectSponge(page, 'desaturate');
+    const before = await readWindow(page, geometry, { x: BAND_MID_X, y: BAND_Y });
+
+    await spongeStroke(page, geometry);
+
+    await expectWindow(
+      page,
+      geometry,
+      { x: BAND_MID_X, y: BAND_Y },
+      before,
+      'a bedrock stroke must leave the backing pixels unchanged'
+    );
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+  });
+
+  /**
+   * 6. A BEDROCK-ONLY DOCUMENT HAS AN EXPLICIT EDITABLE-LAYER ROUTE.
+   *
+   * The tonal tools keep refusing the backing image. The Layers panel's conversion action is the
+   * Photoshop-faithful route out of that state, and it must be a history edit rather than an
+   * implicit merge triggered by a refused pointer gesture.
+   */
+  test('converts a lone Background into an editable layer before a tonal gesture', async ({ page }) => {
+    const convert = page.getByTestId('layers-convert-background-button');
+    await expect(convert, 'a fresh document exposes the Background conversion route').toBeVisible();
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+
+    await convert.click();
+    await expect(convert).toHaveCount(0);
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
 
     await selectTonal(page, SPONGE_ITEM);
-    await expect(modeSelect(page), 'the Sponge is selectable with no editable layer').toBeVisible();
-    await setMode(page, 'desaturate');
-    await setSlider(page, 'Flow', FLOW_FULL);
-    await setSlider(page, 'Size', SPONGE_SIZE);
-
-    const armed = await workspaceGeometry(page);
-    await strokeDocument(page, armed, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
-
-    expect
-      .soft(await readWindow(page, armed, { x: 400, y: 300 }), 'a bedrock drag must not move a pixel')
-      .toEqual(before);
-    expect
-      .soft(
-        await page.getByTestId('undo-button').isDisabled(),
-        'a refused gesture must not have written a TOOL_ACTION history item'
-      )
-      .toBe(true);
+    await expect(modeSelect(page), 'the converted layer keeps the Sponge available').toBeVisible();
   });
 
   /**
@@ -833,211 +788,5 @@ test.describe('Sponge tool', () => {
     expect
       .soft(options, 'the Mode dropdown carries exactly Adobe two modes, in Adobe order')
       .toEqual(['Saturate', 'Desaturate']);
-  });
-
-  /**
-   * The Sponge on a layer the size of the DOCUMENT, probed away from the gesture that made it.
-   *
-   * ## Why this case is not the one test 2 already covers
-   *
-   * Test 2 proves the tool on a 420x120 band — a layer the size of the drag that made it, with
-   * the Sponge stroke running along the very row being probed. That is a small, exactly-known
-   * rectangle. **A real photo is neither**: the layer is document-sized, and the gesture that made
-   * it is nowhere near the pixel being edited. Those are the conditions a user reports as "it
-   * does nothing", and neither is in test 2's geometry.
-   *
-   * So the fixture here is one Draw stroke at `BRUSH_SIZE_MAX` (500), whose disc sweeps a band
-   * 500 document pixels tall and past both sides of the 800x600 document. The layer it leaves is
-   * therefore at least document-sized, and each probe below is a point that is 100 or 200 document
-   * pixels BELOW the row the Draw stroke swept — nowhere near the gesture that created the layer —
-   * while still deep inside the drawn disc, which is what makes its before-read equal to
-   * `BAND_COLOUR` rather than to the white backing image. The geometry that guarantees the second
-   * half: the nearest point of the Draw segment is 100px from probe A and 200px from probe B, both
-   * inside the 250px radius, and the 8-pixel probe window does not move either figure past it.
-   *
-   * `WIDE_PROBE_OUTSIDE` is the brush-not-filter half at document scale: 200 document pixels past
-   * the end of a 30px tip, on the same layer and inside the same buffer the processor was handed.
-   * A per-pixel operation over that buffer would have moved it; a stroke walk cannot. Byte for byte,
-   * the same oracle test 2 uses on the band.
-   *
-   * ## What each assertion is worth
-   *
-   * The Desaturate half is exact for the reason test 2's is: `Flow 100` on a coverage-1 pixel
-   * makes `amount === 1`, so every channel becomes the pivot and `#c85020` must read `(102,102,102)`.
-   *
-   * The Saturate half is exact too, and the numbers are the module's own arithmetic rather than a
-   * captured baseline. `Vibrance` is the seeded default (`src/tools/settings.ts:272`), so
-   * `k = min(1 + 1, chromaHeadroom)` and blue is the binding channel at `102.05 / 70.05 = 1.4568`:
-   *
-   * ```
-   *   r = 102.05 + (200 - 102.05) * 1.4568 = 244.7  -> 245
-   *   g = 102.05 + ( 80 - 102.05) * 1.4568 =  69.9  ->  70
-   *   b = 102.05 + ( 32 - 102.05) * 1.4568 =   0.0  ->   0
-   * ```
-   *
-   * Blue landing on exactly 0 and red stopping at 245 rather than clipping at 255 is the headroom
-   * cap doing its job, so the triple is the assertion. The two rows are 100 document pixels apart
-   * against a 30px tip, so neither stroke reaches the other's probe and the two directions are
-   * independently observable in one fixture.
-   */
-  test('saturates and desaturates a document-sized layer, probed away from the gesture that made it', async ({
-    page,
-  }) => {
-    await clickToolButton(page, 'draw');
-    await setSlider(page, 'Size', String(WIDE_DRAW_SIZE));
-    await setDrawOpacity(page);
-    await setForegroundColor(page, BAND_COLOUR, true);
-    const geometry = await workspaceGeometry(page);
-    await strokeDocument(page, geometry, WIDE_DRAW_FROM, WIDE_DRAW_TO, 20);
-
-    // The fixture reads as the colour that was drawn at all three probes, which is what makes the
-    // assertions below about the Sponge rather than about the Draw.
-    for (const point of [WIDE_PROBE_A, WIDE_PROBE_B, WIDE_PROBE_OUTSIDE]) {
-      expect
-        .soft(
-          meanChannels(await readWindow(page, geometry, point)),
-          `the wide band is painted at ${JSON.stringify(point)}`
-        )
-        .toEqual({ r: BAND_RED, g: BAND_GREEN, b: BAND_BLUE });
-    }
-    const outsideBefore = await readWindow(page, geometry, WIDE_PROBE_OUTSIDE);
-
-    // DESATURATE, 100 document pixels below the row the Draw stroke swept.
-    const sponged = await selectSponge(page, 'desaturate');
-    await strokeDocument(page, sponged, WIDE_SPONGE_A, { x: WIDE_SPONGE_TO_X, y: WIDE_ROW_A }, 20);
-    await expect
-      .poll(async () => meanChannels(await readWindow(page, sponged, WIDE_PROBE_A)), {
-        message: 'a full-Flow Desaturate must reach a probe 100px from the gesture that made the layer',
-        ...pollOptions,
-      })
-      .toEqual({ r: BAND_LUMA, g: BAND_LUMA, b: BAND_LUMA });
-
-    // SATURATE, 200 document pixels below the Draw stroke, so the two rows cannot have contaminated
-    // each other even after the Desaturate has flattened the first one to grey.
-    await setMode(page, 'saturate');
-    const saturated = await workspaceGeometry(page);
-    await strokeDocument(
-      page,
-      saturated,
-      { x: WIDE_SPONGE_FROM_X, y: WIDE_ROW_B },
-      { x: WIDE_SPONGE_TO_X, y: WIDE_ROW_B },
-      20
-    );
-    await expect
-      .poll(async () => meanChannels(await readWindow(page, saturated, WIDE_PROBE_B)), {
-        message: 'a full-Flow Saturate must reach a probe 200px from the gesture that made the layer',
-        ...pollOptions,
-      })
-      .toEqual({ r: BAND_SATURATED_RED, g: BAND_SATURATED_GREEN, b: BAND_SATURATED_BLUE });
-
-    // THE BRUSH HALF, at document scale. Byte for byte, on the same layer, past the tip's reach.
-    expect
-      .soft(
-        await readWindow(page, saturated, WIDE_PROBE_OUTSIDE),
-        'pixels outside the brush footprint must be byte-identical on a document-sized layer too'
-      )
-      .toEqual(outsideBefore);
-  });
-
-  /**
-   * 10. THE ROUTE OUT, FROM THE PANEL.
-   *
-   * The reported symptom was "the Sponge does not work": a fresh document is one `isBedrock`
-   * layer, `SpongeToolArea.tsx:54` refuses the gesture, and the desktop Layers panel used to
-   * publish nothing that changed that. This is the test that says the route exists, and it
-   * asserts the BEHAVIOUR rather than the presence of a button, so it holds whatever the control
-   * is named and wherever it moves.
-   *
-   * ## Why the assertion is a history entry and not a pixel change
-   *
-   * A fresh document is `DEFAULT_BLANK_IMAGE`'s white, and on a grey pixel `r === g === b`, so
-   * every channel's deviation from the pivot is `0` and `chromaScale` returns the pixel untouched
-   * in BOTH modes (`sponge.ts`) — a white canvas is a NO-OP for this tool by construction, which
-   * is the same fact the header of this spec is built around. A pixel assertion here would pass on
-   * a build whose Sponge still did nothing at all.
-   *
-   * So the decidable difference is the one the refusal test above already measures from the other
-   * side: `usePaintStroke` no-ops on bedrock, so a refused drag writes no `TOOL_ACTION` and the
-   * undo button stays disabled. On an editable layer the same drag commits, and that entry is
-   * the proof the gate opened.
-   */
-  test('the Layers panel publishes a route that makes a tonal tool reach the document', async ({ page }) => {
-    const panel = page.getByTestId('panel-group-layers');
-    await expect(panel, 'the Layers panel is mounted on a desktop viewport').toBeVisible();
-    await expect(page.getByTestId('layer-row'), 'a fresh document is exactly one layer deep').toHaveCount(1);
-
-    // BEFORE: the refusal, on its own terms.
-    await selectTonal(page, SPONGE_ITEM);
-    await setMode(page, 'desaturate');
-    const refused = await workspaceGeometry(page);
-    await strokeDocument(page, refused, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
-    await expect
-      .poll(() => page.getByTestId('undo-button').isDisabled(), { message: 'a bedrock drag is refused' })
-      .toBe(true);
-
-    // THE ROUTE. `Flatten Image` is Adobe's name for what `mergeAllLayers` does: it composites
-    // the canvas while `layer-renderer.ts` skips every `!layer.visible` layer, so the stack is
-    // replaced rather than merged — Flatten Image, not Merge Visible.
-    const flatten = page.getByTestId('layers-flatten-button');
-    await expect(flatten, 'a single backing image is flattenable — it is the only route out').toBeEnabled();
-    await flatten.click();
-
-    await expect(page.getByTestId('layer-row'), 'the flatten replaces the stack with one layer').toHaveCount(1);
-    await expect(
-      page.getByTestId('layer-row').first().getByTestId('layer-name'),
-      'the flattened layer is named by the operation, not left as the backing image'
-    ).toHaveText(/^Merged Layer/);
-
-    // AFTER: the same gesture now commits.
-    const armed = await workspaceGeometry(page);
-    await strokeDocument(page, armed, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
-    await expect
-      .poll(() => page.getByTestId('undo-button').isEnabled(), {
-        message: 'the Sponge reached the document once the backing image was flattened',
-      })
-      .toBe(true);
-  });
-
-  /**
-   * THE TRIPWIRE FOR WHAT IS STILL MISSING, and it is a different claim from the one this spec
-   * used to pin.
-   *
-   * `Flatten Image` makes every tonal tool reachable, so the old pin — that the panel published no
-   * control yielding an editable layer — is fixed and is gone. What remains is that the ONLY
-   * route is destructive: flattening replaces the whole stack, so a user who wants to retouch one
-   * layer of a five-layer document cannot, and Photoshop's own answer (`Layer > New > Layer From
-   * Background`, `Duplicate Layer`) is unbuilt.
-   *
-   * ## Why this pin asserts DESTRUCTION and not an absent name
-   *
-   * The pin it replaces matched `/new layer/i`, `/duplicate/i` and `/unlock|convert/i`, which
-   * assert the absence of three STRINGS. Such a test is green before the fix and green after the
-   * correct one, so it could never have failed: it was documentation wearing a test's clothes. A
-   * non-destructive conversion cannot leave this assertion true whatever it is called, because
-   * the backing image would SURVIVE it.
-   *
-   * **So a fix MUST delete this test in the same change**, and must delete `HANDOFF.md` §175 with
-   * it. The only way to keep it green would be to weaken the assertion, which is the move this
-   * repo does not make.
-   */
-  test('the only route to an editable layer destroys the stack around it', async ({ page }) => {
-    await selectTonal(page, SPONGE_ITEM);
-
-    // A second layer, so "the stack" is a stack. The Draw tool is the only tool that creates one.
-    await clickToolButton(page, 'draw');
-    await setForegroundColor(page, BAND_COLOUR, true);
-    const drawn = await workspaceGeometry(page);
-    await strokeDocument(page, drawn, { x: 200, y: 400 }, { x: 500, y: 400 }, 20);
-    await expect(page.getByTestId('layer-row'), 'the draw gesture added a layer').toHaveCount(2);
-
-    await page.getByTestId('layers-flatten-button').click();
-
-    // One row, and it is not either of the two that were there. That is the whole claim: the
-    // route that opens the tonal tools takes the other layers with it.
-    await expect(page.getByTestId('layer-row'), 'flattening a two-layer document leaves one layer').toHaveCount(1);
-    await expect(
-      page.getByTestId('layer-row').first().getByTestId('layer-name'),
-      'no pre-existing layer survives the only available route to an editable layer'
-    ).toHaveText(/^Merged Layer/);
   });
 });

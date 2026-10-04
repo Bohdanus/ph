@@ -35,7 +35,7 @@ the commit path. The same test in a command nobody is required to run is just a
 bug in that command's output.
 
 **One observation in a scheduling-dependent runner is a rate, not a data point.**
-`vitest.config.ts:6-9` sets `pool: 'vmThreads'`, `maxWorkers: 4`,
+`vitest.config.ts` — its `test` block — sets `pool: 'vmThreads'`, `maxWorkers: 4`,
 `isolate: true`. That is a deliberate choice for speed and it is a real source of
 order- and timing-dependence: work is distributed across 4 worker threads, and
 which test files share a worker, in what order, and with what contention depends
@@ -177,166 +177,6 @@ and destroys the only signal that the defect existed.
 - **Not** "we removed the code path that reported it, so the problem is gone."
   See section 3. The reporting path is gone; the runner configuration is not.
 
-## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
-
-**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision).
-Five recorded full-run failures across four checkouts, never once in isolation.
-Not fixed. Not a known-failing test; it is intermittent.**
-
-**The skip is a gate decision, not a fix, and it is not a waiver.**
-`src/contexts/__tests__/useFile.test.tsx` carries an `it.skip` on the one test,
-with the reason in the comment above it. It was skipped on §12's grounds, which
-are the same grounds and are not restated here: a default run is contracted to
-zero failures, a test red roughly one run in five makes unrelated merges look
-broken, and that trains the response of ignoring the gate — which costs more
-than this one test buys. A flaky assertion is also worse than no assertion: a
-green result from it carries no information, so it cannot justify a change
-either. **Nothing about the defect is waived; the hunt below is un-done and
-filed, and the skip is one line to remove.**
-
-**Do not "fix" this by loosening anything.** There is no bound here to widen, and
-that is what the capture below establishes: the save resolves, the details are
-correct, and the only thing that failed is a dialog that should not have been
-open. Relaxing the assertion would delete the only statement this test makes.
-
-This one is worth separating from section 1, because unlike it the failing test
-was captured:
-
-```
-FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
-      > passes JPEG quality through to raster encoding and resolves the save details
- Test Files  1 failed | 197 passed (198)
-      Tests  1 failed | 4512 passed | 34 expected fail (4547)
-```
-
-Observed 2026-09-28, in a full `npm run test` on branch
-`fix/handoff-2026-09-28`. It has **not** reproduced on demand: the same file
-passes in isolation, and six further consecutive full runs were green (198/198
-files, 4513 passed, 34 expected fail). It then **recurred** during the rebase
-onto the responsive tranche, so the honest tally was **two** failures in roughly
-fifteen full runs, not one in seven. A **third** appeared on 2026-09-28 on
-`integration/e2e-campaign-final`, again only in a full run and again passing
-2/2 in isolation immediately afterwards. The assertion text was not captured on
-any occasion — only the test name — so the difference from section 1 is the
-name and a third data point, not a diagnosis.
-
-**What the three occurrences have in common, now that there are three.** Every
-one was a full `npm run test` with several agents running Playwright elsewhere
-on the machine, and every one passed in isolation within seconds. That is
-consistent with the `vmThreads` pool reading timing-sensitive state under CPU
-contention rather than with anything in the change, which is why section 6's
-"not the pool" caveat and this entry have to be read together: the pool is a
-real mechanism, and so is a genuinely unresolved save pipeline, and three
-occurrences do not separate them. What would: capturing the assertion text.
-Capture it next time and this becomes diagnosable in one run.
-
-**The two accounts of the third report may be one event reported twice.** The campaign branch and
-`docs/review-findings-2026-09-28` are not ancestors of one another (merge base `3e52b4e`), which is
-why the tally cannot be pinned from the branches alone: nothing in either branch's history
-distinguishes the runs, and neither run's log was kept. Until one of them produces a captured
-assertion, **four and three are both consistent with what is recorded**, and the difference does not
-change the hunt. What does change the hunt is the fourth report, because it is the one that lands on
-the lead below.
-
-**The report that matters, because it lands on the lead below.** It
-**The third occurrence is the one that matters, and it lands on the lead below.** It
-recurred on `docs/review-findings-2026-09-28` in the run immediately after that branch
-extracted the dialog focus-ownership block out of `SaveDialog.tsx` into
-`src/hooks/useDialogFocusContainment.ts` — the one file in this test's import graph
-that either branch has changed. Before that extraction the tally was two; after it,
-three. **That is a correlation across two branches, not a cause**, and it is the
-cheapest thing to test next: revert the extraction's mount effect alone, run the full
-suite in a loop, and see whether the third occurrence goes away. Do not run a scoped
-loop and conclude anything from it — section 6 forbids inferring from a scoped green
-for a failure observed in a full run.
-
-**Do not close it as "the pool".** Two things make this one worth keeping
-open, and neither is the pool:
-
-1. **The test's subject is an asynchronous save pipeline** — file handle, raster
-   encoding, quality threading, promise resolution — which is exactly the shape
-   section 6 warns about: unresolved work that outlives the file. The same
-   section's "Not `isolate: true`, so files cannot interfere" applies directly.
-2. **The encoder is NOT in this test's execution graph, and an earlier
-   revision of this entry said it was.** It blamed a pixel-budget refusal newly
-   added to `encodeAvif`, and described that refusal as positioned after
-   `getCanvasImageData` when it is positioned before. Both wrong.
-   `useFile.test.tsx:8-12` mocks `../image-load-save-utils.ts` wholesale, so
-   `saveImageToDisk` is a bare `vi.fn()`; `encodeAvif` is reachable only through
-   the dynamic `await import('./avif-utils.ts')` inside that module, which never
-   executes. `avif-utils.ts` and `raster-utils.ts` are not reachable from that
-   test at all. **Two of the three candidate causes for this failure are gone,
-   and the third is weaker than it looked.**
-3. **What the branch actually changed under this test is `SaveDialog.tsx`, and
-   it changed focus.** `git diff 80eb207 --stat` on `useFile.test.tsx`,
-   `useFile.tsx` and `image-load-save-utils.ts` is **empty** — the test and the
-   whole save path beneath it are untouched. The only files inside this test's
-   import graph that either branch has changed are the component itself and, since
-   `a30c318`, the hook its focus block moved into. That hook's mount effect calls
-   `.focus()` synchronously and its cleanup calls `previouslyFocused?.focus?.()`,
-   and both dispatch `focusin`/`focusout` — the events React 19 backs
-   `onFocus`/`onBlur` with — from inside a promise continuation. **That is a lead,
-   not a conclusion**, and it is recorded as one.
-4. **`retireUnreferenced` is structurally ruled out.** The test renders
-   `<FileProvider>` with no `StoreProvider`, and its save input is a detached
-   `document.createElement('canvas')` with `layers: {}`. A raster in no
-   published set can never be a retirement candidate, and the save it performs is
-   a `vi.fn()` that never reaches an encoder. Struck from the hunt rather than
-   left open.
-
-To hunt it, cheapest first: loop the single file
-(`npx vitest --run src/contexts/__tests__/useFile.test.tsx`) to get a cheap
-partial sample, then widen to the full suite — `npm run test 2>&1 | tee
-/tmp/full-$i.log` — which is the only reproduction-capable loop, because the
-failure was observed in a full run and section 6 forbids inferring from a scoped
-green. **Capture the assertion, not just the test name**, and record whether it
-was a timeout or a value mismatch: a timeout points at the focus/async
-interaction in 3, a value mismatch points at ordering.
-
-**The assertion is now captured, and it is a value mismatch, not a timeout.**
-Fifth occurrence, 2026-09-29, on `feat/history-remove-append` in a full
-`npx vitest --run src/contexts` (81 files, 1960 tests) — the run right after a
-code review on that branch, so the machine was busy:
-
-```
-FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
-    > passes JPEG quality through to raster encoding and resolves the save details
-AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
- ❯ src/contexts/__tests__/useFile.test.tsx:157:51
- Test Files  1 failed | 80 passed (81)
-      Tests  1 failed | 1956 passed | 3 expected fail (1960)
-```
-
-The `expect(screen.queryByText('Save File As...')).toBeNull()` in `useFile.test.tsx` is
-the `toBeNull()` half of a test whose first assertion has already passed —
-`expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 })`
-— so the save **did** resolve and the pipeline **did** hand back its
-details. What failed is that a **Save File As dialog was open when it should not
-be**. (The failure quoted above says `:157`, which is what the reporter printed;
-the file has since grown — the `it.skip` above it, and 19 more lines — so the
-assertion is the `toBeNull()` above, and its passing sibling is the
-`toHaveBeenCalledWith` directly above that. Read the line
-number in the quote as history and the assertion text as the current tree.)
-
-Read against this entry's own findings that is a real narrowing: the
-encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
-so `saveImageToDisk` is a bare `vi.fn()` and `encodeAvif` never runs), so the
-failure is not an encoding refusal and not `retireUnreferenced` — **it is
-whatever decides whether the confirmation dialog opens at all**, which is a
-dialog-state question, not a pixel one. That is a different subsystem from the
-three candidates this entry had, and it is now the only one the evidence
-supports.
-
-**What this occurrence does not establish.** One failure in five full runs of
-the same tree — the four subsequent runs were `1957 passed | 3 expected fail`
-each — and the file passes alone, so **nothing here shows the branch causes it.**
-The one suggestive datum cuts the other way: a run of the same tree with
-`history-append.remove.test.ts` excluded was green (80 files, 1927 tests), and
-the two-file run was green. That is a coincidence of worker partitioning, not a
-mechanism, because the same file set then ran green four times over. Treat the
-exclusion result as a lead for the next reproduction and nothing more — the same
-standard section 6 applies to a green run.
-
 ## 8. A third, NAMED observation — the paint-bucket contiguous test, once, in a full headless run
 
 **Status: OPEN. Named, not reproduced. One failure in three reproduction attempts.**
@@ -354,13 +194,17 @@ standard section 6 applies to a green run.
 ```
 
 Observed 2026-09-28 on `main` at `cc7b647`, in a full headless `npx playwright test`
-reporting `182 passed, 1 failed, 2 skipped` (185 total). The line numbers in that
+reporting `182 passed, 1 failed, 2 skipped` (185 total). The coordinates in that
 quote are `cc7b647`'s; on the branch that hardened the failure path the same
-anchors are the test declaration at `:487`, `drawSlab` at `:245` and the pixel
-wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work — though it has
-since moved: the quote's `:536` frame is now the blank line before
-`waitForCanvasPixels` (`:558`), whose timeout throw is at `:579`. So "unchanged by
-that work" was true of the commit range and is no longer true of the file.
+anchors are the `test('the paint bucket fills a contiguous region and not its
+neighbour')` declaration, `drawSlab()`, and `drawSlab()`'s `waitForCanvasPixels()`
+call. The function the quote's stack frame names is `canvas-helpers.ts` —
+`waitForCanvasPixels()` — and that function is unchanged by that work; it has since
+moved, though, in the sense that specs now reach it through the
+`e2e/helpers/canvas-redraw.ts` re-export rather than importing it from
+`canvas-helpers.ts`, so a coordinate from that era no longer identifies it. So
+"unchanged by that work" was true of the commit range and is no longer true of the
+file.
 
 **That run was not a clean run, and that is the single most useful thing known
 about it.** It was produced by the e2e orchestrator with six other agents running
@@ -390,8 +234,8 @@ it is the seed's composition poll running out of its default 5s budget — not t
 `Canvas did not render the #cc0000 line within 10000ms` at `drawSlab` that the
 observation above records. The refused-commit mechanism below cannot be what
 happened, and on this tree it cannot be produced at all: `drawSlab` now asserts
-the commit first (`erase-fill-eyedropper.spec.ts:277-280`), so a refused commit
-names itself as a `toBeEnabled()` failure on the undo button instead of
+the commit first (`e2e/erase-fill-eyedropper.spec.ts` — `drawSlab()`), so a refused
+commit names itself as a `toBeEnabled()` failure on the undo button instead of
 surfacing later as a bare pixel timeout. The page snapshot at failure showed the
 document WAS published (a `Blank 1` Layers row, a `new layer` History row, undo
 and redo disabled) while the pixel poll never returned — which is the
@@ -429,27 +273,30 @@ with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
 1. **It is not a cross-test state leak, and the "7 tests in one worker" shape is
    the wrong frame.** The file declares **10** tests, not 7, and the failing one is
    the 6th. Every test gets a fresh `BrowserContext`, the app persists nothing but
-   the theme (`src/contexts/ThemeContext.tsx:14,28` is the only `localStorage`
-   write in `src/`), and the document starts `uninitialized` on every load
-   (`src/contexts/StoreContext.tsx:297,307,315,317`). **A leaked marquee, layer,
-   zoom or tool is impossible across tests here**, and the failing test's first act
-   is `openWorkspace`, before any of its own state exists.
+   the theme (`src/contexts/ThemeContext.tsx` — `ThemeProvider`'s
+   `localStorage.setItem('theme', …)` is the only `localStorage` write in `src/`), and
+   the document starts `uninitialized` on every load
+   (`src/contexts/StoreContext.tsx` — `initialState`'s `documentId: 'uninitialized'`).
+   **A leaked marquee, layer, zoom or tool is impossible across tests here**, and the failing
+   test's first act is `openWorkspace`, before any of its own state exists.
 2. **It is not the 440px scroll that `preservingScroll` exists to undo.** Measured
    on this tree at 1280x720: `document.documentElement.scrollHeight` is **720**,
    equal to `innerHeight`, and `window.scrollY` was **0** at every step of the
    failing test's setup. The overflow that made the page 1177px tall was fixed by
-   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:909`);
-   the canvas box is a constant `108,100 922x583` from tool click to capture. The
-   1177px/440px figures in `e2e/helpers/screenshot-scale.ts:108-116`,
-   `e2e/helpers/cdp-helpers.ts:53-54`, `e2e/helpers/toolbar-helpers.ts:102-108` and
-   four unit-test comments now describe a layout this build does not produce.
-   **They are stale, not load-bearing, and correcting them is its own change.**
+   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx`
+   — the rail `<aside>`'s own class list); the canvas box is a constant `108,100 922x583` from
+   tool click to capture. The 1177px/440px figures in `e2e/helpers/screenshot-scale.ts` —
+   `viewportRectToPageRect()`'s note — `e2e/helpers/cdp-helpers.ts` —
+   `captureCanvasScreenshot()`'s note — and `e2e/helpers/toolbar-helpers.ts` —
+   `preservingScroll()`'s note, together with four unit-test comments, now describe a
+   layout this build does not produce. **They are stale, not load-bearing, and
+   correcting them is its own change.**
 
 **What the failure therefore is, and is not.** `hasRedPixels`
-(`e2e/helpers/canvas-helpers.ts:464-468,232-234`) wants `red > 180, green < 100,
-blue < 100` anywhere in a 360x140 capture that certainly contains the line. The
-line is composited over an opaque white base, so its red channel is **204 at full
-opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
+(`e2e/helpers/canvas-helpers.ts` — its `STROKE_ANALYSIS.RED_PIXEL_*` comparison) wants
+`red > 180, green < 100, blue < 100` anywhere in a 360x140 capture that certainly contains
+the line. The line is composited over an opaque white base, so its red channel is **204 at
+full opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
 cannot push it under the threshold, and `drawSlab` pins that slider to 1 anyway.
 **The threshold is not defeatable and is not the cause.** The capture also lands
 wholly inside the viewport at `x 228..588, y 230..370` against a 1280x720 window,
@@ -460,17 +307,20 @@ composite**, and every action in `drawSlab` reported success while it did not.
 **The two candidate mechanisms, neither demonstrated.**
 
 - A **refused commit**. The Draw tool commits from `handlePointerUp` and nowhere
-  else (`src/components/Main/DrawToolArea.tsx:110-143`), and it is reached only
+  else (`src/components/Main/DrawToolArea.tsx` — `handlePointerUp()`), and it is reached only
   when `isPointerUpValid` agrees, which refuses a non-primary button or a foreign
-  pointer id (`src/hooks/usePointerPosition.ts:221,223`) and refuses a second
-  press while one is live (`:198`). A refusal produces no layer, no history entry
+  pointer id (`src/hooks/usePointerPosition.ts` — `isPointerUpValid()`) and refuses a second
+  press while one is live (`usePointerPosition.ts` — `isPointerDownValid()`'s first-pointer-wins
+  check). A refusal produces no layer, no history entry
   and no log. See `HANDOFF.md` §66 — that silence is recorded there as a
   document-state defect in its own right, independently of this flake.
 - A **commit the seed overwrote**. The store has no document until the seeding
-  `REPLACE_DOCUMENT` lands (`src/hooks/useApp.ts:77-80` ->
-  `src/contexts/useLayer.ts:214-230` -> `:174-199`), and a tool layer is appended
-  with `COMMIT_DOCUMENT_EDIT` against the `layers` its render closure captured
-  (`src/contexts/useLayer.ts:174,201-207`). **Weakened, not eliminated:** an
+  `REPLACE_DOCUMENT` lands (`src/hooks/useApp.ts` — `setBlankImage()` ->
+  `src/contexts/useLayer.ts` — `_addLayer()`'s `REPLACE_DOCUMENT` -> the `layers` binding
+  `useLayers()` read from `useStore()`), and a tool layer is appended with
+  `COMMIT_DOCUMENT_EDIT` against the `layers` its render closure captured
+  (`useLayer.ts` — `_addLayer()`, whose `currentLayers` parameter defaults to that `layers`).
+  **Weakened, not eliminated:** an
   instrumented copy of the real `openWorkspace` measured its own pixel poll
   satisfied on its **first** attempt on 20 of 20 runs, 42-154 ms after `goto`
   resolved, so the old gate did return before it had established that a document
@@ -482,14 +332,15 @@ composite**, and every action in `drawSlab` reported success while it did not.
 waited on `readPixel(...) not.toBeNull()` and claimed to wait for the seeded base
 layer. It did not: `readPixel` calls `getColorAtPoint(image, x, y, 0)` with no
 `ignoreNearWhite`, and that returns `null` only for an out-of-capture point or a
-fully transparent one (`e2e/helpers/canvas-helpers.ts:728-730,743,757`) — **a white pixel
+fully transparent one (`e2e/helpers/canvas-helpers.ts` — `getColorAtPoint()`) — **a white pixel
 satisfied it**, so the poll only asserted that a screenshot was non-empty. It now
 additionally waits for the seeded `Blank 1` row to be in the Layers panel, read by
 name, which is a fact about the document rather than about a capture. And `drawSlab`
 now asserts the stroke **committed** — `undo` is disabled on a seeded document and
 enabled after the append — _before_ it polls for pixels, so a refused commit names
 itself in the default expect timeout instead of surfacing ten seconds later as a
-bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:579`.
+bare `Canvas did not render … within 10000ms` from `e2e/helpers/canvas-helpers.ts` —
+`waitForCanvasPixels()`.
 
 **To hunt it, capture the artifact, not the name.** The single most valuable
 change to a future report of this is the state at the moment the wait gives up:
@@ -705,12 +556,14 @@ something true about the viewport mapping when it passes. Raising the drift guar
 them: it deletes the one assertion that names the known cause, so the next red run becomes
 unreadable instead of self-describing.
 
-`e2e/viewport-drawing.spec.ts:18-22` holds a `{ name, width, height }` list (`normal`
-1280×720, `wide` 1600×900, `narrow` 900×700) and runs **one** test over all three windows,
-asserting per window with `expect.soft(...).toBeLessThanOrEqual(toleranceFor(box))` at
-`e2e/viewport-drawing.spec.ts:357-364`. **Per-case attribution is a weaker signal than it
-looks**: one test over three windows reports at most one failure carrying three soft-assert
-messages, so "the failing window moves" is read off the message, not off separate test results.
+`e2e/viewport-drawing.spec.ts` — `VIEWPORTS` — holds a `{ name, width, height }` list
+(`normal` 1280×720, `wide` 1600×900, `narrow` 900×700) and runs **one** test over all three
+windows, asserting per window with
+`expect.soft(...).toBeLessThanOrEqual(toleranceFor(box))` in the
+`it('line stays under cursor after window resize (normal, wide and narrow)')` body.
+**Per-case attribution is a weaker signal than it looks**: one test over three windows reports
+at most one failure carrying three soft-assert messages, so "the failing window moves" is read
+off the message, not off separate test results.
 Before `ffb51607` this file ran three tests in a `for` loop and attribution was direct; anything
 recorded against the pre-`ffb51607` shape describes a file that no longer exists.
 
@@ -762,8 +615,7 @@ branch whose only e2e change was a header comment and a viewport ladder:
 - `e2e/sidebar-flyout.spec.ts` — `Test timeout of 30000ms exceeded while
 running "beforeEach" hook`, `page.goto` never returning, from the file's single
   `test.beforeEach` (`await page.goto('/')`).
-- `e2e/toolbar-fit.spec.ts:188` — the same signature, inside
-  `open(page, height)`.
+- `e2e/toolbar-fit.spec.ts` — `open()` — the same signature.
 
 Each failed only inside a full run and passed alone every time, in the same tree, with
 no code change in between and far inside that budget. Both runs had another agent's e2e run
@@ -771,9 +623,11 @@ holding the queue, so the dev server was warm and the bulk of the rest of the su
 already passed when the first one failed — which is what rules section 9's mechanism out,
 since nothing cold was left to lose to.
 
-The part that is named rather than observed: `e2e/toolbar-fit.spec.ts:188` makes
-EIGHT `open()` calls, one per height per layout, and it never calls
-`test.setTimeout`. Its sibling at `:142` does, for the same file. So a test whose
+The part that is named rather than observed: the `it('both layouts collapse and stay
+reachable — …')` sweep in `e2e/toolbar-fit.spec.ts` makes EIGHT `open()` calls, one per
+height per layout, and it never calls `test.setTimeout`. Its sibling, the
+`it('the rendered grid fits its slot, and leaves less than a row behind, at every window
+height')` test, does, for the same file. So a test whose
 whole job is a sweep pays Playwright's 30s default for the whole sweep, and under
 CPU contention from a concurrent run that default is what it runs out of — the
 assertions inside never execute, which is why the report names a navigation and
@@ -832,17 +686,18 @@ fixed two false claims in the new comments, but that is not the review.
 
 ## 15. Files
 
-- `vitest.config.ts:6-9` — the pool configuration this is about
+- `vitest.config.ts` — the `test` block whose `pool`, `maxWorkers` and `isolate` this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
 - `src/util/draw.ts` — the file whose import fan-out defined the observed set
-- `src/contexts/__tests__/useFile.test.tsx` — the named failure in section 7
+
 - `src/contexts/avif-utils.ts` — the encoder whose budget check changed nearby
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs
 - `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
-- `e2e/helpers/canvas-helpers.ts:464-468,568-582,706-712` — the predicate, the poll loop and the
-  sampler
-- `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
+- `e2e/helpers/canvas-helpers.ts` — `hasRedPixels()`, `waitForCanvasPixels()` and
+  `dominantRed()` — the predicate, the poll loop and the sampler
+- `src/hooks/usePointerPosition.ts` — `isPointerDownValid()`, `isPointerMoveValid()` and
+  `isPointerUpValid()` — the validators whose refusal is silent
 - `scripts/e2e-run.mjs` — the wrapper the scripts that RUN a suite route through
   (`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`). Two independent things,
   and the distinction is the design: the **own-server guarantee** (pick a port, verify
@@ -877,17 +732,24 @@ fixed two false claims in the new comments, but that is not the review.
   non-sequitur, and it is recorded there as wrong rather than quietly replaced
 - `e2e/sidebar-flyout.spec.ts` — the `beforeEach` that loses the race
 - `e2e/flyout-longpress-race.spec.ts` — the committed tripwire for the long-press flyout race section 8 names as a CPU-contention flake, and for the misdiagnosis section 9 recounts
-- `e2e/helpers/screenshot-scale.ts:108-116`, `e2e/helpers/cdp-helpers.ts:53-54` — the stale
+- `e2e/helpers/screenshot-scale.ts` — `viewportRectToPageRect()`'s note — and
+  `e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`'s note — the stale
   1177px/440px figures section 8 records as stale
-- `src/hooks/useDialogFocusContainment.ts` — where the focus block section 7's lead 3 names now lives
-- `e2e/viewport-drawing.spec.ts:156,334-338` — the CDP capture, and the
-  `toBeLessThan(25)` CEILING guard section 12 measures. It is a hard assertion on the derived
-  tolerance, not one of the soft stroke assertions, which are at `:357-364`
-- `e2e/viewport-drawing.spec.ts:18-22` — the `{ name, width, height }` list whose cases
-  section 12 observed moving between runs
-- `e2e/toolbar-fit.spec.ts:188` — the eight-`open()` sweep that never raises its own
-  budget, which is what section 13 observed losing
-- `e2e/toolbar-fit.spec.ts:142` — the same file's other test, which does set one
+
+- `e2e/viewport-drawing.spec.ts` — `measureAtViewport()`'s `captureCanvasScreenshot()`
+  call, and the widest-tolerance `toBeLessThan(LEGACY_FIXED_SLACK_CSS_PX)` guard inside
+  `it('line stays under cursor after window resize (normal, wide and narrow)')` — the
+  CDP capture, and the `toBeLessThan(25)` CEILING guard section 12 measures. It is a hard
+  assertion on the derived tolerance, not one of the soft stroke assertions, which are in
+  the same test body
+- `e2e/viewport-drawing.spec.ts` — `VIEWPORTS` — the `{ name, width, height }` list whose
+  cases section 12 observed moving between runs
+- `e2e/toolbar-fit.spec.ts` — the `it('both layouts collapse and stay reachable — …')`
+  sweep — the eight-`open()` sweep that never raises its own budget, which is what
+  section 13 observed losing
+- `e2e/toolbar-fit.spec.ts` — the same file's
+  `it('the rendered grid fits its slot, and leaves less than a row behind, at every window
+height')`, which does set one
 - `scripts/__tests__/e2e-run.test.mjs`, `scripts/__tests__/agent-board.test.mjs` — the two
   suites section 14 saw fail only inside a full run, and pass alone
 - `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees

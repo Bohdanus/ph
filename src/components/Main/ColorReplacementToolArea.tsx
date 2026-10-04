@@ -10,6 +10,12 @@ import {
   type ColorReplacementToolArgs,
 } from '../../tools/colorReplacement.ts';
 import type { Point } from '../../contexts/general-types.ts';
+import type { Layer } from '../../contexts/layer-types.ts';
+import {
+  processorPresentationBounds,
+  stageProcessorInput,
+  type ProcessorStaging,
+} from '../../contexts/presentation-evaluator.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type ColorReplacementToolAreaProps = {
@@ -24,6 +30,7 @@ type ColorReplacementToolAreaProps = {
  */
 export const COLOR_REPLACEMENT_NO_LAYER_PIXELS = 'color-replacement-no-layer-pixels';
 export const COLOR_REPLACEMENT_READBACK_UNAVAILABLE = 'color-replacement-readback-unavailable';
+export const COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE = 'color-replacement-presentation-unavailable';
 
 /**
  * The Color Replacement Tool: CLICK to choose the colour to replace, then DRAG to paint the
@@ -69,11 +76,39 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
   /** The active layer, or undefined — the two refusals below both need to name it. */
   const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
 
-  /** Canvas space to the active layer's own local frame, the space the processor reads. */
-  const toLayerPoint = (point: Point, layerPos: { x: number; y: number }): Point => {
+  /**
+   * The origin of the raster the processor is handed: `pos` for a layer that presents nothing,
+   * its EVALUATED extent for one carrying a transform or a filter. Every point below is rebased
+   * through it, so a stroke on a transformed layer addresses the buffer the layer is drawn from.
+   */
+  const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
+
+  /**
+   * The PRESENTED raster and its size, which is what the two decisions below must be made on and
+   * what the processor will be handed. Reading the raw layer instead would sample and plan against
+   * pixels the commit is not going to touch.
+   *
+   * `null` is a refusal rather than a throw, on the same contract as the two exported names above:
+   * the tool cannot read its own destination, so it says so and writes no history.
+   */
+  const stageLayerPresentation = (layer: Layer, bitmap: NonNullable<Layer['bitmap']>): ProcessorStaging | null => {
+    try {
+      return stageProcessorInput(layer, bitmap);
+    } catch (error) {
+      console.error(
+        COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE,
+        `the active layer ${layer.id} cannot be staged for ${args.toolName}`,
+        error
+      );
+      return null;
+    }
+  };
+
+  /** Canvas space to the presented raster's local frame, the space the processor reads. */
+  const toLayerPoint = (point: Point, origin: { x: number; y: number } | null): Point => {
     const documentPoint = canvasToDocumentPoint(point, documentFrame);
 
-    return { x: documentPoint.x - layerPos.x, y: documentPoint.y - layerPos.y };
+    return { x: documentPoint.x - (origin?.x ?? 0), y: documentPoint.y - (origin?.y ?? 0) };
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -83,7 +118,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
 
     event.preventDefault();
 
-    const layerPoint = toLayerPoint(getLocalCoords(event), activeLayer.pos);
+    const layerPoint = toLayerPoint(getLocalCoords(event), rasterBounds);
 
     // Sampled already: this press opens a drag, and the points accumulate on pointer-move.
     if (args.sampleColor) {
@@ -99,7 +134,10 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
       return;
     }
 
-    const imageData = readLayerImageData(bitmap, { width: activeLayer.pos.width, height: activeLayer.pos.height });
+    const staged = stageLayerPresentation(activeLayer, bitmap);
+    if (!staged) return;
+
+    const imageData = readLayerImageData(staged.bitmap, { width: staged.bounds.width, height: staged.bounds.height });
     if (!imageData) {
       console.error(COLOR_REPLACEMENT_READBACK_UNAVAILABLE, `${args.toolName} cannot read the active layer's pixels`);
       return;
@@ -122,7 +160,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
     if (!isMouseDown.current || !isPointerMoveValid(event)) return;
     if (!activeLayer) return;
 
-    pointsRef.current.push(toLayerPoint(getLocalCoords(event), activeLayer.pos));
+    pointsRef.current.push(toLayerPoint(getLocalCoords(event), rasterBounds));
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -134,7 +172,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
     if (!args.sampleColor || points.length === 0) return;
     if (!activeLayer) return;
 
-    const coords = toLayerPoint(getLocalCoords(event), activeLayer.pos);
+    const coords = toLayerPoint(getLocalCoords(event), rasterBounds);
     const lastPoint = points[points.length - 1];
     if (!lastPoint || lastPoint.x !== coords.x || lastPoint.y !== coords.y) points.push(coords);
 
@@ -153,8 +191,11 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
       return;
     }
 
-    const size = { width: activeLayer.pos.width, height: activeLayer.pos.height };
-    const imageData = readLayerImageData(bitmap, size);
+    const staged = stageLayerPresentation(activeLayer, bitmap);
+    if (!staged) return;
+
+    const size = { width: staged.bounds.width, height: staged.bounds.height };
+    const imageData = readLayerImageData(staged.bitmap, size);
     if (!imageData) {
       console.error(COLOR_REPLACEMENT_READBACK_UNAVAILABLE, `${args.toolName} cannot read the active layer's pixels`);
       return;

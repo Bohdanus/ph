@@ -49,9 +49,14 @@ export const toolbarMap = [
       { label: 'Single Column Marquee Tool', name: 'single-column-marquee' },
     ],
     [
+      // All three lasso tools share `L` in Photoshop, and `Shift+L` is the cycling key rather
+      // than a second binding on one member. So the letter belongs to the tile and only the
+      // tile declares it, exactly as the marquee group above does. The cycling key itself is
+      // recorded as the Photoshop shortcut in `src/tools/descriptions/selection.ts`, which is
+      // where a key that belongs to the group rather than to a tool belongs.
       { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
       { label: 'Polygonal Lasso Tool', name: 'polygonal-lasso' },
-      { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso', shortcut: 'Shift+L' },
+      { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso' },
     ],
     // The Quick Selection shares the Magic Wand's tile because Photoshop puts the two
     // adjacent, and the Wand is the tile's identity as the first entry.
@@ -99,7 +104,22 @@ export const toolbarMap = [
       // `burn` — only the tile's first entry carries the letter.
       { label: 'Sponge Tool', name: 'sponge' },
     ],
-    [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
+    // NO SHORTCUT, and the omission is the fix rather than an oversight. This entry
+    // previously declared `shortcut: 'B'`, which is the Brush's own shortcut and which
+    // `AppKeyboardShortcuts.tsx` binds to `selectBrushTool` on both `b` and `shift+b`. The
+    // Draw tool is bound to no key at all, so the rail rendered a `B` badge on the Draw flyout
+    // item (`SidebarLeft.tsx` draws `tool.shortcut` as a `<kbd>`, and passes it to
+    // `ToolTooltip`) and pressing `B` selected the Brush. `SidebarLeft` is the only place a
+    // declared shortcut reaches the user, so a declared shortcut the app does not implement is
+    // a falsehood, exactly like a tooltip that promises an Esc key the tool has no handler for.
+    //
+    // There is no key to bind, because Adobe publishes none: Photoshop has no Draw tool, so the
+    // previous version of this comment — which claimed Adobe binds it to `Shift+W` — was quoting
+    // a binding that does not exist. `w` and `shift+w` both go to the Object Selection tool.
+    // `toolbar-mapping.test.ts` pins that no two entries may claim the same shortcut, so the
+    // fix cannot regress into a second collision, and `docs/OVERRIDES.md` OVR-2 is what keeps the
+    // tile.
+    [{ label: 'Draw Tool', name: 'draw' }],
   ],
   [
     [

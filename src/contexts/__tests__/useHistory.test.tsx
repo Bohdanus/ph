@@ -13,7 +13,7 @@ import {
 } from '../../util/constants.ts';
 import { useHistory } from '../useHistory.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayerSource, LayersRecord, ToolLayerSource } from '../layer-types.ts';
+import type { Layer, LayerOperationArgs, LayerSource, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { getSortedLayersArray } from '../layer-utils.ts';
@@ -116,6 +116,10 @@ vi.mock('../history-replay.ts', async (importOriginal) => {
 });
 
 const canvasContexts: CanvasRenderingContext2D[] = [];
+// Every 2D context the file's `OffscreenCanvas` mock hands out, so a test can read back the
+// draw a replay made into its own staging surface rather than only what the processor was
+// afterwards handed.
+const offscreenContexts: CanvasRenderingContext2D[] = [];
 
 // vi.restoreAllMocks() in beforeEach also drops the global canvas context stub
 // installed by src/test/setup.ts, so every test re-installs it before rendering.
@@ -267,11 +271,13 @@ describe('useHistory undo replay', () => {
       }
 
       getContext() {
-        return {
-          fillStyle: '#ffffff',
-          globalAlpha: 1,
-          fillRect: vi.fn(),
-        };
+        // The full mock context rather than the three drawing fields this used to expose:
+        // replaying a layer that carries a retained affine rasterizes it through
+        // `drawEvaluatedPresentation` in `replayProcessorInput`, which needs `save`,
+        // `transform` and `drawImage` to exist at all.
+        const context = createMockCanvasContext(this) as unknown as CanvasRenderingContext2D;
+        offscreenContexts.push(context);
+        return context;
       }
     }
 
@@ -299,6 +305,7 @@ describe('useHistory undo replay', () => {
     replayControl.replayCount = 0;
     replayControl.calls = [];
     installCanvasContextStub();
+    offscreenContexts.length = 0;
   });
 
   it('undoes history when NEW_LAYER source is stored in layerSource', () => {
@@ -500,6 +507,103 @@ describe('useHistory undo replay', () => {
     expect(createImageBitmap).not.toHaveBeenCalled();
     expect(state.layers.image.tmpCanvas).toBe(canvas);
     expect(state.layers.image.pos.x).toBe(12);
+  });
+
+  it('replays a tool entry for a layer carrying an affine at its evaluated extent, not at layer.pos', () => {
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(80, 40);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 40, height: 20 },
+        operations: [
+          {
+            id: 'op-scale',
+            kind: 'affine-transform',
+            enabled: true,
+            transform: { a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 },
+          },
+        ],
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    // The evaluator's own bounds, which is what the live pointer move hands this same
+    // processor (`useLayer.ts:730`): the affine's own offset added to the layer origin, and
+    // twice the extent. `layer.pos` — 40x20 at (10, 5) — is what replay used to pass, so a
+    // raster processor read the wrong buffer at the wrong size while the screen, which goes
+    // through the evaluator, showed the evaluated one.
+    expect(processor).toHaveBeenCalledWith({
+      bitmap: expect.objectContaining({ width: 80, height: 40 }),
+      size: { x: 15, y: 8, width: 80, height: 40 },
+    });
+    // The buffer handed over is the evaluated presentation rather than the layer's own
+    // raster, so the affine has to have reached the draw call and not just the arithmetic.
+    // The surface is found by its extent rather than by position, because the publication
+    // also snapshots the visible canvas (`layer-renderer.ts:205`) and allocates its own.
+    const surfaces = offscreenContexts.filter((context) => context.canvas.width === 80 && context.canvas.height === 40);
+    expect(surfaces).toHaveLength(1);
+    const [surface] = surfaces;
+    expect(vi.mocked(surface.drawImage).mock.calls[0]).toEqual([bitmap, 0, 0, 40, 20]);
+    expect(surface.transform).toHaveBeenCalledWith(2, 0, 0, 2, 5, 3);
+    expect(state.layers.top.tmpCanvas).toBe(processed);
+    // Published at the bounds that baked raster occupies, with the baked operation gone from the
+    // list the renderer evaluates again. Keeping both was the double application: `getLayerBitmap`
+    // prefers this canvas, and `drawLayerSource` then re-evaluated a transform it already carried,
+    // at `pos` instead of at the extent. This is the durable contract too —
+    // `materialization.ts` advances `origin`/`size` to the evaluated bounds for exactly this
+    // reason, so the two replay paths now publish the same layer.
+    expect(state.layers.top.pos).toEqual({ x: 15, y: 8, width: 80, height: 40 });
+    expect(state.layers.top.operations).toEqual([]);
+  });
+
+  it('keeps a disabled operation on a layer whose enabled ones it baked into the raster', () => {
+    // A disabled entry contributed to no presentation, so it is not in the baked raster and
+    // dropping it would remove it from `toggleDisabled()`'s reach: the user could never switch
+    // their own adjustment back on.
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const processed = new OffscreenCanvas(40, 20);
+    vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [processed]);
+    const layers: LayersRecord = {
+      top: {
+        ...makeReplayLayer('top', 1, bitmap),
+        pos: { x: 10, y: 5, width: 40, height: 20 },
+        operations: [
+          {
+            id: 'op-blur-off',
+            kind: 'filter',
+            enabled: false,
+            args: { toolName: 'blur', radius: 3 } as LayerOperationArgs,
+          },
+        ],
+      },
+    };
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size: { width: 300, height: 200 } },
+      },
+      { id: 'edit', layerId: 'top', actionName: TOOL_ACTION, args: { toolName: 'shape' } },
+    ]);
+
+    useHistory().resetHistoryTo(1);
+
+    expect(state.layers.top.operations.map((operation) => operation.id)).toEqual(['op-blur-off']);
+    // Nothing was presented, so nothing moved: the layer is published where it already was.
+    expect(state.layers.top.pos).toEqual({ x: 10, y: 5, width: 40, height: 20 });
   });
 
   it('leaves the store completely untouched when toggleDisabled names an entry the timeline does not hold', () => {
@@ -1092,17 +1196,51 @@ describe('useHistory undo replay', () => {
       expect(clearPreviewLayers()).toHaveBeenCalledTimes(2);
     });
 
-    it('drops the preview even when the navigation goes on to fail closed', () => {
+    it('drops the preview only once the replay has been published and dispatched', () => {
+      setup();
+      // The ORDER is the contract, so it is read at the moment of the clear rather than
+      // inferred from the counts above: a clear ahead of the dispatch could strand an
+      // in-progress draft in front of a replay that then refused to publish.
+      const dispatchedAtClear: string[][] = [];
+      clearPreviewLayers().mockImplementationOnce(() => {
+        dispatchedAtClear.push(dispatchedTypes());
+      });
+
+      useHistory().undo();
+
+      expect(dispatchedAtClear).toEqual([['APPLY_HISTORY_REPLAY']]);
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+      // Canvas publication is the other precondition, and it is unchanged: one staged
+      // draw, the same call the successful path always made.
+      expect(rendererControl.drawCalls).toHaveLength(1);
+    });
+
+    it('keeps the in-progress preview when the replay itself throws', () => {
+      setup();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = new Error('replay refused');
+
+      useHistory().undo();
+
+      // The refusal moves neither the store nor the canvas, so it must not cost the user
+      // the stroke they are still dragging. `SET_DURABLE_STATUS` is the whole dispatch.
+      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
+      expect(rendererControl.drawCalls).toHaveLength(0);
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
+    });
+
+    it('keeps the in-progress preview when the replayed canvas cannot be published', () => {
       setup();
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
       rendererControl.result = false;
 
       useHistory().undo();
 
-      // The clear sits ahead of the replay, so an unpublished replay cannot leave a
-      // stale preview standing in for the document it failed to draw.
+      // Same reasoning one step later: the renderer was asked, and declined, so the
+      // document on screen is still the one the preview was drawn over.
       expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
-      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+      expect(rendererControl.drawCalls).toHaveLength(1);
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
     });
 
     it('does not drop the preview for a navigation it refuses', () => {

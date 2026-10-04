@@ -151,7 +151,9 @@ describe('schema', () => {
   it('creates itself on first open and is idempotent', () => {
     const board = boardFor('a');
     const version = board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-    expect(Number(version.value)).toBe(2);
+    // 3, not 2: v3 is `issue_files`, the table that makes a file an open issue
+    // names something other than free.
+    expect(Number(version.value)).toBe(3);
     board.close();
     board.open();
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issues').get().n).toBe(0);
@@ -214,8 +216,26 @@ describe('issues', () => {
     });
     expect(board.locksHeldBy('a')).toHaveLength(0);
     const events = board.events({ issue: id });
-    expect(events.map((event) => event.kind)).toEqual(['issue.create', 'lock.hold']);
+    // `file.reference`, not `lock.hold`. The old expectation was `lock.hold`
+    // with `"held":false` in the payload: an event whose KIND said a hold
+    // happened while its data said one had not, emitted once per imported item.
+    // Fifty-four of those on a board where nothing is held is a log that has to
+    // be read against its own kind names.
+    expect(events.map((event) => event.kind)).toEqual(['issue.create', 'file.reference']);
     expect(events[1].data).toContain('"held":false');
+    // And the association is queryable, which is the part that was missing.
+    expect(board.issuesForPath('src/util/history-adapter.ts').map((issue) => issue.id)).toEqual([id]);
+  });
+
+  it('indexes the files an issue names whether or not it reserves them', () => {
+    const board = boardFor('a');
+    const reserved = board.createIssue({ title: 'with a lock', files: ['src/held.ts'] });
+    const referenced = board.createIssue({ title: 'without a lock', files: ['src/named.ts'], holdFiles: false });
+    const rows = board.db.prepare('SELECT issue_id, path FROM issue_files ORDER BY path').all();
+    expect(rows).toEqual([
+      { issue_id: reserved.id, path: 'src/held.ts' },
+      { issue_id: referenced.id, path: 'src/named.ts' },
+    ]);
   });
 
   it('filings an issue about a held file reports the holder instead of taking it', () => {
@@ -227,6 +247,98 @@ describe('issues', () => {
     expect(result.conflicts.map((conflict) => conflict.holder.agent_id)).toEqual(['a']);
     expect(other.locksHeldBy('b')).toHaveLength(0);
     other.close();
+  });
+});
+
+/**
+ * The index that makes "free" mean something.
+ *
+ * Every test here fails on the previous schema, and together they are the reason
+ * the previous one existed: a board where `check` says `free` for every file
+ * nobody has locked, including files that three agents are editing right now.
+ */
+describe('a file an open issue names is not a free file', () => {
+  it('finds an issue that reserves nothing, which is what an import produces', () => {
+    const a = boardFor('a');
+    a.createIssue({
+      title: 'the rail clips the flyout',
+      files: ['src/components/SidebarLeft/SidebarLeft.tsx'],
+      holdFiles: false,
+    });
+    a.close();
+
+    // A second agent, asking the question the flag reads as: what is this file?
+    const b = boardFor('b');
+    expect(b.listIssues({ files: ['src/components/SidebarLeft/SidebarLeft.tsx'] })).toHaveLength(1);
+    // It holds no lock, so `check` still says free — and now also says who.
+    const report = b.checkPath('src/components/SidebarLeft/SidebarLeft.tsx');
+    expect(report.free).toBe(true);
+    expect(report.issues.map((issue) => issue.title)).toEqual(['the rail clips the flyout']);
+  });
+
+  it('answers the file question for somebody else, which the old query could not', () => {
+    /**
+     * `list --files` joined `file_locks` and required `f.agent_id = ?` — the
+     * caller's own id. So it could only ever report the reader's own locks, and
+     * a file that three other agents were working in came back empty, which is
+     * indistinguishable from a file nobody cares about. The answer has to be
+     * about the path, not about the reader.
+     */
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'a is in the adapter', files: ['src/adapter.ts'] });
+    a.close();
+
+    const b = boardFor('b');
+    expect(b.listIssues({ files: ['src/adapter.ts'] }).map((issue) => issue.id)).toEqual([id]);
+    expect(b.listIssues({ files: ['src/nothing.ts'] })).toHaveLength(0);
+  });
+
+  it('normalises the path, because an absolute one is what a shell pastes', () => {
+    const a = boardFor('a');
+    a.createIssue({ title: 'named', files: ['src/x.ts'], holdFiles: false });
+    a.close();
+    const b = boardFor('b');
+    expect(b.issuesForPath(join(b.identity.worktree, 'src/x.ts')).map((issue) => issue.title)).toEqual(['named']);
+  });
+
+  it('forgets a resolved issue, so check does not cry wolf on a fixed file', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'fixed', files: ['src/fixed.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.resolveIssue(id);
+    a.close();
+    const b = boardFor('b');
+    expect(b.issuesForPath('src/fixed.ts')).toHaveLength(0);
+  });
+
+  it('names the claimant, so an unclaimed reference is distinguishable from a busy one', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'being worked', files: ['src/busy.ts'], holdFiles: false });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+    const b = boardFor('b');
+    expect(b.issuesForPath('src/busy.ts').map((issue) => issue.claimed_by)).toEqual(['a']);
+  });
+
+  it('rebuilds the index from the event log, so an existing board gains it on open', () => {
+    /**
+     * A board already on disk holds its file references in the `data` of its
+     * `issue.create` events and nowhere else. The import cannot be re-run to
+     * fix that — it is idempotent by `origin` and would file nothing — so the
+     * migration has to read them back.
+     */
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'imported', files: ['src/legacy.ts'], holdFiles: false });
+    a.db.exec('DROP TABLE issue_files');
+    a.db.prepare('UPDATE meta SET value = ? WHERE key = ?').run('1', 'schema_version');
+    a.close();
+
+    const b = new Board({ dir, identity: identityFor('b'), now: () => clock }).open();
+    // A v1 board now walks BOTH steps, so it lands on 3 rather than 2: step 1
+    // moves the lock attribution and step 2 indexes the event log.
+    expect(Number(b.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value)).toBe(3);
+    expect(b.issuesForPath('src/legacy.ts').map((issue) => issue.id)).toEqual([id]);
+    b.close();
   });
 });
 
@@ -437,6 +549,45 @@ describe('file locks make one-file-one-agent real', () => {
     b.close();
   });
 
+  it('reports your own lease as heldByYou, so your lock is not indistinguishable from a free file', () => {
+    // Removing `heldByYou` from the return left this suite green. It has no
+    // in-repo consumer yet, which is exactly why nothing noticed — and it is the
+    // half of the answer that separates "the board has never heard of this file"
+    // from "this file is yours, on a lease", on the command AGENTS.md makes every
+    // agent run before every edit.
+    const a = boardFor('a');
+    a.holdFiles(['src/mine.ts']);
+    const mine = a.checkPath('src/mine.ts', { agent: 'a' });
+    expect(mine.free).toBe(true);
+    expect(mine.holders).toEqual([]);
+    expect(mine.heldByYou.map((lock) => lock.agent_id)).toEqual(['a']);
+    // And the peer's view of the same file is a holder, with no `heldByYou` of its own.
+    const theirs = boardFor('b').checkPath('src/mine.ts', { agent: 'b' });
+    expect(theirs.free).toBe(false);
+    expect(theirs.holders.map((holder) => holder.agent_id)).toEqual(['a']);
+    expect(theirs.heldByYou).toEqual([]);
+  });
+
+  it("carries issues on every one of checkPath's returns, including the ones that answer without a query", () => {
+    // db.mjs states this as a contract — a consumer reading `.issues` must never
+    // have to guard for the key being absent — and dropping `issues: []` from two
+    // of the three early returns left the suite green. The CLI's own guard
+    // (`entry.issues && entry.issues.length`) is what has been hiding it: the
+    // contract is about consumers that are NOT the CLI.
+    const board = boardFor('a');
+    board.createIssue({ title: 'named', files: ['src/named.ts'], holdFiles: false });
+
+    // The three early returns, in the shapes db.mjs gives them.
+    expect(board.checkPath('')).toMatchObject({ issues: [], nothing: true });
+    expect(board.checkPath('/elsewhere/outside.ts')).toMatchObject({ issues: [], outside: true });
+    expect(board.checkPath('../../escape.ts')).toMatchObject({ issues: [], outside: true });
+    // A path that normalises to nothing queryable is the fourth return.
+    expect(board.checkPath('src/named.ts').issues.map((issue) => issue.id).length).toBe(1);
+    // And a genuinely free file, with no issue naming it, reports the key as empty
+    // rather than absent — a `[]`, so `.length` is safe on every branch.
+    expect(board.checkPath('src/free.ts')).toMatchObject({ free: true, issues: [] });
+  });
+
   it('hides an expired lock from everything that renders it, not just from a conflict check', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'lock outlives its lease' });
@@ -453,7 +604,14 @@ describe('file locks make one-file-one-agent real', () => {
     // same breath, called the file free.
     expect(a.liveClaimOrNull(id)).not.toBeNull();
     expect(a.locksFor(id)).toHaveLength(0);
-    expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'a' })).toHaveLength(0);
+    expect(a.status().locks).toHaveLength(0);
+    expect(a.checkPath('src/ghost.ts', { agent: 'b' }).free).toBe(true);
+    // The REFERENCE survives the lease, and that is the whole point of keeping
+    // the two apart: this issue is still about `src/ghost.ts` and the board still
+    // has to be able to say so. A query that went away with the lease was
+    // answering "who is in this file right now" through a flag that reads as
+    // "what is this file".
+    expect(a.listIssues({ files: ['src/ghost.ts'] }).map((issue) => issue.id)).toEqual([id]);
     a.close();
   });
 
@@ -1169,20 +1327,78 @@ describe('the schema this script writes', () => {
   it('migrates a v1 board once, advances the version, and survives a dangling id', () => {
     buildV1Board(dir);
     const first = boardFor('a');
-    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    // Two steps, so the whole chain runs and the board lands on 3.
+    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
     // The attribution v1 DID know about is carried forward, and the dangling one
     // is named in the log rather than silently dropped or fatally re-attempted.
     expect(first.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
     const migration = first.events({ kind: 'board.migrate' });
-    expect(migration).toHaveLength(1);
+    expect(migration).toHaveLength(2);
     expect(JSON.parse(migration[0].data)).toMatchObject({ moved: 1, dropped_dangling_issue: 1 });
     first.close();
 
     // A second open must not re-migrate, or every command anyone ever runs
     // repeats the work.
     const second = boardFor('a');
-    expect(second.events({ kind: 'board.migrate' })).toHaveLength(1);
+    expect(second.events({ kind: 'board.migrate' })).toHaveLength(2);
     expect(second.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
+    second.close();
+  });
+
+  /**
+   * The v2 → v3 index reads the EVENT LOG, and the event log outlives the issues
+   * table: closing an issue appends `issue.close` rather than deleting the row,
+   * and an imported board names issues it never created. So a dangling `issue_id`
+   * is the ordinary case, not corruption.
+   *
+   * It is also the case that made this migration unusable. `issue_files.issue_id`
+   * is a real foreign key and SQLite does not apply `ON CONFLICT` to one, so the
+   * natural `INSERT OR IGNORE` raised `FOREIGN KEY constraint failed` partway
+   * through and left the board at v2 — measured on the operator's own board: 143
+   * references indexed, then the raise. A migration that half-runs and refuses is
+   * better than silent corruption, but the board still cannot be opened, which is
+   * the outcome this step exists to remove.
+   */
+  const buildV2BoardWithADanglingEvent = (target) => {
+    const seeded = boardFor('a');
+    const live = seeded.createIssue({ title: 'live', files: ['src/live.ts'], holdFiles: false });
+    // An event naming an issue that does not exist, which is what a closed or
+    // imported issue leaves behind.
+    seeded.db
+      .prepare(
+        `INSERT INTO events (ts, agent_id, kind, issue_id, data)
+         VALUES (?, 'a', 'file.reference', 'ph-404', ?)`
+      )
+      .run(new Date().toISOString(), JSON.stringify({ files: ['src/orphan.ts'], held: false }));
+    seeded.db.exec('DELETE FROM issue_files');
+    seeded.db.prepare("UPDATE meta SET value = '2' WHERE key = 'schema_version'").run();
+    seeded.close();
+    return live.id;
+  };
+
+  it('indexes the v2 event log and survives a dangling issue reference', () => {
+    const liveId = buildV2BoardWithADanglingEvent(dir);
+    // The whole point: opening must not raise.
+    const board = boardFor('a');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
+    // The issue that exists is indexed, and the one that does not is named in the
+    // log rather than silently dropped or fatally re-attempted — the same
+    // treatment `migrateFileLockAttribution` gives its own dangling ids.
+    const rows = board.db.prepare('SELECT path FROM issue_files ORDER BY path').all();
+    expect(rows.map((row) => row.path)).toEqual(['src/live.ts']);
+    expect(board.issuesForPath('src/live.ts').map((issue) => issue.id)).toEqual([liveId]);
+    const migration = board.events({ kind: 'board.migrate' });
+    expect(JSON.parse(migration.at(-1).data)).toMatchObject({ from: 2, to: 3, dropped_dangling_issue: 1 });
+    board.close();
+
+    // And a second open neither re-migrates nor re-raises.
+    const second = boardFor('a');
+    // A literal, not `migration.length`: an expectation derived from the run under
+    // test cannot fail when that run double-emits, which is the failure this is here
+    // to catch. One v2 board runs step 2 alone, so exactly one migrate event.
+    expect(migration).toHaveLength(1);
+    expect(second.events({ kind: 'board.migrate' })).toHaveLength(1);
+    expect(second.db.prepare('SELECT COUNT(*) AS n FROM issue_files').get().n).toBe(1);
     second.close();
   });
 
@@ -1261,12 +1477,54 @@ describe('the schema this script writes', () => {
     after.close();
   });
 
+  it('refuses a gap in the middle of the chain, which the pre-flight cannot see', () => {
+    /**
+     * The three refusal tests around this one all stub `migrationSteps` to `{}`,
+     * which means `requireMigrationStep(1)` throws FIRST and the loop body never
+     * executes. Deleting the entire `if (!step) throw` block from `runMigrations`
+     * left this suite green — the loop's own refusal had no test that could reach
+     * it, and it is the only thing standing between a v1 board and a stamp
+     * written over a missing step.
+     *
+     * So the stub here keeps step 1 and drops step 2: the pre-flight is satisfied,
+     * and only the loop can catch this.
+     */
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    board.migrationSteps = () => ({ 1: () => true });
+    expect(() => board.open()).toThrow(/no step for v2/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    // The version row is the thing at stake, and it must not have moved even
+    // though step 1 ran and reported success.
+    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    after.close();
+  });
+
+  it('withholds the version stamp when ANY step in the chain declines', () => {
+    /**
+     * `runMigrations` used to return one step's value, so `false` from that step
+     * withheld the stamp. The loop made it an ANY with `||`, which inverted the
+     * guarantee the method's own comment states: step 1 declining and step 2
+     * succeeding stamped the board over step 1's unmigrated data. Reproduced
+     * before the fix — a v1 board stamped v3 with an empty `issue_files`.
+     */
+    buildV1Board(dir);
+    const board = new Board({ dir, identity: identityFor('a') });
+    // Step 1 declines, step 2 succeeds: the shape an OR gets wrong and an AND
+    // does not. Nothing is thrown, so the refusal has to be the silent one.
+    board.migrationSteps = () => ({ 1: () => false, 2: () => true });
+    expect(() => board.open()).not.toThrow();
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    expect(after.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('1');
+    after.close();
+  });
+
   it('still migrates the version it does have a step for', () => {
     // The guard must not become a blanket refusal: v1 is a version this script
     // genuinely knows how to move, and refusing it would strand every v1 board.
     buildV1Board(dir);
     const board = boardFor('a');
-    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    expect(board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
     board.close();
   });
 
@@ -1288,7 +1546,7 @@ describe('the schema this script writes', () => {
     delete board.migrationSteps;
     const reopened = board.open();
     expect(reopened.db).not.toBeNull();
-    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    expect(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('3');
     reopened.close();
   });
 
@@ -1484,6 +1742,37 @@ describe('the command line', () => {
     const shown = await cli(['show', id]);
     expect(shown.out).toContain('claimed by a');
     expect(shown.out).toContain('hasUnsavedChanges');
+  });
+
+  it('prints an issue body in `show`, so a long finding has a reader', async () => {
+    /**
+     * The body is the only place on this board that a document of any length can
+     * live: `addEvent` refuses a log line over the limit rather than truncating
+     * it, which is what makes "post the issue id" the instruction an agent gets
+     * for a finding too long for a message. That instruction is only complete if
+     * the reader does not need a second command and a JSON path to see it, and
+     * `show`'s text mode printed metadata and the thread and nothing else — the
+     * body was in `--json` alone.
+     */
+    const body = ['# 4,392 citations migrated', '', '- HANDOFF.md §82-§115: 442 -> 0', '- TOOLS.md: 547 -> 0'].join(
+      '\n'
+    );
+    const filed = JSON.parse((await cli(['new', 'a finding too long for a message', '--body', body, '--json'])).out);
+    await cli(['comment', filed.id, 'a thread line']);
+    const shown = await cli(['show', filed.id]);
+    expect(shown.code).toBe(0);
+    expect(shown.out).toContain('4,392 citations migrated');
+    expect(shown.out).toContain('HANDOFF.md §82-§115: 442 -> 0');
+    // After the metadata, before the thread, so the document is not buried under
+    // the log lines a reader came for.
+    expect(shown.out.indexOf('filed by')).toBeLessThan(shown.out.indexOf('4,392 citations migrated'));
+    expect(shown.out.indexOf('4,392 citations migrated')).toBeLessThan(shown.out.indexOf('a thread line'));
+    expect(JSON.parse((await cli(['show', filed.id, '--json'])).out).issue.body).toBe(body);
+  });
+
+  it('prints no body section for an issue filed without one', async () => {
+    const filed = JSON.parse((await cli(['new', 'no body at all', '--json'])).out);
+    expect((await cli(['show', filed.id])).out).not.toContain('body:');
   });
 
   it('exits 3 when the issue is already claimed, and 4 when the file is held', async () => {

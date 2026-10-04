@@ -9,12 +9,13 @@ import { containFit, DEFAULT_DOCUMENT_SIZE, getWorkspaceCanvas } from '../helper
 import { clickToolButton } from '../helpers/toolbar-helpers';
 import {
   assertExportGeometry,
+  browserVerifiedFormats,
   exportAndVerify,
-  exportFormats,
   exportIcoAndVerify,
   fillSaveDialog,
   INTEGRATION_TEST_TIMEOUT_MS,
   mimeType,
+  prepareExportDownloadDirectory,
   openSaveDialog,
   setupExportTest,
   setupIcoTest,
@@ -22,7 +23,7 @@ import {
   type ExportFormat,
 } from './helpers';
 
-const formats = exportFormats.filter((f) => f.comparePixels);
+const formats = browserVerifiedFormats;
 
 /**
  * The shell's `lg` breakpoint, 1024px. `src/index.scss:38` pins it in px deliberately:
@@ -42,7 +43,7 @@ const LG_BREAKPOINT_PX = 1024;
 const LAYOUT_WIDTHS = [900, 1023, 1024, 1280, 1600] as const;
 
 /** PNG, the lossless format with no third-party encoder in the path. See the test's docblock. */
-const layoutInvarianceFormat: ExportFormat = { label: 'PNG', extension: '.png', comparePixels: false };
+const layoutInvarianceFormat: ExportFormat = { label: 'PNG', extension: '.png', verification: 'browser-pixels' };
 
 /** Sub-directory of the committed snapshot directory that holds the baseline PNGs. */
 const BASELINE_DIR = 'export-baselines';
@@ -521,10 +522,9 @@ test.describe('Export visual regression', () => {
     const sourceDataUrl = await setupIcoTest(page);
     // The ICO flow never uses the workspace export fixture, so prepare its download
     // directory the same way `setupExportTest` does.
-    const downloadDirectory = path.join(testInfo.outputDir, 'exports');
-    await mkdir(downloadDirectory, { recursive: true });
+    const downloadDirectory = await prepareExportDownloadDirectory(testInfo);
 
-    await exportIcoAndVerify(page, sourceDataUrl, downloadDirectory);
+    await exportIcoAndVerify(page, sourceDataUrl, downloadDirectory, testInfo);
   });
 });
 
