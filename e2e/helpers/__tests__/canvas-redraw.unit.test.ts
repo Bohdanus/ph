@@ -80,20 +80,6 @@ function always(result: boolean): Mock<CanvasPixelPredicate> {
   return vi.fn<CanvasPixelPredicate>().mockResolvedValue(result);
 }
 
-/**
- * The `Error` a rejected wait produced, typed once rather than `void | Error` at every site
- * that needs to read the message. A wait that resolves is a failure of this helper, not a
- * silent pass, so a test cannot pass by having stopped waiting for the wrong reason.
- */
-async function rejectionOf(wait: Promise<void>): Promise<Error> {
-  try {
-    await wait;
-  } catch (thrown) {
-    return thrown as Error;
-  }
-  throw new Error('expected the wait to reject, and it resolved');
-}
-
 /** Answers `answers` in order, so the attempt a predicate stops on is exact. */
 function sequence(...answers: boolean[]): Mock<CanvasPixelPredicate> {
   const predicate = vi.fn<CanvasPixelPredicate>();
@@ -173,64 +159,6 @@ describe('waitForCanvasPixels', () => {
     await expect(
       waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(false), { timeoutMs: 300, pollIntervalMs: 100 })
     ).rejects.toThrow('Canvas did not render the expected pixels within 300ms');
-  });
-
-  it('reports how many polls it actually made, so a timeout says how far it got', async () => {
-    const harness = createPollingPage();
-    const predicate = always(false);
-
-    const failure = await rejectionOf(
-      waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, {
-        timeoutMs: 600,
-        pollIntervalMs: 100,
-        description: 'red pixels',
-      })
-    );
-
-    // The count in the message is read back out of it and compared against what the harness
-    // recorded, rather than against a literal: this is an assertion that the two agree, so a
-    // count derived from the deadline would have to be wrong here to pass.
-    const made = harness.screenshot.mock.calls.length;
-    expect(made).toBe(7);
-    expect(predicate.mock.calls.length).toBe(made);
-    expect(failure.message).toBe(`Canvas did not render red pixels within 600ms after ${made} polls`);
-    expect(harness.waitForTimeout).toHaveBeenCalledTimes(made - 1);
-  });
-
-  it('reports a different poll count for a different budget, so the number is measured rather than assumed', async () => {
-    const short = await rejectionOf(
-      waitForCanvasPixels(createPollingPage().page, STANDALONE_CLIP, always(false), {
-        timeoutMs: 250,
-        pollIntervalMs: 100,
-      })
-    );
-    const long = await rejectionOf(
-      waitForCanvasPixels(createPollingPage().page, STANDALONE_CLIP, always(false), {
-        timeoutMs: 1_000,
-        pollIntervalMs: 250,
-      })
-    );
-
-    // 250ms of budget at a 100ms interval is FOUR reads, not three: the loop reads first and
-    // consults the deadline afterwards, so the last read happens after the budget is spent.
-    // The number below is what the loop does, and the two budgets are chosen so that a count
-    // derived from the deadline rather than from the reads cannot produce both of them.
-    expect(short.message).toBe('Canvas did not render the expected pixels within 250ms after 4 polls');
-    expect(long.message).toBe('Canvas did not render the expected pixels within 1000ms after 5 polls');
-  });
-
-  it('says `poll` and not `polls` for the one attempt a zero budget buys', async () => {
-    // The loop reads before it consults the deadline, so a zero timeout is one attempt and
-    // not none. `waitForCanvasRedraw` below is where a real spec meets that case; asserting
-    // the singular here keeps the plural from being the only spelling that was ever checked.
-    const harness = createPollingPage();
-
-    const failure = await rejectionOf(
-      waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(false), { timeoutMs: 0 })
-    );
-
-    expect(harness.screenshot).toHaveBeenCalledTimes(1);
-    expect(failure.message).toBe('Canvas did not render the expected pixels within 0ms after 1 poll');
   });
 
   it('defaults to the shared 10000ms timeout and 100ms poll interval', async () => {
@@ -860,20 +788,6 @@ describe('waitForCanvasRedraw', () => {
 
     expect(harness.screenshot).toHaveBeenCalledTimes(5);
     expect(harness.waitForTimeout.mock.calls).toEqual([[50], [50], [50], [50]]);
-  });
-
-  it('carries the poll count through to the dark-pixel message it builds itself', async () => {
-    // `waitForCanvasRedraw` supplies its own `description` and delegates the loop, so this is
-    // the spelling a real spec's report gets. The count is the same number the dark-pixel
-    // predicate's own call count says, which is what makes it a measurement.
-    const harness = createPollingPage(await createTestImage(WHITE, 1, 1));
-
-    const failure = await rejectionOf(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 200, pollIntervalMs: 100 }));
-
-    expect(failure.message).toBe(
-      `Canvas did not render dark pixels within 200ms after ${harness.screenshot.mock.calls.length} polls`
-    );
-    expect(harness.screenshot).toHaveBeenCalledTimes(3);
   });
 
   it('keeps polling for a light-gray stroke that never reads as dark', async () => {

@@ -964,20 +964,14 @@ export type CanvasPixelPredicate = (screenshot: Buffer) => Promise<boolean>;
 export interface WaitForCanvasPixelsOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
-  /**
-   * Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels
-   * within 10000ms after 101 polls". The description is the variable part of the leading
-   * sentence; the poll count after it is this function's own.
-   */
+  /** Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels within 10000ms". */
   description?: string;
 }
 
 /**
  * Polls a clipped canvas screenshot until `predicate` accepts it, replacing fixed
  * post-draw timeouts: a one-shot screenshot can land before the repaint and make a
- * pixel assertion flaky. Throws with a descriptive message if it never does, and that
- * message ends with the number of polls it took — without which a reader cannot tell a
- * predicate that was never going to be satisfied from one whose region was wrong.
+ * pixel assertion flaky. Throws with a descriptive message if it never does.
  *
  * `clip` is `[PAGE]` and is used exactly as given, for all 10 seconds — see the comment inside
  * the loop, which is the difference between what this function re-reads (the window) and what
@@ -996,17 +990,6 @@ export async function waitForCanvasPixels(
   const pollIntervalMs = options.pollIntervalMs ?? CANVAS_REDRAW_POLL_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
 
-  // How many captures this call took, counted before each read rather than derived from
-  // the deadline. It is the one number the loop has that the deadline does not: a wait can
-  // exhaust its budget in one poll or in a hundred, and the two are different failures —
-  // a predicate satisfied on the first read says the paint landed immediately, while a
-  // hundred failures say the region never carried the pixels at all. Without the count the
-  // timeout message named the budget and the description and nothing else, which is why
-  // `TEST-FLAKES.md` records this loop as "a soft assertion. Nothing in it records which one
-  // gave." It is counted at the read, not at the top of the loop, so it equals the number
-  // of screenshots actually taken.
-  let attempts = 0;
-
   for (;;) {
     // What is re-derived every poll is the WINDOW, not the box. `clip` is a by-value
     // argument, so the loop reads the same PAGE rect on every attempt for the whole timeout —
@@ -1023,22 +1006,12 @@ export async function waitForCanvasPixels(
     // in view, which is every poll in the current layout.
     const onScreen = await onScreenClip(page, clip);
     try {
-      attempts += 1;
       if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
     } finally {
       await onScreen.restore();
     }
     if (Date.now() >= deadline) {
-      // The count is APPENDED, never inserted. Every caller and every test that matches this
-      // message matches its leading sentence — `history-helpers.ts` builds its `description`
-      // from the band states and names the same shape — so the sentence stays intact and
-      // findable, and the count rides after it. It is in the message rather than beside it
-      // because the message is what Playwright prints into the report; a field on the Error
-      // would reach a test that caught the error and nobody reading the failure.
-      throw new Error(
-        `Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms ` +
-          `after ${attempts} poll${attempts === 1 ? '' : 's'}`
-      );
+      throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
     }
     await page.waitForTimeout(pollIntervalMs);
   }

@@ -26,7 +26,7 @@ The corollary is the one that bites: **`store.history` is the only thing that
 rendering, export and undo read, and it stores args, never pixels.** Undo re-runs
 the tool processors. It is not an inverse operation and it is not incremental.
 
-Evidence, all four current:
+Evidence, all three current:
 
 - `src/contexts/StoreContext.tsx` — the doc comment on `StoreData`'s
   `durableDocument` field — _"Diagnostic shadow only; legacy history/runtime
@@ -37,10 +37,6 @@ Evidence, all four current:
 - `src/contexts/useHistory.ts` — inside `resetHistoryTo()` — _"Navigation
   therefore replays the legacy runtime representation and lets StoreContext
   rebuild the sidecar."_
-- `src/contexts/replay-coordinator.ts` — the `ReplayCoordinator` class JSDoc —
-  _"No production path mounts a coordinator… and this module must not be imported
-  by a navigation or rendering path while the legacy runtime stays
-  authoritative."_
 
 `src/contexts/materialization.ts` has one production importer,
 `src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
@@ -54,7 +50,6 @@ guard refuses any logical movement. `publishDurableNavigationPresentation()` als
 returns early while any snapshot in the replay carries a `'legacy-tool'` source,
 so the durable presentation is skipped outright for a document still holding a
 legacy tool snapshot.
-`src/contexts/replay-coordinator.ts` still has no importer outside `__tests__`.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current
@@ -75,15 +70,19 @@ trusting a figure stored here.
   `StoreAction = Action | InternalAction`, with `PublicAction` an alias of
   `Action`; `StoreDispatch` dispatches `PublicAction`, so neither internal type is
   consumer-dispatchable.
-- **Every `StoreAction` kind has a reducer arm, and the switch says so at compile
-  time.** The `default` arm assigns the action to a `never`, so a kind added to
-  `Action` or `InternalAction` without an arm fails `npm run tsc` instead of
-  becoming a silent no-op. Two arms are deliberate no-ops that return `state`:
-  `ADOPT_LAYER_BITMAPS`, which the dispatcher registers with the presentation
-  scope and never forwards, and `SET_ORIGINAL_IMAGE`, which nothing dispatches.
-  So the reducer's **31** arms cover `StoreAction`'s 31 kinds, and the `Action`
-  29 is the public subset. `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
-  the arm count.
+- **The reducer has 31 arms, and every one of the `StoreAction` 31 is named.** The
+  census is exhaustive over the union rather than over `Action`, so two arms exist
+  only to be written down: `ADOPT_LAYER_BITMAPS`, which the dispatcher registers
+  and returns without forwarding in its own `dispatchAction()` branch and which the
+  reducer therefore never receives, and `SET_ORIGINAL_IMAGE`, a public action with
+  no production writer and no `StoreData` field to write. Both return the state
+  unchanged, which is what the reducer's `default: return state` gave them. The
+  `default` is now a `never` guard, so an action type added without an arm is a
+  typecheck error instead of a dispatch that quietly does nothing. So the 31 arms
+  cover `StoreAction`'s 31 kinds and the `Action` **29** is the public subset.
+  `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
+  the arm count, and `StoreContext.boundary-gates.test.ts` pins the set against the
+  union.
 - **The dispatcher is not the reducer.** `dispatchAction()` intercepts seven
   types, named in `INTERCEPTED_STORE_ACTION_TYPES`, and the rest take an explicit
   default at the top of the chain: one `reducer()` call outside React, so a
@@ -319,7 +318,7 @@ as a sequence against the reorder being planned. `publishDurableNavigationPresen
 adds a third durable read, through `replayDurableAtCursor()`. `materializeDocument` has one
 production caller, `composeDurableDocument()` in `durable-compositor.ts`;
 `materializeLayer` is reached only from inside `materializeDocument()` and has no
-importer of its own; `ReplayCoordinator` has none.
+importer of its own.
 
 ## The tool registry
 
