@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44, 48-53, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154, 161 — deleted
+### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 48-54, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154, 161 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -131,47 +131,49 @@ use. What remains here is one real defect the slice found, and the conversion-on
 
 ### The remaining conversion-only writers
 
-Reorder and `remove-layer` are no longer among them. These production sites still pass no
-`durableEntry`, so each one runs `buildDurableDocument` over the whole timeline. Passing a
-`durableEntry` is necessary but not sufficient: the store publishes only on
-`outcome === 'published'` and otherwise reconverts.
+**Re-derive this inventory; it shrank hard.** The store, not the writer, derives most source-backed
+plans now. `sourceBackedEntryContext()` (`StoreContext.tsx`) admits any `NEW_LAYER_ACTION` or
+`MERGE_ACTION`, and the `COMMIT_DOCUMENT_EDIT` branch then plans it with
+`deriveCreateLayerEntry()` or `deriveMergeDocumentEntry()` (`history-adapter.ts`); a
+`REPLACE_LAYER_SOURCE_ACTION` goes through `deriveReplaceLayerSourceEntry()`. So a writer that passes
+no `durableEntry` is no longer evidence of a reconversion — `updateLayerByTool`, `commitDirtyTool`,
+`mergeAllLayers`, `appendSelectionClear` and `commitSelection` all still pass none, and all five are
+planned by the store. Passing a `durableEntry` remains necessary but not sufficient in the other
+direction: the store publishes only on `outcome === 'published'` and otherwise reconverts.
 
-| Site                                              | Action             | Why                                           |
-| ------------------------------------------------- | ------------------ | --------------------------------------------- |
-| `createBlankLayer` (`useLayer.ts`)                | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `createLayerFromBitmap` (`useLayer.ts`)           | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `createLayerFromTool` (`useLayer.ts`)             | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `updateLayerByTool` (`useLayer.ts`)               | `TOOL_ACTION`      | asset-neutral; not blocked by §54             |
-| `commitDirtyTool` (`useLayer.ts`)                 | `TOOL_ACTION`      | asset-neutral; one commit per pending edit    |
-| `mergeAllLayers` (`useLayer.ts`)                  | `MERGE_ACTION`     | asset-bearing, retires layers                 |
-| `appendSelectionClear` (`useSelectionHistory.ts`) | `SELECTION_ACTION` | `catch` fallback when planning throws         |
-| `commitSelection` (`useSelectionHistory.ts`)      | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+**One exclusion is real, and it disagrees with the converter.** `sourceBackedEntryContext()` returns
+`null` for a `kind: 'tool'` layer source whose `args.toolName` is outside
+`text, shape, rectangle, ellipse, triangle, polygon, line`, on the stated ground that raster creator
+tools "have no durable source representation yet". That ground is no longer true:
+`durableSourceKindForTool()` (`history-adapter.ts`) types `draw`, `brush` and `pencil` as `'paint'`,
+`DurableLayerSource` has a `paint` arm, and `sourceBitmap()` (`materialization.ts`) materializes one
+through its generic creator arm. So the last conversion-only writer is
+`createLayerFromTool` (`useLayer.ts`) for a **paint** tool — `createLayerFromTool` for a text or
+shape tool, `createLayerFromBitmap`, `convertBedrockLayer` and a `kind: 'image'` source are all
+planned and published by the store today, raster asset included.
 
-The three `NEW_LAYER_ACTION` rows are the creators that mint the history item, not one shared
-dispatch: `createBlankLayer`, `createLayerFromBitmap` and `createLayerFromTool` are the only
-`layerSource:` writers in `useLayer.ts`, and `_addLayer` is the sink they all dispatch through.
+Two writers still have no `durableEntry` concept at all and reconvert unconditionally:
+`resetHistoryTo` in `useHistory.ts` (`APPLY_HISTORY_REPLAY`) and `setImageFromUpload` in `useApp.ts`
+(`REPLACE_DOCUMENT`). `createBlankLayer` is only that on its `replaceDocument` path, because
+`_addLayer` then dispatches `REPLACE_DOCUMENT`; on its ordinary path the store plans it. The
+`addHistoryEntry` row this table used to carry is **deleted**: that symbol no longer exists anywhere
+in `src/`, and "see item 14" pointed at a reader that no longer had a referent.
 
-Three sites have no `durableEntry` concept and reconvert unconditionally: `resetHistoryTo` in
-`useHistory.ts` (`APPLY_HISTORY_REPLAY`), `createBlankLayer` in `useLayer.ts` and
-`setImageFromUpload` in `useApp.ts` (both
-`REPLACE_DOCUMENT`). The `addHistoryEntry` row this table used to carry is
-**deleted**: that symbol no longer exists anywhere in `src/`, and "see item 14" pointed at a
-reader that no longer had a referent.
-
-**Fix, in order.** Only `create-layer` and `merge-document` are blocked on §54's registry
-transaction, and that gap is what keeps those four writers here. `remove-layer` and the
-`TOOL_ACTION` operations are asset-neutral: a `remove-layer` carries only a `layerId`
+**Fix, in order.** Make the planner's exclusion list and `durableSourceKindForTool()` one rule rather
+than two, so a tool the converter will type is a tool the planner will admit. Every other append
+family is already published with the registry transaction around it, and `remove-layer` and the
+`TOOL_ACTION` operations are asset-neutral regardless: a `remove-layer` carries only a `layerId`
 (the `'remove-layer'` case in `history-model.ts`), and a `TOOL_ACTION` carrying no layer source is
 derived by `operationForTool` (`history-adapter.ts`), whose every arm returns an operation with no
 raster snapshot — `apply-raster-processor`, `apply-affine-transform`, `apply-filter` and
 `reposition-layer` all live in that same function — reached from the `TOOL_ACTION` caller arm in
-`legacyHistoryToDurable`. `collectDurableAssetIds` scans the whole replayable history but collects
+`legacyHistoryToDurable`. `collectDurableAssetIds` walks the whole replayable history but collects
 only raster-bearing kinds, so a removal or an in-place pixel edit changes no reachable asset and
-needs neither registration nor retirement. They remain here only until a `durableEntry` is planned
-for them; §54 is untouched and still applies to the first actual asset-bearing append writer.
+needs neither registration nor retirement.
 
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/history-append.ts`,
-`src/contexts/StoreContext.tsx`, `src/contexts/useLayer.ts`, `src/components/SidebarRight/LayersTab.tsx`
+**Files.** `src/contexts/StoreContext.tsx` — `sourceBackedEntryContext()`,
+`src/contexts/history-adapter.ts` — `durableSourceKindForTool()`, `deriveCreateLayerEntry()`,
+`deriveMergeDocumentEntry()`; `src/contexts/useLayer.ts` — `createLayerFromTool()`
 
 ### How the reorder publication is proved, and what it costs
 
@@ -273,139 +275,6 @@ exists to avoid choosing between. Two tripwires, because either can fail silentl
   refusal stops containing the defect: the shadow and the document keep disagreeing, and the next
   reorder publishes a third answer. `StoreContext.reorder.test.tsx` pins that two-append sequence
   and is the test that would catch it; it passes either way if only the single append is exercised.
-
----
-
-## 16. An invalid document frame: conversion reports the loss, the append boundary does not
-
-> **Conversion half fixed and verified. The append-boundary half below is untouched by that change
-> and is the remaining work.** Not deleted.
-
-**Done, and how it was verified.** `legacyHistoryToDurable` now pushes a `warning` diagnostic
-naming the entry when a `SET_DOCUMENT_FRAME_ACTION` entry derives no durable operation
-(the `SET_DOCUMENT_FRAME` arm of `legacyHistoryToDurable` in `history-adapter.ts`), so the
-conversion no longer reports `status: 'current'` while
-silently omitting a document-frame change. The severity is the decision, and it is not a detail:
-`convertLegacyHistorySafely` returns `unavailable` and withholds the **whole** shadow on the first
-`error` diagnostic (`history-adapter.ts`), so an error here would punish every unrelated entry
-for a defect the legacy timeline tolerates. The archived branch's copy used `error`; that is one of
-the two reasons it could not simply be ported. Verified by
-the `it('drops a document frame action that carries no next frame and reports the loss')` case in
-`history-adapter.branches.test.ts` — the diagnostic, its severity and its message body — plus
-that file's coverage of every falsifying branch of `isValidDocumentFrame` and three valid frames
-that must still convert silently. It replaced an assertion that pinned the SILENCE
-(`expect(diagnostics).toEqual([])`), which was a tripwire for this defect rather than a contract.
-
-**Still open: the append path records nothing.** The boundary's own refusal is real and typed —
-`unavailable` (`history-append.ts`) returns a `warning`-severity diagnostic — and
-`decideDurableAppend` never re-checks the plan it is handed. Two
-things then lose it:
-
-- A refused plan is `null`, and `if (!planned)` is the **first** precondition
-  (inside `decideDurableAppend`), so a null planned entry yields `outcome: 'preconditions'` —
-  never `'mismatch'`. `durableAppendDiagnostic` (`history-append.ts`) and its `durable-append-mismatch`
-  code are produced only on the `mismatch` branch, in `StoreContext.tsx`'s `COMMIT_DOCUMENT_EDIT`
-  dispatch branch and its `REORDER_LAYERS` dispatch branch for a reorder.
-- The diagnostic the boundary **did** compute never leaves the boundary. All four production call
-  sites destructure only two of the three result fields — `updateLayerByTool` and `removeLayer`
-  (`useLayer.ts`), `appendSelectionClear` and `commitSelection` (`useSelectionHistory.ts`) each read
-  `entry` and `durableEntry` — and `diagnostics` (on `AppendBoundaryResult` in `history-append.ts`)
-  has no slot on the `CommitDocumentEditIntentPayload` type in
-  `StoreContext.tsx`, so it is discarded at the call site.
-
-**User-visible failure: none today.** The only writer of this action, `applyDocumentCrop`, rejects
-`width/height <= 0` and any frame that fails `isValidDocumentFrame`
-(both inside `applyDocumentCrop` in `useLayer.ts`) before it plans, and `setImageFromUpload` in
-`useApp.ts` creates a single `OPEN_DOCUMENT_ACTION`. This is a latent observability gap, not a live
-bug: the day a second `SET_DOCUMENT_FRAME_ACTION` writer appears, its refusals are as silent as
-these were. The far end stays unvalidated too — the `'set-document-frame'` case in
-`durable-replay.ts` applies `next` with no check — so the shadow can still _hold_ an invalid frame;
-what changed is that conversion no longer produces one silently.
-
-**Fix.** Two independent halves. Report the boundary's own `diagnostics`: either dispatch them on
-`COMMIT_DOCUMENT_EDIT`, or fold them into `durableDiagnostics` at the point the store already
-handles `mismatch`, so a refused plan is not indistinguishable from a clean one. And decide
-deliberately whether a null planned entry on a translated action should be `preconditions` or
-`mismatch` — today `preconditions` is **right**, because the store falls back to a full conversion
-that already handles the case, and grading it a mismatch would report a writer defect for a refusal
-the legacy timeline also makes.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/useLayer.ts`,
-`src/contexts/useSelectionHistory.ts`, `src/contexts/StoreContext.tsx`
-
----
-
-## 17. Duplicate durable entry id: conversion guards it, the append boundary does not
-
-> **Conversion half fixed and verified. `decideDurableAppend` still has no uniqueness check of its
-> own, and that is the remaining work.** Not deleted.
-
-**Done, and how it was verified.** Conversion now withholds a repeated id from publication and says
-so. `publishedEntryIds` (`history-adapter.ts`) is consulted at the publication guard in
-`legacyHistoryToDurable` and a skip pushes a `warning` naming the id in that same function.
-`warning` is the only severity the
-conversion can afford, for §16's reason: `convertLegacyHistorySafely` withholds the whole shadow on
-the first `error`, and the archived branch's copy used `error`. Only ids
-that actually reached `entries` consume the id, again in `legacyHistoryToDurable`, so an entry that
-derived nothing does
-not shadow a later one. Verified by the `durable entry id uniqueness` block in
-`history-adapter.diagnostics.test.ts`: the conversion stays `current`, the entries after a
-repeat still convert, the id-keyed lookup still resolves exactly one entry, there
-is one durable cursor per legacy entry, and the frame and layer folds stay advanced.
-
-**Still open: the boundary has no uniqueness check, and the one diagnostic it can produce names the
-wrong list.** `decideDurableAppend` never re-checks uniqueness. `validatePlannedDurableEntry`
-(`history-append.ts`) compares `planned.id` to `entry.id` inside that same function —
-planned-versus-**legacy**
-agreement, not timeline uniqueness — and its `next.entries[next.entries.length - 1] !== entry`
-check is a reference check on the same object. `freezeDurableDocument` only clones and freezes, and
-`updateHistoryTimeline` (`history-timeline.ts`) appends unconditionally. So a duplicate id on the
-published path yields
-a durable document with two same-id entries, and since the id is a lookup key
-(`toggleDurableEntry` in `history-adapter.ts`, and `updateHistoryTimeline`'s `toggle-disabled`
-command in `history-timeline.ts`) a later toggle hits the wrong entry. The
-invariant rests entirely on a diagnostic that is computed and discarded.
-
-`validateTimeline` (`history-append.ts`) does check uniqueness, at the top of that function, and
-returns an `error`-severity diagnostic — but it reads the **LEGACY** timeline only, so it cannot
-see the durable base, which is the only list the durable entries live in. It also runs after
-`translate`, inside `planHistoryAppend`, so the diagnostic coexists with a non-null `durableEntry`
-by construction.
-
-**Reachability, stated accurately.** This section previously said `planHistoryAppend` is called with
-no `id`. That is **wrong**, and would not survive a check: **two of the four production call sites
-do pass one.** `appendSelectionClear` in `useSelectionHistory.ts` passes the `uuidv4()` it mints,
-and `commitSelection` the one it mints; the other two — `updateLayerByTool` and `removeLayer` in
-`useLayer.ts` — pass none, so `createHistoryItem` (`history-utils.ts`) mints one. The
-conclusion is unchanged and the reason is narrower: **all four ids are a fresh `uuidv4()`**, so a
-collision requires a uuid that repeats. The base's own ids are those same minted ids, carried in by
-the rebuild, which is what makes `validateTimeline`'s check fire at all. Every production
-`REPLACE_DOCUMENT` supplies a non-empty history.
-
-The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts`) requires
-`prior.cursor === prior.entries.length - 1`, so any out-of-range cursor already falls back first.
-
-**Fix.** Return `durableEntry: null` when `validateTimeline` produces an `error`-severity
-diagnostic, so the store takes the reconversion fallback. **This breaks two tests, not one.** The
-plan-level case at
-`it('reports a duplicate entry id without changing the entry')` in `history-append.test.ts` asserts
-`result.durableEntry` is
-non-null on exactly
-this collision, under the comment "reporting never blocks the append" — that is the assertion the
-fix deletes. And the boundary-level case at
-`it('publishes an entry id the durable document already holds, and the shadow keeps both')` in
-`history-append.test.ts` pins the same blindness
-from the other side: it asserts `decision.outcome === 'published'` for a base whose history already
-holds the id, and its own last block pins the coexistence (`expect(collidingPlan.durableEntry)
-.not.toBeNull()`). Both must be re-pointed in the same change as the fix; neither may be relaxed.
-Note the two are near-duplicates on purpose: the first is a statement about the plan, the second is
-the alarm the fix has to trip.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
-
----
-
----
 
 ---
 
@@ -692,71 +561,54 @@ defaults)
 
 ---
 
-## 54. The durable append fast path does not reconcile asset ownership
-
-**Problem.** `decideDurableAppend` publishes a cloned durable document directly, while full
-conversion wraps asset-bearing operations in `beginDocumentAssetTransaction` / commit / reconcile
-(all three in `history-adapter.ts` — `convertLegacyHistorySafely()`). Every append family published
-today is asset-neutral —
-`set-document-frame`, `set-selection`, `reorder-layers`, `set-layer-properties` and `remove-layer`
-(their five arms in `history-append.ts` — `validatePlannedDurableEntry()`, whose terminal
-`no durable translation is published for "…" yet` refusal is what makes the set exhaustive), none of
-which
-`collectDurableAssetIds` scans (`history-model.ts` — `collectDurableAssetIds()`) — so the fast path
-is safe so far. The
-next asset-bearing operation could publish a document without registering or retiring its raster
-ownership.
-
-**Fix.** Extend the single-writer publication path with the asset-registry transaction before
-publishing the first durable operation that introduces or replaces an asset. Keep the property-only
-path free of unnecessary asset work.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/StoreContext.tsx`,
-`src/contexts/history-adapter.ts`
-
 ---
 
 ## 55. The `EXCLUDED-touched-by-prior-campaigns` manifest is not a safe boundary
 
 **Problem.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` is
-what a fixer reads to learn which files a prior campaign owns, and item 39 in this file is written
-entirely in terms of it. It lists 136 files (`wc -l`). Reconstructing the true set from the session store
-instead — every `apply_patch` / `edit` / `write` target in a session whose `model.providerID` is
-`openai`, which is 60 GPT sessions — returns **72 `src/` files the manifest does not list**, and
-several of them are load-bearing for entries above:
+what a fixer reads to learn which files a prior campaign owns, and entries in this file that name it
+are written entirely in terms of it. It lists 136 files (`wc -l`). Reconstructing the true set from
+the session store instead — every `apply_patch` / `edit` / `write` target in a session whose
+`model.providerID` is `openai`, which was 60 GPT sessions when it was measured — returns
+**72 `src/` files the manifest does not list**, and several of them are load-bearing for entries here:
 
-| not in the manifest                                                                                | which entry depends on it |
-| -------------------------------------------------------------------------------------------------- | ------------------------- |
-| `src/contexts/history-model.ts`                                                                    | 10, 11, 12                |
-| `src/contexts/durable-replay.ts`, `replay-coordinator.ts`, `replay-checkpoints.ts`                 | 1, 12                     |
-| `src/contexts/psd-utils.ts`                                                                        | 7                         |
-| `src/contexts/useSelectionHistory.ts`                                                              | 15, 33                    |
-| `src/contexts/selection-baseline.ts`                                                               | 31                        |
-| `src/components/HistoryControls/HistoryControls.tsx`, `AppKeyboardShortcuts.tsx`, `UndoButton.tsx` | 37                        |
-| `src/components/SidebarLeft/toolIcons.tsx`                                                         | 46                        |
-| `src/components/SaveDialog/__tests__/SaveDialog.test.tsx`                                          | 44                        |
-| `src/hooks/useAnts.ts`, `src/util/canvas.ts`                                                       | 39                        |
-| `src/components/Main/CropToolArea.tsx`, `TextToolArea.tsx`                                         | 22                        |
+Re-derive the table from the entries this file still carries rather than reading it off this entry —
+the entries it was built from have been deleted. Comparing every live entry's `Files` line against
+the manifest returns **64** `src/` files the manifest does not list, and the omissions are exactly
+where the migration's own boundary lives:
 
-So an entry whose `Files` line names only unlisted files reads as unblocked when it is not: items 7,
-10, 12, 22, 31, 37, 39, 44 and 46 all do. Item 39's own text is the tell — it says `src/tools/draw.ts`
-is "**not** in the EXCLUDED list" and therefore needs coordination; it is not in the list because
-the list is incomplete, not because the file is free.
+| not in the manifest                                                                | live entries whose `Files` line names it |
+| ---------------------------------------------------------------------------------- | ---------------------------------------- |
+| `src/contexts/history-model.ts`                                                    | 10, 56, 172, 197                         |
+| `src/contexts/replay-coordinator.ts`                                               | 10, 199                                  |
+| `src/contexts/presentation-evaluator.ts`                                           | 1, 159, 163                              |
+| `src/contexts/durable-replay.ts`                                                   | 94                                       |
+| `src/contexts/psd-utils.ts`                                                        | 45, 56, 147, 166, 169, 172               |
+| `src/contexts/layer-types.ts`                                                      | 56, 172                                  |
+| `src/components/SidebarLeft/toolIcons.tsx`                                         | 116                                      |
+| `src/tools/fill.ts`                                                                | 47, 122                                  |
+| `src/tools/quickSelection.ts`, `rectangularSelection.ts`, `ellipticalSelection.ts` | 59, 115                                  |
+| `src/tools/draw.ts`                                                                | 163, 164                                 |
 
-**A second, live ownership axis the manifest has no notion of: 40 branches are unmerged.**
-`git branch --no-merged main` returns 41, and `merge/ps-tool-expansion` alone diffs 121 files against
-`main` — including `src/tools/settings.ts`, `src/contexts/layer-utils.ts`,
-`src/components/Main/Main.tsx`, `toolbar-mapping.ts` and every `SidebarLeft` suite. `src/util/floodFill.ts`
-is renamed to `src/util/flood-fill.ts` there, so item 49's files are mid-migration. The GPT-owned
-unmerged branches are `history-presentation-lifecycle`, `history-selection-baseline-parity`,
-`history-append-readiness`, `history-selection-append-support`,
-`history-selection-creation-writer`, and `fix/unit-tests` (the branch that closes items 16-19).
+So an entry whose `Files` line names only unlisted files reads as unblocked when it is not. The
+sharpest case is the one this entry originally turned on: `src/tools/draw.ts` is absent from the
+manifest, and its absence is incompleteness, not permission — the same reasoning applies to every
+row above.
+
+**A second, live ownership axis the manifest has no notion of: the unmerged branches.**
+`git branch --no-merged main` is the command, and every branch it names is a file set the manifest
+cannot see. Derive the count when you need it rather than reading a number off this entry: it moves
+every time a session lands work, and the branches named here when this entry was written are gone
+from the repository. An entry can therefore read as unblocked on BOTH axes at once, which is the
+failure the manifest's completeness claim would have to cover to be a boundary at all.
 
 **Fix.** Regenerate the manifest from the session store rather than maintaining it by hand, and
 extend it with the unmerged-branch file set. Until then, treat "not in the manifest" as carrying no
 information at all, and derive ownership the way this entry does before touching anything.
 
-**Reproduce the 72.** The `lightshopy.com` clone is the reason both path prefixes and the
+**Reproduce the session-store half.** The count was 72 `src/` files on 2026-09-27 and is not
+re-derivable cheaply — the store is large and grows. The `lightshopy.com` clone is the reason both
+path prefixes and the
 `edit`/`write` tools are in this, not just `apply_patch`:
 
 ```bash
@@ -773,7 +625,8 @@ comm -23 /tmp/gpt_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCL
 comparison. Dropping the clone prefix lowers the count to 39, which is how a `grep -rn lightshopy`
 over the store misses a third of the corpus.
 
-**Verified by cross-check, not assertion:** the reconstruction also audited the other write vectors
+**Verified by cross-check, not assertion** (measured 2026-09-27; the shape of the cross-check is the
+point, not the tallies): the reconstruction also audited the other write vectors
 and found them clean — of 974 `bash` calls in GPT sessions there is no `sed -i`, `perl -i`, `tee`,
 `patch`, `git apply` or shell redirect that writes a tracked file. The only files the tool-call
 reconstruction misses are `package.json` and `package-lock.json`, via `npm install ag-psd` and
@@ -793,9 +646,11 @@ PSD import populates and validates it (`src/contexts/psd-utils.ts` — `loadPsd(
 `savePsd()` validates it), and the legacy renderer applies it
 (`layer-renderer.ts` — `drawLayer()`'s `ctx.globalAlpha`). **`materialization.ts` does not:** its
 `sourceBitmap()` blank arm sets `ctx.globalAlpha` from `source.opacity` — the BLANK SOURCE's own
-alpha, baked into that blank's pixels — and never reads the snapshot's opacity at all. That is the
-relationship §92 states, and it is why a materialization that applied the snapshot's opacity on top
-would double-apply an alpha the pixels already carry. Nothing in the app ever
+alpha, baked into that blank's pixels — and never reads the snapshot's opacity at all. That is why a
+materialization that applied the snapshot's opacity on top would double-apply an alpha the pixels
+already carry. `sourceToRuntimeLayer()` (`history-adapter.ts`) keeps the two models out of the
+argument by binding `opacity: 1`, so a converted layer's snapshot carries no layer-level alpha to
+double-apply; §92 states the remaining disagreements between the two rules. Nothing in the app ever
 writes it. There is no opacity control in the desktop shell, and the mobile layers
 drawer had one that was removed rather than shipped broken.
 
@@ -888,12 +743,14 @@ for mobile rather than copied across.
 ## 59. Five selection tools claim `creator: true` and cannot create anything
 
 **Problem.** `materializeLayer` trusts the `creator` flag as its only gate
-(`materialization.ts` — `sourceBitmap()`, the `processor?.creator` refusal). **Five**
+(`materialization.ts` — `sourceBitmap()`, the `processor?.creator` refusal). **Seven**
 `commit: 'selection'` entries claim it — `polygonal-lasso`, `freehand-lasso`,
-`rectangular-selection` (all three in `toolProcessors.ts` — `toolProcessors`), and, added after this
-entry was first written, `elliptical-selection` and
-`quick-selection` (the two newer entries in the same map). All five processors are pass-throughs over
-a `bitmap` that is
+`rectangular-selection`, `elliptical-selection`, `quick-selection`,
+`single-row-marquee` and `single-column-marquee` (all seven in `toolProcessors.ts`
+— `toolProcessors`). The two marquee entries were added after this entry was first
+written and reuse `rectangularSelection`, so they are pass-throughs exactly as
+the rectangular marquee is. All seven processors are pass-throughs over a
+`bitmap` that is
 `undefined` on a creator call:
 
 ```ts
@@ -902,45 +759,58 @@ export const rectangularSelection =
   () => [bitmap];
 ```
 
-- `rectangular-selection`, `elliptical-selection` and `quick-selection` → `[undefined]`, caught by
-  `if (!created) throw` (`materialization.ts` — `sourceBitmap()`), message blames the tool.
-  `ellipticalSelection.ts` and
-  `quickSelection.ts` are the same pass-through, so the second and third fail identically.
+- `rectangular-selection`, `single-row-marquee`, `single-column-marquee`,
+  `elliptical-selection` and `quick-selection` → `[undefined]`, caught by
+  `if (!created) throw` (`materialization.ts` — `sourceBitmap()`), message blames
+  the tool. `ellipticalSelection.ts` and
+  `quickSelection.ts` are the same pass-through, so the second and third fail
+  identically.
 - `polygonal-lasso` / `freehand-lasso` with empty `points` → `copyPolygonToCanvas` returns a **1×1
   canvas**, which is truthy, so the guard **accepts it** and the layer silently materializes blank.
   With non-empty points it throws an unrelated `SelectionCanvasContextError`.
 
-**Why this is a landmine rather than a typo.** The flag is currently unreachable from production
-precisely _because_ item 58's throw fires first. So the lie is invisible today and becomes live the
-moment item 58 or item 1 is fixed — which makes it a trap laid for whoever does that work.
+**Why this is a landmine rather than a typo.** No production path reads the flag
+for a selection tool today, and the reason is named in code rather than inferred:
+`durableSourceKindForTool()` (`history-adapter.ts`) types only `text`, the six
+shape names and `draw`/`brush`/`pencil`, so a selection tool's layer source stays
+`legacy-tool`; `sourceBitmap()` throws on that kind, and
+`publishDurableNavigationPresentation()` (`StoreContext.tsx`) refuses the whole
+document before it reaches materialization. The converter agrees — the
+`'selection'` arm of `operationForTool` (`history-adapter.ts`) returns `null`, so
+a selection history item derives no durable operation at all. So the lie is
+invisible today and becomes live the moment any of those gates admits a selection
+source, which makes it a trap laid for whoever does that work.
 
-**Fix.** Drop `creator: true` from all five. They are `commit: 'selection'` mutators, not creators.
+**Fix.** Drop `creator: true` from all seven. They are `commit: 'selection'` mutators, not creators.
 Every genuine creator was checked and honours its curried `params.size`; a repo-wide grep for
 `Math.random|Date.now|new Date(|performance.now|crypto.` across `src/tools/` returns **zero**, so the
 flag is a sound determinism signal wherever it is honestly set.
 
 **Test that fails without the fix.** For every entry claiming `creator: true`, call
 `imageProcessor({ size: { width: 8, height: 8 } })(args)` and assert a returned bitmap with finite
-`width`/`height` ≥ 1. Fails today for all five, and for none of the honest creators.
+`width`/`height` ≥ 1. Fails today for all seven, and for none of the honest creators.
 
 **Three pins assert the current roster, and each is a tripwire by its own admission.**
 `tool-processors.test.ts` — the `it('only labels source-creating tools as creators, and each creator
-commits as a source')` title hard-codes the 13-name creator roster including all five and
-asserts `expect(['source', 'selection']).toContain(commit)`, so it passes on the lie rather than
-catching it; the `it('hands a creator-param lasso call no source bitmap, because selection consumes
+commits as a source')` title hard-codes the 17-name creator roster including all seven and
+asserts `expect(['source', 'selection', 'raster']).toContain(commit)`, so it passes on the lie rather
+than catching it; the `it('hands a creator-param lasso call no source bitmap, because selection consumes
 one (the lasso entries in toolProcessors.ts)')` title records it in prose — "Both lasso tools are
 flagged creators, yet
 `selection` reads `bitmap` … The behaviour is pinned here so the registry/param-type mismatch stays
 visible"; and the `it('selects the polylasso processor for the lasso and the shape processor for
-figure variants')` title names the two newer offenders. Delete or re-point all three in the same
-change as the fix.
+figure variants')` title names `elliptical-selection` and `quick-selection` as "The two newer
+selection tools", which the two marquee entries have since overtaken. Delete or re-point all three in
+the same change as the fix.
 
 **Files.** `src/tools/toolProcessors.ts` — the `commit: 'selection'` entries,
 `src/tools/selection.ts` — `selection()`,
-`src/tools/rectangularSelection.ts` — `rectangularSelection()`,
+`src/tools/rectangularSelection.ts` — `rectangularSelection()` (also the
+`single-row-marquee` and `single-column-marquee` processor),
 `src/tools/ellipticalSelection.ts` — `ellipticalSelection()`,
 `src/tools/quickSelection.ts` — `quickSelection()`,
-`src/contexts/materialization.ts` — `sourceBitmap()`
+`src/contexts/materialization.ts` — `sourceBitmap()`,
+`src/tools/__tests__/tool-processors.test.ts` — the three roster pins named above
 
 ---
 
@@ -1015,9 +885,13 @@ the liveness set scans. If a raster ever enters the registry from a source the s
 
 This is an unstated invariant, not a demonstrated defect — no such entry is known to exist, and
 `history-replay` reads its sources from `nextState.layers` and `nextState.history`, which are both
-scanned. It is recorded because item 54 is about the durable asset registry and this is its
-presentation-scope twin: whoever fixes 54 should not leave this one unexamined, and the invariant is
-cheapest to pin as a test now.
+scanned. It is recorded on its own now: the registry half that used to sit beside it — the append
+boundary's missing asset-registry transaction — is fixed, and the store opens a document asset
+transaction around every planned source-backed publication, commits it only after the state is
+published, and reconciles the exact set the published document names. That fix made asset ownership
+on the append path a settled question and left this as the one place where the **presentation**
+scope's liveness set and the registry still have to agree without saying so. The invariant is
+cheapest to pin as a test now, while it is still unstated rather than load-bearing.
 
 ## 64. `useDrag` has no importer anywhere in `src`
 
@@ -2088,30 +1962,32 @@ which `replayHistory` reaches through its `createLayer` dependency (its two
 `dependencies.createLayer` calls, wired at `useHistory.ts` — the `createLayer` dependency). The
 converter builds the same layer through a **second, re-derived** rule,
 `sourceToRuntimeLayer` (`history-adapter.ts`), called from the create-layer arm and
-the merge arm of `legacyHistoryToDurable()`. The two disagree on three fields, on the first layer of
-any document:
+the merge arm of `legacyHistoryToDurable()`. The two still disagree on two fields, on the first layer
+of any document:
 
-| field     | runtime (`layer-utils.ts` — `createLayerSource()`)                                                  | shadow (`history-adapter.ts` — `sourceToRuntimeLayer()`)               |
-| --------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `name`    | `` `${getNameFromSource(source)} ${maxOrder}` `` — the `name` it binds                              | the bare kind, with no order suffix — the `name` it binds              |
-| `opacity` | `1`, always — the `opacity` it binds                                                                | `source.opacity` for a blank — the `opacity` it binds                  |
-| `order`   | `maxLayerOrder(layers) + 1` — the `order` it binds; `0` for an empty record, from `maxLayerOrder()` | `Math.max(-1, …) + 1` — the `order` it binds, so `0` for an empty fold |
+| field   | runtime (`layer-utils.ts` — `createLayerSource()`)                                                  | shadow (`history-adapter.ts` — `sourceToRuntimeLayer()`)               |
+| ------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `name`  | `` `${getNameFromSource(source)} ${maxOrder}` `` — the `name` it binds                              | the bare kind, with no order suffix — the `name` it binds              |
+| `order` | `maxLayerOrder(layers) + 1` — the `order` it binds; `0` for an empty record, from `maxLayerOrder()` | `Math.max(-1, …) + 1` — the `order` it binds, so `0` for an empty fold |
 
-Executed against the real converter on a blank source with `opacity: 0.5` added to an empty
-document: the runtime layer is `{ name: 'Blank 1', opacity: 1, order: 1 }` and the durable snapshot
-is `{ name: 'Blank', opacity: 0.5, order: 0 }`. A second disagreement rides along in the same line:
+Executed against the real converter on a blank source added to an empty document: the runtime layer
+is `{ name: 'Blank 1', order: 1 }` and the durable snapshot is `{ name: 'Blank', order: 0 }`. A second
+disagreement rides along in the same line:
 `getNameFromSource` applies `ellipsify` (`layer-utils.ts` — `getNameFromSource()`), so a long image
 name is truncated in
 the document and not in the shadow.
 
-**User-visible failure.** The shadow describes a differently **named** and differently **transparent**
-layer than the document for the same edit. The `opacity` half is the dangerous one and it is not
-merely a wrong number: the runtime bakes a blank's `source.opacity` into the canvas pixels
-(`layer-utils.ts` — `createLayerSource()`'s blank arm, at its `ctx.globalAlpha`) and leaves
-`layer.opacity` at `1`, so the
-shadow's `opacity: 0.5` is a **layer-level** claim about an alpha the document holds in the bitmap.
-A materialization that applied it would double-apply the transparency. The `order` half is quieter
-but not free: it puts the first layer of a document at order `0` in one model and `1` in the other.
+**The `opacity` half of this entry is closed.** The two rules used to disagree here too — the runtime
+bound `opacity: 1` and `sourceToRuntimeLayer()` bound `source.opacity` for a blank — and
+`convertLayer()` copies whatever `sourceToRuntimeLayer()` produced into the snapshot, so the snapshot
+recorded a layer-level `0.5` for an alpha the document held in the bitmap. `sourceToRuntimeLayer()`
+now binds `opacity: 1` for every source, so both models agree at `1` and that hazard is no longer
+reachable from the converter. The pixels-versus-field question this raised is §56's, and it is still
+open there.
+
+**User-visible failure.** The shadow describes a differently **named** layer than the document for the
+same edit. The `order` half is quieter but not free: it puts the first layer of a document at order
+`0` in one model and `1` in the other.
 
 **Two existing tests pin the two answers, which is why neither side is accidental.** The `it('names a
 blank layer Blank and a tool layer after its tool')` title in
@@ -2121,13 +1997,11 @@ makes a new layer visible at the tip and absent at prior cursors')` title in
 second one.**
 
 **Fix — this is a decision, not an edit, and the decision comes first.** The obvious move is to have
-the converter call the runtime rule rather than re-implement it, and that is what should happen; but
-it cannot be done until the durable model says what a layer's `opacity` **means**. Today the field is
-a runtime `Layer` field the runtime never sets from a source, so "copy the runtime layer" and "record
-the source's alpha" are different contracts and only one of them can become the durable snapshot's.
-Decide that, then make the converter derive through the shared rule and update both pins above in
-the same change. Do not "fix" the name and order without it: a partial fix leaves the converter
-deriving one field from the runtime rule and another from the source, which is a third rule rather
+the converter call the runtime rule rather than re-implement it, and that is what should happen: the
+layer's `name` and `order` are what the runtime rule means, and the shadow is the re-derived copy.
+Decide that the runtime rule wins, then make the converter derive through it and update the durable pin
+in the same change. Do not "fix" one field without the other: a partial fix leaves the converter
+deriving `name` from the runtime rule and `order` from its own fold, which is a third rule rather
 than one of the two.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/layer-utils.ts`
@@ -5552,12 +5426,14 @@ entry that moves a verdict is
 audit recorded in `4c07778c` there is nothing in them worth landing: the production fix is superseded
 by main's mark-and-sweep retirement, the still-valid test cases are now on `main`, and the rest is dead
 or vacuous. Its curated entry calls it "the only holder of the #16 and #17 fixes", which was true on
-2026-09-27 and is stale now — `HANDOFF.md` §16 and §17 both record their conversion halves fixed and
-verified, and name the tests on `main` that verify them. The one piece not on `main` is
-`history-append.ts` withholding `durableEntry` on an append-point violation, which is §17's _prescribed
-remaining work_ and is specified in more detail in §17 than the branch holds it. A branch that is
-provably superseded is therefore permanently `at-risk`, because "2 ahead" and "worth keeping" are the
-same signal to the generator.
+2026-09-27 and is stale now — and the branch's last piece of its own is stale with it. Both of those
+prescribed works have landed: the append boundary now forwards its own diagnostics into
+`durableDiagnostics` on the `COMMIT_DOCUMENT_EDIT` payload instead of discarding them, and
+`planHistoryAppend()` withholds `durableEntry` when `validateTimeline()` produces an `error`
+diagnostic. The two tests the older entries said that change would break are gone from
+`history-append.test.ts`, replaced by an end-to-end duplicate-id suite that asserts the withheld plan
+and the reconversion it falls back to. So the branch is superseded outright, and remains permanently
+`at-risk` because "2 ahead" and "worth keeping" are the same signal to the generator.
 
 **What is needed.** Either the generator compares patch-ids rather than commit reachability, so a
 cherry-picked branch reads as landed; or a disposition an operator can state meaning "reviewed, keep
@@ -5960,11 +5836,15 @@ the product instead chooses to relax the refusal or require flattening, that is 
 and must be recorded in `docs/OVERRIDES.md` before implementation; an agent must not make that
 deviation.
 
-The safe first slice is the one-layer case: `convertBedrockLayer()` uses the existing
-`merge-document` replay contract while preserving the Background name and refuses to flatten a
-multi-layer stack. A future multi-layer Background conversion needs its own source-replacement
-operation or an equivalent atomic history action; reusing Flatten for it would silently destroy the
-stack.
+The safe first slice is the one-layer case: `convertBedrockLayer()` reuses the existing
+`NEW_LAYER_ACTION` boundary while preserving the Background name, and refuses to flatten a
+multi-layer stack. It is `create-layer`, not `merge-document` — naming the bedrock layer's own id
+makes `replayHistory`'s create arm replace the record rather than add a second one, and the durable
+shadow derives the same `create-layer` operation from the same entry. A future multi-layer Background
+conversion cannot reuse `replace-layer-source` either: it admits only `EditableDurableLayerSource`,
+so it deliberately cannot carry the raster a Background conversion needs. That needs its own
+raster-admitting operation, or an equivalent atomic history action; reusing Flatten for it would
+silently destroy the stack.
 
 **Files.** `src/components/Main/SpongeToolArea.tsx`, `DodgeToolArea.tsx`, `BurnToolArea.tsx`,
 `SmudgeToolArea.tsx`, `CloneStampToolArea.tsx`, `GradientToolArea.tsx`, `EraserToolArea.tsx`,
