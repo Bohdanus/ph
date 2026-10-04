@@ -419,7 +419,23 @@ index alone. Decide in that worktree, from inside it — never from the main che
 removing the worktree deletes the state files and there is no reflog entry and
 nothing for `git fsck` to recover. It also refuses when it could not read that state,
 and when no state was supplied for it at all: an absent signal is not a clear
-worktree.
+worktree. The refusal names the command that would discard the work, and it carries
+the board claims, locks, agents and sessions `preflight` already holds — because the
+operator's first question about a discard command is whether anybody is standing
+there.
+
+**A worktree whose directory is gone still counts.** Its git directory usually
+survives, and that is where a mid-merge `MERGE_HEAD` lives; `git worktree prune`
+deletes it. Both `repo:state` and `dispose` find that directory by matching the
+administrative directories' own `gitdir` files rather than by deriving a name from the
+worktree path, because git sanitises the name it uses — a leading `.` becomes `-`. So
+when `dispose` refuses with `prunable`, **run `npm run repo:state` before pruning.**
+The refusal used to say there was "nothing to salvage and no state to verify" and then
+recommend the command that destroys it.
+
+**Where there is no command to run, the report says so instead of naming one.**
+`git merge --squash` writes no `MERGE_HEAD` and git cannot abandon a squash at all, so
+its remedy is nothing rather than a plausible-looking command that fatals.
 
 ## The list of worktrees: `WORKTREES.json`
 
