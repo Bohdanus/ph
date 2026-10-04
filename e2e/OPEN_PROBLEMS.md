@@ -291,8 +291,8 @@ in the `console-police.json` report attachment.
 
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
 
-The directory holds 17 files. Seven are read — the formats with
-`comparePixels: true` in `e2e/export/helpers.ts`, each read through
+The directory holds 17 files. Seven are read — the formats whose `verification` is
+`browser-pixels` in `e2e/export/helpers.ts`, each read through
 `baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
 
 - the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
@@ -394,32 +394,6 @@ expect(selectable).toEqual(['pencil', 'block']);
 the same fact stated as what a user can actually choose. No fix is proposed here: the
 retarget is upstream behaviour, and the only way to remove it from the assertions is
 to stop wrapping the control in its label, which is the repo's markup convention.
-
-## P2 — a cached canvas box addresses a different pixel after a tool switch
-
-`e2e/canvas-helpers.ts` consumers; measured on `Desktop Chrome` (1280x720), 2026-09-28
-
-The workspace canvas element is `width: 100%; height: 100%` of a CSS grid row, and the
-row's height is the active tool's options bar. Switching from the Eraser bar to the
-Magic Eraser bar changes the bar's height, the main area resizes, and the canvas box
-moves. A spec that measures the box once and reuses it afterwards is then clicking and
-sampling a different pixel — with no error anywhere, because every coordinate is
-still a valid number.
-
-Measured on this suite: a `boundingBox()` of `{x: 56, y: 100, width: 974, height: 890}`
-taken under the Eraser bar addressed a point 20 CSS px higher under the Magic Eraser
-bar, which is enough to move a 24-CSS-px stroke out of the sampled window entirely.
-The symptom is not a failure but a _wrong_ one: the magic eraser appeared to erase the
-whole line and a bucket appeared to fill nothing, and both readings were artefacts of
-the stale box. `usePointerPosition` centres the 800x600 document inside the canvas, so
-the vertical offset is the product of two scales (`974/800` and `890/600`) rather than
-one, and a cached box cannot be corrected after the fact.
-
-Fix: measure the box immediately before every gesture and every capture, or measure it
-once per tool after the options bar for that tool has rendered. `e2e/erase-fill-eyedropper.spec.ts`
-threads a `canvasBox(page)` call through `stroke`, `clickAt`, `readPixel`,
-`measureErasedWidth` and `slabClip` for this reason. A helper that returns the box
-alongside the capture it took would make the mistake harder to make.
 
 ## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
 
@@ -534,30 +508,6 @@ Three specs are `test.skip` by declaration:
   `playwright.config.ts` starts `npm run dev`. Nothing establishes that
   `vite build` output renders byte-identically, so a future switch to serving
   `dist/` should be treated as a possible baseline-affecting change.
-
-## P2 — the export line is specified in document space; the ICO line still is not
-
-`e2e/export/helpers.ts`, `setupIcoTest`
-
-`setupExportTest` used to draw at canvas-relative offsets (`150,150` to `350,150`), which
-made the export a function of the window rather than of the document. The canvas is
-`w-full h-full` of a grid area the shell sizes, and `usePointerPosition` fits the document
-into it and centres it, so the same offsets marked different document points at different
-canvas sizes. The baselines encoded one particular canvas height: fixing a real desktop
-overflow moved the canvas from 974x890 to 974x583 and shifted the export by 459 pixels with
-no change anywhere in the export path.
-
-`setupExportTest` now specifies the line in document space and maps it in with
-`documentToCanvasOffset`, which mirrors the app's own contain-fit, and pins the committed
-pixels by using the document points the old offsets mapped to. `the export is independent of
-the canvas height` in the same spec asserts the property directly, and
-`e2e/helpers/__tests__/document-mapping.unit.test.ts` pins the mapping.
-
-`setupIcoTest` is untouched and still strokes at `ICON_STROKE` canvas-relative offsets
-against a 256x256 document. It escapes harm today because it compares in-browser against the
-source canvas rather than against a committed baseline, so a moved line still matches itself.
-It is one layout change away from the same class of failure, and the fix is the same: map
-`ICON_STROKE` through `documentToCanvasOffset` with a 256x256 document.
 
 ## P2 — an explicit redraw clip is in page coordinates, and a canvas-relative one passes for the wrong reason
 
@@ -989,7 +939,7 @@ and **is not a defect here**:
   state is client-side, and there is no `storageState`, no `beforeAll` and no
   `newContext` anywhere under `e2e/`. The config caps workers at 1 locally for
   readability, and `webServer` is a stateless Vite dev server shared by every worker.
-- **52 timeout literals / 10 unused imports / 8 red CDP assertions / 9 orphaned
+- **52 timeout literals / 10 unused imports / 8 red CDP assertions / 10 orphaned
   baselines.** The first two are fixed (`noUnusedLocals` and `noUnusedParameters` are
   on, the count is 0); the CDP assertions now derive their scale; the orphans are
   recorded in the P3 entry above.
