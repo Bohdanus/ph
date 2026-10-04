@@ -20,10 +20,11 @@ export type UseRectProps = {
   /**
    * Shift: hold a FRESH drag to a square, whatever `aspectRatio` says.
    *
-   * Opt-in per consumer because this hook is shared: crop and the Move tool pass neither this
-   * nor `fromCentre`, and a drag with both unset runs `adjustFreePoint` exactly as it always
-   * has. A handle RESIZE is not a fresh drag and is not affected either — the modifier that
-   * locks a resize is the aspect ratio `getEdgeAtPoint` already captures.
+   * Opt-in per consumer because this hook is shared: the crop and the rectangular marquee pass
+   * both this and `fromCentre`, the Move tool and the text tool pass neither, and a drag with
+   * both unset runs `adjustFreePoint` exactly as it always has. A handle RESIZE is not a fresh
+   * drag and is not affected either — the modifier that locks a resize is the aspect ratio
+   * `getEdgeAtPoint` captures.
    */
   constrainToSquare?: boolean;
   /** Alt: grow a fresh drag out from the press point instead of away from it. */
@@ -36,8 +37,8 @@ export type UseRectProps = {
    * Opt-in per consumer because this hook is shared: crop's box is a window onto a canvas that
    * extends past the image, so a box dragged past the frame edge has to keep the overhang — the
    * clamp below made it snap back to the edge while `onChange`/`onChangeEnd` still reported the
-   * unclamped rect, so the two disagreed on screen. Every other consumer wants the clamp and
-   * passes neither this nor the other two.
+   * unclamped rect, so the two disagreed on screen. Every other consumer wants the clamp, and
+   * passes this alone.
    *
    * PAINTING ONLY. The reported rect is `sortRect(rect)` with no clamp in any case, so
    * `onRepaint`, `onChange` and `onChangeEnd` are untouched by this prop; the backing store clips
@@ -172,17 +173,19 @@ export function useRect({
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, dimensionsRef } =
     pointerPositionData;
 
-  function getEdgeAtPoint(point: Point, event?: PointerEvent<HTMLDivElement>): string | null {
+  /**
+   * Where in the existing box a point lands, and NOTHING else — no decision, no recorded state.
+   *
+   * Split out of `getEdgeAtPoint` because the aspect-ratio capture that wraps it has to know the
+   * ANSWER before it may record anything: whether the press landed on the box decides whether the
+   * gesture is a resize of that box at all.
+   */
+  function edgeAtPoint(point: Point): string | null {
     const _initialRect = startRectRef.current;
     if (_initialRect) {
       const { x1, y1, x2, y2 } = _initialRect;
       const { scale } = dimensionsRef.current;
       const h2 = HANDLE_SIZE / scale / 2;
-
-      // Detect modifier keys to lock aspect ratio, if not set already
-      if (!aspectRatio && event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
-        customAspectRatioRef.current = (x2 - x1) / (y2 - y1);
-      }
 
       // check for tops
       if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
@@ -219,6 +222,35 @@ export function useRect({
     }
 
     return null;
+  }
+
+  /**
+   * The hit test, plus the one thing it is allowed to decide: a press that LANDS ON the box, with
+   * a modifier held, pins that box's own ratio for the whole gesture.
+   *
+   * The gate on `edge` is load-bearing, and it is a defect fix rather than a tidy-up. The capture
+   * used to be unconditional, so a press on EMPTY canvas — a fresh drag, the gesture
+   * `adjustFreshPoint` exists to constrain — recorded the previous box's ratio as well, and the
+   * fresh drag inherited it whenever no other modifier was set. For the crop that made Command the
+   * aspect-ratio modifier: `sampleFreshDragModifiers` reads `shiftKey` and `altKey` only, so
+   * Command reached the geometry solely through here, and a Command-drag out of an existing 2:1
+   * crop box produced another 2:1 box. Adobe gives Command to the crop for two other things —
+   * invoking Straighten and temporarily disabling snapping to the crop box edge — and to neither
+   * marquee as a proportion lock, where Shift is the key.
+   *
+   * What a resize does with a modifier is untouched, on purpose: `constrainToSquare`/`fromCentre`
+   * are about a fresh drag, and the ratio a HANDLE drag locks is this line.
+   */
+  function getEdgeAtPoint(point: Point, event?: PointerEvent<HTMLDivElement>): string | null {
+    const edge = edgeAtPoint(point);
+
+    // Detect modifier keys to lock aspect ratio, if not set already
+    if (edge && !aspectRatio && event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+      const { x1, y1, x2, y2 } = startRectRef.current!;
+      customAspectRatioRef.current = (x2 - x1) / (y2 - y1);
+    }
+
+    return edge;
   }
 
   function setMouseCursor(edge: string | null, event: PointerEvent<HTMLDivElement>) {
@@ -409,9 +441,9 @@ export function useRect({
           ({ x1, y1, x2, y2 } = adjustFreePoint(point, _aspectRatio));
       }
     } else {
-      // The ratio is deliberately not consulted when a modifier is held: `getEdgeAtPoint` still
-      // records a fresh press outside the current selection as locking THAT selection's aspect,
-      // and a marquee that is being constrained to a square is not being held to the last one.
+      // A marquee under a modifier is not held to the last one's ratio: `adjustFreshPoint` takes
+      // the square on its own, and `getEdgeAtPoint` no longer records anything for a press that
+      // landed on empty canvas, so `customAspectRatioRef` can only hold a RESIZE's ratio here.
       const modifiers = freshDragModifiersRef.current;
       const isModified = modifiers.constrainToSquare || modifiers.fromCentre;
       ({ x1, y1, x2, y2 } = adjustFreshPoint(point, modifiers, isModified ? null : _aspectRatio));
