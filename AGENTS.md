@@ -34,14 +34,13 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 ### Delegation
 
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
-- Never exceed 15 simultaneous subagents/processes; this project fans out in waves of three.
+- Never exceed 9 simultaneous subagents/processes.
 - A task subagent inherits the working directory. Give it the absolute worktree path and never let two agents edit the same file.
 
 ### Model policy
 
 **THE DEFAULT MODEL IS `Space Bunny Alpha (retires Oct 5)` ON PROVIDER `kilo`, AT VARIANT `max`. USE THAT EXACT PAIR ON EVERY `task` AND `agent_manager` CALL UNLESS THE OPERATOR NAMES ANOTHER. It is free, and it is nearly as good as GPT Luna.**
 
-- The **dated** spelling is the catalog entry on `kilo`. The undated `Space Bunny Alpha` is an `openrouter` entry, so the two names are not interchangeable, and a name paired with the wrong provider is an off-catalog pair the resolver **fuzzy-matches instead of rejecting** — a successful launch proves nothing about what ran. `docs/ORCHESTRATION.md` §"Which provider did a subagent run on?" is the evidence.
 - **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
 - A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
 - GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
