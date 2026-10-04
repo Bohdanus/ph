@@ -441,6 +441,25 @@ sixth.
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
 `new Image()`. That is where a shared load-side ceiling would have to live for those two formats.
 
+**The TIFF budget cannot reach `UTIF.decode`, which runs before all of it.** Every ceiling above is
+consulted on the page `UTIF.decode` has already parsed, and the parser is itself unbounded:
+`_readIFD` loops `for (j = 0; j < num; j++)` **per tag**, on a `num` it reads from the file as a
+32-bit field, and `loadTiffFile` — `loadTiffFile()` calls `UTIF.decode` as its first statement. A
+126-byte page with `num = 1e8` on one tag spends **4.5 seconds inside `decode`**, where no ceiling in
+this file can see it; `1e9` exhausts memory. This is one stage earlier than the declared-segment
+hole the same entry now guards, and it is the reason a guard cannot be added here: the values that
+would price it are read by the parser whose cost is the problem.
+
+**What would close it.** A pre-scan of the IFD — count of entries, and each entry's declared `num` —
+against the file's own byte length, before `UTIF.decode` is called, refusing a file whose declared
+counts cannot fit the bytes present. That is a small TIFF reader rather than a guard, and it is the
+same shape as the pre-decode check the existing budget performs one stage later, so the two belong in
+one place rather than two.
+
+**Affected.** `src/contexts/tiff-utils.ts` — `loadTiffFile()`'s first statement;
+`node_modules/utif/UTIF.js` — `_readIFD()`, which is the dependency's own parser and not editable
+here.
+
 **Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
 `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
 `src/contexts/affine-transform.ts`, `src/contexts/psd-utils.ts`
