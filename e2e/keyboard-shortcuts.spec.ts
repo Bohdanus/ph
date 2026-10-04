@@ -339,17 +339,21 @@ test.describe('Keyboard shortcuts', () => {
       await expect(page.getByText('Right-click also finishes the selection')).toHaveCount(0);
     });
 
-    test('U selects the shape tool and Shift+U walks the whole shapes flyout', async ({ page }) => {
-      // The cycle IS the rail's shapes flyout, so this walks every entry in the order
-      // `toolbar-mapping.ts` lists them. It pins two defects at once: matching the display
-      // name "ellipse" against the stored figure "oval" made `indexOf` return -1, so Shift+U
-      // from the ellipse wrapped back to the rectangle; and the Triangle and the Polygon were
-      // absent from the cycle list, so Shift+U from either of them also restarted at the
-      // rectangle. The first four figures are read off the bar's own
-      // `aria-label="Current shape"` readout, which is the one place the stored `figure` is in
-      // the document; the Custom Shape tool has its own tool name and its own bar, so it is
-      // named off the placeholder panel instead.
+    test('U selects the shape tool and Shift+U walks the whole shapes flyout and closes it', async ({ page }) => {
+      // The cycle IS the rail's shapes flyout, and it CLOSES: the press after Custom Shape
+      // returns to the Rectangle. That last step is the one worth driving from the browser,
+      // because the Custom Shape tool carries its own tool name rather than a figure, so it is
+      // the only entry whose position cannot come from the stored `figure`. This pins three
+      // defects at once: matching the display name "ellipse" against the stored figure "oval"
+      // made `indexOf` return -1, so Shift+U from the ellipse wrapped back to the rectangle;
+      // the Triangle and the Polygon were absent from the cycle list, so Shift+U from either of
+      // them also restarted at the rectangle; and the Custom Shape tool resolved to -1 as well,
+      // which closed the cycle over five entries and lost the rectangle from it for good. The
+      // five figures are read off the bar's own `aria-label="Current shape"` readout, which is
+      // the one place the stored `figure` is in the document; the Custom Shape tool has its own
+      // bar, so it is named off the placeholder panel instead.
       const figure = page.locator('[aria-label="Current shape"]');
+      const customShape = page.locator('div.border-dashed').first().getByText('Custom Shape Tool', { exact: true });
 
       await page.keyboard.press('u');
       await expect(figure).toContainText('Rectangle');
@@ -367,10 +371,11 @@ test.describe('Keyboard shortcuts', () => {
       }
 
       await page.keyboard.press('Shift+u');
-      await expect(
-        page.locator('div.border-dashed').first().getByText('Custom Shape Tool', { exact: true }),
-        'polygon -> custom shape, the sixth and last entry of the group'
-      ).toBeVisible();
+      await expect(customShape, 'polygon -> custom shape, the sixth and last entry of the group').toBeVisible();
+
+      await page.keyboard.press('Shift+u');
+      await expect(figure, 'custom shape -> rectangle, the step that closes the group').toContainText('Rectangle');
+      await expect(customShape).toHaveCount(0);
     });
   });
 
