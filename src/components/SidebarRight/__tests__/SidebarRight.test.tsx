@@ -431,9 +431,12 @@ describe('SidebarRight', () => {
     expect(tab).not.toHaveAttribute('id');
 
     fireEvent.doubleClick(tab);
-    // Rolled up, the reference DANGLE rather than pointing at nothing that exists: the honest
-    // pair is `aria-expanded="false"` and no `aria-controls`, not a name with no target.
+    // Rolled up, the reference must NOT dangle: the honest pair is `aria-expanded="false"` and
+    // no `aria-controls`, not a name with no target. Asserting only the body's absence passed
+    // against a component that kept naming it, which is the defect this case is named for.
     expect(container.querySelector(`#${bodyId}`)).toBeNull();
+    expect(tab).not.toHaveAttribute('aria-controls');
+    expect(tab).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('reverses the drag direction once the dock is on the left edge', () => {

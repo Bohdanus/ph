@@ -5858,25 +5858,10 @@ requiring that the branch's first-parent line contains no merge commit. `.husky/
 runs in the branch and already has `main...HEAD`. Do **not** solve this by making the merge guard
 refuse more; it is already refusing correctly, and widening it fires on ordinary landings.
 
-## 221. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
+## 221. The unit suite still has assertions that cannot fail
 
 **Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
-assertions that pass on any non-null value, but six classes of defect remain, and one of them is a
-source bug the new tests now prove.
-
-`PanelGroup.tsx` emits `aria-controls={panel-body-<id>}` unconditionally while the body it names is
-rendered only when the panel is not rolled up. A collapsed panel therefore points at an id that is not
-in the tree, and `aria-expanded="false"` beside a reference to nothing is the pair the panel's own
-accessibility test claims is dishonest. The new suite asserts the truth — the attribute is present,
-and the id it names is absent — so the finding cannot be removed by a test edit.
-
-**Affected.** `src/components/SidebarRight/PanelGroup.tsx` for the dangling reference.
-
-**What would close it.** Make the attribute conditional on the same expression that renders the body,
-AND replace the two assertions that currently pin the defect: the one that reads
-`aria-controls` off a rolled-up control, and the one that reads the absent body back out of the
-document. They cannot both stay: the second is the defect's proof, so it is the first that has to go.
-Whoever does this is fixing the component, not the test.
+assertions that pass on any non-null value, but six classes of defect remain.
 
 The remaining test defects, each with the fix that was proven to work:
 
@@ -5931,7 +5916,7 @@ reviewers who had read neither the triage nor the authors' reasoning then found 
 cannot-fail style assertion whose double started on the asserted value, two hand-copied literals with
 no independent derivation, an arithmetic restatement of a sibling assertion, and the stale chip table
 above, which is the only one of them that was a merge artefact rather than a defect present from the
-start. The dangling reference and the fixture divergence were left unfixed because the mandate was
+start. The fixture divergence was left unfixed because the mandate was
 test files only.
 
 ## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
