@@ -18,6 +18,14 @@ class ImageStub {
   onload: HTMLImageElement['onload'] = null;
   onerror: HTMLImageElement['onerror'] = null;
   src = '';
+  /**
+   * A real decode always reports a positive natural size, and the ICO fixtures below are declared
+   * as 4×4 entries, so that is the default. A stub that left these `undefined` would be refused by
+   * `assertWithinMaxEdge`'s integer test — which is the point: the PNG branch reads its geometry
+   * from here, so the stub has to answer with one.
+   */
+  naturalWidth = 4;
+  naturalHeight = 4;
   constructor() {
     recordImage(this as unknown as HTMLImageElement);
   }
@@ -50,6 +58,23 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+/**
+ * Drives a PNG entry all the way through the browser: `loadIcoFile` cannot settle until `onload`
+ * fires, and the geometry it then reports has to be in place *before* that, because the ceiling is
+ * read off the element rather than off the container.
+ */
+async function resolvePngIco(
+  ico: Uint8Array<ArrayBuffer>,
+  naturalWidth: number | undefined,
+  naturalHeight: number | undefined
+): Promise<HTMLImageElement> {
+  const pending = loadIcoFile(new Blob([ico]));
+  await vi.waitFor(() => expect(imageStub).not.toBeNull());
+  Object.assign(imageStub!, { naturalWidth, naturalHeight });
+  imageStub!.onload!.call(imageStub!, new Event('load'));
+  return pending;
+}
 
 async function resolveIco(ico: Uint8Array<ArrayBuffer>): Promise<HTMLImageElement> {
   const pending = loadIcoFile(new Blob([ico]));
@@ -246,7 +271,12 @@ describe('ICO encoding', () => {
     { width: 0, height: 1 },
     { width: 1, height: 0 },
   ])('rejects a degenerate $width x $height canvas', async ({ width, height }) => {
-    await expect(encodeIco(canvasOf(width, height))).rejects.toThrow('ICO dimensions cannot exceed 256 pixels');
+    // A zero axis is not an over-large one, so it gets its own message: "cannot exceed 256
+    // pixels" is false of a 0-pixel-wide canvas and tells the reader nothing about which half of
+    // the guard fired.
+    await expect(encodeIco(canvasOf(width, height))).rejects.toThrow(
+      `ICO image has invalid dimensions to save (${width}×${height})`
+    );
   });
 
   it.each([
@@ -564,6 +594,36 @@ describe('ICO PNG-compressed entries', () => {
 
     await expect(pending).rejects.toThrow('Failed to decode ICO image');
     expect(vi.mocked(URL.revokeObjectURL)).toHaveBeenCalledExactlyOnceWith('blob:mock-url');
+  });
+
+  it('refuses a PNG entry the encoder would then reject, closing the same asymmetry on this branch', async () => {
+    // A DIB declares its geometry in a header this module parses, so it can be checked before the
+    // decode. A PNG entry does not: the only geometry is what the browser reports after it has
+    // already decoded. Leaving that unchecked is how a 512×512 PNG icon — what most tools emit at
+    // and above 256 — opens here and is then refused by `Save as ICO`.
+    installImageHarness();
+    const png = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
+    const pending = resolvePngIco(icon(png, 4, 4), 512, 512);
+
+    await expect(pending).rejects.toThrow('ICO image is too large to open (512×512)');
+    expect(vi.mocked(URL.revokeObjectURL)).toHaveBeenCalledExactlyOnceWith('blob:mock-url');
+  });
+
+  it('refuses a PNG entry whose geometry it cannot read, rather than assuming it is small', async () => {
+    // `undefined < 1` and `undefined > 256` are both false, so a range-only guard waves an
+    // unreadable geometry through and the document reaches the Save dialog unchecked.
+    installImageHarness();
+    const png = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
+    const pending = resolvePngIco(icon(png, 4, 4), undefined, undefined);
+
+    await expect(pending).rejects.toThrow('ICO image has invalid dimensions to open');
+  });
+
+  it('accepts a PNG entry sitting exactly on the ICO maximum', async () => {
+    installImageHarness();
+    const png = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
+
+    await expect(resolvePngIco(icon(png, 256, 256), 256, 256)).resolves.toBeInstanceOf(ImageStub);
   });
 });
 

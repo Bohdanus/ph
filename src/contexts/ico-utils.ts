@@ -12,6 +12,28 @@ const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 
  */
 const MAX_EDGE = 256;
 
+/**
+ * One ceiling for every geometry an ICO can present, on the way in and on the way out. The two
+ * halves of `loadIcoFile` reach their geometry differently — a DIB declares it in a header, a PNG
+ * entry only in the stream the browser decodes — so the shared helper is what makes "opens, and can
+ * be saved back" one property rather than two coincidental ones.
+ */
+function assertWithinMaxEdge(width: number, height: number, action: 'open' | 'save') {
+  // The integer test is not decoration. A PNG entry's geometry arrives from the browser rather
+  // than from a header this module parses, and `undefined < 1` and `undefined > 256` are both
+  // false — so a shape guard written only with the range comparisons waves an unreadable geometry
+  // straight through, which is the same defect the AVIF budget had.
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`ICO image has invalid dimensions to ${action} (${width}×${height}).`);
+  }
+  if (width > MAX_EDGE || height > MAX_EDGE) {
+    if (action === 'save') {
+      throw new Error('ICO dimensions cannot exceed 256 pixels');
+    }
+    throw new Error(`ICO image is too large to open (${width}×${height}). Maximum is ${MAX_EDGE} pixels per axis.`);
+  }
+}
+
 function isPng(data: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => data[index] === byte);
 }
@@ -34,12 +56,10 @@ function decodeBmpIcon(data: Uint8Array): ReturnType<typeof decodeBmp> {
   }
   // The geometry a BMP-shaped DIB decodes to, against the same ceiling `encodeIco` enforces on
   // the way out. Checked on the declared axes rather than on the directory entry, because the
-  // entry's zero-byte-means-256 convention is a property of the *directory* — a DIB declares
-  // real dimensions, and it is those that reach `decodeBmp`.
+  // entry's zero-byte-means-256 convention is a property of the *directory* — a DIB declares real
+  // dimensions, and it is those that reach `decodeBmp`.
+  assertWithinMaxEdge(width, rawHeight / 2, 'open');
   const height = rawHeight / 2;
-  if (width > MAX_EDGE || height > MAX_EDGE) {
-    throw new Error(`ICO image is too large to open (${width}×${height}). Maximum is ${MAX_EDGE} pixels per axis.`);
-  }
 
   const paletteCount = bitsPerPixel <= 8 ? colorsUsed || 1 << bitsPerPixel : 0;
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
@@ -115,12 +135,18 @@ export async function loadIcoFile(file: Blob): Promise<HTMLImageElement> {
   const png = new Blob([image], { type: 'image/png' });
   const url = URL.createObjectURL(png);
   try {
-    return await new Promise((resolve, reject) => {
+    const decoded = await new Promise<HTMLImageElement>((resolve, reject) => {
       const imageElement = new Image();
       imageElement.onload = () => resolve(imageElement);
       imageElement.onerror = () => reject(new Error('Failed to decode ICO image'));
       imageElement.src = url;
     });
+    // A PNG entry declares its geometry in the IHDR chunk, which the browser has already honoured
+    // by the time `onload` fires, so this is a read and not a second decode. Without it the modern
+    // entry kind skips the ceiling entirely: a 512×512 PNG icon opens here and is then refused by
+    // `encodeIco`, so the round trip is broken on exactly the branch most tools produce.
+    assertWithinMaxEdge(decoded.naturalWidth, decoded.naturalHeight, 'open');
+    return decoded;
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -128,13 +154,11 @@ export async function loadIcoFile(file: Blob): Promise<HTMLImageElement> {
 
 export async function encodeIco(canvas: HTMLCanvasElement): Promise<Blob> {
   // Before the encode, not after it: `canvasToPngBlob` rasterises the whole canvas through
-  // `toBlob`, so `Save as ICO` on a 10000×10000 document would pay a full PNG encode of a 400 MP
-  // raster — and allocate it — only to be refused by the geometry check below. The canvas
-  // carries its own geometry, so the guard costs two comparisons.
+  // `toBlob`, so `Save as ICO` on a 10000×10000 document would pay a full PNG encode of 400 MB of
+  // RGBA — and allocate it — only to be refused by the geometry check below. The canvas carries its
+  // own geometry, so the guard costs two comparisons.
+  assertWithinMaxEdge(canvas.width, canvas.height, 'save');
   const { width, height } = canvas;
-  if (width < 1 || height < 1 || width > MAX_EDGE || height > MAX_EDGE) {
-    throw new Error('ICO dimensions cannot exceed 256 pixels');
-  }
 
   const png = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer());
 

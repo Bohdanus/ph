@@ -96,8 +96,15 @@ function assertSamplesAgree(page: IfdTags) {
  * is trivial can therefore ask for an enormous tile buffer — `{t256:[1000], t257:[1000],
  * t258:[8,8,8,8], t322:[23170], t323:[23170]}` is 1000×1000, so the page term is 4 MB and passes
  * every pixel check, while `tbuff` alone is `ceil(23170² × 4)` = 2,147,395,600 bytes against a
- * 1.6 GB ceiling, out of a ~200-byte file. UTIF's `|0` on that expression wraps rather than
- * throwing, so nothing downstream reports it; refusing it here is the only thing that does.
+ * 1.6 GB ceiling, out of a ~200-byte file. Above 2³¹ UTIF's `|0` on that expression wraps, so the
+ * allocation it then attempts is *smaller* than the figure here — the prediction stays on the safe
+ * side of the real one, which is what this function needs, and it is not exact up there.
+ *
+ * A tile dimension of zero is refused rather than costed, because `ceil(0 * th * bipp / 8)` is 0,
+ * the budget would wave the page through, and UTIF would then divide by it: `tx = Math.floor((width
+ * + tw - 1) / tw)` is `Infinity` for `tw === 0`, so the tile loop does not terminate. A hang is a
+ * worse outcome than the 2.15 GB allocation this guard exists to prevent, and it is reachable from
+ * the same ~200-byte file.
  *
  * Returns `null` when the tags do not yield a finite size, which is a malformed page rather
  * than a small one — including `t322` with no `t323`, where UTIF would read `undefined[0]`.
@@ -120,8 +127,11 @@ function predictDecodeBytes(page: IfdTags, width: number, height: number): numbe
   if (tileWidth === undefined) {
     return Number.isFinite(pageBytes) ? pageBytes : null;
   }
+  // Read after the `t262` branch above, deliberately: that branch replaces `bitsPerPixel` with the
+  // row length the file's own strip byte counts imply, and UTIF sizes the tile buffer by the same
+  // replaced value. Reading it earlier would under-count a tiled page that is also 32803-compressed.
   const tileLength = tagValue(page, 't323');
-  if (tileLength === undefined) {
+  if (tileWidth <= 0 || tileLength === undefined || tileLength <= 0) {
     return null;
   }
   const bytes = pageBytes + Math.ceil((tileWidth * tileLength * bitsPerPixel) / 8);
