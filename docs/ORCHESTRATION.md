@@ -370,6 +370,50 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     deliberately NOT isolated: the report-viewer npm script resolves `playwright-report`, and a
     per-run folder would leave it with nothing to open.
 
+## What git is doing right now
+
+A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
+git directory — `.git/worktrees/<name>/` for a linked worktree, `.git/` for the
+primary. **No commit records it, no branch name carries it, and `git status` in the
+main checkout cannot see it.** `MERGE-INTEGRITY-AUDIT.md` calls this the whole
+hazard class in one place, and it is right: on 2026-10-04 a worktree in this
+repository held an eight-path unresolved merge for hours, and the only reason
+anybody knew was that a person ran the audit's `find` by hand.
+
+`npm run repo:state` reports it. It is `scripts/repo-state-gate.mjs`, and it reads
+git's own markers — `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`,
+`rebase-merge/`, `rebase-apply/` — plus `git diff --name-only --diff-filter=U`, which
+is the only query that separates an unmerged index entry from an ordinary edit.
+`--json` prints the same findings for a caller that wants them as data.
+
+**Run it before you believe the repository is quiet.** It exits non-zero when
+anything is in progress, and it is the check to run before a sweep, before a landing,
+and before you conclude that a worktree is finished.
+
+**It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
+worktree, so it scales with the fleet — measured in seconds on a repository with 155
+worktrees. That is right for a command a person runs and wrong for a hook, and the
+decisive reason is behavioural: a hook would block every push in the repository
+because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
+for one session's state gets `--no-verify`'d, after which it protects nothing.
+
+**It reports WHAT is in progress and never WHOSE it is.** git does not record that
+either, so `WORKTREES.json` carries a chat-recency signal for it. Establish the owner
+before you intervene: the worktree measured above was live, and an abort would have
+destroyed a session's in-flight work.
+
+**`MERGE_HEAD` with an index that no longer has unmerged paths is the dangerous
+shape, and the report warns about it by name.** Every conflict resolved, nothing
+committed. `git commit` lands an unattended resolution; `git merge --abort` throws the
+resolution away. Both are one command away, and neither is distinguishable from the
+index alone. Decide in that worktree, from inside it — never from the main checkout.
+
+**`npm run dispose` refuses a worktree with an operation in progress**, because
+removing the worktree deletes the state files and there is no reflog entry and
+nothing for `git fsck` to recover. It also refuses when it could not read that state,
+and when no state was supplied for it at all: an absent signal is not a clear
+worktree.
+
 ## The list of worktrees: `WORKTREES.json`
 
 `WORKTREES.json` at the repository root is a generated inventory of every

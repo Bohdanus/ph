@@ -36,6 +36,7 @@ import {
   preflight,
   protectedContentOnDisk,
   readGitState,
+  readOperationState,
   rebuildCommand,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
@@ -101,11 +102,24 @@ const greenBoard = {
 };
 const greenSessions = { available: true, dbPath: '/home/x/kilo.db', error: null, live: [] };
 
+/**
+ * A worktree git is not doing anything to.
+ *
+ * Supplied by `green()` rather than defaulted inside `preflight`, because the refusal
+ * for an ABSENT signal is itself a case below: a helper that filled this in would
+ * make that case unreachable, and the check it guards is the one whose absence is
+ * unrecoverable if it is ever wrong.
+ */
+function greenOperationState(overrides = {}) {
+  return { gitDir: '/repo/.git/worktrees/task', operations: [], unmerged: [], readError: null, ...overrides };
+}
+
 function green(overrides = {}) {
   return preflight({
     target: 'task',
     nowMs: NOW,
     gitState: greenState(),
+    operationState: greenOperationState(),
     inventory: greenInventory(),
     board: greenBoard,
     sessions: greenSessions,
@@ -127,6 +141,35 @@ describe('dispose preflight', () => {
     const cases = [
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
       ['it is the main checkout', { gitState: greenState({ isPrimary: true }) }, 'main-worktree'],
+      [
+        'a merge is in progress in it',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+          }),
+        },
+        'operation-in-progress',
+      ],
+      [
+        'a rebase is in progress in it',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'rebase', marker: 'rebase-merge', value: null }],
+          }),
+        },
+        'operation-in-progress',
+      ],
+      [
+        'its index holds unmerged paths and no operation marker',
+        { operationState: greenOperationState({ unmerged: ['f.txt', 'g.ts'] }) },
+        'operation-in-progress',
+      ],
+      [
+        'its git state could not be read at all',
+        { operationState: greenOperationState({ readError: 'exit 128' }) },
+        'operation-state-unreadable',
+      ],
+      ['no git state was supplied for it', { operationState: undefined }, 'operation-state-absent'],
       ['HEAD is detached', { gitState: greenState({ detached: true, branch: '(detached)' }) }, 'detached'],
       ['there is no branch to delete', { gitState: greenState({ branch: '(unknown)' }) }, 'no-branch'],
       ['the inventory is absent', { inventory: { ok: false, reason: 'missing' } }, 'inventory-missing'],
@@ -260,6 +303,7 @@ describe('dispose preflight', () => {
     const verdict = preflight({
       target: 'stale-citations',
       nowMs: NOW,
+      operationState: greenOperationState(),
       gitState: greenState({
         name: 'stale-citations',
         branch: 'fix/stale-citations',
@@ -294,6 +338,7 @@ describe('dispose preflight', () => {
       target: 'task',
       nowMs: NOW,
       gitState: greenState({ isPrimary: true, modified: 2, dirtyPaths: ['a', 'b'] }),
+      operationState: greenOperationState(),
       inventory: { ok: false, reason: 'missing' },
       board: { ...greenBoard, claims: [{ agentId: 'x' }] },
       sessions: { available: true, live: [{ id: 's' }] },
@@ -602,6 +647,49 @@ describe('a signal that could not be read is not an empty signal', () => {
     expect(codes(green({ gitState: greenState({ statusError: null }) }))).toEqual([]);
   });
 
+  it('reads an operation state as no-operation rather than as no-answer', () => {
+    // The reader's whole contract with `preflight`: a worktree git is not touching
+    // reads as an empty ANSWER, and only a read that actually failed reads as a
+    // question. Conflating them would put the new refusal on every clean worktree,
+    // which is how a guard gets switched off.
+    const dir = join(TMP, 'op-state-clean');
+    mkdirSync(dir, { recursive: true });
+    expect(readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: () => [] })).toEqual({
+      gitDir: dir,
+      operations: [],
+      unmerged: [],
+      readError: null,
+    });
+  });
+
+  it('records a failed read as readError instead of throwing, so the refusal can name it', () => {
+    // `git diff` exiting non-zero has to arrive at `preflight` as a FIELD. A throw
+    // here would escape `preflight`, which is a pure decision function with no
+    // try/catch of its own, and the operator would see a stack trace instead of the
+    // refusal that says which command failed.
+    const dir = join(TMP, 'op-state-failed');
+    mkdirSync(dir, { recursive: true });
+    const boom = () => {
+      throw new Error('Command failed: git diff');
+    };
+    const state = readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: boom });
+    expect(state.readError).toMatch(/git diff/);
+    expect(state.unmerged).toEqual([]);
+
+    const verdict = green({ operationState: state });
+    expect(codes(verdict)).toEqual(['operation-state-unreadable']);
+    expect(verdict.failures[0].message).toMatch(/UNKNOWN rather than no/);
+  });
+
+  it('treats a worktree whose git directory cannot be resolved as unreadable, not clean', () => {
+    // The shape that would otherwise pass every check: `gitDirOf` returns null, which
+    // a `?? []` would read as "no operations". A disposal on that answer removes
+    // `.git/worktrees/<name>/` and with it the only record of a merge.
+    const state = readOperationState('/nowhere', { gitDirOf: () => null });
+    expect(state.readError).toMatch(/absolute-git-dir/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
   it('refuses on gitignored content that no command rebuilds', () => {
     // `git status --porcelain` honours .gitignore, and `ls-files --others
     // --exclude-standard` — which is what salvage() reads — honours it too. So a
@@ -848,6 +936,7 @@ describe('readGitState reads the ignored content it is supposed to refuse on', (
       target: 'task',
       nowMs: NOW,
       gitState: state,
+      operationState: greenOperationState(),
       inventory: greenInventory(),
       board: greenBoard,
       sessions: greenSessions,
