@@ -5075,10 +5075,15 @@ tools:
   `commit === 'layer-operation'` arm in `history-replay.ts` re-appends the
   retained operation for a `layer-operation` tool and `continue`s, so the raster branch is never taken for
   either id.
-- `materialization.ts`'s `createLayerFromTool()` path — requires `processor.creator`, which neither tool
-  sets. The module has no
-  runtime importer at all: `durable-compositor.ts` is its only non-test importer, and nothing outside
-  tests imports that.
+- `materialization.ts`'s creator path — closed by `sourceBitmap()`'s `processor?.creator` refusal, which
+  neither tool satisfies. **This module is mounted**, and its mount is why that refusal is load-bearing
+  rather than decorative: `durable-compositor.ts` is its sole non-test importer, and `StoreContext.tsx`
+  is `durable-compositor.ts`'s, through `composeDurableDocument()` in
+  `publishDurableNavigationPresentation()`. Two gates precede the creator call, not one.
+  `durableSourceKindForTool()` (`history-adapter.ts`) returns `null` for `color` and `levels`, so a
+  layer source for either stays `legacy-tool`; `sourceBitmap()` throws on that kind outright, and
+  `publishDurableNavigationPresentation()` refuses the whole document before materialization runs.
+  Relaxing either gate without the other still cannot reach the call.
 - `materialization.ts`'s raster-operation application — reached only by an `apply-raster-processor`
   operation, and
   the `commit === 'layer-operation'` arm of `history-adapter.ts` maps every `layer-operation` tool to
@@ -5111,9 +5116,9 @@ canvas-filter requirement, so the two files are not later mistaken for dead code
 `color`/`levels`/`transform` entries), `src/contexts/useLayer.ts` (`tempUpdateLayer()`),
 `src/contexts/history-replay.ts` (its `layer-operation` arm),
 `src/contexts/history-adapter.ts` (its `layer-operation` and trapezoid arms),
-`src/contexts/materialization.ts` (`createLayerFromTool()` and the raster-operation application),
-`src/contexts/layer-utils.ts` (`createLayerFromTool()`),
-`src/contexts/layer-renderer.ts` (`getLayerBitmap()`, `isVectorSource()`), `docs/TOOLS-TOO-HARD.md`
+`src/contexts/materialization.ts` (`sourceBitmap()` and the raster-operation application),
+`src/contexts/layer-utils.ts` (`createLayerSource()`),
+`src/contexts/layer-renderer.ts` (`getLayerBitmap()`, `vectorToolNames`), `docs/TOOLS-TOO-HARD.md`
 
 ## 172. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers is unanswered, and it changes the durable schema
 
