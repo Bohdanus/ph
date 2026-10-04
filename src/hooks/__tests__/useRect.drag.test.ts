@@ -144,6 +144,23 @@ describe('useRect mask drawing', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
   });
 
+  /**
+   * `handlesOutside` is the Type tool's alone, and the default above is Adobe's: a grip straddling
+   * the corner is grabbable across its whole width, because `edgeAtPoint` takes
+   * `HANDLE_SIZE / scale / 2` either side of the corner either way. Painting the grip wholly outside
+   * left the outer half of every visible handle unclickable on the marquee, the crop and the Move
+   * tool, and `e2e/select-move.spec.ts` — `stretches selected line` — caught exactly that.
+   */
+  it('paints the handles whole outside the rect for a consumer that opts in', () => {
+    const { ctx } = setup({ initialRect: RECT, handlesOutside: true });
+
+    const handle = HANDLE_SIZE;
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 250, handle, handle);
+  });
+
   it('reports the sorted rect to onRepaint but not to onChange while idle', () => {
     const onRepaint = vi.fn();
     const onChange = vi.fn();

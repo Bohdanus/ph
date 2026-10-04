@@ -9,6 +9,7 @@ import { useFile } from '../../contexts/useFile.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
 import type { SpongeMode } from '../../tools/sponge.ts';
+import type { FigureType } from '../../tools/shape.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
 
 /**
@@ -134,21 +135,45 @@ export const AppKeyboardShortcuts = () => {
 
   const selectShapeTool = (shiftKey = false) => {
     if (shiftKey) {
-      // The cycle must be expressed in real FigureType values. Matching the
-      // display name 'ellipse' against the stored figure 'oval' made
-      // indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle
-      // instead of advancing to Line.
+      // The cycle IS the flyout, in the rail's own order: `toolbar-mapping.ts` —
+      // `toolbarMap`'s five `shape`-named entries. The Custom Shape tool is the sixth entry of
+      // that same group rather than a figure, because it carries its own `toolName`, so it gets
+      // the one index past the last figure and the modulus spans all six entries.
+      //
+      // The group CLOSES, which is what Adobe's "cycle through tools with the same shortcut
+      // key" does: the press after the last entry advances to the first, so the press after
+      // Custom Shape selects the Rectangle. That is why the active tool's position is derived
+      // explicitly rather than left to `indexOf`. Letting the Custom Shape tool fall into the
+      // `-1` branch gave it the Rectangle's index, and the cycle then closed over five entries
+      // with the Rectangle permanently unreachable by Shift+U alone.
+      //
+      // The fallback is still `-1 + 1 === 0`, so a genuinely unlisted figure and a non-shape
+      // tool both start the group at the Rectangle. The list holds real `FigureType` values for
+      // the same reason: matching the display name 'ellipse' against the stored figure 'oval'
+      // made indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle instead of
+      // advancing to Line.
+      const orderedFigures = [
+        'rectangle',
+        'oval',
+        'line',
+        'triangle',
+        'polygon',
+      ] as const satisfies readonly FigureType[];
+      const customShapeIndex = orderedFigures.length;
       const currentFigure = toolArgs.toolName === 'shape' ? toolArgs.figure : 'rectangle';
-      const orderedFigures = ['rectangle', 'oval', 'line', 'custom-shape'] as const;
-      const currentIndex = orderedFigures.indexOf(currentFigure as (typeof orderedFigures)[number]);
-      const nextFigure = orderedFigures[(currentIndex + 1) % orderedFigures.length];
+      const figureIndex = orderedFigures.indexOf(currentFigure);
+      // The Custom Shape tool is the group's LAST entry, not a figure, so its index comes from
+      // what it is rather than from the -1 the figure lookup gives it.
+      const currentIndex = toolArgs.toolName === 'custom-shape' ? customShapeIndex : figureIndex;
+      const nextIndex = (currentIndex + 1) % (orderedFigures.length + 1);
 
-      if (nextFigure === 'custom-shape') {
+      if (nextIndex === customShapeIndex) {
         goToTool('custom-shape');
-      } else {
-        patchToolArgs('shape', { figure: nextFigure });
-        goToTool('shape');
+        return;
       }
+
+      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
+      goToTool('shape');
       return;
     }
 

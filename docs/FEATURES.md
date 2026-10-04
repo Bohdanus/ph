@@ -46,22 +46,22 @@ platform limit.
 
 ## Summary
 
-| Area              | Status      | The gap in one line                                                            |
-| ----------------- | ----------- | ------------------------------------------------------------------------------ |
-| Document model    | `partial`   | One document, no colour mode, no Image Size                                    |
-| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                     |
-| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                       |
-| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels |
-| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only         |
-| History           | `have`      | Linear, unbounded, with a History panel                                        |
-| Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
-| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
-| View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
-| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                           |
-| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
-| Export options    | `partial`   | JPEG quality is the only user-controllable option                              |
-| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all        |
-| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                        |
+| Area              | Status      | The gap in one line                                                                 |
+| ----------------- | ----------- | ----------------------------------------------------------------------------------- |
+| Document model    | `partial`   | One document, no colour mode, no Image Size                                         |
+| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                          |
+| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                            |
+| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels      |
+| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only              |
+| History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush |
+| Panels            | `partial`   | Two panels. Photoshop has seventeen                                                 |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                               |
+| View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                               |
+| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                |
+| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                      |
+| Export options    | `partial`   | JPEG quality is the only user-controllable option                                   |
+| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all             |
+| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                             |
 
 ## Documents
 
@@ -230,8 +230,10 @@ that the obvious writer is discarded by replay.
 
 ## History
 
-**Photoshop:** a linear History States panel with named states, a per-step
-visibility toggle, unlimited states, and History States snapshots.
+**Photoshop:** a History panel with named states, configurable History States (default 50,
+maximum 1,000), snapshots, optional non-linear history, and the History Brush. See
+<https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/history-panel-overview.html>
+and <https://helpx.adobe.com/photoshop/using/performance-preferences.html>.
 
 **This app:** a linear `HistoryItem[]` with a cursor
 (`history-types.ts` — `HistoryItem`, carried in a `HistoryTimeline` whose
@@ -243,7 +245,10 @@ exists
 per-step disabled toggle, plus Undo/Redo in the header
 (`HistoryControls.tsx` — its `undo-button` and `redo-button`).
 
-**Status:** `have`
+**Status:** `partial`
+
+**Gap:** The app has no configurable History States limit, snapshots, non-linear-history option or
+History Brush. Its linear cursor and redo-tail truncation are the portions that match Photoshop.
 
 **Note, because it is the opposite of what the code looks like:** entries store
 _args_, never pixels, and undo re-runs the tool processors from index zero
@@ -268,7 +273,7 @@ plus `PanelGroup.tsx`), and Window has Reset Workspace
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
 (`SidebarLeft.tsx` — its `color-pickers` cluster); the closest analogues to
-Color and Character are the Photo Filter command's three sliders and the Type options bar,
+Color and Character are the Desaturate command's three sliders and the Type options bar,
 which are options bars, not panels.
 
 ## Menu bar
@@ -279,7 +284,7 @@ Help.
 **This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
 (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
-Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Desaturate` — and
 twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
 records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,

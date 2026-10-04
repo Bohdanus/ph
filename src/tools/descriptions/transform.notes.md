@@ -205,22 +205,52 @@ string into an `OffscreenCanvas` 2D context, and both are unreached processors f
 commit kinds; they are cited in the data file because
 they are the registered processors, not because editing runs them.
 
-**The Brightness mapping, stated exactly, because the old note had it inverted.** The re-anchored
-exponential in `expAdjustment()` (`src/tools/functions.ts`) is a table, and the table is:
+**The Brightness mapping, stated exactly, because the old note had it inverted.** The
+proportionate curve in `proportionateFactor()` (`src/tools/functions.ts`) is a table over
+Adobe's own travels for this adjustment, and the table is:
 
-| `val`  | factor | emitted  |
-| ------ | ------ | -------- |
-| `-100` | `0`    | `0%`     |
-| `0`    | `1`    | `100%`   |
-| `+100` | `> 1`  | `> 100%` |
+| control    | slider | factor | emitted |
+| ---------- | ------ | ------ | ------- |
+| Brightness | `-150` | `0`    | `0%`    |
+| Brightness | `0`    | `1`    | `100%`  |
+| Brightness | `+150` | `2`    | `200%`  |
+| Contrast   | `-50`  | `0.5`  | `50%`   |
+| Contrast   | `0`    | `1`    | `100%`  |
+| Contrast   | `+100` | `2`    | `200%`  |
 
-So **0 is the neutral**, emitting exactly `brightness(100%) contrast(100%)`, and it is the
-**minimum** of −100 that emits `brightness(0%)`. The
-`it('emits the neutral as brightness(100%) contrast(100%)')` and
-`it('reaches black: -100 brightness emits brightness(0%)')` cases in
-`src/tools/__tests__/functions.test.ts` pin both literals by name. `defaultSettings.levels` is
-`{ brightness: 0, contrast: 0 }` (the `levels` entry of `defaultSettings` in
-`src/tools/settings.ts`), so the panel at rest applies nothing.
+So **0 is the neutral** on both controls, emitting exactly `brightness(100%) contrast(100%)`, and it is
+**Brightness's** minimum of −150 that emits `brightness(0%)`. The `levels` entry of
+`defaultSettings` in `src/tools/settings.ts` is `{ brightness: 0, contrast: 0 }`, so the panel at
+rest applies nothing.
+
+The two spans are not the same number, and the difference is the whole point of the table.
+Brightness divides by its own negative travel, so −150 lands on a factor of exactly `0` — a
+multiply to zero is the one thing `brightness()` does exactly right. Contrast divides by `100`,
+**not** by its own `−50` travel, because its two ends are not the same kind of endpoint:
+Photoshop's own Legacy contrast at `+100` is a measured gain of exactly `2`, and `1 + c/100`
+puts `+100` on that same `2` while leaving `−50` on `0.5`. Dividing by `50` instead would put
+`−50` on a factor of `0`, which is `contrast(0%)` — every pixel becomes the same mid-grey and
+the image carries no information at all. That is precisely the failure Adobe names when it
+warns against Legacy: "this can cause clipping or loss of image detail in highlight or shadow
+areas."
+
+**What "proportionate" is, and where the curve stops.** Adobe's sentence for this adjustment's
+default mode is "In normal mode, Brightness/Contrast applies proportionate (nonlinear)
+adjustments to the image layer, as with Levels and Curves adjustments."
+(<https://helpx.adobe.com/photoshop/using/apply-brightness-contrast-adjustment.html>) Two halves of
+that are claimed here and one is not. **Claimed:** the linear response — a constant factor step
+per slider step, so the same drag feels the same everywhere on the travel rather than gentle at
+one end and abrupt at the other — and the **non-clipping negative half**, which the CSS pipeline
+reproduces exactly on both controls. `brightness(0%..100%)` is a monotone contraction toward
+black and `contrast(0%..100%)` is a monotone contraction about the mid-grey pivot, and neither
+can move a value outside `[0, 1]`. **Not claimed: the nonlinearity.** Adobe pairs "proportionate"
+with "(nonlinear)" and compares the adjustment to Levels and Curves, and its measured response is
+an S — a `+20` brightness reads `10→11`, `128→145`, `250→253`, a set no constant scale and no
+constant offset can produce. CSS `brightness()` is a clamped pure multiply and `contrast()` a
+clamped affine pivot, so every factor above `1` clips: `contrast(f)` clips every input past
+`0.5 + 0.5/f`, and `brightness(f)` cannot create a white that was not already white. Reproducing
+the real curve needs a per-channel lookup table applied per pixel, which is the same absent
+mechanism this file's Levels entry rests on. **That gap is a follow-up, not a claim of parity.**
 
 The test harness defect the corpus also flagged **is** fixed. The `filter` data property in
 `createMockCanvasContext()` (`src/test/setup.ts`) replaces
@@ -764,27 +794,27 @@ histogram, and a filter string of `brightness() contrast()`.
 
 Every one of those eleven rows is `missing`, and the two that were `partial` until this pass were
 `partial` by association rather than by resemblance. The app's nearest analogue to the black point
-is its **Brightness** slider, which is a flat linear multiply with a re-anchored exponential
-response (`BRIGHTNESS_EXPONENT` in `src/tools/functions.ts`, the `expAdjustment()` it is fed
-through, and `buildLevelsFilter()` which emits the string), and the nearest analogue to the white
-point is its **Contrast** slider, which pivots around mid-gray in encoded space where Photoshop's
-curve is piecewise-linear through three control points with its midpoint fixed at level 128.
-**Neither app slider is a Photoshop Levels control.** An association between two things is not a
-control that exists and diverges, which is what `partial` means, so the count of `present` rows here
-is zero and the count of `partial` rows is one: the table describes Photoshop's panel, and the app's
-panel and Photoshop's share no rows in it.
+is its **Brightness** slider, which is a flat linear multiply — proportionate, no exponent, one
+constant factor step per slider step (`proportionateFactor()` in `src/tools/functions.ts` and
+`buildLevelsFilter()`, which emits the string) — and the nearest analogue to the white point is
+its **Contrast** slider, which pivots around mid-gray in encoded space where Photoshop's curve is
+nonlinear and, for Levels itself, piecewise-linear through three control points with its midpoint
+fixed at level 128. **Neither app slider is a Photoshop Levels control.** An association between two
+things is not a control that exists and diverges, which is what `partial` means, so the count of
+`present` rows here is zero and the count of `partial` rows is one: the table describes
+Photoshop's panel, and the app's panel and Photoshop's share no rows in it.
 
-**And the mapping, which this file previously had inverted.** 0 on the Brightness slider is the
-**neutral** — the re-anchoring makes it emit exactly `brightness(100%) contrast(100%)`, so the panel
+**And the mapping, which this file previously had inverted.** 0 on both sliders is the
+**neutral** — proportionality makes it emit exactly `brightness(100%) contrast(100%)`, so the panel
 at its defaults (the `levels` entry of `defaultSettings` in `src/tools/settings.ts`) applies nothing
-at all. It is the **minimum**, −100,
+at all. It is Brightness's **minimum**, −150,
 that emits `brightness(0%)` and multiplies the layer to black.
 The earlier sentence here said "at
 zero it makes the image darker without clipping anything"; that is false, and the contract table on
-`expAdjustment()` in `src/tools/functions.ts` and the two named literals in the
-`it('emits the neutral as brightness(100%) contrast(100%)')` and
-`it('reaches black: -100 brightness emits brightness(0%)')` cases in
-`src/tools/__tests__/functions.test.ts` are the correction.
+`proportionateFactor()` in `src/tools/functions.ts` and the named literals in the
+`it('emits the neutral as brightness(100%) contrast(100%), so the default args apply nothing')` and
+`it('reaches black: the -150 end of the Brightness slider emits brightness(0%)')` cases in
+`src/tools/__tests__/image-processors.test.ts` are the correction.
 
 Two version- and space-dependent facts are load-bearing and are in the prose. Levels operates on
 the document profile's **encoded** values; Adobe draws the contrast with Exposure, which
@@ -897,10 +927,13 @@ English, not a product name, and `types.ts` requires the name verbatim, so `phot
 an Adobe name at all** — and the label went out with the entry. The flyout that carried `color`,
 `levels` and `transform` is gone from `toolbarMap`; `extraTools` in `toolbar-mapping.ts` is
 where the three ids are recorded as carrying no Tools-rail entry, and `color` is reached now from
-`Image ▸ Adjustments ▸ Photo Filter` (the `Photo Filter` entry of `ADJUSTMENTS_ITEMS` in
+`Image ▸ Adjustments ▸ Desaturate` (the `Desaturate` entry of `ADJUSTMENTS_ITEMS` in
 `DesktopHeader.tsx`). Nothing in `src/` spells it
-"Colors" any more, so `appNotes` records the rail absence and the Photo Filter host rather than the
-old name.
+"Colors" any more, so `appNotes` records the rail absence and the Desaturate host rather than the
+old name. It read `Photo Filter` until the mislabel was corrected: Adobe's Photo Filter is a lens
+filter with a Density slider and a Preserve Luminosity option, and this bar computes
+`grayscale(%) sepia(%) saturate(%)`, so an enabled `Photo Filter` opened a bar its own label did
+not describe.
 
 **The `On-image adjustment icon` row moved up two positions, and its detail was wrong about the
 mechanism while it was wrong about the position.** It was listed last, after `Reset`; the control

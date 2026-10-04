@@ -5,6 +5,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
+import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
@@ -17,7 +18,7 @@ import {
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId }] = useStore();
+  const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
   const { toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer, convertBedrockLayer } =
     useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
@@ -36,7 +37,22 @@ export default function LayersTab() {
     setActiveLayer(id);
     const source = layers[id]?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
-      setToolArgs(source.args);
+      if (source.args.toolName === 'text' && source.args.rect) {
+        const frame = documentFrame ?? documentFrameFromSize(totalSize);
+        const offsetX = layers[id].pos.x - frame.x;
+        const offsetY = layers[id].pos.y - frame.y;
+        setToolArgs({
+          ...source.args,
+          rect: {
+            x1: source.args.rect.x1 + offsetX,
+            y1: source.args.rect.y1 + offsetY,
+            x2: source.args.rect.x2 + offsetX,
+            y2: source.args.rect.y2 + offsetY,
+          },
+        });
+      } else {
+        setToolArgs(source.args);
+      }
     }
   };
 
@@ -206,6 +222,7 @@ export default function LayersTab() {
                     animateMove(draggedLayerId, layer.id);
                   }}
                   onClick={() => selectLayer(layer.id)}
+                  onDoubleClick={() => selectLayer(layer.id)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',

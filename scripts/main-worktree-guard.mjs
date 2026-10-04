@@ -38,7 +38,10 @@
  * WHAT IS DELIBERATELY ALLOWED
  * ----------------------------
  * - **Landing.** A CLEAN merge into `main` runs `pre-merge-commit`, and a fast-forward runs no
- *   hook at all, so neither reaches this file. A CONFLICTED one does: it is completed by an
+ *   BLOCKING hook, so neither reaches this file. (`post-merge` DOES fire on a fast-forward; it
+ *   releases board claims and exits 0, so it cannot block anything. "Runs no hook at all" was
+ *   wrong about git, and it was wrong here.)
+ *   A CONFLICTED one does reach this file: it is completed by an
  *   ordinary `git commit`, which fires `pre-commit`, whose first command is this guard. Land in a
  *   worktree and fast-forward `main`, which is the documented flow for exactly that reason.
  * - **A named operator hotfix.** `ALLOW_MAIN_COMMIT=1`, which is the only way
@@ -101,7 +104,7 @@ const REFUSAL = `gate: refusing to record a commit in the MAIN worktree.
   Not git stash: one refs/stash is shared by every worktree, so a pop here can
   take another agent's entry, silently.
 
-A clean merge and a fast-forward are unaffected — those run pre-merge-commit or no hook. A CONFLICTED merge
+A clean merge and a fast-forward are unaffected — those run pre-merge-commit, or no blocking hook at all. A CONFLICTED merge
 is completed by an ordinary "git commit", so it lands here: bring main into a worktree instead.
 An operator hotfix the operator asked for on main by name is:
 

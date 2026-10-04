@@ -1021,7 +1021,6 @@ describe('StoreContext provider-owned transient surface', () => {
     expect(second.toolOverlayRef).toBe(first.toolOverlayRef);
     expect(second.rectOverlayRef).toBe(first.rectOverlayRef);
     expect(second.containerRef).toBe(first.containerRef);
-    expect(second.textareaRef).toBe(first.textareaRef);
     expect(second.currentArgs).toBe(first.currentArgs);
     expect(second.previewLayers).toBe(first.previewLayers);
   });

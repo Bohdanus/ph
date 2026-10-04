@@ -36,14 +36,16 @@ export const ellipticalSelection =
  *
  * `SelectionSourceTool` in `src/contexts/general-types.ts:17` has no
  * `'elliptical-selection'` member, and that union is the integration's file rather than
- * this tool's, so the commit borrows `'magic-wand'` instead of inventing a cast. It is
- * the one borrowed value that is also the right behaviour: `drawSelectionOutline` skips
- * its per-vertex anchor dots for `'magic-wand'` and `'freehand-lasso'`
- * (`src/util/selection.ts:201`) and `findSelectionAnchorAtPoint` returns `null` for them
- * (`src/util/selection.ts:239`), and a tessellated ellipse must carry neither 141
- * draggable handles nor an anchor hit-test. Adding the real member to the union and
- * adding it to the two `selection.ts` exclusions is the whole follow-up; until then
- * every reference goes through this one constant.
+ * this tool's, so the commit borrows `'magic-wand'` instead of inventing a cast. The
+ * borrow pays for exactly the two `selection.ts` exclusions keyed on that source —
+ * `drawSelectionAnchors` returns before painting for `'magic-wand'` and
+ * `'freehand-lasso'` (`src/util/selection.ts:155`) and `findSelectionAnchorAtPoint`
+ * returns `null` for them (`src/util/selection.ts:203`) — and a tessellated ellipse must
+ * carry neither per-vertex handles nor an anchor hit-test. Nothing else consults the
+ * source: the border is the marching ants, and `useSelectionAnts` strokes every active
+ * selection whatever made it. Adding the real member to the union and adding it to those
+ * two exclusions is the whole follow-up; until then every reference goes through this
+ * one constant.
  */
 export const ELLIPTICAL_SELECTION_SOURCE_TOOL = 'magic-wand' as const;
 
@@ -228,9 +230,9 @@ export function ellipseVertexCount(radiusX: number, radiusY: number): number {
  * The inscribed polygon, as a point path with NO repeated closing vertex.
  *
  * A `Selection.points` array is an open polyline that the renderer and the hit test
- * both wrap from the last vertex back to the first: `drawClosedSelectionPath` calls
- * `closePath` (`src/util/selection.ts:137`) and `isPointInPolygon` seeds `j` at
- * `length - 1` (`src/util/selection.ts:191`). Appending the first point again would
+ * both wrap from the last vertex back to the first: `useSelectionAnts`'s `shapePath`
+ * calls `closePath` (`src/hooks/useSelectionAnts.ts:46`) and `isPointInPolygon` seeds `j`
+ * at `length - 1` (`src/util/selection.ts:217`). Appending the first point again would
  * therefore add a zero-length closing segment and a duplicated handle at the top of the
  * ellipse, and `pointsBoundingPos` would see the same vertex twice. The loop is closed
  * by the wrap instead, and because the angles are `i / n * 2 * PI` the wrapped segment
