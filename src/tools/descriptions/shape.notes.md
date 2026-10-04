@@ -963,21 +963,21 @@ Sources:
 
 ## Keyboard
 
-| Keys      | Photoshop                                                                | App                                                                                                                       | App site                                                                                |
-| --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`               | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
-| `Shift+U` | cycle through the whole group                                            | cycles only `rectangle → oval → line → custom-shape`; `triangle` and `polygon` index to `-1` and restart at the rectangle | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
-| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                                      | `AppKeyboardShortcuts.tsx` — the `useKeyDownShortcut` registrations for `'['` and `']'` |
-| `Space`   | reposition while drawing                                                 | implemented                                                                                                               | `ShapeToolArea.tsx` — `ShapeToolArea()`'s Space key listeners                           |
+| Keys      | Photoshop                                                                | App                                                                                                         | App site                                                                                |
+| --------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'` | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
+| `Shift+U` | cycle through the whole group                                            | walks the flyout's six entries in the rail's order; where it stops is the wrap note below                   | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
+| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                        | `AppKeyboardShortcuts.tsx` — the `useKeyDownShortcut` registrations for `'['` and `']'` |
+| `Space`   | reposition while drawing                                                 | implemented                                                                                                 | `ShapeToolArea.tsx` — `ShapeToolArea()`'s Space key listeners                           |
 
-The `Shift+U` cycle is the gap: `triangle` and `polygon` are absent from `orderedFigures` in
-`src/components/Common/AppKeyboardShortcuts.tsx` — `selectShapeTool()`, so `Shift+U` never advances to
-them even though
-both are registered `ToolName`s with their own entries in the tools map. **The failure mode is a
-restart, not a freeze**, and the distinction is load-bearing for the row's wording: the branch is
-`orderedFigures[(currentIndex + 1) % orderedFigures.length]` with `currentIndex = indexOf(currentFigure)`,
-so an unlisted figure gives `-1` and `(-1 + 1) % 4 === 0` — the rectangle. Every data-file row now says
-Shift+U from the Triangle or the Polygon "restarts at the rectangle instead of advancing".
+The `Shift+U` cycle WAS the gap, and is closed: `orderedFigures` in
+`src/components/Common/AppKeyboardShortcuts.tsx` — `selectShapeTool()` listed four entries
+against the flyout's six, so `triangle` and `polygon` indexed to `-1` and
+`orderedFigures[(-1 + 1) % 4]` was the rectangle — **a restart, not a freeze**. The list now
+holds all five `FigureType` values in the rail's order and the modulus spans six entries, the
+sixth being the Custom Shape tool, which carries its own `toolName` rather than a `figure`. The
+`-1 + 1 === 0` branch is still what a stored value outside the group takes, so it lands on the
+rectangle.
 
 **Plain `U` is not "always jumps to the rectangle" either, and that was the other half of the same
 mistake.** The five geometric figures in the rail all carry `name: 'shape'` and differ only by
@@ -989,6 +989,13 @@ figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-
 `toolbarMap`'s `'custom-shape'` entry), so
 `U` from there is the one case that does force the rectangle. Both halves are now in the row rather
 than only in this table.
+
+**Where the cycle stops is the wrap note, and it is the one statement of it.** The cycle does not
+close on itself: the press after Custom Shape re-enters the group at the Ellipse rather than
+returning to the Rectangle, because the Custom Shape tool is a different `toolName` and the
+`indexOf() === -1` fallback resolves to the rectangle before advancing. The Rectangle is reachable
+with plain `U`. Closing the cycle is a change to the fallback's target, not to `orderedFigures`.
+Whether Photoshop's own cycle wraps is a separate question, and an open one — see Unverified.
 
 ---
 
@@ -1171,3 +1178,21 @@ Claims that could not be sourced to a URL that was opened. None of them appear i
   `Indent Sides By %` and `Smooth Indents`, or coexist with it.** The old labels are sourced to
   `http://www.underwaterphotography.com/photoshop/photoshop/1_11_3_1.html`; the new ones to the
   current Adobe star page. No page opened here states the migration.
+- **Whether Photoshop's `Shift+<letter>` cycle through a tool group wraps back onto the first
+  tool in that group.** The instruction is documented; the wrap step is not. The closest page
+  opened in this pass is
+  `https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview/` (2025, third
+  party), whose whole of the rule is "To cycle through tools with the same keyboard shortcut,
+  press and hold Shift as you press the letter" — it names the action and says nothing about
+  what the last press does. Adobe's own pages carry the shorter form ("Cycle through tools with
+  the same shortcut key", and a bare letter selects where `Shift+<letter>` cycles, on
+  `https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`
+  and `https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html`), and **neither
+  helpx page could be opened from this environment** — both return HTTP 403 to a plain fetch — so
+  the exact Adobe wording is carried here from the quotes `selection.notes.md` records, not from
+  a page read in this pass. Nothing states the wrap, so **the data file makes no claim about it in
+  either direction**: `shapeCycleShortcut` describes only where the app's own cycle stops. The
+  app's cycle does not close (see the wrap note in Keyboard), which is either a divergence from
+  Adobe or a faithful reading of a cycle whose wrap is undocumented. **Checked against a running
+  Photoshop before anyone decides**, and closing the app's cycle is a change to the target of the
+  unlisted-figure fallback rather than to `orderedFigures`.

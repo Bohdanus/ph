@@ -339,27 +339,37 @@ test.describe('Keyboard shortcuts', () => {
       await expect(page.getByText('Right-click also finishes the selection')).toHaveCount(0);
     });
 
-    test('U selects the shape tool and Shift+U cycles the figure, oval included', async ({ page }) => {
-      // This pins the bug the source comment at `selectShapeTool` records: matching the
-      // display name "ellipse" against the stored figure "oval" made `indexOf` return -1,
-      // so Shift+U from the ellipse wrapped back to the rectangle instead of advancing.
-      // The figure is read off the bar's own `aria-label="Current shape"` readout, which
-      // is the one place the stored `figure` is in the document.
+    test('U selects the shape tool and Shift+U walks the whole shapes flyout', async ({ page }) => {
+      // The cycle IS the rail's shapes flyout, so this walks every entry in the order
+      // `toolbar-mapping.ts` lists them. It pins two defects at once: matching the display
+      // name "ellipse" against the stored figure "oval" made `indexOf` return -1, so Shift+U
+      // from the ellipse wrapped back to the rectangle; and the Triangle and the Polygon were
+      // absent from the cycle list, so Shift+U from either of them also restarted at the
+      // rectangle. The first four figures are read off the bar's own
+      // `aria-label="Current shape"` readout, which is the one place the stored `figure` is in
+      // the document; the Custom Shape tool has its own tool name and its own bar, so it is
+      // named off the placeholder panel instead.
       const figure = page.locator('[aria-label="Current shape"]');
 
       await page.keyboard.press('u');
       await expect(figure).toContainText('Rectangle');
 
-      await page.keyboard.press('Shift+u');
-      await expect(figure, 'rectangle -> ellipse').toContainText('Ellipse');
+      const expectedFigures = [
+        { label: 'Ellipse', key: 'rectangle -> ellipse, not back to the rectangle' },
+        { label: 'Line', key: 'ellipse -> line, not back to the rectangle' },
+        { label: 'Triangle', key: 'line -> triangle, which the old cycle skipped' },
+        { label: 'Polygon', key: 'triangle -> polygon, which the old cycle also skipped' },
+      ];
 
-      await page.keyboard.press('Shift+u');
-      await expect(figure, 'ellipse -> line, not back to the rectangle').toContainText('Line');
+      for (const step of expectedFigures) {
+        await page.keyboard.press('Shift+u');
+        await expect(figure, step.key).toContainText(step.label);
+      }
 
       await page.keyboard.press('Shift+u');
       await expect(
         page.locator('div.border-dashed').first().getByText('Custom Shape Tool', { exact: true }),
-        'line -> custom shape'
+        'polygon -> custom shape, the sixth and last entry of the group'
       ).toBeVisible();
     });
   });

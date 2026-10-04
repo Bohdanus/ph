@@ -232,9 +232,10 @@ records "this layer's source args changed" and does not exist (§7.3).
 ## 3. Edit mode, commit, cancel
 
 **Edit mode exists for a draft, and is DERIVED rather than flagged.** A text tool argument carrying
-both a string and a box IS edit mode; the predicate is `hasPendingText` (`src/util/typeGuards.ts`),
-and it is the same one the dirty-document check uses, so the options bar, the canvas overlay and the
-dirty flag cannot disagree about whether the tool is editing. There is no `editing: boolean` anywhere.
+both a box and a session IS edit mode; the box is the predicate, in `TextEditOverlay.tsx` and in
+`Text.tsx`, so the options bar, the canvas overlay and the dirty flag cannot disagree about whether the
+tool is editing. The string may be empty while the caret is still live, which is why the string is not
+the signal. There is no `editing: boolean` anywhere.
 
 `TextEditOverlay.tsx` is that mode: a transparent `div[contenteditable]` laid over the type box,
 which owns the caret, the character selection, the IME and the clipboard because the browser already
@@ -249,7 +250,12 @@ commits the open draft before placing the next box. The second one was a silent 
 is not yet a layer, so nothing had recorded the typed text and overwriting the arguments discarded it
 with no history entry.
 
-**Still `GAP`:** the way back into a COMMITTED layer (§3.1).
+**Reaching a COMMITTED layer is still partial.** Selecting an existing text row with the Type tool
+active hydrates its source arguments (`LayersTab.tsx` — `selectLayer()`), and `applyText()` replaces
+that layer through `replaceLayerSource()` when the new gesture starts at the layer's original
+position; a gesture elsewhere creates a new layer. That is a position-sensitive redraw standing in for
+an entry route, and Adobe's routes — click the text flow, double-click the layer, double-click the `T`
+thumbnail — are still `GAP` (§3.1).
 
 One Adobe commit path _is_ already present: switching tools commits the draft implicitly, because
 `goToTool` calls `commitDirtyTool()` first (`src/hooks/useApp.ts` — `goToTool`).
@@ -292,9 +298,12 @@ route, which has no helpx citation, and what is Elements-only is the
 
 **Requirements**
 
-- `HAVE` — edit mode as a derived draft state, with the Commit/Cancel pair appearing only inside it.
-- `GAP` — re-entering an existing type layer to change characters. **This is the blocking
-  requirement for everything in §4 and §6.**
+- `HAVE` — edit mode as a derived state, with the Commit/Cancel pair appearing only inside it.
+- `PARTIAL` — reaching an existing type layer to change characters. Selecting the row hydrates its
+  args and a gesture at the layer's original position replaces it through `replaceLayerSource()`, but
+  Adobe's routes — click the text flow, double-click the layer, double-click the `T` thumbnail — are
+  still `GAP`, and a position-sensitive redraw is not one of them. **This is the blocking requirement
+  for everything in §4 and §6.**
 - `HAVE` — cancel of an in-progress edit through the Cancel button.
 - `HAVE` — `Ctrl/Cmd+Return`, keypad Enter, and Esc commit through the contenteditable overlay;
   ordinary Enter inserts a line break and IME composition is left to the browser.

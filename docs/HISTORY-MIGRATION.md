@@ -34,18 +34,32 @@ addressed by identity; they must not be duplicated into the timeline.
 ### RQ-2: lossless correction
 
 Editing an existing text or shape layer must edit its source arguments rather
-than create a replacement layer and leave the old one behind. The current
-durable operation union has no source-rewrite operation: `create-layer` and
-`merge-document` carry complete layer snapshots, while the other operations can
-change properties, position, order, filters, affine transforms, raster
-processors, frame, or selection only. `DurableLayerPropertyPatch` deliberately
-omits `source`.
+than create a replacement layer and leave the old one behind.
+`DurableLayerPropertyPatch` still deliberately omits `source`, so the
+capability needs its own operation: `create-layer` and `merge-document` carry
+complete layer snapshots, while the property, position, order, filter, affine,
+raster-processor, frame and selection operations change something other than a
+layer's arguments.
 
-The migration therefore needs one source-edit operation (name and exact payload
-to be decided) plus matching legacy production consumption, durable replay,
-source rehydration into the relevant options bar, and undo/redo parity. A new
-operation is not useful while durable state remains render-only shadow; the
-operation and its visible consumer must land together.
+**The authorized operation has landed and is named.** `replace-layer-source`
+carries a `layerId`, an `EditableDurableLayerSource` and the layer's `pos`, and
+`source` and `pos` travel together deliberately: a source edit re-measures the
+layer box, so a legacy entry that moved both must produce ONE operation or the
+legacy-to-durable cursor map grows by two for one edit. `DurableOperation` holds
+twelve kinds. The operation is derived by `deriveReplaceLayerSourceEntry()`
+(`history-adapter.ts`), reached from `legacyHistoryToDurable`, planned at the
+append boundary (`history-append.ts`), replayed by the `'replace-layer-source'`
+case in `durable-replay.ts`, and deep-frozen by `cloneOperation`
+(`history-model.ts`). Its retained operations deliberately survive a source
+rewrite, so a live filter or transform is not dropped when the text is retyped.
+
+**What the requirement still owes.** The production options bar reads
+`toolArgs` from legacy replay, so source rehydration is a cutover-time
+requirement governed by RQ-4's differential and ownership gates, not a gap in the
+operation itself. Re-derive the half that is not yet proved rather than assuming
+the landed slice closed it: the legacy/durable parity the operator's ruling names
+— creation, edit, undo, redo, navigation — and the options-bar rehydration that
+becomes visible when the durable document becomes the authority.
 
 ### RQ-3: bounded replay with explicit permission
 
@@ -60,11 +74,16 @@ The budget is a user setting, not an architecture constant. The repository has
 no recorded override for this requirement; agents must not invent one or write
 `OVERRIDES.md`.
 
-The earlier proposal for a thirteenth durable operation was an automatic
-`rasterize-layer` escape hatch and is superseded. The durable operation count
-was corrected to eleven in the finalisation audit. This document's authorized
-source-edit operation is a different requirement: it preserves editable text
-and shape sources and is not a rasterization path.
+The earlier proposal for an automatic `rasterize-layer` escape hatch — one more
+durable operation, whichever number it would have taken — is superseded.
+`DurableOperation` now holds twelve kinds, eleven from the finalisation audit plus
+the authorized `replace-layer-source`. That source-edit operation is a different
+requirement: it preserves editable text and shape sources and is not a
+rasterization path. Count the union in `history-model.ts`, not from this
+sentence.
+The count is also derived by `history-model.reachability.test.ts`'s
+`it('declares exactly the kinds the DurableOperation union declares')`, rather
+than by a hand-written list that could miss a newly added kind.
 
 ### RQ-4: one replay authority
 
@@ -104,10 +123,24 @@ backing image. Do not auto-merge from a refused pointer gesture.
 the bedrock gate or requiring flatten before every tonal edit would be a product
 deviation and cannot be implemented without an operator decision.
 
-The first implementation slice deliberately supports a lone bedrock layer by
-preserving its name through the existing `merge-document` contract. It refuses
-to flatten a multi-layer stack; atomic multi-layer Background conversion remains
-a separate source-replacement requirement.
+The first implementation slice deliberately supports a lone bedrock layer. It
+reuses the existing `NEW_LAYER_ACTION` boundary rather than Flatten: naming the
+bedrock layer's own id makes `replayHistory`'s create arm replace the record
+instead of adding a second one, so the panel keeps its row, `activeLayerId`
+stays valid, and an undo rebuilds the backing layer from the document's first
+entry. The durable shadow derives the same `create-layer` operation from the same
+entry. `pos` is copied verbatim and the document frame is never touched, which is
+what preserves the pixels.
+
+It refuses to flatten a multi-layer stack, and `convertBedrockLayer()` names why
+in its own doc comment: both layer constructors place a created layer at
+`maxOrder + 1`, so converting under any other layer would stack an opaque copy of
+the whole frame on top of it and do so identically on every replay. Atomic
+multi-layer Background conversion is therefore a separate requirement, and it is
+sharper than "a source-replacement requirement": `replace-layer-source` admits
+only `EditableDurableLayerSource`, so it deliberately cannot carry the raster a
+Background conversion needs. Widening the action needs a raster-admitting
+variant or an equivalent atomic history action.
 
 ## Sequencing
 
@@ -118,9 +151,12 @@ a separate source-replacement requirement.
    authority. The runtime retained-operation boundary, supported raster append
    path, and navigation presentation mount are closed; remaining work is the
    render/export surfaces and final authority transfer.
-3. Verify source-edit history and source rehydration together for text and
-   shape correction. Keep independent legacy/durable parity for creation, edit,
-   undo, redo, and navigation.
+3. The source-edit durable slice is in: `replace-layer-source` is derived,
+   planned, replayed and cloned. What is still owed is the proof half — legacy
+   and durable parity for creation, edit, undo, redo and navigation, plus source
+   rehydration into the relevant options bar. Do not read the landed operation
+   as a closed requirement; the operator's ruling was that the operation and its
+   visible consumer land as one slice, and the consumer is still legacy-sourced.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
