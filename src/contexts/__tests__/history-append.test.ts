@@ -1240,16 +1240,16 @@ describe('decideDurableAppend: reorder entries', () => {
 });
 
 /**
- * Three known gaps in the publication preconditions, pinned exactly as the
- * boundary behaves today.
+ * What the publication preconditions do today: one known gap, pinned exactly as
+ * the boundary behaves, and the tests that keep a fixed gap fixed.
  *
- * Each test asserts what the code DOES and names, in its own comment, the
- * precondition it does not have. They are tripwires, not endorsements: a fix
+ * The pin asserts what the code DOES and names, in its own comment, the
+ * precondition it does not have. It is a tripwire, not an endorsement: a fix
  * adds the named precondition, and the pin is deleted rather than relaxed. A
- * green run here is not evidence the boundary is safe — it is evidence the
+ * green run on it is not evidence the boundary is safe — it is evidence the
  * defect has not been fixed yet.
  */
-describe('decideDurableAppend: known gaps in the publication preconditions', () => {
+describe('decideDurableAppend: publication preconditions, and the remaining known gap', () => {
   const undoneFrame: DocumentFrame = { x: 0, y: 0, width: 640, height: 480 };
   const appendedFrame: DocumentFrame = { x: 0, y: 0, width: 200, height: 150 };
   const zeroFrame: DocumentFrame = { x: 0, y: 0, width: 0, height: 0 };
@@ -1358,21 +1358,22 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
     expect(replayDurableDocument(decision.document, 1).frame).toEqual(undoneFrame);
   });
 
-  // KNOWN GAP 2 — missing precondition: `isValidDocumentFrame` on the planned
-  // `next`. The frame branch of `validatePlannedDurableEntry`
-  // (`history-append.ts:486-498`) proves only that `planned.operation.next` equals
-  // `args.nextFrame` structurally (`sameFrame`, `history-append.ts:492`); it never
-  // asks whether either is a document frame. Every derivation that BUILDS such an
-  // entry refuses one (`history-adapter.ts:260`, which the plan calls at
-  // `history-append.ts:133`), so only a supplied entry reaches the gap.
+  // The frame branch of `validatePlannedDurableEntry` asks whether
+  // `planned.operation.next` is a document frame at all — `document-frame.ts` —
+  // `isValidDocumentFrame()` — before it compares it to the legacy arg, so an
+  // invalid frame is a `mismatch` and the store records the disagreement. Only a
+  // SUPPLIED entry reaches it: every derivation that BUILDS this entry refuses
+  // one (`history-adapter.ts` — `deriveSetDocumentFrameEntry()`, which
+  // `history-append.ts` — `translate()` calls), and `planHistoryAppend()`'s own
+  // output is what the store normally hands the boundary.
   //
-  // User-visible failure: durable replay applies `next` unvalidated
-  // (`durable-replay.ts:129-131`) and `documentFrameSize` clamps to a 1x1 minimum
-  // (`document-frame.ts:9-14`), so a published 0x0 crop makes the shadow describe
-  // a 1x1 document. The conversion route for the same item publishes nothing and
-  // reports the loss as a warning (`history-adapter.ts:662`), so the two routes
-  // now disagree about one legacy item and only one of them says so.
-  it('publishes a planned frame whose next frame is not a document frame, and the shadow replays it anyway', () => {
+  // What the check is for: durable replay applies `next` with no validation
+  // (`durable-replay.ts` — its `'set-document-frame'` case) and
+  // `documentFrameSize()` clamps to a 1x1 minimum, so a PUBLISHED 0x0 crop made
+  // the shadow describe a document one pixel square rather than a zero — the loss
+  // invisible as a degenerate size. The assertions below keep both halves of that
+  // claim: the boundary refuses, and nothing it published can carry the frame.
+  it('refuses a planned frame whose next frame is not a document frame, so the shadow cannot replay it', () => {
     const entry = cropEntryWith('crop-zero', zeroFrame);
     const planned: DurableHistoryEntry = {
       id: entry.id,
@@ -1384,14 +1385,20 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
 
     const decision = decideCrop(base, entry, planned);
 
-    expect(decision.outcome).toBe('published');
-    if (decision.outcome !== 'published') return;
-    expect(replayDurableDocument(decision.document).frame).toEqual(zeroFrame);
-    // Every size the application reads off that frame is clamped, so the loss is
-    // not visible as a zero — it is visible as a document one pixel square.
-    expect(documentFrameSize(replayDurableDocument(decision.document).frame)).toEqual({ width: 1, height: 1 });
+    expect(decision.outcome).toBe('mismatch');
+    // The reason is the reported contract: a writer that supplied an unusable
+    // frame is a writer defect, and the store's diagnostic has to name it.
+    if (decision.outcome !== 'mismatch') return;
+    expect(decision.reason).toBe('the durable next frame is not a valid document frame');
 
-    // The same item on the other two routes, which is what makes this a divergence.
+    // Nothing was published, so the durable document still describes the frame it
+    // described before the append, and the clamped 1x1 size never reaches it.
+    expect(documentFrameSize(zeroFrame)).toEqual({ width: 1, height: 1 });
+    expect(replayDurableDocument(base).frame).toEqual(baselineFrame);
+    expect(base.history.map((candidate) => candidate.id)).toEqual(['baseline-0']);
+
+    // The same item on the other two routes, which is what made this a divergence:
+    // both refused it, and the conversion route is the one that takes over.
     expect(deriveSetDocumentFrameEntry(entry, baselineFrame)).toBeNull();
     const plan = planHistoryAppend({
       item: {

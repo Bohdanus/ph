@@ -8,7 +8,7 @@ import {
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
-import type { DocumentFrame } from './document-frame.ts';
+import { isValidDocumentFrame, type DocumentFrame } from './document-frame.ts';
 import { getAssetRegistry, type AssetRegistry } from './asset-registry.ts';
 import {
   deriveRemoveLayerEntry,
@@ -1178,6 +1178,15 @@ export function validatePlannedDurableEntry(
     }
     const args = entry.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
     if (!args?.nextFrame) return 'a document frame change has no next frame';
+    // The structural comparison below proves the two agree, never that either is
+    // usable: durable replay applies `next` unvalidated and every size the
+    // application reads off a frame is clamped, so an invalid `next` would publish
+    // a document that is not the one the legacy item describes and would report
+    // nothing. Every derivation that BUILDS this entry refuses one, so a refusal
+    // here is a supplied entry and a writer defect, which is what a `mismatch` is.
+    if (!isValidDocumentFrame(planned.operation.next)) {
+      return 'the durable next frame is not a valid document frame';
+    }
     if (!sameFrame(planned.operation.next, args.nextFrame))
       return 'the durable next frame does not match the legacy entry';
     if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
