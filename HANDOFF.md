@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 196, 200, 204, 208-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -6332,37 +6332,42 @@ closes with §151 rather than before it, and the entry stays until it does.
 
 **Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/Main.scss`
 
-## 236. The inventory reports a dirty main checkout as clean, and an attempt to fix it destabilised a load-fragile test
+## 236. The inventory reports a dirty main checkout as clean, and an attempt to fix it destabilised a test whose cause is still unknown
 
 **Problem.** `classify()` in `scripts/lib/worktree-inventory/classify.mjs` assigns
 `STATUS.LANDED` for `wt.isPrimary` BEFORE it tests `uncommitted`, so the main checkout is reported
-`LANDED` with the single reason `this is the main worktree` whether or not its tree holds changes.
-A reader is told `LANDED` and infers a clean tree. The status itself is right — the main checkout IS
-the landing site and its commits are on `main` by definition — so this is a missing reason, not a
-wrong status. It is also **not** a safety hole: the recommendation is computed under a second
-`if (wt.isPrimary)` that no-ops before any prune advice, so no dirty primary can be advised for
-deletion.
+`LANDED` with no uncommitted reason whether or not its tree holds changes. A reader is told `LANDED`
+and infers a clean tree. The status itself is right — the main checkout IS the landing site and its
+commits are on `main` by definition — so this is a missing reason, not a wrong status. It is also
+**not** a safety hole: the recommendation is computed under a second `if (wt.isPrimary)` that no-ops
+before any prune advice, so no dirty primary can be advised for deletion.
 
 **What makes this an entry rather than a two-line edit.** Adding the two missing reasons —
-`if (uncommitted)` and `if (unmerged)` inside that branch — reproducibly turned
+`if (uncommitted)` and `if (unmerged)` inside that branch — turned
 `the curated table > never asks the table to protect a worktree whose protection is derived` from
-green to a 60s timeout, five runs out of five, at durations of 67s, 86s, 107s, 155s and 200s. The
-same test passed at 13s, 22s, 24s, 29s, 43s and 47s with `classify.mjs` at `HEAD`, with an inert
-comment appended to the file, and with an inert comment inside that exact branch carrying this
-entry's own wording. The two statements cost nothing measurable: `uncommitted` and `unmerged` are
-both computed before the branch chain, and the test filters on raw git facts (`ahead`,
-`mergedIntoMain`, `dirty`, `untracked`) and never reads `reasons`. **So the cause was not found and
-the change was reverted rather than landed unexplained.** Do not re-add these two lines before the
-timeout itself is understood; the fragility is a known property of that test, which reads git in
-every worktree in the repository against a fixed budget.
+green to a 60s timeout. **These are single-machine observations, not a benchmark**, taken with 158
+live worktrees under concurrent agent load: five runs with the change, at 67s, 86s, 107s, 155s and
+200s, and six runs green — at 13s, 22s, 24s, 29s, 43s and 47s — with `classify.mjs` at `HEAD`, with
+an inert comment appended to the file, and with an inert comment inside that exact branch.
 
-**What would close it.** Fix the budget first, then the reason. The test's own comment names the
-cost — "this reads git in every worktree in the repository" — and the fleet is past 150 worktrees, so
-its 60s budget is a function of the fleet rather than of the code under test. Once that is not the
-thing standing in the way, the fix is the two pushes above, plus a unit test over a synthetic
-primary worktree fact set asserting that a dirty primary's `reasons` carry the uncommitted line. A
-synthetic fact set is what makes it safe: the real inventory cannot exercise the case without a
-dirty main checkout.
+**What those runs do and do not establish.** The two statements are _semantically_ inert:
+`uncommitted` and `unmerged` are both computed before the branch chain, and the test filters on raw
+git facts (`ahead`, `mergedIntoMain`, `dirty`, `untracked`) and never reads `reasons`. That is a fact
+about the code, and it is not an explanation of the timeouts — the timings differ by enough to be
+worth reporting, and the inert-comment control passing is evidence AGAINST load alone, not for it.
+**The cause was not found, and the change was reverted rather than landed unexplained.** Do not
+re-add these two lines before the timeout itself is understood.
+
+**What would close it.** Two things, and the first is now the better-evidenced one. Under full-suite
+load, individual tests in `worktree-inventory.test.mjs` exceed their 60s budgets: two DIFFERENT tests
+from this file have failed on different full-suite runs, while the whole file passes 160/160 in 24s
+when run alone. The budget is a function of the fleet rather than of the code under test, so sizing
+it is the first repair. That does **not** explain the classify correlation above — an inert edit in
+the same branch passed every time — so after the budget is fixed, re-run the two pushes and find out
+whether they still matter. If they do not, the fix is those two lines plus a unit test over a
+synthetic primary worktree fact set asserting that a dirty primary's `reasons` carry the uncommitted
+line; a synthetic fact set is what would make that safe, because the real inventory cannot exercise
+the case without a dirty main checkout.
 
 **Files.** `scripts/lib/worktree-inventory/classify.mjs`,
 `scripts/__tests__/worktree-inventory.test.mjs`

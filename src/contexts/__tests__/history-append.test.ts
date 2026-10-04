@@ -594,10 +594,12 @@ describe('planHistoryAppend: append-point validation', () => {
     // lands rather than asserting a hand-built object contains itself.
     //
     // Not driven here: the React wrapper that dispatches `COMMIT_DOCUMENT_EDIT` and
-    // reads the result back out of the store. That lives in
-    // `useLayer.commit.test.tsx`, which mocks this module, so reproducing the
-    // dispatch here would exercise the mock rather than this boundary. What is
-    // covered is the real transition plus the real publication decision.
+    // reads the result back out of the store. That subject lives in
+    // `useLayer.commit.test.tsx`, which mocks `../layer-renderer.ts` and not this
+    // module, so the two files are complementary rather than redundant: that one
+    // covers the store round trip, this one covers the real transition plus the real
+    // publication decision. Reproducing the dispatch here would duplicate that
+    // file's subject, not exercise a mock.
     const next = updateHistoryTimeline(prior, { type: 'append', entry: result.entry });
 
     // A correct superset of the prior timeline: nothing already committed changed,
