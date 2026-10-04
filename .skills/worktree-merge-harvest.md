@@ -483,7 +483,7 @@ so a branch it kept is anchored and recoverable.
 worktree, so the refusal is about you or about nobody in particular — only the write arm names a
 chat, and only for thirty minutes. `--no-live-writers` does not clear it.
 `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is the
-one home for the mechanism, and `HANDOFF.md` §205 is the one home for the flag that _would_ clear it,
+one home for the mechanism, and `HANDOFF.md` §224 is the one home for the flag that _would_ clear it,
 which a sweep must not reach for.
 
 This is the gate working: the same signal caught a worktree with agents editing it an hour earlier

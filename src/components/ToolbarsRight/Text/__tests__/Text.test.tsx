@@ -8,7 +8,6 @@ const storeState = vi.hoisted(() => ({
   canvasRef: { current: null },
   color: '#000000',
   currentArgs: { current: null },
-  textareaRef: { current: null },
   totalSize: { width: 800, height: 600 },
 }));
 
@@ -42,6 +41,22 @@ const toolArgs = vi.hoisted(() => ({
 const mockCreateLayerFromTool = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 
+/**
+ * `hasPendingText` is the one predicate the bar and the canvas both derive edit mode from, so the
+ * case that needs them to disagree overrides the PREDICATE rather than the args. `null` is "no
+ * override", which is every case but that one.
+ */
+const pendingTextOverride = vi.hoisted(() => ({ value: null as boolean | null }));
+
+vi.mock('../../../../util/typeGuards.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../util/typeGuards.ts')>();
+  return {
+    ...actual,
+    hasPendingText: (args: Parameters<typeof actual.hasPendingText>[0]) =>
+      pendingTextOverride.value ?? actual.hasPendingText(args),
+  };
+});
+
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [storeState],
 }));
@@ -64,7 +79,6 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
     canvasRef: { current: null },
     color: '#000000',
     currentArgs: { current: null },
-    textareaRef: { current: null },
     totalSize: { width: 800, height: 600 },
     ...overrides,
   });
@@ -149,16 +163,21 @@ describe('Text toolbar', () => {
   beforeEach(() => {
     resetStoreState();
     resetToolArgs();
-    mockCreateLayerFromTool.mockClear();
-    mockSetToolArgs.mockClear();
+    // `mockReset`, not `mockClear`: the ordering cases below install an implementation that pushes
+    // onto a closure array, and `mockClear` keeps implementations, so without the reset every later
+    // case in the file would be asserting against a mock left pointing at a dead array.
+    mockCreateLayerFromTool.mockReset();
+    mockSetToolArgs.mockReset();
+    pendingTextOverride.value = null;
   });
 
-  it('renders text input and controls', () => {
+  it('renders every labelled style control', () => {
     renderWithProvider(<Text />);
 
     // Every labelled control the bar is supposed to carry, by its visible name. A control that
     // loses its `htmlFor` silently stops appearing here, which is the only place that catches it.
-    expect(screen.getByLabelText('Text')).toBeInTheDocument();
+    // The `Text` entry this used to open with was the toolbar's own text field, which no longer
+    // exists — the draft is typed into `TextEditOverlay` on the canvas, not here.
     expect(screen.getByLabelText('Font')).toBeInTheDocument();
     expect(screen.getByLabelText(/Font Size/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Line Height/)).toBeInTheDocument();
@@ -167,11 +186,35 @@ describe('Text toolbar', () => {
     expect(screen.getByLabelText('Align')).toBeInTheDocument();
   });
 
-  it('has Apply and Clear buttons', () => {
+  it('carries no text field at all, because the draft is typed on the canvas', () => {
     renderWithProvider(<Text />);
 
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
+    // The textarea this replaces was the app's answer to having no edit mode — "type into a field
+    // on the right, press Apply, get a raster layer" — and it was the largest fidelity gap in the
+    // tool: no caret, no placeholder, a second place to look for the text. It is gone rather than
+    // hidden, so this asserts the ABSENCE of the element and not the absence of a visible one: a
+    // hidden field that still held the draft would be a second source of truth, and two inputs
+    // bound to one string fight over the focus. `queryByLabelText('Text')` alone would pass
+    // against a textarea whose `htmlFor` had been dropped.
+    expect(screen.queryByLabelText('Text')).not.toBeInTheDocument();
+    expect(document.querySelector('textarea')).toBeNull();
+    // `input[type="text"]` too: an untyped `<input>` defaults to `type="text"`, and FontSelect's
+    // trigger is a `<button>`, so the bar has no other text-entry control to confuse this with.
+    expect(document.querySelector('input[type="text"]')).toBeNull();
+    expect(document.querySelector('input:not([type])')).toBeNull();
+  });
+
+  it('has Commit and Cancel buttons, named exactly', () => {
+    renderWithProvider(<Text />);
+
+    // A string `name` is a whole-string, case-sensitive comparison in this query, so these are
+    // exact already; `toHaveAccessibleName` states the same claim through a different route, which
+    // is what keeps a rename from surviving on a future query that loosens `name` to a substring.
+    expect(screen.getByRole('button', { name: 'Commit' })).toHaveAccessibleName('Commit');
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveAccessibleName('Cancel');
+    // And from the other side: the old pair is gone, not merely outranked.
+    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
   });
 
   it('names the style toggles for assistive technology, not by their glyph', () => {
@@ -392,71 +435,118 @@ describe('Text toolbar', () => {
 
   it('renders null when toolArgs is not text tool', () => {
     resetToolArgs({ toolName: 'draw' });
-    const { queryByLabelText } = renderWithProvider(<Text />);
+    const { container, queryByLabelText } = renderWithProvider(<Text />);
 
-    expect(queryByLabelText('Text')).not.toBeInTheDocument();
+    // The whole bar, not one control: `isTextToolArgs` short-circuits before any of them render.
+    expect(container).toBeEmptyDOMElement();
+    expect(queryByLabelText('Font')).not.toBeInTheDocument();
   });
 
-  it('disables Apply and Clear when text is empty', () => {
-    resetToolArgs({ text: '' });
-    renderWithProvider(<Text />);
-
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
-  });
-
-  it('disables Apply and Clear when rect is null', () => {
-    resetToolArgs({ rect: null });
-    renderWithProvider(<Text />);
-
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
-  });
-
-  it('keeps Apply disabled for typed text with no rect, instead of growing one at the origin', () => {
-    // This is the regression. `calculateNewRect` used to substitute
-    // `{x1:0,y1:0,x2:0,y2:0}` for a null rect, so typing without a drag published a real
-    // rect, `disabled={!text || !rect}` stopped being a dead half, and Apply committed a
-    // `text 2` layer whose ink landed at the document origin (drawing starts at
-    // `rect.x1 + TEXT_PADDING`, `text.ts:32,49`).
+  it('shows the Editing type layer label only while a draft is open', () => {
+    // Adobe's one visible tell for edit mode: "if you see the Commit button and the Cancel button,
+    // the type tool is in edit mode". The label is the bar's half of that same predicate, and it
+    // is derived from `hasPendingText` — the predicate `TextEditOverlay` derives edit mode from —
+    // so the bar and the canvas cannot disagree about whether the tool is editing.
     resetToolArgs({ text: '', rect: null });
-    const { rerender } = renderWithProvider(<Text />);
+    const { unmount } = renderWithProvider(<Text />);
 
-    fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Hi' } });
+    expect(screen.queryByText('Editing type layer')).not.toBeInTheDocument();
 
-    // The keystroke itself must leave the rect null — that is the whole fix, and the only
-    // thing here that fails against the old substitution.
-    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hi', rect: null }));
+    unmount();
 
-    // And the button must still be disabled once those published args come back, which is
-    // what the `!rect` half of the gate exists for. The mock store hands back the same
-    // object until something republishes it, so the rerender is what makes this a real
-    // assertion rather than one about the pre-typing state.
-    const published = mockSetToolArgs.mock.lastCall?.[0] as { text: string; rect: unknown };
-    resetToolArgs({ text: published.text, rect: published.rect as typeof toolArgs.rect });
-    rerender(
-      <KeyboardEventsProvider>
-        <Text />
-      </KeyboardEventsProvider>
-    );
-
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
-    // Typing something to place is a canvas action, so the toolbar has to say so.
-    expect(screen.getByLabelText('Text')).toHaveAttribute('placeholder', 'Drag on the canvas to place text...');
-  });
-
-  it('enables Apply and Clear when text and rect are present', () => {
+    // The draft is what decides it, not the mount: the fixture every other case here renders
+    // already carries one, and that is the editing state.
+    resetToolArgs({ text: 'Hello', rect: { x1: 0, y1: 0, x2: 100, y2: 50 } });
     renderWithProvider(<Text />);
 
-    expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Clear' })).not.toBeDisabled();
+    expect(screen.getByText('Editing type layer')).toBeInTheDocument();
   });
 
-  it('calls createLayerFromTool when Apply clicked with valid text', () => {
+  it('renders every style control with no draft open: only the pair and the label are gated', () => {
+    resetToolArgs({ text: '', rect: null });
     renderWithProvider(<Text />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    // The pair is Adobe's edit-mode tell and it is gated on `hasPendingText`, but the type
+    // settings are not a property of the draft — Photoshop's options bar carries them with no
+    // type layer on the canvas, and a bar that emptied itself on every tool switch would take the
+    // font, the size and the colour with it.
+    expect(screen.getByLabelText('Font')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Font Size/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Line Height/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Tracking/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Color')).toBeInTheDocument();
+    expect(screen.getByLabelText('Align')).toBeInTheDocument();
+    for (const name of ['Bold', 'Italic', 'All Caps', 'Small Caps', 'Underline', 'Strikethrough']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
+
+    // And they still publish, so "rendered" is not a decorative claim.
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bold: true }));
+  });
+
+  it('keeps the edit controls mounted for an empty draft box', () => {
+    resetToolArgs({ text: '', rect: { x1: 0, y1: 0, x2: 100, y2: 50 } });
+    renderWithProvider(<Text />);
+
+    expect(screen.getByRole('button', { name: 'Commit' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  });
+
+  it('does not show Commit and Cancel when the draft has no rect', () => {
+    resetToolArgs({ text: 'Hello', rect: null });
+    renderWithProvider(<Text />);
+
+    expect(screen.queryByRole('button', { name: 'Commit' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the pair absent for a draft with text but no rect', () => {
+    // `calculateNewRect` used to substitute `{x1:0,y1:0,x2:0,y2:0}` for a null rect, so a text
+    // with no box became a commit whose ink landed at the document origin (drawing starts at
+    // `rect.x1 + TEXT_PADDING`). The substitution itself is pinned where it lives, in
+    // `rect.test.ts` — `it('returns null when there is no rect, instead of growing one at the
+    // document origin')` — so what remains here is the toolbar's half: with no rect there is no
+    // draft to commit. This case used to reach that state by typing into the bar's textarea, which
+    // the toolbar no longer has; a canvas click is what produces it now, and that arrives as the
+    // args themselves.
+    resetToolArgs({ text: 'Hi', rect: null });
+    renderWithProvider(<Text />);
+
+    expect(screen.queryByRole('button', { name: 'Commit' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    // The label is on the same predicate, so a half-open draft is not edit mode on the canvas
+    // either and the bar must not claim it is.
+    expect(screen.queryByText('Editing type layer')).not.toBeInTheDocument();
+  });
+
+  it('enables Commit and Cancel when the draft has both a text and a rect', () => {
+    renderWithProvider(<Text />);
+
+    expect(screen.getByRole('button', { name: 'Commit' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  });
+
+  it('refuses to commit a draft that carries no rect, even when the bar is told a draft is open', () => {
+    // `applyText` guards on `editing` AND on `rect`, and the `rect` half is the one a disagreement
+    // needs: with `hasPendingText` honest, `editing` true already implies a rect, so the pair is
+    // already disabled and the guard is unreachable through the button — defence in depth, which
+    // is only pinned if something can reach it. The predicate is overridden to report a draft the
+    // args do not actually carry, which is precisely the state the guard exists for.
+    pendingTextOverride.value = true;
+    resetToolArgs({ text: 'Hi', rect: null });
+    renderWithProvider(<Text />);
+
+    expect(screen.queryByRole('button', { name: 'Commit' })).not.toBeInTheDocument();
+
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+  });
+
+  it('calls createLayerFromTool with the draft args when Commit is clicked', () => {
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
 
     expect(mockCreateLayerFromTool).toHaveBeenCalledWith(
       expect.objectContaining({ args: expect.objectContaining({ text: 'Hello' }) })
@@ -471,15 +561,15 @@ describe('Text toolbar', () => {
   // `absolute inset-0` over the whole centred container, so a click in the letterbox margin reached
   // it — and a throw from a React event handler goes to `window.onerror` rather than to an error
   // boundary, since `ToolbarHorizontal` sits outside every boundary in the tree. The old order
-  // therefore lost the user's typed text with no layer, no message and Apply disabled: the empty
-  // textarea was the only evidence anything had happened. Inverting these two lines fails this test.
+  // therefore lost the user's typed text with no layer, no message and the commit disabled. Inverting
+  // these two lines fails this test; the case below states the same guarantee as its consequence.
   it('creates the layer BEFORE clearing the draft', () => {
     const order: string[] = [];
     mockCreateLayerFromTool.mockImplementation(() => void order.push('create'));
     mockSetToolArgs.mockImplementation(() => void order.push('clear'));
     renderWithProvider(<Text />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
 
     expect(order).toEqual(['create', 'clear']);
     // Both still happen: this is a reordering, not a removal.
@@ -491,7 +581,7 @@ describe('Text toolbar', () => {
   // a throw from `createLayerFromTool` left it set against a `toolArgs` identity nothing had changed,
   // so every later Apply returned immediately and the user's next try did nothing at all. The draft
   // survived — which was the point of the reorder — but the control did not, and nothing tested it.
-  it('can Apply again after a create that threw', () => {
+  it('can Commit again after a create that threw', () => {
     // A throw out of a React event handler reaches `window.onerror`, and an uncaught exception there
     // is reported as an unhandled error by the runner — which fails the run without failing a test.
     // This test needs the throw for its whole point, so the error is CAUGHT here and on no other:
@@ -504,14 +594,14 @@ describe('Text toolbar', () => {
       });
       renderWithProvider(<Text />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
 
       // Nothing was cleared, and — this is the assertion — the failed attempt did NOT consume the guard.
       expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
 
       // The second click, with a create that works this time.
       mockCreateLayerFromTool.mockImplementation(() => undefined);
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
 
       expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(2);
       expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
@@ -520,12 +610,27 @@ describe('Text toolbar', () => {
     }
   });
 
-  it('clears text when Clear clicked', () => {
+  it('clears text when Cancel clicked', () => {
     renderWithProvider(<Text />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+  });
+
+  it('Cancel discards the draft without creating a layer', () => {
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // A discard, which is what Adobe's is: "To cancel the changes, click the Cancel button in the
+    // options bar". The absence of the create is the half that matters — a Cancel that committed
+    // would be a Commit under a different name, and the two buttons sit next to each other.
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    // And nothing about the style travels with the discard, so the tool keeps its last settings.
+    expect(lastToolArgs()).toMatchObject({ fontFamily: 'Arial', fontSize: 64, color: '#000000' });
   });
 
   describe('font family', () => {
@@ -640,14 +745,14 @@ describe('Text toolbar', () => {
     });
   });
 
-  describe('apply idempotency', () => {
-    it('commits the same tool args only once, however often Apply is activated (applyText)', () => {
+  describe('commit idempotency', () => {
+    it('commits the same tool args only once, however often Commit is activated', () => {
       renderWithProvider(<Text />);
 
-      const applyButton = screen.getByRole('button', { name: 'Apply' });
-      fireEvent.click(applyButton);
-      fireEvent.click(applyButton);
-      fireEvent.click(applyButton);
+      const commitButton = screen.getByRole('button', { name: 'Commit' });
+      fireEvent.click(commitButton);
+      fireEvent.click(commitButton);
+      fireEvent.click(commitButton);
 
       // The guard compares the args object identity, and the mocked store hands back the same
       // object until something else republishes it.
@@ -661,9 +766,10 @@ describe('Text toolbar', () => {
       // object. Mutating the args in place, as this mock does, must not create a second layer.
       renderWithProvider(<Text />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+      const commitButton = screen.getByRole('button', { name: 'Commit' });
+      fireEvent.click(commitButton);
       resetToolArgs({ text: 'Second' });
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+      fireEvent.click(commitButton);
 
       expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
     });
@@ -902,7 +1008,11 @@ describe('Text toolbar', () => {
   });
 
   describe('keyboard navigation', () => {
-    it('walks the bar left to right, with the style toggles between Italic and Apply', async () => {
+    it('walks the bar left to right, with the style toggles between Italic and Commit', async () => {
+      // The pair is Adobe's edit-mode tell, so it is on the tab path only while a draft is open —
+      // and the fixture this renders already carries one, which is why Commit and Cancel are stops
+      // here at all. A `disabled` control is not focusable, so presenting no draft would drop both
+      // ends of the walk rather than reorder it.
       renderWithProvider(<Text />);
       const user = userEvent.setup();
 
@@ -910,7 +1020,6 @@ describe('Text toolbar', () => {
       // make this an assertion about whatever happened to be focused, which is the whole thing
       // under test.
       const stops = [
-        screen.getByLabelText('Text'),
         screen.getByLabelText('Font'),
         screen.getByRole('spinbutton', { name: /Font Size/ }),
         screen.getByLabelText(/Line Height/),
@@ -923,8 +1032,8 @@ describe('Text toolbar', () => {
         screen.getByRole('button', { name: 'Small Caps' }),
         screen.getByRole('button', { name: 'Underline' }),
         screen.getByRole('button', { name: 'Strikethrough' }),
-        screen.getByRole('button', { name: 'Apply' }),
-        screen.getByRole('button', { name: 'Clear' }),
+        screen.getByRole('button', { name: 'Commit' }),
+        screen.getByRole('button', { name: 'Cancel' }),
       ];
 
       stops[0].focus();
@@ -1070,14 +1179,14 @@ describe('Text toolbar', () => {
       expect(lastToolArgs().italic).toBe(true);
     });
 
-    it('allows enter/space to trigger apply and clear buttons', async () => {
+    it('allows enter/space to trigger Commit and Cancel', async () => {
       renderWithProvider(<Text />);
       const user = userEvent.setup();
-      const applyButton = screen.getByRole('button', { name: 'Apply' });
-      const clearButton = screen.getByRole('button', { name: 'Clear' });
+      const commitButton = screen.getByRole('button', { name: 'Commit' });
+      const cancelButton = screen.getByRole('button', { name: 'Cancel' });
 
-      applyButton.focus();
-      expect(applyButton).toHaveFocus();
+      commitButton.focus();
+      expect(commitButton).toHaveFocus();
       await user.keyboard('{Enter}');
       expect(mockCreateLayerFromTool).toHaveBeenCalledWith(
         expect.objectContaining({ args: expect.objectContaining({ text: 'Hello' }) })
@@ -1085,26 +1194,12 @@ describe('Text toolbar', () => {
 
       mockCreateLayerFromTool.mockClear();
 
-      clearButton.focus();
-      expect(clearButton).toHaveFocus();
+      cancelButton.focus();
+      expect(cancelButton).toHaveFocus();
       await user.keyboard(' ');
       expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
       expect(lastToolArgs().text).toBe('');
       expect(lastToolArgs().rect).toBeNull();
-    });
-
-    it('reports typed text to the store while the textarea stays controlled by toolArgs.text', async () => {
-      renderWithProvider(<Text />);
-      const user = userEvent.setup();
-      const textInput = screen.getByLabelText('Text') as HTMLTextAreaElement;
-
-      expect(textInput).toHaveValue('Hello');
-
-      textInput.focus();
-      await user.type(textInput, '!');
-
-      expect(lastToolArgs().text).toBe('Hello!');
-      expect(textInput).toHaveValue('Hello');
     });
 
     it('escape key does not close anything (no popovers)', async () => {

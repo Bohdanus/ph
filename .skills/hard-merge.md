@@ -1428,7 +1428,7 @@ node --input-type=module -e "import {CURATED} from './scripts/lib/worktree-inven
 If that prints an empty array, the veto cannot fire for you, and **if you believe something in that
 directory is unaccounted for, raising it is the whole of your move** — tell the operator it is a
 `mustNotPrune` claim, because the field records a human claim and a subagent setting it would make
-the guard self-served. `HANDOFF.md` §206 is the entry.
+the guard self-served. `HANDOFF.md` §225 is the entry.
 
 ```bash
 node scripts/worktree-inventory.mjs          # a fresh verdict: disposal reads it

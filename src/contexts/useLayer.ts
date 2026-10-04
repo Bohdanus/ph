@@ -19,6 +19,7 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
+
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
   type CreatorToolParams,
@@ -355,12 +356,27 @@ export const useLayers = () => {
   const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
+    const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
+    // The replacement is RENDERED, not merely recorded. `getLayerBitmap` re-runs a creator only for
+    // the vector tools — a `text` source is excluded — so a tool layer with neither `tmpCanvas` nor
+    // `bitmap` draws nothing at all: `drawLayerSource` declines it, `drawLayersToCanvas` reports
+    // "skipped layer without bitmap", and export flattens without the type. MEASURED: an in-place
+    // text commit over an existing layer emptied the layer from the canvas, from the export and from
+    // merge, and redo emptied it again. So the raster comes from the same creator a new layer uses.
+    let rebuilt: Layer;
+    try {
+      rebuilt = createLayerSource({ layerId: id, layers, source: nextSource });
+    } catch (error) {
+      console.error('Unable to render a replacement layer source', error);
+      return null;
+    }
     const nextLayer: Layer = {
       ...layer,
-      source: { ...source, args: { ...source.args }, pos: { ...source.pos } },
-      pos: { ...source.pos },
-      bitmap: null,
-      tmpCanvas: null,
+      name: rebuilt.name,
+      source: rebuilt.source,
+      pos: { ...rebuilt.pos },
+      bitmap: rebuilt.bitmap,
+      tmpCanvas: rebuilt.tmpCanvas,
     };
     const item = {
       layerId: id,
@@ -475,7 +491,32 @@ export const useLayers = () => {
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
+      // An emptied draft is an edit session with nothing in it. It cannot be committed — the Commit
+      // button is disabled and there is no ink to record — so the implicit path CLOSES it rather than
+      // returning early, which used to leave a box on the canvas that a tool switch reopened and that
+      // no key could end: Escape, Ctrl+Enter and Commit were all no-ops and only Cancel escaped.
+      if (!args.text && args.rect) {
+        const closed = { ...args, text: '', rect: null };
+        if (setToolArgs) setToolArgs(closed);
+        else currentArgsRef.current = closed;
+        clearOverlay();
+        return layers;
+      }
       if (!args.text || !args.rect) return layers;
+      // An UNTOUCHED placeholder is discarded, not committed. This is the implicit path — a tool
+      // switch, or a click elsewhere on the canvas — and a box the user never typed into is not a
+      // layer: clicking with the Type tool and then clicking away in Photoshop leaves the document
+      // unchanged, and the placeholder is a preview of the font rather than content. The explicit
+      // Commit button deliberately still commits it, because there the user has said "take this".
+      // The flag is the whole of the test: a string comparison would discard real content that
+      // happens to be those words, which is the defect the flag replaced.
+      if (args.placeholderUntouched === true) {
+        const discarded = { ...args, text: '', rect: null };
+        if (setToolArgs) setToolArgs(discarded);
+        else currentArgsRef.current = discarded;
+        clearOverlay();
+        return layers;
+      }
 
       const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
@@ -486,7 +527,13 @@ export const useLayers = () => {
         if (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y) {
           const source: ToolLayerSource = {
             kind: 'tool',
-            args: { ...args, rect: measuredRect },
+            // Layer-LOCAL, because that is what the create arm stores and what `createLayerSource`
+            // renders from: the creator builds a `pos`-sized canvas and draws at the rect's own
+            // coordinates. An unreduced canvas-space rect puts the ink outside that canvas whenever
+            // the document frame is not the origin — MEASURED on a crop with `documentFrame.x` at
+            // -100, a replace armed rendered an EMPTY layer at the right position. The origin
+            // comparison above still uses the un-reduced rect, so the guard is unaffected.
+            args: { ...args, rect: reduceRect(sortRect(measuredRect), pos), placeholderUntouched: false },
             pos,
           };
           const replaced = replaceLayerSource(activeLayer.id, source);
@@ -494,12 +541,13 @@ export const useLayers = () => {
             const cleared = { ...args, text: '', rect: null };
             if (setToolArgs) setToolArgs(cleared);
             else currentArgsRef.current = cleared;
+            clearOverlay();
             return { ...layers, [activeLayer.id]: replaced };
           }
         }
       }
 
-      const layer = createLayerFromTool({ args });
+      const layer = createLayerFromTool({ args: { ...args, placeholderUntouched: false } });
       const cleared = { ...args, text: '', rect: null };
       if (setToolArgs) {
         setToolArgs(cleared);
