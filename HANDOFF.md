@@ -3238,10 +3238,26 @@ failures are the symlink and not your work.
 reproduce, and the numbers are in the plan.** Both probes are green, and that is structural rather
 than lucky: `totalSize` is recomputed only from `updates.documentFrame`
 (`src/contexts/StoreContext.tsx` — `projectPublishedTimeline()`, reached from the
-`COMMIT_DOCUMENT_EDIT` case), and of the eight `COMMIT_DOCUMENT_EDIT` dispatches in
-`src/contexts/useLayer.ts` exactly one carries a frame — `applyDocumentCrop()`, which cannot
-grow the document because `trimRect()` clamps every edge into `[0, totalSize]`
-(`src/util/rect.ts` — `trimRect()`, whose clamp is `clampEdge()`).
+`COMMIT_DOCUMENT_EDIT` case), and of the `COMMIT_DOCUMENT_EDIT` dispatches in `src/contexts/useLayer.ts`
+exactly one carries a frame — `applyDocumentCrop()`. Take the dispatch count from the file; it moves
+as writers are added.
+
+**Correction to the reason that was written here.** This paragraph used to say `applyDocumentCrop()`
+"cannot grow the document because `trimRect()` clamps every edge into `[0, totalSize]`". **That is
+false, and inverted.** `applyDocumentCrop()` normalises with `sortRoundRect()`
+(`src/contexts/useLayer.ts` — `applyDocumentCrop()`), not `trimRect()`. `rect.ts` documents the
+difference deliberately: `trimRect` feeds `roundedPos` clamped edges, `sortRoundRect` feeds it
+unclamped ones, "the rounding is the same, the clamp is the caller's decision"
+(`src/util/rect.ts` — `sortRoundRect()`, `trimRect()`, `clampEdge()`), and the function's own comment
+says "Unclamped on purpose, and that is the whole feature". So `applyDocumentCrop()` **can** and does
+grow the document, and the added band stays transparent — that is OVR-1 in `docs/OVERRIDES.md`. The
+green probes are still explained, by the other half of the sentence: only this one dispatch carries a
+frame, so no _ordinary tool commit_ moves `totalSize`. The conclusion stands; the mechanism named for
+it did not. `trimRect()` is real and does clamp via `clampEdge()`, but it is not on the crop commit
+path: `CropToolArea`'s `onChangeEnd` hands `applyDocumentCrop()` the `sortRoundRect()` result, and
+`crop`'s own `imageProcessor` (`src/tools/crop.ts`) is reached by nothing in that flow.
+`operationForTool()` (`src/contexts/history-adapter.ts`) returns `null` for a `document-operation`
+tool, so the durable converter derives nothing from it either.
 
 **What the green run does NOT cover, which is most of this entry.** Scenarios D and E are
 deliberately assertion-light: they assert only `expect(rows.length).toBeGreaterThan(0)`, a tautology,
