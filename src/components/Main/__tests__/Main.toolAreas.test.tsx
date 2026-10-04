@@ -487,9 +487,14 @@ describe('Main tool-area routing', () => {
     // A non-selection tool must not run a 60fps loop into a canvas nobody can see. The canvas and
     // the loop are gated on one boolean (`selectionToolActive`), so they cannot disagree; this
     // loop is the half of that claim which is not about the list above.
+    //
+    // `GuardedMain`, not a bare `Main`: this branch's base predates the unsaved-changes provider,
+    // and main added `useUnsavedChanges` under `Main`, so rendering the raw component here throws
+    // "must be used within an UnsavedChangesProvider" before the assertion runs at all. Every other
+    // rerender in this file already goes through the guard for the same reason.
     for (const toolName of ['reposition', 'brush', 'crop', 'text', 'zoom', 'paint-bucket', 'eyedropper'] as const) {
       storeState.toolName = toolName;
-      rerender(<Main />);
+      rerender(<GuardedMain />);
 
       expect(ants().style.display).toBe('none');
     }

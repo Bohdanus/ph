@@ -3992,28 +3992,6 @@ That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export
 `src/components/Main/RectangularSelectionToolArea.tsx:176`,
 `src/tools/singleRowColumnMarquee.ts:65-82`.
 
-## 179. The rectangular marquee's in-flight border is the one piece of selection chrome that never crawls
-
-**Problem.** A selection's border is the marching ants for every selection tool now, so the crawl
-is uniform across all nine of them. The exception is the rectangle BETWEEN press and release: while
-a gesture is in flight the ants stand down (`selection-drag-preview.ts`, published by `useRect`'s
-`beginGesture`) and the only border on screen is `useRect`'s own stroke, whose dashes are static for
-the reason in §86. The user sees the border appear — a dashed rectangle where there was none — and
-then not move, for the whole drag, on the one tool whose border is otherwise indistinguishable from
-the other eight at rest.
-
-**It is a smaller defect than it looks, and the fix is the fix.** The drag is RAF-throttled, so the
-rectangle itself tracks the pointer; only the dashes are frozen, and a still dash around a moving
-rectangle reads as a marquee rather than as a stalled border. Animating it means §86's loop, and
-that loop has to reach this branch too — `borderMode: 'while-dragging'` is the only place the
-rectangle's stroke is on screen while `useRect` owns it, so the offset ref has to advance there
-without advancing for `'always'`, where the Move tool's own dashed rect would start crawling under
-a different rule than the ants use.
-
-**Files.** `src/hooks/useRect.ts:323-329`, `src/hooks/selection-drag-preview.ts`
-
----
-
 ## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
@@ -5124,3 +5102,25 @@ the paint bar lacks, so `draw` may be deleted later and this is the work for tha
 **What is needed.** Do not merge it; do not dispose of it. If `draw` is deleted, re-derive the
 removal from `main` — do not resurrect `603356ac`, which is 583 commits behind its base and carries
 the mutant above.
+
+---
+
+## 179. The rectangular marquee's in-flight border is the one piece of selection chrome that never crawls
+
+**Problem.** A selection's border is the marching ants for every selection tool now, so the crawl
+is uniform across all nine of them. The exception is the rectangle BETWEEN press and release: while
+a gesture is in flight the ants stand down (`selection-drag-preview.ts`, published by `useRect`'s
+`beginGesture`) and the only border on screen is `useRect`'s own stroke, whose dashes are static for
+the reason in §86. The user sees the border appear — a dashed rectangle where there was none — and
+then not move, for the whole drag, on the one tool whose border is otherwise indistinguishable from
+the other eight at rest.
+
+**It is a smaller defect than it looks, and the fix is the fix.** The drag is RAF-throttled, so the
+rectangle itself tracks the pointer; only the dashes are frozen, and a still dash around a moving
+rectangle reads as a marquee rather than as a stalled border. Animating it means §86's loop, and
+that loop has to reach this branch too — `borderMode: 'while-dragging'` is the only place the
+rectangle's stroke is on screen while `useRect` owns it, so the offset ref has to advance there
+without advancing for `'always'`, where the Move tool's own dashed rect would start crawling under
+a different rule than the ants use.
+
+**Files.** `src/hooks/useRect.ts:323-329`, `src/hooks/selection-drag-preview.ts`
