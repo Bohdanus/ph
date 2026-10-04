@@ -116,11 +116,8 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     // numbers a new layer at `maxLayerOrder(layers) + 1` and puts that same number
     // in its name suffix, and the baseline's only layer sits at order 0. The
     // converter used to bind the bare kind at `Math.max(-1, ...orders) + 1`, so
-    // this read 'Blank' at order 0 for the very first layer of a document.
+    // this read `'Blank'` at order 0 for the very first layer of a document.
     expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank 1');
-    // Non-discriminating here: over a non-empty stack the two rules both read
-    // `max + 1`. `create-layer numbers the first layer of an empty document at 1,
-    // not 0` below is what separates them.
     expect(atTip.layers[layer2Id]?.snapshot.order).toBe(1);
     expect(atTip.layers[layer2Id]?.operations).toHaveLength(0);
     expect(atTip.activeLayerId).toBe(layer2Id);
