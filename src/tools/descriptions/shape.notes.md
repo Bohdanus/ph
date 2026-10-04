@@ -188,23 +188,24 @@ arrangement, and Additional shape and path options"
 that bar at all and come last, and the Path-mode-only `Operation` row sits with the path rows
 rather than at the end.
 
-| Photoshop control  | Photoshop behaviour                                        | App status | App default                          | App site                                                 |
-| ------------------ | ---------------------------------------------------------- | ---------- | ------------------------------------ | -------------------------------------------------------- |
-| `Mode`             | Shape / Path / Pixels, default Shape                       | partial    | `shape`                              | `Figures/Shape.tsx` — `Shape()`'s "Tool mode" `<select>` |
-| `Fill`             | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff`  | `StoreContext.tsx` — `initialState`                      |
-| `Stroke`           | outline swatch, same four contents                         | partial    | store `color` = `#000000`            | `StoreContext.tsx` — `initialState`                      |
-| `Stroke width`     | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5               | `Figures/Shape.tsx` — `Shape()`'s thickness slider       |
-| `Stroke type`      | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins            | `Figures/Shape.tsx` — `Shape()`'s dash toggle            |
-| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | Create <Figure> dialog, 100×100 seed | `CreateShapeDialog.tsx` — `DIALOG_DEFAULTS`              |
-| `Path Operations`  | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                    | —                                                        |
-| `Path Alignment`   | align and distribute components                            | missing    | —                                    | —                                                        |
-| `Path Arrangement` | bring forward / send back                                  | missing    | —                                    | —                                                        |
-| `Operation`        | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                    | —                                                        |
-| `Weight`           | path thickness — see below; mode-dependent                 | missing    | —                                    | —                                                        |
-| gear               | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                    | —                                                        |
-| `Mode` (blend)     | **Pixel mode only**, layer blend list                      | missing    | —                                    | —                                                        |
-| `Opacity`          | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes             | `Figures/Shape.tsx` — `Shape()`'s `alpha-slider`         |
-| `Anti-alias`       | **Pixel mode only**, applied automatically                 | missing    | —                                    | —                                                        |
+| Photoshop control                       | Photoshop behaviour                                        | App status | App default                          | App site                                                 |
+| --------------------------------------- | ---------------------------------------------------------- | ---------- | ------------------------------------ | -------------------------------------------------------- |
+| `Mode`                                  | Shape / Path / Pixels, default Shape                       | partial    | `shape`                              | `Figures/Shape.tsx` — `Shape()`'s "Tool mode" `<select>` |
+| `Fill`                                  | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff`  | `StoreContext.tsx` — `initialState`                      |
+| `Stroke`                                | outline swatch, same four contents                         | partial    | store `color` = `#000000`            | `StoreContext.tsx` — `initialState`                      |
+| `Stroke width`                          | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5               | `Figures/Shape.tsx` — `Shape()`'s thickness slider       |
+| `Stroke type`                           | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins            | `Figures/Shape.tsx` — `Shape()`'s dash toggle            |
+| `Shape W&H`                             | exact W/H, plus From Center; click opens Create <Shape>    | partial    | Create <Figure> dialog, 100×100 seed | `CreateShapeDialog.tsx` — `DIALOG_DEFAULTS`              |
+| `Path Operations`                       | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                    | —                                                        |
+| `Path Alignment`                        | align and distribute components                            | missing    | —                                    | —                                                        |
+| `Path Arrangement`                      | bring forward / send back                                  | missing    | —                                    | —                                                        |
+| `Operation`                             | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                    | —                                                        |
+| `Weight`                                | path thickness — see below; mode-dependent                 | missing    | —                                    | —                                                        |
+| `Set additional shape and path options` | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                    | —                                                        |
+| `Radius`                                | corner rounding, 0–1000 px, Adobe's figure corner control  | present    | the figure's own dialog field        | `Figures/Shape.tsx` — `Shape()`'s radius input           |
+| `Mode` (blend)                          | **Pixel mode only**, layer blend list                      | missing    | —                                    | —                                                        |
+| `Opacity`                               | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes             | `Figures/Shape.tsx` — `Shape()`'s `alpha-slider`         |
+| `Anti-alias`                            | **Pixel mode only**, applied automatically                 | missing    | —                                    | —                                                        |
 
 **The Fill and Stroke app sites moved file, and the values did not.** Both defaults are still
 `#ffffff` and `#000000`; what was wrong was the file. `src/tools/shape.ts` — `setShapeCtx()` — writes

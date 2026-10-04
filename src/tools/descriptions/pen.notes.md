@@ -142,13 +142,14 @@ error.** The `curvature-pen` row was tallied as three when it is four — it has
 Selection…/Mask/Shape. A later recount found a second error in the same table: `curvature-pen` was
 given nine controls and five `missing` where the data file and this file's own Curvature Pen table
 both say eight and four, so the family was stated as 30 rows with 14 `missing` when the file holds 29
-with 13. Recounted mechanically from `pen.ts`, the family total is now 15 `inert` across 29 control
+with 14. Recounted mechanically from `pen.ts` and from the generated per-tool tables in `docs/TOOLS.md`, the family total is now 15 `inert` across 29 control
 rows: 16 less the one row that moved from `inert` to `missing` under "Path Operations" below, which is
 the only `inert` count this pass changed on purpose. The repository-wide figure in the earlier version
-— pen 16, paint 3 (eraser `Flow`, magic-eraser `Anti-aliased`, paint-bucket `Anti-aliased`), draw 1
-(`Mode`), and zero in selection, focus, shape, type-crop and transform — is **not** re-derived here:
-it was counted in the `tool-descriptions` worktree, and the other tools' description files sit on their
-own branches, so this worktree's copies are not the states it was taken from. A hand-maintained tally in
+— pen 16, paint 3, draw 1, and zero in selection, focus, shape, type-crop and transform — was counted
+against other worktrees' copies of those files, so none of it held. Re-derived here from the generated
+tables: **pen 15, paint 4** (eraser `Flow`, magic-eraser `Anti-alias`, paint-bucket `Anti-alias`, and
+color-replacement `Sampling`), **eyedropper-draw 3** (the eyedropper's one and the draw tool's two),
+**shape 8**, and **zero in selection, focus, type-crop and transform**. A hand-maintained tally in
 a prose file is the one number in this directory with nothing holding it to the code beside it.
 
 **This family is what the `inert` definition is for.** It originally read "_state_ is declared and

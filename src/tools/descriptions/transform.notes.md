@@ -238,12 +238,12 @@ shadow would use".
 | tool         | options rows | present | partial | inert | missing |
 | ------------ | ------------ | ------- | ------- | ----- | ------- |
 | `reposition` | 9            | 0       | 2       | 0     | 7       |
-| `transform`  | 13           | 1       | 6       | 0     | 6       |
+| `transform`  | 13           | 0       | 6       | 0     | 7       |
 | `levels`     | 12           | 0       | 1       | 0     | 11      |
 | `color`      | 7            | 0       | 1       | 0     | 6       |
 
 **No status changed in this pass, and three summaries did.** `reposition` keeps 9 rows at 2
-`partial`, `transform` 13 at 1 `present` / 6 `partial` / 6 `missing`, `levels` 12 at 1 `partial`,
+`partial`, `transform` 13 at 0 `present` / 6 `partial` / 7 `missing`, `levels` 12 at 1 `partial`,
 `color` 7 at 1 `partial`; every `partial` and `missing` was re-derived against
 `src/tools/settings.ts` and the four `ToolbarsRight` panels rather than carried over, and none of
 them moved. The summaries were rewritten because each asserted something the source does not say.
