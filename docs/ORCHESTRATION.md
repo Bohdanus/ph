@@ -87,8 +87,11 @@ under it.
 Three things stay allowed, each deliberately:
 
 - **A landing.** `git merge` into `main` runs `pre-merge-commit`, and a
-  fast-forward runs no hook at all, so the documented landing flow never reaches
-  this file.
+  fast-forward runs no **blocking** hook, so the documented landing flow never
+  reaches this file. The narrow word matters: a fast-forward does run
+  `post-merge`, which is why §Landing can name it as the thing that releases this
+  merge's board claims. A document that says "runs no hook at all" is wrong about
+  git, and this one was, in six tracked places.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
@@ -166,8 +169,9 @@ status` and `git diff` before staging.
   meant it.
 
   **Its limits, because a gate that claims more than it has is the failure it replaces:**
-  git runs no hook for a **fast-forward**, so that landing shape is uncovered — safe by
-  construction, since the branch tip contains main as an ancestor, but uncovered. And
+  git runs no **blocking** hook for a **fast-forward** — `post-merge` fires and exits 0,
+  so that landing shape is uncovered — safe by construction, since the branch tip
+  contains main as an ancestor, but uncovered. And
   `--no-verify` bypasses it, as it bypasses every gate here.
 
   **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
@@ -376,11 +380,35 @@ covers a chat that was opened in `main` and driven into a task worktree.
 
 **A signal that could not be read is not an empty signal.** A `git status` that
 fails refuses as `dirty-tree-unreadable` rather than leaving the counts at zero,
-a board database that is present but unreadable refuses, and a bare name that is
-the basename of two worktrees refuses rather than disposing the first match —
+a board database that is present but unreadable refuses, and a bare name that
+is the basename of two worktrees refuses rather than disposing the first match —
 git guarantees two worktrees cannot share a _path_, which is not the same thing.
 Each of those three was a direction where a failed lookup produced the same
 value as a clean answer.
+
+### `derived-live-writer` can refuse the session that is asking — and no override clears it
+
+**The one refusal that has no escape is worth naming on its own, because it is
+the one that has cost the most time.** `dispose` refuses `derived-live-writer`
+when the record's `derivedLive` is true or `writeHistory.derivedChatIds` is
+non-empty. Both are derived from what a chat **did inside that worktree**, so the
+chat that ran the gates in there, or that committed there, is the chat the refusal
+names. `classify()` deliberately keeps `derivedLive` beside the suppressed `live`
+rather than letting `--no-live-writers` erase its own evidence, and `dispose`
+reads `derivedLive` — so **the documented override does not open this door.** The
+window is `RECENT_IO_WINDOW_MS`, four hours wide, and `shellHistory` is fed by
+the bash calls whose `workdir` is inside the worktree, which is exactly what a
+harvest does in its gate step.
+
+So the ordinary shape of a harvest is: gate the branch inside its worktree, land
+it, and then find that the worktree you just gated cannot be disposed by you.
+**That is the tool working, not a bug to route around** — the same `io` signal is
+the one that caught a worktree with agents editing it an hour earlier carrying
+`action: "dispose"` and `prunable: true` with every git fact correct. Do not look
+for a flag, and do not reach for `git worktree remove`; a later session, or the
+operator, disposes it once the window closes. Land the work and **say in the
+report that the removal is pending**, because a harvest that reports its landing
+and silently leaves the directory is indistinguishable from one that forgot.
 
 Then it **anchors** the branch at `refs/keep/disposed/<name>` before deleting
 anything, so no `git gc` can make a disposed branch unreachable, and it

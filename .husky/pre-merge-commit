@@ -20,7 +20,8 @@
 # reports success while deleting another branch's work is worse than one that stops.
 #
 # WHAT IT CANNOT COVER, stated here so nobody relies on it:
-# - A FAST-FORWARD landing fires no hook at all. That path is safe by construction —
+# - A FAST-FORWARD landing fires no BLOCKING hook (post-merge runs, and cannot block).
+#   That path is safe by construction —
 #   the branch tip contains main as an ancestor, so the result IS the branch tree and
 #   every difference from main is a change the branch made on purpose. Verified with
 #   raw git, not assumed.

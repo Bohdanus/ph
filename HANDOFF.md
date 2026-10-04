@@ -5524,3 +5524,56 @@ rather than the shape: the rule is that a publication must be refused unless
 `isSamePresentationCanvas` per record. Whether that is the intended invariant, or whether
 `PROMOTE_LAYER_PRESENTATIONS` should also carry the whole-tree guard, is an architecture
 judgement and belongs to the operator.
+
+## 203. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
+
+**The problem.** Two agents independently write `## 79.`, and a merge resolves the collision
+by keeping both headings. That is the shape `.skills/hard-merge.md` taxonomy class 4 exists
+for, and its fix — incumbent keeps the number, the newcomer takes `max + 1` — is a
+**document-level** decision. Nothing enforces it, and the machine that reads the result cannot
+see the violation: `parseHandoffDoc()` in `scripts/lib/agent-board/handoff-import.mjs` keys
+items by number, so the second heading overwrites or is dropped rather than reported.
+`parseHandoffDoc({ file: 'HANDOFF.md', text: '## 79. one … ## 79. two …' })` returns **one**
+item, titled `one`, with no warning and no entry in any diagnostics field.
+
+**Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number
+case, so the suite is green on a document that has lost an entry. `.skills/hard-merge.md`
+Phase 7.2 previously claimed this test existed and failed on exactly this input; that claim was
+false and is corrected in the same change. The phase's count sweep cannot catch it either — a
+duplicated number leaves `merged == ours + theirs − base` true — which is why the phase now also
+runs `grep -oE '^## [0-9]+\.' | sort | uniq -d` over the incoming side.
+
+**What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding
+rather than resolving it silently, in the shape it already uses for a retired heading
+(`deadNumbers` and the `DEAD_HEADING` consumed by `assemble`), and
+`scripts/__tests__/handoff-import.test.mjs` should gain the case: two headings, one number, one
+reported finding, and the heading count still two. Until then the only check is the `uniq -d`
+Phase 7.2 now carries, and it has to be run by hand.
+
+## 204. `dispose` has one refusal no flag can clear, and it names the session that is asking
+
+**The problem.** `scripts/dispose-worktree.mjs` refuses `derived-live-writer` when the
+inventory record's `derivedLive` is true or `writeHistory.derivedChatIds` is non-empty. Both are
+derived from what a chat did **inside** that worktree — `writeHistory` from the write calls and
+`shellHistory` from bash calls whose `workdir` is under it, per the header of
+`scripts/lib/worktree-inventory/writes.mjs` — so the chat that ran the gates in a worktree is the
+chat the refusal names, for `RECENT_IO_WINDOW_MS` (four hours).
+
+**The consequence, which is the finding.** `.skills/worktree-merge-harvest.md` §Step 5 runs
+`npm run tsc` from inside the branch's worktree and §Step 6 then calls `npm run dispose`, so **a
+harvest cannot complete its own removal**. Five independent sessions over three days hit this
+and every one correctly refused to defeat the gate, which left landed branches accumulating
+behind a gate nobody could open. `--no-live-writers "<why>"` does **not** open it: `classify()`
+in `scripts/lib/worktree-inventory/classify.mjs` keeps `derivedLive` beside the suppressed `live`
+precisely so an override cannot erase its own evidence, and `dispose` reads `derivedLive`.
+
+**What is documented, and what is not.** `docs/ORCHESTRATION.md` — §"`derived-live-writer` can
+refuse the session that is asking — and no override clears it" — now explains the shape, and
+both skills defer to it. That is deliberately the whole of the fix: the signal is the one that
+caught ten worktrees certified `dispose` while a live agent was editing inside them, and
+weakening it to let an agent clear its own name is the same defect the 2026-10-01 incident was.
+What is still missing is **a lever that is safe**. The shape that would close it without
+weakening the guard is a self-scoped one — a refusal is cleared when the named `derivedChatIds`
+are **this session's own** ids and nothing else is live, recorded in `ownership.suppressed` beside
+the signals it overrode, so the file stays auditable rather than believed. Whether an agent may
+clear its own name at all is an architecture judgement and belongs to the operator.
