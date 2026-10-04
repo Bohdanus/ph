@@ -150,12 +150,12 @@ export const toolsMap: ToolsMap = {
   'freeform-pen': {
     ...toolProcessors['freeform-pen'],
     icon: 'freeform-pen',
-    toolboxComponent: placeholderTool('Freeform Pen Tool', 'pen'),
+    toolboxComponent: placeholderTool('Freeform Pen Tool', 'freeform-pen'),
   },
   'curvature-pen': {
     ...toolProcessors['curvature-pen'],
     icon: 'curvature-pen',
-    toolboxComponent: placeholderTool('Curvature Pen Tool', 'pen'),
+    toolboxComponent: placeholderTool('Curvature Pen Tool', 'curvature-pen'),
   },
   'add-anchor-point': {
     ...toolProcessors['add-anchor-point'],

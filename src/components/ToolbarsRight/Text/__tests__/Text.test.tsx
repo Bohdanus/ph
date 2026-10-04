@@ -127,6 +127,20 @@ const pressArrowOnRange = (range: HTMLInputElement, key: 'ArrowUp' | 'ArrowDown'
   fireEvent.input(range);
 };
 
+/**
+ * The Size field typed the way a hand types it: select all, then one keystroke at a time.
+ *
+ * A single `fireEvent.change(field, {value: '129'})` hands the control a FINISHED value and cannot
+ * reproduce what used to go wrong, because the damage lived BETWEEN two keystrokes — the field
+ * republished the first one and repainted itself before the second landed. Each `change` below is one
+ * of those keystrokes, in the order a browser dispatches them.
+ */
+const typeSizeDigitByDigit = (field: HTMLElement, digits: string) => {
+  for (let length = 1; length <= digits.length; length += 1) {
+    fireEvent.change(field, { target: { value: digits.slice(0, length) } });
+  }
+};
+
 const renderWithProvider = (ui: React.ReactElement) => {
   return render(<KeyboardEventsProvider>{ui}</KeyboardEventsProvider>);
 };
@@ -615,8 +629,12 @@ describe('Text toolbar', () => {
       resetStoreState({ color: '#00ff00' });
       resetToolArgs({ color: '#0000ff' });
       renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/);
 
-      fireEvent.change(screen.getByLabelText(/Font Size/), { target: { value: '48' } });
+      fireEvent.change(size, { target: { value: '48' } });
+      // The Size field commits rather than streams (`font size retyping` below), so the keystroke
+      // above is a draft and this blur is what publishes it. Every assertion below is unchanged.
+      fireEvent.blur(size);
 
       expect(lastToolArgs()).toMatchObject({ color: '#0000ff', fontSize: 48 });
     });
@@ -702,6 +720,187 @@ describe('Text toolbar', () => {
     });
   });
 
+  /**
+   * The Size field takes the number it exists to accept.
+   *
+   * A keystroke is not an edit. The field published from `onChange`, and every published value came
+   * straight back through the controlled `value={style.fontSize}`, so the control repainted itself
+   * between two keystrokes: typing `129` over the seeded `64` published `1`, then `12`, then `129`,
+   * and typing `08` published `FONT_SIZE_MIN` on the leading zero, leaving the `8` to land after a
+   * `0.01` the field had already rewritten itself to.
+   *
+   * Every test below is written to FAIL against that, not merely to describe the fix: the keystrokes
+   * arrive one at a time, and the publication that matters is the last one.
+   */
+  describe('font size retyping', () => {
+    it('takes a size typed digit by digit and publishes nothing until it is committed', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+      expect(size.value).toBe('64');
+
+      // `1`, then `12`, then `129`. `1` and `12` are both IN range, so the old handler published
+      // them and let the field repaint to each one before the next keystroke — the corruption had
+      // nothing to do with the clamp, and a test that only typed an out-of-range value would miss it.
+      typeSizeDigitByDigit(size, '129');
+      // The field shows what the user has typed, all three keystrokes in.
+      expect(size.value).toBe('129');
+      // And a draft is not a tool argument: nothing was published while it was being typed.
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      fireEvent.blur(size);
+
+      // EXACTLY one publish, carrying the finished size. A last-call read would pass straight
+      // through three publishes of three intermediates, which is the defect itself.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 129 }));
+      // It went out through `publishStyle`, so the rect the new metrics imply went with it — a size
+      // that changed the measure and kept the box would lay the layer out against stale metrics.
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    });
+
+    it('takes a leading zero without publishing FONT_SIZE_MIN over it', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      // `0` is the one intermediate the old handler could not survive: `Math.max(FONT_SIZE_MIN, 0)` is
+      // `FONT_SIZE_MIN`, so the field became `0.01` mid-word and the `8` landed after it.
+      typeSizeDigitByDigit(size, '08');
+      // The user's own string, not the clamped one. `toBe('08')` rather than a number, because a
+      // clamp applied to the draft is a mutation this assertion is here to kill.
+      expect(size.value).toBe('08');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      fireEvent.blur(size);
+
+      // The size the user typed, not the `0.01` the old field published on the first keystroke — and
+      // not `0.018`, which is what its own `0.01` repaint turned the trailing digit into.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 8 }));
+    });
+
+    it('shows the committed size in the field once the draft is dropped', () => {
+      const { rerender } = renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      typeSizeDigitByDigit(size, '129');
+      fireEvent.blur(size);
+      // Immediately after the commit the field is back to whatever the store holds, and this file's
+      // mock hands the same args object back on every call — so it reads the seeded `64` here.
+      expect(size.value).toBe('64');
+
+      // Feeding the store what the toolbar published is what a real store does, and it is the only
+      // way to see the committed value land in the field at all. A field that kept its draft after
+      // the commit, or dropped it without publishing, fails the line below.
+      resetToolArgs({ fontSize: lastToolArgs().fontSize as number });
+      rerender(
+        <KeyboardEventsProvider>
+          <Text />
+        </KeyboardEventsProvider>
+      );
+
+      expect(size.value).toBe('129');
+    });
+
+    it('commits on Enter, because blur alone is not reachable by keyboard alone', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '96' } });
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(size, { key: 'Enter' });
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 96 }));
+    });
+
+    it('abandons the draft on Escape, leaving the published size untouched', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      typeSizeDigitByDigit(size, '500');
+      expect(size.value).toBe('500');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(size, { key: 'Escape' });
+
+      // No publish, and the field is back to the published `64` rather than the abandoned draft —
+      // which is only possible because nothing was published while it was being typed. A field that
+      // committed on every keystroke has already published `5`, and this fails.
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(size.value).toBe('64');
+    });
+
+    it('clamps at the commit, at both ends, and not while the value is being typed', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      // `min`/`max` cannot be what does this: they are constraint-validation metadata, so the
+      // browser marks the field `:invalid` and dispatches the change anyway. The field holds what
+      // the user typed until they commit, which is a different assertion from the one the clamp is.
+      fireEvent.change(size, { target: { value: '5000' } });
+      expect(size.value).toBe('5000');
+      fireEvent.blur(size);
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 1296 }));
+
+      mockSetToolArgs.mockClear();
+      fireEvent.change(size, { target: { value: '0' } });
+      expect(size.value).toBe('0');
+      fireEvent.blur(size);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+
+      mockSetToolArgs.mockClear();
+      fireEvent.change(size, { target: { value: '-40' } });
+      fireEvent.blur(size);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('publishes nothing for an emptied field, and restores the last good size on the way out', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      // The empty draft is the user's own text while they are in the field — resolving it here is
+      // what used to publish `FONT_SIZE_MIN` the instant a size was selected for retyping.
+      fireEvent.change(size, { target: { value: '' } });
+      expect(size.value).toBe('');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      fireEvent.blur(size);
+
+      // Nothing, on the way out either, and the controlled restore puts the published size back.
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(size.value).toBe('64');
+    });
+
+    it('follows an external size change, and yields to a live draft until it is committed', () => {
+      const { rerender } = renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+      expect(size.value).toBe('64');
+
+      const republish = (fontSize: number) => {
+        resetToolArgs({ fontSize });
+        rerender(
+          <KeyboardEventsProvider>
+            <Text />
+          </KeyboardEventsProvider>
+        );
+      };
+
+      // With no draft in progress the field IS the published size, so an external publish — a tool
+      // switch, a settings reload, another control — still repaints it. The draft is `null` here,
+      // which is what keeps that true.
+      republish(200);
+      expect(size.value).toBe('200');
+
+      // A draft outranks it: the keystrokes in front of the user are what they are looking at, and a
+      // publish landing mid-edit must not replace the value they are typing towards under the cursor.
+      typeSizeDigitByDigit(size, '7');
+      republish(300);
+      expect(size.value).toBe('7');
+
+      // And the commit publishes the DRAFT rather than the size the store happened to hold.
+      fireEvent.blur(size);
+      expect(lastToolArgs()).toMatchObject({ fontSize: 7 });
+    });
+  });
+
   describe('keyboard navigation', () => {
     it('walks the bar left to right, with the style toggles between Italic and Apply', async () => {
       renderWithProvider(<Text />);
@@ -772,17 +971,25 @@ describe('Text toolbar', () => {
       expect(fontSizeField.step).toBe('any');
       expect(fontSizeField.value).toBe('64');
 
+      // Each value below is a keystroke or a paste, not an edit on its own: the field COMMITS rather
+      // than streams (`font size retyping`), so the blur is part of reaching the published value
+      // rather than a gesture the assertions above needed. Every assertion is the one that was here
+      // before — including `toHaveBeenCalledExactlyOnceWith`, which is what says one `change` plus one
+      // commit is ONE publish rather than two.
       fireEvent.change(fontSizeField, { target: { value: '48' } });
+      fireEvent.blur(fontSizeField);
       expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 48 }));
 
       // The property `step={1}` actually broke, stated as a behaviour rather than as a modulo:
       // a size between two integers has to be publishable at all. Under `step={1}` the browser
       // reported this value as `:invalid` and the spinner could not land on it.
       fireEvent.change(fontSizeField, { target: { value: '48.5' } });
+      fireEvent.blur(fontSizeField);
       expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 48.5 }));
 
       // And Adobe's own maximum is a legal value, which the old grid stopped one step short of.
       fireEvent.change(fontSizeField, { target: { value: fontSizeField.max } });
+      fireEvent.blur(fontSizeField);
       expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 1296 }));
 
       // An emptied field publishes NOTHING, which is the other half: `Number('')` is `0`, not
@@ -791,6 +998,12 @@ describe('Text toolbar', () => {
       mockSetToolArgs.mockClear();
       fireEvent.change(fontSizeField, { target: { value: '' } });
       expect(mockSetToolArgs).not.toHaveBeenCalled();
+      // And leaving the edit restores what was published, rather than the field being left blank or
+      // the empty value being committed — which is the whole of why `Number('')` is not enough to
+      // look at. The mock store hands back the same args, so the published size is the seeded 64.
+      fireEvent.blur(fontSizeField);
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(fontSizeField.value).toBe('64');
 
       // The label is still `Font Size` and it is still a real `<label for>`, so clicking the
       // label focuses the field. Its readout is the FIELD's range, not the current size: with a

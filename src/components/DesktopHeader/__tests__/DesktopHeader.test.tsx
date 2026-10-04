@@ -581,9 +581,8 @@ describe('DesktopHeader menu commands', () => {
 describe('DesktopHeader Tools menu figure entries', () => {
   // These five entries are the second selection surface for the figures. The sidebar
   // already reaches them as `goToTool('shape')` plus a `figure` patch; dispatching the
-  // registered figure `ToolName`s mounted the Shape panel with e.g. `toolName: 'rectangle'`,
-  // where the `args.toolName !== 'shape'` guard at Shape.tsx:32 suppressed the store-colour
-  // publish — so Tools > Rectangle Tool + a red colour well committed black.
+  // registered figure `ToolName`s mounted the Shape panel with a figure-specific tool name,
+  // bypassing the shared shape-family state path used by the sidebar.
   //
   // `ellipse` is the trap: the registered `ToolName` is `ellipse`, the stored figure is `oval`.
   it.each([
