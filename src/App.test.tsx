@@ -308,7 +308,7 @@ describe('App shell layout', () => {
  * work — but `display: none` hides without unmounting. A surface left open on a phone
  * therefore stayed mounted on desktop, and `MobileToolSheet` held a second live instance of
  * the active tool's options panel next to the one `ToolbarHorizontal` owns: duplicate
- * `id="text-input"`, duplicate `id="font-family-select"`, duplicate window Escape listeners.
+ * `id="font-size-input"`, duplicate `id="font-family-select"`, duplicate window Escape listeners.
  *
  * `MobileShell` is mocked here, so the assertions are on the flags this component owns.
  */

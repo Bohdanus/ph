@@ -19,6 +19,7 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
+import { PLACEHOLDER_TEXT } from '../tools/text.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
   type CreatorToolParams,
@@ -461,6 +462,19 @@ export const useLayers = () => {
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
       if (!args.text || !args.rect) return layers;
+      // An UNTOUCHED placeholder is discarded, not committed. This is the implicit path — a tool
+      // switch, or a click elsewhere on the canvas — and a box the user never typed into is not a
+      // layer: clicking with the Type tool and then clicking away in Photoshop leaves the document
+      // unchanged, and the placeholder is a preview of the font rather than content. The explicit
+      // Commit button deliberately still commits it, because there the user has said "take this".
+      // The flag distinguishes the preview string from real user content that happens to be the
+      // same words (or a committed layer re-entered with those words).
+      if (args.placeholderUntouched === true && args.text === PLACEHOLDER_TEXT) {
+        const discarded = { ...args, text: '', rect: null };
+        if (setToolArgs) setToolArgs(discarded);
+        else currentArgsRef.current = discarded;
+        return layers;
+      }
 
       const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {

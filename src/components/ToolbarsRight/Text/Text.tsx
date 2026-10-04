@@ -3,8 +3,8 @@ import { calculateNewRect, sortRect, sortedRectToPos } from '../../../util/rect.
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import { canvasToDocumentPos, documentFrameFromSize } from '../../../contexts/document-frame.ts';
+import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
 import {
   FONT_SIZE_MAX,
@@ -24,8 +24,7 @@ import {
 } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, textareaRef, totalSize, documentFrame: currentDocumentFrame, activeLayerId, layers }] =
-    useStore();
+  const [{ canvasRef, totalSize, documentFrame: currentDocumentFrame, activeLayerId, layers }] = useStore();
   const { createLayerFromTool, replaceLayerSource } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
   const appliedArgsRef = useRef<typeof toolArgs | null>(null);
@@ -36,6 +35,8 @@ const Text: React.FC<{}> = () => {
 
   const style = resolveTextStyle(toolArgs);
   const { text = '', rect = null, color } = toolArgs;
+  /** A placed box remains an edit session even after the user deletes every character. */
+  const editing = Boolean(rect);
 
   /**
    * Publishing a style change and the rectangle it implies as ONE call.
@@ -49,10 +50,6 @@ const Text: React.FC<{}> = () => {
   const publishStyle = (changes: Partial<typeof toolArgs>) => {
     const newArgs = { ...toolArgs, ...changes };
     onChange({ ...newArgs, rect: calculateNewRect(newArgs, canvasRef, totalSize) ?? rect });
-  };
-
-  const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    publishStyle({ text: event.target.value });
   };
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -94,9 +91,11 @@ const Text: React.FC<{}> = () => {
   };
 
   const handleAlignChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    // Through `publishStyle`, unlike colour and the two decorations: `calculateNewRect` has an
-    // alignment arm that re-centres or re-flushes a box the text outgrew, so a box re-placed by
-    // left and then switched to right is one the next measurement would move again.
+    // Through `publishStyle`, unlike colour and the two decorations. `calculateNewRect` has no
+    // alignment arm at all now — a POINT box hugs its ink and keeps its left edge for all three
+    // settings, because Adobe scopes alignment to paragraph type — but a PARAGRAPH box's width is
+    // the width the user dragged and alignment redistributes the ink inside it, so a box re-placed
+    // by left and then switched to right is one the next measurement would move again.
     publishStyle({ align: event.target.value as 'left' | 'center' | 'right' });
   };
 
@@ -136,19 +135,20 @@ const Text: React.FC<{}> = () => {
    * this function was the odd one out rather than the rule being wrong somewhere.
    */
   const applyText = () => {
-    if (!text || !rect) return;
+    if (!editing || !text || !rect) return;
     if (appliedArgsRef.current === toolArgs) return;
     const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
     const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
     const localPos = sortedRectToPos(sortRect(measuredRect));
     const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+    const committedArgs = { ...toolArgs, placeholderUntouched: false, rect: measuredRect };
     const editsActiveLayer =
       activeLayer?.source?.kind === 'tool' &&
       activeLayer.source.args.toolName === 'text' &&
       pos.x === activeLayer.pos.x &&
       pos.y === activeLayer.pos.y;
     if (editsActiveLayer && activeLayer) {
-      replaceLayerSource(activeLayer.id, { kind: 'tool', args: { ...toolArgs, rect: measuredRect }, pos });
+      replaceLayerSource(activeLayer.id, { kind: 'tool', args: committedArgs, pos });
     } else {
       // The re-entrancy guard is armed AFTER the create, not before it. Armed before, a throw from
       // `createLayerFromTool` left it armed against a `toolArgs` identity nothing has changed, so
@@ -156,7 +156,7 @@ const Text: React.FC<{}> = () => {
       // bricked, and no second attempt could recover it. Arming it after the create keeps the guard
       // doing its real job, which is a repeated invocation of THIS handler within one tick, without
       // letting a failure consume the user's next try.
-      createLayerFromTool({ args: { ...toolArgs, rect: measuredRect } });
+      createLayerFromTool({ args: committedArgs });
     }
     appliedArgsRef.current = toolArgs;
     onChange({ ...toolArgs, text: '', rect: null });
@@ -167,23 +167,27 @@ const Text: React.FC<{}> = () => {
   };
 
   return (
-    <div className="flex flex-row items-center gap-4 h-full">
-      <div className="flex flex-col">
-        <div className="flex items-center gap-2">
-          <label htmlFor="text-input" className="text-[10px] mr-[-3px] font-medium text-gray-700 dark:text-gray-300">
-            Text
-          </label>
-          <textarea
-            ref={textareaRef}
-            id="text-input"
-            value={text}
-            onChange={handleTextChange}
-            placeholder={rect ? 'Enter text...' : 'Drag on the canvas to place text...'}
-            rows={2}
-            className="rounded border border-gray-400 bg-white px-1 py-0.5 text-xs text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-300 dark:bg-white dark:text-gray-900 w-52"
-          />
+    <div className="flex flex-row items-center gap-4 h-full min-w-[1020px]">
+      {/*
+       * Adobe's ONE visible tell for edit mode, and the reason there is no text field here any more.
+       *
+       * "To determine whether a type tool is in edit mode, look in the options bar — if you see the
+       * Commit button and the Cancel button, the type tool is in edit mode"
+       * (https://helpx.adobe.com/photoshop/using/creating-type.html). The pair is the whole of it,
+       * and it is only rendered while a placed box is open: the rectangle remains the edit-session
+       * signal even when the user deletes all characters, so the bar and canvas keep the caret alive.
+       *
+       * The textarea this replaces was the app's answer to having no edit mode — "type into a field
+       * on the right, press Apply, get a raster layer" — and it was the largest fidelity gap in the
+       * tool: no caret, no placeholder, and a second place to look for the text. It is gone rather
+       * than hidden because a hidden field that still holds the draft's text is a second source of
+       * truth, and two inputs bound to one string fight over the focus.
+       */}
+      {editing && (
+        <div className="flex flex-col">
+          <span className="text-[10px] font-medium text-gray-700 dark:text-gray-300">Editing type layer</span>
         </div>
-      </div>
+      )}
 
       <div className="flex flex-col">
         <div className="flex items-center gap-2">
@@ -399,14 +403,25 @@ const Text: React.FC<{}> = () => {
         </button>
       </div>
 
-      <div className="flex gap-2 ml-2">
-        <button className={PRIMARY_BUTTON} disabled={!text || !rect} onClick={applyText}>
-          Apply
-        </button>
-        <button className={SECONDARY_BUTTON} disabled={!text || !rect} onClick={clear}>
-          Clear
-        </button>
-      </div>
+      {editing && (
+        <div className="flex gap-2 ml-2">
+          {/*
+           * `Commit` and `Cancel`, in that order and both only in edit mode.
+           *
+           * `Cancel` is a discard, which is what Adobe's is: "To cancel the changes, click the Cancel
+           * button in the options bar" (https://helpx.adobe.com/photoshop/using/editing-text.html).
+           * Neither is `disabled` while a draft is open, because `editing` already means a draft is
+           * open — the `disabled={!text || !rect}` this replaces was the old half-gate, and it was
+           * reachable only because the field could be emptied, which it no longer can.
+           */}
+          <button className={PRIMARY_BUTTON} disabled={!editing || !text} onClick={applyText}>
+            Commit
+          </button>
+          <button className={SECONDARY_BUTTON} disabled={!editing} onClick={clear}>
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 };

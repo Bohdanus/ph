@@ -14,9 +14,9 @@ version:
   possible (a corrected `ctx.font` shorthand, `textBaseline: 'alphabetic'`, and ink-width
   anchoring). §19 is the item-by-item record; §20 is the measured Canvas 2D behaviour those
   choices rest on; §21 is why each choice was made and what it costs.
-- **Not shipped** — the rest of the structural work. There is still **no edit mode**, **no caret**,
-  **no placeholder text**, **no per-character or per-paragraph style**, **no justification**, **no
-  hyphenation**, and **no vertical type**. Those are the `GAP` rows in §2, §3, §4, §6 and §9.
+- **Not shipped** — the remaining structural work. Committed-layer re-entry, per-character or
+  per-paragraph style, justification, hyphenation, and vertical type remain unavailable. Those are
+  the `GAP` rows in §3, §4, §6 and §9.
 
 - **Shipped in a second wave** — the **click/drag distinction**: a click places **point** type and
   a drag places **paragraph** type, decided by a named constant in the app. With it, **paragraph
@@ -26,8 +26,8 @@ version:
 
 So the status rows are now split three ways: the character-formatting rows in §5 have largely been
 converted from `PARTIAL`/`GAP` to `HAVE`, the two-kind rows in §2 and the wrapping row in §6 moved
-in the second wave, and the interaction rows in §3 and §4 have not moved at all. §16 is renumbered
-to list only what has not landed.
+in the second wave, and draft edit mode, placeholder selection, caret input and IME handling moved
+in this wave. §16 is renumbered to list only what has not landed.
 
 Researched 2026-09-30; re-researched and re-derived 2026-10-01; a second wave of research and
 implementation on 2026-10-02. Sources in [§22](#22-sources). Every claim about this repository was
@@ -81,12 +81,12 @@ shorter than the last revision reported rather than longer.** Re-verified 2026-1
 | `Text.tsx` — the colour swatch           | `<input id="text-color" type="color">`     | the same `#text-color` input, higher up the file                                                                                              |
 | `Text.tsx` — the colour-reversal comment | the comment recording the colour reversal  | the same comment, above `handleColorChange`                                                                                                   |
 | `Text.tsx` — its last line               | the end of the file (item 4's "336 lines") | **414 lines**, so item 4 is wrong by a second revision in the _other_ direction                                                               |
-| `type-crop.ts`'s `appNotes`              | the `appNotes` key                         | **the same key**, further down the file — and a concurrent session refreshed the `sources` array around it without touching the prose (§22.3) |
+| `type-crop.ts`'s `appNotes`              | the `appNotes` key                         | **the same key**, further down the file — and a concurrent session refreshed the `sources` array around it without touching the prose (§22.1) |
 
 The colour-input correction is still true and is now pinned in two places rather than one: the
 `it('renders a Color swatch bound to the tool args colour')` case in `Text.test.tsx` and the
 `it('commits the recalculated rect and leaves the tool its own colour')` case in
-`TextToolArea.test.tsx`. §22.2 carries the index. The lesson is the one §0 was written to make:
+`TextToolArea.test.tsx`. §22.1 carries the index. The lesson is the one §0 was written to make:
 **a line reference in this document is a claim about a moving file, and §0 is where that claim is
 allowed to be visibly wrong.**
 
@@ -103,7 +103,7 @@ allowed to be visibly wrong.**
 | Overflow icon    | `src/tools/text.ts` — `TextLayout`, `RenderTextOptions`, `drawOverflowIndicator`                                                                              | `TextLayout.overflow`, `RenderTextOptions`, `drawOverflowIndicator`                                                                                        |
 | Renderer helpers | `src/tools/text.ts` — `fontShorthand`, `trackingPx`, `hasLetterSpacing`/`hasFontVariantCaps`, `applyTextStyle`, `inkWidth`, `fillLine`, `decorationThickness` | `fontShorthand`, `trackingPx`, the two feature tests, `applyTextStyle`, `inkWidth`, `fillLine`, the decorations                                            |
 | Registry entry   | `src/tools/toolProcessors.ts` — the `text` entry                                                                                                              | `commit: 'source'`, `creator: true`                                                                                                                        |
-| Toolbar          | `src/components/ToolbarsRight/Text/Text.tsx` — the `Text` component's returned bar                                                                            | textarea, font, size, leading, tracking, colour, align, six toggles, Apply/Clear                                                                           |
+| Toolbar          | `src/components/ToolbarsRight/Text/Text.tsx` — the `Text` component's returned bar                                                                            | edit-state label, font, size, leading, tracking, colour, align, six toggles, Commit/Cancel                                                                 |
 | Font picker      | `src/components/ToolbarsRight/Text/FontSelect.tsx` — `FONTS`                                                                                                  | 14 hard-coded families, hover preview, Escape/outside-click revert                                                                                         |
 | Canvas area      | `src/components/Main/TextToolArea.tsx` — `useRect` wiring and `redrawText`                                                                                    | `useRect` wiring and the click/drag decision, overlay repaint                                                                                              |
 | Rect growth      | `src/util/rect.ts` — `calculateNewRect`, whose two arms are the paragraph one (height only) and the point one (grow to fit, then re-place)                    | `calculateNewRect` — two arms: paragraph sizes by height only, point grows to fit and re-places                                                            |
@@ -114,9 +114,9 @@ allowed to be visibly wrong.**
 Three things about that table are new, and the first two are consequences of §7. The tool is
 **still one flat `TextToolArgs` record with no per-run or per-character structure**, and it is now
 a flat record with **twelve resolved style fields** plus one kind, which is what §19 records. And
-**two measurement functions write style onto their caller's context before they measure** —
-`getTextWidth` and `getTextLineCount` — so both are bracketed in `save`/`restore`, because
-`calculateNewRect` hands them the live tool overlay. See §21.5 and §21.12.
+**two measurement paths write style onto their caller's context before they measure** —
+`getTextWidth` and `getTextLineCount`, both through `withTextStyle` — so both are bracketed in
+`save`/`restore`, because `calculateNewRect` hands them the live tool overlay. See §21.5 and §21.12.
 
 **The paragraph arm of `calculateNewRect` is the third new thing, and it is where the box stopped
 being decorative.** The width is clamped to the document **first** (`rect.ts` —
@@ -132,29 +132,22 @@ point arm runs only for point), which is what keeps a dragged box the width it w
 
 This is the behaviour the naive description gets most wrong, so it is worth stating precisely.
 
-**In this app, a click places point type and a drag places paragraph type. That landed in the
-second wave; this paragraph describes what was there before it, because the rows below are the
-evidence the change was needed.** `TextToolArea.tsx` spreads only `useRect`'s pointer events, and
-`useRect` computes `onChangeEnd` on every valid release with no minimum-distance check at all
-(`useRect` — `handlePointerUp`; a grep for `threshold`/`distance`/`MIN_DRAG` across the hook returns
-nothing). With a press and release at the same point and no existing rect, `calculateMaskRect`
-(`useRect`) takes the fresh-point branch and `adjustFreePoint` (`useRect`) returns a **zero-area
-rect**. That zero-area rect then reaches `calculateNewRect`, whose `!text` branch _widens_ it to
-roughly `2 × (fontSize × lineHeight + 2 × TEXT_PADDING)` px at the click point, so a bare click
-produced a real, non-degenerate draft box and focused the textarea — but a box of no particular
-kind, laid out with no wrapping.
+**In this app, a click places point type and a drag places paragraph type.** `TextToolArea.tsx`
+measures pointer travel in CSS pixels against `POINT_TYPE_MAX_DRAG_PX`; a click collapses the box to
+the press origin and a drag preserves the paragraph rectangle. A new placement seeds the draft with
+`PLACEHOLDER_TEXT`, while `TextEditOverlay.tsx` selects it in the browser contenteditable so the first
+keystroke replaces it. `calculateNewRect` still widens an empty point draft so the pre-typing frame is
+visible, and floors a paragraph's usable width so a vertical drag cannot create a zero-width layer.
 
 `src/util/__tests__/rect.test.ts` — the `it('returns an expanded rect when text is empty')` title —
 pins that widening branch as load-bearing, and it is **unchanged** by either wave:
 `calculateNewRect`'s `!text` branch still turns a zero-area drag into a non-degenerate box, which is
 what makes the overlay mask visible before anything is typed.
 
-**No text is ever auto-created.** `args.text` stays `''`, `Apply` stays disabled (`Text.tsx` — the
-`Apply` button's `disabled={!text || !rect}`), and no layer is created. A repo-wide grep for
-`lorem`, `placeholder` and `Enter text` returns exactly one production hit — the HTML `placeholder`
-attribute on the textarea (`Text.tsx`), which is a DOM hint and never becomes a layer. (That same
-`textarea` also carries the token, as a Tailwind `placeholder:` colour variant, which is CSS rather
-than an attribute.)
+**A draft is not committed automatically.** The placeholder lives in tool args and the contenteditable
+overlay until Commit, an explicit keyboard commit, or an implicit commit from switching tools or
+placing another box. An untouched placeholder is discarded on implicit commit; the Commit button can
+explicitly preserve it as a layer.
 
 **Photoshop behaves differently, and the difference is a requirement** ([creating-type](https://helpx.adobe.com/photoshop/using/creating-type.html), Adobe):
 
@@ -217,8 +210,8 @@ this wave implemented.
 - `HAVE` — **point vs paragraph type as a stored distinction**, with `point` as the migration
   default, because a record written before the field existed can only have behaved as point type
   (§19.4).
-- `GAP` — **placeholder text.** A new type layer is born with placeholder text pre-selected, so
-  typing replaces it rather than appending. The preference must gate it.
+- `HAVE` — **placeholder text for a new draft.** A placement seeds `Lorem ipsum`, the browser
+  overlay selects it, and the first keystroke replaces it. The preference gate remains out of scope.
 - `GAP` — **second click creates a second layer**, and a click inside an existing text flow
   enters it instead.
 - `HAVE` — **overflow indicator** on the box, drawn only on the draft overlay. The size, the
@@ -228,21 +221,35 @@ this wave implemented.
   (`rect.ts` — `calculateNewRect`'s point arm). It is not a **transform** box and does not reflow on
   a later resize in the sense §8 requires.
 
-**The largest fidelity gap in the tool has narrowed but not closed.** "Click to place type, type to
-replace it" still has no `type to replace it`: there is no edit mode, no caret, and no placeholder,
-so the app still asks the user to type into a textarea on the right rather than onto the canvas.
-What the second wave bought is that the two gestures Photoshop distinguishes now produce two
-genuinely different layers.
+**The largest fidelity gap in the tool is now CLOSED for a placement, and still open for a committed
+layer.** "Click to place type, type to replace it" works: clicking places a box holding Adobe's
+placeholder, pre-selected, with a live caret over it (§3). The remaining half is the way BACK IN —
+double-clicking a committed type layer to edit its characters — which needs a durable operation that
+records "this layer's source args changed" and does not exist (§7.3).
 
 ---
 
 ## 3. Edit mode, commit, cancel
 
-**In this app there is no edit mode, and this revision did not change that.** `applyText`
-(`Text.tsx`) is the commit, and it is a one-shot "type into the textarea, press Apply, get a raster
-layer". There is no way back into a placed layer to change a character, and no way to cancel a
-partially-typed layer — `clear()` (`Text.tsx`) discards the pending draft. Nothing in §19 touched
-this section's rows.
+**Edit mode exists for a draft, and is DERIVED rather than flagged.** A text tool argument carrying
+both a string and a box IS edit mode; the predicate is `hasPendingText` (`src/util/typeGuards.ts`),
+and it is the same one the dirty-document check uses, so the options bar, the canvas overlay and the
+dirty flag cannot disagree about whether the tool is editing. There is no `editing: boolean` anywhere.
+
+`TextEditOverlay.tsx` is that mode: a transparent `div[contenteditable]` laid over the type box,
+which owns the caret, the character selection, the IME and the clipboard because the browser already
+implements all four. `Text.tsx`'s Commit and Cancel are the commit and the discard, and the options
+bar has no text field at all — Photoshop's does not either, and its own rule for recognising edit
+mode is the two buttons appearing.
+
+**Two commit paths that Adobe documents and the app did not have are now here**, both measured in a
+real browser rather than assumed: `Escape` COMMITS rather than cancels (Adobe's shipped default,
+under `Edit > Preferences > Type > Use Esc key to commit text`), and a click elsewhere on the canvas
+commits the open draft before placing the next box. The second one was a silent data loss — a draft
+is not yet a layer, so nothing had recorded the typed text and overwriting the arguments discarded it
+with no history entry.
+
+**Still `GAP`:** the way back into a COMMITTED layer (§3.1).
 
 One Adobe commit path _is_ already present: switching tools commits the draft implicitly, because
 `goToTool` calls `commitDirtyTool()` first (`src/hooks/useApp.ts` — `goToTool`).
@@ -285,14 +292,12 @@ route, which has no helpx citation, and what is Elements-only is the
 
 **Requirements**
 
-- `GAP` — edit mode as a state, with the Commit/Cancel pair appearing only inside it.
+- `HAVE` — edit mode as a derived draft state, with the Commit/Cancel pair appearing only inside it.
 - `GAP` — re-entering an existing type layer to change characters. **This is the blocking
   requirement for everything in §4 and §6.**
-- `GAP` — cancel of an in-progress edit.
-- `GAP` — `Ctrl/Cmd+Return`, keypad Enter, and Esc bound to commit/cancel. Note the app's own
-  trap: the textarea holds focus as soon as the tool is selected (`TextToolArea.tsx` — the
-  tool-change focus effect), and `handleKeyDown` (`useKeyboardEvents.tsx`) refuses any shortcut
-  without `allowInInput` while a field has focus — so `T` pressed mid-draft types a letter today.
+- `HAVE` — cancel of an in-progress edit through the Cancel button.
+- `HAVE` — `Ctrl/Cmd+Return`, keypad Enter, and Esc commit through the contenteditable overlay;
+  ordinary Enter inserts a line break and IME composition is left to the browser.
 - `GAP` — the `T` thumbnail and double-click-to-edit in the Layers panel.
   `src/components/SidebarRight/LayersTab.tsx` has **no `onDoubleClick`** at all; the only editable
   field there is the layer _name_.
@@ -326,13 +331,73 @@ Adobe).
 
 **Requirements**
 
-- `GAP` — caret placement and character-range selection. There is no caret model in the app.
-- `GAP` — the click-count ladder.
+- `HAVE` — caret placement and character-range selection. Both come from the browser rather than from
+  a model: the caret is where the user clicked the glyphs the overlay drew, which is exact by
+  construction, and drag-select, double-click-word and triple-click-line are the engine's own.
+- `HAVE` — IME, and not by a caret model: composition is entirely the browser's, and the overlay
+  refuses every `keydown` while `isComposing` so committing cannot happen out from under a candidate
+  the user is still choosing. The element is `contenteditable`, and the one input shape that does NOT
+  work here is a `<textarea>` (§3.2).
+- `GAP` — the click-count ladder, in the part that needs a committed layer: `HANDOFF.md` carries it.
 - `GAP` — the caret-dependent Kerning/Tracking field swap.
-- `GAP` — IME. Any caret model must be composition-aware from the start. The browser owns
-  composition; the caret is real but hidden during it, and `keydown` must not be intercepted for
-  ordinary input. The commented-out caret scaffolding in `TextToolArea.tsx` shows the previous
-  approach, and it was wrong for this reason — it is a sketch, not a reference.
+
+### 3.1 Getting back into a committed layer is still open
+
+Adobe offers three routes and none of them exists here. "Double-click the type layer's thumbnail or
+double-click the type layer with the Type tool" re-enters editing (which is the app's §3.2 overlay,
+applied to a layer rather than to a draft); "Choose the Type tool, and then click inside the type
+layer" is the same thing reached with the tool already selected; and the `T`/`Type` icon in the
+options bar re-enters the layer that is currently selected.
+
+**The blocker is not the gesture and it is not the ink.** A layer keeps its `TextToolArgs` in
+`source.args`, so the string, the face, the size, the colour and the rect are all readable back at
+runtime and `renderText` could re-rasterise them. The blocker is that changing them has to be
+RECORDED, and neither half exists: there is no runtime function that replaces an existing layer's
+source (only `createLayerFromTool`, which mints a new layer), and no durable operation for "an
+existing layer's source args changed". Applying the change without recording it would fix the pixels
+and lose them on the next replay. `HANDOFF.md` carries the work.
+
+### 3.2 Why the in-place editor is a contenteditable `div` and not a `<textarea>`
+
+The obvious implementation of "a transparent overlay that owns the caret" is a `<textarea>`, and it
+is the wrong element. **MEASURED, headless Chromium 153** — every number below came out of a real
+page, and the repeatable harness is `e2e/text-edit.spec.ts`'s parity case:
+
+- **A textarea's value ignores the element's `white-space` entirely, and no author declaration
+  escapes it.** `pre-wrap`, `pre-line` and `normal` all rendered the same four lines;
+  `getComputedStyle` reported `pre-line` while the value rendered `pre-wrap`; and the value charged
+  three spaces for a three-space run and `tab-size: 8` for a tab, where `wrapLine` charges one space
+  for both. A `div` under `pre-line` reproduces the canvas rule break-for-break, which is what
+  `DomOverlayStyle.whiteSpace` is for.
+- **The caret would then land on the DOM's line breaks, not the canvas's** — wrong by up to a line,
+  because the two wrap differently. `contenteditable="plaintext-only"` does not rescue it: it pins the
+  value to `pre-wrap` internally and behaves like a textarea.
+- **A textarea cannot be measured at all.** `document.createElement('textarea').shadowRoot` is `null`,
+  so `Range.getClientRects()` per character and `Selection.anchorOffset` are unreachable and the caret
+  index would have to be inferred. A `contenteditable` `div` keeps its text in the LIGHT DOM and both
+  work.
+- **The two renderings are the same pixels.** With the vertical correction below applied, canvas and
+  DOM text XOR to **0 pixels** in seven of eight measured cases (`deviceScaleFactor` 2, four families
+  at two leadings). Horizontal alignment needed no correction at all, in any family, with and without
+  `letter-spacing`.
+
+Two consequences of the same choice, both deliberate:
+
+- **The canvas does not draw the draft's ink while the overlay is up.** Two renderers of one string in
+  one box are either exact or visibly doubled, and the overlay's background is transparent so the
+  canvas ink would show through. The box outline and the overflow indicator stay on the canvas,
+  because they are box chrome rather than type.
+- **A point box now shrinks as well as grows** (`rect.ts` — `calculateNewRect`'s point arm). The
+  grow-only rule inferred "this slack is a box the user widened with a handle", and seeding the
+  placeholder broke that inference: a box born holding `'Lorem ipsum'` carries slack the user never
+  chose. "Each line of type is independent — the line expands or shrinks as you edit it".
+
+**The vertical correction, in one line.** A canvas first baseline sits at `TEXT_PADDING + ascent` below
+the box's top; a DOM line box puts its baseline at `(lineStep - (ascent + descent)) / 2 + ascent`
+below the CONTENT box's top, so the content box has to sit at `TEXT_PADDING - halfLeading`. The
+correction is SIGNED, because a leading under the font's ascent makes the half-leading negative and
+pushes the content box DOWN — and that is the case in which the first line's ink reaches above the
+box's own top edge, which is why the overlay is `overflow: visible` rather than clipped.
 
 **A ready-made foundation exists, and it is now half-used.** `src/util/string.ts` provides
 `charLength`, `deleteCharAt`, `deleteLastChar` and `ellipsify`, all **grapheme-cluster-safe** via the
@@ -907,8 +972,6 @@ Canvas 2D, and what each Photoshop feature costs there:
 
 | Photoshop feature      | Canvas 2D             | Status                                                                              |
 | ---------------------- | --------------------- | ----------------------------------------------------------------------------------- |
-| Photoshop feature      | Canvas 2D             | Status                                                                              |
-| ---------------------- | --------------------- | ---------------------------------------------------------------------------------   |
 | Kerning                | `ctx.fontKerning`     | Available; **default metrics kerning matches Adobe's default**, no control          |
 | Tracking               | `ctx.letterSpacing`   | **Used, feature-detected, with a measured fallback** (§19, §20, §21)                |
 | Word spacing           | `ctx.wordSpacing`     | Baseline 2025 — feature-detect; **not used yet** (it is §6's `wordSpacingDesired`)  |
@@ -979,8 +1042,8 @@ places paragraph type: the type wraps to the dragged width and the box keeps tha
   the click/drag distinction itself (the `test('a click places point type: the line does not wrap
 and the box grows to fit it')` title), and the overflow indicator (the `test('the overflow icon
 is on the draft overlay only while the type outgrows the box')` title) — and the last two
-  are what §21.12 argues below. The caret, the click-count ladder and IME remain `GAP` because
-  edit mode does.
+  are what §21.12 argues below. The contenteditable overlay now supplies the caret and IME path;
+  the click-count ladder remains `GAP` because committed-layer re-entry does.
 - **Rendered output** — a text layer's pixels are the only place wrapping, tracking and
   justification are observable. These need a **pixel** assertion. jsdom `toBeVisible()` is not
   evidence about glyphs. The e2e's ink-bounds assertions (the `test('committed text reaches the
@@ -1007,17 +1070,11 @@ without re-rasterizing …')` title — is the `it.fails` on replay re-rasteriza
   (`text.test.ts` — the `it('places each grapheme cluster itself when the platform has no
 letterSpacing')` title). That is enough to catch a wrong signature and not enough to catch a
   wrong cluster rule.
-- **A second gap, and it is the one that produced a bug.** `getTextLineCount`'s `save`/`restore`
-  bracket is **not pinned by any unit test**, and could not be: `rect.test.ts`'s mock `measureText`
-  ignores `ctx.font` entirely (`rect.test.ts` — `makeCanvasRef`), and the one direct test
-  (`text.test.ts` — the `it('measures the box against the WRAPPED line count, not the hard-break
-count')` title) checks the line count rather than the bracket. **The bracket exists only
-  because the e2e caught the defect** (§21.12). Removing it would turn the suite green while
-  re-breaking the feature, which is the worst available outcome. **Either widen the mock so
-  `measureText` honours `ctx.font`, or add an e2e that fails without the bracket** — and the second
-  already exists: `e2e/text-tool.spec.ts`'s `test('a drag places paragraph type: the type wraps to
-the dragged width and the box keeps that width')`, which is why this is a latent gap rather than a
-  live one.
+- **A second gap, and it is the one that produced a bug.** The `withTextStyle` `save`/`restore`
+  bracket is now covered by the font-sensitive `rect.test.ts` mock and the browser assertion in
+  `e2e/text-tool.spec.ts`'s paragraph wrapping test. Removing the bracket must make that test red;
+  the old claim that the mock ignored `ctx.font` was true before the review round and is no longer
+  true.
 
 ---
 
@@ -1039,13 +1096,13 @@ Removed, and why each went:
   held: it needed the durable materializer's re-run of the creator to agree with the preview, a
   single layout authority so the two could not diverge, and a fix for a defect the e2e caught. Its
   remaining halves — justification, hyphenation, indents, per-paragraph scope — are **not** this
-  item any more; they are old items 7 and 9 below, which stay.
+  item any more; they are the separate justification, indents, and hyphenation survivors below.
 
 | #   | Item                                                                     | Why here                                                                                                                         |
 | --- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **Live type layer + run model** (§7)                                     | Blocks every remaining per-character and per-paragraph feature, and re-entering a layer at all                                   |
-| 2   | **Placeholder text, pre-selected** (§2)                                  | What makes "click then type" feel like Photoshop. The gesture half landed; **this** is the half that did not                     |
-| 3   | **Edit mode + caret + selection** (§3, §4)                               | Commit/cancel, manual kerning, IME, and §7's usability                                                                           |
+| 2   | **Placeholder text, pre-selected** (§2)                                  | What makes "click then type" feel like Photoshop; placement, selection, and browser editing now ship                             |
+| 3   | **Committed-layer re-entry** (§3, §4)                                    | The remaining route to edit existing type through the durable source model                                                       |
 | 4   | **Orientation / vertical type** (§9)                                     | The one bar control named in the naive description, and the only Adobe-documented one this app omits entirely                    |
 | 5   | **Justification, in all four modes** (§6)                                | Paragraph-only in Adobe, which now matters because the two kinds are distinguishable; also the Min/Desired/Max triad             |
 | 6   | **Missing-font state** (§10)                                             | A document from a collaborator must always open                                                                                  |
@@ -1069,16 +1126,16 @@ were narrowed rather than deleted, because deleting them would have claimed the 
   of text outgrowing a box is now real**, which is what makes §8's transform matrix and §6's
   conversion gap reachable at all.
 
-**Renumbering note.** Two items left (old 2 and 5, both landed), four old items were merged into
-narrower survivors (§6's hyphenation became old 9's neighbour rather than riding with wrapping),
-and one new item appears at 2 because the gesture landed and only the text half did.
+**Renumbering note.** The click/drag and wrapping rows landed, four old items were merged into
+narrower survivors, and the placeholder row appears separately because the gesture landed while its
+text-and-selection half initially did not.
 
 ---
 
 ## 17. Open questions
 
-These are judgement calls, not research gaps. Each one blocks work downstream. **Three are settled
-by the second wave and one is re-posed**, each marked.
+These are judgement calls, not research gaps. Each one blocks work downstream. **One is settled by
+the second wave, one is partly answered, and one is re-posed**, each marked.
 
 1. **Does a text layer stay editable, or commit once?** Today: commit once, to a raster. §3 and
    §7 assume the layer survives. **This is the decision the rest of the document waits on**, and
@@ -1153,8 +1210,8 @@ block moved during the second wave.** The moved rows are named in the prose unde
 | File                                                                                                                                                                                                                                 | Pins                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Breaks on                       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
 | `src/tools/__tests__/text.test.ts` (1587 lines)                                                                                                                                                                                      | `fontShorthand` order; `fontShorthand`'s grammar-legal shape; the four Adobe constants; `trackingPx`; `resolveTextStyle`'s five defaults, its `lineHeight` fallback, its pass-through and its non-mutation; the empty-draft guard in all four spellings; the shared overlay alpha; `textBaseline`/`textAlign`; the per-line baseline and the 0.8em fallback; the per-line anchor including both overflow cases; tracking's string shape, its `'letterSpacing' in ctx` guard, ink-vs-advance anchoring, the cluster fallback and the zero-tracking path; caps, including the font-before-caps order and the `'fontVariantCaps' in ctx` guard; both rules' thickness, position, colour and off state; `getTextWidth`'s widest line, absent text, trailing-gap subtraction, `(n-1)` fallback, zero clamp, zero-tracking path and style match; creator canvas size; re-rasterization cost. **New in the second wave**: `resolveTextKind` resolving a missing `kind` to `point`; `textWrapWidth`; seven `layoutText` tests (point-as-hard-breaks, wrapping without losing a word, `\n` staying a hard break, never breaking or hyphenating an over-wide word, the trailing-space trim, overflow reported only against a given box height, wrapped-count-vs-hard-break-count); three `renderText` tests for the two kinds; three for the overflow icon including "draws no indicator on the default call"; **the `it.fails('replays text from a durable vector source without re-rasterizing …')` replay tripwire** | most of the model               |
-| `src/util/__tests__/rect.test.ts` — the `describe('calculateNewRect')` block                                                                                                                                                         | grow-from-click (`it('returns an expanded rect when text is empty')`), grow-on-wider-text, centre re-placement, **no shrink**, height arithmetic, null-rect precedence. **New in the second wave, six tests**: a paragraph box keeps the dragged width however much wider the text is; a paragraph box is sized by the **wrapped** line count, not the hard-break count; a paragraph box is never re-placed for `align` where point type moves centre and right; a paragraph box already tall enough is left exactly as dragged; a paragraph box wraps at the **clamped** width; and a record carrying **no `kind` key at all** keeps growing, which is what every pre-kind document holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | wrapping and fixed boxes        |
-| `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx` (908 lines)                                                                                                                                                              | Apply/Clear gating, the textarea placeholder, the **colour swatch owning its value** (`describe('text colour')`), the four style toggles each in three states (`describe('the four style toggles')`), `publishStyle`'s metric-vs-decoration split (`it('recomputes the rect for a change of metrics and leaves it alone for a change of decoration')`), a persisted record with the five optionals deleted (`it('renders every optional style field as its default when the persisted record predates it')`), the 15-stop tab order including all six toggles (`it('walks the bar left to right, with the style toggles between Italic and Apply')`), the number field over `0.01..1296` (`it('exposes font size as a number field over the whole 0.01..1296 range')`), tracking in 1/1000 em (`it('shows the seeded value in the field and in the readout, in 1/1000 em')`), apply idempotency (`it('commits the same tool args only once, however often Apply is activated …')`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | the whole commit model          |
+| `src/util/__tests__/rect.test.ts` — the `describe('calculateNewRect')` block                                                                                                                                                         | point growth/shrink and hard-break sizing; paragraph width floors, clamped wrapping, wrapped-height calculation, handle-resize safety, empty drafts, and legacy records without `kind`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | wrapping and fixed boxes        |
+| `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`                                                                                                                                                                          | Commit/Cancel gating, the absence of the old textarea, the **colour swatch owning its value**, style toggles, metric-vs-decoration geometry, persisted defaults, keyboard tab order, Adobe size range, tracking, and commit idempotency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | the whole commit model          |
 | `src/components/Main/__tests__/TextToolArea.test.tsx` — the `describe('onChangeEnd')` block                                                                                                                                          | colour ownership in both directions — a drag must not republish the foreground (`it('commits the recalculated rect and leaves the tool its own colour')`), and a foreground change must not republish the args (`it('does not republish the args when only the store foreground changed')`). **New in the second wave, five tests**: a drag commits a paragraph box with the dragged rect handed over unchanged; a click commits a point box with the rect collapsed onto the press origin; a 4px×1px press is a drag; a 200px×3px press is a drag; and a press **exactly at** 3px×3px is a click                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | focus moving to the canvas      |
 | `src/contexts/__tests__/useLayer.text.test.tsx` (370 lines)                                                                                                                                                                          | commit idempotency in both directions, cleared-draft shape, distinct-args distinct-layers, text-without-rect committing nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | the commit model                |
 | `e2e/text-tool.spec.ts` (2117 lines, 16 tests)                                                                                                                                                                                       | drag-then-type order, the Apply gate, the `/^text \d+$/` layer row, **ink stays inside the dragged rectangle** (the `test('committed text reaches the canvas as foreground pixels inside the dragged rectangle')` title, whose `expect.soft` assertions carry the claim), Clear discarding, colour driven through `#text-color`, the six toggles' `aria-pressed`, Bold weighting rather than switching typeface, Italic leaning rather than switching, tracking widening the ink, underline below the band, strikethrough through it, caps differing from each other, the size field clamping at both Adobe ends, the Adobe maximum's ink reaching the document bottom. **New in the second wave, three tests**: `test('a drag places paragraph type: the type wraps to the dragged width and the box keeps that width')`; `test('a click places point type: the line does not wrap and the box grows to fit it')`; `test('the overflow icon is on the draft overlay only while the type outgrows the box')`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | creation gestures, layer naming |
@@ -1239,13 +1296,13 @@ path neither back-fills them nor drops them.
 | #   | Change                                                                                                                                         | Where                                                                                                                           | Adobe basis                                                                                                                                                                                              |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | `kind?: 'point' \| 'paragraph'` on the args, and `TextKind`                                                                                    | `text.ts` — `TextKind` and `TextToolArgs`'s optional `kind`                                                                     | `TextItem.isPointText` / `isParagraphText` (UXP); ExtendScript `TextType {PARAGRAPHTEXT, POINTTEXT}` (**Adobe-authored text in a third-party mirror**)                                                   |
-| 2   | `POINT_TYPE_MAX_DRAG_PX = 3`, and the click/drag test                                                                                          | `text.ts` — `POINT_TYPE_MAX_DRAG_PX`; `TextToolArea.tsx` — `onChangeEnd`'s pointer-travel test against `POINT_TYPE_MAX_DRAG_PX` | **none — a RECONSTRUCTION.** Adobe states the two gestures by intent ("Select anywhere… to add point text" / "Drag anywhere… to add paragraph text") and documents **no threshold**. §21.13              |
+| 2   | `POINT_TYPE_MAX_DRAG_PX = 3`, and the click/drag test                                                                                          | `text.ts` — `POINT_TYPE_MAX_DRAG_PX`; `TextToolArea.tsx` — `onChangeEnd`'s pointer-travel test against `POINT_TYPE_MAX_DRAG_PX` | **none — a RECONSTRUCTION.** Adobe states the two gestures by intent ("Select anywhere… to add point text" / "Drag anywhere… to add paragraph text") and documents **no threshold**. §17 item 8          |
 | 3   | `resolveTextKind` — absent `kind` means `point`                                                                                                | `text.ts` — `resolveTextKind`                                                                                                   | none — a migration decision, and the only defensible one (§19.4)                                                                                                                                         |
 | 4   | `layoutText` as the single layout authority, shared by the renderer and the box measurement                                                    | `text.ts` — `layoutText`, called from `renderText` and `getTextWidth`                                                           | "the lines of type wrap to fit the dimensions of the bounding box" (`creating-type.html`)                                                                                                                |
 | 5   | `textWrapWidth` — the width a paragraph box offers its text                                                                                    | `text.ts` — `textWrapWidth`                                                                                                     | none — it is `rect` less `TEXT_PADDING` on both sides, and the box is the app's                                                                                                                          |
 | 6   | Greedy first fit at spaces, hard breaks first, trailing space trimmed, **no hyphenation**                                                      | `text.ts` — `wrapLine`                                                                                                          | hyphenation off by default (`ParagraphStyle.hyphenation`, "boolean … Default false"); the `\n` and trailing-space halves are measured, §20                                                               |
 | 7   | The paragraph arm of `calculateNewRect`: clamped width first, height only from the wrapped line count, no grow-to-fit, no `align` re-placement | `rect.ts` — `calculateNewRect`                                                                                                  | "the lines of type wrap to fit the dimensions of the bounding box" (`creating-type.html`), §6                                                                                                            |
-| 8   | `getTextLineCount`, bracketed in `save`/`restore`                                                                                              | `text.ts` — `getTextLineCount`                                                                                                  | none — a measurement that must not leak. §21.12                                                                                                                                                          |
+| 8   | `getTextLineCount`, bracketed through `withTextStyle` in `save`/`restore`                                                                      | `text.ts` — `withTextStyle` and `getTextLineCount`                                                                              | none — a measurement that must not leak. §21.12                                                                                                                                                          |
 | 9   | `TextLayout.overflow`, carried out of the layout rather than recomputed                                                                        | `text.ts` — `TextLayout` and `layoutText`'s return                                                                              | "If you enter more text that can fit within a paragraph boundary…, a small box or circle containing a plus symbol (+) appears in place of a handle in the corner of the boundary" (`creating-type.html`) |
 | 10  | `drawOverflowIndicator`, drawn **only** on the draft overlay                                                                                   | `text.ts` — `drawOverflowIndicator` and `RenderTextOptions.overflowIndicator`                                                   | the quote above, and nothing else: **the size, the corner and the colour are a RECONSTRUCTION**. §21.11                                                                                                  |
 | 11  | `renderText`'s third argument, `overflowIndicator`, opt-in                                                                                     | `text.ts` — `renderText`; `TextToolArea.tsx` — `redrawText`'s `overflowIndicator: true`                                         | none — it is a decision that chrome must never reach the creator                                                                                                                                         |
@@ -1458,9 +1515,9 @@ resolution, where Adobe's would have to. It is deliberately fixed rather than de
 so that it is the same object at two zoom levels, and both figures are named constants so they are
 one edit rather than a search.
 
-**12. `getTextLineCount` had to be bracketed, and no unit test could have caught it.**
-`getTextLineCount` (`text.ts`) brackets `applyTextStyle` exactly as `getTextWidth` does, for exactly
-the reason §21.5 gives — `calculateNewRect` hands both the **live tool overlay**. The defect this
+**12. `withTextStyle` had to bracket the line-count measurement, and the unit mock now covers it.**
+`getTextLineCount` reaches `withTextStyle` just as `getTextWidth` does, for exactly the reason §21.5
+gives — `calculateNewRect` hands both the **live tool overlay**. The defect this
 fixed is the one worth generalising. Unbracketed, `getTextLineCount` measured the draft in
 **whatever the last tool left on the overlay** — measured in the browser, `10px sans-serif` against
 the renderer's 64px Arial, and 162.9px for the test string (§20.1). Every candidate therefore
@@ -1470,15 +1527,9 @@ was simply the wrong height, which is invisible until you read it.
 
 **Two lessons, and the second is the one to carry.** First: **a measurement that reads a caller's
 context must own every state it depends on**, and `applyTextStyle` writing five properties is five
-ways to be wrong. Second: **the unit suite could not have caught this, and the e2e did.**
-`rect.test.ts`'s mock `measureText` returns a **constant width** regardless of `ctx.font`
-(`rect.test.ts` — `makeCanvasRef`), so applying the style changes nothing there; and the one
-`getTextLineCount` test (`text.test.ts` — the
-`it('measures the box against the WRAPPED line count, not the hard-break count')` title) exercises
-the count, not the bracket. **A mock that ignores the property under test cannot pin a defect in that
-property** — so the fix is not "add a `save`/`restore` test", it is that the e2e was the only
-instrument with the fidelity to see the bug. That is the same argument §15 makes for pixel
-assertions, and it is why §15's own gap list has a new entry.
+ways to be wrong. Second: the font-sensitive `rect.test.ts` mock now makes the unit path sensitive to
+the bracket, while the e2e verifies the rendered paragraph height. A mock that ignores the property
+under test cannot pin a defect; this one reads `ctx.font` and does.
 
 ---
 
@@ -1638,7 +1689,7 @@ Orientation`, `Warp text` and `Anti-aliased` being **options-bar** controls; tha
   list. **That list is REFUTED** (§11): `TypeUnits` has three members, not six. The mirror is
   retained here only so the next session does not re-derive the error from it
 
-### 22.2 Superseded claims, collected
+### 22.1 Superseded claims, collected
 
 Every claim in this document that a later revision found false, in one place, so that none of them
 is rediscovered. The current text says so at each site; this table is the index.
@@ -1658,7 +1709,7 @@ is rediscovered. The current text says so at each site; this table is the index.
 | Alignment applies to the whole layer, and nothing says otherwise                                        | **half false** — "Alignment options are available only for paragraph type"; this app aligns point type too                                                                                                                 | §6                |
 | "no e2e currently asserts that tracking, caps or a rule reaches the canvas at all"                      | **false** — twelve of sixteen text e2e are pixel assertions                                                                                                                                                                | §15               |
 | §21 said "Four decisions"; there were six                                                               | **false** — now twelve, and the count is enumerated                                                                                                                                                                        | §21               |
-| `Text.tsx` is 336 lines / §0 item 4                                                                     | **false** — 414, and every §0 line reference moved a second time                                                                                                                                                           | §0, §22.2         |
+| `Text.tsx` is 336 lines / §0 item 4                                                                     | **false** — 414, and every §0 line reference moved a second time                                                                                                                                                           | §0, §22.1         |
 | The type tile lives in `toolbar-mapping.ts`'s `toolbarMap`                                              | **false** — the file and the export both exist. `toolbarMap` is the `toolbar-mapping.ts` array whose `Horizontal Type Tool` entry carries this tile; `toolsMap.ts` is the registry of tool definitions and carries no tile | §9                |
 | The §0/§1/§7 citations in `layer-renderer.ts`, `useLayer.ts`, `toolProcessors.ts`, `materialization.ts` | **correct** — re-verified, unchanged; the `vectorToolNames`, `createLayerFromTool`, `text`-entry and `sourceBitmap` citations all still resolve                                                                            | §0, §1, §7        |
 | Size range is 8–500                                                                                     | **false** — Adobe's `0.01..1296`                                                                                                                                                                                           | §5, §19           |

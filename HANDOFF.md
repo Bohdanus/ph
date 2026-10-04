@@ -5912,29 +5912,20 @@ slack. The defect is the interaction, and there is nothing to fix in the geometr
 (`renderText`'s anchor). Both carry comments describing the division of labour. No test pins the
 no-op, which is why it survived.
 
-**What would close it.** A decision about the control, and it needs Adobe before it needs code: either
-Photoshop also renders alignment as a no-op for point type — in which case the honest fix is to
-disable the control while the draft is point type and say why in the bar — or it re-flows the box, in
-which case the box has to gain room to align within, which contradicts "the line expands or shrinks as
-you edit it". Do not resolve this by making the box honour `align` without settling that question
-first.
+**What would close it.** Disable the control while the draft is point type and say why in the bar.
+Adobe answers the question this entry was holding open: "You can align type to one edge of a paragraph
+(left, center, or right for horizontal type). Alignment options are available only for paragraph
+type" (`formatting-paragraphs.html`), and "You can align and justify only paragraph text. To manage
+spacing for point text, convert it to paragraph text by selecting Type > Convert to Paragraph Text"
+(`setup-paragraph-formatting.html`). So the control is not merely ineffective for point type, it is not
+offered — the fix belongs in the bar, and the reconstruction to make is that this app offers it anyway.
 
-## 196. Escape does not abort an uncommitted text draft
-
-**Problem.** `TextToolArea` has no abort route. A draft is left by Clear, by Apply, by switching tools,
-or by nothing at all; there is no Escape, and the gesture has no `pointercancel` handler of its own.
-`useRect`'s own pointer capture IS released on `pointercancel` and on unmount, so the capture cannot
-leak — what is missing is a way to abandon a draft the user has decided against. Photoshop's `Esc` on
-an uncommitted type box removes it.
-
-**Affected.** `src/components/Main/TextToolArea.tsx`, and `src/hooks/useRect.ts` if the abort is
-implemented as a `releasePointer` call rather than a draft reset.
-
-**What would close it.** A product decision on two questions this entry cannot answer from the code:
-whether Escape clears the draft or only the in-flight gesture, and what it does when focus is in the
-textarea — which is where it will be, because the tool area focuses the textarea on commit, and
-Escape inside a `<textarea>` is a normal key. Getting that wrong makes Escape clear the text the user
-is typing, which is worse than the missing feature.
+**The geometry is now pinned in the direction Adobe names.** `calculateNewRect`'s point arm recomputes
+the width on every call and keeps `x1` for all three alignments, so a point box hugs its ink and does
+not move. Two older tests pinned the opposite (`does not change width when text fits within the
+current width`, and `centers wider text for center align`); both were pins of behaviour Adobe
+contradicts and both are gone. Do not reintroduce an `align`-driven point box on the strength of the
+`HANDOFF.md` history above — the reconciliation it records was superseded.
 
 ## 197. Multi-layer bedrock conversion remains intentionally unavailable
 
@@ -6015,3 +6006,19 @@ guard fix rather than alongside it.
 **Provenance.** Found by review. An earlier correction in this area added a blur handler that turned
 out to be dead code — its guard tested a value `resolveTextStyle` had already clamped — and while
 establishing that it was dead, the intermediate-value problem became visible.
+
+## 201. A committed type layer cannot be entered again
+
+**Problem.** The Type tool now has edit mode, and it is unreachable for anything already committed.
+Clicking the canvas places a draft, the draft is an in-place editor, and the draft commits into a
+raster layer — and then there is no way back: no double-click on the layer re-enters, selecting the
+layer with the Type tool and clicking inside it does not, and there is no `T` control in the options
+bar for a selected text layer. Adobe offers all three
+(`https://helpx.adobe.com/photoshop/using/creating-type.html`), and the double-click one is the one
+users reach for first.
+
+**What would close it.** Add an entry route for committed text sources: clicking inside a selected text
+layer, double-clicking its layer thumbnail, or double-clicking the layer with the Type tool should
+hydrate the source args into the contenteditable overlay, select the existing characters, and commit
+through `replaceLayerSource`. Preserve the existing `replace-layer-source` durable operation; do not
+create a replacement layer or rasterize the source.
