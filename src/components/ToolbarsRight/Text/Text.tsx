@@ -1,5 +1,5 @@
 import React, { type ChangeEvent, type KeyboardEvent, useRef, useState } from 'react';
-import { calculateNewRect, sortRect, sortedRectToPos } from '../../../util/rect.ts';
+import { calculateNewRect, reduceRect, sortRect, sortedRectToPos } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
@@ -190,7 +190,15 @@ const Text: React.FC<{}> = () => {
       pos.x === activeLayer.pos.x &&
       pos.y === activeLayer.pos.y;
     if (editsActiveLayer && activeLayer) {
-      replaceLayerSource(activeLayer.id, { kind: 'tool', args: committedArgs, pos });
+      // Layer-LOCAL rect, as the create arm stores it and as the creator renders it: the raster is
+      // built at `pos` size and the type is drawn at the rect's own coordinates. An unreduced
+      // canvas-space rect therefore renders an EMPTY layer as soon as the document frame is not the
+      // origin. `commitDirtyTool`'s replace arm reduces for the same reason.
+      replaceLayerSource(activeLayer.id, {
+        kind: 'tool',
+        args: { ...committedArgs, rect: reduceRect(sortRect(measuredRect), pos) },
+        pos,
+      });
     } else {
       // The re-entrancy guard is armed AFTER the create, not before it. Armed before, a throw from
       // `createLayerFromTool` left it armed against a `toolArgs` identity nothing has changed, so
