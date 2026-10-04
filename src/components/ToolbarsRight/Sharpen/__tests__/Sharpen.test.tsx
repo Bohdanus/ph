@@ -20,15 +20,23 @@ import type { SharpenToolArgs } from '../../../../tools/sharpen.ts';
  * be unfalsifiable. Real `useState` (rather than assigning a module variable) is what makes the
  * repaint observable, because the repo compiles with `babel-plugin-react-compiler`, which
  * memoizes `<Sharpen />` on its empty props.
+ *
+ * `publish` is the live `setArgs` the mock records for the mounted bar, so a test can land
+ * args from OUTSIDE the panel the way a settings restore or a tool switch does. It is the same
+ * state the bar reads — one `useState`, one writer set — and it bypasses `setToolArgs` on
+ * purpose, so an external write cannot be mistaken for one of the bar's own writes.
  */
-const toolState = vi.hoisted(() => ({ initial: null as unknown }));
+const toolState = vi.hoisted(() => ({
+  initial: null as unknown,
+  publish: null as null | ((next: unknown) => void),
+}));
 
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockPatchToolArgs = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../../contexts/useCurrentTool.tsx', async () => {
-  const { useState } = await import('react');
+  const { useEffect, useState } = await import('react');
   return {
     useCurrentTool: () => {
       const [toolArgs, setArgs] = useState<Record<string, unknown>>(toolState.initial as Record<string, unknown>);
@@ -36,6 +44,12 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', async () => {
         toolState.initial = next;
         setArgs(next as Record<string, unknown>);
       };
+
+      // Recorded after every render rather than during it, so a test can only reach the
+      // writer of a bar that is actually mounted.
+      useEffect(() => {
+        toolState.publish = publish;
+      });
 
       return {
         toolArgs,
@@ -79,11 +93,29 @@ function resetToolArgs(overrides: Partial<SharpenToolArgs> = {}) {
   return toolState.initial as SharpenToolArgs;
 }
 
+/**
+ * Publishes args from outside the panel, as a settings restore or a tool switch does.
+ *
+ * It goes through the mounted bar's own `setArgs` rather than `setToolArgs`, so the bar sees
+ * an args change it did not cause and `mockSetToolArgs` records nothing: every assertion
+ * about "the writes this bar made" stays about this bar.
+ */
+const externalUpdate = (next: SharpenToolArgs) => {
+  if (!toolState.publish) throw new Error('externalUpdate needs a mounted Sharpen');
+  act(() => {
+    toolState.publish?.(next);
+  });
+};
+
 const lastArgs = () => mockSetToolArgs.mock.lastCall?.[0] as SharpenToolArgs;
+
+/** The payloads of every write this bar made, in order. */
+const writtenArgs = () => mockSetToolArgs.mock.calls.map(([payload]) => payload);
 
 describe('Sharpen toolbar', () => {
   beforeEach(() => {
     resetToolArgs();
+    toolState.publish = null;
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
     mockPatchToolArgs.mockClear();
@@ -97,6 +129,7 @@ describe('Sharpen toolbar', () => {
 
   afterEach(() => {
     resetToolArgs();
+    toolState.publish = null;
     rafCallbacks.length = 0;
     vi.unstubAllGlobals();
   });
@@ -157,16 +190,18 @@ describe('Sharpen toolbar', () => {
       expect(mockTempUpdateLayer.mock.invocationCallOrder[0]).toBeLessThan(mockSetToolArgs.mock.invocationCallOrder[0]);
     });
 
-    it('replaces the whole args object rather than merging into the previous one', () => {
+    it('publishes the whole args object, carrying the field the user did not move', () => {
       resetToolArgs();
       render(<Sharpen />);
 
       fireEvent.change(getAmount(), { target: { value: '120' } });
       flushRaf();
 
-      // `throttledOnChange` spreads the pending-or-`args` base and overwrites one field, so a
-      // value the user never moved cannot survive in the frame that flushes, and no field can
-      // be invented.
+      // The payload is the COMPLETE args, merged from the pending-or-`args` base, so the one
+      // field the user never touched is carried through from that base rather than dropped, and
+      // no field can be invented. This used to be titled "replaces the whole args object rather
+      // than merging into the previous one", which described the shape the fix removed: the bar
+      // merges now, and what it must never do is publish a partial.
       expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
         amount: 120,
         radius: 1,
@@ -215,6 +250,49 @@ describe('Sharpen toolbar', () => {
       // write carrying the stale Amount would be one call with the wrong value.
       expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({ toolArgs: expected });
       expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expected);
+    });
+
+    it("starts each frame from the current args, never from the last frame's pending write", () => {
+      render(<Sharpen />);
+
+      // Frame 1 moves Amount only.
+      fireEvent.change(getAmount(), { target: { value: '120' } });
+      flushRaf();
+
+      // Frame 2 moves Radius, in a LATER frame, so the amount survives a republished `args`
+      // rather than a pending ref — `setToolArgs` wrote state, so the closure is fresh.
+      fireEvent.change(getRadius(), { target: { value: '8' } });
+      flushRaf();
+
+      expect(writtenArgs()).toEqual([
+        { amount: 120, radius: 1, toolName: 'sharpen' },
+        { amount: 120, radius: 8, toolName: 'sharpen' },
+      ]);
+
+      // Now the args change from OUTSIDE the panel, the way a settings restore or a tool
+      // switch publishes them: into the same state the bar reads, and not through the bar.
+      externalUpdate({ amount: 30, radius: 8, toolName: 'sharpen' });
+      expect(getAmount()).toHaveValue('30');
+
+      // The next frame has to build on THOSE. The rAF callback clears `pendingUpdateRef`, so
+      // the merge base is the args as they stand now. If it left frame 1's pending args in the
+      // ref, the base would still be `{ amount: 120, radius: 1 }`, this write would carry the
+      // long-dead 120 instead of the external 30, and the thumb would snap back to a value
+      // the user set two frames and one settings restore ago.
+      fireEvent.change(getRadius(), { target: { value: '6' } });
+      flushRaf();
+
+      expect(writtenArgs()).toEqual([
+        { amount: 120, radius: 1, toolName: 'sharpen' },
+        { amount: 120, radius: 8, toolName: 'sharpen' },
+        { amount: 30, radius: 6, toolName: 'sharpen' },
+      ]);
+      // The preview rides the same three payloads: one call per frame, never a fourth for the
+      // external update, which this bar did not make.
+      expect(mockTempUpdateLayer).toHaveBeenCalledTimes(3);
+      expect(mockTempUpdateLayer).toHaveBeenLastCalledWith({
+        toolArgs: { amount: 30, radius: 6, toolName: 'sharpen' },
+      });
     });
 
     it('schedules a fresh frame after the previous one has flushed', () => {
