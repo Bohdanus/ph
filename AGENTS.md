@@ -30,10 +30,21 @@ git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
   Branch: docs/commit-attribution
   ```
 
-  `Chat:` on every commit; `Branch:` on the commit that merges into `main`. The chat id
-  is the provenance link the next session needs, and it is the only place the id is
-  written down. Find yours with `kilo session list --all`, or the `ses_` id in the
-  session URL.
+  `Chat:` on every commit; `Branch:` on the commit that merges into `main`. Read the id
+  once, up front — it is also a board identity, so `--agent ses_…` on
+  `npm run swarm --` claims and locks as this chat, and `check` exits 1 on somebody
+  else's reservation ([`docs/ORCHESTRATION.md#the-swarm-board`](docs/ORCHESTRATION.md)).
+
+  **There is no `kilo` CLI here.** The id is in the session store, and a phrase you
+  remember typing is its unique key — `parent_id IS NULL` keeps subagents out:
+
+  ```bash
+  sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
+    JOIN message m ON m.session_id=s.id JOIN part p ON p.message_id=m.id
+    WHERE s.parent_id IS NULL AND json_extract(p.data,'\$.type')='text'
+      AND instr(lower(json_extract(p.data,'\$.text')),'a phrase you typed')>0
+    ORDER BY s.time_updated DESC LIMIT 1;"
+  ```
 
 The three traps that follow from having a worktree are in **Worktrees and dev servers**
 below.
