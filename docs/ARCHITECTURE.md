@@ -302,13 +302,14 @@ shadow can never close a bitmap the legacy path still owns.
 **Production callers, exhaustively:** `convertLegacyHistorySafely` from
 `StoreContext.tsx`'s `buildDurableDocument()`; `decideDurableAppend` from
 `dispatchAction()`'s `REORDER_LAYERS` and `COMMIT_DOCUMENT_EDIT` branches;
-`replayDurableDocument` from that same `REORDER_LAYERS` branch
-— once, and only to read the shadow's layer
-order as a reorder gate — and from `publishDurableNavigationPresentation()`, which
-takes `replayDurableAtCursor()` and composes from it. `materializeDocument` has one,
-`composeDurableDocument()` in `durable-compositor.ts`; `materializeLayer` is reached
-only from inside `materializeDocument()` and has no importer of its own;
-`ReplayCoordinator` has none.
+`replayDurableDocument` from **two** sites, not one — `durableLayersAtCursor()`,
+which feeds `sourceBackedEntryContext()` the shadow's own layer order, and that
+same `REORDER_LAYERS` branch, where the order is read a second time and compared
+as a sequence against the reorder being planned. `publishDurableNavigationPresentation()`
+adds a third durable read, through `replayDurableAtCursor()`. `materializeDocument` has one
+production caller, `composeDurableDocument()` in `durable-compositor.ts`;
+`materializeLayer` is reached only from inside `materializeDocument()` and has no
+importer of its own; `ReplayCoordinator` has none.
 
 ## The tool registry
 
