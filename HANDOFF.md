@@ -2695,27 +2695,32 @@ compared shortcuts across the rail; that was true of the figure-flyout assertion
 (`it('keeps Triangle, Polygon, Line and Custom Shape in the flyout')` and
 `it('only declares U as the shape shortcut')`) but not of the rail-wide contract since.
 
-**What remains live is a gap, and closing it is a decision rather than a repair.** Adobe’s Tools
-panel has no Draw tool, so it assigns the tool no letter and there is no Adobe binding for it to
-be faithful to. An earlier version of this paragraph claimed Adobe binds the Draw tool to
-`Shift+W`; that provenance was fabricated, it is withdrawn here, and
-`src/tools/descriptions/eyedropper-draw.ts` carried the same sentence and no longer does. The
-chords are occupied by this app’s own keymap instead: `w` and `shift+w` both go to
-`selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
+**What remains live is a gap, and closing it is a decision rather than a repair.** An earlier version
+of this paragraph claimed Adobe binds the Draw tool to `Shift+W`. Adobe’s published
+default-keyboard-shortcut reference gives no letter for a Draw tool, so that provenance was
+fabricated, it is withdrawn here, and `src/tools/descriptions/eyedropper-draw.ts` carried the same
+sentence and no longer does. The chords are occupied by this app’s own keymap instead: `w` and
+`shift+w` both go to `selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
 `useKeyDownShortcut({ key: 'w' … })` registrations, the Magic Wand tile’s `objectSelectionGroup`),
-and `b` and `shift+b` both go to `selectBrushTool()`. `toolbar-mapping.ts`’s own comment states the
-conclusion rather than declining it — "There is no key to bind, because Adobe publishes none" — and
-`docs/DOCUMENTATION.md`’s ladder makes Adobe’s documentation the authority, so this entry does not
-answer whether the tile should carry a key anyway and no change may be made on this paragraph
-alone.
+and `b` and `shift+b` both go to `selectBrushTool()`. `docs/DOCUMENTATION.md`’s ladder makes Adobe’s
+documentation the authority, so this entry does not answer whether the tile should carry a key
+anyway and no change may be made on this paragraph alone.
 
 **Fix.** Take the ruling — does the Draw tile get a key of its own, and which chord if so — and
-write it into `docs/OVERRIDES.md` if it departs from the current "no key". There is no Adobe letter
-to reproduce, so the ruling is about this app’s keymap: `w` and `shift+w` are the Object Selection
-chord, `b` and `shift+b` the brush group. If the tile is to carry a key, add the
+write it into `docs/OVERRIDES.md` if it departs from the current "no key". There is no published
+Adobe letter to reproduce, so the ruling is about this app’s keymap: `w` and `shift+w` are the
+Object Selection chord, `b` and `shift+b` the brush group. If the tile is to carry a key, add the
 `useKeyDownShortcut` registration and the `shortcut` in the same change, since
 `it('never declares the same shortcut on two entries')` will refuse a declaration that collides. If
 the tile is to keep none, nothing needs changing and the live half of this entry closes.
+
+One claim beside this one is still unverified and is left as it stands rather than restated here:
+the comment above the Draw entry in `toolbar-mapping.ts` says "Adobe publishes none" on the premise
+that "Photoshop has no Draw tool", and `docs/OVERRIDES.md` titles OVR-2 "Photoshop’s Tools panel has
+no Draw tool". Whether Adobe’s Tools panel carries a tool by that name is a separate question from
+whether its shortcut reference gives that tool a letter, and only the second is settled. Re-derive
+that premise from Adobe before either is quoted as authority, and correct both together — OVR-2 is
+what keeps the tile, so its heading is not a comment that can drift alone.
 
 **Files.** `toolbar-mapping.ts` — `toolbarMap`'s `brush` entry, its Draw flyout entry and the
 comment above it; `src/components/Common/AppKeyboardShortcuts.tsx` — `brushGroup`,
