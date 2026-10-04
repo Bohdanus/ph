@@ -44,7 +44,11 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => ({ canUndo, undo, canRedo, redo }) }));
 
-vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool }) }));
+vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool, handleImageSave: vi.fn() }) }));
+
+vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => ({ openSaveImageDialog: vi.fn() }) }));
+
+vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => ({ commitDirtyTool: vi.fn(() => ({})) }) }));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({

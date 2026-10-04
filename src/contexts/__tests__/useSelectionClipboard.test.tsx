@@ -197,7 +197,7 @@ describe('pasteSelectionClipboard', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
-  it('clones the clipboard bitmap and centers the new layer inside the document frame', async () => {
+  it('clones the clipboard bitmap and centers the new layer in document space', async () => {
     vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas);
     storeState.documentFrame = { x: 12, y: 7, width: 100, height: 100 };
     const clipboardBitmap = createMockImageBitmap(30, 40);
@@ -217,7 +217,7 @@ describe('pasteSelectionClipboard', () => {
     });
   });
 
-  it('clamps a clipboard larger than the document to the document frame origin', async () => {
+  it('clamps a clipboard larger than the document to the document origin', async () => {
     storeState.documentFrame = { x: 12, y: 7, width: 100, height: 100 };
     storeState.selectionClipboard = createClipboard({
       bitmap: createMockImageBitmap(300, 400),
@@ -235,6 +235,7 @@ describe('pasteSelectionClipboard', () => {
   });
 
   it('prefers the clipboard position size over the bitmap size', async () => {
+    storeState.documentFrame = { x: 40, y: 25, width: 100, height: 100 };
     storeState.selectionClipboard = createClipboard({
       bitmap: createMockImageBitmap(99, 99),
       pos: { x: 10, y: 20, width: 30, height: 40 },
@@ -245,7 +246,7 @@ describe('pasteSelectionClipboard', () => {
 
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        pos: { x: 35, y: 30, width: 30, height: 40 },
+        pos: { x: 75, y: 55, width: 30, height: 40 },
       })
     );
   });

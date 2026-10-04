@@ -4,6 +4,7 @@ import { useRect } from '../../hooks/useRect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
+import { clearSelectionDragPreview } from '../../hooks/selection-drag-preview.ts';
 import type { RectXYSorted } from '../../contexts/general-types.ts';
 import {
   createCommittedRectangleSelection,
@@ -73,6 +74,12 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     // square centred on it.
     constrainToSquare: true,
     fromCentre: true,
+    // The ants are this selection's border (`Main.tsx:63`), so `useRect`'s own stroke is the same
+    // rectangle one canvas below it. It is kept for the drag only, and the hook is the only thing
+    // that knows when the drag starts and ends, so it is also the only thing that can tell the ants
+    // loop to stand down for it — hence one prop rather than two separate wirings that could
+    // disagree about the same gesture.
+    borderMode: 'while-dragging',
     onChangeEnd: (rect: RectXYSorted) => {
       // FIRST, before anything can return. `onChangeEnd` is the single function
       // whose body covers BOTH exits — the early return below and the commit at
@@ -154,9 +161,16 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
    * A cancel is genuinely terminal even under `useRect`'s capture: `useRect` does
    * not surface its internal `onPointerCancel`, so no `onChangeEnd` follows and
    * the claim has to be dropped here or it would outlive the gesture.
+   *
+   * The preview clear rides the same route for the same reason and is deliberately
+   * redundant with the hook's: the entry hides the ants, a leaked one hides them for
+   * the rest of the session (`selection-drag-preview.ts:58`-`:63`), and it is
+   * unconditional and idempotent, so two callers clearing the same cancel costs
+   * nothing and covers the one route `useRect` cannot run code on.
    */
   const handlePointerCancel = () => {
     releaseDocumentClaim();
+    clearSelectionDragPreview();
   };
 
   useEffect(() => {
@@ -165,6 +179,10 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
       // with the provider-level `resetDocumentGestures`, this is what bounds a
       // leaked claim to the mount that leaked it.
       releaseDocumentClaim();
+      // Same reasoning for the preview entry, and the same bound: the slot is a
+      // module-level variable that outlives this mount. `useRect`'s own teardown
+      // clears it too, and on this tool the two run in the same commit.
+      clearSelectionDragPreview();
     };
   }, []);
 

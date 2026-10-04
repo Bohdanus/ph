@@ -94,10 +94,49 @@
  *   in the open. Widening the gate to lossy hand-resolutions would fire on ordinary conflict
  *   resolution, and the first agent to meet that would reach for `--no-verify`, which is
  *   how the two original shapes were nearly lost once already.
+ * - `git merge --squash -X ours`. Not fixable here, and worth stating precisely: it produces
+ *   a staged tree identical to HEAD's, so `git commit` answers "nothing to commit, working
+ *   tree clean", there is no commit, there is no `MERGE_HEAD`, and neither hook fires. The
+ *   branch's payload disappears with no event to hang a check on. `git merge --squash`
+ *   WITHOUT a strategy flag is fine and does not need this guard: it stages the real merge
+ *   result. The fix belongs in a `pre-push` check, where a branch's own diff against `main`
+ *   has two sides to compare, not in a hook that never runs.
+ *
+ * WHAT AN INDEPENDENT REVIEW FOUND HERE, and what this file now does about it. Seven cases
+ * were reproduced against the guard as it stood, each one a merge that destroyed committed
+ * work and reported a clean pass — or, in one case, a crash. Five are listed above because
+ * they are limits; two were bugs in the DISCERNMENT rather than the coverage, and both are
+ * fixed and pinned by tests:
+ *   - an add/add conflict resolved by `-X theirs`: no blob at the merge base, and the shape
+ *     that names `checkout --theirs` as its producer asked for one before it would look.
+ *   - a modify/delete resolution: an uncaught TypeError, because the losing side was HEAD's
+ *     side and HEAD had deleted the path. `main()` catches `GuardError` only, so the hook
+ *     exited 1 with a stack trace and no verdict.
+ *   Also fixed, and each a case where something was destroyed silently: an added EMPTY file
+ *   and an added GITLINK swallowed by `-s ours` (both measured zero lost); a commit whose
+ *   entire substance is indentation, which trimming lines made invisible — and
+ *   `npm run format` produces exactly that commit; a `-s ours` merge whose result then had a
+ *   mode bit set, which three successive proxies for "already judged" each failed to exclude;
+ *   and suspect blobs past the batch buffer, which answered `clean` because an unread blob
+ *   measures as no loss. That last one was fail-OPEN and is now a refusal.
+ *
+ * Replayed over the 407 merges on `main` before and after: the same 36 merges refused, the
+ * same kinds, the same paths. Every fix above is a shape that was invisible, not a verdict
+ * that changed.
  */
 
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+
+/**
+ * Ceiling on one `cat-file --batch` response. A commit hook has a time budget and a memory
+ * budget, and this is the knob that trades one for the other.
+ *
+ * It was 256 MiB, which six distinct ~61 MiB blobs exceed — and exceeding it used to be
+ * silent. 1 GiB is comfortably above any single merge's blob set here while staying inside
+ * what a commit hook may allocate. Past it the guard refuses; see `batchBlobs`.
+ */
+export const MAX_BLOB_BYTES = 1024 * 1024 * 1024;
 
 /**
  * @typedef {{ path: string, reason: string }} Takeover
@@ -214,6 +253,14 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
 
   /** @type {{ path: string, kind: string, reason: (n: number) => string }[]} */
   const suspects = [];
+  // The paths shapes 1 and 2 reached a verdict on, so shape 3 can skip exactly those rather
+  // than a proxy for them. Three proxies were tried and every one of them left a hole:
+  // `moved.has(path)` misses a `-s ours` merge whose result then had a mode bit set in the
+  // index — moved was empty, the path "moved" by mode alone, shape 3 skipped, shapes 1 and 2
+  // found neither the base's entry nor the incoming one, and the branch's committed rewrite
+  // went unreported behind a clean pass. `moved && changedByHead` misses the same thing one
+  // step later. Only the answer to "did they already rule on this path" is correct.
+  const judged = new Set();
 
   // Shape 1 and shape 2: the merge MOVED the path relative to HEAD, and its result is one
   // whole side's blob. Only a path HEAD itself changed since the two sides diverged can
@@ -225,26 +272,43 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     const headBlob = trees.head.get(path);
     const incomingBlob = trees.incoming.get(path);
     const resultBlob = trees.result.get(path);
-    if (!baseBlob || !incomingBlob || !resultBlob) continue;
+    // `incomingBlob` and `resultBlob` are all BOTH shapes below need, and no more. Asking for
+    // a `baseBlob` here too is what silently dropped every add/add conflict: `-X theirs` on
+    // one takes the branch's file wholesale, main's committed file is gone, there is no
+    // conflict marker anywhere, and the shape that names `checkout --theirs` as its producer
+    // never ran because the merge base had no such path. Measured, in a throwaway repo:
+    // `scanned=1 takeovers=0`, exit 0, main's content replaced.
+    if (!incomingBlob || !resultBlob) continue;
     // The two sides already agree: whatever they did to this file, there is nothing
     // for the merge to lose.
-    if (incomingBlob.oid === headBlob?.oid) continue;
+    if (sameEntry(incomingBlob, headBlob)) continue;
 
-    if (resultBlob.oid === baseBlob.oid) {
+    if (baseBlob && sameEntry(resultBlob, baseBlob)) {
       // `git add -A` in a feature worktree while the root checkout sat at another HEAD:
       // the branch committed the pre-divergence content of a file it never worked on,
       // so the merge handed main back its own older version. This is the shape that cost
       // this repository 17 files and 1,835 lines, recorded at docs/ORCHESTRATION.md with
       // no conflict anywhere in it.
+      judged.add(path);
       suspects.push({
         path,
         kind: 'restored-pre-divergence-content',
-        losing: headBlob,
+        losing: headBlob ?? absent(),
         reason: (n) =>
-          `the result is byte-for-byte the pre-divergence content from ${truncate(base)}, so main's committed change to it was undone (${n} line(s) of its own are absent)`,
+          headBlob
+            ? `the result is byte-for-byte the pre-divergence content from ${truncate(base)}, so main's committed change to it was undone (${n} line(s) of its own are absent)`
+            : `the result is byte-for-byte the pre-divergence content from ${truncate(base)}, undoing the deletion the merged-into side had committed here`,
       });
-    } else if (resultBlob.oid === incomingBlob.oid) {
+    } else if (sameEntry(resultBlob, incomingBlob)) {
       // `git checkout --theirs <file>`, or any resolution that keeps one whole side.
+      //
+      // A path the merged-into side DELETED is not a takeover under this shape: it held no
+      // content here to lose, and the branch adding a file is the branch doing its job. It is
+      // a takeover under the shape above, which is the one that undoes a deletion — and it is
+      // reached there because a deletion is a `headBlob` of `undefined`, so skipping here is
+      // what keeps `losing` from being `undefined` for the measure to dereference.
+      if (!headBlob) continue;
+      judged.add(path);
       suspects.push({
         path,
         kind: 'whole-file-takeover',
@@ -262,9 +326,9 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
   // payload. Iterating HEAD's changes instead, as an earlier draft of this did, found only
   // the contested subset and reported the rest of a dropped commit as clean.
   for (const path of changedByIncoming) {
-    // Already judged above whenever the merge moved it at all: shape 3 requires the result
-    // to be HEAD's side verbatim, and a moved path cannot be that.
-    if (moved.has(path)) continue;
+    // Already ruled on by shapes 1 or 2 above, which ran to completion first. See `judged`
+    // for why a proxy for this was a measured miss.
+    if (judged.has(path)) continue;
 
     const incomingBlob = trees.incoming.get(path);
     // The branch deleted this path. Whatever HEAD holds is not the branch's content, so
@@ -284,8 +348,12 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
       kind: 'discarded-incoming-change',
       losing: incomingBlob,
       reason: (n) =>
-        `the result kept the merged-into side's version of this path and ${n} line(s) the incoming side committed are absent from it, ` +
-        'so that part of the commit did not land',
+        headBlob
+          ? `the result kept the merged-into side's version of this path and ${n} line(s) the incoming side committed are absent from it, so that part of the commit did not land`
+          : // Not "kept the merged-into side's version": HEAD has no version of a path it
+            // deleted. Saying so was the wording a measured finding complained about, and it
+            // is the sentence a reader uses to decide whether to rebase or re-apply.
+            `the merged-into side DELETED this path, the result did not, and ${n} line(s) the incoming side committed are absent from it — so the deletion did not land either`,
     });
   }
 
@@ -295,7 +363,7 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
   for (const { path, losing } of suspects) {
     const resultBlob = trees.result.get(path);
     for (const entry of [losing, resultBlob]) {
-      if (entry && !entry.gitlink) wanted.add(entry.oid);
+      if (entry && !entry.gitlink && entry.oid) wanted.add(entry.oid);
     }
   }
   const contents = batchBlobs([...wanted], cwd);
@@ -306,13 +374,30 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     const losing = suspect.losing;
     const resultBlob = trees.result.get(path);
 
+    // A path the merged-into side deleted and the merge brought back: there is no blob on
+    // that side to compare, so the loss is the DELETION rather than any line of it. Counted
+    // as one, because `git status` will say one file and not zero.
+    if (losing.absent) {
+      if (resultBlob) {
+        takeovers.push({
+          path,
+          kind: suspect.kind,
+          deleted: 1,
+          reason: suspect.reason(1),
+        });
+      }
+      continue;
+    }
+
     // A gitlink is a submodule pointer, not content: there are no lines to compare, so a
-    // changed pointer is the whole of what was kept or lost.
+    // changed pointer — or a pointer that is simply gone — is the whole of what was lost.
+    // The absent case matters because a branch that ADDS a submodule and is then swallowed
+    // by `-s ours` leaves no result entry at all, which read as nothing lost.
     const lost =
       losing.gitlink || resultBlob?.gitlink
-        ? losing.gitlink && resultBlob && losing.oid !== resultBlob.oid
-          ? 1
-          : 0
+        ? (resultBlob?.oid ?? null) === losing.oid
+          ? 0
+          : 1
         : lostLineCount(contents.get(losing.oid), resultBlob ? contents.get(resultBlob.oid) : null);
 
     // Copying one whole side is not by itself a loss, and treating it as one is how a gate
@@ -344,15 +429,42 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
 }
 
 /**
- * Whether the result holds HEAD's side of this path verbatim.
+ * Whether the result holds HEAD's CONTENT for this path.
+ *
+ * OID only, and that is the whole distinction with `sameEntry`. This asks "did the
+ * merged-into side's version of these bytes win?", which is a question about content;
+ * `sameEntry` asks "is this the same file, mode and all?", which is what shapes 1 and 2
+ * need in order to recognise one whole side being copied.
  *
  * `undefined` for both sides counts as HEAD's side winning: HEAD deleted the path, or
  * never had it, and the result does not have it either. That is precisely what `-s ours`
  * produces for a path only the incoming side ever touched — the whole-payload case, and the
  * one an earlier draft missed by requiring HEAD to have changed the path.
+ *
+ * The commit that introduced this called it exactly `!moved.has(path)` and measured the
+ * equivalence across five merge shapes. It is false, and the sixth is small: a `-X ours`
+ * merge whose result then had `git update-index --chmod=+x` run over it. The OID is still
+ * HEAD's, so HEAD's content had won — but the path had "moved" by mode, and shape 3 skipped
+ * on `moved`, so the branch's committed content went unreported behind a clean pass.
  */
 function headWon(resultBlob, headBlob) {
   return (resultBlob?.oid ?? null) === (headBlob?.oid ?? null);
+}
+
+/**
+ * Two tree entries are the same side's content only if the blob AND the mode agree.
+ *
+ * `null`/`undefined` is "this side does not have the path", which compares equal to itself
+ * and to nothing else — the case where a deletion is compared against a deletion.
+ */
+function sameEntry(a, b) {
+  if (!a || !b) return (!a?.oid ?? null) === (!b?.oid ?? null);
+  return a.oid === b.oid && a.mode === b.mode;
+}
+
+/** A tree entry standing for a path the protected side does not have. */
+function absent() {
+  return { oid: null, mode: null, gitlink: false, absent: true };
 }
 
 function splitZ(text) {
@@ -373,12 +485,24 @@ function truncate(sha) {
 function readTreeBlobs(treeish, cwd) {
   const raw = tryGit(['ls-tree', '-r', '-z', '--full-tree', treeish], { cwd });
   const map = new Map();
-  if (raw === null) return map;
+  // Same reasoning as `batchBlobs`, and worse here: an empty map from ONE of the four
+  // trees makes every path look absent from it, which silently empties all four scans at
+  // once. `ls-tree` overflows its buffer on a tree large enough to do that, so this is a
+  // size failure wearing a "no such ref" costume.
+  if (raw === null) {
+    throw new GuardError(
+      `could not list the tree of ${truncate(treeish)}. Refusing rather than comparing against an empty one: ` +
+        'a path missing from a tree reads as a path that side never had.'
+    );
+  }
   for (const entry of splitZ(raw)) {
     const tab = entry.indexOf('\t');
     if (tab < 0) continue;
     const [mode, , oid] = entry.slice(0, tab).split(' ');
-    map.set(entry.slice(tab + 1), { oid, gitlink: mode === '160000' });
+    // `mode` as well as the OID, because an entry is not its blob: a mode bit is a
+    // committed change of its own, and comparing OIDs alone cannot see it change or be
+    // changed. See `sameEntry`.
+    map.set(entry.slice(tab + 1), { oid, mode, gitlink: mode === '160000' });
   }
   return map;
 }
@@ -388,9 +512,18 @@ function readTreeBlobs(treeish, cwd) {
  *
  * @param {string[]} oids
  * @param {string} cwd
+ * @param {{ maxBytes?: number }} [options]
  * @returns {Map<string, Buffer>} absent where the object could not be read
+ * @throws {GuardError} when the batch cannot be read. It does NOT return an empty map:
+ * an empty map reads as "this blob has no lines", every measure returns 0, and a merge
+ * that dropped six large assets reports a clean pass. That is fail-OPEN on the one path
+ * where the loss is largest, and it is reachable: `maxBuffer` was 256 MiB while six
+ * distinct ~61 MiB assets exceed it, `execFileSync` throws `ENOBUFS`, and the `catch` ate
+ * it. A photo editor is plausibly the project most likely to merge large binaries. The
+ * cap is now 1 GiB, and past it the guard refuses rather than passes — refusing is a
+ * nuisance and passing is the failure this program exists to prevent.
  */
-function batchBlobs(oids, cwd) {
+export function batchBlobs(oids, cwd, { maxBytes = MAX_BLOB_BYTES } = {}) {
   const out = new Map();
   if (oids.length === 0) return out;
   let buf;
@@ -403,11 +536,14 @@ function batchBlobs(oids, cwd) {
     buf = execFileSync('git', ['cat-file', '--batch'], {
       cwd,
       input: `${oids.join('\n')}\n`,
-      maxBuffer: 256 * 1024 * 1024,
+      maxBuffer: maxBytes,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-  } catch {
-    return out;
+  } catch (error) {
+    throw new GuardError(
+      `could not read ${oids.length} blob(s) in one batch (${error?.code ?? error?.message ?? 'unknown error'}). ` +
+        'Refusing rather than comparing nothing: an unread blob measures as no loss at all, which is the one answer that must not be guessed.'
+    );
   }
   let offset = 0;
   for (;;) {
@@ -434,14 +570,24 @@ function batchBlobs(oids, cwd) {
  * untouched. Measured, and the reason string it produced — that the commit "landed as a
  * no-op" — was false at the same time.
  *
- * A multiset, not a set, so a file that repeats a line keeps its multiplicity. Whitespace
- * is trimmed so reindentation does not read as a change; a genuinely rewritten line is
- * absent from the result and correctly counts as lost. An empty result means everything
- * the losing side had is gone.
+ * A multiset, not a set, so a file that repeats a line keeps its multiplicity. An empty
+ * result means everything the losing side had is gone.
+ *
+ * Lines are keyed VERBATIM, with only the line ending normalised. Trimming them was wrong,
+ * and measurably so: a branch whose entire commit is reindentation, or a change of line
+ * ending, measured zero lost under `-X ours` and vanished behind a clean pass.
+ * `npm run format` produces exactly that shape, so the blindness sat on this repository's
+ * most common commit. Keying verbatim is sound in all three shapes precisely because the
+ * result is byte-identical to one whole side, so there is no merge-computed whitespace to
+ * excuse a difference: a line of the losing side that is not present verbatim is gone.
  */
 function lostLineCount(losingBuf, resultBuf) {
   if (!losingBuf) return 0;
-  if (!resultBuf) return nonBlankLines(losingBuf);
+  // A path with no entry in the result at all. A `.gitkeep`, or a file the branch
+  // created holding nothing but newlines, measures zero non-blank lines and read as
+  // nothing lost — so a whole file could vanish behind a clean pass. One, because
+  // `git status` will report one file and not zero.
+  if (!resultBuf) return Math.max(nonBlankLines(losingBuf), isBlank(losingBuf) ? 1 : 0);
   // A NUL byte means the content is binary and lines mean nothing. Fall back to identity,
   // which is what `--numstat` does when it prints `-`.
   if (losingBuf.includes(0) || resultBuf.includes(0)) {
@@ -449,19 +595,37 @@ function lostLineCount(losingBuf, resultBuf) {
   }
   const available = new Map();
   for (const line of resultBuf.toString('utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    available.set(trimmed, (available.get(trimmed) ?? 0) + 1);
+    const key = normaliseLine(line);
+    if (key.trim() === '') continue;
+    available.set(key, (available.get(key) ?? 0) + 1);
   }
   let lost = 0;
   for (const line of losingBuf.toString('utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    const held = available.get(trimmed) ?? 0;
-    if (held > 0) available.set(trimmed, held - 1);
+    const key = normaliseLine(line);
+    if (key.trim() === '') continue;
+    const held = available.get(key) ?? 0;
+    if (held > 0) available.set(key, held - 1);
     else lost++;
   }
   return lost;
+}
+
+/**
+ * A line with its line ending normalised and nothing else touched.
+ *
+ * CRLF is an artefact of a checkout rather than committed content, so it must not decide
+ * whether a line survived. Indentation IS committed content, and normalising it away is
+ * what let a commit whose entire substance is whitespace measure zero lost.
+ */
+function normaliseLine(line) {
+  return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
+function isBlank(buf) {
+  for (const line of buf.toString('utf8').split('\n')) {
+    if (normaliseLine(line).trim() !== '') return false;
+  }
+  return true;
 }
 
 function nonBlankLines(buf) {

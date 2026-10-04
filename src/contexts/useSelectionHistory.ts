@@ -7,6 +7,7 @@ import { planHistoryAppend } from './history-append.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { Selection } from './general-types.ts';
 import type { SelectionSnapshot } from './history-model.ts';
+import { selectionSnapshot } from './selection-baseline.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 
@@ -111,7 +112,13 @@ export function appendSelectionClear({
 
   // Captured before any dispatch, so the durable `before` baseline is the state
   // the user actually had, never a value read back after the store moved.
-  const previousSelectionState: SelectionSnapshot = { selections: existing, activeSelectionId };
+  //
+  // Through `selectionSnapshot()`, not an object literal: `existing` IS the
+  // store's live array, and a literal would hand the recorded baseline a live
+  // reference to it. `selection-baseline.ts` owns that rule — the deep copy and
+  // the freeze — so a writer that builds its own literal holds the contract only
+  // by accident, and the freeze would land on the store's array.
+  const previousSelectionState: SelectionSnapshot = selectionSnapshot(existing, activeSelectionId);
   const nextSelectionState: SelectionSnapshot = { selections: [], activeSelectionId: null };
 
   const item: NewHistoryItem = {
@@ -276,7 +283,7 @@ export const useSelectionHistory = () => {
       // state the user actually had, never a value read back after the store
       // moved. `next` is the state this very dispatch publishes, so the same
       // object is both the visible change and the recorded one.
-      const previousSelectionState: SelectionSnapshot = { selections: existing, activeSelectionId };
+      const previousSelectionState: SelectionSnapshot = selectionSnapshot(existing, activeSelectionId);
       const nextSelectionState: SelectionSnapshot = {
         selections: next.selections,
         activeSelectionId: next.activeSelectionId,

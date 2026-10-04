@@ -51,7 +51,7 @@ function AppContainer() {
   // `display: none` hides without unmounting — so a surface left open on a phone stays
   // rendered on desktop, and `MobileToolSheet` holds a second live instance of the active
   // tool's options panel next to the one `ToolbarHorizontal` owns: duplicate
-  // `id="text-input"`, duplicate `id="font-family-select"`, duplicate window Escape
+  // `id="font-size-input"`, duplicate `id="font-family-select"`, duplicate window Escape
   // listeners. Resetting the flags here, where they live, is the fix; unmounting the shell
   // is not, because the always-mounted design is what keeps the canvas alive across a
   // crossing.

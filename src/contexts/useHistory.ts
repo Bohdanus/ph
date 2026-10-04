@@ -76,7 +76,6 @@ export const useHistory = () => {
     // Durable replay remains a diagnostic shadow until every pixel consumer
     // uses the same materialization contract. Navigation therefore replays the
     // legacy runtime representation and lets StoreContext rebuild the sidecar.
-    clearPreviewLayers?.();
     try {
       const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
       const replay = replayHistory(
@@ -142,6 +141,17 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      // Dropped HERE, after the replay has been published and applied, and not
+      // ahead of it. A navigation that throws — a converter refusal, a tool
+      // processor, a refused publication — leaves the visible canvas and the
+      // store exactly as they were, so clearing first would discard an
+      // in-progress tool draft for a navigation that changed nothing. Once a
+      // replay IS on screen the clear is still required, and `drawAllLayers` in
+      // `useLayer` is the only thing that recomposites a preview over the
+      // layers: left standing, the draft would survive in state while its
+      // pixels were gone from the canvas, so the next `commitDirtyTool()` would
+      // apply a stroke the user could no longer see.
+      clearPreviewLayers?.();
       // Reported HERE rather than inside `replayHistory`, which collects instead
       // of logging (see `ReplayDiagnostic`): replay runs on every undo, redo and
       // history-panel click, so a per-item log inside that loop would re-emit the

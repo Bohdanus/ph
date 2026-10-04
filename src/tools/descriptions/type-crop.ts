@@ -25,7 +25,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A combo box showing every font available to Photoshop in a WYSIWYG list, each entry rendered in its own face so the list previews the fonts.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:133',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:251',
       },
       {
         control: 'Font Style',
@@ -38,21 +38,21 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The type size, entered in points by default and accepting a unit suffix. `TypeUnits` is `MILLIMETERS / PIXELS / POINTS`.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:154',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:288',
       },
       {
         control: 'Text color',
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:215',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:356',
       },
       {
         control: 'Align Text Left / Center Text / Align Text Right',
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:226',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:367',
       },
       {
         control: 'Toggle the type on a path',
@@ -83,7 +83,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The check mark and the cancel cross, which appear only while a type layer is in edit mode — Adobe\'s own test for edit mode is that they are there: "look in the options bar — if you see the Commit button and the Cancel button, the type tool is in edit mode." Commit also fires on the numeric keypad\'s Enter and on Ctrl+Enter (Windows) or Command+Return (Mac OS). Esc commits by default, and the Use Esc key to commit text preference that flips it to cancel moved from Edit > Preferences > Type to Settings > Type in 23.0.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:321',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:472',
       },
     ],
     modifiers: [],
@@ -235,14 +235,14 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           "Displays the cropped-out area as a shaded overlay, which is Adobe's own wording. The region is the area the crop will discard — the same one Enable Crop Shield covers — and the difference between the two is that this one is a plain shade where Crop Shield is a colour and an opacity you choose.",
         status: 'partial',
-        appRef: 'src/hooks/useRect.ts:250',
+        appRef: 'src/hooks/useRect.ts:296',
       },
       {
         control: 'Enable Crop Shield',
         detail:
           'Applies a color overlay outside the crop area, with a customizable color and an opacity you set, plus an auto-adjust option that lightens the overlay as the crop is dragged so it never obscures the subject. The shield darkens the parts of the canvas the crop will discard.',
         status: 'partial',
-        appRef: 'src/hooks/useRect.ts:250',
+        appRef: 'src/hooks/useRect.ts:296',
       },
       {
         control: 'Fill',
@@ -262,11 +262,11 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         keys: 'Shift',
         action:
-          "Two different things, both Adobe's. Dragging a fresh box with it held starts a new crop box; dragging a corner handle with it held constrains the proportions the box already has.",
+          "Two different things, both Adobe's. Dragging a fresh box with it held constrains that box to a square; dragging a corner handle with it held constrains the proportions the box already has.",
       },
       {
         keys: 'Alt',
-        action: 'Draws and resizes the crop box outward from its center, so the opposite edge moves as well.',
+        action: 'Draws the crop box outward from its center, so the opposite edge moves as well.',
       },
       { keys: 'Alt+Shift', action: 'Constrains the proportions and draws from the center at the same time.' },
       {
@@ -306,12 +306,12 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/tools/crop.ts:26',
       'src/tools/toolProcessors.ts:157',
       'src/components/ToolbarsRight/Crop/Crop.tsx:61',
-      'src/components/Main/CropToolArea.tsx:199',
-      'src/components/Main/CropToolArea.tsx:235',
-      'src/hooks/useRect.ts:173',
-      'src/hooks/useRect.ts:250',
-      'src/hooks/useRect.ts:371',
-      'src/hooks/useRect.ts:483',
+      'src/components/Main/CropToolArea.tsx:201',
+      'src/components/Main/CropToolArea.tsx:242',
+      'src/hooks/useRect.ts:248',
+      'src/hooks/useRect.ts:289',
+      'src/hooks/useRect.ts:404',
+      'src/hooks/useRect.ts:527',
       'src/util/rect.ts:49',
       'src/util/rect.ts:84',
       'src/contexts/useLayer.ts:203',
@@ -321,7 +321,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'toolbar-mapping.ts:66',
     ],
     appNotes:
-      "The app's crop edits the document frame rather than a tool layer, and it is not a raster commit at all. The crop's processor is declared with `commit: 'document-operation'`, and that commit kind is refused by every layer path — painting on it, replaying it into a layer and converting it to a durable layer all bail out — so the raster trim in src/tools/crop.ts is declared and unreachable: what actually commits is applyDocumentCrop, which takes the rect unclamped, converts it into the next documentFrame and dispatches a COMMIT_DOCUMENT_EDIT carrying a SET_DOCUMENT_FRAME_ACTION history entry with the previous frame. The frame changes at once — smaller or larger, depending on the rect — and everything outside the new frame stops rendering, while layer positions and sources are untouched, so the discarded pixels are still held in the layer bitmaps and undo puts the frame back. That is Photoshop's Delete Cropped Pixels OFF case — the canvas shrinks, the pixels are kept — not the ON case, which permanently removes them. What the app genuinely lacks is the setting itself, which it can neither offer nor invert, and the Image > Reveal All menu item, which does not exist anywhere in the app. The rect may be dragged past the image edge, and the commit follows it there: applyDocumentCrop normalises the rect with sortRoundRect, which sorts and rounds each edge once without the clamp trimRect applies, so a rect reaching past an edge commits a larger documentFrame and a rect reaching before the origin anchors the frame negatively. The commit dispatches no fill of any kind and touches no layer, so the band the growth adds is covered by no layer and stays transparent whatever the bottom layer is — that is OVR-1 in docs/OVERRIDES.md, recorded by hand, and it is the decision for Photoshop's Background-layer case rather than an omission of the fill. Nothing else in the stack caps a frame: the one limit is in applyDocumentCrop itself, which refuses anything past the 4096px per side or the 16777216px area — that is, anything outside a 4096 x 4096 box, with the per-side arm subsuming the area arm because 4096 x 4096 IS the area ceiling. The reason is not the largest canvas a browser can allocate; it is iOS Safari's ceiling and its failure mode. Safari's maximum canvas AREA is 16777216 and it fails there SILENTLY: getContext('2d') still hands back a context and every draw becomes a no-op, so an over-area document renders blank with no exception to catch, and this app ships mobile surfaces. 2^24 is also the lowest of the ceilings the browsers it targets impose, which is what makes it the one value that is correct everywhere at once. The per-side figure is derived from that area ceiling rather than from any browser constant, because an area ceiling bounds how many PIXELS a surface holds and says nothing about its longest edge, and a crop rect can be dragged arbitrarily far past an edge at low zoom. Photoshop's two synthesising values, Content-Aware Fill and Generative Expand, are absent from the app for reasons that are not about the crop, and the crop's bar renders no Fill control at all. Dragging inside the crop box translates the rect rather than picking up the layer under the pointer, because CropToolArea never passes one and so the branch that would move the image never runs; whether that is a divergence is not settled, because Adobe's current crop page says an inside drag moves the box. The pending rect is not written through to the persisted settings — the crop arm of the settings saver omits the rect and the pre-ratio rect before persisting — so the aspect ratio survives a tool switch and the draft does not, and switching away from the Crop tool and back discards the draft. That is closer to Photoshop's cancel-on-Escape than to its commit-on-switch. On modifiers, Shift does lock the current aspect ratio on a handle drag, but it is honoured for any modifier the browser reports rather than Shift alone, and useRect's fromCentre and constrainToSquare props are opt-in that CropToolArea never passes, so there is no Alt from-centre drag at all and the Alt, Alt+Shift, Ctrl, Shift-rotate and Ctrl-rotate rows of the table above are aspirational. Enter and Esc are the exception to that pattern: CropToolArea installs its own window keydown listener rather than a table entry, so Enter commits and Esc cancels for real, and neither is reachable from the shared keyboard table. X is unbound, and O and Shift+O are actively harmful to repeat: O selects the first of the three-tool tonal group, and Shift+O cycles it, so a second press lands on Burn and a third on Sponge — a three-step cycle over Dodge, Burn and Sponge, not a two-tool toggle. The crop tile holds a single entry, so Shift+C re-selects the Crop tool rather than cycling a flyout, and Perspective Crop, Slice and Slice Select are not in the tool registry at all.",
+      "The app's crop edits the document frame rather than a tool layer, and it is not a raster commit at all. The crop's processor is declared with `commit: 'document-operation'`, and that commit kind is refused by every layer path — painting on it, replaying it into a layer and converting it to a durable layer all bail out — so the raster trim in src/tools/crop.ts is declared and unreachable: what actually commits is applyDocumentCrop, which takes the rect unclamped, converts it into the next documentFrame and dispatches a COMMIT_DOCUMENT_EDIT carrying a SET_DOCUMENT_FRAME_ACTION history entry with the previous frame. The frame changes at once — smaller or larger, depending on the rect — and everything outside the new frame stops rendering, while layer positions and sources are untouched, so the discarded pixels are still held in the layer bitmaps and undo puts the frame back. That is Photoshop's Delete Cropped Pixels OFF case — the canvas shrinks, the pixels are kept — not the ON case, which permanently removes them. What the app genuinely lacks is the setting itself, which it can neither offer nor invert, and the Image > Reveal All menu item, which does not exist anywhere in the app. The rect may be dragged past the image edge, and the commit follows it there: applyDocumentCrop normalises the rect with sortRoundRect, which sorts and rounds each edge once without the clamp trimRect applies, so a rect reaching past an edge commits a larger documentFrame and a rect reaching before the origin anchors the frame negatively. The commit dispatches no fill of any kind and touches no layer, so the band the growth adds is covered by no layer and stays transparent whatever the bottom layer is — that is OVR-1 in docs/OVERRIDES.md, recorded by hand, and it is the decision for Photoshop's Background-layer case rather than an omission of the fill. Nothing else in the stack caps a frame: the one limit is in applyDocumentCrop itself, which refuses anything past the 4096px per side or the 16777216px area — that is, anything outside a 4096 x 4096 box, with the per-side arm subsuming the area arm because 4096 x 4096 IS the area ceiling. The reason is not the largest canvas a browser can allocate; it is iOS Safari's ceiling and its failure mode. Safari's maximum canvas AREA is 16777216 and it fails there SILENTLY: getContext('2d') still hands back a context and every draw becomes a no-op, so an over-area document renders blank with no exception to catch, and this app ships mobile surfaces. 2^24 is also the lowest of the ceilings the browsers it targets impose, which is what makes it the one value that is correct everywhere at once. The per-side figure is derived from that area ceiling rather than from any browser constant, because an area ceiling bounds how many PIXELS a surface holds and says nothing about its longest edge, and a crop rect can be dragged arbitrarily far past an edge at low zoom. Photoshop's two synthesising values, Content-Aware Fill and Generative Expand, are absent from the app for reasons that are not about the crop, and the crop's bar renders no Fill control at all. Dragging inside the crop box translates the rect rather than picking up the layer under the pointer, because CropToolArea never passes one and so the branch that would move the image never runs; whether that is a divergence is not settled, because Adobe's current crop page says an inside drag moves the box. The pending rect is not written through to the persisted settings — the crop arm of the settings saver omits the rect and the pre-ratio rect before persisting — so the aspect ratio survives a tool switch and the draft does not, and switching away from the Crop tool and back discards the draft. That is closer to Photoshop's cancel-on-Escape than to its commit-on-switch. On modifiers, the fresh-drag half of the Shift, Alt and Alt+Shift rows above is implemented: CropToolArea passes `constrainToSquare` and `fromCentre`, the same pair RectangularSelectionToolArea passes, `sampleFreshDragModifiers` reads `shiftKey` and `altKey` per pointer event rather than once at press time, and `adjustFreshPoint` takes the square on the RADIUS per axis before mirroring the drag, so Alt+Shift is a square centred on the press point rather than one that has drifted off it. Shift outranks the bar's Ratio while it is held, and a fresh drag with neither key still obeys that Ratio. Command and Control are deliberately NOT the aspect modifier on a fresh drag: `getEdgeAtPoint` captures a box's own ratio only for a press that landed ON that box, so neither key reaches the geometry of a new box at all, which is Adobe's arrangement — Command is the crop's Straighten and edge-snap key and constrains no marquee's proportions. Two residues are left. The capture on a HANDLE resize still honours Control and Command as well as Shift, where Adobe gives them no proportion lock; it is the hook's one shared answer to that row and the Move tool, the text tool and the marquees all read it. And Alt on a handle RESIZE does not resize from the centre, so the Alt row is implemented for a new box and not for an existing one. The Ctrl, Shift-rotate and Ctrl-rotate rows remain aspirational. Enter and Esc are the exception to that pattern: CropToolArea installs its own window keydown listener rather than a table entry, so Enter commits and Esc cancels for real, and neither is reachable from the shared keyboard table. X is unbound, and O and Shift+O are actively harmful to repeat: O selects the first of the three-tool tonal group, and Shift+O cycles it, so a second press lands on Burn and a third on Sponge — a three-step cycle over Dodge, Burn and Sponge, not a two-tool toggle. The crop tile holds a single entry, so Shift+C re-selects the Crop tool rather than cycling a flyout, and Perspective Crop, Slice and Slice Select are not in the tool registry at all.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html',
       'https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-photos.html',

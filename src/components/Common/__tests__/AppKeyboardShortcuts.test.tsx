@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppKeyboardShortcuts } from '../AppKeyboardShortcuts.tsx';
 import { KeyboardEventsProvider } from '../../../hooks/useKeyboardEvents.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
+import { claimDocumentGesture, releaseDocumentGesture } from '../../../hooks/document-gesture.ts';
 
 /**
  * These tests use the real KeyboardEventsProvider, so the guard conditions
@@ -19,13 +20,30 @@ const undo = vi.hoisted(() => vi.fn());
 const redo = vi.hoisted(() => vi.fn());
 const canUndo = vi.hoisted(() => vi.fn(() => false));
 const canRedo = vi.hoisted(() => vi.fn(() => false));
+/** `openSaveImageDialog` resolves an `ImageSaveResponse`, and `null` for a cancelled dialog. */
+const openSaveImageDialog = vi.hoisted(() =>
+  vi.fn<() => Promise<{ fileName: string; format: string } | null>>(() =>
+    Promise.resolve({ fileName: 'saved.png', format: 'image/png' })
+  )
+);
+const handleImageSave = vi.hoisted(() => vi.fn());
+const commitDirtyTool = vi.hoisted(() => vi.fn(() => ({ committed: 'layer' })));
 
 const storeState = vi.hoisted(
   () =>
     ({
+      fileName: 'untitled.png',
+      totalSize: { width: 800, height: 600 },
+      documentFrame: { x: 0, y: 0, width: 800, height: 600 },
       hasImage: true,
       toolName: 'brush' as ToolName,
-    }) as { hasImage: boolean; toolName: ToolName }
+    }) as {
+      fileName: string;
+      totalSize: { width: number; height: number };
+      documentFrame: { x: number; y: number; width: number; height: number };
+      hasImage: boolean;
+      toolName: ToolName;
+    }
 );
 
 const toolState = vi.hoisted(() => ({ toolArgs: { toolName: 'brush' } as ToolArgs }));
@@ -45,7 +63,15 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => ({ canUndo, undo, canRedo, redo }) }));
 
-vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool }) }));
+vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool, handleImageSave }) }));
+
+vi.mock('../../../contexts/useFile.tsx', () => ({
+  useFile: () => ({ openSaveImageDialog }),
+}));
+
+vi.mock('../../../contexts/useLayer.ts', () => ({
+  useLayers: () => ({ commitDirtyTool }),
+}));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
@@ -105,6 +131,12 @@ beforeEach(() => {
   // refused layer in every test that presses the key.
   layerViaCopy.mockResolvedValue(true);
   clipboardState.hasActiveSelection = true;
+  openSaveImageDialog.mockResolvedValue({ fileName: 'saved.png', format: 'image/png' });
+  handleImageSave.mockReset();
+  commitDirtyTool.mockReturnValue({ committed: 'layer' });
+  storeState.fileName = 'untitled.png';
+  storeState.totalSize = { width: 800, height: 600 };
+  storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
   storeState.hasImage = true;
   storeState.toolName = 'brush';
   toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
@@ -539,6 +571,231 @@ describe('AppKeyboardShortcuts clipboard', () => {
 
     press('c');
     expect(goToTool).toHaveBeenCalledExactlyOnceWith('crop');
+  });
+});
+
+describe('AppKeyboardShortcuts save', () => {
+  /**
+   * Adobe's own shortcut table gives Save as `Ctrl+S` on Windows and `Cmd+S` on macOS
+   * (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`),
+   * so the two platforms are two ROWS rather than one row described in prose: a registration that
+   * bound only `meta` would leave every Windows and Linux user on the browser's Save Page, and
+   * `matchesShortcut` compares `(event.metaKey || event.ctrlKey)` against the single declared
+   * `mod`, which is what makes one registration cover both.
+   *
+   * These rows assert against `saveDocument`'s own mocks, not against a shared save hook: the
+   * handler restates the header's four steps rather than calling an extracted `useSaveDocument`,
+   * so a change to that sequence shows up HERE rather than in one place. That is the duplication
+   * the component comment records on purpose, and this block is the fourth place to look when the
+   * save stops matching `File > Save`.
+   */
+  it.each([
+    ['macOS', { metaKey: true }],
+    ['Windows and Linux', { ctrlKey: true }],
+  ])('opens the SaveDialog with mod+S on %s', async (_platform, modifiers) => {
+    renderShortcuts();
+
+    expect(press('s', modifiers)).toBe(true);
+    await flushAsync();
+
+    expect(commitDirtyTool).toHaveBeenCalledTimes(1);
+    expect(openSaveImageDialog).toHaveBeenCalledExactlyOnceWith({
+      fileName: 'untitled.png',
+      layers: { committed: 'layer' },
+      size: { width: 800, height: 600 },
+      documentFrame: { x: 0, y: 0, width: 800, height: 600 },
+    });
+    expect(handleImageSave).toHaveBeenCalledExactlyOnceWith({ fileName: 'saved.png', format: 'image/png' });
+  });
+
+  it('commits the pending tool preview before the dialog is handed the document', async () => {
+    // Pins the ORDER, which is the part a wrong flow would actually get wrong: a save that
+    // staged the document first would call both mocks and export the un-committed record.
+    // It does NOT pin the `flushSync` around `commitDirtyTool` — that wrapper exists to force
+    // the commit to land before the read in production, and a synchronous mock cannot observe a
+    // React batch at all. Dropping the wrapper leaves this row green; what catches a reordered
+    // flow is the `layers` argument in the table row above.
+    renderShortcuts();
+
+    press('s', { ctrlKey: true });
+    await flushAsync();
+
+    expect(commitDirtyTool.mock.invocationCallOrder[0]).toBeLessThan(openSaveImageDialog.mock.invocationCallOrder[0]);
+  });
+
+  it('records nothing when the dialog is cancelled, because a cancel is not a save', async () => {
+    // `null` is the in-band refusal every caller of `openSaveImageDialog` guards with `if (data)`.
+    // Treating it as a failure would put a console error in front of a user who simply changed
+    // their mind, which is the same mistake the Meta+C and Meta+J rows above pin against.
+    openSaveImageDialog.mockResolvedValue(null);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('s', { metaKey: true });
+      await flushAsync();
+
+      expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+      expect(handleImageSave).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('cancels the browser Save Page default, which is the whole reason to claim the key', () => {
+    renderShortcuts();
+
+    // `press` reports the `preventDefault`, not a side effect of saving. `Ctrl+S`/`Cmd+S` is the
+    // browser's own Save Page in every engine, so an in-app Save that also saved the HTML would be
+    // worse than the missing shortcut this replaces.
+    expect(press('s', { ctrlKey: true })).toBe(true);
+    expect(press('s', { metaKey: true })).toBe(true);
+
+    // And a bare `s` is still the Clone Stamp's own key, unclaimed by this registration: every
+    // other `s` in the file declares `mod: false`, so a press carrying either modifier fails
+    // their `mod` test before their undeclared `shift`/`alt` are ever compared.
+    expect(press('s')).toBe(false);
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('clone-stamp');
+  });
+
+  it.each([
+    ['a text input', 'input'],
+    ['a textarea', 'textarea'],
+  ])('does not save from inside %s, and leaves the key to the browser there', (_label, tag) => {
+    renderShortcuts();
+    const field = document.createElement(tag);
+    if (tag === 'input') (field as HTMLInputElement).type = 'text';
+    document.body.appendChild(field);
+
+    // `allowInInput` defaults to false and `useKeyboardEvents` tests the editable target BEFORE
+    // `preventDefault`, so a focused text field neither runs the save flow nor has its browser
+    // Save Page cancelled. That is the file's uniform rule and it is what stops a Ctrl+S aimed at
+    // the SaveDialog's own file-name field from re-entering the save flow underneath the dialog.
+    expect(press('s', { ctrlKey: true }, field)).toBe(false);
+    expect(press('s', { metaKey: true }, field)).toBe(false);
+
+    expect(commitDirtyTool).not.toHaveBeenCalled();
+    expect(openSaveImageDialog).not.toHaveBeenCalled();
+    expect(goToTool).not.toHaveBeenCalled();
+  });
+
+  it('does nothing at all while no image is loaded, and does not claim the key either', () => {
+    storeState.hasImage = false;
+    renderShortcuts();
+
+    // `useKeyboardEvents` resolves `enabled` with a `continue` that runs BEFORE `preventDefault`,
+    // so a disabled registration cannot cancel the browser default. This row pins that
+    // consequence rather than pretending it away: with no document there is nothing to save, and
+    // the key is handed back rather than swallowed by a registration that would do nothing.
+    expect(press('s', { ctrlKey: true })).toBe(false);
+
+    expect(commitDirtyTool).not.toHaveBeenCalled();
+    expect(openSaveImageDialog).not.toHaveBeenCalled();
+    expect(handleImageSave).not.toHaveBeenCalled();
+  });
+
+  it('reaches the save flow on Shift+mod+S too, because that is Adobe’s Save As', async () => {
+    // This app's only save IS Save As — `useFile.tsx` proposes "<name> (copy)" — so the chord
+    // Adobe pairs with Save belongs on the same dialog rather than nowhere. `shift` is left
+    // undeclared, which is what lets it fall through exactly as it does for `I`/`E`/`S`.
+    renderShortcuts();
+
+    press('s', { ctrlKey: true, shiftKey: true });
+    await flushAsync();
+
+    expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+    expect(goToTool).not.toHaveBeenCalled();
+    expect(patchToolArgs).not.toHaveBeenCalled();
+  });
+
+  it('saves rather than setting a Sponge mode on mod+S', async () => {
+    // The inverse direction of the row the tool-cycling block pins: with the Sponge selected,
+    // `Alt+Shift+S` is Saturate and a bare `S` is still the Clone Stamp, but `Ctrl+S` carries
+    // `mod` and neither of those declares it, so the save flow gets the press.
+    storeState.toolName = 'sponge';
+    renderShortcuts();
+
+    press('s', { ctrlKey: true });
+    await flushAsync();
+
+    expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+    expect(patchToolArgs).not.toHaveBeenCalled();
+    expect(goToTool).not.toHaveBeenCalled();
+  });
+
+  it('does not re-open the dialog on auto-repeat, because one press is one save', async () => {
+    renderShortcuts();
+
+    // The registration does NOT set `repeat`, and `useKeyboardEvents` drops `event.repeat`
+    // BEFORE `onKeyDown` runs, so a held key never reaches the dialog — while still cancelling
+    // the browser default on every repeat, which is the property the provider's own comment pins.
+    expect(press('s', { ctrlKey: true, repeat: true })).toBe(true);
+    await flushAsync();
+
+    expect(openSaveImageDialog).not.toHaveBeenCalled();
+
+    press('s', { ctrlKey: true });
+    await flushAsync();
+
+    expect(openSaveImageDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses mod+S while a document gesture is open, before it can consume the gesture’s preview', () => {
+    // `mutatesDocument` is left at its `true` default, and `saveDocument` commits a live tool
+    // preview — so the refusal has to happen at `keydown`, before dispatch and therefore before
+    // `commitDirtyTool`. A mid-gesture save would bake the preview the gesture's own release is
+    // about to write. The press is dropped, not queued: there is no flush point, and the
+    // correct post-release target is the gesture's OWN history entry, which does not exist yet.
+    renderShortcuts();
+    claimDocumentGesture('rectangular-selection', 1);
+
+    try {
+      expect(press('s', { ctrlKey: true })).toBe(false);
+
+      expect(commitDirtyTool).not.toHaveBeenCalled();
+      expect(openSaveImageDialog).not.toHaveBeenCalled();
+    } finally {
+      releaseDocumentGesture('rectangular-selection', 1);
+    }
+  });
+
+  it('reports a throwing commitDirtyTool instead of letting it escape the document listener', async () => {
+    commitDirtyTool.mockImplementation(() => {
+      throw new Error('commit failed');
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('s', { metaKey: true });
+      await flushAsync();
+
+      expect(openSaveImageDialog).not.toHaveBeenCalled();
+      expect(handleImageSave).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Unable to prepare document export', expect.any(Error));
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it('reports a rejected save the way the header does, so a failed export is not silent', async () => {
+    openSaveImageDialog.mockRejectedValue(new Error('disk offline'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      renderShortcuts();
+
+      press('s', { ctrlKey: true });
+      await flushAsync();
+
+      expect(handleImageSave).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Unable to prepare document export', expect.any(Error));
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
 

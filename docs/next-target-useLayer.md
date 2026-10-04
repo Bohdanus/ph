@@ -242,7 +242,7 @@ Key constraints that affect testing:
 
 Follow patterns from existing passing test files:
 
-- **`replay-checkpoints.test.ts`**: Uses `vi.fn()` for release callbacks, tests eviction ordering
+- **`history-append.test.ts`**: Uses `vi.fn()` for injected collaborators, asserts on the decision shape a refusal returns
 - **`ShapeToolArea.test.tsx`**: Mocks `useStore`, uses `vi.useFakeTimers()` for RAF-related async
 - **`useDrag.test.ts`**: `renderHook` pattern for hook-only testing, `pointerState` hoisted mutable object for mock state
 - **`useCurrentTool.test.tsx`**: `renderHook` with `CurrentToolProvider` wrapper, `lastSavedSettings` reset in `beforeEach`
