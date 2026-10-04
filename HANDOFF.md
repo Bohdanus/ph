@@ -307,30 +307,9 @@ pin the unbounded behaviour as load-bearing:
   case expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
-**Fix.** Bound the lookup at the replay target, and change those two tests **in the same change**:
-they must be re-derived to assert a creation entry that precedes the target, not deleted to make the
-bound pass. The unbounded behaviour was a live feature, so a fix that makes one of them fail without
-re-deriving it has removed a user-visible capability, not corrected a pin.
-
-Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
-cursor argument) and be threaded through `replayHistory` in `history-replay.ts` and
-`legacyHistoryToDurable` in `history-adapter.ts`
-together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
-exists to close.
-
-**Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
-them:**
-
-- The doc comment above `deriveSelectionBaseline` in `selection-baseline.ts`. The claim is in that
-  comment, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
-  record that the selection ever existed", restated there for the durable baseline.
-- The comment above the `deriveSelectionBaseline(legacyHistory)` call in `legacyHistoryToDurable`
-  (`history-adapter.ts`) repeats it in the adapter's own voice: "It cannot be narrowed to the
-  pre-first-entry state
-  **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
-  the only record that the selection existed." Rewriting only the first leaves the rule's owner
-  corrected and its caller still advertising the reason it must not be bounded, so the next reader
-  takes the call site as exempt from the bound being introduced at the signature.
+**Fix.** Keep `deriveSelectionBaseline()` unbounded over the whole timeline. Any future selection
+authority migration must preserve that rule and keep the two tests above as tripwires; bounding one
+consumer but not the other would reopen the parity divergence this helper exists to close.
 
 **Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
 `src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,
@@ -2081,8 +2060,9 @@ frame at the pre-add size when a bedrock layer is added mid-history')` titles (t
 
 **Files.** `src/contexts/history-replay.ts`
 
-The append-boundary test citations are a separate drift cluster, not part of this file's
-`history-replay.ts` arithmetic; they are recorded in §204.
+The append-boundary test citations were a separate drift cluster, not part of this file's
+`history-replay.ts` arithmetic. They were resolved with the §87-§89 fixes and are no longer
+outstanding.
 
 ---
 
@@ -5523,41 +5503,33 @@ judgement and belongs to the operator.
 
 ---
 
-## 203. No browser seam distinguishes durable and legacy presentation authorities
+## 203. No Playwright assertion distinguishes the durable authorities, and no seam exposes the cursor or the published layers
 
-**Problem.** The only durable Playwright assertion is the status string read by
-`error-boundary.spec.ts` through `error-boundary-durable-status`. No testid or `window` hook exposes
-the durable status, cursor, or which layers were published from a durable composition. The current
-history e2e tests therefore pass identically when the durable presentation mount is declined.
+**Problem.** Durable status IS already reachable from Playwright — `ErrorBoundary.tsx` renders
+`error-boundary-durable-status`, and `DevStatusStrip.tsx` renders `dev-status-strip` with
+`data-status={durableStatus}`. The strip is DEV-gated, and `playwright.config.ts` runs
+`npm run dev` as its `webServer`, so it is reachable in every e2e run. What does not exist is any
+exposure of the durable CURSOR or of WHICH LAYERS were published from a durable composition: no
+`window` hook in `src/`, nothing in `e2e/helpers/` or `e2e/fixtures/`.
 
-**Consequence.** Browser evidence cannot prove that navigation published durable pixels or that a
-declined composition left the legacy presentation in place.
+The only durable assertions in `e2e/` are the status string and two absence checks —
+`error-boundary.spec.ts` reads `error-boundary-durable-status`, and also asserts
+`dev-status-strip` and `error-boundary-durable-status` are absent outside an error. None of them
+reads a cursor or a published-layer set, so the history specs pass identically whether a navigation
+published durable pixels or the mount declined it.
 
-**Fix.** Add a development-only Playwright seam carrying durable status, cursor and published-layer
-state. Add one test for a successful durable navigation publication and one for a declined
-composition falling back to the legacy presentation. Assert the seam, not pixel colours.
+**Consequence.** Browser evidence cannot prove that navigation published durable composition, nor
+that a declined composition left the legacy presentation in place. The pixel differential proves the
+compositions agree; nothing proves the browser ever shows them.
 
-**Files.** `src/contexts/StoreContext.tsx`, `e2e/error-boundary.spec.ts`, and the history navigation
-specs
+**Fix.** Extend the existing seam rather than inventing one: put the durable cursor and the published
+layer ids beside `data-status` on `DevStatusStrip`, which already reaches Playwright. Add one
+history-navigation spec asserting a published durable composition and one asserting the declined
+fallback. Assert the seam values, not pixel colours — the pixel claim belongs to
+`history-migration.pixel-parity.test.ts` and is duplicated nowhere.
 
----
-
-## 204. History-append pin citations drifted outside the history-replay citation inventory
-
-**Problem.** The `KNOWN GAP 1` block in `history-append.test.ts` carried source citations that no
-longer resolve to the units they name, among them `decideDurableAppend()` and the related
-`StoreContext.tsx` builder. These are not the `history-replay.ts` shifts owned by §99, so that entry's
-arithmetic cannot repair them.
-
-**Consequence.** A reader following the append-boundary pin is sent to the wrong code and can miss
-the live defect or misread a guard as already fixed.
-
-**Fix.** Re-derive every remaining stale citation against the current symbols and replace line ranges
-with unit citations. Do not change the pin to make the citation check green.
-
-**Files.** `src/contexts/__tests__/history-append.test.ts`, `src/contexts/history-append.ts` —
-`decideDurableAppend()`, `validatePlannedDurableEntry()`, `translate()`,
-`src/contexts/StoreContext.tsx` — `buildDurableDocument()`
+**Files.** `src/components/DevStatusStrip/DevStatusStrip.tsx`, `src/contexts/StoreContext.tsx`,
+`e2e/error-boundary.spec.ts`, and the history navigation specs
 
 ---
 
@@ -5598,31 +5570,46 @@ a tripwire and starts being a lie.
 
 ---
 
-## 206. The export axis is blind exactly where the runtime axis diverges
+## 206. Export parity was never proven for any layer, and the first export axis could not fail
 
-**Problem.** The pixel differential compares the export surface by mounting durable compositions into
-the legacy records' `tmpCanvas`, which only happens for layers
-`durablePresentationIsRendererIdentical()` accepts: no retained operations, matching bounds, and a
-`raster` or `blank` source. Every transformed, filtered and text layer is **declined**, so the export
-comparison falls back to the legacy presentation and compares legacy against itself. Six declines are
-measured: `reposition and affine transform@2:layer-a`, `filter chain@1,2,3:layer-a`,
-`text source@1:text-layer`, `raster processor on a non-flat baseline@1:layer-a` — pinned by the
-`mounts every composed layer …` `it.fails` title in the same file.
+**Problem.** The pixel differential's export axis mounted durable compositions into the legacy
+records and then called `renderExportCanvas()` on both sides. That comparison was structurally
+incapable of failing. The mount keeps the LEGACY record's `pos`, `visible`, `opacity`, `blendMode`
+and `operations`, and `renderExportCanvas()` is handed the legacy frame and size on both sides; the
+only durable input was a `tmpCanvas` swap. And because `durablePresentationIsRendererIdentical()`
+(`StoreContext.tsx`) accepts a layer only when it has no retained operations and
+`isEqual(bounds, existing.pos)`, the bitmap it accepted was a byte-identical copy of the legacy
+record's own — 30 accepted mounts, zero differing bytes, on every cursor.
 
-**Why it matters more than a coverage gap.** §205's divergence sits on the runtime axis only, and the
-export axis reports agreement there **because it never compared anything**. A green export assertion
-is therefore not evidence of export parity for any transformed, filtered or text layer — the same
-"simultaneously live and uninformative" shape §1 records about the mount itself.
+**Measured, not inferred.** Stamping the durable compositor's layer 7px off turns the RUNTIME axis
+red and leaves the OLD export axis at zero differing bytes: `renderExportCanvas()` places by
+`layer.pos` and never reads `materialized.bounds`, and the accept predicate required those two to be
+equal, so the one value worth comparing was equal by precondition. The blindness was **every
+cursor**, not the six declines the mount records.
 
-**Fix.** Widen `durablePresentationIsRendererIdentical()` per source kind, gated on the pixel
-differential being green for that kind, so each widening is separately provable. The export axis goes
-green for a layer only when the mount accepts it; until then, treat export parity for those kinds as
-unproven rather than passing. Remove the pin with the widening that satisfies it.
+**Consequence.** Export parity is unproven for every layer kind, including plain raster and blank —
+not merely for the transformed, filtered and text layers the six declines name. A reader of the green
+suite would reasonably conclude the opposite. This is the "simultaneously live and uninformative"
+shape §1 records about the mount itself, one level down.
+
+**Fixed here.** The export axis now derives the durable side entirely from the durable composition:
+`pos` from `materialized.bounds`, `visible`/`opacity`/`blendMode`/`order`/`name` from the durable
+replay layer's own snapshot, `operations` empty because the retained presentation is already baked in,
+and size and frame from the durable replay rather than the legacy one. Nothing on that side is read
+off legacy replay. The same 7px mutation now turns the export axis red on 30 cursors, so it is a
+gate. Run in `src/contexts/__tests__/history-migration.pixel-parity.test.ts` —
+`durableExportRecords()`.
+
+**What is still owed.** Export parity is now _enforced_, but two of the scenarios remain unproven in
+BOTH directions for jsdom reasons rather than compared-and-agreed: `filter chain`, because
+`PixelContext` records `ctx.filter` without applying it, and `text source`, because `fillText`
+rasterizes nothing. Those are the two `it.fails` titles naming the limitation. Widening
+`durablePresentationIsRendererIdentical()` remains the production question, and it is now separable
+from the harness: the harness no longer depends on the mount.
 
 **Files.** `src/contexts/StoreContext.tsx` — `durablePresentationIsRendererIdentical()`,
-`src/contexts/durable-compositor.ts` — `composeDurableDocument()`,
-`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the
-`mounts every composed layer …` `it.fails` title
+`src/contexts/export-canvas.ts` — `renderExportCanvas()`,
+`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — `durableExportRecords()`
 
 ---
 
@@ -5675,7 +5662,103 @@ create a replacement layer or rasterize the source. Note that `commitDirtyTool`'
 the active layer when the draft's origin equals that layer's, so an entry route must carry the layer id
 rather than relying on the origin match.
 
-## 209. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
+## 209. The in-place editor covers its own box, so the inner half of every resize handle is dead
+
+**Problem.** `useRect`'s `drawMask` draws each corner and edge handle as a square CENTRED on the edge,
+`ctx.fillRect(x - h2, y - h2, h1, h1)` with `h2 = HANDLE_SIZE / scale / 2`, so six CSS px of every handle
+lies inside the type box — which is exactly the rectangle `TextEditOverlay` occupies, and
+`Main.tsx` mounts the overlay last so it is the topmost child. Every pointerdown in that band belongs to
+the editor. The outer six pixels of a handle still resize; the inner six place a caret instead.
+`edgeAtPoint`'s `'inside'` region is unreachable for the same reason, so `TextToolArea`'s
+`onChangeEnd` classification of an interior press as a move never fires while a draft is open, and the
+cursor feedback stops because `setMouseCursor` writes to an element that is no longer the event target.
+
+**Adobe allows both at once.** "You can adjust the bounding box while you enter type or after you create
+the type layer" (https://helpx.adobe.com/photoshop/using/creating-type.html).
+
+**Affected.** `src/components/Main/TextEditOverlay.tsx` — the element's box; `src/hooks/useRect.ts` —
+the handle size and where it sits.
+
+**What would close it.** Draw the handles OUTSIDE the rect (`x - h1` rather than `x - h2`, and the same
+for the right and bottom edges) and hit-test against `h2`. That removes the whole band from the
+editor's hit area with two constants in one file, and it is also Adobe's arrangement. Shrinking the
+editor instead is the wrong direction: the editor's box has to BE the type box for the caret to land
+where the user clicked.
+
+## 210. `textareaRef` is dead state in the store
+
+**Problem.** The options bar's `<textarea id="text-input">` is gone, so `textareaRef` is written by
+`StoreContext` and read by nothing in `src/` or `e2e/` — a store field, a `useRef` and a default that
+exist to point at an element that no longer exists.
+
+**Affected.** `src/contexts/StoreContext.tsx` — the field on the store's shape, the `useRef` and the
+value returned; `src/__tests__/fixtures/store.ts`; `src/contexts/__tests__/StoreContext.test.tsx` and
+`StoreContext.reducer.test.tsx` (both enumerate the refs, so removing one changes a test about something
+else); `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`.
+
+**What would close it.** Delete the field and the four call sites. It was left rather than removed
+alongside the textarea because a concurrent session was editing `StoreContext.tsx`, and a three-line
+deletion resolved under merge pressure is a worse trade than a week of dead state.
+
+## 211. Layer hydration publishes a layer-local rect, so the in-place edit path opens at the document origin
+
+**Problem.** `createLayerFromTool`'s no-`pos` branch stores `args.rect` REDUCED — `reduceRect(worldRect,
+newPos)` — because the creator builds a `pos`-sized canvas and draws the type at the rect's own
+coordinates. `LayersTab`'s `selectLayer` publishes `source.args` verbatim, so the draft it opens is in
+LAYER-LOCAL space while the editor, `calculateNewRect` and both commit arms read CANVAS space. MEASURED:
+a text layer at document (120, 80) whose `source.args.rect` is (0, 0, 100, 60) opens its editor over the
+document's top-left corner; committing from there measures a rect around (0, 0), which does not match
+the active layer's origin, so the CREATE arm runs and a SECOND text layer appears at (0, 0) carrying the
+edited text while the original is untouched. The comment at the origin-equality guard — "Selection
+hydration preserves the active layer's origin" — describes an invariant the storage format does not
+provide.
+
+**Affected.** `src/components/SidebarRight/LayersTab.tsx` — `selectLayer`; the guard in
+`commitDirtyTool`'s text arm is correct and must keep comparing un-reduced canvas rects.
+
+**What would close it.** Hydrate in the space the commit path measures in: in `selectLayer`, translate
+`rect` by `layer.pos` and the document frame before publishing it, leaving `source.args.rect`
+layer-local as the create arm stores it. This is the same reduction the create arm performs, in the
+other direction.
+
+## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
+
+**Problem.** `domOverlayStyle` emits `textDecorationLine` and `textDecorationColor` and nothing else,
+so the draft's underline and strikethrough take the UA's thickness and offset. `renderTextInto` draws
+them with `decorationThickness(fontSize)` and `UNDERLINE_BELOW_BASELINE_EM`, and the strike at
+`xHeightHalf()`. The DOM rule also spans the line's full advance, while the canvas spans `inkWidth`,
+which subtracts one letter-spacing gap — so with `align: center` or `right` and non-zero tracking the two
+disagree by `spacing / 2` and `spacing` as well. Found independently by two reviews and left unclaimed by
+both.
+
+**Affected.** `src/tools/text.ts` — `DomOverlayStyle` and `domOverlayStyle`; the canvas side is
+`decorationThickness` and `renderTextInto`.
+
+**What would close it.** Emit `textDecorationThickness` and `textUnderlineOffset` from
+`domOverlayStyle`, and anchor the rule to the same extent the canvas measures. The residual after that
+is cosmetic and unmeasured outside the eight cases `domOverlayStyle`'s own comment reports, so treat what
+is left as draft-versus-commit ink that reflows on commit rather than as a defect to close.
+
+## 213. `type-crop.ts`'s `appRef` line numbers are 60–110 lines off and reach a generated document
+
+**Problem.** `docs/TOOLS.md`'s "In this app" column carries five `Text.tsx` line numbers, every one wrong
+by 60–110 lines: the row labelled "Font family" resolves to a comment about tool switching, and the row
+labelled "Commit / Cancel" resolves to the start of a `{/*` comment. They come from the
+`appRef` values in `src/tools/descriptions/type-crop.ts`, so editing `docs/TOOLS.md` is wrong — the data
+is the fix, then `npm run docs:tools`. `tool-descriptions.test.mjs` only fails when a line is PAST EOF,
+which is why a citation that drifted by a hundred lines cannot fail any gate.
+
+**Affected.** `src/tools/descriptions/type-crop.ts` — the seven `appRef` values; the generated
+`docs/TOOLS.md` follows from them.
+
+**What would close it.** Re-derive each `appRef` from the current `Text.tsx`, or relax `appRef` to accept
+a unit citation the way the rest of the documentation rules do. There is a rule conflict behind this and
+it is the operator's to settle: `AGENTS.md` bans `file.ext:‹line›` in every tracked document,
+`tool-descriptions.test.mjs` documents `REF_PATTERN` as the only form `appRef` accepts, and
+`docs/TOOLS.md` is excluded from the citation check because it is generated — so the banned form is
+enforced nowhere the form is mandatory.
+
+## 214. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
 
 **Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
 assertions that pass on any non-null value, but six classes of defect remain, and one of them is a

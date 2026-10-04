@@ -445,28 +445,44 @@ describe('calculateNewRect', () => {
     expect(result!.x2).toBe(100 + 2 * 5);
   });
 
-  it('centers wider text for center align', () => {
-    const canvasRef = makeCanvasRef(120);
-    const result = calculateNewRect(
-      {
-        ...baseArgs,
-        text: 'hello',
-        fontSize: 16,
-        lineHeight: 1.2,
-        rect: { x1: 50, y1: 0, x2: 100, y2: 0 },
-        align: 'center',
-      } as TextToolArgs,
-      canvasRef,
-      imageSize
-    );
-    const requiredWidth = 120 + 2 * 5;
-    const currentWidth = 100 - 50;
-    expect(result!.x1).toBeCloseTo(50 + (currentWidth - requiredWidth) / 2);
-    expect(result!.x2).toBeCloseTo(50 + (currentWidth + requiredWidth) / 2);
+  it('does NOT move a POINT box for center or right align, because Adobe scopes alignment to paragraph type', () => {
+    // This replaces a pin that asserted the opposite — that a center-aligned point box grows
+    // symmetrically about its current centre — on the reasoning that `align` should place the growth.
+    // Adobe settles it: "You can align type to one edge of a paragraph (left, center, or right for
+    // horizontal type). Alignment options are available only for paragraph type"
+    // (`formatting-paragraphs.html`), and "You can align and justify only paragraph text. To manage
+    // spacing for point text, convert it to paragraph text" (`setup-paragraph-formatting.html`).
+    // Point type "appears in a straight line without boundaries or a bounding box"
+    // (`add-text.html`), so there is nothing to align within. All three settings therefore produce
+    // the SAME rect for a point box, which is the geometry the entry in `HANDOFF.md` describes as a
+    // no-op control — a control defect, not a geometry one, and the entry carries the fix.
+    const rect = { x1: 50, y1: 0, x2: 100, y2: 0 };
+    for (const align of ['left', 'center', 'right'] as const) {
+      const result = calculateNewRect(
+        {
+          ...baseArgs,
+          text: 'hello',
+          fontSize: 16,
+          lineHeight: 1.2,
+          rect,
+          align,
+        } as TextToolArgs,
+        makeCanvasRef(120),
+        imageSize
+      );
+      expect(result!.x1, align).toBe(50);
+      expect(result!.x2, align).toBe(50 + 120 + 2 * TEXT_PADDING);
+    }
   });
 
-  it('does not change width when text fits within the current width', () => {
-    const canvasRef = makeCanvasRef(10);
+  it('SHRINKS a point box whose text is narrower than the box, because a point line is its own box', () => {
+    // This is the other half of "each line of type is independent — the line expands or shrinks as
+    // you edit it" (Adobe, `creating-type.html), and it is the half that used to be missing. The
+    // rule grew only, on the reasoning that slack meant "a box the user widened with a handle" —
+    // which stopped being true the moment a box is born holding the `'Lorem ipsum'` placeholder,
+    // because then it carries slack the user never chose. A grow-only rule cannot tell the two
+    // apart, so three characters typed over the placeholder left the line as wide as the placeholder.
+    const canvasRef = makeCanvasRef();
     const result = calculateNewRect(
       {
         ...baseArgs,
@@ -479,34 +495,50 @@ describe('calculateNewRect', () => {
       canvasRef,
       imageSize
     );
-    expect(result!.x2).toBe(100);
+    // The fixture measurer reads `text.length * parseFloat(ctx.font)`, and `applyTextStyle` has set
+    // `ctx.font` to the 16px face the args carry, so `'hi'` measures 2 * 16 = 32; plus `TEXT_PADDING`
+    // at each end, that is 42. The box arrived 100 wide and must come back 42 wide — a grow-only rule
+    // returns 100 and this test fails.
+    expect(result!.x1).toBe(0);
+    expect(result!.x2).toBe(2 * 16 + 2 * TEXT_PADDING);
   });
 
-  it.each(['left', 'center', 'right'] as const)(
-    'leaves a box that already fits its text exactly where it was dragged, for align %s',
-    (align) => {
-      // The guard `requiredWidth > currentWidth` is what keeps a point box still when there is no
-      // slack for `align` to distribute — and `renderText` anchors `align` INSIDE the box, so moving
-      // the box would move the ink twice. `HANDOFF.md` records that the arm was once moved outside
-      // this guard and reverted for exactly that reason, and at the time only `left` was pinned: a
-      // revert would have shifted the ink 55px on `center` and moved the committed layer's origin
-      // and width on `right`, both undetected. So the case is run for all three.
-      const dragged = { x1: 0, y1: 0, x2: 100, y2: 50 };
-      // 40 of ink + 2 * 5 of padding = 50, against a box 100 wide: 50 of genuine SLACK. The first
-      // version of this case made the text exactly fill the box, and every arm then computed the
-      // same box whether or not it was inside the guard — the same trap as the fixtures above, one
-      // level down. Slack is what `align` would distribute, so slack is what makes the guard matter.
-      const canvasRef = makeCanvasRef(40);
+  it('grows and shrinks a point box in the same direction for left alignment, from a fixed left edge', () => {
+    // The shrinking arm must not walk the LEFT edge leftward the way centre and right do: left
+    // alignment pins x1 and moves x2, so a line that both grows and shrinks keeps its origin. A
+    // sign error here moves the whole line every keystroke.
+    const narrower = calculateNewRect(
+      { ...baseArgs, text: 'hi', rect: { x1: 40, y1: 0, x2: 200, y2: 0 }, align: 'left' } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    const wider = calculateNewRect(
+      { ...baseArgs, text: 'abcdefghij', rect: { x1: 40, y1: 0, x2: 200, y2: 0 }, align: 'left' } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    expect(narrower!.x1).toBe(40);
+    expect(wider!.x1).toBe(40);
+    expect(wider!.x2).toBeGreaterThan(narrower!.x2);
+  });
 
-      const result = calculateNewRect(
-        { ...baseArgs, text: 'hello', fontSize: 20, lineHeight: 1.2, rect: dragged, align } as TextToolArgs,
-        canvasRef,
-        imageSize
-      );
+  it.each(['left', 'center', 'right'] as const)('shrinks a point box to its ink regardless of align %s', (align) => {
+    // Point type has no paragraph alignment box. Its width follows the current ink on every edit,
+    // so a placeholder-sized draft contracts when the user replaces the placeholder.
+    const dragged = { x1: 0, y1: 0, x2: 100, y2: 50 };
+    // 40 of ink + 2 * 5 of padding = 50, against a box 100 wide. The result must remove that
+    // placeholder-era slack rather than preserving it for an alignment setting that does not
+    // apply to point type.
+    const canvasRef = makeCanvasRef(40);
 
-      expect(result).toEqual(dragged);
-    }
-  );
+    const result = calculateNewRect(
+      { ...baseArgs, text: 'hello', fontSize: 20, lineHeight: 1.2, rect: dragged, align } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result).toEqual({ x1: 0, y1: 0, x2: 50, y2: 50 });
+  });
 
   it('measures with the font the args carry, so the box follows the face', () => {
     // Font-sensitive mock: no pinned width, so every measure reads `ctx.font`. A point box whose

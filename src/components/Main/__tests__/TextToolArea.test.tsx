@@ -1,8 +1,9 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { makeMockCtx } from '../../../__tests__/canvas-mock.ts';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
 import { TextToolArea } from '../TextToolArea.tsx';
-import { renderText } from '../../../tools/text.ts';
+import { PLACEHOLDER_TEXT, drawOverflowIndicator, layoutText } from '../../../tools/text.ts';
 import { calculateNewRect } from '../../../util/rect.ts';
 
 type TextArgs = {
@@ -12,6 +13,7 @@ type TextArgs = {
   fontFamily: string;
   fontSize: number;
   italic: boolean;
+  kind?: 'point' | 'paragraph';
   lineHeight: number;
   text?: string;
   rect: { x1: number; y1: number; x2: number; y2: number } | null;
@@ -20,6 +22,7 @@ type TextArgs = {
 
 const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
+  commitDirtyTool: vi.fn(),
   dispatch: vi.fn(),
   color: '#000000',
   redraw: vi.fn(),
@@ -32,6 +35,10 @@ const h = vi.hoisted(() => ({
   currentEdgeRef: { current: null as string | null },
   useRectProps: { current: null as UseRectProps | null },
   textarea: { current: null as HTMLTextAreaElement | null },
+  // How many times the store mock's `textareaRef` GETTER ran. The component used to read it and
+  // focus what it held; it no longer touches it, and this counter is what turns "no longer" into an
+  // assertion instead of an absence nobody checked.
+  textareaRefReads: 0,
   containerRef: { current: document.createElement('div') },
   toolOverlayRef: { current: document.createElement('canvas') },
 }));
@@ -58,6 +65,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
         return h.containerRef;
       },
       get textareaRef() {
+        h.textareaRefReads += 1;
         return h.textarea;
       },
       get toolOverlayRef() {
@@ -79,6 +87,14 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
     },
     get setToolArgs() {
       return h.setToolArgs;
+    },
+  }),
+}));
+
+vi.mock('../../../contexts/useLayer.ts', () => ({
+  useLayers: () => ({
+    get commitDirtyTool() {
+      return h.commitDirtyTool;
     },
   }),
 }));
@@ -106,16 +122,31 @@ vi.mock('../../../util/rect.ts', async () => {
   };
 });
 
+/**
+ * `layoutText` and `drawOverflowIndicator` are the whole of what the chrome repaint asks this module
+ * for, and both are mocked so that the repaint is a CHOICE rather than a measurement: the overflow
+ * answer is set per test, which is what makes both branches reachable and both falsifiable.
+ *
+ * `renderText` is deliberately NOT mocked. It is the function the component must stop calling, and a
+ * stub would make any reintroduced call invisible — a stub draws nothing, so a `not.toHaveBeenCalled`
+ * on `ctx.fillText` would pass against the very defect it exists to catch. Left real, a reintroduced
+ * call paints.
+ */
 vi.mock('../../../tools/text.ts', async () => {
   const actual = await vi.importActual<typeof import('../../../tools/text.ts')>('../../../tools/text.ts');
   return {
     ...actual,
-    renderText: vi.fn(),
+    layoutText: vi.fn(() => ({ lines: [], overflow: false })),
+    drawOverflowIndicator: vi.fn(),
   };
 });
 
 const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null } = { current: null }) =>
   render(<TextToolArea overlayCtxRef={overlayCtxRef} />);
+
+/** The overflow answer the repaint will be given, as if the text had been measured. */
+const laysOutAsOverflowing = (overflow: boolean) =>
+  vi.mocked(layoutText).mockReturnValue({ lines: ['hello'], overflow });
 
 /**
  * A whole press-drag-release, followed by the `onChangeEnd` `useRect` would have called.
@@ -143,6 +174,7 @@ const gesture = (
 describe('TextToolArea', () => {
   beforeEach(() => {
     h.setToolArgs.mockReset();
+    h.commitDirtyTool.mockReset();
     h.dispatch.mockReset();
     h.redraw.mockReset();
     h.pointerDown.mockReset();
@@ -151,20 +183,30 @@ describe('TextToolArea', () => {
     h.currentEdgeRef.current = null;
     h.useRectProps.current = null;
     h.textarea = { current: null };
+    h.textareaRefReads = 0;
     h.color = '#000000';
     toolArgs = makeTextArgs();
     vi.mocked(calculateNewRect).mockReset();
     vi.mocked(calculateNewRect).mockReturnValue(null);
-    vi.mocked(renderText).mockReset();
+    vi.mocked(layoutText).mockReset();
+    laysOutAsOverflowing(false);
+    vi.mocked(drawOverflowIndicator).mockReset();
   });
 
   it('does not crash when the textarea ref is not attached yet', () => {
     expect(() => renderArea()).not.toThrow();
   });
 
-  it('focuses the textarea after text arguments become active', () => {
+  /**
+   * The replacement for the pin this used to be. There is no options-bar textarea to focus: typing
+   * goes into `TextEditOverlay`, a transparent DOM element laid over the same box, and it owns the
+   * caret and the focus. What replaced the focus effect is the absence — so that is the assertion,
+   * and it is made on the store's own getter, because a focus path reached through a different
+   * spelling would still have to read the ref to get at a textarea.
+   */
+  it('never reads the store textareaRef, and focuses nothing when the text tool becomes active', () => {
     toolArgs = makeTextArgs({ toolName: 'draw' });
-    const { rerender } = renderArea();
+    const { container, rerender } = renderArea();
     const textarea = document.createElement('textarea');
     const focus = vi.spyOn(textarea, 'focus');
     h.textarea.current = textarea;
@@ -174,7 +216,9 @@ describe('TextToolArea', () => {
       rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
     });
 
-    expect(focus).toHaveBeenCalledTimes(1);
+    expect(h.textareaRefReads).toBe(0);
+    expect(focus).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')).toBeNull();
   });
 
   it('does not crash when a rectangle finishes while the textarea is unavailable', () => {
@@ -205,7 +249,27 @@ describe('TextToolArea', () => {
       });
     });
 
-    it('repaints through redrawText on every rect repaint', () => {
+    /**
+     * THE PIN, and it is about a prop's ABSENCE — which is why the assertion is an exact `true` and
+     * not a truthiness test. `hideBlend` is optional, so a consumer that forgets it passes `undefined`,
+     * and that is precisely the shape the defect had.
+     *
+     * `useRect`'s `drawMask` lays `rgba(0, 0, 0, 0.7)` over the WHOLE document and then `clearRect`s
+     * a hole at the frame. That dim is the crop tool's "everything outside the crop is not part of
+     * the result", and it is the DEFAULT because most of `useRect`'s consumers are crop-shaped — so
+     * the Type tool, which was not opting out, dimmed every COMMITTED layer to 30% for as long as a
+     * draft was open.
+     *
+     * MEASURED, live headless Chromium, on a committed red glyph: `maxRed` 76 with a draft open and
+     * 255 with none. 255 × (1 − 0.7) = 76.5, which is the arithmetic of that fill and nothing else.
+     */
+    it("asks useRect for NO dim, because the 0.7 blend is the crop frame's and dims every committed layer", () => {
+      renderArea();
+
+      expect(h.useRectProps.current!.hideBlend).toBe(true);
+    });
+
+    it('hands useRect the chrome-only draft repaint', () => {
       renderArea();
 
       expect(h.useRectProps.current!.onRepaint).toEqual(expect.any(Function));
@@ -217,7 +281,7 @@ describe('TextToolArea', () => {
 
       fireEvent.pointerDown(el, { button: 0, clientX: 5, clientY: 5 });
       fireEvent.pointerMove(el, { clientX: 6, clientY: 6 });
-      fireEvent.pointerUp(el, { button: 0, clientX: 6, clientY: 6 });
+      fireEvent.pointerUp(el, { clientX: 6, clientY: 6 });
 
       expect(h.pointerDown).toHaveBeenCalledTimes(1);
       expect(h.pointerMove).toHaveBeenCalledTimes(1);
@@ -237,8 +301,11 @@ describe('TextToolArea', () => {
       // pointer's travel and a rect alone no longer decides it.
       gesture(rendered, { x: 0, y: 0 }, { x: 40, y: 20 }, { x1: 0, y1: 0, x2: 40, y2: 20 });
 
+      // The box is measured from the SEEDED text, not from whatever the args happened to hold: a
+      // placement arrives holding Adobe's placeholder, and a box sized from the previous string
+      // would be sized from a string the layer will never have.
       expect(calculateNewRect).toHaveBeenCalledWith(
-        expect.objectContaining({ text: 'hi', rect: { x1: 0, y1: 0, x2: 40, y2: 20 } }),
+        expect.objectContaining({ text: PLACEHOLDER_TEXT, rect: { x1: 0, y1: 0, x2: 40, y2: 20 } }),
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
@@ -247,7 +314,14 @@ describe('TextToolArea', () => {
       // drag republished the foreground, not the colour the user had chosen.
       // A 40x20 press is a drag, so the committed record also says which of Adobe's two kinds of
       // type layer the gesture placed.
-      expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, color: '#0000ff', rect: newRect, kind: 'paragraph' });
+      expect(h.setToolArgs).toHaveBeenCalledWith({
+        ...toolArgs,
+        text: PLACEHOLDER_TEXT,
+        color: '#0000ff',
+        rect: newRect,
+        kind: 'paragraph',
+        placeholderUntouched: true,
+      });
     });
 
     it('does not republish the args when only the store foreground changed', () => {
@@ -264,30 +338,22 @@ describe('TextToolArea', () => {
       expect(h.setToolArgs).not.toHaveBeenCalled();
     });
 
-    it('focuses the textarea after a successful change end', () => {
+    it('publishes the placement exactly once when a rect can be calculated', () => {
       renderArea();
-      const textarea = document.createElement('textarea');
-      const focus = vi.spyOn(textarea, 'focus');
-      h.textarea.current = textarea;
       vi.mocked(calculateNewRect).mockReturnValue({ x1: 0, y1: 0, x2: 10, y2: 10 });
 
       act(() => h.useRectProps.current!.onChangeEnd({ x1: 0, y1: 0, x2: 10, y2: 10 }));
 
       expect(h.setToolArgs).toHaveBeenCalledTimes(1);
-      expect(focus).toHaveBeenCalledTimes(1);
     });
 
-    it('drops the commit and the focus when no rect can be calculated', () => {
+    it('drops the publish when no rect can be calculated', () => {
       renderArea();
-      const textarea = document.createElement('textarea');
-      const focus = vi.spyOn(textarea, 'focus');
-      h.textarea.current = textarea;
       vi.mocked(calculateNewRect).mockReturnValue(null);
 
       act(() => h.useRectProps.current!.onChangeEnd({ x1: 0, y1: 0, x2: 10, y2: 10 }));
 
       expect(h.setToolArgs).not.toHaveBeenCalled();
-      expect(focus).not.toHaveBeenCalled();
     });
 
     it('commits a drag as a paragraph box, with the dragged rect handed over unchanged', () => {
@@ -303,7 +369,9 @@ describe('TextToolArea', () => {
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
-      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph', rect: dragged }));
+      expect(h.setToolArgs).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'paragraph', rect: dragged, text: PLACEHOLDER_TEXT })
+      );
     });
 
     it('commits a click as a point box, collapsing the rect onto the press origin', () => {
@@ -319,7 +387,7 @@ describe('TextToolArea', () => {
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
-      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point' }));
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'point', text: PLACEHOLDER_TEXT }));
     });
 
     it('treats a 4px-wide, 1px-tall press as a drag: crossing the threshold on ONE axis is enough', () => {
@@ -335,7 +403,9 @@ describe('TextToolArea', () => {
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
-      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph' }));
+      expect(h.setToolArgs).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'paragraph', text: PLACEHOLDER_TEXT })
+      );
     });
 
     it('treats a 200px-wide, 3px-tall press as a drag too: a height inside the threshold decides nothing alone', () => {
@@ -354,7 +424,9 @@ describe('TextToolArea', () => {
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
-      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph' }));
+      expect(h.setToolArgs).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'paragraph', text: PLACEHOLDER_TEXT })
+      );
     });
 
     it('treats a press exactly at the threshold, 3px by 3px, as a click', () => {
@@ -368,7 +440,7 @@ describe('TextToolArea', () => {
       // `<=` and not `<`: the threshold is the largest press still counted as a click on BOTH
       // axes, so a 4px travel is the first that is not.
       expect(calculateNewRect).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'point', rect: { x1: 7, y1: 8, x2: 7, y2: 8 } }),
+        expect.objectContaining({ kind: 'point', rect: { x1: 7, y1: 8, x2: 7, y2: 8 }, text: PLACEHOLDER_TEXT }),
         h.toolOverlayRef,
         { width: 100, height: 100 }
       );
@@ -428,12 +500,129 @@ describe('TextToolArea', () => {
     });
   });
 
+  /**
+   * The two halves of Adobe's arrival: "A layer is created immediately, containing placeholder text
+   * that previews font, size and colour" (the text, here) and the commit of whatever was already
+   * being typed (the history entry, here). The SELECTION half is `TextEditOverlay`'s.
+   */
+  describe('placing a box', () => {
+    it('a placement seeds the box with the Adobe placeholder text', () => {
+      const placed = { x1: 12, y1: 34, x2: 12, y2: 34 };
+      vi.mocked(calculateNewRect).mockReturnValue(placed);
+
+      const rendered = renderArea();
+      gesture(rendered, { x: 12, y: 34 }, { x: 14, y: 35 }, placed);
+
+      // Spelled out twice on purpose: the literal is the contract as Adobe states it, and the
+      // imported constant is the same string, so a change to `PLACEHOLDER_TEXT` is a visible
+      // failure here rather than a silent one in a screenshot.
+      expect(PLACEHOLDER_TEXT).toBe('Lorem ipsum');
+      expect(h.setToolArgs).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'Lorem ipsum', placeholderUntouched: true })
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: PLACEHOLDER_TEXT }));
+    });
+
+    it('a placement with no draft open commits nothing', () => {
+      const placed = { x1: 12, y1: 34, x2: 12, y2: 34 };
+      vi.mocked(calculateNewRect).mockReturnValue(placed);
+
+      // The default args: no text and no box, which is what "no draft is open" is.
+      const rendered = renderArea();
+      gesture(rendered, { x: 12, y: 34 }, { x: 14, y: 35 }, placed);
+
+      // A commit here would create a layer out of nothing. The guard is `args.text && args.rect`,
+      // not merely the gesture.
+      expect(h.commitDirtyTool).not.toHaveBeenCalled();
+      expect(h.setToolArgs).toHaveBeenCalledTimes(1);
+    });
+
+    it('a placement while a draft is open commits that draft exactly once and publishes the new box', () => {
+      const open = { x1: 10, y1: 10, x2: 40, y2: 30 };
+      const placed = { x1: 100, y1: 100, x2: 100, y2: 100 };
+      toolArgs = makeTextArgs({ text: 'typed so far', rect: open, kind: 'point' });
+      vi.mocked(calculateNewRect).mockReturnValue(placed);
+
+      const rendered = renderArea();
+      gesture(rendered, { x: 100, y: 100 }, { x: 102, y: 101 }, placed);
+
+      // It used to do neither: a second click overwrote `args` with a fresh box and the typed text
+      // was gone with no history entry, because a draft is not yet a layer and nothing had recorded
+      // it. Exactly once, because a commit creates a layer and a second one would create a second.
+      expect(h.commitDirtyTool).toHaveBeenCalledTimes(1);
+      // And the published box is the NEW one, at the second click's coordinates.
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ rect: placed }));
+      expect(h.setToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: PLACEHOLDER_TEXT }));
+    });
+
+    it('commits the open draft before publishing the new box', () => {
+      const open = { x1: 10, y1: 10, x2: 40, y2: 30 };
+      const placed = { x1: 100, y1: 100, x2: 100, y2: 100 };
+      toolArgs = makeTextArgs({ text: 'typed so far', rect: open, kind: 'point' });
+      vi.mocked(calculateNewRect).mockReturnValue(placed);
+
+      const rendered = renderArea();
+      gesture(rendered, { x: 100, y: 100 }, { x: 102, y: 101 }, placed);
+
+      // The order IS the behaviour. `commitDirtyTool` creates the layer and clears `text`/`rect` by
+      // writing the tool args back, so publishing first would commit the NEW box with the OLD text
+      // — a text layer at the second click's coordinates holding the first click's words. Call
+      // order is the only thing that distinguishes the two, so it is asserted rather than assumed.
+      expect(h.commitDirtyTool.mock.invocationCallOrder[0]).toBeLessThan(h.setToolArgs.mock.invocationCallOrder[0]);
+    });
+
+    it('a press inside an existing box moves it without committing or re-seeding the text', () => {
+      const existing = { x1: 10, y1: 10, x2: 120, y2: 40 };
+      const moved = { x1: 12, y1: 12, x2: 122, y2: 42 };
+      toolArgs = makeTextArgs({ text: 'hello world', rect: existing, kind: 'point' });
+      // `'inside'`: the press landed in a box that was already there, so the gesture is a move. Only
+      // `useRect` can answer this, because only `useRect` ran `getEdgeAtPoint`.
+      h.currentEdgeRef.current = 'inside';
+      vi.mocked(calculateNewRect).mockReturnValue(moved);
+
+      const rendered = renderArea();
+      gesture(rendered, { x: 60, y: 25 }, { x: 61, y: 25 }, moved);
+
+      // Not committed — a move of a draft is not an exit from it — and NOT re-seeded: the placeholder
+      // belongs to the ARRIVAL of a box, and a move is not an arrival. Re-seeding here would throw
+      // away whatever the user has typed the moment they nudge the box they are typing into, which
+      // is the same class of defect as the reclassification above it.
+      expect(h.commitDirtyTool).not.toHaveBeenCalled();
+      expect(h.setToolArgs).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'hello world', rect: moved, kind: 'point' })
+      );
+      expect(h.setToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: PLACEHOLDER_TEXT }));
+    });
+  });
+
+  /**
+   * The canvas side of a draft is CHROME now. The ink is a transparent DOM element over the same
+   * box, so anything painted here is visible underneath it.
+   */
   describe('text preview', () => {
     it('repaints once the text becomes non-empty', () => {
       const { rerender } = renderArea();
       h.redraw.mockClear();
 
-      toolArgs = makeTextArgs({ text: 'hi' });
+      // The box arrives WITH the text — a placement seeds it — so the repaint is gated on both and
+      // a rerender carrying only one of them paints nothing.
+      toolArgs = makeTextArgs({ text: 'hi', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } });
+      act(() => {
+        rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
+      });
+
+      expect(h.redraw).toHaveBeenCalledTimes(1);
+    });
+
+    it('repaints when the box moves under an unchanged text', () => {
+      toolArgs = makeTextArgs({ text: 'hi', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } });
+      const { rerender } = renderArea();
+      h.redraw.mockClear();
+
+      // Point type grows and shrinks with its content, so the box is recomputed from the text on
+      // every keystroke and `args.rect` changes while `args.text` may not. The boundary has to
+      // follow it or the ink leaves the box, which is why the rect is a dependency of its own.
+      toolArgs = makeTextArgs({ text: 'hi', rect: { x1: 5, y1: 6, x2: 90, y2: 44 } });
       act(() => {
         rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
       });
@@ -447,42 +636,97 @@ describe('TextToolArea', () => {
       expect(h.redraw).not.toHaveBeenCalled();
     });
 
-    it('renders the text onto the overlay context in the tool colour', () => {
-      const ctx = document.createElement('canvas').getContext('2d');
-      h.color = '#00ff00';
+    it('does not repaint while the box is still missing', () => {
+      toolArgs = makeTextArgs({ text: 'hi', rect: null });
+
+      renderArea();
+
+      // The other half of the gate, and the reason the repaint effect lists both: there is no
+      // boundary to follow, and `redrawText` was the only consumer of a box that did not have one.
+      expect(h.redraw).not.toHaveBeenCalled();
+    });
+
+    it('draws no ink onto the overlay context, because the DOM overlay owns the draft', () => {
+      const ctx = makeMockCtx();
       toolArgs = makeTextArgs({ text: 'hello', rect: { x1: 5, y1: 6, x2: 50, y2: 30 }, color: '#0000ff' });
+      // OVERFLOWING on purpose. The overflow branch is the only one that reaches a drawing call, so
+      // a test that laid the text out as fitting would pass against a component that painted the ink
+      // wherever overflow happened to be true, and would say nothing about the normal case.
+      laysOutAsOverflowing(true);
 
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!({ x1: 5, y1: 6, x2: 50, y2: 30 }));
 
-      // The preview the user reads on the canvas is the colour the bar will commit, not the
-      // foreground: the two used to disagree the moment the bar's own choice was made.
-      // The third argument is the overflow indicator, which is the one thing this overlay asks
-      // for that the committed layer's canvas must never have baked into it.
-      expect(renderText).toHaveBeenCalledWith(
+      // Two renderers of one string in one place either agree exactly or show doubled, offset
+      // type, and the overlay's background is transparent precisely so the ink below shows
+      // through — which is another way of saying the canvas ink would be visible under the DOM
+      // ink. Asserted on `fillText` and not on a call to `renderText`, because the defect is ink
+      // rather than one particular call: `renderText` is the REAL implementation here, so a
+      // reintroduced call actually paints and fails this.
+      expect(ctx.fillText).not.toHaveBeenCalled();
+      expect(ctx.fill).not.toHaveBeenCalled();
+    });
+
+    it('draws the overflow indicator in the tool colour when layoutText reports overflow', () => {
+      const ctx = makeMockCtx();
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      h.color = '#00ff00';
+      toolArgs = makeTextArgs({ text: 'hello', rect, color: '#0000ff' });
+      laysOutAsOverflowing(true);
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+
+      // The indicator is the exception that survives the ink removal: it is box CHROME, and Adobe
+      // draws "a small box or circle containing a plus symbol (+) appears in place of a handle in
+      // the corner of the boundary". The colour is the tool's own swatch and not the store's
+      // foreground, which is a different colour on purpose.
+      expect(drawOverflowIndicator).toHaveBeenCalledWith(ctx, rect, '#0000ff');
+      // The overflow is ASKED for, not drawn on the way to an answer: the box height is the last
+      // argument, so a layout asked without it is asked a question it cannot answer.
+      expect(layoutText).toHaveBeenCalledWith(
         ctx,
-        expect.objectContaining({ text: 'hello', color: '#0000ff', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } }),
-        { overflowIndicator: true }
+        expect.objectContaining({ color: '#0000ff' }),
+        'hello',
+        Infinity,
+        24
       );
     });
 
-    it('skips the text render when there is nothing to draw', () => {
-      const ctx = document.createElement('canvas').getContext('2d');
-      toolArgs = makeTextArgs({ text: undefined });
+    it('draws no overflow indicator when the text fits inside the box', () => {
+      const ctx = makeMockCtx();
+      const rect = { x1: 5, y1: 6, x2: 50, y2: 30 };
+      toolArgs = makeTextArgs({ text: 'hello', rect, color: '#0000ff' });
+      laysOutAsOverflowing(false);
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!(rect));
+
+      expect(drawOverflowIndicator).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing when there is no text to lay out', () => {
+      const ctx = makeMockCtx();
+      toolArgs = makeTextArgs({ text: undefined, rect: { x1: 0, y1: 0, x2: 10, y2: 10 } });
 
       renderArea({ current: ctx });
       act(() => h.useRectProps.current!.onRepaint!({ x1: 0, y1: 0, x2: 10, y2: 10 }));
 
-      expect(renderText).not.toHaveBeenCalled();
+      // Not even the question is worth asking with nothing to lay out, and a measurement against an
+      // empty string is the one call `layoutText` documents as skippable.
+      expect(layoutText).not.toHaveBeenCalled();
+      expect(drawOverflowIndicator).not.toHaveBeenCalled();
+      expect(ctx.fillText).not.toHaveBeenCalled();
     });
 
-    it('skips the text render when the overlay context is unavailable', () => {
-      toolArgs = makeTextArgs({ text: 'hello' });
+    it('skips the repaint when the overlay context is unavailable', () => {
+      toolArgs = makeTextArgs({ text: 'hello', rect: { x1: 0, y1: 0, x2: 10, y2: 10 } });
 
       renderArea({ current: null });
       act(() => h.useRectProps.current!.onRepaint!({ x1: 0, y1: 0, x2: 10, y2: 10 }));
 
-      expect(renderText).not.toHaveBeenCalled();
+      expect(layoutText).not.toHaveBeenCalled();
+      expect(drawOverflowIndicator).not.toHaveBeenCalled();
     });
   });
 });

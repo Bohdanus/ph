@@ -220,7 +220,12 @@ export const calculateNewRect = (
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  const { align, text, rect } = newArgs;
+  // `align` is NOT destructured here, and that is the point arm's whole finding: Adobe scopes
+  // paragraph alignment to paragraph type ("Alignment options are available only for paragraph type",
+  // `formatting-paragraphs.html`), so a point box's left edge never moves and the property has nothing
+  // to say about this geometry. `renderText` still reads it, and computes the same `x` for all three
+  // settings on a box that hugs its ink.
+  const { text, rect } = newArgs;
   // No rect means the text has not been placed on the canvas yet, and there is nothing to
   // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
   // document origin, which no caller wanted: the only path that can reach here with a null
@@ -303,53 +308,43 @@ export const calculateNewRect = (
       }
     } else {
       /**
-       * The point arm, and the ONE place `align` moves a box rather than moving ink.
+       * The point arm, and the ONE place a point box's geometry is decided at all.
        *
-       * `align` is honoured twice, by two different mechanisms, and which one runs depends on
-       * whether the box has room:
+       * **The box hugs its ink, in both directions, and the LEFT EDGE NEVER MOVES.** Both halves of
+       * that are Adobe:
        *
-       * - **The box has slack** (`requiredWidth <= currentWidth`) — a box the user widened with a
-       *   handle. The box is left EXACTLY where it is, and `renderText`'s anchor
-       *   (`boxLeft + (boxRight - boxLeft - width) / 2` for centre, `boxRight - width` for right)
-       *   moves the ink inside it. Nothing to do here, and moving the box would be wrong: it would
-       *   displace the ink a second time, by the same slack, on top of the anchor.
-       * - **The text outgrows the box** (`requiredWidth > currentWidth`). There is no slack to
-       *   distribute, so the growth itself has to be placed, and that is this arm: rightward for
-       *   left, symmetrically about the current centre for centre, leftward with the right edge
-       *   pinned for right.
+       * - The width is recomputed every call rather than compared against what is there. "When you
+       *   enter point type, each line of type is independent — the line expands or shrinks as you edit
+       *   it, but it doesn't wrap to the next line" (`creating-type.html`). This arm used to grow only,
+       *   on the reasoning that slack meant "a box the user widened with a handle" — which stopped being
+       *   true the moment a box is born holding the `'Lorem ipsum'` placeholder, because then it
+       *   carries slack the user never chose, and three characters typed over the placeholder left the
+       *   line as wide as the placeholder. A grow-only rule cannot tell the two apart.
+       * - `align` does NOT move the box, for any of the three settings. "You can align type to one edge
+       *   of a paragraph (left, center, or right for horizontal type) […] Alignment options are
+       *   available only for paragraph type" (`formatting-paragraphs.html`), and the same scope in
+       *   `setup-paragraph-formatting.html`: "You can align and justify only paragraph text." Point type
+       *   "appears in a straight line without boundaries or a bounding box" (`add-text.html`), so there
+       *   is nothing to align within and the control has no meaning here — `renderText`'s anchor agrees,
+       *   computing the same `x` for all three settings on a box that hugs its ink.
        *
-       * A point box whose width is exactly its ink has neither, so all three settings render
-       * identically there. That is not a defect to fix in this file: it is what "each line of type
-       * is independent — the line expands or shrinks as you edit it" (Adobe, `creating-type.html`)
-       * means for a box that hugs its own text. `HANDOFF.md` carries the open question about
-       * whether the bar should say so.
+       * That is not a style choice. An earlier version of this arm DID displace the box by `align`, and
+       * `HANDOFF.md` entry 195 records the objection: moving the box and then anchoring the ink inside
+       * it shifts the ink by twice the slack. With the box hugging its ink the slack is zero, so the
+       * displacement would be the only shift — but it would still be a shift, for a control Adobe says
+       * is not available on this kind of type. So the arm keeps `x1` and moves only `x2`.
        *
-       * The `align` comparison below is a chain rather than a `switch` because the third arm IS
-       * the fallthrough: an absent or unrecognised value — a hand-edited or forward-version
-       * settings record, or an args object built before `align` was a field — grows rightward,
-       * which is where the tool starts. A `switch` with three named cases and no default left that
-       * input doing NOTHING at all, while `renderText`'s own anchor documents the opposite rule for
-       * the same value on the same box. The two halves of one alignment must not disagree about
-       * where an unrecognised value lands.
+       * A consequence, stated because it is real: widening a POINT box with a handle now survives only
+       * until the next keystroke, which snaps it back to its ink. Adobe has no handle on a point line
+       * at all, so this is the closer of the two behaviours, and the handle belongs to `HANDOFF.md`'s
+       * transform question rather than to point type.
+       *
+       * `clampEdge` still applies, to the edge that is kept: a box dragged off the document's left edge
+       * keeps its ink inside the document, which is the one thing this rect's origin may not do.
        */
-      const currentWidth = newRect.x2 - newRect.x1;
       const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-      if (requiredWidth > currentWidth) {
-        // Each re-placed left edge is clamped again, because `align` can move it off the origin
-        // this rect started from: a centred or right-flushed box growing leftwards off a click at
-        // the document's left edge would otherwise START outside the document, which is the one
-        // thing this rect's origin may not do. The EXTENT is then rebuilt from the clamped edge
-        // rather than kept, because clamping an edge inward and leaving the other one alone would
-        // crop exactly the ink this rule exists to preserve.
-        const grownLeft =
-          align === 'center'
-            ? newRect.x1 - (requiredWidth - currentWidth) / 2
-            : align === 'right'
-              ? newRect.x2 - requiredWidth
-              : newRect.x1;
-        const x1 = clampEdge(grownLeft, imageSize.width);
-        newRect = { ...newRect, x1, x2: x1 + requiredWidth };
-      }
+      const x1 = clampEdge(newRect.x1, imageSize.width);
+      newRect = { ...newRect, x1, x2: x1 + requiredWidth };
     }
   }
 
