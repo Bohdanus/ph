@@ -5592,104 +5592,22 @@ durable kind has no legacy counterpart; every kind in the union has one today.
 `src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
 `src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
 
-## 208. A committed type layer cannot be entered again
-
-**Problem.** The Type tool now has edit mode, and it is unreachable for anything already committed.
-Clicking the canvas places a draft, the draft is an in-place editor, and the draft commits into a
-raster layer — and then there is no way back: no double-click on the layer re-enters, selecting the
-layer with the Type tool and clicking inside it does not, and there is no `T` control in the options
-bar for a selected text layer. Adobe offers all three
-(`https://helpx.adobe.com/photoshop/using/creating-type.html`), and the double-click one is the one
-users reach for first.
-
-**Affected.** `src/components/Main/TextEditOverlay.tsx` derives its edit session from the current tool
-args rather than from a layer, and `src/components/SidebarRight/LayersTab.tsx` has no `onDoubleClick`
-on a row.
-
-**What would close it.** Add an entry route for committed text sources: clicking inside a selected text
-layer, double-clicking its layer thumbnail, or double-clicking the layer with the Type tool should
-hydrate the source args into the contenteditable overlay, select the existing characters, and commit
-through `replaceLayerSource`. Preserve the existing `replace-layer-source` durable operation; do not
-create a replacement layer or rasterize the source. Note that `commitDirtyTool`'s in-place arm replaces
-the active layer when the draft's origin equals that layer's, so an entry route must carry the layer id
-rather than relying on the origin match.
-
-## 209. The in-place editor covers its own box, so the inner half of every resize handle is dead
-
-**Problem.** `useRect`'s `drawMask` draws each corner and edge handle as a square CENTRED on the edge,
-`ctx.fillRect(x - h2, y - h2, h1, h1)` with `h2 = HANDLE_SIZE / scale / 2`, so six CSS px of every handle
-lies inside the type box — which is exactly the rectangle `TextEditOverlay` occupies, and
-`Main.tsx` mounts the overlay last so it is the topmost child. Every pointerdown in that band belongs to
-the editor. The outer six pixels of a handle still resize; the inner six place a caret instead.
-`edgeAtPoint`'s `'inside'` region is unreachable for the same reason, so `TextToolArea`'s
-`onChangeEnd` classification of an interior press as a move never fires while a draft is open, and the
-cursor feedback stops because `setMouseCursor` writes to an element that is no longer the event target.
-
-**Adobe allows both at once.** "You can adjust the bounding box while you enter type or after you create
-the type layer" (https://helpx.adobe.com/photoshop/using/creating-type.html).
-
-**Affected.** `src/components/Main/TextEditOverlay.tsx` — the element's box; `src/hooks/useRect.ts` —
-the handle size and where it sits.
-
-**What would close it.** Draw the handles OUTSIDE the rect (`x - h1` rather than `x - h2`, and the same
-for the right and bottom edges) and hit-test against `h2`. That removes the whole band from the
-editor's hit area with two constants in one file, and it is also Adobe's arrangement. Shrinking the
-editor instead is the wrong direction: the editor's box has to BE the type box for the caret to land
-where the user clicked.
-
-## 210. `textareaRef` is dead state in the store
-
-**Problem.** The options bar's `<textarea id="text-input">` is gone, so `textareaRef` is written by
-`StoreContext` and read by nothing in `src/` or `e2e/` — a store field, a `useRef` and a default that
-exist to point at an element that no longer exists.
-
-**Affected.** `src/contexts/StoreContext.tsx` — the field on the store's shape, the `useRef` and the
-value returned; `src/__tests__/fixtures/store.ts`; `src/contexts/__tests__/StoreContext.test.tsx` and
-`StoreContext.reducer.test.tsx` (both enumerate the refs, so removing one changes a test about something
-else); `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`.
-
-**What would close it.** Delete the field and the four call sites. It was left rather than removed
-alongside the textarea because a concurrent session was editing `StoreContext.tsx`, and a three-line
-deletion resolved under merge pressure is a worse trade than a week of dead state.
-
-## 211. Layer hydration publishes a layer-local rect, so the in-place edit path opens at the document origin
-
-**Problem.** `createLayerFromTool`'s no-`pos` branch stores `args.rect` REDUCED — `reduceRect(worldRect,
-newPos)` — because the creator builds a `pos`-sized canvas and draws the type at the rect's own
-coordinates. `LayersTab`'s `selectLayer` publishes `source.args` verbatim, so the draft it opens is in
-LAYER-LOCAL space while the editor, `calculateNewRect` and both commit arms read CANVAS space. MEASURED:
-a text layer at document (120, 80) whose `source.args.rect` is (0, 0, 100, 60) opens its editor over the
-document's top-left corner; committing from there measures a rect around (0, 0), which does not match
-the active layer's origin, so the CREATE arm runs and a SECOND text layer appears at (0, 0) carrying the
-edited text while the original is untouched. The comment at the origin-equality guard — "Selection
-hydration preserves the active layer's origin" — describes an invariant the storage format does not
-provide.
-
-**Affected.** `src/components/SidebarRight/LayersTab.tsx` — `selectLayer`; the guard in
-`commitDirtyTool`'s text arm is correct and must keep comparing un-reduced canvas rects.
-
-**What would close it.** Hydrate in the space the commit path measures in: in `selectLayer`, translate
-`rect` by `layer.pos` and the document frame before publishing it, leaving `source.args.rect`
-layer-local as the create arm stores it. This is the same reduction the create arm performs, in the
-other direction.
-
 ## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
 
-**Problem.** `domOverlayStyle` emits `textDecorationLine` and `textDecorationColor` and nothing else,
-so the draft's underline and strikethrough take the UA's thickness and offset. `renderTextInto` draws
-them with `decorationThickness(fontSize)` and `UNDERLINE_BELOW_BASELINE_EM`, and the strike at
-`xHeightHalf()`. The DOM rule also spans the line's full advance, while the canvas spans `inkWidth`,
-which subtracts one letter-spacing gap — so with `align: center` or `right` and non-zero tracking the two
-disagree by `spacing / 2` and `spacing` as well. Found independently by two reviews and left unclaimed by
-both.
+**Problem.** `domOverlayStyle` now emits `textDecorationThickness` and `textUnderlineOffset`, so the
+draft's underline and strikethrough no longer take the UA's metrics and no longer jump against
+`renderTextInto`'s `decorationThickness(fontSize)`, `UNDERLINE_BELOW_BASELINE_EM` and `xHeightHalf()`.
+What is left is the EXTENT: the DOM rule spans the line's full advance, while the canvas spans
+`inkWidth`, which subtracts exactly one letter-spacing gap — so with `align: center` or `right` and
+non-zero tracking the two anchors disagree by `spacing / 2` and `spacing`.
 
 **Affected.** `src/tools/text.ts` — `DomOverlayStyle` and `domOverlayStyle`; the canvas side is
-`decorationThickness` and `renderTextInto`.
+`renderTextInto`'s `inkWidth`.
 
-**What would close it.** Emit `textDecorationThickness` and `textUnderlineOffset` from
-`domOverlayStyle`, and anchor the rule to the same extent the canvas measures. The residual after that
-is cosmetic and unmeasured outside the eight cases `domOverlayStyle`'s own comment reports, so treat what
-is left as draft-versus-commit ink that reflows on commit rather than as a defect to close.
+**What would close it.** Anchor the decoration rule to the same extent the canvas measures, which in a
+`div` means a span around the ink rather than a decoration on the block. The residual is cosmetic and
+unmeasured outside the cases `domOverlayStyle`'s own comment reports, so treat what is left as
+draft-versus-commit ink that reflows on commit rather than as a defect to close.
 
 ## 213. `type-crop.ts`'s `appRef` line numbers are 60–110 lines off and reach a generated document
 
@@ -6272,3 +6190,44 @@ source moves too.
 `src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
 `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
 `src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx`
+
+## 231. A type layer re-entered from a panel control opened an editor the keystrokes never reached
+
+**Problem.** All four re-entry routes hydrate the draft through `textLayerEditTarget` and none of them
+took the focus, because the overlay's focus lived behind an inequality guard on the element's text: after
+a commit the overlay is unmounted, so a re-entry remounts it already holding the hydrated string, the
+guard saw no mismatch and returned before `focus()`. MEASURED: double-click a committed text row, and
+`document.activeElement` was `body` with the editor visible and holding the right characters. Every
+keystroke then ran as a document shortcut instead of editing the type layer, and Escape committed the
+untouched string — a silent no-op that the row count and the reopened overlay both reported as success.
+The focus reclaim did not catch it either: it listened for `focusin`, and Chromium does not reliably
+publish one when focus falls to `body` from a press on a non-focusable row.
+
+**Affected.** `src/components/Main/TextEditOverlay.tsx` — the seed effect and the reclaim.
+
+**What would close it.** Closed. Entry focuses whenever the host is not already the active element, the
+reclaim also answers a `pointerdown` in the capture phase while exempting editable targets and form
+controls, and BOTH defer to the next animation frame — a focus taken inside an event handler does not
+survive that event, because the browser resolves the press's own focus target after every listener for it
+has run. `e2e/text-edit.spec.ts` pins the committed result: the layer's own ink is measured and compared
+against the typed string, and against the pre-edit one, which is the half the previous version of that
+case could not see.
+
+## 232. `useRect` paints a handle twice the reach its hit test accepts, and the difference places a box
+
+**Problem.** `handlesOutside` moved the corner grips outside the rect — `hIn = -h1`, so each is painted
+over `[corner − h1, corner]` with `h1 = HANDLE_SIZE / scale`, twelve CSS px — while `edgeAtPoint` kept the
+`±h2` band it has always used, six CSS px. Three of each grip's four quadrants therefore matched no test,
+returned `null`, and `TextToolArea` reads `null` as "this press placed a box": clicking a blue grip
+committed the open draft and published a fresh placeholder box under the pointer, where the user aimed at
+a resize. MEASURED on a placed draft with text open. It is a regression of the fix for the overlay
+covering its own handles: before that, the painted grip straddled `±h2` and matched its own hit test.
+
+**Affected.** `src/hooks/useRect.ts` — `edgeAtPoint`; the Type tool is the only consumer that sets
+`handlesOutside`, and the other three are untouched because their grips are still centred.
+
+**What would close it.** Closed. A corner's accepted region is now the PAINTED region when
+`handlesOutside` is set, which is a superset of the old band, so nothing that resized before stops
+resizing. What is still unreachable is moving a box by an inside drag, and every cursor affordance over
+the box: `setMouseCursor` runs from the tool area's own pointer handlers, which the overlay covers, and
+the overlay is a sibling of that area rather than a child, so it declares no cursor of its own.
