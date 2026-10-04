@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 196, 200, 204, 208-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -331,7 +331,7 @@ one real entry through `commitSelection` / `clearSelections` / `appendSelectionC
 
 | gesture                                                          | append site                                                                                              |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Clear/Deselect control, and the tool switch                      | `clearSelections` / `appendSelectionClear` in `useSelectionHistory.ts`, and `goToTool` in `useApp.ts`    |
+| Deselect control, and the tool switch                            | `clearSelections` / `appendSelectionClear` in `useSelectionHistory.ts`, and `goToTool` in `useApp.ts`    |
 | magic-wand click                                                 | `handlePointerDown` in `MagicWandToolArea.tsx`                                                           |
 | rectangle drag end                                               | `onChangeEnd` in `RectangularSelectionToolArea.tsx`                                                      |
 | polygonal / freehand lasso close, feathered magnetic lasso close | `finishSelection` in `PolygonClickToolArea.tsx`, `finishSelection` in `FeatherMagneticLassoToolArea.tsx` |
@@ -440,6 +440,25 @@ sixth.
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
 `new Image()`. That is where a shared load-side ceiling would have to live for those two formats.
+
+**The TIFF budget cannot reach `UTIF.decode`, which runs before all of it.** Every ceiling above is
+consulted on the page `UTIF.decode` has already parsed, and the parser is itself unbounded:
+`_readIFD` loops `for (j = 0; j < num; j++)` **per tag**, on a `num` it reads from the file as a
+32-bit field, and `loadTiffFile` — `loadTiffFile()` calls `UTIF.decode` as its first statement. A
+126-byte page with `num = 1e8` on one tag spends **4.5 seconds inside `decode`**, where no ceiling in
+this file can see it; `1e9` exhausts memory. This is one stage earlier than the declared-segment
+hole the same entry now guards, and it is the reason a guard cannot be added here: the values that
+would price it are read by the parser whose cost is the problem.
+
+**What would close it.** A pre-scan of the IFD — count of entries, and each entry's declared `num` —
+against the file's own byte length, before `UTIF.decode` is called, refusing a file whose declared
+counts cannot fit the bytes present. That is a small TIFF reader rather than a guard, and it is the
+same shape as the pre-decode check the existing budget performs one stage later, so the two belong in
+one place rather than two.
+
+**Affected.** `src/contexts/tiff-utils.ts` — `loadTiffFile()`'s first statement;
+`node_modules/utif/UTIF.js` — `_readIFD()`, which is the dependency's own parser and not editable
+here.
 
 **Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
 `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
@@ -970,7 +989,7 @@ corrections to the research behind it, and the sequencing.
 **The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, same rendered
 names, same groups, same letters. A tool Photoshop does not have is **deleted, not relabelled** —
 the app already has the Brush, which is `draw`'s nearest. Adjustments and transforms are
-`Image ▸ Adjustments` and `Edit ▸ Transform` commands and leave the rail entirely. The registry
+`Image ▸ Adjustments` and `Edit ▸ Free Transform` commands and leave the rail entirely. The registry
 identifier stays free (`reposition` for the Move tool is fine); the **rendered label** does not.
 
 **Shape of the work: 41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete.**
@@ -983,7 +1002,7 @@ building the target list — the list as written ships a rail that is still not 
 | Selection Brush is "Photoshop on the web, not the desktop panel" — exclude it | Adobe's own **desktop** page says "Select the Selection Brush tool **from the toolbar**". Include it.                                                                                                                                                                                                                                                                                  |
 | Adjustment Brush has "zero Adobe pages" — exclude it                          | Two Adobe pages, "Select Adjustment Brush Tool **from the toolbar**". Include it; it is a large _feature_, which is a different decision from membership.                                                                                                                                                                                                                              |
 | —                                                                             | **Remove tool** and **Content-Aware Tracing tool** are absent from the list entirely. Both are Adobe-documented, and the Remove tool's page says "In the Tools panel, select Remove tool." A sweep of Adobe's _overview tables_ misses both, because each has its own page instead. Content-Aware Tracing's own page confirms its **group**: "from the Pen tool group in the toolbar". |
-| —                                                                             | **Artboard, Frame, Perspective Crop, Slice, Slice Select, Ruler** are also absent. All are in Adobe's own shortcut PDF.                                                                                                                                                                                                                                                                |
+| —                                                                             | **Artboard, Frame, Perspective Crop, Slice, Slice Select** are also absent. All are in Adobe's own shortcut PDF. **The Ruler was in this list and is built** — `src/tools/ruler.ts`, `src/components/Main/RulerToolArea.tsx`, `src/components/ToolbarsRight/Ruler/Ruler.tsx` — so it is named here rather than left in a row that would read as a gap.                                 |
 | §68 below points at this section                                              | The `AGENTS.md` pointer named a section that did not exist. It exists now.                                                                                                                                                                                                                                                                                                             |
 
 Two that must **not** be added despite appearing in the shortcut PDF: **3D Material Eyedropper** and
@@ -1506,7 +1525,7 @@ several panels into one body, not moving a group.
 **7. There are no workspaces.** Adobe documents saving, switching, deleting and restoring them
 as four separate operations, and a workspace "remembers the size and position of panels". This
 app has one unnamed workspace persisted under one key, with a single hard-coded
-`Window > Reset Workspace` and no panel list to remove a panel from — "Select Window from the
+`Window > Workspace > Reset Essentials` and no panel list to remove a panel from — "Select Window from the
 menu bar. Select the panel name to remove it from the workspace", and the per-tab
 **Close / Close Tab Group** context menu, are both absent.
 
@@ -2325,7 +2344,9 @@ persisted defaults for two live keys:
   `{ alpha: 1, lineWidth: 3, color: '#FF0000', fill: false, points: [] } satisfies LassoToolArgs`.
 - `src/tools/polygonSelection.ts` types all of them, and `PolygonSelectionToolSettings` is
   `Omit<LassoToolArgs, 'points'>` — so they survive a reload.
-- `PolygonalLasso.tsx` and `FreehandLasso.tsx` render **hint text only**; neither has a control.
+- `PolygonalLasso.tsx` and `FreehandLasso.tsx` render **hint text only**; neither has a control for
+  `lineWidth` or `alpha`. Each does render one button, an app-invented `Mode` toggle that switches
+  between `Outline` and `Fill` — see §233 for why that button's argument reaches nothing.
 
 So deleting it is not a cleanup, it is a second defect: two persisted settings with no UI
 at all, and a settings bucket that round-trips values a user can no longer change. **The real
@@ -2396,11 +2417,15 @@ conclusion from a missing policy is that no policy was ever written down.
 { label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
 ```
 
-All four activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
-equivalent in `Mobile/mobile-tools.ts`, the `Image`/`Edit` menu dispatch in `DesktopHeader.tsx`, and
-the keyboard map in `AppKeyboardShortcuts.tsx` — and `useApp.ts` holds the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx` records that dispatching the
-key directly was a **bug they fixed**: it mounted the Shape panel where the
+All three activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
+equivalent in `Mobile/mobile-tools.ts` and the keyboard map in `AppKeyboardShortcuts.tsx` — and
+`useApp.ts` holds the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. A fourth surface existed until 2026-10-02: the header's
+`Tools` menu, the one menu this app carried that Adobe does not have, and the menu bar's rebuild
+against Adobe's own list removed it. What that menu recorded about dispatching the key directly is
+still true of the three that remain, and it is why they dispatch `shape` plus the figure rather
+than the figure key: `DesktopHeader.tsx` recorded the dispatch as a **bug they fixed** — it
+mounted the Shape panel where the
 `toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
 red and the shape committed black.
 
@@ -2445,7 +2470,7 @@ and `fixedHeight`, implemented in full in `ellipticalSelection.ts` — its `Marq
 `MARQUEE_SIZE_MIN`/`MAX` bounds.
 
 `RectangularSelection.tsx` is, in full, the literal string
-`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
+`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Deselect.
 
 Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
 `Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
@@ -2465,28 +2490,30 @@ defaults, `src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`
 rendered body, `src/tools/ellipticalSelection.ts` — `applyRatio()`,
 `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
 
-## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
+## 116. Three of the six pen tools have no shortcut, and Adobe's Pen flyout carries all six
 
 `AppKeyboardShortcuts.tsx` — `penGroup` — is `['pen', 'freeform-pen', 'curvature-pen']`, so
 `P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
-`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx`'s
-`TOOL_MENU_ITEMS` lists only the three pens. There is no standalone keymap table the enumeration
-could be incomplete against: the keymap _is_ the `useKeyDownShortcut({ key: … })` registrations in
-`AppKeyboardShortcuts.tsx`, and `grep -n "add-anchor-point\|delete-anchor-point\|convert-point"
-src/components/Common/AppKeyboardShortcuts.tsx` returns nothing —
-`toolbar-mapping.ts` declares the three without a `shortcut` as well, so no other surface declares a
-binding either. `selectPenTool()` is the only consumer of `penGroup`, and `useApp.ts`'s `goToTool()`
+`convert-point` have **no keybinding**, and no surface can be declaring one: all six are entries in
+`toolbar-mapping.ts` — the Pen group's six — and the three declare no `shortcut` field at all. There
+is no standalone keymap table the enumeration could be incomplete against: the keymap _is_ the
+`useKeyDownShortcut({ key: … })` registrations in
+`AppKeyboardShortcuts.tsx`, and none of them names one of the three.
+`selectPenTool()` is the only consumer of `penGroup`, and `useApp.ts`'s `goToTool()`
 is the only site in `src` that dispatches `SET_TOOL_NAME`, so a tool is reachable by key only
 through a registration calling one of those selectors.
 
 **Both other halves of the earlier version of this heading are wrong, and the rail never needed
 them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx`'s `freeform-pen` entry gives
 `freeform-pen` its own `FreeformPenIcon`, and `toolbar-mapping.ts`'s `toolbarMap` gives each of the
-six its own label. The Tools-menu absence is Adobe's own doing — Adobe's keyboard-shortcut reference
-(Adobe, primary, and the source `docs/PHOTOSHOP-UX.md` — "What it costs" cites for its own shortcut
-list) lists **no** shortcut for `Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, so a
-menu row for them would be a departure rather than a fix, and `docs/OVERRIDES.md` has no entry
-authorising one. What `docs/TOOLS.md` — "Freeform Pen Tool", "Curvature Pen Tool" and "Curvature
+six its own label. The missing shortcut is Adobe's own doing on one count and not on the other:
+Adobe's keyboard-shortcut reference (Adobe, primary, and the source `docs/PHOTOSHOP-UX.md` — "What it
+costs" cites for its own shortcut list) lists **no** shortcut for `Add Anchor Point`, `Delete Anchor
+Point` or `Convert Point`, so nothing here is missing that Adobe binds — and `docs/OVERRIDES.md` has
+no entry authorising inventing one. **Adobe's Tools panel does carry all three**, in the Pen flyout
+beside the three it groups here, so this is a keyboard question and the rail is not implicated: the
+rail matches Adobe's membership and not Adobe's bindings. What `docs/TOOLS.md` — "Freeform
+Pen Tool", "Curvature Pen Tool" and "Curvature
 Pen Tool" again — record is only that the shortcuts do not exist, which is what this entry says.
 
 **The rail half does not survive either.** `docs/PHOTOSHOP-UX.md` — "Open violations" states the six
@@ -2497,7 +2524,7 @@ pen family. So the "incomplete hiding" framing has no premise: nothing was hidde
 not add a shortcut here without asking.** What remains is a record, not a defect.
 
 **Files.** `src/components/Common/AppKeyboardShortcuts.tsx` — `penGroup` and `selectPenTool()`;
-`src/components/DesktopHeader/DesktopHeader.tsx` — `TOOL_MENU_ITEMS`;
+`toolbar-mapping.ts` — the Pen group's six entries, three of them without a `shortcut`;
 `src/components/SidebarLeft/SidebarLeft.tsx` — `RailGripIcon`;
 `src/components/SidebarLeft/toolIcons.tsx` — the `freeform-pen` entry; `docs/TOOLS.md` — "Freeform
 Pen Tool", "Shape Tool (the Tools panel group; no entry by that name)" and "Pen Tool";
@@ -4242,7 +4269,8 @@ header describes the state that commit fixed:
   four-violation attribution block under it, describe a red suite. `npm run test:e2e -- accessibility` is
   **3 passed, 0 violation(s)**.
 - The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
-  File (New/Open/Save) and Tools menus only.
+  Adobe's ten menus (`File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help`) and no
+  Export among them.
 - The header's "The scans are per-state, not per-app" bullet says the Save dialog is unscanned. It
   was measured here: 0 violations, 45 nodes, both
   themes. (Not added to the gate, so the header is still right about the gate and wrong about the
@@ -4457,13 +4485,14 @@ the frame a non-zero origin and an extent that disagrees with `size`.
 `src/contexts/StoreContext.tsx` (the `documentFrameSize()` call sites, `reducer()`'s `SET_SIZE`
 arm, and the commented-out `SET_SIZE` dispatch)
 
-## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
+## 167. `Edit ▸ Transform` renders six disabled mode rows, and every item in Adobe's submenu is blocked on the same two constraints
 
-**Problem.** `Edit` carries exactly one item, `Free Transform`
-(the `Edit` menu's only `<li>`, in `src/components/DesktopHeader/DesktopHeader.tsx`), because that
-is where Adobe puts it at
-the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt, and it is
-where a user who knows Photoshop looks for eleven commands. Adobe's own page enumerates them —
+**Problem.** `Edit` carries `Free Transform` at the top level, beside a `Transform` submenu whose six
+modes are all disabled (`DesktopHeader.tsx` — the `edit` entry of the `menus` array). **The placement
+is this app's own and it does not match Adobe**: Adobe nests `Free Transform` _inside_ `Transform`, and
+`DesktopHeader.tsx`'s comment above the `menus` array says exactly that while keeping the two apart
+here. So the submenu is unbuilt and is not even where a user who knows Photoshop looks for
+`Free Transform`. Adobe's own page enumerates the eleven commands in it —
 "You can find these commands under `Edit > Transform`" —
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html>
 (fetched 200 on 2026-10-01 with a default `curl` User-Agent; it 403s a browser-shaped one):
@@ -4538,40 +4567,36 @@ its transient-preview comment, `handleRotateLeft`/`handleRotateRight`, the `180�
 `#rotate-slider` range input), `src/contexts/useCurrentTool.tsx` (`patchToolArgs`, `_setToolArgs`),
 `src/contexts/useLayer.ts` (`tempUpdateLayer`)
 
-## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
+## 169. Adobe's ten menus all render now, and most of the commands inside them are unbuilt
 
-**Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
-(the five `header-*-menu-button` triggers in `DesktopHeader.tsx`). Adobe's is eleven: File, Edit,
-Image, Layer,
-Type, Select, Filter, 3D, View, Window, Help. Two of the five that exist are nearly empty: `Edit` holds
-one item, and `Image` holds one submenu.
+**Problem.** The bar was **five** menus — File, Tools, Image, Edit, Window (the five
+`header-*-menu-button` triggers in `DesktopHeader.tsx`) — when this entry was written, against
+Adobe's File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help. The structural half of
+that gap is closed: the bar was rebuilt against Adobe's own list, so all ten render, the `Tools`
+menu Adobe does not have is gone, and a command this app cannot run renders `disabled` where the
+user looks for it. What is left is membership, and it is not cosmetic.
 
-The gap is not cosmetic. A user who knows Photoshop reaches for `Select > Deselect`,
-`Select > Modify > Feather`, `Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds
-nothing. Worse, several of those are **unreachable entirely**, not merely unreachable from a menu: the
-app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a selection
-(`src/util/selection.ts` exports no such function), and no adjustment layers at all
+A user who knows Photoshop reaches for `Select > Deselect`, `Select > Modify > Feather`,
+`Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds each row greyed. Worse,
+several of those commands are **unreachable entirely**, not merely unreachable from a menu: the
+app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a
+selection (`src/util/selection.ts` exports no such function), and no adjustment layers at all
 (the unsupported-key warning list in `src/contexts/psd-utils.ts` names `adjustment`, `mask` and
 `clipping`, and says they are not preserved on import).
 
-**The documentation consequence is the part to fix first.** `docs/TOOLS-TOO-HARD.md` files the Select
-gaps as capability absences and justifies them with a menu that does not exist — "There is no menu
-surface that could host them". There **is** a menu bar now; there is no `Select` menu on it. Adding that
-menu is separable work from the selection-model work, and conflating the two is how a menu gap got filed
-as an algorithm gap in the first place.
+**The documentation consequence was the part to fix first, and it is fixed.**
+`docs/TOOLS-TOO-HARD.md` used to file the Select gaps as capability absences and justify them with a
+menu that did not exist — "There is no menu surface that could host them". There **is** a menu
+surface now, so those entries name the `Select` rows that host them and record that every one is
+greyed.
 
-**Fix.** Add the missing top-level menus in Adobe's order, each carrying the commands the app can
-already do and a **disabled** item for each it cannot — the shape `Image ▸ Adjustments` already uses
-(the `MenuHostItem` rule that an item is enabled by having a `toolName` and nothing else, applied by the
-`disabled={toolName === undefined}` attribute on the menu item button).
-Start with **`Select`**: its honest contents are the smallest, because Select All and Deselect are
-trivial and Feather / Grow / Modify / Inverse are `disabled` items until the model work lands. Then
-**`Layer`**, almost all of it disabled while adjustment layers do not exist. **`View`** and **`Filter`**
-follow the same rule. **`Type`** last of the plausible ones; **`3D`** is a candidate for never shipping
-at all, and should be decided rather than deferred.
+**Fix.** Build the commands, not the menus. The `Select` model work — an inverse, a morphological
+grow/shrink and a feather over a mask — is the substrate for five greyed `Select` rows, and
+adjustment layers are the substrate for the twenty greyed `Image ▸ Adjustments` rows. Adding rows to
+a menu without their computation widens the greyed surface without narrowing the gap.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem`, `ADJUSTMENTS_ITEMS`
-and their doc comments, and the five menu triggers), `src/util/selection.ts`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`ADJUSTMENTS_ITEMS` and its doc comment,
+the `menus` array, and the ten menu triggers), `src/util/selection.ts`,
 `src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
 
@@ -5930,11 +5955,22 @@ items by number, so the second heading overwrites or is dropped rather than repo
 `parseHandoffDoc({ file: 'HANDOFF.md', text: '## 79. one … ## 79. two …' })` returns **one**
 item, titled `one`, with no warning and no entry in any diagnostics field.
 
-**Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number
-case, so the suite is green on a document that has lost an entry. **There is no mechanical check
-anywhere**: `.skills/hard-merge.md` Phase 7.2 asserted one existed, which is false, and its own count
-sweep cannot catch it either — a duplicated number leaves `merged == ours + theirs − base` true. The
-only check is a set comparison between the two sides' number lists, run by hand.
+**Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number so the parser is not _directly_ tested for it — but the live-document assertions do
+catch the consequence. That file reads the real `HANDOFF.md`, and two of its cases fire on a
+duplicate: `keeps HANDOFF.md's own numbering, so every origin there is a number` asserts the
+origins are unique and ascending, and `produces one item per numbered heading, and no item for a
+prose section` asserts `items.length` equals the raw count of numbered headings. A merge that keeps
+both `## 79.` headings yields two headings and one item, so the count assertion fails. **The
+duplicate cannot reach `main` silently through `gate:push`.**
+
+What is still missing is narrower, and it is the two things this entry's own remedy names. The
+_parser_ has no diagnostic: `parseHandoffDoc()` discards the second heading and reports nothing, so
+the failure a human sees is an item count in a test rather than the number that collided. And
+**nothing compares a branch's numbers to `main`'s before the merge**, so the collision is only
+detected after it has been written; `.skills/hard-merge.md` Phase 7.2 gives a manual `comm -12` and
+`uniq -d` recipe for that comparison and asserts no automated gate, which is correct — its own count
+sweep cannot catch it either, because a duplicated number leaves `merged == ours + theirs − base`
+true.
 
 **What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding rather
 than resolving it silently, in the shape it already uses for a retired heading (`deadNumbers` and
@@ -6170,41 +6206,6 @@ different rule than the ants use.
 
 ---
 
-## 230. Seven selection options bars label a deselect `Clear`, and the word is Adobe's pixel eraser
-
-**Problem.** The button that ends a selection is labelled `Clear` on every selection options bar:
-`RectangularSelection.tsx`, `EllipticalSelection.tsx`, `QuickSelection.tsx`, `MagicWand.tsx`,
-`FreehandLasso.tsx`, `FeatherMagneticLasso.tsx` and `SingleRowColumnMarquee.tsx` each render the
-label over a handler that calls `clearSelections()` (`useSelectionHistory.ts`), which publishes
-`appendSelectionClear()`. Nothing on that path deletes a pixel.
-
-`Clear` is not a neutral word here. In Photoshop it is `Edit > Clear`, which deletes the selected
-pixels, and none of the seven bars offers any other control that does — so a reader who knows the
-word reads this button as a destructive pixel operation on a bar that cannot perform one. Adobe
-names the deselect `Deselect` and puts it on `Ctrl+D`; no selection bar of Adobe's carries a
-`Clear`.
-
-**It is a label defect and nothing else, which is why every gate passes.** The handler is right,
-the disabled conditions are right, and no test fails: nothing measures the word. The orphan branch
-`docs/handoff-reconcile-landed-and-new` filed it under `204`, a number this file has since
-tombstoned for an unrelated entry, so merging that branch would either resurrect `204` or lose this
-defect. It is recorded here under a number of its own instead.
-
-**What is needed.** Rename the label to `Deselect` in all seven bars, in the same change. The call
-sites that pin the word move with it: `getByRole('button', { name: 'Clear', exact: true })` in
-`e2e/freehand-lasso.spec.ts` and `e2e/selection-gestures.spec.ts`, and
-`screen.getByRole('button', { name: 'Clear' })` in the seven bars' `__tests__`. `src/tools/descriptions/`
-describes the control by the same word and `docs/TOOLS.md` is generated from it, so the description
-source moves too.
-
-**Files.** `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx`,
-`src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx`,
-`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx`,
-`src/components/ToolbarsRight/MagicWand/MagicWand.tsx`,
-`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
-`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
-`src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx`
-
 ## 231. A type layer re-entered from a panel control opened an editor the keystrokes never reached
 
 **Problem.** All four re-entry routes hydrate the draft through `textLayerEditTarget` and none of them
@@ -6245,3 +6246,140 @@ covering its own handles: before that, the painted grip straddled `±h2` and mat
 resizing. What is still unreachable is moving a box by an inside drag, and every cursor affordance over
 the box: `setMouseCursor` runs from the tool area's own pointer handlers, which the overlay covers, and
 the overlay is a sibling of that area rather than a child, so it declares no cursor of its own.
+
+## 233. The lasso bars' Outline/Fill toggle persists a field that nothing reads
+
+**Problem.** The polygonal and freehand lasso bars each render one `Mode` button whose whole effect
+is to swap its own accessible name between `Outline` and `Fill` and write `fill: !isFill` back
+through `patchToolArgs`. Nothing reads it. The lasso's commit processor destructures `points`
+alone and hands them to `copyPolygonToCanvas()`, which takes a source canvas and a point list and
+no mode; the component that draws the trace passes no `metadata`; the selection metadata type
+carries no colour, width, alpha or fill field; and the preview's strokes are hardcoded. The same is
+true of `alpha`, `lineWidth` and `color` beside it — the only reader of those three is `Lasso.tsx`,
+a component with no production consumer, which is what §110 is about.
+
+**Affected.** `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx` and
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx` — `isFill`, `handleFillToggle()`, the label;
+`src/tools/polygonSelection.ts` — the `fill` field of `LassoToolArgs`; `src/tools/settings.ts` — the
+two lasso defaults that seed it; `src/tools/selection.ts` — the processor that ignores it.
+
+**What would close it.** Decide what `Mode` is, because the two answers are different jobs. If it is
+Photoshop's combination-mode control, that is a data-model change and not a wiring fix: `Selection`
+has no mode field, so New / Add To / Subtract From / Intersect need a committed selection model
+before any button can select one. If it stays an app-invented control, delete it from both bars and
+drop `fill` from `LassoToolArgs`, and land `e2e/freehand-lasso.spec.ts`'s `the bar toggles between
+Outline and Fill` and the two bars' `__tests__` in the same change. `docs/TOOLS.md` is generated
+from the description source and `scripts/__tests__/tool-descriptions.test.mjs` holds it byte-equal,
+so regenerate it rather than editing it.
+
+**Files.** `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`, `src/tools/polygonSelection.ts`,
+`src/tools/selection.ts`, `src/tools/settings.ts`
+
+## 234. The interface has no size control, and a two-value theme toggle is the only appearance setting
+
+**Problem.** Adobe's appearance settings carry an interface-size control beside the colour scheme,
+so a user on a small display or a large one can change the scale of the whole interface. This app
+has `Theme = 'light' | 'dark'` and nothing else. `ThemeContextType` carries only `theme` and
+`toggleTheme`, and the two `localStorage` keys in `src/` are `theme` and `panelLayout` — there is no
+density, scale, zoom-level or interface-size setting anywhere, no Preferences surface to hold one,
+no root font size in any of the three stylesheets and no size custom property in `index.scss`. The
+only `density` identifiers in `src/` are brush-dab density. Every text size, control height and gap
+in the interface is therefore fixed, which is the half of Adobe's appearance surface the theme
+toggle covers and not the other half.
+
+**Affected.** `src/contexts/ThemeContext.tsx` — the two-value `Theme` union and the context type;
+`src/index.scss` — no size custom property and no `:root` font size.
+
+**What would close it.** Add the control, or state the gap where appearance is described.
+`docs/FEATURES.md` documents the theme toggle; an interface-size entry beside it that names what is
+missing is enough to stop the theme toggle reading as the whole of appearance. If the control is
+built, the property it writes has to reach every size the interface expresses — a root font size
+scales the rem-based type but not the fixed pixel control heights, so the honest first step is
+naming which of the two the control drives.
+
+**Files.** `src/contexts/ThemeContext.tsx`, `src/index.scss`, `docs/FEATURES.md`
+
+## 235. The paint cursor is a crosshair, so it carries neither the tip's position nor its width
+
+**Problem.** While a paint stroke is in progress the cursor is `cursor-draw`, whose only rule is
+`cursor: crosshair`. A crosshair is one of the browser's default cursors: it tells the user nothing
+about where the brush tip is or how wide it is, which for the one tool whose cursor carries
+information is the whole content of the cursor. `DrawToolArea.tsx` draws no outline of its own, and
+no modifier anywhere switches to a precise cursor — the class carries no precise variant and the
+component consults no modifier key. Sixteen other tool areas do set their own cursor, so this is not
+a general absence of per-tool cursors and must not be described as one; what is missing is the
+cursor for the tool whose cursor is load-bearing.
+
+**Affected.** `src/components/Main/DrawToolArea.tsx`; the cursor rules in
+`src/components/Main/Main.scss` for the precise variant.
+
+**What would close it.** A screen-space circle sized from the tip during a paint drag, and a modifier
+that swaps the crosshair for the precise crosshair. Both depend on the view transform, and §151
+names a brush-tip circle as part of its own fix because that transform is commented out — so this
+closes with §151 rather than before it, and the entry stays until it does.
+
+**Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/Main.scss`
+
+## 236. The inventory reports a dirty main checkout as clean, and an attempt to fix it destabilised a test whose cause is still unknown
+
+**Problem.** `classify()` in `scripts/lib/worktree-inventory/classify.mjs` assigns
+`STATUS.LANDED` for `wt.isPrimary` BEFORE it tests `uncommitted`, so the main checkout is reported
+`LANDED` with no uncommitted reason whether or not its tree holds changes. A reader is told `LANDED`
+and infers a clean tree. The status itself is right — the main checkout IS the landing site and its
+commits are on `main` by definition — so this is a missing reason, not a wrong status. It is also
+**not** a safety hole: the recommendation is computed under a second `if (wt.isPrimary)` that no-ops
+before any prune advice, so no dirty primary can be advised for deletion.
+
+**What makes this an entry rather than a two-line edit.** Adding the two missing reasons —
+`if (uncommitted)` and `if (unmerged)` inside that branch — turned
+`the curated table > never asks the table to protect a worktree whose protection is derived` from
+green to a 60s timeout. **These are single-machine observations, not a benchmark**, taken with 158
+live worktrees under concurrent agent load: five runs with the change, at 67s, 86s, 107s, 155s and
+200s, and six runs green — at 13s, 22s, 24s, 29s, 43s and 47s — with `classify.mjs` at `HEAD`, with
+an inert comment appended to the file, and with an inert comment inside that exact branch.
+
+**What those runs do and do not establish.** The two statements are _semantically_ inert:
+`uncommitted` and `unmerged` are both computed before the branch chain, and the test filters on raw
+git facts (`ahead`, `mergedIntoMain`, `dirty`, `untracked`) and never reads `reasons`. That is a fact
+about the code, and it is not an explanation of the timeouts — the timings differ by enough to be
+worth reporting, and the inert-comment control passing is evidence AGAINST load alone, not for it.
+**The cause was not found, and the change was reverted rather than landed unexplained.** Do not
+re-add these two lines before the timeout itself is understood.
+
+**What would close it.** Two things, and the first is now the better-evidenced one. Under full-suite
+load, individual tests in `worktree-inventory.test.mjs` exceed their 60s budgets: two DIFFERENT tests
+from this file have failed on different full-suite runs, while the whole file passes 160/160 in 24s
+when run alone. The budget is a function of the fleet rather than of the code under test, so sizing
+it is the first repair. That does **not** explain the classify correlation above — an inert edit in
+the same branch passed every time — so after the budget is fixed, re-run the two pushes and find out
+whether they still matter. If they do not, the fix is those two lines plus a unit test over a
+synthetic primary worktree fact set asserting that a dirty primary's `reasons` carry the uncommitted
+line; a synthetic fact set is what would make that safe, because the real inventory cannot exercise
+the case without a dirty main checkout.
+
+**Files.** `scripts/lib/worktree-inventory/classify.mjs`,
+`scripts/__tests__/worktree-inventory.test.mjs`
+
+## 237. The tool rail patches a figure's args before selecting the tool, so the outgoing commit reads the wrong args
+
+**Problem.** `SidebarLeft`'s `selectTool` calls `patchToolArgs('shape', { figure })` and only then
+`goToTool(tool.name)`. `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, and that commit
+reads the outgoing args — so with the incoming figure already written into `currentArgs`, a figure
+picked from the rail commits the outgoing tool against the incoming tool's args. In the text case the
+commit takes its drop branch: `useLayer`'s text branch reads `args.text` and `args.rect`, finds
+neither on a shape args object, early-returns, and an unapplied text layer is dropped with nothing to
+undo. The inverse order is what `mobile-tools.ts`'s `makeSelectTool` already does, and what the
+header's figure rows used to do before the `Tools` menu was removed; the rail is the one caller left
+that does it the other way. Nothing pins either order: the header's own test for it was deleted with
+its surface, and no rail test asserts the sequence.
+
+**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; the surviving safe order is in
+`src/components/Mobile/mobile-tools.ts`.
+
+**What would close it.** Select first, then patch, in `SidebarLeft`, plus a test that asserts the
+order the way the header's asserted it: have `commitDirtyTool` record the args it sees and fail if
+they are the incoming figure's. Ordering it against `makeSelectTool` also removes the last place the
+two surfaces can disagree, which is how the sheet and the bar came to differ once already.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Mobile/mobile-tools.ts`

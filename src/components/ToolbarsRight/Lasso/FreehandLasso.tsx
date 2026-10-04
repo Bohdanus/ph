@@ -40,7 +40,7 @@ const FreehandLasso: React.FC<{}> = () => {
     pasteSelectionClipboard();
   };
 
-  const handleClear = () => {
+  const handleDeselect = () => {
     clearSelections();
   };
 
@@ -71,8 +71,8 @@ const FreehandLasso: React.FC<{}> = () => {
         <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>
           Paste
         </button>
-        <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleClear}>
-          Clear
+        <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleDeselect}>
+          Deselect
         </button>
       </div>
 

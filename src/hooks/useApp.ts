@@ -3,7 +3,7 @@ import { useStore, type StoreMetadataUpdates } from '../contexts/StoreContext.ts
 import type { Layer, LayersRecord } from '../contexts/layer-types.ts';
 import type { NewDocumentBlankParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
-import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
+import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/file-types.ts';
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';

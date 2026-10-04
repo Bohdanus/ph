@@ -1,24 +1,3 @@
-import { type Page, type Locator, type TestInfo } from '@playwright/test';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import sharp from 'sharp';
-import {
-  type ClipOptions,
-  type CssBounds,
-  type CssBox as BoundingBox,
-  imageBoundsToCss,
-  viewportRectToPageRect,
-} from './screenshot-scale';
-
-/**
- * The coordinate shapes are declared once, in `./screenshot-scale`, and re-exported here
- * under the names the specs have always imported. This module is the suite's public
- * helper surface, so a spec still writes `import type { BoundingBox } from
- * './helpers/canvas-helpers'`; what it must not do is own a private copy of the shape,
- * which is what the three-way duplication this replaces was.
- */
-export type { ClipOptions, CssBounds, BoundingBox };
-
 /**
  * THE COORDINATE SPACES, and the tag every export below carries.
  *
@@ -49,6 +28,26 @@ export type { ClipOptions, CssBounds, BoundingBox };
  * feeds is `[PAGE]`. Two of the four spaces, one function, and the difference is the box
  * origin. `canvasRedrawClip`'s JSDoc is where that is stated.
  */
+import { type Page, type Locator, type TestInfo } from '@playwright/test';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import sharp from 'sharp';
+import {
+  type ClipOptions,
+  type CssBounds,
+  type CssBox as BoundingBox,
+  imageBoundsToCss,
+  viewportRectToPageRect,
+} from './screenshot-scale';
+
+/**
+ * The coordinate shapes are declared once, in `./screenshot-scale`, and re-exported here
+ * under the names the specs have always imported. This module is the suite's public
+ * helper surface, so a spec still writes `import type { BoundingBox } from
+ * './helpers/canvas-helpers'`; what it must not do is own a private copy of the shape,
+ * which is what the three-way duplication this replaces was.
+ */
+export type { ClipOptions, CssBounds, BoundingBox };
 
 /**
  * A region found INSIDE a decoded capture. `[IMAGE]`, whole pixels, inclusive at both ends.
@@ -1250,6 +1249,18 @@ export interface CaptureRegion {
 }
 
 /**
+ * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
+ * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
+ */
+function isLetterboxCell(red: number, green: number, blue: number): boolean {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+  return (
+    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
+    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
+  );
+}
+
+/**
  * Device pixels per CSS pixel on each axis of a capture of `region`, from the decoded
  * image's own dimensions.
  *
@@ -1272,18 +1283,6 @@ export interface CaptureRegion {
  * `__tests__/canvas-stroke-analysis.unit.test.ts` carries the rule at a divergence no real
  * capture produces for exactly that reason.
  */
-/**
- * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
- * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
- */
-function isLetterboxCell(red: number, green: number, blue: number): boolean {
-  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
-  return (
-    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
-    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
-  );
-}
-
 function captureScale(imageWidth: number, imageHeight: number, region: CaptureRegion): { x: number; y: number } {
   if (
     !(region.width > 0) ||
