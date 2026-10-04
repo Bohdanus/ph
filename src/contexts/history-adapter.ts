@@ -1185,6 +1185,7 @@ export function toggleDurableEntry(document: DurableDocument, entryId: string): 
   );
   return refreezeDurableDocument(document, {
     history,
+    cursor: document.cursor,
     branchRevision: document.branchRevision + 1,
     durableRevision: document.durableRevision + 1,
   });

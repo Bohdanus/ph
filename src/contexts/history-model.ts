@@ -438,6 +438,23 @@ function cloneOperation(operation: DurableOperation): DurableOperation {
   }
 }
 
+/**
+ * The one copy of an entry into the shape a document holds.
+ *
+ * An entry arrives at the append boundary only shallow-frozen: every producer in
+ * `history-adapter.ts` and `history-append.ts` freezes the wrapper and leaves its
+ * operation to this module, and several leave parts of the payload unfrozen besides
+ * — `deriveSetDocumentFrameEntry`'s `previous` and `next`, `selectionSnapshot()`'s
+ * `before` and `after` down to the nested `points` and `metadata` wherever a
+ * selection entry is derived, the conversion's `reorder-layers` map and
+ * `merge-document` removal ids, and every `source.size`. An entry is therefore a
+ * `DurableDocument` value the moment it is placed in one and an ordinary object
+ * until then, and this is the boundary where the second becomes the first.
+ *
+ * Module-internal on purpose: it is not the reuse path. `refreezeDurableDocument`
+ * carries an entry across by identity when the base is one of
+ * `ownDeepFrozenCopies`, so only an entry this module did not freeze takes the copy.
+ */
 function freezeDurableHistoryEntry(entry: DurableHistoryEntry): DurableHistoryEntry {
   return Object.freeze({
     id: entry.id,
@@ -527,6 +544,24 @@ export type DurableDocumentRefreeze = Readonly<{
  * An entry is reused only when it is, BY IDENTITY, an object `base.history` already
  * holds. A rebuilt, reordered, edited or truncated entry therefore always takes the
  * copy path, and the fallback applies to a base that is not an own copy at all.
+ *
+ * What makes the reuse sound is narrow and checkable rather than assumed. First, the
+ * base must be one this module froze, which is what proves its `baseline` and its
+ * entries are frozen all the way down — sharing them with the result is then
+ * unobservable, because no reader can write to a frozen object and there is no second
+ * writer that could have. Second, an entry the caller supplies that is not already
+ * one of this document's is deep-copied here, which is the case that actually occurs:
+ * a planned entry arrives at the append boundary only shallow-frozen. So the change
+ * takes a bare entry rather than demanding a pre-cloned one, and the total is over
+ * the input type rather than a precondition its callers must satisfy.
+ *
+ * The cost this avoids is what makes it worth having at all. `freezeDurableDocument`
+ * is the right answer to "this document may share nothing with its input", which is
+ * what `cloneDurableDocument` and the conversion both want. It is the wrong answer to
+ * "this document changed one integer", which is what an incremental append and a
+ * cursor move are, and it is wrong at a cost that grows with the timeline: both used
+ * to re-copy and re-freeze every entry and every baseline layer in order to read one
+ * field differently, which is quadratic work over a long edit session.
  */
 /**
  * The next history array for a base that already holds the entries it retains: an
