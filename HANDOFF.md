@@ -499,8 +499,8 @@ the session store instead — every `apply_patch` / `edit` / `write` target in a
 
 Re-derive the table from the entries this file still carries rather than reading it off this entry —
 the entries it was built from have been deleted. Collecting every `src/` path named in the `Files`
-paragraph of a numbered entry and comparing it against the manifest returns **78** the manifest does
-not list — one of them a directory rather than a file, `src/components/ToolbarHorizontal/`, which §134
+paragraph of a numbered entry and comparing it against the manifest returns a set the manifest does
+not list — among them a directory rather than a file, `src/components/ToolbarHorizontal/`, which §134
 names in that form — and the omissions are exactly where the migration's own boundary lives:
 
 | not in the manifest                                           | live entries whose `Files` line names it |
@@ -540,14 +540,20 @@ only there.
 ```bash
 awk '/^## [0-9]/{f=0;s=0;next} f&&/^\*\*[A-Z]/{f=0} !s&&/^\*\*Files\.\*\*/{f=1;s=1} f' HANDOFF.md \
   | grep -o '`src/[^`]*`' | tr -d '`' | sort -u > /tmp/handoff_paths.txt
-comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 78
+comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l
 ```
 
-Those paragraphs name 125 distinct `src/` paths, 47 of them in the manifest. `sort -u` is what makes
-the answer a count of paths rather than of entry-path pairs, which is 244. Two `Files` paragraphs in
-the file are deliberately outside the extraction and neither changes the count: §142 carries a second
-one that names no `src/` path at all. The live §159 entry is headed and its `Files` paragraph names
-the real `src/hooks/usePaintStroke.ts` path.
+That count is deliberately not written down here, and no number should be added back. It counts the
+`src/` paths this file's own entries name, so every edit to any entry's `Files` paragraph moves it —
+and it was re-derived four times (81, then 79, then 78, then 81 again), each time correctly on the
+tree of the day and stale by the next edit. A figure a document cannot keep true is worse than no
+figure, because a reader cannot tell a stale one from a fresh one. Quote what the command prints when
+you need it, in the place you need it.
+
+`sort -u` is what makes that command's answer a count of paths rather than of entry-path pairs. Two
+`Files` paragraphs in the file are deliberately outside the extraction and neither changes the count:
+§142 carries a second one that names no `src/` path at all. The live §159 entry is headed and its
+`Files` paragraph names the real `src/hooks/usePaintStroke.ts` path.
 
 **Reproduce the session-store half.** The count was 72 `src/` files on 2026-09-27 and is not
 re-derivable cheaply — the store is large and grows. The `lightshopy.com` clone is the reason both
@@ -2977,24 +2983,41 @@ rider survives.
 `src/tools/settings.ts` — the five figure entries in `defaultSettings`;
 `src/components/Main/ShapeToolArea.tsx`
 
-## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
+## 129. The worktree-inventory suite's per-test timeout is I/O-bound on the shared session database, so it fails under concurrent readers and is indistinguishable from a real break
 
 **Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
-to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
-and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
-with 56 worktrees:
+to protect a worktree whose protection is derived` runs the inventory generator over every worktree.
+Measured on `main` with 56 worktrees:
 
 ```
 full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
 the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
+the same test under branch load   : 147s wall, user 8.78s / sys 16.07s
 ```
 
-So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
-bare `Test timed out` with no assertion — the same output a genuine break produces.
+**This entry's stated cause was wrong and is corrected here.** It used to say the cost grows with
+the fleet because the generator runs git per worktree. The third measurement refutes that:
+**147 seconds of wall clock against 24.85 seconds of CPU is about 17% utilisation**, and a
+CPU- or process-bound workload cannot look like that. It is **blocked on I/O**, not spending
+anything — three generator modules open the same file independently (`chats.mjs`'s `openDb()`,
+`board.mjs`'s `openBoard()`, `writes.mjs`'s `openDb()`), and that store is the operator's 14 GB
+session database, not repository content. So the cost scales with **concurrent readers of one
+shared store**, which is worse exactly when the swarm is busiest, and a measurement taken on a
+quiet machine is not evidence. `chats.mjs`'s own module docstring already says the dominant cost
+is two unindexed `LIKE` scans over `part`.
+
+The 53s figure is also not the worst case: the 76957ms above is already over budget, and 147s is
+the real headroom. Both are observations with their dates, on a store that has since grown — quote
+them as measurements, not as constants. The budget they are measured against has since shrunk
+further: the suite sets `vi.setConfig({ testTimeout: 15_000 })`, so every figure above is several
+times the timeout now in force.
+
+The knife edge and the indistinguishability are unchanged and are the reason this is an entry rather
+than a re-run: the failure it produces is a bare `Test timed out` with no assertion, which is the
+same output a genuine break produces.
 
 **Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
-started with makes this test cross the line, and CI cannot tell the difference. A green local run at
-99 worktrees and a red CI run at 56 would be the same defect with a different cause.
+started with makes this test cross the line, and CI cannot tell the difference.
 
 **Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
 worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
@@ -5279,12 +5302,14 @@ and `boxRight` is `x2 - TEXT_PADDING`, and a point box is exactly `inkWidth + 2 
 construction. All three settings therefore compute the same `x`, so Left, Centre and Right render
 pixel-identically for every point draft — the control is live, focusable, and does nothing.
 
-This was investigated as a `calculateNewRect` defect and is NOT one. The growth arm in
-`calculateNewRect` is correctly gated on `requiredWidth > currentWidth`: it places the growth when the
-text outgrows a box that has no slack to distribute, and leaves the box alone when there is slack —
-because `renderText` then anchors within it. Moving that arm outside the guard was tried and reverted:
-it moves the box AND lets `renderText` anchor inside the moved box, so the ink shifts by twice the
-slack. The defect is the interaction, and there is nothing to fix in the geometry.
+This was investigated as a `calculateNewRect` defect and is NOT one. The point arm in
+`calculateNewRect` recomputes the required width on every call and keeps `x1`, moving only `x2`, so
+the box hugs its ink and there is no slack inside it for `renderText` to anchor within. There is no
+`requiredWidth > currentWidth` guard in that arm at any revision in this lineage; the paragraph
+below used to describe one, and a reader who took it for the current shape would look for slack
+distribution that does not exist. Displacing the box by `align` was tried and reverted: it moves the
+box AND lets `renderText` anchor inside the moved box, so the ink shifts by twice the slack. The
+defect is the interaction, and there is nothing to fix in the geometry.
 
 **Affected.** `src/util/rect.ts` (`calculateNewRect`'s point arm) and `src/tools/text.ts`
 (`renderText`'s anchor). Both carry comments describing the division of labour. No test pins the
