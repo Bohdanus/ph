@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 196, 200, 204, 208-211, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3441,12 +3441,14 @@ git worktree list --porcelain | grep '^worktree ' | cut -d' ' -f2- \
   | cut -d' ' -f1 | sort | uniq -c
 ```
 
-**133 of 160 worktrees have no `node_modules` of their own**, so Node resolution walks up
-into the main checkout's and every one of them serves the AVIF wasm out of Vite's allow
-list. The other 27 hold a real install — measured as `node_modules/react` being present,
-not as how it got there. So the convention this entry states is widely not followed, and the
-failure a non-follower sees is indistinguishable from the one this entry documents — which
-is the whole reason it has been re-derived twice.
+**133 of 160 worktrees have no `node_modules` of their own**, and those are the ones that
+hit this trap: Node resolution walks up into the main checkout's, so the wasm URL is a
+main-checkout path that a worktree-rooted Vite will not serve. The census is deliberately
+stated as presence of `node_modules/react` rather than as how it got there, and it is a
+**census of the shape, not a universal**: two of the 133 resolve `react` through a symlinked
+`node_modules` that points somewhere else again, so `node_modules` being absent above a
+worktree does not by itself prove the 403 — it makes it the overwhelmingly likely cause,
+which is what the probe below confirms for the case that matters.
 
 **A scope correction to the entry's own recipe, because it is what makes the trap
 reproducible.** Its reproduction assumes a symlinked `node_modules`. **A worktree with no
@@ -5902,22 +5904,26 @@ The remaining test defects, each with the fix that was proven to work:
   still accepts a paint commit. Adobe refuses paint tools on a locked layer, so this is an app-wide
   gap that a passing test now certifies. The gate belongs where `isBedrock` is already checked, in
   `CloneStampToolArea.tsx` and its siblings, and the test follows the gate.
-- A hand-copied literal table drifts, and one already did. `src/tools/__tests__/tool-processors.test.ts`
-  copied a seven-chip list into every pen-family card; `main` then re-pointed two of those cards at
-  their own groups and the table went stale silently, in the same shape four other hand-copied tables
-  in the same change still have. The surviving shape is a `configKey` column carrying the test's own
-  claim, resolved through `placeholderToolGroups` — the form
-  `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` already uses. Copying the
-  chips instead is the defect, and a comment arguing against importing them is the tell.
+- A hand-copied literal table drifts. The instance that already drifted is fixed:
+  `src/tools/__tests__/tool-processors.test.ts` copied a seven-chip list into every pen-family card,
+  `main` then re-pointed two of those cards at their own groups, and the table went stale silently.
+  `placeholderCards` now carries a `configKey` column resolved through `placeholderToolGroups`, the
+  form `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` uses. **Four of the same
+  shape remain live, all in that same file:** `declaredCommitKinds` copies `ToolCommitKind`,
+  `declaredReplayKinds` copies `ToolReplayKind`, `replayKinds` copies the registry's 43 `replay.kind`
+  literals, and `realBarControlIds` copies the control ids of fifteen options bars. Each resolves
+  against its own list, so a production table that gains or renames a member fails nothing until the
+  copy is updated by hand. `placeholderNames` and `icons` in the same file are **not** instances:
+  the first is an independent claim about which cards render, and the second has a coverage test.
 
 **Provenance.** Found 2026-10-04 on `test/harden-units` by a three-way read-only triage of every test
 file. The authors mutated their own new assertions to show they could fail, and two independent
 reviewers who had read neither the triage nor the authors' reasoning then found more: a
 cannot-fail style assertion whose double started on the asserted value, two hand-copied literals with
-no independent derivation, an arithmetic restatement of a sibling assertion, and the stale chip table
-above, which is the only one of them that was a merge artefact rather than a defect present from the
-start. The fixture divergence was left unfixed because the mandate was
-test files only.
+no independent derivation, an arithmetic restatement of a sibling assertion, and the stale chip table,
+which was the only one of them that was a merge artefact rather than a defect present from the
+start — and which that session then fixed itself, so only the four copies above are still open. The
+fixture divergence was left unfixed because the mandate was test files only.
 
 ## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
 
