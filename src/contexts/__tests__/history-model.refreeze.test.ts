@@ -47,6 +47,16 @@ function blurEntry(id: string, radius: number): DurableHistoryEntry {
   });
 }
 
+function processorEntry(id: string): DurableHistoryEntry {
+  return entry(id, {
+    kind: 'apply-raster-processor',
+    layerId: 'layer-1',
+    processorId: 'blur',
+    version: 1,
+    args: { strength: 4, kernel: [1, 2, 1], passes: [{ radius: 2 }, { radius: 3 }] },
+  });
+}
+
 /**
  * The live `args` object of an `apply-filter` operation, so a test can edit it AFTER
  * the document was built. It narrows on the kind instead of casting, so a test that
@@ -85,6 +95,19 @@ function frozenDocument(history: DurableHistoryEntry[]): DurableDocument {
   return freezeDurableDocument(plainDocument(history));
 }
 
+function reachableObjects(root: unknown, found: object[] = []): object[] {
+  if (!root || typeof root !== 'object') return found;
+  found.push(root);
+  for (const value of Object.values(root)) reachableObjects(value, found);
+  return found;
+}
+
+function expectDeeplyFrozen(root: unknown, minimumObjects = 10): void {
+  const objects = reachableObjects(root);
+  expect(objects.length).toBeGreaterThan(minimumObjects);
+  expect(objects.every((object) => Object.isFrozen(object))).toBe(true);
+}
+
 function append(base: DurableDocument, added: DurableHistoryEntry) {
   const history = [...base.history, added];
   return refreezeDurableDocument(base, { history, cursor: history.length - 1 });
@@ -118,8 +141,8 @@ describe('refreezeDurableDocument reuse', () => {
   });
 
   it('keeps the reused structure frozen, so the shared objects cannot be edited', () => {
-    const base = frozenDocument([blurEntry('a', 1)]);
-    const result = append(base, blurEntry('b', 2));
+    const base = frozenDocument([blurEntry('a', 1), processorEntry('b')]);
+    const result = append(base, blurEntry('c', 3));
 
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.history)).toBe(true);
@@ -131,6 +154,19 @@ describe('refreezeDurableDocument reuse', () => {
       'use strict';
       Object.defineProperty(result.baseline.layers[0]!.pos, 'x', { value: 999 });
     }).toThrow(TypeError);
+    expectDeeplyFrozen(result);
+  });
+
+  it('deep-copies a caller-rebuilt entry even when it is equal field for field', () => {
+    const base = frozenDocument([blurEntry('a', 1)]);
+    const rebuilt: DurableHistoryEntry = { ...base.history[0]! };
+
+    const result = refreezeDurableDocument(base, { history: [rebuilt], cursor: 0 });
+
+    expect(result.history[0]).not.toBe(rebuilt);
+    expect(result.history[0]?.operation).not.toBe(rebuilt.operation);
+    expect(result.history[0]).toEqual(rebuilt);
+    expectDeeplyFrozen(result.history[0], 3);
   });
 
   it('returns the document the full freeze would return', () => {
@@ -147,6 +183,7 @@ describe('refreezeDurableDocument reuse', () => {
       { cursor: -99 },
       { cursor: 1.5 },
       { cursor: Number.NaN },
+      { cursor: Number.POSITIVE_INFINITY },
     ]) {
       expect(refreezeDurableDocument(base, changes)).toEqual(freezeDurableDocument({ ...base, ...changes }));
     }
@@ -199,6 +236,25 @@ describe('refreezeDurableDocument reuse', () => {
     expect(cloned.baseline).not.toBe(base.baseline);
     expect(cloned.history[0]).not.toBe(base.history[0]);
     expect(cloned.history[0]?.operation).not.toBe(base.history[0]?.operation);
+  });
+
+  it('leaves the source document unchanged while changing the returned positions', () => {
+    const base = frozenDocument([blurEntry('a', 1), blurEntry('b', 2)]);
+    const historyBefore = base.history;
+    const before = JSON.stringify(base);
+
+    const result = refreezeDurableDocument(base, {
+      history: [...base.history],
+      cursor: 0,
+      durableRevision: 99,
+    });
+
+    expect(base.cursor).toBe(1);
+    expect(base.durableRevision).toBe(2);
+    expect(base.history).toBe(historyBefore);
+    expect(JSON.stringify(base)).toBe(before);
+    expect(result.durableRevision).toBe(99);
+    expect(result.cursor).toBe(0);
   });
 });
 
