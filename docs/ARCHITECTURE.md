@@ -220,7 +220,9 @@ delegates the draw — so an engine that ignores the write raises
 `requireLayerFilterSupport()`, and hands the result to `drawEvaluatedPresentation()`,
 which owns the `ctx.filter` write. A claim that `layer-renderer.ts` assigns
 `ctx.filter` no longer resolves: `grep -n "ctx.filter" src/contexts/layer-renderer.ts`
-returns only the guard and its comment.
+returns exactly **one** line, and it is the guard's comment, not the guard —
+`requireLayerFilterSupport()` delegates to `requireCanvasFilter()` and never names
+`ctx.filter` in its body.
 
 ### The presentation cache
 
@@ -315,17 +317,25 @@ importer of its own; `ReplayCoordinator` has none.
 
 Two registries with different key sets, which is easy to misread as one:
 
-- **`src/tools/toolsMap.ts`** — **44** entries, and **not** one per `ToolName`:
-  `ToolName` is `keyof ToolArgsByName`, which has 25 members, so the map is
-  strictly wider and a tile's key need not be a `ToolName` at all. Each entry
-  spreads its processor and adds an `icon` and a `toolboxComponent`. The whole-tool
-  map therefore includes the `eyedropper` entry, which has _only_ icon and
+- **`src/tools/toolsMap.ts`** — **44** entries, and **exactly one per `ToolName`**:
+  `ToolName` is `keyof ToolArgsByName`, which has **44** members, and the two key
+  sets are **identical** — only the declaration order differs. Prove the equality by
+  `diff`-ing two sorted key lists:
+  `awk '/^export type ToolArgsByName = \{/,/^\};/' src/contexts/tool-types.ts | grep -oE "^  '?[a-zA-Z][a-zA-Z0-9-]*'?:" | tr -d " ':" | sort`
+  against the same pipeline over
+  `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts`.
+  **A `[a-zA-Z]+` pattern undercounts**, because it drops the **19** hyphenated keys
+  (`polygonal-lasso`, `feather-magnetic-lasso`, `color-replacement`,
+  `add-anchor-point`, `custom-shape` and fifteen more) — 44 − 19 = 25, which is how a
+  44-entry map came to be documented as 25 members and as "not one per `ToolName`".
+  Each entry spreads its processor and adds an `icon` and a `toolboxComponent`. The
+  whole-tool map therefore includes the `eyedropper` entry, which has _only_ icon and
   component, and **seven** `placeholderTool` entries — the six-key `pen` group
   (`pen`, `freeform-pen`, `curvature-pen`, `add-anchor-point`,
   `delete-anchor-point`, `convert-point`) plus `custom-shape`, which uses its own
   `custom-shape` group. Count them with
   `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts | grep -cE "^  '?[a-zA-Z-]+'?:"`;
-  the quoted keys are why a `[a-zA-Z]+` pattern undercounts.
+  the quoted keys are why the `-` is required in that character class.
 - **`src/tools/toolProcessors.ts`** — **43** entries, `PixelToolName` derived by
   `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which
   is how a tool that needs
