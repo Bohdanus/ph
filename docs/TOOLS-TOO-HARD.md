@@ -143,7 +143,7 @@ missing substrate as Select and Mask above, and it is the reason the first entry
 type change.
 
 **What the app does instead.** No selection can be inverted, grown, shrunk or feathered after the
-fact. A selection is what the last tool drew, and the only edits available are copy, paste and clear
+fact. A selection is what the last tool drew, and the only edits available are copy, paste and deselect
 from the marquee's bar.
 
 ### Regions with holes
