@@ -226,8 +226,8 @@ const spaceRepositionModifier: ToolModifier = {
  * geometric figures all resolve to ONE app tool name and differ only by a `figure` field,
  * so U from any of them keeps the figure it is already on. The Custom Shape tool is the
  * exception, because it carries its own tool name, and U from there falls back to the
- * rectangle. What `Shift+U` does with the same asymmetry — where the cycle stops rather than
- * wrapping — is the `Shift+U` row's own statement, not a second one here.
+ * rectangle. `Shift+U` closes the group the same way, over all six entries; the `Shift+U` row
+ * states that, and it is the row that owns it.
  */
 const shapeGroupShortcut: ToolShortcut = {
   keys: 'U',
@@ -238,7 +238,7 @@ const shapeGroupShortcut: ToolShortcut = {
 const shapeCycleShortcut: ToolShortcut = {
   keys: 'Shift+U',
   action:
-    'Cycles to the next tool in the shapes tool group, through all six entries the rail’s flyout holds: rectangle, ellipse, line, triangle, polygon and Custom Shape. The cycle does not close on itself — the press after Custom Shape re-enters the group at the ellipse, so the rectangle is reachable with U rather than with the cycle.',
+    'Cycles to the next tool in the shapes tool group, through all six entries the rail’s flyout holds: rectangle, ellipse, line, triangle, polygon and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.',
 };
 
 const shapeToolShortcuts: readonly ToolShortcut[] = [shapeGroupShortcut, shapeCycleShortcut];
