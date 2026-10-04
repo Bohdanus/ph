@@ -5847,3 +5847,35 @@ contribution is the boundary and not the shape.
 **Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
 travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
 This entry is only the part that did not.
+
+## 202. `docs/DOCUMENTATION.md` states the presentation-cache rule more strongly than the reducer enforces it
+
+**The problem.** `docs/DOCUMENTATION.md` — the section on a documented constraint beating a
+cleaner design — says that if `docs/` says the presentation cache is published through a typed
+action, then a refactor that promotes a cache outside reducer publication "has not improved
+the code — it has broken a rule that exists for a stated reason". Read literally that makes
+`PROMOTE_LAYER_PRESENTATIONS` the violation it names, because promotion does not go through
+publication.
+
+**What the code actually does.** Two reducer arms write the presentation cache, and each has
+its own guard. `PROMOTE_LAYER_PRESENTATIONS` re-checks `isSamePresentationCanvas` per record
+and rewrites only the records that differ. `PUBLISH_RUNTIME_PRESENTATION` replaces `layers`
+wholesale, and `dispatchAction` refuses that arm unless `layersDifferOnlyByPresentation`
+proves the publication moved no durable layer state. The whole-tree guard is applied on the
+publication path and NOT on the promotion path — so the guarantee "a publication cannot move
+durable state" is enforced, and the guarantee "promotion cannot silently drop durable state"
+is enforced per record by a different, weaker check. Nothing enforces a rule about promoting
+outside the reducer, because `PROMOTE_LAYER_PRESENTATIONS` is itself a reducer action.
+
+`AGENTS.md` carried the correction in its architecture-status section until 2026-10-04, when
+that section was cut for duplication with `docs/ARCHITECTURE.md` and
+`docs/ARCHITECTURE.md` §"The presentation cache". Cutting the paragraph removed the only
+document that said the documented rule was stronger than the code, which is why the finding
+is filed here rather than left to the next reader of `docs/DOCUMENTATION.md`.
+
+**What would close it.** Reword `docs/DOCUMENTATION.md` so the constraint names the guard
+rather than the shape: the rule is that a publication must be refused unless
+`layersDifferOnlyByPresentation` holds, and promotion must re-check
+`isSamePresentationCanvas` per record. Whether that is the intended invariant, or whether
+`PROMOTE_LAYER_PRESENTATIONS` should also carry the whole-tree guard, is an architecture
+judgement and belongs to the operator.
