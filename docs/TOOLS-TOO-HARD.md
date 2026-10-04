@@ -506,7 +506,8 @@ Non-destructive editing section is where that distinction is already drawn.
 
 **Not a handoff item.** The gap is real but it is recorded here as a capability decision, and per
 this file's own policy nobody treats its absence as a defect. The rail entries for these ids are
-`HANDOFF.md` §170's, which is a separate decision.
+`HANDOFF.md` §74's — the rail-clone decision, which names Sponge among the entries to replace —
+which is a separate decision.
 
 **What Photoshop does.** Dodge, Burn, Sponge and Smudge accumulate for as long as the button is
 held. The result depends on how long the cursor rested in each place, which is the entire point of

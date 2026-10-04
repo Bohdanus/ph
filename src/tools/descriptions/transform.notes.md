@@ -193,9 +193,13 @@ only. `createCanvas()` in `src/contexts/materialization.ts` prefers `new Offscre
 wherever one exists, and `filterForOperation()` applies the same string there — the materializer
 reaches it through `evaluatePresentation()` in `src/contexts/presentation-evaluator.ts`. The
 `OffscreenCanvasRenderingContext2D.filter` support Safari has never shipped is therefore a property
-of that surface, not of the canvas the user is editing on. Note also that **no module outside
-`src/contexts/__tests__/` imports `materialization.ts`** — the durable document is a shadow, and
-that materializer is currently reached by its own tests only. The `levels` processor in
+of that surface, not of the canvas the user is editing on. Note also that the durable document is
+still a shadow, but the materializer is **no longer reached by its own tests only**: exactly one
+production module imports `materialization.ts`, which is `src/contexts/durable-compositor.ts`, and
+`src/contexts/StoreContext.tsx` mounts that compositor through `composeDurableDocument()` for
+navigation presentation. The single-importer rule is pinned by
+`src/contexts/__tests__/StoreContext.boundary-gates.test.ts`'s `it('routes production durable
+materialization only through the compositor boundary')`. The `levels` processor in
 `src/tools/levels.ts` and the `colors` processor in `src/tools/colors.ts` still build the same
 string into an `OffscreenCanvas` 2D context, and both are unreached processors for these two
 commit kinds; they are cited in the data file because
@@ -231,7 +235,7 @@ So the string is pinned and the pixels are not.
 Net for the descriptions: `levels` and `color` are `partial`, and the divergence recorded for each
 is not "the app has fewer controls" but "the app has a different engine in a different color
 space, on a surface that is a plain canvas element rather than the `OffscreenCanvas` the durable
-shadow would use".
+materializer uses".
 
 ## Census
 

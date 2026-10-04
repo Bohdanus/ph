@@ -35,7 +35,6 @@ addressed by identity; they must not be duplicated into the timeline.
 
 Editing an existing text or shape layer must edit its source arguments rather
 than create a replacement layer and leave the old one behind.
-
 **This requirement is satisfied, and its premise when written is no longer true.**
 The durable operation union now carries a source-rewrite operation,
 `replace-layer-source` — a twelfth kind beside `create-layer` and `merge-document`,
@@ -80,7 +79,10 @@ The earlier proposal for a thirteenth durable operation was an automatic
 `rasterize-layer` escape hatch and is superseded. The durable operation count was
 eleven when the finalisation audit corrected it, and is **twelve** now:
 `replace-layer-source` was added as RQ-2's source-edit operation. That operation
-preserves editable text and shape sources and is not a rasterization path.
+editable text and shape sources and is not a rasterization path. The count itself
+is now derived by `history-model.reachability.test.ts`'s
+`it('declares exactly the kinds the DurableOperation union declares')`, rather
+than by a hand-written list that could miss a newly added kind.
 
 ### RQ-4: one replay authority
 
