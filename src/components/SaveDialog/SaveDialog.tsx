@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ImageSaveResponse } from '../../contexts/useFile.tsx';
+import type { ImageSaveResponse } from '../../contexts/file-types.ts';
 import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { DEFAULT_JPEG_QUALITY, IMAGE_FORMATS, PSD_FORMAT } from '../../constants/imageFormats.ts';
 import { useDialogFocusContainment } from '../../hooks/useDialogFocusContainment.ts';

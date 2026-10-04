@@ -1,4 +1,4 @@
-import type { ImageUploadResponse } from './useFile.tsx';
+import type { ImageUploadResponse } from './file-types.ts';
 import { resolveImageFormat, withFileExtension } from '../constants/imageFormats.ts';
 
 const TIFF_MIME_TYPES = new Set(['image/tif', 'image/tiff', 'image/x-tiff']);
