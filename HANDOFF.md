@@ -6250,3 +6250,32 @@ Leave `nextSelectionState` alone: its own comment records that `next` is deliber
 dispatch publishes, so freezing it would freeze live store state. A test asserting the recorded
 `previousSelectionState.selections` is not the same array reference as the store's would fail before
 the change and pass after it, which is the only shape of proof this needs.
+
+## 228. Every shape draws unfilled by default, and no entry records whether that is the ruling
+
+**Problem.** A rectangle drawn on a fresh document is stroked and never filled, because the shape
+args seed no `hasFill`: `src/tools/settings.ts` seeds `backgroundColor: null` and no `hasFill` key,
+so `Figures/Shape.tsx` renders `filled-toggle` unchecked and `drawShape()`'s gate —
+`args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor` — is false on its first
+conjunct. The colour half is not the blocker: `Shape.tsx` adopts the store's `backgroundColor`, and
+`StoreContext.tsx`'s `initialState` carries `#ffffff`, so ticking `Filled` does fill. The default is
+the whole of the question.
+
+Whether Adobe's own shape tools fill by default was **not established** while filing this. A search
+of Adobe's published default-keyboard-shortcut reference settled a different question — whether a
+Draw tool has a letter — and returned no row either way for shapes. So this entry states the app's
+behaviour and records the divergence as unresolved; it does not assert what Photoshop does, and no
+document in `docs/` may be corrected on the strength of this paragraph.
+
+**Affected.** `src/tools/settings.ts` — the `shape` default; `src/components/ToolbarsRight/Figures/Shape.tsx`
+— `filled-toggle` and `handleFillToggle()`; `src/tools/shape.ts` — `drawShape()`'s `hasFill`
+conjunct; `src/tools/__tests__/tool-settings.test.ts` pins the seeded table with `toEqual`, so it
+refuses a flip until it is re-derived.
+
+**What would close it.** Take the ruling from Adobe's own shape-options documentation. If shapes are
+meant to fill, seed `hasFill: true` beside the existing `backgroundColor` seed, re-derive the
+tool-settings pin, and expect the e2e baselines that draw a shape to move. If they are meant to stay
+unfilled, record the divergence in `docs/OVERRIDES.md` — the tile is kept there under OVR-2, so the
+override is where a deliberate divergence belongs. Either way the `!!args.backgroundColor` half of
+the gate must survive the change: it is what stops a filled figure with no colour from painting with
+whatever `fillStyle` the shared overlay last carried.
