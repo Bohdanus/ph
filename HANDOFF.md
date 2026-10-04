@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 175, 191-192, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -123,8 +123,6 @@ so the existing comparison covers it. The first durable scheduler must take a to
 restoring the deleted module.
 
 **Files.** `src/contexts/history-model.ts` — `DurableLayerSnapshot`
-
----
 
 ---
 
@@ -929,12 +927,6 @@ shape leaves painted, which nothing else removes')` title
 
 ---
 
----
-
----
-
----
-
 ## 72. A duplicated `/**` makes `DrawToolArgs.composite`'s doc comment a comment about itself
 
 `src/tools/draw.ts` — `DrawToolArgs`'s `composite` field opens two block comments back to back.
@@ -1687,62 +1679,6 @@ its `initial` fallback object, and `frameFromFirstEntryBedrock()`;
 
 ---
 
----
-
-## 92. The converter re-derives a created or merged layer's snapshot, and disagrees with the runtime rule
-
-**Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts` —
-`createLayerSource()`),
-which `replayHistory` reaches through its `createLayer` dependency (its two
-`dependencies.createLayer` calls, wired at `useHistory.ts` — the `createLayer` dependency). The
-converter builds the same layer through a **second, re-derived** rule,
-`sourceToRuntimeLayer` (`history-adapter.ts`), called from the create-layer arm and
-the merge arm of `legacyHistoryToDurable()`. The two still disagree on two fields, on the first layer
-of any document:
-
-| field   | runtime (`layer-utils.ts` — `createLayerSource()`)                                                  | shadow (`history-adapter.ts` — `sourceToRuntimeLayer()`)               |
-| ------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `name`  | `` `${getNameFromSource(source)} ${maxOrder}` `` — the `name` it binds                              | the bare kind, with no order suffix — the `name` it binds              |
-| `order` | `maxLayerOrder(layers) + 1` — the `order` it binds; `0` for an empty record, from `maxLayerOrder()` | `Math.max(-1, …) + 1` — the `order` it binds, so `0` for an empty fold |
-
-Executed against the real converter on a blank source added to an empty document: the runtime layer
-is `{ name: 'Blank 1', order: 1 }` and the durable snapshot is `{ name: 'Blank', order: 0 }`. A second
-disagreement rides along in the same line:
-`getNameFromSource` applies `ellipsify` (`layer-utils.ts` — `getNameFromSource()`), so a long image
-name is truncated in
-the document and not in the shadow.
-
-**The `opacity` half of this entry is closed.** The two rules used to disagree here too — the runtime
-bound `opacity: 1` and `sourceToRuntimeLayer()` bound `source.opacity` for a blank — and
-`convertLayer()` copies whatever `sourceToRuntimeLayer()` produced into the snapshot, so the snapshot
-recorded a layer-level `0.5` for an alpha the document held in the bitmap. `sourceToRuntimeLayer()`
-now binds `opacity: 1` for every source, so both models agree at `1` and that hazard is no longer
-reachable from the converter. The pixels-versus-field question this raised is §56's, and it is still
-open there.
-
-**User-visible failure.** The shadow describes a differently **named** layer than the document for the
-same edit. The `order` half is quieter but not free: it puts the first layer of a document at order
-`0` in one model and `1` in the other.
-
-**Two existing tests pin the two answers, which is why neither side is accidental.** The `it('names a
-blank layer Blank and a tool layer after its tool')` title in
-`layer-utils.createLayerSource.test.ts` pins the runtime (`'Blank 1'`, `'shape 1'`) and the `it('create-layer
-makes a new layer visible at the tip and absent at prior cursors')` title in
-`durable-replay.layer-operations.test.ts` pins the shadow (`'Blank'`). **A fix has to flip the
-second one.**
-
-**Fix — this is a decision, not an edit, and the decision comes first.** The obvious move is to have
-the converter call the runtime rule rather than re-implement it, and that is what should happen: the
-layer's `name` and `order` are what the runtime rule means, and the shadow is the re-derived copy.
-Decide that the runtime rule wins, then make the converter derive through it and update the durable pin
-in the same change. Do not "fix" one field without the other: a partial fix leaves the converter
-deriving `name` from the runtime rule and `order` from its own fold, which is a third rule rather
-than one of the two.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/layer-utils.ts`
-
----
-
 ## 94. A skipped duplicate leaves the fold advanced, so a later `set-document-frame` can carry a `previous` the durable history never reached
 
 **Problem.** When a duplicate id is skipped, the publication is withheld and the **fold state is
@@ -2052,8 +1988,6 @@ frame at the pre-add size when a bedrock layer is added mid-history')` titles (t
 The append-boundary test citations were a separate drift cluster, not part of this file's
 `history-replay.ts` arithmetic. They were resolved with the §87-§89 fixes and are no longer
 outstanding.
-
----
 
 ---
 
@@ -4765,8 +4699,6 @@ change closed.
 
 ---
 
----
-
 ## 174. The discard prompt has no Save option, and adding one is a product decision
 
 **Problem.** `ConfirmDialog` (`src/components/ConfirmDialog/ConfirmDialog.tsx`) is the app's
@@ -6279,8 +6211,6 @@ whatever `fillStyle` the shared overlay last carried.
 
 ---
 
----
-
 ## 229. The rectangular marquee's in-flight border is the one piece of selection chrome that never crawls
 
 **Problem.** A selection's border is the marching ants for every selection tool, so the crawl is
@@ -6301,3 +6231,40 @@ different rule than the ants use.
 
 **Files.** `src/hooks/useRect.ts` — `drawMask()`, `beginGesture()`;
 `src/hooks/selection-drag-preview.ts` — `publishSelectionDragPreview()`
+
+---
+
+## 230. Seven selection options bars label a deselect `Clear`, and the word is Adobe's pixel eraser
+
+**Problem.** The button that ends a selection is labelled `Clear` on every selection options bar:
+`RectangularSelection.tsx`, `EllipticalSelection.tsx`, `QuickSelection.tsx`, `MagicWand.tsx`,
+`FreehandLasso.tsx`, `FeatherMagneticLasso.tsx` and `SingleRowColumnMarquee.tsx` each render the
+label over a handler that calls `clearSelections()` (`useSelectionHistory.ts`), which publishes
+`appendSelectionClear()`. Nothing on that path deletes a pixel.
+
+`Clear` is not a neutral word here. In Photoshop it is `Edit > Clear`, which deletes the selected
+pixels, and none of the seven bars offers any other control that does — so a reader who knows the
+word reads this button as a destructive pixel operation on a bar that cannot perform one. Adobe
+names the deselect `Deselect` and puts it on `Ctrl+D`; no selection bar of Adobe's carries a
+`Clear`.
+
+**It is a label defect and nothing else, which is why every gate passes.** The handler is right,
+the disabled conditions are right, and no test fails: nothing measures the word. The orphan branch
+`docs/handoff-reconcile-landed-and-new` filed it under `204`, a number this file has since
+tombstoned for an unrelated entry, so merging that branch would either resurrect `204` or lose this
+defect. It is recorded here under a number of its own instead.
+
+**What is needed.** Rename the label to `Deselect` in all seven bars, in the same change. The call
+sites that pin the word move with it: `getByRole('button', { name: 'Clear', exact: true })` in
+`e2e/freehand-lasso.spec.ts` and `e2e/selection-gestures.spec.ts`, and
+`screen.getByRole('button', { name: 'Clear' })` in the seven bars' `__tests__`. `src/tools/descriptions/`
+describes the control by the same word and `docs/TOOLS.md` is generated from it, so the description
+source moves too.
+
+**Files.** `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx`,
+`src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx`,
+`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx`,
+`src/components/ToolbarsRight/MagicWand/MagicWand.tsx`,
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
+`src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx`
