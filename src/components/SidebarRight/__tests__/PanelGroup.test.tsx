@@ -115,7 +115,7 @@ describe('PanelGroup', () => {
     });
 
     it('derives the group, the row and the control from one id, and is focusable', () => {
-      const { group, row, control } = setup({ id: 'history' });
+      const { group, row, control, body } = setup({ id: 'history' });
 
       expect(group).toHaveAttribute('data-testid', 'panel-group-history');
       expect(row).toHaveAttribute('data-testid', 'panel-header-row-history');
@@ -123,6 +123,11 @@ describe('PanelGroup', () => {
       // One id, three places it must not drift: what the control controls, and what the testids
       // name. The row exists so a real button can sit beside the control without invalid ARIA.
       expect(control.getAttribute('aria-controls')).toBe('panel-body-history');
+      // Expanded, the name must RESOLVE: `aria-controls` naming an id that is not in the tree is
+      // the same dangling reference the rolled-up case must not have, and asserting the string
+      // alone would pass either way. `body()` resolves it the way an assistive technology would —
+      // through the container — rather than off `document`.
+      expect(body()).not.toBeNull();
       expect(row.parentElement).toBe(group);
       expect(control.parentElement).toBe(row);
       // Keyboard reachability is the whole point of `role="button"`: this is a roll-up control
@@ -163,10 +168,10 @@ describe('PanelGroup', () => {
       expect(screen.queryByText(BODY_MARKER)).toBeNull();
       // A roll-up leaves the tab bar, not an empty box: the title is meant to still be there.
       expect(screen.getByText('Layers')).toBeInTheDocument();
-      // The target `aria-controls` names is gone while the attribute still names it — asserted
-      // because that is what the component does, and a fix has to change this line, not this test.
-      expect(control.getAttribute('aria-controls')).toBe('panel-body-layers');
-      expect(document.getElementById('panel-body-layers')).toBeNull();
+      // Rolled up, the reference must NOT dangle: the honest pair is `aria-expanded="false"` and
+      // no `aria-controls` at all, not a name with no target. The attribute is gated on the same
+      // expression that renders the body, so the two cannot drift.
+      expect(control).not.toHaveAttribute('aria-controls');
     });
 
     it('rolls up on a double-click, reports a zero-argument callback, and comes back', () => {
