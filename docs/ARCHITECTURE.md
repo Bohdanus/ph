@@ -75,13 +75,18 @@ trusting a figure stored here.
   `StoreAction = Action | InternalAction`, with `PublicAction` an alias of
   `Action`; `StoreDispatch` dispatches `PublicAction`, so neither internal type is
   consumer-dispatchable.
-- **The reducer's 29 arms are not the `Action` 29.** `ADOPT_LAYER_BITMAPS` is
-  deliberately arm-less — the dispatcher registers it and returns without
-  forwarding, in its own `dispatchAction()` branch. `SET_ORIGINAL_IMAGE` falls
-  through to the reducer's `default: return state`. `PUBLISH_RUNTIME_PRESENTATION`
-  is the offset the other way: it is an `InternalAction` and it does have an arm.
+- **The reducer has 31 arms, and every one of the `StoreAction` 31 is named.** The
+  census is exhaustive over the union rather than over `Action`, so two arms exist
+  only to be written down: `ADOPT_LAYER_BITMAPS`, which the dispatcher registers
+  and returns without forwarding in its own `dispatchAction()` branch and which the
+  reducer therefore never receives, and `SET_ORIGINAL_IMAGE`, a public action with
+  no production writer and no `StoreData` field to write. Both return the state
+  unchanged, which is what the reducer's `default: return state` gave them. The
+  `default` is now a `never` guard, so an action type added without an arm is a
+  typecheck error instead of a dispatch that quietly does nothing.
   `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
-  the arm count.
+  the arm count, and `StoreContext.boundary-gates.test.ts` pins the set against the
+  union.
 - **The dispatcher is not the reducer.** `dispatchAction()` intercepts seven
   types, computes `latestStateRef.current = reducer(currentState, action)` _before_
   dispatching, and only then calls `rawDispatch`: `PROMOTE_LAYER_PRESENTATIONS`,

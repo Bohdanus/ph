@@ -259,6 +259,31 @@ const ALL_PUBLIC_ACTIONS: Record<PublicAction['type'], true> = {
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false;
 
+/**
+ * The two `InternalAction` types. They are not exported, so the record above
+ * cannot reach them, and a census that stopped at the public 29 would pass over
+ * exactly the arms nothing in production dispatches.
+ */
+const INTERNAL_ACTION_TYPES = ['PUBLISH_RUNTIME_PRESENTATION', 'ADOPT_LAYER_BITMAPS'] as const;
+
+/**
+ * The reducer's own body, sliced out of the module source.
+ *
+ * Bounded by the signature and the first column-zero `}` after it, because every
+ * brace inside the function is indented and the function's own is not. Reading
+ * the whole module instead would sweep the dispatcher's seven `action.type ===`
+ * intercepts into the same set, which is a different question and one the
+ * dispatcher already answers with a test of its own.
+ */
+function reducerSource(): string {
+  const source = readFileSync(join(srcDir, 'contexts/StoreContext.tsx'), 'utf8');
+  const start = source.indexOf('function reducer(state: StoreData, action: StoreAction): StoreData {');
+  expect(start).toBeGreaterThan(-1);
+  const end = source.indexOf('\n}\n', start);
+  expect(end).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
+
 describe('StoreContext boundary gates', () => {
   it('reports a forbidden module from any module, not only from StoreContext', () => {
     const knownBad = `
@@ -374,5 +399,25 @@ describe('StoreContext boundary gates', () => {
       dispatch({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [] } });
     };
     void typeProbe;
+  });
+
+  it('names a reducer arm for every action type instead of relying on an untyped default', () => {
+    const source = reducerSource();
+    const arms = [...source.matchAll(/^ {4}case '([A-Z_]+)':/gm)].map((match) => match[1] as string);
+
+    // The census is over LABELS, not over behaviour, so it is the one assertion
+    // that survives an arm being deleted and re-added as a differently-shaped one:
+    // a type with no label at all is the defect, whatever the arm does.
+    expect([...arms].sort()).toEqual([...Object.keys(ALL_PUBLIC_ACTIONS), ...INTERNAL_ACTION_TYPES].sort());
+
+    // And the census only means something if the switch cannot accept a type it
+    // does not name. The `never` guard is what makes an unarmed action a typecheck
+    // error; a plain `default: return state` would leave the set above passing while
+    // every action added after it silently no-ops. Both halves are asserted
+    // because either alone is defeatable: the label set without the guard is
+    // satisfied by an untyped default, and the guard without the set would not
+    // notice an arm removed by widening the discriminant.
+    expect(source).toContain('const _exhaustive: never = action;');
+    expect(source).not.toMatch(/default:\s*\n\s*return state;/);
   });
 });

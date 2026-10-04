@@ -816,8 +816,35 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         selectionDraft: { status: 'idle' },
         selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
       };
-    default:
+    /**
+     * Two arms exist only to be written down, and both were previously the
+     * untyped `default`'s silent no-op. Naming them is what lets the guard below
+     * be a real one: an action type added without an arm is a typecheck error
+     * instead of a no-op nobody notices until the state it should have written
+     * silently never changes.
+     */
+    case 'SET_ORIGINAL_IMAGE':
+      // A public action with no production writer and nothing in `StoreData` to
+      // write — there is no `originalImage` field, and the state it once named is
+      // `hasImage`. Its entire behaviour was `default: return state`, and that is
+      // what this preserves.
       return state;
+    case 'ADOPT_LAYER_BITMAPS':
+      // Registration is ownership bookkeeping the dispatcher performs without
+      // forwarding, so the reducer never receives this action. `return state`
+      // documents that; the dispatcher's own branch, not this arm, is the
+      // behaviour.
+      return state;
+    default: {
+      // Load-bearing, and the `never` is the point: `StoreAction` is a closed
+      // union, so a type added to `Action` or `InternalAction` without an arm
+      // above fails `tsc` here rather than reaching the caller as a dispatch
+      // that quietly does nothing. `return state` is kept so a runtime
+      // untyped caller still gets the no-op the old `default` gave it.
+      const _exhaustive: never = action;
+      void _exhaustive;
+      return state;
+    }
   }
 }
 
@@ -1230,7 +1257,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
       const publishPlanned = planned.outcome === 'published' && !boundaryHasError;
-      let publicationFailed = false;
 
       if (!publishPlanned) {
         plannerTransaction?.rollback();
@@ -1249,64 +1275,110 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A planned durable append can carry a newly registered asset-bearing
       // operation. Open the document transaction only after the pure decision
       // succeeds, publish the state, then commit and reconcile the exact set the
-      // published document names. If any step fails, rollback before rebuilding.
+      // published document names.
+      //
+      // The `try` covers the FALLIBLE work and nothing else, and its catch is
+      // therefore the one place the rebuild below may be reached from: the whole
+      // conversion rebuild and its dispatch run only when no state has moved
+      // yet, so the append is still un-published and rolling the transaction
+      // back is exactly right.
+      //
+      // Publication itself is deliberately OUTSIDE it. `latestStateRef.current`
+      // and `rawDispatch` are the point of no return — an exception from
+      // `transaction.commit`, `reconcileDocumentAssets` or the retirement walk
+      // used to land in the same catch, fall out of this `if`, and dispatch a
+      // SECOND `COMMIT_DOCUMENT_EDIT` for one append. The rebuild derives its
+      // projection from `currentState`, the pre-publication record, so the second
+      // dispatch both re-published a transition that had already happened and
+      // computed it from a state the store no longer held.
       if (publishPlanned) {
         let transaction: DocumentAssetTransaction | undefined = plannerTransaction;
+        let published:
+          | {
+              transaction: DocumentAssetTransaction;
+              converted: DurableProjection;
+              action: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload };
+              state: StoreData;
+            }
+          | undefined;
         try {
           transaction ??= registry.beginDocumentAssetTransaction(currentState.documentId);
           const converted = appendBoundaryDiagnostics(
             { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
             boundaryDiagnostics
           );
-          const committedAction: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
+          const committed: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
             type: 'COMMIT_DOCUMENT_EDIT',
             payload: commitPayload(converted),
           };
-          const nextState = projectPublishedTimeline(currentState, {
-            updates: committedAction.payload.updates,
-            timeline,
-            durableDocument: converted.document,
-            durableStatus: converted.status,
-            durableDiagnostics: converted.diagnostics,
-          });
-          latestStateRef.current = nextState;
-          rawDispatch(committedAction);
-          transaction.commit();
-          if (converted.document) {
-            registry.reconcileDocumentAssets(currentState.documentId, collectDurableAssetIds(converted.document));
-          }
-          // Retirement runs after the transition is published, and only against
-          // the record that transition actually produced.
-          retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
-          return;
+          published = {
+            transaction,
+            converted,
+            action: committed,
+            state: projectPublishedTimeline(currentState, {
+              updates: committed.payload.updates,
+              timeline,
+              durableDocument: converted.document,
+              durableStatus: converted.status,
+              durableDiagnostics: converted.diagnostics,
+            }),
+          };
         } catch (error) {
-          publicationFailed = true;
+          // The transaction is the local one, and nothing below reads
+          // `plannerTransaction`: a rollback here releases exactly what the plan
+          // registered and nothing has named it yet.
           transaction?.rollback();
-          console.error('Unable to publish a planned durable append; rebuilding the durable document', error);
+          console.error('Unable to plan a durable append publication; rebuilding the durable document', error);
+        }
+        if (published) {
+          latestStateRef.current = published.state;
+          rawDispatch(published.action);
+          // Past `rawDispatch` the append is published, so a failure here is
+          // contained: reported, and never re-entered through the rebuild. The
+          // rollback is dropped with the fall-through — `rollback()` on a settled
+          // transaction is a no-op anyway, and the publication has named the very
+          // assets it would have released. Retirement that does not run is
+          // deferred to the next transition that consults the scope, which is
+          // safe because the same walk would have closed nothing the store still
+          // reaches.
+          try {
+            published.transaction.commit();
+            if (published.converted.document) {
+              registry.reconcileDocumentAssets(
+                currentState.documentId,
+                collectDurableAssetIds(published.converted.document)
+              );
+            }
+            // Retirement runs after the transition is published, and only against
+            // the record that transition actually produced.
+            retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, published.state);
+          } catch (error) {
+            console.error('Unable to finalize a published durable append; the append itself is committed', error);
+          }
+          return;
         }
       }
 
-      let converted: DurableProjection =
-        planned.outcome === 'published' && !boundaryHasError && !publicationFailed
-          ? appendBoundaryDiagnostics(
-              { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
-              boundaryDiagnostics
-            )
-          : appendBoundaryDiagnostics(
-              buildDurableDocument(
-                nextFrame
-                  ? {
-                      ...currentState,
-                      documentFrame: cloneDocumentFrame(nextFrame),
-                      totalSize: documentFrameSize(nextFrame),
-                    }
-                  : currentState,
-                [...timeline.entries],
-                timeline.cursor,
-                timeline.branchRevision
-              ),
-              boundaryDiagnostics
-            );
+      // Reached only when the fast path above did NOT publish: the plan was not
+      // publishable, or its publication could not be prepared. Nothing has moved
+      // in either case, so the whole-timeline conversion is both the correct and
+      // the only remaining route to an append — which is what makes this the sole
+      // fallback, rather than one of several.
+      let converted: DurableProjection = appendBoundaryDiagnostics(
+        buildDurableDocument(
+          nextFrame
+            ? {
+                ...currentState,
+                documentFrame: cloneDocumentFrame(nextFrame),
+                totalSize: documentFrameSize(nextFrame),
+              }
+            : currentState,
+          [...timeline.entries],
+          timeline.cursor,
+          timeline.branchRevision
+        ),
+        boundaryDiagnostics
+      );
       if (planned.outcome === 'mismatch') {
         converted = {
           ...converted,

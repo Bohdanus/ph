@@ -205,6 +205,55 @@ describe('StoreContext durable diagnostic contract', () => {
   });
 });
 
+describe('StoreContext action coverage', () => {
+  it('keeps the public action that writes no store field a no-op with a named arm', () => {
+    const captured: { store: ReturnType<typeof useStore>[0] | null } = { store: null };
+    const Capture = () => {
+      const [store, dispatch] = useStore();
+      useEffect(() => {
+        captured.store = store;
+      }, [store]);
+      return (
+        <div>
+          <div data-testid="coverage-state">
+            {`${store.hasImage}:${store.hasUnsavedChanges}:${Object.keys(store.layers).length}:${store.durableStatus}`}
+          </div>
+          <button onClick={() => dispatch({ type: 'SET_ORIGINAL_IMAGE', payload: true })}>Set original image</button>
+          <button onClick={() => dispatch({ type: 'SET_HAS_IMAGE', payload: true })}>Set has image</button>
+        </div>
+      );
+    };
+
+    render(
+      <StoreProvider>
+        <Capture />
+      </StoreProvider>
+    );
+
+    const before = screen.getByTestId('coverage-state').textContent;
+    const beforeStore = captured.store;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set original image' }));
+
+    // `SET_ORIGINAL_IMAGE` is in the public union with no production writer and no
+    // `StoreData` field to write, so its behaviour is the no-op the reducer's
+    // untyped `default` used to give it. It now has a named arm saying so, which
+    // is what lets the switch carry a `never` guard instead of swallowing every
+    // future action type the same way.
+    expect(screen.getByTestId('coverage-state').textContent).toBe(before);
+    // Identity, not just equality: the arm returns the SAME record rather than a
+    // copy, so the dispatch is not even a state change React has to reconcile.
+    expect(captured.store).toBe(beforeStore);
+
+    // And the reducer is still reducing. A swallowed dispatch, a case label nested
+    // inside another arm, or a `default` that fell into the next case would all
+    // leave this one landing while `SET_ORIGINAL_IMAGE` still appeared to no-op.
+    fireEvent.click(screen.getByRole('button', { name: 'Set has image' }));
+
+    expect(screen.getByTestId('coverage-state').textContent).toBe('true:false:0:unavailable');
+  });
+});
+
 describe('StoreContext initial state contract', () => {
   const InitialProbe = () => {
     const [store] = useStore();
