@@ -511,8 +511,8 @@ describe('TIFF raster byte budget', () => {
       ]);
 
       await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        'TIFF image declares more compressed data than the budget allows (64×64). ' +
-          'It would copy more than 1600 MB, over the TIFF budget.'
+        'TIFF image declares more segment data than the budget allows (64×64). ' +
+          'It would read more than 1600 MB, over the TIFF budget.'
       );
       expect(decodeImage).not.toHaveBeenCalled();
     });
@@ -555,7 +555,7 @@ describe('TIFF raster byte budget', () => {
       ]);
 
       await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /declares more compressed data than the budget allows/
+        /declares more segment data than the budget allows/
       );
       expect(decodeImage).not.toHaveBeenCalled();
     });
@@ -568,13 +568,14 @@ describe('TIFF raster byte budget', () => {
       decode.mockReturnValue([{ ...tinyPage, t273: [0, 1, 2, 3], t279: [-1, 4000000000, 4000000000, 4000000000] }]);
 
       await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /declares more compressed data than the budget allows/
+        /declares more segment data than the budget allows/
       );
       expect(decodeImage).not.toHaveBeenCalled();
     });
 
     it('decodes an uncompressed page whose declared counts are its own raster', async () => {
-      // The control: `bipl` is `ceil(64 × 32 / 8) × 8` = 256, so one 64-row segment is 16 KB, and
+      // The control: `bipl` is `ceil(64 × 32 / 8) × 8` = 2048, which UTIF divides by 8 to give
+      // the 256-byte row, so one 64-row segment is 16 KB, and
       // the sum of the declared counts is that. Refusing this would be refusing every
       // uncompressed TIFF the app can legitimately be handed.
       installImageHarness();
@@ -590,29 +591,53 @@ describe('TIFF raster byte budget', () => {
       expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
     });
 
-    it('does not price declared counts for a compressed page, where they are not a loop bound', async () => {
-      // For any `cmpr` other than 1 the copy loop needs `len == tgt.length`, so it is bounded by a
-      // buffer this module already prices, and the codec branches are driven by the compressed
-      // stream — which cannot exceed the file. Pricing declared counts there would refuse files
-      // on a number UTIF never uses as a bound.
-      installImageHarness();
-      const page = {
-        width: 64,
-        height: 64,
-        ...tinyPage,
-        t259: [5],
-        t273: [0, 4000000000, 8000000000],
-        t279: [4000000000, 4000000000, 4000000000],
-      };
-      decode.mockReturnValue([page]);
-      toRGBA8.mockReturnValue(new Uint8Array(4));
+    it('prices a compressed page too, because PackBits and G4 loop on the declared count too', async () => {
+      // The first version of this guard returned early unless `cmpr === 1`, on the claim that the
+      // codec branches are driven by the compressed stream. They are not: PackBits and Thunder run
+      // `while (off < off + len)` and G3/G4 run `while ((boff >>> 3) < off + slen)`, so the
+      // declared count bounds those as well. G4 is super-linear on all-zero input because `wrd`
+      // never resets, which is how a 106-byte file reached a hundred-second decode.
+      decode.mockReturnValue([
+        {
+          ...tinyPage,
+          t259: [32773],
+          t273: [0, 4000000000, 8000000000],
+          t279: [4000000000, 4000000000, 4000000000],
+        },
+      ]);
 
-      const pending = loadTiffFile(new Blob(['tiff']));
-      await vi.waitFor(() => expect(imageStub).not.toBeNull());
-      imageStub!.onload!.call(imageStub!, new Event('load'));
+      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+        /declares more segment data than the budget allows/
+      );
+      expect(decodeImage).not.toHaveBeenCalled();
+    });
 
-      await expect(pending).resolves.toBe(imageStub);
-      expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
+    it('refuses a declared count that is not finite, because the loop it drives never stops', async () => {
+      // `for (let j = 0; j < len; j++)` does not terminate for `Infinity`, and one is reachable in
+      // six bytes: UTIF's IFD reader trusts a tag's declared type without checking it against the
+      // tag, and its RATIONAL branch is `readUint(numerator) / readUint(denominator)` with no zero
+      // check — so a StripByteCounts declared RATIONAL with a zero denominator arrives as
+      // `Infinity`. Counting it as zero, which an earlier version of this guard did, waved the file
+      // straight through.
+      decode.mockReturnValue([{ ...tinyPage, t273: [0, 8], t279: [Number.POSITIVE_INFINITY, 0] }]);
+
+      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+        /declares more segment data than the budget allows/
+      );
+      expect(decodeImage).not.toHaveBeenCalled();
+    });
+
+    it('refuses a single-segment page whose count contradicts its geometry', async () => {
+      // UTIF replaces the declared counts with `height * (bipl >>> 3)` when there is exactly one
+      // offset, so this is the one shape where the declared count is never used. Mirroring that
+      // substitution would excuse the file; not mirroring it is the decision, so it is pinned here
+      // rather than left as a comment.
+      decode.mockReturnValue([{ ...tinyPage, t273: [0], t279: [4000000000] }]);
+
+      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+        /declares more segment data than the budget allows/
+      );
+      expect(decodeImage).not.toHaveBeenCalled();
     });
   });
 

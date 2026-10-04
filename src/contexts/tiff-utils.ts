@@ -247,52 +247,49 @@ function predictTileWorkBytes(page: IfdTags, width: number, height: number): num
 }
 
 /**
- * The bytes an **uncompressed** page makes UTIF copy, which geometry cannot price at all.
+ * The bytes a page makes UTIF read out of the file **because the file said so**, which is the one
+ * cost no other term here can see: every other budget in this module is derived from `t256`/`t257`
+ * and the tile tags, so a page may declare any segment size over geometry that is trivially small.
  *
  * `_decompress` opens with `if (cmpr == 1 || (len == tgt.length && cmpr != 32767)) for (let j = 0;
- * j < len; j++)`, so an uncompressed segment copies exactly the byte count the file declares for
- * it — and `cmpr` is `t259 ? t259[0] : 1`, so **omitting the compression tag is enough to get
- * here**. Those counts are `t279`, or `t325` when `t279` is absent, indexed by segment.
- *
- * Every other term in this file is derived from `t256`/`t257` and the tile tags, so a page can
- * declare a segment count of any size over geometry that is trivially small. A ~4 KB IFD — a
- * thousand `t273` offsets and a thousand `t279` counts — is 4 × 10¹² iterations of the copy loop
- * over a 64 × 64 page, and the pixel, allocation and tile-work budgets all admit it.
- *
- * Only `cmpr === 1` is priced. For any other compression the first branch needs
- * `len == tgt.length`, so the loop is bounded by a target buffer this module already prices, and
- * the codec branches are driven by the compressed stream rather than by a declared count.
+ * j < len; j++)`, and `len` is `bcnt[i]` — `t279`, or `t325` when `t279` is absent, indexed by
+ * segment. Four of the codec branches are bounded by that same declared count rather than by the
+ * compressed stream: PackBits and Thunder loop `while (off < off + len)`, G3 and G4 loop
+ * `while ((boff >>> 3) < off + slen)`. So the counts are priced for every compression, not only the
+ * uncompressed one — three 534 MB segments is 1.602 GB of work over a 64 × 64 page, and a thousand
+ * offsets carrying a thousand four-billion counts is 4 × 10¹² iterations from a ~8 KB IFD.
  *
  * UTIF replaces the declared counts with a geometry-derived one when there is exactly one offset
- * (`cmpr == 1 && soff.length == 1`); that substitution is deliberately not mirrored, so a
- * single-segment file with an inconsistent count is refused rather than excused.
+ * (`cmpr == 1 && soff.length == 1`). That substitution is deliberately not mirrored, so a
+ * single-segment file whose count disagrees with its geometry is refused rather than excused.
  */
 function predictDeclaredSegmentBytes(page: IfdTags): number | null {
-  if ((tagValue(page, 't259') ?? 1) !== 1) {
-    return null;
-  }
   const counts = Array.isArray(page.t279) ? page.t279 : Array.isArray(page.t325) ? page.t325 : undefined;
   if (!counts) {
     return null;
   }
-  // A count that is negative, `NaN` or not a number makes UTIF's `for (j = 0; j < len; j++)` not
-  // run at all, so it contributes nothing to the work and counting it as zero is exact. It must
-  // not, though, abandon the total: an early return here would let a file hide every count that
-  // matters behind one bad one — `[-1, 4e9, 4e9, 4e9]` is twelve billion iterations that this
-  // function would have declined to price.
-  return counts.reduce(
-    (total, value) => total + (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0),
-    0
-  );
+  return counts.reduce((total, value) => {
+    // `for (let j = 0; j < len; j++)` does not stop for a non-finite `len`, and one is reachable
+    // in six bytes: UTIF's IFD reader honours a tag's declared type without checking it against the
+    // tag, and its RATIONAL branch is `readUint(numerator) / readUint(denominator)` with no zero
+    // check. A StripByteCounts declared RATIONAL with a zero denominator arrives here as `Infinity`
+    // and never returns. There is no count too large to refuse.
+    if (value === Number.POSITIVE_INFINITY) {
+      return Number.POSITIVE_INFINITY;
+    }
+    // A negative or `NaN` count makes the loop not run at all, so it contributes nothing and
+    // counting it as zero is exact. It must not, though, abandon the total: `[-1, 4e9, 4e9, 4e9]`
+    // is twelve billion iterations this function would otherwise decline to price at all.
+    return total + (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
+  }, 0);
 }
 
 /**
  * Everything the budget can know before the decode: the page's own pixel count, the sample
  * counts, the tile geometry, the size of the buffer `UTIF.decodeImage` is about to allocate from
- * them, the amount a tiled page would have to move through that buffer, and — for an uncompressed
- * page — the byte counts the file itself declares per segment. The tile geometry is checked before
- * either is computed, so the byte figure is always a real allocation and never an unbounded loop
- * count.
+ * them, the amount a tiled page would have to move through that buffer, and the byte counts the
+ * file itself declares per segment. The tile geometry is checked before either is computed, so the
+ * byte figure is always a real allocation and never an unbounded loop count.
  */
 function assertIfdWithinBudget(page: IfdTags, width: number, height: number) {
   assertPixelBudget(width, height, 'open');
@@ -309,8 +306,8 @@ function assertIfdWithinBudget(page: IfdTags, width: number, height: number) {
   const segmentBytes = predictDeclaredSegmentBytes(page);
   if (segmentBytes !== null && segmentBytes > MAX_TIFF_BYTES) {
     throw new Error(
-      `TIFF image declares more compressed data than the budget allows (${width}×${height}). ` +
-        `It would copy more than ${MAX_TIFF_BYTES / 1_000_000} MB, over the TIFF budget.`
+      `TIFF image declares more segment data than the budget allows (${width}×${height}). ` +
+        `It would read more than ${MAX_TIFF_BYTES / 1_000_000} MB, over the TIFF budget.`
     );
   }
 }
