@@ -458,6 +458,14 @@ describe('useSelectionHistory committed selection state', () => {
  *
  * The mutation below is therefore simulated rather than observed: it stands for
  * any future in-place write, and it is what an alias would fail.
+ *
+ * TWO copies stand between the store and the record, and these cases cannot tell
+ * them apart: `selectionSnapshot` above, and `cloneArgs` in `createHistoryItem`.
+ * Removing either one alone leaves every case here green — measured, not
+ * assumed. So this block pins that the recorded baseline is a VALUE; it does not
+ * pin WHICH of the two makes it one. `selection-baseline.test.ts` is what pins
+ * `selectionSnapshot`, with `not.toBe` on `points`, `pos` and `metadata` and
+ * `Object.isFrozen` on the snapshot and its array.
  */
 describe('useSelectionHistory recorded baseline is a value, not a live reference', () => {
   it('survives an in-place write to the store array after a clear', () => {
