@@ -325,10 +325,18 @@ describe('MobileShell', () => {
       const panel = document.getElementById('mobile-layers-panel')!;
       expect(screen.getByRole('dialog', { name: 'Layers & History Drawer' })).toBeInTheDocument();
       expect(document.activeElement).toBe(panel);
+      // The trigger's `aria-controls` must RESOLVE here, where the drawer is actually mounted —
+      // the header's own suite renders no drawer, so it can only check which side of the open state
+      // the attribute sits on. A reference that only ever appears while closed is the defect.
+      expect(trigger.getAttribute('aria-controls')).toBe('mobile-layers-panel');
 
       await user.keyboard('{Escape}');
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(document.activeElement).toBe(trigger);
+      // And gone with it: the honest pair while closed is `aria-expanded="false"` and no
+      // `aria-controls` at all, not a name with no target.
+      expect(trigger).toHaveAttribute('aria-expanded', 'false');
+      expect(trigger).not.toHaveAttribute('aria-controls');
     });
 
     it('translates the toggle prop into a close, so a backdrop click does not reopen the drawer', async () => {
