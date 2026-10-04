@@ -113,11 +113,12 @@ export const toolbarMap = [
     // declared shortcut reaches the user, so a declared shortcut the app does not implement is
     // a falsehood, exactly like a tooltip that promises an Esc key the tool has no handler for.
     //
-    // Photoshop binds the Draw tool to `Shift+W`, and that is not free here: `w` and `shift+w`
-    // both go to the Object Selection tool. Binding a key for fidelity is a product decision
-    // about which tool wins the chord, and it is not one this comment should make silently.
+    // There is no key to bind, because Adobe publishes none: Photoshop has no Draw tool, so the
+    // previous version of this comment — which claimed Adobe binds it to `Shift+W` — was quoting
+    // a binding that does not exist. `w` and `shift+w` both go to the Object Selection tool.
     // `toolbar-mapping.test.ts` pins that no two entries may claim the same shortcut, so the
-    // fix cannot regress into a second collision.
+    // fix cannot regress into a second collision, and `docs/OVERRIDES.md` OVR-2 is what keeps the
+    // tile.
     [{ label: 'Draw Tool', name: 'draw' }],
   ],
   [

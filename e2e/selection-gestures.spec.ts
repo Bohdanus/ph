@@ -10,6 +10,7 @@ import {
   type SelectionBounds,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
+import { committedAntsOutline, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
   openToolFlyoutViaRightClick,
@@ -17,7 +18,6 @@ import {
   verifyPrimaryTool,
 } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
-import { committedAntsOutline, waitForCommittedAnts } from './helpers/selection-border';
 
 /**
  * Seven pixel-level tests for the five selection tools.

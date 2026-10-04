@@ -24,6 +24,18 @@ const LAYER_OVERLAP_Y = 260;
  * size and the clip cannot be narrowed past the window that is averaged inside it.
  */
 const OVERLAP_SAMPLE_RADIUS = 5;
+/** The tooltip every History row carries, which is the only handle the rows have. */
+const HISTORY_ROW_TITLE = 'Click to go back to this state';
+/**
+ * The product's own spelling of a reorder entry: `REORDER_ACTION = 'reorder layers'`
+ * (`src/util/constants.ts`), LOWER CASE. `HistoryTab` renders it through a CSS `capitalize`
+ * class, so it only ever APPEARS capitalised - which is why a locator may not be written
+ * against the rendered form. Matched case-insensitively for that reason, and deliberately
+ * not written as "Reorder Layers": that string is nowhere in `src/`, so it would resolve
+ * only through `getByText`'s case-insensitive substring match, and a restyle that dropped
+ * the `capitalize` class would turn this into a locator error rather than a product signal.
+ */
+const REORDER_ENTRY = /reorder layers/i;
 
 test.describe('Layers', () => {
   test.beforeEach(async ({ page }) => {
@@ -101,7 +113,16 @@ test.describe('Layers', () => {
     expect(initialColor!.green).toBeGreaterThan(initialColor!.blue * 1.5);
 
     await moveToTop('draw 2', 'draw 4');
-    await expect(page.getByText('Reorder Layers')).toBeVisible();
+    // ONE DRAG IS ONE HISTORY ENTRY, and the COUNT is that claim - not the visibility of a
+    // single row. A drag that wrote its entry twice, or wrote one per pointermove, still
+    // leaves a reorder row on screen, so `toBeVisible()` on one of them passes and the
+    // timeline is silently longer than the gesture that made it. The row is matched by the
+    // product's own lowercase string (see `REORDER_ENTRY`), and through the tooltip every
+    // History row shares rather than through the rendered text.
+    await expect(
+      page.getByTitle(HISTORY_ROW_TITLE).filter({ hasText: REORDER_ENTRY }),
+      'one drag is one history entry'
+    ).toHaveCount(1);
     const blackTopScreenshot = await capture('layers-black-top');
     const blackTopColor = await sampleOverlap(blackTopScreenshot);
     expect(blackTopColor, 'Expected black at overlap point').toBeTruthy();

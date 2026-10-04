@@ -34,6 +34,59 @@ export const TRACKING_MAX = 1000;
 export const AUTO_LEADING = 1.2;
 
 /**
+ * The leading range the options bar offers, and the bounds a corrupt record is folded into.
+ *
+ * **A RECONSTRUCTION, NOT AN ADOBE FIGURE.** Adobe's leading is an absolute baseline-to-baseline
+ * distance or *Auto*, not a multiplier, so there is no Adobe range to copy — the requirement doc
+ * (`TEXT_TOOL_REQUIREMENTS.md` §5, §16 item 9) carries the divergence and the case for making it
+ * a length. The numbers are the app's own, and they live here rather than inline in the bar
+ * because `resolveTextStyle` needs the same two numbers to fold a corrupt record into, and two
+ * copies of a range is one copy too many.
+ *
+ * The floor is not arbitrary in the way it looks: below roughly `0.85` the line step falls under
+ * the font's own ascent and the FIRST baseline lands below the box the layer is sized from, so the
+ * reachable part of the slider used to crop committed glyphs. The value is left where the bar put
+ * it, because `renderText` now sizes the box to contain the ink whatever the ratio, and moving the
+ * slider's floor is a product decision rather than part of that fix.
+ */
+export const MIN_LINE_HEIGHT = 0.5;
+export const MAX_LINE_HEIGHT = 2.25;
+
+/**
+ * The text a new type layer is born with, and the text that is **selected** when it appears.
+ *
+ * **A RECONSTRUCTION, and Adobe does not document it for the desktop product.** Adobe documents the
+ * placeholder for Photoshop *Elements* — "After clicking with the T tool, placeholder text (Lorem
+ * Ipsum) will appear. This will disappear as soon as you start typing your text. Placeholder text
+ * can be disabled in Preferences > Type"
+ * (https://helpx.adobe.com/photoshop-elements/desktop/adding-shapes-and-text/add-text.html) — and
+ * documents the same string as a menu command you paste into an existing text layer, `Type > Paste
+ * Lorem Ipsum` (https://helpx.adobe.com/photoshop/using/creating-type.html). What **no** Adobe page
+ * states is the part this tool depends on: that the placeholder arrives PRE-SELECTED, so typing
+ * replaces it rather than appending to it. `TEXT_TOOL_REQUIREMENTS.md` §2 records the silence and
+ * §2 also carries the requirement.
+ *
+ * It is seeded PRE-SELECTED here because that is the only behaviour under which "click, then type"
+ * feels like Photoshop: with the placeholder merely placed and the caret at index 0, the user's
+ * first keystroke would produce `aLorem ipsum`, which is not what Adobe does on any account.
+ *
+ * The gate Adobe documents — `Fill new type layers with placeholder text` under the Type
+ * preferences — has no home in this app: there is no preferences store, and inventing one for a
+ * single boolean is a larger change than the feature. It is recorded as an outstanding requirement
+ * rather than silently shipped as always-on.
+ */
+export const PLACEHOLDER_TEXT = 'Lorem ipsum';
+
+/**
+ * The size a record with no usable `fontSize` resolves to, and the seed the bar opens at.
+ *
+ * Sixty-four is what `defaultSettings` seeds and what every screenshot of the tool shows, so a
+ * corrupt or absent size lands where the tool starts rather than at Adobe's `0.01` — a technically
+ * valid value that renders nothing a user can see.
+ */
+export const DEFAULT_FONT_SIZE = 64;
+
+/**
  * Where the underline sits below the baseline, as a fraction of the type size.
  *
  * **A RECONSTRUCTION, NOT AN ADOBE FIGURE.** Adobe documents that the underline is drawn in the
@@ -100,6 +153,8 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
+  /** True only for a newly placed placeholder that has not received user input yet. */
+  placeholderUntouched?: boolean;
 
   /**
    * Adobe's character attributes that arrived after the first version of this tool. Every one is
@@ -149,6 +204,45 @@ export type ResolvedTextStyle = {
   underline: boolean;
 };
 
+/**
+ * A number from a record that may be corrupt, folded into a range this renderer can draw.
+ *
+ * The seam exists for the same reason {@link resolveTextStyle} does, and it closes the half of the
+ * question that function's own contract left open: `??` answers what a MISSING field means, and
+ * said nothing about a field carrying a value no geometry can use. A hand-edited or
+ * forward-version settings record is an input this file explicitly promises to survive, and three
+ * of the ways it failed were silent rather than loud:
+ *
+ * - `fontSize: NaN` built the shorthand `'NaNpx Arial'`, which the CSS grammar REJECTS — and Chrome
+ *   does not throw on a rejected `ctx.font`, it keeps the previous one. So the drawing context went
+ *   on using an older face while `fontSize` itself still reached `calculateNewRect`, and the two
+ *   halves disagreed about the size of the type.
+ * - `lineHeight: NaN` made every baseline `NaN`, and `fillText` at a `NaN` y draws NOTHING at all:
+ *   an empty layer, with no error anywhere.
+ * - `tracking: NaN` produced `'NaNpx'`, which `ctx.letterSpacing` also rejects silently, and sent
+ *   `inkWidth` down its per-cluster fallback with a `NaN` cursor.
+ *
+ * `Number.isFinite` rather than a truthiness or `isNaN` test, because `Infinity` is just as
+ * undrawable as `NaN` and `??` admits neither.
+ */
+function finiteOr(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * A number from a record that may be corrupt, folded into a range.
+ *
+ * Distinct from {@link finiteOr} because the size and the leading both have a legal RANGE as well
+ * as a legal type, and a record carrying `fontSize: 1e9` or `lineHeight: 0` is as unusable as one
+ * carrying `NaN`: the first allocates a layer of astronomical size, the second overlaps every pair
+ * of lines and pushes the first baseline below the box the layer is sized from. `FONT_SIZE_MIN` and
+ * `FONT_SIZE_MAX` are Adobe's own `CharacterStyle.size` bounds, so clamping to them is the same
+ * rule the options bar applies on entry rather than a second policy.
+ */
+function finiteInRangeOr(value: number | undefined, min: number, max: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value as number)) : fallback;
+}
+
 export function resolveTextStyle(args: TextToolArgs): ResolvedTextStyle {
   return {
     align: args.align,
@@ -156,12 +250,24 @@ export function resolveTextStyle(args: TextToolArgs): ResolvedTextStyle {
     bold: args.bold ?? false,
     color: args.color,
     fontFamily: args.fontFamily,
-    fontSize: args.fontSize,
+    fontSize: finiteInRangeOr(args.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX, DEFAULT_FONT_SIZE),
     italic: args.italic ?? false,
-    lineHeight: args.lineHeight ?? AUTO_LEADING,
+    // Finiteness only, and deliberately NOT {@link MIN_LINE_HEIGHT}..{@link MAX_LINE_HEIGHT}:
+    // those two are the BAR's range and the bar owns them, while this seam exists to make the value
+    // drawable. A leading of 0 is finite and drawable — it stacks every line on the first baseline,
+    // which is what `renderText` does with it and what the `it('stacks lines on top of each other
+    // for a zero line height')` case pins as the arithmetic rather than a special case. Only a
+    // non-finite leading is undrawable, and it is undrawable SILENTLY: every baseline becomes
+    // `NaN` and `fillText` draws nothing at all.
+    lineHeight: finiteOr(args.lineHeight, AUTO_LEADING),
     smallCaps: args.smallCaps ?? false,
     strikethrough: args.strikethrough ?? false,
-    tracking: args.tracking ?? 0,
+    // Range-folded too, and the reason is concrete: `tracking: 1e9` produced a `trackingPx` of
+    // twenty million, which `inkWidth` then subtracts from every measured line — `Math.max(0, width -
+    // spacing)` clamps each line to ZERO, every fit test passes, nothing ever wraps, and
+    // `calculateNewRect`'s point arm sized the box to `0 + 2 * TEXT_PADDING` for the entire string.
+    // `TRACKING_MIN`/`TRACKING_MAX` are the bar's own limits and were sitting fifteen lines above.
+    tracking: finiteInRangeOr(args.tracking, TRACKING_MIN, TRACKING_MAX, 0),
     underline: args.underline ?? false,
   };
 }
@@ -285,6 +391,40 @@ function baselineOffset(ctx: Ctx2D, fontSize: number): number {
   return finiteMetric(ctx.measureText('').fontBoundingBoxAscent, ASCENT_FALLBACK_EM, fontSize);
 }
 
+/**
+ * Fallback descent, as a fraction of the type size, paired with {@link ASCENT_FALLBACK_EM}.
+ *
+ * Real descents across the shipped families run a little over a fifth of the em, so 0.2em is the
+ * rounded middle of that band rather than a claim about any one font. It exists so the ink-height
+ * calculation below has a number even where `measureText` reports no `fontBoundingBoxDescent`.
+ */
+const DESCENT_FALLBACK_EM = 0.2;
+
+/**
+ * How much vertical room ONE line of this type occupies as INK rather than as line spacing.
+ *
+ * The ascent plus the descent, because a glyph's ink reaches above the baseline as well as below
+ * it, and a box sized from the line step alone put the first baseline below its own bottom edge
+ * whenever the leading fell under the ascent. Measured from the live context so it follows the face
+ * and the size, and folded through {@link finiteMetric} in both halves so a context that reports
+ * nothing — every canvas mock in this repo's tests — still yields a finite, drawable number rather
+ * than a `NaN` baseline, which draws NOTHING rather than something visibly wrong.
+ */
+function inkHeight(ctx: Ctx2D | null | undefined, style: ResolvedTextStyle): number {
+  // Zero rather than a fallback guess when there is no context to ask. `calculateNewRect` is handed
+  // a ref it may not have — `Text.tsx` passes the tool overlay, which is null on the very first
+  // render and in every test that does not mount a canvas — and the ink term exists to stop the
+  // FIRST line being cropped, which needs a measured ascent to mean anything. Without a measurer the
+  // honest answer is the line step alone, which is what this box sized from before the ink term was
+  // added and is never smaller than a single line's worth of spacing.
+  if (!ctx) return 0;
+  const metrics = ctx.measureText('');
+  return (
+    finiteMetric(metrics.fontBoundingBoxAscent, ASCENT_FALLBACK_EM, style.fontSize) +
+    finiteMetric(metrics.fontBoundingBoxDescent, DESCENT_FALLBACK_EM, style.fontSize)
+  );
+}
+
 /** Half the rendered x-height, which is where a strikethrough belongs. */
 function xHeightHalf(ctx: Ctx2D, fontSize: number): number {
   const metrics = ctx.measureText('x');
@@ -376,6 +516,48 @@ export function textWrapWidth(rect: RectXYSorted): number {
 }
 
 /**
+ * Where a line of type MAY be broken, as a pattern rather than a character.
+ *
+ * A pattern rather than `' '` because Photoshop breaks paragraph type at a whitespace RUN, not at
+ * U+0020 specifically: a paragraph of tab-separated columns is one U+0020-free token under the old
+ * rule, so it could never be broken, was emitted alone, overflowed its box by hundreds of pixels,
+ * and reported no overflow at all. Every `\s` character EXCEPT NBSP is an opportunity, which is
+ * the whole of the NBSP rule: `\s` matches U+00A0, so it is excluded by character class rather than
+ * stripped afterwards, and `1\u00A0kg` stays one token because the intent is inseparable. The
+ * exclusion is written as the ESCAPE rather than as a pasted NBSP, which is indistinguishable from
+ * the ordinary space in a diff, in a review and to `no-irregular-whitespace`.
+ */
+const BREAK_OPPORTUNITY = /[^\S\u00A0]+/;
+
+/**
+ * What a break opportunity becomes when the line is put back together.
+ *
+ * A single U+0020. The pattern above matches a RUN of whitespace, so a run that was one tab or
+ * three spaces rejoins as one space — the same collapse CSS performs at the end of a line, applied
+ * here to the interior where a renderer draws a space of its own choosing anyway.
+ */
+const BREAK_OPPORTUNITY_REPLACEMENT = ' ';
+
+/**
+ * Strips the collapsible space from the end of a candidate line, and ONLY the collapsible space.
+ *
+ * `String.prototype.trimEnd` is the wrong tool and was measurably so: U+00A0 is in the ES
+ * `WhiteSpace` production, so `trimEnd()` deleted a trailing NBSP as well, and the fit test then
+ * ran against a line one space narrower than the one `fillLine` drew — an overflow the layout could
+ * not see and the box could not grow to cover.
+ */
+function trimTrailingCollapsibleSpace(candidate: string): string {
+  return candidate.replace(/[ \t]+$/, '');
+}
+
+/** One hard-broken line's greedy wrap, and whether any token in it outgrew the box. */
+type WrapLineResult = {
+  lines: string[];
+  /** True when a single token is wider than `wrapWidth` and so had to overflow unbroken. */
+  widthOverflowed: boolean;
+};
+
+/**
  * Splits one hard-broken line into the greedy set of lines that fit `wrapWidth`.
  *
  * **Every decision in here is forced by something Adobe says or something the platform measures.**
@@ -394,33 +576,40 @@ export function textWrapWidth(rect: RectXYSorted): number {
  *   end of a line, and canvas does not: measured, `measureText('ab ')` is 5.557px wider than
  *   `measureText('ab')`. Without the trim, a line that ends in a space breaks one word early.
  * - **A non-breaking space is not an opportunity.** NBSP measures identically to a space, so
- *   metrics cannot tell the two apart and the distinction has to be a code-point check.
+ *   metrics cannot tell the two apart and the distinction has to be a code-point check — which is
+ *   what {@link BREAK_OPPORTUNITY} and {@link trimTrailingCollapsibleSpace} are. `trimEnd()` is
+ *   emphatically NOT the trim: NBSP is in the ES `WhiteSpace` production, so `trimEnd()` deleted a
+ *   non-breaking space too, measuring the fit against a line one space narrower than the one
+ *   {@link fillLine} then drew.
  * - **Greedy first fit, not optimal.** Nothing in Adobe's documentation describes the composer;
  *   Photoshop's Every-line and Single-line composers are paragraph-level and are not exposed in
  *   Adobe's API at all. Measured cost of the naive breaker on this path is ~2µs per paragraph.
  */
-function wrapLine(ctx: Ctx2D, line: string, wrapWidth: number, spacing: number): string[] {
-  const fits = (candidate: string) => inkWidth(ctx, candidate.trimEnd(), spacing) <= wrapWidth;
-  if (fits(line)) return [line];
+function wrapLine(ctx: Ctx2D, line: string, wrapWidth: number, spacing: number): WrapLineResult {
+  const fits = (candidate: string) => inkWidth(ctx, trimTrailingCollapsibleSpace(candidate), spacing) <= wrapWidth;
+  if (fits(line)) return { lines: [line], widthOverflowed: false };
 
   // A single token that cannot fit is not broken. It is emitted alone and overflows, and the
-  // caller reports the overflow — this is Adobe's off-by-default hyphenation, not a failure.
-  const tokens = line.split(' ');
+  // caller is told so — this is Adobe's off-by-default hyphenation, not a failure, and the
+  // overflow flag is what puts Adobe's overflow icon on screen for it.
+  const tokens = line.split(BREAK_OPPORTUNITY);
   const wrapped: string[] = [];
   let current = '';
+  let widthOverflowed = false;
   for (const token of tokens) {
-    const candidate = current === '' ? token : `${current} ${token}`;
+    const candidate = current === '' ? token : `${current}${BREAK_OPPORTUNITY_REPLACEMENT}${token}`;
     if (current !== '' && !fits(candidate)) {
       wrapped.push(current);
       current = token;
     } else {
       current = candidate;
     }
-    // A no-break space inside `token` keeps the token whole, and `split(' ')` already does: the
-    // token is never subdivided, so no further check is needed for the token itself.
+    // The token is never subdivided, so a NBSP inside it keeps it whole without a further check:
+    // `BREAK_OPPORTUNITY` does not match NBSP.
+    if (!fits(token)) widthOverflowed = true;
   }
   wrapped.push(current);
-  return wrapped;
+  return { lines: wrapped, widthOverflowed };
 }
 
 /**
@@ -451,11 +640,65 @@ export function layoutText(
   // and the measurement is the expensive half. Point type therefore skips it entirely and the
   // caller's single measurement per line stands.
   const hardBroken = text.split('\n');
-  const lines = Number.isFinite(wrapWidth)
-    ? hardBroken.flatMap((line) => wrapLine(ctx, line, wrapWidth, spacing))
-    : hardBroken;
-  const requiredHeight = lines.length * style.fontSize * style.lineHeight + TEXT_PADDING * 2;
-  return { lines, overflow: boxHeight !== undefined && requiredHeight > boxHeight };
+  // Styled here rather than left to the caller, because this is the layout AUTHORITY and it
+  // measures: `wrapLine` calls `measureText`, and a context still wearing the workspace canvas's
+  // `10px sans-serif` wraps a 1042px line at 163px. `withTextStyle` brackets, so a caller that has
+  // already styled — `renderText` draws in the draft's face and `getTextWidth` measures in it — gets
+  // its own styling back rather than this function's.
+  // `wrapWidth > 0` and not merely finite. A box narrower than twice `TEXT_PADDING` makes
+  // `textWrapWidth` NEGATIVE, and `fits('')` is then false — so an empty hard-break line reported a
+  // width overflow it could not possibly have, and Adobe's icon appeared for a body with no ink in
+  // it. A box with no usable interior cannot overflow horizontally. `calculateNewRect` floors a
+  // paragraph box at that padding anyway, so this is a guard on the public function rather than on
+  // the production path.
+  const wrapped =
+    Number.isFinite(wrapWidth) && wrapWidth > 0
+      ? withTextStyle(ctx, style, () => hardBroken.flatMap((line) => wrapLine(ctx, line, wrapWidth, spacing)))
+      : null;
+  const lines = wrapped ? wrapped.flatMap((result) => result.lines) : hardBroken;
+
+  // Adobe's condition is "more text than can fit within a paragraph boundary", which is about the
+  // BOUNDARY and not about the number of lines: a single token too wide for the box overflows it
+  // horizontally while `lines.length` stays at one and the height fits perfectly. So the height
+  // comparison alone could never raise the icon for the very case this file documents as expected —
+  // an unbroken word wider than its box — and the icon is the only signal the user gets.
+  //
+  // The width flag needs no measurement, so it is settled first and unconditionally. The height
+  // probe is a `measureText('')` and is taken ONLY when a caller asked about a box at all: with no
+  // `boxHeight` there is nothing to overflow, and `getTextWidth` — the hot path, once per keystroke
+  // per line — must not pay a per-font metric read it will not look at.
+  const widthOverflowed = wrapped ? wrapped.some((result) => result.widthOverflowed) : false;
+  const overflow =
+    widthOverflowed || (boxHeight !== undefined && requiredHeightForLines(ctx, style, lines.length) > boxHeight);
+
+  return { lines, overflow };
+}
+
+/**
+ * The height a box has to be to hold `lineCount` lines of this type, padding included.
+ *
+ * **The box has to contain the INK, and the ink is taller than the line spacing whenever the leading
+ * is under the font's own ascent.** The first baseline sits at `y1 + TEXT_PADDING + ascent`, so a
+ * leading whose step is under that ascent put the baseline BELOW the box the layer is sized from —
+ * and the committed layer's canvas IS the box, since `createLayerFromTool` takes `pos` from the rect
+ * and `layer-utils`' `createLayerSource` sizes the creator's canvas at `size: pos`. The crop was
+ * therefore not a drawing artifact but missing pixels in the file. The leading slider's floor is
+ * well under the threshold, so this was reachable on every draft at a low leading.
+ *
+ * Exported rather than folded into {@link layoutText} because it is BOX POLICY, not layout: only
+ * `calculateNewRect` needs it, and keeping it here gives `layoutText` a `measureText('')` it can
+ * skip entirely when no caller asked about a box.
+ */
+export function requiredHeightForLines(
+  ctx: Ctx2D | null | undefined,
+  style: ResolvedTextStyle,
+  lineCount: number
+): number {
+  const lineStep = style.fontSize * style.lineHeight;
+  // Styled for the same reason `layoutText` is: the ink term is the font's own ascent, so measuring
+  // it on an unstyled context returns the ascent of whatever face that context happens to wear.
+  const ink = ctx ? withTextStyle(ctx, style, () => inkHeight(ctx, style)) : 0;
+  return Math.max(lineCount * lineStep, ink) + TEXT_PADDING * 2;
 }
 
 /**
@@ -504,13 +747,47 @@ export function drawOverflowIndicator(ctx: Ctx2D, rect: RectXYSorted, color: str
   ctx.restore();
 }
 
-export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOptions = {}) {
+export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOptions = {}): void {
   const style = resolveTextStyle(args);
   const kind = resolveTextKind(args);
   const { text, rect } = args;
   if (!text || !rect) return;
 
+  // OUTSIDE the bracket, and deliberately so. `resetOverlayAlpha` is a WRITE and not a restore, and
+  // it belongs after the `!text || !rect` return above so that a no-op draft leaves the shared
+  // overlay's alpha exactly as it found it. Were it inside, `restore()` would undo it.
   resetOverlayAlpha(ctx);
+
+  // Bracketed, and the bracket is load-bearing rather than defensive, for the reason
+  // `getTextWidth`'s is: `applyTextStyle` is not a measurement, it writes `font`, `textBaseline`,
+  // `textAlign`, `letterSpacing` and `fontVariantCaps` onto the caller's context, and this one is
+  // handed the LIVE tool overlay — the same object `overlayCtxRef` and `toolOverlayRef` resolve to.
+  // So an unbracketed version left the session-long overlay wearing the draft's typeface,
+  // tracking and caps variant after the user left the Type tool, for every later overlay painter
+  // to inherit. The three measurers in this file were closed for exactly this reason; this one was
+  // the only context-touching function left open, and it is the one that runs most often.
+  ctx.save();
+  try {
+    renderTextInto(ctx, style, kind, text, rect, options);
+  } finally {
+    ctx.restore();
+  }
+}
+
+/**
+ * The body of {@link renderText}, with the canvas already styled and already bracketed.
+ *
+ * Split out so the bracket is one thing this file owns rather than something each branch of a long
+ * function has to remember, and so the style is resolved once for both halves.
+ */
+function renderTextInto(
+  ctx: Ctx2D,
+  style: ResolvedTextStyle,
+  kind: TextKind,
+  text: string,
+  rect: RectXYSorted,
+  options: RenderTextOptions
+): void {
   applyTextStyle(ctx, style);
 
   ctx.fillStyle = style.color;
@@ -568,22 +845,20 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOp
  * because `calculateNewRect` needs the count and nothing else, and measuring the width as well
  * would double the `measureText` calls on every keystroke.
  */
+/**
+ * How many lines this body needs in a box of `wrapWidth`.
+ *
+ * One line, no bracket of its own, because `layoutText` — the layout authority — styles the context
+ * it measures on. That is the whole point of {@link withTextStyle}: this function used to carry its
+ * own `save`/`applyTextStyle`/`restore` while `layoutText` did not, which is how a paragraph box's
+ * WIDTH came out right and its HEIGHT did not. With the styling inside the authority there is
+ * nothing left here to bracket, and a second bracket would be a second place to forget.
+ *
+ * **No production caller** — `calculateNewRect` takes its line count from the `layoutText` it already
+ * performs, so this exists as the seam a caller wants when it has a box and needs only the count.
+ */
 export function getTextLineCount(ctx: Ctx2D, args: TextToolArgs, wrapWidth: number): number {
-  const style = resolveTextStyle(args);
-  const text = args.text ?? '';
-  // Bracketed, and the bracket is load-bearing rather than defensive: `calculateNewRect` hands this
-  // the live tool overlay, whose context carries whatever the last tool left on it — measured in the
-  // browser, the overlay reports `10px sans-serif` and counts the test string at 162.9px against the
-  // renderer's 64px Arial. Measuring unstyled makes every candidate fit, so a paragraph box sized by
-  // this grew to one line and committed two wrapped lines of ink as a single band that overflowed it.
-  // An unbracketed version would additionally leave the Type tool's typography on the shared overlay.
-  ctx.save();
-  try {
-    applyTextStyle(ctx, style);
-    return layoutText(ctx, style, text, wrapWidth).lines.length;
-  } finally {
-    ctx.restore();
-  }
+  return layoutText(ctx, resolveTextStyle(args), args.text ?? '', wrapWidth).lines.length;
 }
 
 export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs): number {
@@ -596,10 +871,7 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
   // (`TextToolArea.tsx` hands the same ref to both), so an unbracketed version would leave the
   // overlay wearing the Type tool's typography every time a box was recomputed. This is the same
   // leak `resetOverlayAlpha` exists for, and unlike that helper it was not closed.
-  ctx.save();
-  try {
-    applyTextStyle(ctx as Ctx2D, style);
-
+  return withTextStyle(ctx as Ctx2D, style, () => {
     const spacing = trackingPx(style);
     // The widest WRAPPED line for a paragraph box, and the widest explicit line for a point box —
     // which is the same number as before this revision, because an infinite wrap width leaves the
@@ -608,9 +880,181 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
     const { lines } = layoutText(ctx as Ctx2D, style, args.text ?? '', wrapWidth);
 
     return lines.reduce((widest, line) => Math.max(widest, inkWidth(ctx as Ctx2D, line, spacing)), 0);
+  });
+}
+
+/**
+ * Measure something in the face and tracking the args carry, on a context that may be carrying
+ * something else entirely.
+ *
+ * **Every measurement in a 2D canvas reads `ctx.font`, and `measureText` reads it at the moment of
+ * the call.** A context that has not been styled measures in whatever face it was left wearing — and
+ * the workspace canvas is left wearing `10px sans-serif` for the whole session. Measured on this
+ * host, a 1042px string at `64px Arial` reads as 163px at `10px sans-serif`, so a paragraph box
+ * sized from an unstyled measure wraps its line count at the wrong width and grows to hold one line
+ * instead of three, while the renderer — which does style its context — draws all three. The box is
+ * the committed layer's canvas, so the extra lines are cropped out of the file rather than merely
+ * mislaid on the overlay.
+ *
+ * `getTextWidth` applied the style itself for exactly this reason and `getTextLineCount` did not,
+ * which is why one of the two was right about a paragraph box's WIDTH and the other wrong about its
+ * HEIGHT. This helper is the one rule both go through now, and `calculateNewRect` — which measures
+ * on the workspace context `Text.tsx` hands it — goes through it too.
+ *
+ * Bracketed, because it is handed the caller's context and `applyTextStyle` writes `font`,
+ * `textBaseline`, `textAlign`, `letterSpacing` and `fontVariantCaps` onto it. `applyTextStyle` runs
+ * inside the bracket, so the caller's own styling survives: `renderText` styles, then measures, then
+ * draws, and the draw still happens in the draft's face.
+ */
+export function withTextStyle<T>(ctx: Ctx2D, style: ResolvedTextStyle, measure: () => T): T {
+  ctx.save();
+  try {
+    applyTextStyle(ctx, style);
+    return measure();
   } finally {
     ctx.restore();
   }
+}
+
+/**
+ * The CSS an in-place editor has to carry to be indistinguishable from {@link renderText}.
+ *
+ * **The type is a plain object of CSS strings rather than a React style object on purpose.** This
+ * file is the layout and metric authority and it knows nothing about the DOM overlay that consumes
+ * it; a `React.CSSProperties` here would make the renderer depend on the view layer, and a caller
+ * could then drift from the values below without any test noticing. Every value is derived from the
+ * same {@link ResolvedTextStyle} and the same `measureText` the canvas path uses.
+ */
+export type DomOverlayStyle = {
+  caretColor: string;
+  color: string;
+  fontFamily: string;
+  fontSize: string;
+  fontStyle: string;
+  fontVariantCaps: 'all-small-caps' | 'small-caps' | 'normal';
+  fontWeight: string;
+  letterSpacing: string;
+  lineHeight: string;
+  /**
+   * `pre-line`, and it is the whole reason this is not a `<textarea>`.
+   *
+   * The canvas breaks a paragraph at whitespace RUNS and collapses each run to one space
+   * ({@link wrapLine}), keeps `\n` as a hard break, and never breaks at NBSP. `pre-line` is the one
+   * `white-space` value with exactly that behaviour: sequences of white space collapse, newlines
+   * survive. `pre-wrap` preserves the runs and `normal` folds the newlines.
+   *
+   * MEASURED, headless Chromium 153, at `20px/1.4` Arial, on a string carrying a two-space run, a
+   * three-space run, a tab and an NBSP-joined token: `pre-line` reproduced the canvas rule's line
+   * breaks break-for-break, `pre-wrap` produced four lines where the canvas produced three, and the
+   * blank-column gap widths were byte-identical between `pre-wrap` and `pre-line`, so the two
+   * declarations render the same pixels and differ only from the canvas.
+   */
+  whiteSpace: 'pre-line';
+  /** See {@link DomOverlayStyle.whiteSpace}; the pair of declarations is one decision. */
+  overflowWrap: 'normal';
+  wordBreak: 'normal';
+  textAlign: 'left' | 'center' | 'right';
+  textDecorationLine: string;
+  textDecorationColor: string;
+  textDecorationThickness: string;
+  textUnderlineOffset: string;
+  paddingTop: string;
+  paddingRight: string;
+  paddingBottom: string;
+  paddingLeft: string;
+};
+
+/**
+ * The vertical correction that puts a DOM line box's first baseline on the canvas's first baseline.
+ *
+ * The canvas puts its first baseline at `TEXT_PADDING + ascent` below the box's top edge, where
+ * `ascent` is the font's own (`fontBoundingBoxAscent`, {@link baselineOffset}). A DOM line box puts
+ * its baseline at `(lineStep - (ascent + descent)) / 2 + ascent` below the CONTENT box's top — the
+ * half-leading, then the ascent — so the content box has to sit at
+ * `TEXT_PADDING - halfLeading` for the two to agree.
+ *
+ * **The correction is signed and that is not incidental.** A leading under the font's own ascent
+ * gives a NEGATIVE half-leading, the content box moves DOWN rather than up, and the first line's ink
+ * then reaches above the box's own top edge — which is precisely the case the box-height policy in
+ * {@link requiredHeightForLines} exists to contain, and precisely why the overlay must not be
+ * `overflow: hidden`.
+ *
+ * MEASURED, headless Chromium 153, `deviceScaleFactor` 2, four families at `line-height` 1.2 and
+ * 0.8: the closed form matched the measured baseline in all eight cases, with a residual of
+ * −0.90625 … 0.00 **CSS** px — which is −1.81 … 0.00 device px at that ratio, so the honest claim is
+ * "within two device pixels", not within one. The residual is not random error: it is exactly
+ * `ascent_css − ascent_canvas`, the same font read through two text engines, and it does not depend
+ * on the leading. At the two ratios the app actually renders at the worst case is under one device
+ * pixel. In the same runs the two text renderings were the SAME PIXELS at the optimum in seven of the
+ * eight (XOR count exactly 0). Horizontal alignment needed no correction at all — the first glyph's
+ * ink left edge was identical in both engines, with and without `letter-spacing`, in all four
+ * families.
+ */
+function overlayPaddingTop(ctx: Ctx2D, style: ResolvedTextStyle): number {
+  const lineStep = style.fontSize * style.lineHeight;
+  // Called from inside `withTextStyle`, so the ascent and descent it needs are the FONT's. An
+  // unstyled context measures whatever face it happens to wear — the trap `layoutText` and
+  // `requiredHeightForLines` are both written around.
+  return TEXT_PADDING - (lineStep - inkHeight(ctx, style)) / 2;
+}
+
+/**
+ * Every CSS declaration the in-place editor needs, derived from the one style record and one
+ * `measureText` on the caller's context.
+ *
+ * `scale` is the workspace's contain fit — CSS px per document px — and it multiplies every LENGTH
+ * and the type size, because the overlay lives in the same client-pixel space the canvases are
+ * displayed in while `style` and `rect` are in document px. It is deliberately NOT a
+ * `devicePixelRatio` factor: `containFit` is DPR-invariant by construction, since a CSS px is a CSS
+ * px at any ratio.
+ *
+ * **A missing context yields a zero correction, not a guessed one.** The correction is derived from
+ * the font's own ascent and descent, and with no context to ask there is nothing to derive it from;
+ * inventing a fraction here would put a plausible-looking number in front of a caller that will
+ * believe it. Tests are the benign caller — there is no rendered baseline to be aligned to — but they
+ * are not the only one: the editor holds its measuring context in state, populated by a layout
+ * effect, so it is `null` on the overlay's first render in every session, and permanently `null` on a
+ * platform whose `getContext('2d')` returns `null` (`Main.tsx` documents that as a supported iOS
+ * Safari state). On that first frame the baseline is out by the half-leading — at most half the
+ * difference between the line step and the ink — and on a canvas-less platform the type bar's own
+ * controls are the thing to look at, not the ink.
+ */
+export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTextStyle, scale = 1): DomOverlayStyle {
+  const lineStep = style.fontSize * style.lineHeight;
+  const padding = TEXT_PADDING * scale;
+  const decoration: string[] = [];
+  if (style.underline) decoration.push('underline');
+  if (style.strikethrough) decoration.push('line-through');
+
+  const shared = {
+    caretColor: style.color,
+    color: style.color,
+    fontFamily: style.fontFamily,
+    fontSize: `${style.fontSize * scale}px`,
+    fontStyle: style.italic ? 'italic' : 'normal',
+    // The same single-valued variant the canvas resolves, and for the same reason: Adobe's two
+    // toggles are independent booleans and the resolved rendering is not. See `applyTextStyle`.
+    fontVariantCaps: style.allCaps ? 'all-small-caps' : style.smallCaps ? 'small-caps' : 'normal',
+    fontWeight: style.bold ? '700' : '400',
+    letterSpacing: `${trackingPx(style) * scale}px`,
+    lineHeight: `${lineStep * scale}px`,
+    overflowWrap: 'normal',
+    paddingBottom: `${padding}px`,
+    paddingLeft: `${padding}px`,
+    paddingRight: `${padding}px`,
+    textAlign: style.align,
+    textDecorationColor: style.color,
+    textDecorationLine: decoration.length > 0 ? decoration.join(' ') : 'none',
+    textDecorationThickness: `${decorationThickness(style.fontSize) * scale}px`,
+    textUnderlineOffset: `${UNDERLINE_BELOW_BASELINE_EM * style.fontSize * scale}px`,
+    whiteSpace: 'pre-line',
+    wordBreak: 'normal',
+  } satisfies Omit<DomOverlayStyle, 'paddingTop'>;
+
+  return {
+    ...shared,
+    paddingTop: `${(ctx ? withTextStyle(ctx, style, () => overlayPaddingTop(ctx, style)) : TEXT_PADDING) * scale}px`,
+  };
 }
 
 export const text =

@@ -14,7 +14,7 @@ import {
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
-import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-border';
+import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
   navigateAndSelectInFlyout,

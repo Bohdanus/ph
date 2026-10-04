@@ -1,6 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import { type BoundingBox, getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { type AntRun, readAntRuns, waitForCommittedAnts } from './helpers/selection-border';
+import { type AntRun, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import { expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 /**
@@ -12,7 +12,7 @@ import { expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/
  *   (`resizeCanvas(selectionAntsOverlayRef.current, width, height)`), so one backing-store pixel
  *   IS one document pixel and every number below is already in the space
  *   `singleRowMarqueeRect` / `singleColumnMarqueeRect` work in. The reads come from
- *   `e2e/helpers/selection-border.ts`, which takes them out of `getImageData` rather than a
+ *   `e2e/helpers/selection-ants.ts`, which takes them out of `getImageData` rather than a
  *   screenshot for exactly that reason, and that file's header is the reference for what
  *   `readAntRuns` returns.
  *
@@ -679,7 +679,7 @@ test.describe('Single row and single column marquee', () => {
     const press = pointOn(fit, 'row', 200, 0.5);
     await page.mouse.click(press.x, press.y);
     const first = await committedAntsBand(page, fit, 'row');
-    // PORTED FROM MAIN — see the note on the row-drag test above. `committedBand` -> 
+    // PORTED FROM MAIN — see the note on the row-drag test above. `committedBand` ->
     // `committedAntsBand`, and the exact-extent assertion replaces main's
     // `|start - (200 - halfStroke)| <= STROKE_TOLERANCE_PX`.
     expectAntsBand(first, fit, 'row', 200);

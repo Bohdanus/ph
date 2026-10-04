@@ -2,11 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createSelectionHistoryItem } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
-import { convertLegacyHistorySafely, deriveSetSelectionEntry, legacyHistoryToDurable } from '../history-adapter.ts';
+import {
+  convertLegacyHistorySafely,
+  deriveSetSelectionEntry,
+  legacyHistoryToDurable,
+  type DurableConversionAttempt,
+} from '../history-adapter.ts';
 import {
   collectDurableAssetIds,
   DURABLE_SCHEMA_VERSION,
   type AssetId,
+  type PlainValue,
   type SelectionSnapshot,
 } from '../history-model.ts';
 import type { Selection } from '../general-types.ts';
@@ -742,7 +748,31 @@ describe('deriveSetSelectionEntry', () => {
   });
 });
 
-describe('plainValue absence handling', () => {
+/**
+ * `plainValue` (`history-adapter.ts:113`) treats `undefined` as ABSENCE in the
+ * object branch, and after the fix as absence PRESERVED AS A HOLE in the array
+ * branch. The two branches disagreeing WAS the defect: an array element of
+ * `undefined` fell through to the non-plain throw, the throw became an `error`
+ * diagnostic, and `convertLegacyHistorySafely` withholds the WHOLE durable
+ * shadow on the first one — so a single holey tool-arg array was enough to lose
+ * the document, which is a far worse outcome than the object branch's own
+ * handling of the very same value.
+ *
+ * The array branch KEEPS the absence rather than compacting it away, because
+ * legacy replay (`history-replay.ts`) hands the processor the original array and
+ * an index IS the meaning: `[0, undefined, 1]` must not become `[0, 1]`. What
+ * survives as a divergence is narrower — the durable array is a real hole where
+ * legacy's is an explicit `undefined`, so `1 in array` disagrees — and that is
+ * reported as an `array-arg-hole-preserved` `warning` rather than adopted
+ * silently. The object branch is the opposite rule on purpose: there a key and
+ * a key-present-and-undefined are the same OBSERVATION, so the key survives with
+ * an undefined value rather than being dropped.
+ *
+ * The guard rails the fix must not relax: a non-finite number and a non-plain
+ * value inside an array are still defects, and `null` is a value the guard
+ * explicitly admits at the top of the function, so only `undefined` is absence.
+ */
+describe('plainValue absence handling (history-adapter)', () => {
   it('an explicit undefined element in a tool-arg array does not void the document', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
@@ -789,11 +819,11 @@ describe('plainValue absence handling', () => {
 
   it('a hole in a tool-arg array stays a hole', () => {
     const registry = new AssetRegistry();
-    const stops = new Array<unknown>(3);
-    stops[0] = 0;
-    stops[2] = 1;
+    const holey = new Array<unknown>(3);
+    holey[0] = 0;
+    holey[2] = 1;
     const result = convertSafely(
-      [{ id: 'hole', actionName: TOOL_ACTION, layerId, args: { toolName: 'levels', stops } }],
+      [{ id: 'hole', actionName: TOOL_ACTION, layerId, args: { toolName: 'levels', stops: holey } }],
       registry
     );
 
@@ -801,10 +831,212 @@ describe('plainValue absence handling', () => {
     expect(result.status).toBe('current');
     expect(operation?.kind).toBe('apply-filter');
     if (operation?.kind === 'apply-filter') {
-      const durableStops = operation.filter.args.stops as readonly unknown[];
-      expect(durableStops).toHaveLength(3);
-      expect(1 in durableStops).toBe(false);
+      const stops = operation.filter.args.stops as readonly unknown[];
+      expect(stops).toHaveLength(3);
+      expect(1 in stops).toBe(false);
     }
+    registry.shutdown();
+  });
+
+  /**
+   * `levels` commits as `layer-operation`, so `history-adapter.ts` runs its args
+   * through `plainObject` and stores them at `operation.filter.args`. The array
+   * therefore survives into the durable document, which is what makes the STORED
+   * shape assertable rather than only the diagnostic.
+   */
+  function levelsItem(overrides: Record<string, unknown>, id = 'levels-edit'): HistoryItem {
+    return {
+      id,
+      actionName: TOOL_ACTION,
+      layerId,
+      args: { toolName: 'levels', brightness: 1, contrast: 2, ...overrides },
+    };
+  }
+
+  /** The array exactly as the durable document holds it, or `undefined` if the operation is not a filter. */
+  function durableStops(document: DurableConversionAttempt['document']): readonly PlainValue[] | undefined {
+    const operation = document?.history[0]?.operation;
+    if (operation?.kind !== 'apply-filter') return undefined;
+    const stops = operation.filter.args.stops;
+    return Array.isArray(stops) ? stops : undefined;
+  }
+
+  it('converts an array arg that carries an absent element instead of withholding the whole shadow', () => {
+    const registry = new AssetRegistry();
+
+    const result = convertSafely([levelsItem({ stops: [0, undefined, 0.5, undefined, 1] })], registry);
+
+    // The defect: the absent elements reached the non-plain throw, the throw
+    // became an `error` diagnostic, and the entire document was voided. So the
+    // assertion is that NO `error` remains — not that the diagnostics are empty,
+    // because the durable hole is not the legacy observation and that divergence
+    // is now reported.
+    expect(result.diagnostics.some((diagnostic) => diagnostic.severity === 'error')).toBe(false);
+    // One warning per absent element, so the count is the number of holes: two
+    // here, and not one diagnostic per array or one per preserved hole.
+    expect(result.diagnostics).toHaveLength(2);
+    for (const diagnostic of result.diagnostics) {
+      expect(diagnostic).toMatchObject({
+        historyId: 'levels-edit',
+        actionName: TOOL_ACTION,
+        severity: 'warning',
+        code: 'array-arg-hole-preserved',
+      });
+      expect(diagnostic.message).toContain('history:levels-edit.args.stops');
+    }
+    expect(result.status).toBe('current');
+    // The document is USABLE, not merely non-null: the baseline and the tool
+    // entry both survived, so the shadow can actually shadow the replay.
+    expect(result.document?.baseline.layers).toHaveLength(1);
+    expect(result.document?.history).toHaveLength(1);
+    expect(result.document?.history[0]?.operation).toMatchObject({
+      kind: 'apply-filter',
+      layerId,
+      filter: { toolName: 'levels' },
+    });
+    registry.shutdown();
+  });
+
+  it('stores the array with its length and holes intact rather than compacting it', () => {
+    const registry = new AssetRegistry();
+    const sparse = [0, undefined, 0.5, undefined, 1];
+
+    const stops = durableStops(convertSafely([levelsItem({ stops: sparse })], registry).document);
+
+    // Compacting would be the wrong answer here: legacy replay hands the
+    // processor the ORIGINAL array, so `[0, undefined, 0.5, undefined, 1]` and
+    // `[0, 0.5, 1]` are different arguments and every positional consumer would
+    // read a different value. The length is the legacy length.
+    expect(stops?.length).toBe(5);
+    // Every index the author wrote is still a hole, not a shifted value.
+    expect(stops && 1 in stops).toBe(false);
+    expect(stops && 3 in stops).toBe(false);
+    // And the values that WERE present keep the indices they were written at,
+    // which is the whole reason for preserving rather than compacting.
+    expect(stops?.[0]).toBe(0);
+    expect(stops?.[2]).toBe(0.5);
+    expect(stops?.[4]).toBe(1);
+    // A new, frozen array: the legacy array is never aliased into the shadow.
+    expect(stops).not.toBe(sparse);
+    expect(stops && Object.isFrozen(stops)).toBe(true);
+    registry.shutdown();
+  });
+
+  it('keeps a hole-padded array hole-padded at the same index', () => {
+    const registry = new AssetRegistry();
+    // eslint-disable-next-line no-sparse-arrays -- the hole IS the subject under test: a history arg carrying an absent element is the input this arm exists for, and a dense literal could not express it
+    const holey: unknown[] = [0, , 1];
+
+    const stops = durableStops(convertSafely([levelsItem({ stops: holey })], registry).document);
+
+    expect(stops?.length).toBe(3);
+    expect(stops && 1 in stops).toBe(false);
+    expect(stops?.[0]).toBe(0);
+    expect(stops?.[2]).toBe(1);
+    registry.shutdown();
+  });
+
+  it('preserves a null inside an array, because null is a value and not an absence', () => {
+    const registry = new AssetRegistry();
+
+    const result = convertSafely([levelsItem({ stops: [null, 0.5, null] })], registry);
+    const stops = durableStops(result.document);
+
+    // `plainValue` admits `null` as a plain value and the array branch tests on
+    // absence rather than falsiness. A filter written against falsiness rather
+    // than absence would swallow every `null` here, and three values would
+    // silently become one — so this is the likeliest regression the fix could
+    // introduce. Nothing is reported either: `null` is the legacy observation.
+    expect(result.diagnostics).toEqual([]);
+    expect(result.status).toBe('current');
+    expect(stops).toEqual([null, 0.5, null]);
+    expect(stops?.length).toBe(3);
+    registry.shutdown();
+  });
+
+  it('converts an empty array, and reports an array holding nothing but absence', () => {
+    const registry = new AssetRegistry();
+
+    const empty = convertSafely([levelsItem({ stops: [] }, 'empty-array')], registry);
+    const onlyAbsence = convertSafely([levelsItem({ stops: [undefined] }, 'only-absence')], registry);
+
+    // An empty array is a real argument and is reported as nothing.
+    expect(empty.diagnostics).toEqual([]);
+    expect(empty.status).toBe('current');
+    expect(durableStops(empty.document)).toEqual([]);
+
+    // An array of nothing but absence is a length-1 hole, and it is reported
+    // rather than adopted quietly — the shadow and legacy replay disagree about
+    // the argument, and `status: 'current'` is not on its own a claim that they
+    // agree. Note it is NOT collapsed to the empty array: the index is the
+    // meaning.
+    expect(onlyAbsence.status).toBe('current');
+    expect(durableStops(onlyAbsence.document)?.length).toBe(1);
+    expect(0 in (durableStops(onlyAbsence.document) as readonly PlainValue[])).toBe(false);
+    expect(onlyAbsence.diagnostics).toHaveLength(1);
+    expect(onlyAbsence.diagnostics[0]).toMatchObject({
+      historyId: 'only-absence',
+      actionName: TOOL_ACTION,
+      severity: 'warning',
+      code: 'array-arg-hole-preserved',
+    });
+    expect(onlyAbsence.diagnostics[0]?.message).toContain('history:only-absence.args.stops');
+    registry.shutdown();
+  });
+
+  it('still rejects a non-plain value nested inside an array and names its index', () => {
+    class FakeClass {
+      foo = 'bar';
+    }
+    const registry = new AssetRegistry();
+
+    const result = convert([levelsItem({ stops: [0, new FakeClass()] }, 'hostile-array')], registry);
+
+    // The array branch admits absence; it must not have become a general amnesty
+    // for non-plain values inside an array.
+    expect(result.document.history).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'hostile-array',
+      actionName: TOOL_ACTION,
+      severity: 'error',
+      code: 'invalid-history-entry',
+    });
+    // The path is built from the LEGACY array, so the index is where the value
+    // sits in the input.
+    expect(result.diagnostics[0]?.message).toContain('history:hostile-array.args.stops[1]');
+    registry.shutdown();
+  });
+
+  it('names the LEGACY index in the path, so a diagnostic points at the array the author wrote', () => {
+    class FakeClass {
+      foo = 'bar';
+    }
+    const registry = new AssetRegistry();
+
+    const result = convert([levelsItem({ stops: [undefined, new FakeClass()] }, 'shifted-array')], registry);
+
+    // The absent element at index 0 leaves the hostile value at index 1 in the
+    // array the author wrote. The diagnostic is raised while converting the
+    // LEGACY input, so it addresses that index: `stops[1]` is where
+    // `new FakeClass()` actually is, and it is the only index a reader holding
+    // the history item can use to find it.
+    expect(result.diagnostics[0]).toMatchObject({ historyId: 'shifted-array', severity: 'error' });
+    expect(result.diagnostics[0]?.message).toContain('history:shifted-array.args.stops[1]');
+    registry.shutdown();
+  });
+
+  it('names the hole a warning reports by its own legacy index', () => {
+    const registry = new AssetRegistry();
+
+    const result = convertSafely([levelsItem({ stops: [0, undefined, 0.5, undefined, 1] }, 'indexed-holes')], registry);
+
+    // Each hole is named at the index the LEGACY array uses, so a reader holding
+    // the history item can find it. Naming the position among the survivors
+    // instead would point at the wrong element entirely.
+    const paths = result.diagnostics.map((diagnostic) => diagnostic.message);
+    expect(paths.some((message) => message.includes('history:indexed-holes.args.stops[1]'))).toBe(true);
+    expect(paths.some((message) => message.includes('history:indexed-holes.args.stops[3]'))).toBe(true);
     registry.shutdown();
   });
 });

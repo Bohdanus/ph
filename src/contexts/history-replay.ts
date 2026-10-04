@@ -21,6 +21,7 @@ import {
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SELECTION_ACTION,
@@ -177,6 +178,36 @@ export function replayHistory(
       if (!source) continue;
       const layer = dependencies.createLayer({ layerId, layers, source });
       layers = { [layer.id]: layer };
+      continue;
+    }
+    if (actionName === REPLACE_LAYER_SOURCE_ACTION) {
+      const layer = layers[layerId];
+      const replacementSource = (args as { source?: unknown } | undefined)?.source;
+      if (!layer || !replacementSource || typeof replacementSource !== 'object' || Array.isArray(replacementSource)) {
+        continue;
+      }
+      if ((replacementSource as { kind?: unknown }).kind !== 'tool') continue;
+      const replacement = dependencies.createLayer({
+        layerId,
+        layers,
+        source: replacementSource as LayerSource,
+      });
+      layers = {
+        ...layers,
+        [layerId]: {
+          ...layer,
+          name: replacement.name,
+          pos: { ...replacement.pos },
+          source: replacement.source,
+          bitmap: replacement.bitmap,
+          // The creator has already rendered the replacement. Storing `null` here threw that raster
+          // away and left a layer no renderer would draw: `getLayerBitmap` re-runs a creator only for
+          // the vector tools, and a `text` source is excluded, so a redo emptied the layer.
+          tmpCanvas: replacement.tmpCanvas,
+          operations: [...layer.operations],
+          lastHistoryId: item.id,
+        },
+      };
       continue;
     }
     if (actionName === REMOVE_ACTION) {

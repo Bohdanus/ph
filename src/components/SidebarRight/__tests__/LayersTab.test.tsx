@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
-import type { Layer, LayerId, LayersRecord } from '@/contexts/layer-types.ts';
+import type { Layer, LayerId, LayersRecord, ToolLayerSource } from '@/contexts/layer-types.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
 import { RENAME_LAYER_ACTION } from '@/util/constants.ts';
+import type { TextToolArgs } from '@/tools/text.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
   EyeIcon: ({ open }: { open: boolean }) => <span data-testid="eye-icon" data-open={open} />,
@@ -23,7 +24,12 @@ const mockLayers: LayersRecord = {
   'layer-3': createMockLayer({ id: 'layer-3', name: 'Top Layer', order: 2 }),
 };
 
-type StoreSnapshot = { layers: LayersRecord; activeLayerId: LayerId | null };
+type StoreSnapshot = {
+  layers: LayersRecord;
+  activeLayerId: LayerId | null;
+  documentFrame?: { x: number; y: number; width: number; height: number };
+  totalSize?: { width: number; height: number };
+};
 
 /**
  * The action mocks are wired back into a real store snapshot, so a payload assertion
@@ -56,6 +62,8 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
   };
 });
 
+const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+
 vi.mock('@/contexts/StoreContext.tsx', async () => {
   const { useSyncExternalStore } = await import('react');
   return {
@@ -67,8 +75,17 @@ vi.mock('@/contexts/useLayer.ts', () => ({
   useLayers,
 }));
 
+vi.mock('@/contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
+}));
+
 function seed(layers: LayersRecord = mockLayers, activeLayerId: LayerId | null = 'layer-2') {
-  liveStore.snapshot = { layers, activeLayerId };
+  liveStore.snapshot = {
+    layers,
+    activeLayerId,
+    documentFrame: { x: 40, y: 20, width: 200, height: 120 },
+    totalSize: { width: 200, height: 120 },
+  };
 }
 
 function updateStore(mutate: (snapshot: StoreSnapshot) => StoreSnapshot) {
@@ -158,6 +175,7 @@ describe('LayersTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    currentToolState.toolArgs = { toolName: 'move' };
     wireActionsToStore();
     seed();
   });
@@ -243,6 +261,43 @@ describe('LayersTab', () => {
     expect(reordered[0]).toHaveClass('bg-white');
     expect(reordered[1]).toHaveTextContent('Layer 2');
     expect(reordered[1]).toHaveClass('bg-transparent');
+  });
+
+  it('hydrates a selected text layer into canvas space for re-entry', () => {
+    currentToolState.toolArgs = { toolName: 'text' };
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'hello',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    seed(
+      {
+        text: createMockLayer({
+          id: 'text',
+          name: 'Text layer',
+          pos: { x: 120, y: 80, width: 100, height: 60 },
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+      },
+      null
+    );
+    render(<LayersTab />);
+
+    act(() => {
+      fireEvent.click(getLayerDivs()[0]);
+    });
+
+    expect(currentToolState.setToolArgs).toHaveBeenCalledWith({
+      ...args,
+      rect: { x1: 80, y1: 60, x2: 180, y2: 120 },
+    });
   });
 
   it('removes layer on trash click', () => {

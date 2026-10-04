@@ -809,6 +809,39 @@ const loadPlaywrightConfig = async () => {
 
 type PlaywrightConfig = Awaited<ReturnType<typeof loadPlaywrightConfig>>;
 
+/**
+ * `forbidOnly` WAS the one `playwright.config.ts` key whose value depended on an
+ * environment variable, which is exactly why its guard needs two readings instead of
+ * one: `!!process.env.CI` is true under CI, so a single read of the imported config
+ * in a CI test run cannot tell the unconditional `true` from the conditional one.
+ * Both are therefore taken here, with the module registry reset between them so the
+ * config module actually re-evaluates rather than returning its first evaluation
+ * from the ESM cache.
+ *
+ * `process.env.CI` is restored in a `finally`, including the delete case, because a
+ * test that leaves `CI` set changes what every later assertion in this file is
+ * measuring — the pool checks below are among them.
+ */
+const readPlaywrightForbidOnly = async (ci: string | undefined) => {
+  const previous = process.env.CI;
+  if (ci === undefined) {
+    delete process.env.CI;
+  } else {
+    process.env.CI = ci;
+  }
+  vi.resetModules();
+  try {
+    return (await loadPlaywrightConfig()).forbidOnly;
+  } finally {
+    if (previous === undefined) {
+      delete process.env.CI;
+    } else {
+      process.env.CI = previous;
+    }
+    vi.resetModules();
+  }
+};
+
 describe('harness configuration guards (the AGENTS.md test traps)', () => {
   const rootTest = rootProjectConfig.test;
   const e2eTest = e2eProjectConfig.test;
@@ -1001,6 +1034,24 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
       e2eNonSpecTsFiles.length,
       'THIS RUN FOUND NO NON-SPEC `.ts` FILE UNDER `e2e/`, so the testMatch guard above is unproven rather than satisfied. Either the helpers moved out of `e2e/`, or the walk pattern `\\.tsx?$` in this file is stale. Re-derive it before trusting this file.'
     ).toBeGreaterThan(0);
+  });
+
+  it('refuses a committed `test.only` on every run, not only under CI', async () => {
+    // A committed `test.only` is a SILENT SCOPE REDUCTION: Playwright collects one
+    // test, the reporter prints it green, and nothing in the output says the other
+    // tests never ran. Guarding it with `!!process.env.CI` made the failure mode
+    // worst where it is least visible — every local run, and no CI run.
+    //
+    // Both readings, because one does not discriminate: `!!process.env.CI` evaluates
+    // to `true` under CI and this file runs in CI.
+    expect(
+      await readPlaywrightForbidOnly(undefined),
+      '`playwright.config.ts` does not set `forbidOnly` unconditionally, so a committed `test.only` is a silent scope reduction on every LOCAL run: the suite collects one test, prints it green, and the operator reads green as coverage. Set it to the literal `true`.'
+    ).toBe(true);
+    expect(
+      await readPlaywrightForbidOnly('1'),
+      '`playwright.config.ts` stops forbidding `test.only` under CI. That half used to hold; the guard is `true` in BOTH readings or it is not a guard.'
+    ).toBe(true);
   });
 
   it('keeps app coverage a measure of src/ by excluding e2e/**', () => {

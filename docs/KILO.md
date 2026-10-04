@@ -13,7 +13,7 @@ Kilo is configured in three places, and only one of them is in git:
 | Surface                                                             | Tracked | Its home                                                                    |
 | ------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------- |
 | [`../kilo.jsonc`](../kilo.jsonc) — project permissions, MCP servers | yes     | itself; this document links to it and never restates it                     |
-| `.kilo/agents/*.md` — the four agent definitions                    | **no**  | **this document**, because [`.gitignore:49`](../.gitignore) ignores `.kilo` |
+| `.kilo/agents/*.md` — the four agent definitions                    | **no**  | **this document**, because [`../.gitignore`](../.gitignore) ignores `.kilo` |
 | `~/.config/kilo/kilo.jsonc` — model, tools, global permissions      | **no**  | **this document**                                                           |
 
 `.kilo/` is gitignored on purpose: it holds one worktree per task under
@@ -115,7 +115,7 @@ Four layers are installed and working, and a fifth is deliberately absent:
 | structural   | `ast-grep` (binary plus two skills)              |
 | symbol / LSP | Serena MCP                                       |
 | semantic     | `semantic_search` (local embeddings, no network) |
-| —            | no browser MCP, no code-exfiltration index       |
+| —            | no code-exfiltration index                       |
 
 Adding an index that sends this repository off the machine, or a second index of the
 same code, buys nothing this table does not already cover. The history of that survey,

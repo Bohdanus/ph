@@ -3,11 +3,15 @@ import { EXPORT_LINE_END, EXPORT_LINE_START } from '../../export/helpers';
 import {
   canvasOffsetToDocument,
   DEFAULT_DOCUMENT_HEIGHT,
+  DEFAULT_DOCUMENT_SIZE,
   DEFAULT_DOCUMENT_WIDTH,
+  containFit,
   documentStrokeBoundaryMargin,
   documentToCanvasOffset,
   DRAW_TOOL_STROKE_WIDTH,
   MIN_STROKE_BOUNDARY_MARGIN_DOC_PX,
+  type DocumentFrameOrigin,
+  type DocumentSize,
 } from '../canvas-helpers';
 
 /**
@@ -220,5 +224,118 @@ describe('the export line clears the document pixel grid', () => {
     const margin = documentStrokeBoundaryMargin(rounded, { x: 287, y: 58 }, DRAW_TOOL_STROKE_WIDTH);
     expect(margin).toBe(0);
     expect(margin).toBeLessThan(MIN_STROKE_BOUNDARY_MARGIN_DOC_PX);
+  });
+});
+
+/**
+ * THE CROP FRAME, and the two-leg map the app actually performs.
+ *
+ * `usePointerPosition.ts:261-262` maps client -> CANVAS space, and then every tool area adds the
+ * document frame with `canvasToDocumentPoint` (`src/contexts/document-frame.ts:32-34`). So the
+ * app's DOCUMENT -> CANVAS direction is `(d - frame) * scale + offset`, not `d * scale + offset`
+ * — the two differ by exactly `frame * scale`, which is zero for an uncropped document and
+ * proportional to the crop after one. Before the `documentFrame` parameter existed, this
+ * function's own JSDoc claimed a DOCUMENT space it did not deliver, and nothing in the suite
+ * noticed because no e2e spec crops.
+ *
+ * Every case here is therefore about a state the suite cannot reach today, on purpose: the
+ * parameter is the only thing standing between the helper and the app's arithmetic, and the
+ * first spec that crops is the first thing that would compare the two.
+ */
+describe('documentFrame', () => {
+  const BOX = { x: 56, y: 100, width: 974, height: 583 };
+  /** A crop that trims 120 off the left and 40 off the top, leaving a 680x560 frame. */
+  const CROP: DocumentFrameOrigin = { x: 120, y: 40 };
+
+  it('defaults to the origin, leaving every existing caller byte-identical', () => {
+    // The load-bearing backward-compatibility claim: with no fifth argument the two functions
+    // are what they were before it existed, which is why no spec needed editing.
+    expect(documentToCanvasOffset(BOX, 400, 300)).toEqual(
+      documentToCanvasOffset(BOX, 400, 300, DEFAULT_DOCUMENT_SIZE, { x: 0, y: 0 })
+    );
+    expect(canvasOffsetToDocument(BOX, 200, 150)).toEqual(
+      canvasOffsetToDocument(BOX, 200, 150, DEFAULT_DOCUMENT_SIZE, { x: 0, y: 0 })
+    );
+  });
+
+  it('puts a point at the frame origin on the letterbox origin, not scaled by it', () => {
+    // The single clearest statement of what the parameter does. The frame's own (0,0) is the
+    // top-left of the FRAME, which is the top-left of the letterboxed document — so a document
+    // point equal to the frame origin must land on the document rect's corner exactly, with the
+    // frame subtracted BEFORE the scale rather than after.
+    const { offsetX, offsetY } = containFit(BOX);
+
+    expect(documentToCanvasOffset(BOX, CROP.x, CROP.y, DEFAULT_DOCUMENT_SIZE, CROP)).toEqual({
+      x: offsetX,
+      y: offsetY,
+    });
+  });
+
+  it('shifts the forward mapping by the frame times the scale, which is the app arithmetic', () => {
+    const { scale } = containFit(BOX);
+    const point = { x: 300, y: 200 };
+
+    const withoutFrame = documentToCanvasOffset(BOX, point.x, point.y);
+    const withFrame = documentToCanvasOffset(BOX, point.x, point.y, DEFAULT_DOCUMENT_SIZE, CROP);
+
+    expect(withFrame.x).toBeCloseTo(withoutFrame.x - CROP.x * scale, 9);
+    expect(withFrame.y).toBeCloseTo(withoutFrame.y - CROP.y * scale, 9);
+    // Spelled out because it is the shape of the defect: without the frame the two agree, and
+    // the crop is the only thing that separates them.
+    expect(scale).toBeGreaterThan(0);
+    expect(CROP.x * scale).toBeGreaterThan(100);
+  });
+
+  it('shifts the inverse mapping by the frame unscaled, in the other direction', () => {
+    const canvasPoint = { x: 200, y: 150 };
+
+    const withoutFrame = canvasOffsetToDocument(BOX, canvasPoint.x, canvasPoint.y);
+    const withFrame = canvasOffsetToDocument(BOX, canvasPoint.x, canvasPoint.y, DEFAULT_DOCUMENT_SIZE, CROP);
+
+    expect(withFrame.x).toBeCloseTo(withoutFrame.x + CROP.x, 9);
+    expect(withFrame.y).toBeCloseTo(withoutFrame.y + CROP.y, 9);
+  });
+
+  it('keeps the two legs exact inverses with a non-zero frame', () => {
+    // The same property the block above proves at the default, at a frame the suite cannot
+    // produce — and proved on BOTH contain-fit branches, so it is not one scale's luck.
+    for (const box of [
+      { x: 0, y: 0, width: 974, height: 583 },
+      { x: 0, y: 0, width: 974, height: 963 },
+      { x: 0, y: 0, width: 1_600, height: 500 },
+      { x: 0, y: 0, width: 500, height: 1_600 },
+    ]) {
+      for (const frame of [CROP, { x: 0, y: 37 }, { x: 211, y: 0 }, { x: -25, y: -9 }]) {
+        for (const point of [
+          { x: 0, y: 0 },
+          { x: 123.203285, y: 78.234086 },
+          { x: 400, y: 300 },
+          { x: 800, y: 600 },
+        ]) {
+          const offset = documentToCanvasOffset(box, point.x, point.y, DEFAULT_DOCUMENT_SIZE, frame);
+          const back = canvasOffsetToDocument(box, offset.x, offset.y, DEFAULT_DOCUMENT_SIZE, frame);
+
+          expect(back.x).toBeCloseTo(point.x, 6);
+          expect(back.y).toBeCloseTo(point.y, 6);
+        }
+      }
+    }
+  });
+
+  it('uses the frame with a non-default document size too, since both are independent inputs', () => {
+    const cropped: DocumentSize = { width: 680, height: 560 };
+    const { offsetX, offsetY } = containFit(BOX, cropped);
+
+    expect(documentToCanvasOffset(BOX, CROP.x, CROP.y, cropped, CROP)).toEqual({ x: offsetX, y: offsetY });
+  });
+
+  it('does not mutate the frame it is handed', () => {
+    const frame: DocumentFrameOrigin = { x: 120, y: 40 };
+    const snapshot = { ...frame };
+
+    documentToCanvasOffset(BOX, 10, 10, DEFAULT_DOCUMENT_SIZE, frame);
+    canvasOffsetToDocument(BOX, 10, 10, DEFAULT_DOCUMENT_SIZE, frame);
+
+    expect(frame).toEqual(snapshot);
   });
 });

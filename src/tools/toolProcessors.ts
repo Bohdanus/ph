@@ -59,6 +59,12 @@ export type ToolCommitKind =
 export type ToolProcessorDefinition = {
   creator?: boolean;
   /**
+   * Whether the processor reads the existing layer bitmap before producing its
+   * raster result. Omitted means true; draw-backed paint processors are the
+   * explicit exceptions because they create a fresh canvas from their stroke.
+   */
+  compositesOntoInput?: boolean;
+  /**
    * The tool's pixels or its retained presentation depend on `CanvasRenderingContext2D.filter`,
    * which is not Baseline: caniuse records Safari 3.1 - 17.6 as unsupported (WebKit bug 198416,
    * since resolved) and MDN states the feature is not Baseline. Set this on every such tool so the
@@ -298,14 +304,16 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   brush: {
     commit: 'raster',
+    creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen'));
+      const [canvas] = draw(params)(buildDrawArgs(args, 'pen'));
       return [canvas];
     },
   },
   pencil: {
     commit: 'raster',
+    creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
       // `??` guards only `undefined` and `null`, so a non-numeric string reaches
@@ -313,7 +321,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
       // in favour of a width it picks itself. Only a finite width may reach the clamp.
       const width = Number((args as Partial<DrawToolArgs>).lineWidth ?? DEFAULT_PENCIL_LINE_WIDTH);
       const lineWidth = Number.isFinite(width) ? Math.max(1, width) : DEFAULT_PENCIL_LINE_WIDTH;
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen', lineWidth));
+      const [canvas] = draw(params)(buildDrawArgs(args, 'pen', lineWidth));
       return [canvas];
     },
   },

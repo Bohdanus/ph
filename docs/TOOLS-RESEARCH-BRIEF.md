@@ -75,17 +75,17 @@ only in the **main** checkout; a worktree has none of it. Read it from `/Users/b
 
 | File                                   | What it is for                                                                                                                                                                                                                                       |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `01-photoshop-reference.md`            | The behaviour spec across 7 tool families, every claim cited, plus §10 (`:888-955`) the corrections log: 17 disproved premises and 18 unresolved items. **Read §10 before you trust any Photoshop claim in it.**                                     |
+| `01-photoshop-reference.md`            | The behaviour spec across 7 tool families, every claim cited, plus §10 the corrections log: 17 disproved premises and 18 unresolved items. **Read §10 before you trust any Photoshop claim in it.**                                                  |
 | `00-tool-inventory.md`                 | Every registered tool vs Photoshop. Its universe is the registry, so it structurally could not surface a missing tool.                                                                                                                               |
 | `02-implementation-plan.md`            | 10 phases with `file:line` anchors. Its anchors are against an older revision.                                                                                                                                                                       |
-| `03-ui-chrome-spec.md`                 | Theme, typography, the control vocabulary, **options-bar contents per tool (`:175`)**, and an explicit "Unverified — do not present as fact" section at `:333`.                                                                                      |
+| `03-ui-chrome-spec.md`                 | Theme, typography, the control vocabulary, **§5 "Options-bar contents per tool"**, and an explicit §10 "Unverified — do not present as fact" section.                                                                                                |
 | `04-blend-modes-and-brush-spec.md`     | All 27 blend modes with formulas, the compositing equation, Opacity-vs-Flow math, brush tip and dab rendering, airbrush, smoothing, auto-erase, colour replacement. §2 and §8 make the blend-mode and `color-replacement` rows implementation-grade. |
 | `05-selection-mask-migration.md`       | The selection keystone: combination-mode design, marching squares, per-test impact table. Start here for any selection work.                                                                                                                         |
 | `06-adjustments-and-color-pipeline.md` | sRGB/XYZ/Lab matrices, real Levels, Brightness/Contrast, Black & White + Tint, Hue/Saturation, engine-independent Gaussian blur.                                                                                                                     |
 | `07-test-harness-and-migration.md`     | Canvas-mock capability report and the established test conventions.                                                                                                                                                                                  |
-| `RESEARCH-BRIEF.md`                    | The constraints the original research ran against, and what it **disproved**. Its `## 10. Open questions / unknowns` (`:160`) and `## Rules for accuracy about the current code` (`:168`) are the two sections to read first.                        |
+| `RESEARCH-BRIEF.md`                    | The constraints the original research ran against, and what it **disproved**. Its `## 10. Open questions / unknowns` and `## Rules for accuracy about the current code` are the two sections to read first.                                          |
 
-Four corrections from `01-photoshop-reference.md:888-911` that change what a description may
+Four corrections from §10 of `01-photoshop-reference.md` that change what a description may
 assert — these are already reflected below, and repeating them is a defect:
 
 1. "The Polygon Tool is click-to-place-vertices" → **it is drag-defined**, inscribing a regular
@@ -96,14 +96,14 @@ assert — these are already reflected below, and repeating them is a defect:
 4. "Black & White has 10 colour ranges" → **it has 6 sextants**. The 9-range CMYK model is
    Selective Color.
 
-And one boundary: `01-photoshop-reference.md:945` — "No browser was executed." Every support
-claim in that corpus derives from caniuse / MDN BCD / the WebKit bug tracker, not from runtime
-measurement.
+And one boundary, from §10 of `01-photoshop-reference.md` — "No browser was executed." Every
+support claim in that corpus derives from caniuse / MDN BCD / the WebKit bug tracker, not from
+runtime measurement.
 
-`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,371-line playbook whose
-`## Photoshop shape tools` section (`:357-846`) is a fully worked research digest and the
-canonical example of the expected density. Its `## The tool backlog` (`:3797`) and
-`## Appendix A — the trap list` (`:4012`) are worth reading before writing prose.
+`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,686-line playbook whose
+`## Photoshop shape tools` section is a fully worked research digest and the canonical example of
+the expected density. Its `## The tool backlog` and `## Appendix A — the trap list` sections are
+worth reading before writing prose.
 
 ## House rules for the writing
 
@@ -113,7 +113,7 @@ canonical example of the expected density. Its `## The tool backlog` (`:3797`) a
   tooltip that wraps to four lines is a defect. `purpose` carries the detail.
 - Describe **Photoshop's** tool in `summary`/`purpose`. The app's divergence goes in `appNotes`
   and in the per-control `status`. Mixing the two produces a description that is true of neither.
-- No file-scope or line-number claims in prose prose that will go stale. `implementationRefs` is
+- No file-scope or line-number claims in prose that will go stale. `implementationRefs` is
   the place for a citation, and the notes file is the place for a sentence about one.
 - Do not add comments to the data files. A citation belongs in `implementationRefs`, which is
   data, not a comment that drifts from it.

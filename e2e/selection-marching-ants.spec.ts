@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { committedAntsOutline, readAntRuns, waitForCommittedAnts, type AntWindow } from './helpers/selection-border';
+import { committedAntsOutline, readAntRuns, waitForCommittedAnts, type AntWindow } from './helpers/selection-ants';
 import type { CssBox, ImageSize, Point } from './helpers/screenshot-scale';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -185,7 +185,7 @@ interface DocumentGeometry {
  * is the `<main>` element the store's `containerRef` points at - found by walking
  * up from the ants canvas rather than by indexing the document.
  *
- * It is NOT the contain-fit mapping in `e2e/helpers/selection-border.ts`, and the difference
+ * It is NOT the contain-fit mapping in `e2e/helpers/selection-ants.ts`, and the difference
  * is load-bearing rather than stylistic. That helper maps a document-pixel bounding box onto
  * PAGE coordinates through the ants ELEMENT's own rect, which is what a caller comparing
  * against a drag endpoint or a clip rectangle needs; this one maps onto the coordinates the

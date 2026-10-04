@@ -245,6 +245,13 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     containerRef,
     overlayRef: toolOverlayRef,
     aspectRatio,
+    // Adobe's crop modifiers, and the reason `useRect` asks per consumer rather than deciding:
+    // Shift holds a FRESH drag to a square whatever the bar's Ratio says, Option/Alt grows it out
+    // from the press point, and the pair is a square centred on that point. The rectangular
+    // marquee already passes the same two; the Move and text tools deliberately pass neither, and
+    // a handle resize keeps the ratio `getEdgeAtPoint` captures on its own.
+    constrainToSquare: true,
+    fromCentre: true,
     // Crop is the one consumer whose box may run off the frame, so it keeps the overhang instead
     // of snapping back to the frame edge.
     allowOutsideCanvas: true,

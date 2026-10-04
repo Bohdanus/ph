@@ -37,10 +37,13 @@
  *
  * WHAT IS DELIBERATELY ALLOWED
  * ----------------------------
- * - **Landing.** A branch merged into `main` runs `pre-merge-commit`, not
- *   `pre-commit`, and a fast-forward runs no hook at all. The documented landing
- *   flow therefore never reaches this file, which is the correct outcome: the
- *   main worktree is where a merge lands.
+ * - **Landing.** A CLEAN merge into `main` runs `pre-merge-commit`, and a fast-forward runs no
+ *   BLOCKING hook, so neither reaches this file. (`post-merge` DOES fire on a fast-forward; it
+ *   releases board claims and exits 0, so it cannot block anything. "Runs no hook at all" was
+ *   wrong about git, and it was wrong here.)
+ *   A CONFLICTED one does reach this file: it is completed by an
+ *   ordinary `git commit`, which fires `pre-commit`, whose first command is this guard. Land in a
+ *   worktree and fast-forward `main`, which is the documented flow for exactly that reason.
  * - **A named operator hotfix.** `ALLOW_MAIN_COMMIT=1`, which is the only way
  *   through and is stated in the refusal rather than left to be discovered.
  * - **A repository it cannot place.** Detection failure allows the commit. This
@@ -77,7 +80,7 @@ export { OVERRIDE_VAR };
  * recipe is the message: stage only your own paths (the main worktree is not
  * stable while you work), carry them to a worktree as a patch, and commit
  * there. `git stash` is named in the "not this" line because it is the escape
- * every model reaches for and it is shared across all 95 worktrees through one
+ * every model reaches for and every worktree shares one
  * `refs/stash` in the common git dir.
  */
 const REFUSAL = `gate: refusing to record a commit in the MAIN worktree.
@@ -101,8 +104,9 @@ const REFUSAL = `gate: refusing to record a commit in the MAIN worktree.
   Not git stash: one refs/stash is shared by every worktree, so a pop here can
   take another agent's entry, silently.
 
-  A landing is unaffected — "git merge" into main runs pre-merge-commit, not
-  this. An operator hotfix the operator asked for on main by name is:
+A clean merge and a fast-forward are unaffected — those run pre-merge-commit, or no blocking hook at all. A CONFLICTED merge
+is completed by an ordinary "git commit", so it lands here: bring main into a worktree instead.
+An operator hotfix the operator asked for on main by name is:
 
     ALLOW_MAIN_COMMIT=1 git commit -m "..."
 `;
@@ -115,7 +119,7 @@ const REFUSAL = `gate: refusing to record a commit in the MAIN worktree.
  * the same directory; in a linked worktree the first is
  * `<common>/worktrees/<name>` and the second is `<common>`. Measured on both
  * shapes in this repository — main answers `/Users/bkalynovskyi/ph/.git` twice,
- * and `.kilo/worktrees/tsc-guard` answers `.../.git/worktrees/tsc-guard` then
+ * and a linked worktree answers `.../.git/worktrees/<name>` then
  * `.../.git`.
  *
  * `realpathSync` on both sides, because the two are equal as strings long before

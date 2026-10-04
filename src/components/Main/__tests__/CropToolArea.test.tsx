@@ -164,10 +164,21 @@ describe('CropToolArea', () => {
 
     it('opts out of the paint clamp, so the overhang stays on the overlay', () => {
       // Crop is the only consumer whose frame is a window onto a canvas that extends past the
-      // image. Every other consumer wants the clamp and passes neither this nor the other two.
+      // image. Every other consumer wants the clamp, and passes this prop alone.
       render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
 
       expect(useRectProps.current!.allowOutsideCanvas).toBe(true);
+    });
+
+    it('opts into the Shift square and the Option from-centre fresh-drag modifiers', () => {
+      // Adobe's crop rows: Shift constrains the proportions of a new box, Option draws it outward
+      // from its centre, and the two together do both. `useRect` asks per consumer because the Move
+      // and text tools deliberately constrain nothing, so a crop that passed neither had no
+      // from-centre drag at all and no square — its Shift row was aspirational.
+      render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
+
+      expect(useRectProps.current!.constrainToSquare).toBe(true);
+      expect(useRectProps.current!.fromCentre).toBe(true);
     });
 
     it('provides an onChangeEnd callback', () => {

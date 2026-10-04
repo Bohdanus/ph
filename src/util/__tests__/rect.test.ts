@@ -236,9 +236,27 @@ describe('calculateNewRect', () => {
     italic: false,
   };
 
-  function makeCanvasRef(measureWidth: number) {
+  /**
+   * A canvas whose `measureText` can be made FONT-SENSITIVE.
+   *
+   * Passing a number pins the width for every string at every font, which is what the arithmetic
+   * tests below want and what made this file blind: with a constant, a regression that deleted
+   * `ctx.font = fontShorthand(style)` from `applyTextStyle` — or restored the
+   * `${size}px ${weight}` shorthand its grammar rejects — passed every width assertion here, and
+   * so did any change to `tracking`, because `baseArgs` carries none and the cluster fallback in
+   * `inkWidth` therefore never ran.
+   *
+   * Omitting the number derives the width from the string and from `ctx.font` instead, so a test
+   * can ask what the box does when the face changes. `font` is a REAL property here rather than a
+   * bare `vi.fn()` sink, because the font-aware path has to be able to read back what
+   * `applyTextStyle` wrote.
+   */
+  function makeCanvasRef(measureWidth?: number) {
     const ctx = {
-      measureText: vi.fn(() => ({ width: measureWidth })),
+      font: '10px sans-serif',
+      measureText: vi.fn((text: string) => ({
+        width: measureWidth ?? text.length * (parseFloat(ctx.font) || 10),
+      })),
       // `getTextWidth` brackets its `applyTextStyle` in save/restore because it is handed the live
       // tool overlay by `calculateNewRect` and would otherwise leave that context wearing the Type
       // tool's typography. These are `vi.fn()`s and so are not real state, but they have to be
@@ -264,7 +282,150 @@ describe('calculateNewRect', () => {
       imageSize
     );
     expect(result).not.toBeNull();
-    expect(result).toEqual({ x1: -1, y1: 0, x2: 1, y2: 16 * 1.2 + 2 * 5 });
+    // `x1` is 0 and not -1. The one-pixel widening below is what makes a zero-area press visible
+    // before anything is typed, and it used to be returned UNCLAMPED, so a click at the document's
+    // left edge published a box starting a pixel outside the document — a box `useRect`'s
+    // `drawMask` then painted clamped to `[0, 1]`, so the frame jumped on the first keystroke. The
+    // expectation this replaced asserted `-1`; it was correct only about the defect.
+    expect(result).toEqual({ x1: 0, y1: 0, x2: 1, y2: 16 * 1.2 + 2 * 5 });
+  });
+
+  it('keeps an empty draft box inside the document when the press is in the letterbox', () => {
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        // A press below the image, which the tool area reaches because it is `absolute inset-0`
+        // over the whole centred container rather than over the letterboxed canvas.
+        rect: { x1: 40, y1: 1010, x2: 40, y2: 1010 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result!.y1).toBe(1000);
+    // A whole line box at the edge, not half of one hanging off it, and a positive extent — which
+    // is what `layer-utils`' `Layer width and height must be greater than 0` needs.
+    expect(result!.y2).toBeGreaterThan(1000);
+  });
+
+  it('gives a VERTICAL paragraph drag a usable width, because it is classified as a paragraph', () => {
+    // THE REGRESSION THIS FILE HAD NO CASE FOR. `TextToolArea` classifies on the larger of the two
+    // axes, so a drag straight DOWN — no horizontal travel at all — is a paragraph box, and `useRect`
+    // hands back a sorted rect whose `x1` equals its `x2`. A zero-width box has no positive extent,
+    // and `layer-utils`' `createLayerSource` refuses one outright, so Apply threw on a box the user
+    // could see and could not fix. Nothing caught it: the e2e drags both ways, and no unit test
+    // placed a paragraph box narrower than its own padding.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind: 'paragraph',
+        rect: { x1: 500, y1: 100, x2: 500, y2: 200 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x2).toBeGreaterThan(result!.x1);
+    // At the floor, which is the box's own padding, so `textWrapWidth` is zero rather than negative:
+    // below that every fit test fails and the breaker reports a width overflow for a body with no ink.
+    expect(result!.x2 - result!.x1).toBe(2 * 5);
+  });
+
+  it('floors a paragraph box a HANDLE RESIZE has narrowed to nothing, not just an empty draft', () => {
+    // The second route to the same zero width: a user dragging the right handle onto the left edge.
+    // The non-empty paragraph path never re-derives the width, so flooring only the empty draft
+    // would have left this one throwing.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind: 'paragraph',
+        rect: { x1: 100, y1: 100, x2: 100, y2: 180 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x2 - result!.x1).toBe(2 * 5);
+  });
+
+  it('leaves a point box at its own one-pixel widening, because the floor is paragraph-only', () => {
+    // A point press is a zero-AREA point rather than a zero-width box, and its one pixel is what
+    // makes its overlay mask visible before anything is typed. Giving it the paragraph floor would
+    // replace that with a 20px box the user never dragged.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 100, y1: 100, x2: 100, y2: 100 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    // One pixel each side of the click, so two where nothing clamps — and nowhere near the
+    // paragraph floor, which is the point of the case.
+    expect(result!.x2 - result!.x1).toBe(2);
+    expect(result!.x2 - result!.x1).toBeLessThan(2 * 5);
+  });
+
+  it('leaves a wider paragraph drag exactly as dragged', () => {
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind: 'paragraph',
+        rect: { x1: 100, y1: 100, x2: 480, y2: 180 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x1).toBe(100);
+    expect(result!.x2).toBe(480);
+  });
+
+  it('keeps an empty PARAGRAPH draft exactly the width the user dragged', () => {
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind: 'paragraph',
+        rect: { x1: 100, y1: 100, x2: 300, y2: 180 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    // A paragraph box's width is the width the user dragged. The one-pixel widening that point
+    // type needs made `textWrapWidth` 2px wider on the first character than on every character
+    // after it, so the first line of type wrapped at a width no later keystroke reproduced.
+    expect(result!.x1).toBe(100);
+    expect(result!.x2).toBe(300);
   });
 
   it('expands the width for left-aligned text that exceeds the current width', () => {
@@ -284,28 +445,44 @@ describe('calculateNewRect', () => {
     expect(result!.x2).toBe(100 + 2 * 5);
   });
 
-  it('centers wider text for center align', () => {
-    const canvasRef = makeCanvasRef(120);
-    const result = calculateNewRect(
-      {
-        ...baseArgs,
-        text: 'hello',
-        fontSize: 16,
-        lineHeight: 1.2,
-        rect: { x1: 50, y1: 0, x2: 100, y2: 0 },
-        align: 'center',
-      } as TextToolArgs,
-      canvasRef,
-      imageSize
-    );
-    const requiredWidth = 120 + 2 * 5;
-    const currentWidth = 100 - 50;
-    expect(result!.x1).toBeCloseTo(50 + (currentWidth - requiredWidth) / 2);
-    expect(result!.x2).toBeCloseTo(50 + (currentWidth + requiredWidth) / 2);
+  it('does NOT move a POINT box for center or right align, because Adobe scopes alignment to paragraph type', () => {
+    // This replaces a pin that asserted the opposite — that a center-aligned point box grows
+    // symmetrically about its current centre — on the reasoning that `align` should place the growth.
+    // Adobe settles it: "You can align type to one edge of a paragraph (left, center, or right for
+    // horizontal type). Alignment options are available only for paragraph type"
+    // (`formatting-paragraphs.html`), and "You can align and justify only paragraph text. To manage
+    // spacing for point text, convert it to paragraph text" (`setup-paragraph-formatting.html`).
+    // Point type "appears in a straight line without boundaries or a bounding box"
+    // (`add-text.html`), so there is nothing to align within. All three settings therefore produce
+    // the SAME rect for a point box, which is the geometry the entry in `HANDOFF.md` describes as a
+    // no-op control — a control defect, not a geometry one, and the entry carries the fix.
+    const rect = { x1: 50, y1: 0, x2: 100, y2: 0 };
+    for (const align of ['left', 'center', 'right'] as const) {
+      const result = calculateNewRect(
+        {
+          ...baseArgs,
+          text: 'hello',
+          fontSize: 16,
+          lineHeight: 1.2,
+          rect,
+          align,
+        } as TextToolArgs,
+        makeCanvasRef(120),
+        imageSize
+      );
+      expect(result!.x1, align).toBe(50);
+      expect(result!.x2, align).toBe(50 + 120 + 2 * TEXT_PADDING);
+    }
   });
 
-  it('does not change width when text fits within the current width', () => {
-    const canvasRef = makeCanvasRef(10);
+  it('SHRINKS a point box whose text is narrower than the box, because a point line is its own box', () => {
+    // This is the other half of "each line of type is independent — the line expands or shrinks as
+    // you edit it" (Adobe, `creating-type.html), and it is the half that used to be missing. The
+    // rule grew only, on the reasoning that slack meant "a box the user widened with a handle" —
+    // which stopped being true the moment a box is born holding the `'Lorem ipsum'` placeholder,
+    // because then it carries slack the user never chose. A grow-only rule cannot tell the two
+    // apart, so three characters typed over the placeholder left the line as wide as the placeholder.
+    const canvasRef = makeCanvasRef();
     const result = calculateNewRect(
       {
         ...baseArgs,
@@ -318,7 +495,161 @@ describe('calculateNewRect', () => {
       canvasRef,
       imageSize
     );
-    expect(result!.x2).toBe(100);
+    // The fixture measurer reads `text.length * parseFloat(ctx.font)`, and `applyTextStyle` has set
+    // `ctx.font` to the 16px face the args carry, so `'hi'` measures 2 * 16 = 32; plus `TEXT_PADDING`
+    // at each end, that is 42. The box arrived 100 wide and must come back 42 wide — a grow-only rule
+    // returns 100 and this test fails.
+    expect(result!.x1).toBe(0);
+    expect(result!.x2).toBe(2 * 16 + 2 * TEXT_PADDING);
+  });
+
+  it('grows and shrinks a point box in the same direction for left alignment, from a fixed left edge', () => {
+    // The shrinking arm must not walk the LEFT edge leftward the way centre and right do: left
+    // alignment pins x1 and moves x2, so a line that both grows and shrinks keeps its origin. A
+    // sign error here moves the whole line every keystroke.
+    const narrower = calculateNewRect(
+      { ...baseArgs, text: 'hi', rect: { x1: 40, y1: 0, x2: 200, y2: 0 }, align: 'left' } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    const wider = calculateNewRect(
+      { ...baseArgs, text: 'abcdefghij', rect: { x1: 40, y1: 0, x2: 200, y2: 0 }, align: 'left' } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    expect(narrower!.x1).toBe(40);
+    expect(wider!.x1).toBe(40);
+    expect(wider!.x2).toBeGreaterThan(narrower!.x2);
+  });
+
+  it.each(['left', 'center', 'right'] as const)('shrinks a point box to its ink regardless of align %s', (align) => {
+    // Point type has no paragraph alignment box. Its width follows the current ink on every edit,
+    // so a placeholder-sized draft contracts when the user replaces the placeholder.
+    const dragged = { x1: 0, y1: 0, x2: 100, y2: 50 };
+    // 40 of ink + 2 * 5 of padding = 50, against a box 100 wide. The result must remove that
+    // placeholder-era slack rather than preserving it for an alignment setting that does not
+    // apply to point type.
+    const canvasRef = makeCanvasRef(40);
+
+    const result = calculateNewRect(
+      { ...baseArgs, text: 'hello', fontSize: 20, lineHeight: 1.2, rect: dragged, align } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result).toEqual({ x1: 0, y1: 0, x2: 50, y2: 50 });
+  });
+
+  it('measures with the font the args carry, so the box follows the face', () => {
+    // Font-sensitive mock: no pinned width, so every measure reads `ctx.font`. A point box whose
+    // text outgrows it is sized from `getTextWidth`, which is where the two `ctx.font` writes
+    // matter — `applyTextStyle`'s shorthand and `fontVariantCaps` after it. This is the assertion
+    // that makes the mock worth anything: with the old constant-width mock, deleting
+    // `ctx.font = fontShorthand(style)` outright passed every width test in this file.
+    const at16 = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 0, y1: 0, x2: 1, y2: 0 },
+      } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    const at64 = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 64,
+        lineHeight: 1.2,
+        rect: { x1: 0, y1: 0, x2: 1, y2: 0 },
+      } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    // 'hello' is five characters, and the mock charges `fontSize` per character.
+    expect(at16!.x2).toBe(5 * 16 + 2 * 5);
+    expect(at64!.x2).toBe(5 * 64 + 2 * 5);
+    expect(at64!.x2).toBeGreaterThan(at16!.x2);
+  });
+
+  it('widens for tracking, through the per-grapheme fallback', () => {
+    // `baseArgs` carries no `tracking`, so the cluster fallback in `inkWidth` never ran anywhere in
+    // this file: with `spacing === 0` it short-circuits to a single `measureText`, and with
+    // `letterSpacing` absent from the mock `hasLetterSpacing` is false, so tracking had no coverage
+    // at all. Tracking 100 is 0.1em, applied per grapheme past the first.
+    const untracked = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'abcd',
+        fontSize: 20,
+        lineHeight: 1.2,
+        rect: { x1: 0, y1: 0, x2: 1, y2: 0 },
+      } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    const tracked = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'abcd',
+        fontSize: 20,
+        lineHeight: 1.2,
+        tracking: 100,
+        rect: { x1: 0, y1: 0, x2: 1, y2: 0 },
+      } as TextToolArgs,
+      makeCanvasRef(),
+      imageSize
+    );
+    // Four characters at 20px is 80px of ink; tracking adds one gap per pair, so three of them at
+    // 0.1em of 20px.
+    expect(tracked!.x2).toBe(untracked!.x2 + 3 * (0.1 * 20));
+  });
+
+  it('keeps the ink a point box needs even when it runs past the document edge', () => {
+    const canvasRef = makeCanvasRef(300);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        // A click ten pixels from the right edge of a thousand-pixel document. The box has to grow
+        // rightward past the document, because the committed layer's canvas IS this rect
+        // (`createLayerFromTool` takes `pos` from it and `createLayerSource` sizes the creator's
+        // canvas at `size: pos`), so clamping the extent wrote a ten-pixel bitmap holding the first
+        // few pixels of one glyph while the overlay showed the whole string.
+        rect: { x1: 990, y1: 0, x2: 990, y2: 0 },
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result!.x1).toBe(990);
+    expect(result!.x2).toBe(990 + 300 + 2 * 5);
+    expect(result!.x2).toBeGreaterThan(imageSize.width);
+  });
+
+  it('clamps the origin of a point box that would otherwise start outside the document', () => {
+    const canvasRef = makeCanvasRef(300);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        // Right-aligned text growing leftward off a press below the document.
+        rect: { x1: 5, y1: 1005, x2: 5, y2: 1005 },
+        align: 'right',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result!.y1).toBe(1000);
+    expect(result!.x1).toBeGreaterThanOrEqual(0);
+    // And the extent is still the content's, so nothing is cropped by the origin clamp.
+    expect(result!.x2 - result!.x1).toBe(300 + 2 * 5);
   });
 
   it('expands height for multi-line text', () => {

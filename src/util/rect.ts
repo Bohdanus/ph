@@ -1,5 +1,13 @@
 import type { RefObject } from 'react';
-import { getTextLineCount, getTextWidth, resolveTextKind, textWrapWidth, type TextToolArgs } from '../tools/text.ts';
+import {
+  getTextWidth,
+  layoutText,
+  requiredHeightForLines,
+  resolveTextKind,
+  resolveTextStyle,
+  textWrapWidth,
+  type TextToolArgs,
+} from '../tools/text.ts';
 import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
 import type { Ctx2D, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
@@ -78,6 +86,48 @@ export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
   };
 }
 
+/**
+ * A text box's ORIGIN clamped into the document, with its EXTENT left alone.
+ *
+ * **A type layer is not the document, and the origin is the only part of the box that has to be
+ * inside it.** Photoshop lets a type layer grow past the canvas edge rather than cropping the type
+ * to it, and this app's committed layer canvas IS the box — `useLayer`'s `createLayerFromTool`
+ * takes `pos` from this rect and `layer-utils`'s `createLayerSource` sizes the creator's canvas at
+ * `size: pos` — so clamping the extent destroyed ink the draft had already shown the user. A
+ * left-aligned click at `imageSize.width - 10` grew `x2` to `width + 300`, `trimRect2` clamped it
+ * back to `width`, and the commit wrote a ten-pixel bitmap holding the first few pixels of one
+ * glyph; the same held for the last line near the bottom edge.
+ *
+ * Clamping the origin is what replaces that clamp, and it is what makes a positive extent
+ * STRUCTURAL rather than accidental: every extent below is content-derived and every text box
+ * carries `TEXT_PADDING` on both sides, so `x2 > x1` and `y2 > y1` hold for any non-empty text —
+ * which is what `layer-utils`' `Layer width and height must be greater than 0` throw needs.
+ *
+ * The far edge is additionally floored at the clamped origin, which is the same map
+ * {@link clampEdge} is: it never crops anything a sorted rect had, and it means a rect that
+ * arrived wholly outside the document — a click in the letterbox, say — still comes out sorted
+ * rather than inverted. `RectXYSorted` is an alias of `RectXY` and guarantees nothing at the type
+ * level, so this is load-bearing rather than decoration.
+ */
+function clampTextOrigin(rect: RectXYSorted, imageSize: Size): RectXYSorted {
+  // Sorted FIRST. `RectXYSorted` is an alias of `RectXY`, so nothing at the type level guarantees
+  // `x1 <= x2`, and this function's whole contract is that the box it returns has a positive extent.
+  // Without the sort the far-edge floor below DELETES the span instead of normalising it: an input of
+  // `{x1: 500, x2: 100}` came back `{x1: 500, x2: 500}` — width zero, 400px of box gone — where
+  // `sortRect` would have given `{100, 500}`. The production caller happens to sort already, which is
+  // exactly why the JSDoc could claim a guarantee the code did not keep.
+  const sorted = sortRect(rect);
+  const x1 = clampEdge(sorted.x1, imageSize.width);
+  const y1 = clampEdge(sorted.y1, imageSize.height);
+
+  // The far edges are floored at the clamped origin rather than clamped too. Clamping them is the
+  // obvious reading and it is wrong: a box dragged out past the right edge would have its ORIGIN
+  // pulled back to the edge and keep its far edge beyond the document, which still has a positive
+  // extent, whereas clamping both collapses such a box to nothing at the boundary. The ink this
+  // function exists to preserve lives beyond the document by design.
+  return { x1, y1, x2: Math.max(sorted.x2, x1), y2: Math.max(sorted.y2, y1) };
+}
+
 // `trimRect` without the clamp: crop extends the canvas past the image edge, so the
 // rect this normalises is expected to leave it. That is why there is no `imageSize`
 // argument and no `isTrimmed` — a caller that needs the intersection clamps separately.
@@ -128,12 +178,54 @@ export function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
+/**
+ * The narrowest a PARAGRAPH box may be, as the width a drag has to leave.
+ *
+ * **A RECONSTRUCTION, with no Adobe figure behind it.** Adobe documents that paragraph type wraps
+ * to the dimensions of its bounding box and says nothing about how narrow that box is allowed to
+ * get, so this is the app's own floor and it exists here for two structural reasons rather than for
+ * looks:
+ *
+ * - A press with no horizontal travel produces `x1 === x2`, because `useRect` sorts the mask rect and
+ *   a vertical drag has no width. `TextToolArea` classifies on the larger of the two axes, so a
+ *   purely VERTICAL drag is a paragraph box — and a zero-width box has no positive extent, which
+ *   `layer-utils`' `createLayerSource` refuses outright. Without a floor, dragging straight down
+ *   leaves Apply throwing on a box the user can see and cannot fix, and the throw reaches
+ *   `window.onerror` rather than a boundary.
+ * - Below the box's own padding, `textWrapWidth` goes NEGATIVE, and then `fits('')` is false for
+ *   every candidate and the breaker reports a width overflow for a body with no ink in it.
+ *
+ * The value is therefore the padding, and not a round number chosen to look like a UI minimum: it is
+ * the width at which the wrap width reaches zero, which is the point below which the box has no
+ * usable interior left.
+ */
+const MIN_PARAGRAPH_WIDTH = TEXT_PADDING * 2;
+
+/**
+ * Hold a paragraph box at {@link MIN_PARAGRAPH_WIDTH}, leaving a wider drag exactly as dragged.
+ *
+ * Applied at BOTH of this function's paragraph exits — the empty-draft early return and the final
+ * one — because a user can reach a zero-width paragraph box by dragging vertically OR by dragging a
+ * handle onto its opposite edge, and the non-empty path never re-derives the width. Flooring only
+ * the empty draft would leave the resize route throwing.
+ */
+function atLeastMinParagraphWidth(rect: RectXYSorted, isParagraph: boolean): RectXYSorted {
+  if (!isParagraph) return rect;
+  if (rect.x2 - rect.x1 >= MIN_PARAGRAPH_WIDTH) return rect;
+  return { ...rect, x2: rect.x1 + MIN_PARAGRAPH_WIDTH };
+}
+
 export const calculateNewRect = (
   newArgs: TextToolArgs,
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  const { align, text, fontSize, lineHeight, rect } = newArgs;
+  // `align` is NOT destructured here, and that is the point arm's whole finding: Adobe scopes
+  // paragraph alignment to paragraph type ("Alignment options are available only for paragraph type",
+  // `formatting-paragraphs.html`), so a point box's left edge never moves and the property has nothing
+  // to say about this geometry. `renderText` still reads it, and computes the same `x` for all three
+  // settings on a box that hugs its ink.
+  const { text, rect } = newArgs;
   // No rect means the text has not been placed on the canvas yet, and there is nothing to
   // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
   // document origin, which no caller wanted: the only path that can reach here with a null
@@ -143,24 +235,50 @@ export const calculateNewRect = (
   // type, so it can never hit this.
   if (!rect) return null;
 
-  if (!text)
-    return {
-      ...rect,
-      x1: rect.x1 - 1,
-      x2: rect.x2 + 1,
-      y2: rect.y1 + fontSize * lineHeight + 2 * TEXT_PADDING,
-    };
-
+  // Resolved before the `!text` branch, which needs the kind for the one-pixel question below and
+  // not for anything else.
   const isParagraph = resolveTextKind(newArgs) === 'paragraph';
+
+  // The empty draft is a box with NO ink in it, so nothing can be lost by clamping all four of its
+  // edges into the document — and clamping is what stops the frame jumping on the first keystroke.
+  // `useRect`'s `drawMask` paints `trimRect(...)` while handing `onRepaint` the UNCLAMPED rect, so
+  // the click at `x = 0` published `[-1, 1]` and painted it at `[0, 1]`: the box the first
+  // keystroke grew from started a pixel left of the frame the user was looking at.
+  //
+  // The one-pixel widening is kept for POINT type, whose rect is the click point itself — it is
+  // what makes the overlay mask of a zero-area press visible before anything is typed, and
+  // `TEXT_TOOL_REQUIREMENTS.md` §2 records it as load-bearing. It is DROPPED for PARAGRAPH type,
+  // where the box's width is the width the user dragged: the ±1 made `textWrapWidth` 2px wider on
+  // the first character than on every character after it, so the first line of type wrapped at a
+  // width no later keystroke would reproduce.
+  //
+  // The height is derived from the CLAMPED origin, so a press in the letterbox keeps a whole line
+  // box at the document edge instead of half of one hanging off it.
+  if (!text) {
+    const inset = isParagraph ? 0 : 1;
+    // Raw `fontSize`/`lineHeight` would put a `NaN` from a corrupt settings record straight into
+    // `y2`, and `createLayerSource` rejects only `=== 0`, so a negative extent reaches
+    // `new OffscreenCanvas`. `resolveTextStyle` is the one seam that folds both, and every other
+    // measurement in this file already goes through it.
+    const { fontSize: size, lineHeight: leading } = resolveTextStyle(newArgs);
+    const draft = atLeastMinParagraphWidth(
+      trimRect2({ ...rect, x1: rect.x1 - inset, x2: rect.x2 + inset }, imageSize),
+      isParagraph
+    );
+    return { ...draft, y2: draft.y1 + size * leading + 2 * TEXT_PADDING };
+  }
 
   // A paragraph box's width is the width the user dragged, so it is clamped BEFORE anything is
   // measured rather than after. `useRect.drawMask` paints `trimRect(...)` while handing
   // `onRepaint` the unclamped rect, so without this the preview wraps at the dragged width while
   // the committed box is the clamped one and the two wrap differently — a divergence that moves
   // ink today and changes where the lines break under wrapping.
-  const placed = isParagraph ? (trimRect2(rect, imageSize) ?? rect) : rect;
+  //
+  // `trimRect2` returns a `RectXY` and never null, so the `?? rect` this line once carried was a
+  // provable no-op.
+  const placed = isParagraph ? trimRect2(rect, imageSize) : rect;
 
-  let newRect = placed;
+  let newRect = clampTextOrigin(placed, imageSize);
 
   const ctx2d = canvasRef.current?.getContext('2d');
   if (ctx2d) {
@@ -169,40 +287,112 @@ export const calculateNewRect = (
       // re-placed: "the lines of type wrap to fit the dimensions of the bounding box"
       // (https://helpx.adobe.com/photoshop/using/creating-type.html), so the box's dimensions are
       // what the text takes, not the other way round.
-      const lineCount = getTextLineCount(ctx2d as Ctx2D, { ...newArgs, rect: placed }, textWrapWidth(placed));
-      const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
-      if (requiredHeight > placed.y2 - placed.y1) {
-        newRect = { ...placed, y2: placed.y1 + requiredHeight };
+      //
+      // The height comes from the ONE layout this function performs, below, rather than from a
+      // `lineCount * fontSize * lineHeight + TEXT_PADDING * 2` computed here: that arithmetic was a
+      // second opinion about where the lines fall, in the one file whose reason to exist is that
+      // there is only one, and it was wrong in a second way as well, because the line step is
+      // shorter than the ink whenever the leading is under the font's own ascent — so the box
+      // cropped its own first line and the committed layer went out without it.
+      const style = resolveTextStyle(newArgs);
+      // Both halves style their own context now, which is the fix `e2e/text-tool.spec.ts` has been
+      // holding red for. The workspace canvas carries `10px sans-serif` for the whole session, so an
+      // unstyled measure wrapped this paragraph at a fraction of its real width: measured on this
+      // host a 1042px string at `64px Arial` reads as 163px unstyled, the line count came back as
+      // one, and the box grew to hold one line while the renderer drew three — into a canvas that IS
+      // the box, so two bands were cropped out of the committed layer rather than merely mislaid.
+      const lineCount = layoutText(ctx2d as Ctx2D, style, text, wrapWidth(newRect, isParagraph)).lines.length;
+      const requiredHeight = requiredHeightForLines(ctx2d as Ctx2D, style, lineCount);
+      if (requiredHeight > newRect.y2 - newRect.y1) {
+        newRect = { ...newRect, y2: newRect.y1 + requiredHeight };
       }
     } else {
-      const currentWidth = placed.x2 - placed.x1;
+      /**
+       * The point arm, and the ONE place a point box's geometry is decided at all.
+       *
+       * **The box hugs its ink, in both directions, and the LEFT EDGE NEVER MOVES.** Both halves of
+       * that are Adobe:
+       *
+       * - The width is recomputed every call rather than compared against what is there. "When you
+       *   enter point type, each line of type is independent — the line expands or shrinks as you edit
+       *   it, but it doesn't wrap to the next line" (`creating-type.html`). This arm used to grow only,
+       *   on the reasoning that slack meant "a box the user widened with a handle" — which stopped being
+       *   true the moment a box is born holding the `'Lorem ipsum'` placeholder, because then it
+       *   carries slack the user never chose, and three characters typed over the placeholder left the
+       *   line as wide as the placeholder. A grow-only rule cannot tell the two apart.
+       * - `align` does NOT move the box, for any of the three settings. "You can align type to one edge
+       *   of a paragraph (left, center, or right for horizontal type) […] Alignment options are
+       *   available only for paragraph type" (`formatting-paragraphs.html`), and the same scope in
+       *   `setup-paragraph-formatting.html`: "You can align and justify only paragraph text." Point type
+       *   "appears in a straight line without boundaries or a bounding box" (`add-text.html`), so there
+       *   is nothing to align within and the control has no meaning here — `renderText`'s anchor agrees,
+       *   computing the same `x` for all three settings on a box that hugs its ink.
+       *
+       * That is not a style choice. An earlier version of this arm DID displace the box by `align`, and
+       * `HANDOFF.md` entry 195 records the objection: moving the box and then anchoring the ink inside
+       * it shifts the ink by twice the slack. With the box hugging its ink the slack is zero, so the
+       * displacement would be the only shift — but it would still be a shift, for a control Adobe says
+       * is not available on this kind of type. So the arm keeps `x1` and moves only `x2`.
+       *
+       * A consequence, stated because it is real: widening a POINT box with a handle now survives only
+       * until the next keystroke, which snaps it back to its ink. Adobe has no handle on a point line
+       * at all, so this is the closer of the two behaviours, and the handle belongs to `HANDOFF.md`'s
+       * transform question rather than to point type.
+       *
+       * `clampEdge` still applies, to the edge that is kept: a box dragged off the document's left edge
+       * keeps its ink inside the document, which is the one thing this rect's origin may not do.
+       */
       const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-      if (requiredWidth > currentWidth) {
-        switch (align) {
-          case 'left':
-            newRect = { ...placed, x2: placed.x1 + requiredWidth };
-            break;
-          case 'center':
-            newRect = {
-              ...placed,
-              x1: placed.x1 + (currentWidth - requiredWidth) / 2,
-              x2: placed.x1 + (currentWidth + requiredWidth) / 2,
-            };
-            break;
-          case 'right':
-            newRect = { ...placed, x1: placed.x2 - requiredWidth };
-        }
-      }
+      const x1 = clampEdge(newRect.x1, imageSize.width);
+      newRect = { ...newRect, x1, x2: x1 + requiredWidth };
     }
   }
 
-  const lineCount = text.split('\n').length;
-  const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
-
-  const currentHeight = newRect.y2 - newRect.y1;
-  if (!isParagraph && requiredHeight > currentHeight) {
-    newRect = { ...newRect, y2: newRect.y1 + requiredHeight };
+  // The hard-break count, for the point box only. A PARAGRAPH box's height was already settled from
+  // its own layout call above, and it must not be settled twice from two different sources — which
+  // is exactly what happened before, and is why `HANDOFF.md` still carries an entry about a
+  // paragraph box whose wrapped and hard-break heights disagreed.
+  // The guard is HOISTED, not applied to the result. It used to read
+  // `!isParagraph && hardBreakHeight(...) > currentHeight`, so a paragraph draft still paid for the
+  // call: a `resolveTextStyle` allocation, a bracketed `applyTextStyle` writing five properties, and
+  // a `measureText('')` — a real font metric read, which can force a synchronous font load on a face
+  // not yet resident — on every keystroke, purely to have the number discarded one line later.
+  if (!isParagraph) {
+    const pointRequiredHeight = hardBreakHeight(ctx2d, newArgs, text);
+    if (pointRequiredHeight > newRect.y2 - newRect.y1) {
+      newRect = { ...newRect, y2: newRect.y1 + pointRequiredHeight };
+    }
   }
 
-  return trimRect2(newRect, imageSize);
+  // A PARAGRAPH box keeps every edge clamped to the document, which is the same
+  // `trimRect2(rect, imageSize)` its width was clamped with, and it is what makes the overflow icon
+  // reachable at all: `layoutText` reports an overflow by comparing the lines it needs against the
+  // box's height, and a box that could grow past the document's bottom edge could never outgrow
+  // its own height. `e2e/text-tool.spec.ts` — the overflow-icon test — pins that clamp.
+  //
+  // A POINT box is not clamped: its extent is what the content required, and the ink past the
+  // document edge belongs to the layer even though the canvas cannot show it.
+  return isParagraph ? trimRect2(atLeastMinParagraphWidth(newRect, true), imageSize) : newRect;
 };
+
+/** The wrap width a box of this kind offers its text: the box's own for paragraph, unbounded for point. */
+function wrapWidth(rect: RectXYSorted, isParagraph: boolean): number {
+  return isParagraph ? textWrapWidth(rect) : Infinity;
+}
+
+/**
+ * The height a POINT box needs: its hard-broken lines, sized by the same layout authority.
+ *
+ * Point type lays out against an infinite width, so its line count IS its hard-break count and
+ * there is nothing to wrap — but the ink still has to fit, which is the same
+ * `Math.max(lines * lineStep, inkHeight)` rule the paragraph arm uses. Going through
+ * {@link layoutText} rather than a local `split('\n').length` multiplication is what keeps the two
+ * arms from drifting: they answer the same question and now answer it in one place.
+ */
+function hardBreakHeight(ctx: Ctx2D | undefined | null, args: TextToolArgs, text: string): number {
+  // No context at all is not a reason to report zero lines of height: `requiredHeightForLines`
+  // degrades to the line step on its own, and the line step is the honest answer when there is no
+  // measurer — `Text.tsx` hands `calculateNewRect` the tool overlay, which is null on the first
+  // render and in every test that mounts no canvas.
+  return requiredHeightForLines(ctx, resolveTextStyle(args), text.split('\n').length);
+}

@@ -77,6 +77,6 @@ control the paint bar does not have yet. That hold is temporary, and
 this entry is where it is revisited when they land.
 
 Suspends [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) on `draw`: "No
-invented tools" at `:33`, and "`draw` is a live tile, and it is the
-last deletion" at `:131`. No keyboard letter — Adobe's single cycling
+invented tools", and "`draw` is a live tile, and it is the
+last deletion". No keyboard letter — Adobe's single cycling
 `B` already serves four tools.

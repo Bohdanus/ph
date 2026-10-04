@@ -1744,6 +1744,37 @@ describe('the command line', () => {
     expect(shown.out).toContain('hasUnsavedChanges');
   });
 
+  it('prints an issue body in `show`, so a long finding has a reader', async () => {
+    /**
+     * The body is the only place on this board that a document of any length can
+     * live: `addEvent` refuses a log line over the limit rather than truncating
+     * it, which is what makes "post the issue id" the instruction an agent gets
+     * for a finding too long for a message. That instruction is only complete if
+     * the reader does not need a second command and a JSON path to see it, and
+     * `show`'s text mode printed metadata and the thread and nothing else — the
+     * body was in `--json` alone.
+     */
+    const body = ['# 4,392 citations migrated', '', '- HANDOFF.md §82-§115: 442 -> 0', '- TOOLS.md: 547 -> 0'].join(
+      '\n'
+    );
+    const filed = JSON.parse((await cli(['new', 'a finding too long for a message', '--body', body, '--json'])).out);
+    await cli(['comment', filed.id, 'a thread line']);
+    const shown = await cli(['show', filed.id]);
+    expect(shown.code).toBe(0);
+    expect(shown.out).toContain('4,392 citations migrated');
+    expect(shown.out).toContain('HANDOFF.md §82-§115: 442 -> 0');
+    // After the metadata, before the thread, so the document is not buried under
+    // the log lines a reader came for.
+    expect(shown.out.indexOf('filed by')).toBeLessThan(shown.out.indexOf('4,392 citations migrated'));
+    expect(shown.out.indexOf('4,392 citations migrated')).toBeLessThan(shown.out.indexOf('a thread line'));
+    expect(JSON.parse((await cli(['show', filed.id, '--json'])).out).issue.body).toBe(body);
+  });
+
+  it('prints no body section for an issue filed without one', async () => {
+    const filed = JSON.parse((await cli(['new', 'no body at all', '--json'])).out);
+    expect((await cli(['show', filed.id])).out).not.toContain('body:');
+  });
+
   it('exits 3 when the issue is already claimed, and 4 when the file is held', async () => {
     const filed = JSON.parse((await cli(['new', 'contended', '--json'])).out);
     await cli(['claim', filed.id]);

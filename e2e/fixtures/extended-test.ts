@@ -12,7 +12,8 @@ import { ConsolePolice } from '../helpers/console-police';
  *   import a `test` that carries it.
  *
  *   That is why this file exists rather than a helper the specs call by hand. A
- *   helper is opt-in per spec, and 36 opt-in points is 36 chances to forget; an
+ *   helper is opt-in per spec, and one opt-in point per spec is one chance to
+ *   forget each; an
  *   `auto` fixture is opt-out, which is the property that matters for a check
  *   whose entire value is that nobody can forget it.
  *
@@ -31,7 +32,7 @@ import { ConsolePolice } from '../helpers/console-police';
  *
  * WHY EVERYTHING IS RE-EXPORTED
  *   Specs also pull `type Page`, `type TestInfo` and `type Locator` from
- *   `@playwright/test`, and 46 files importing from two places is 46 chances to
+ *   `@playwright/test`, and every spec importing from two places is a chance to
  *   reintroduce the direct import this file exists to replace. The star re-export
  *   keeps one module specifier per spec. An explicit local export shadows a star
  *   export, which is how the extended `test` below wins over the base one.

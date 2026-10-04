@@ -107,7 +107,7 @@ describe('tool layer source conversion', () => {
     expect((created.layer.source as { args: unknown }).args).not.toBe(args);
   });
 
-  it('keeps a non-creator tool source as a legacy-tool source without a placement', () => {
+  it('converts a creator paint source with its placement', () => {
     const registry = new AssetRegistry();
 
     const { document, diagnostics } = convert(registry, {
@@ -121,16 +121,14 @@ describe('tool layer source conversion', () => {
     const created = document.history[0]?.operation;
     if (created?.kind !== 'create-layer') throw new Error('expected a create-layer operation');
     expect(created.layer.source).toStrictEqual({
-      kind: 'legacy-tool',
+      kind: 'paint',
       toolName: 'pencil',
       args: { toolName: 'pencil', color: '#00ff00' },
       size: { width: layerPos.width, height: layerPos.height },
+      sourcePos: { ...layerPos },
       isBedrock: false,
     });
-    // A legacy-tool source has no sourcePos field at all, so replay cannot
-    // reconstruct where the tool drew without materializing the pixels.
-    expect(created.layer.source).not.toHaveProperty('sourcePos');
-    expect(replayDurableDocument(document).layers['tool-pencil']?.snapshot.source.kind).toBe('legacy-tool');
+    expect(replayDurableDocument(document).layers['tool-pencil']?.snapshot.source.kind).toBe('paint');
   });
 
   it('derives a bedrock tool source size from the recorded size instead of the position', () => {

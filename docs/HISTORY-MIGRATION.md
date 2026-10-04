@@ -1,0 +1,211 @@
+# History Migration
+
+This document owns the durable-history migration requirements, sequencing, and
+decision record. It is the implementation contract for the migration; current
+code facts remain in [`ARCHITECTURE.md`](ARCHITECTURE.md), and open defects
+remain in [`../HANDOFF.md`](../HANDOFF.md).
+
+## Authority
+
+The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
+now stages a durable-composed presentation cache into those legacy layers, and
+render and export consume that cache through `getLayerBitmap()`; logical
+undo/redo remains legacy-authoritative. `durableDocument` is a mounted
+navigation presentation cache as well as the durable state model. The migration
+is not complete until one replay/materialization authority feeds undo, redo,
+navigation, render, export and history-panel state without a second logical
+state writer.
+
+The durable model is not disposable scaffolding. Its action log, typed layer
+sources, asset registry, immutable operation cloning, and append boundary are
+the target architecture. The safe path is to complete and prove it before
+changing production authority, not to keep two renderers indefinitely.
+
+## Requirements
+
+### RQ-1: actions, not bitmap snapshots
+
+History entries must carry replayable tool arguments and references to external
+raster assets, not a new bitmap for every edit. This is already true for normal
+tool commits through `createHistoryItem()` and `ToolArgs`. It is not yet true for
+all document-source carriers: the legacy `documentSource`, image layer sources,
+and merge arguments can retain raster payloads. Imported and intentionally
+rasterized pixels must be owned by the document-scoped asset registry and
+addressed by identity; they must not be duplicated into the timeline.
+
+### RQ-2: lossless correction
+
+Editing an existing text or shape layer must edit its source arguments rather
+than create a replacement layer and leave the old one behind.
+`DurableLayerPropertyPatch` still deliberately omits `source`, so the
+capability needs its own operation: `create-layer` and `merge-document` carry
+complete layer snapshots, while the property, position, order, filter, affine,
+raster-processor, frame and selection operations change something other than a
+layer's arguments.
+
+**The authorized operation has landed and is named.** `replace-layer-source`
+carries a `layerId`, an `EditableDurableLayerSource` and the layer's `pos`, and
+`source` and `pos` travel together deliberately: a source edit re-measures the
+layer box, so a legacy entry that moved both must produce ONE operation or the
+legacy-to-durable cursor map grows by two for one edit. `DurableOperation` holds
+twelve kinds. The operation is derived by `deriveReplaceLayerSourceEntry()`
+(`history-adapter.ts`), reached from `legacyHistoryToDurable`, planned at the
+append boundary (`history-append.ts`), replayed by the `'replace-layer-source'`
+case in `durable-replay.ts`, and deep-frozen by `cloneOperation`
+(`history-model.ts`). Its retained operations deliberately survive a source
+rewrite, so a live filter or transform is not dropped when the text is retyped.
+
+**What the requirement still owes.** The production options bar reads
+`toolArgs` from legacy replay, so source rehydration is a cutover-time
+requirement governed by RQ-4's differential and ownership gates, not a gap in the
+operation itself. The pixel and export differential exists and has found one
+real divergence; the obligations it has not closed are listed under Sequencing.
+The pinned `args.enabled` divergence also remains open.
+
+### RQ-3: bounded replay with explicit permission
+
+Replay cost must be measured. When replay exceeds a user-facing budget, the app
+may offer a choice, but it must never rasterize automatically. Acceptance must
+be explicit and transactional: publish a safe raster baseline first, preserve
+the visible document on failure, release old assets only after publication, and
+make the resulting history state undo-safe. The empty-history case must not
+leave a History-panel row whose disabled action blanks the document.
+
+The budget is a user setting, not an architecture constant. The repository has
+no recorded override for this requirement; agents must not invent one or write
+`OVERRIDES.md`.
+
+The earlier proposal for an automatic `rasterize-layer` escape hatch — one more
+durable operation, whichever number it would have taken — is superseded.
+`DurableOperation` now holds twelve kinds, eleven from the finalisation audit plus
+the authorized `replace-layer-source`. That source-edit operation is a different
+requirement: it preserves editable text and shape sources and is not a
+rasterization path. Count the union in `history-model.ts`, not from this
+sentence.
+The count is also derived by `history-model.reachability.test.ts`'s
+`it('declares exactly the kinds the DurableOperation union declares')`, rather
+than by a hand-written list that could miss a newly added kind.
+
+### RQ-4: one replay authority
+
+The final state has one logical replay authority. Runtime rendering, export,
+undo, redo, navigation, and history-panel state must agree. During migration,
+legacy-versus-durable differential checks are allowed; shipping two authorities
+is not.
+
+The retired coordination gate forbids production imports of
+`replay-coordinator.ts` and `replay-checkpoints.ts`. A separate plain assertion
+allows exactly one production importer for `materialization.ts`,
+`durable-compositor.ts`. The compositor is mounted for navigation presentation
+and its `tmpCanvas` is already consumed by render and export. The remaining
+cutover surfaces stay legacy-authoritative until their differential and
+ownership gates pass.
+
+### RQ-5: Photoshop fidelity follows the precedence ladder
+
+Adobe documentation decides Photoshop behaviour. Repository docs decide this
+code's current and required behaviour. A deviation requires an operator-written
+entry in `docs/OVERRIDES.md`; difficulty, uncertainty, and an agent's proposed
+fallback are not overrides.
+
+## Tool reachability consequence
+
+Burn, Sponge, Dodge, Smudge, Clone Stamp, Gradient, Eraser, and Fill still
+refuse a bedrock layer through their tool-area enabled predicates and
+`usePaintStroke()`'s disabled path. New and opened documents start with one
+bedrock layer, and the desktop Layers panel now exposes an explicit conversion
+action for a lone bedrock record. Their pixel kernels and generic durable
+`apply-raster-processor` representation are not the blocker.
+
+The implemented product path is Photoshop's editable-layer conversion model:
+`convertBedrockLayer()` records a deliberate conversion through the existing
+history boundary, and the existing non-bedrock gate continues to protect the
+backing image. Do not auto-merge from a refused pointer gesture.
+`mergeAllLayers()` remains a separate explicit Flatten-like command. Relaxing
+the bedrock gate or requiring flatten before every tonal edit would be a product
+deviation and cannot be implemented without an operator decision.
+
+The first implementation slice deliberately supports a lone bedrock layer. It
+reuses the existing `NEW_LAYER_ACTION` boundary rather than Flatten: naming the
+bedrock layer's own id makes `replayHistory`'s create arm replace the record
+instead of adding a second one, so the panel keeps its row, `activeLayerId`
+stays valid, and an undo rebuilds the backing layer from the document's first
+entry. The durable shadow derives the same `create-layer` operation from the same
+entry. `pos` is copied verbatim and the document frame is never touched, which is
+what preserves the pixels.
+
+It refuses to flatten a multi-layer stack, and `convertBedrockLayer()` names why
+in its own doc comment: both layer constructors place a created layer at
+`maxOrder + 1`, so converting under any other layer would stack an opaque copy of
+the whole frame on top of it and do so identically on every replay. Atomic
+multi-layer Background conversion is therefore a separate requirement, and it is
+sharper than "a source-replacement requirement": `replace-layer-source` admits
+only `EditableDurableLayerSource`, so it deliberately cannot carry the raster a
+Background conversion needs. Widening the action needs a raster-admitting
+variant or an equivalent atomic history action.
+
+## Sequencing
+
+1. Record the operator rulings below and make the requirements document part of
+   the tracked architecture map.
+2. Keep every currently appendable durable operation replayable without changing
+   production authority. The runtime retained-operation boundary, the supported
+   raster append path and the navigation presentation mount are closed, and the
+   §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
+3. The source-edit durable slice is in: `replace-layer-source` is derived,
+   planned, replayed and cloned. Logical replay parity and a pixel/export
+   differential both exist; what is still owed is the divergence the differential
+   found (§205), the two scenarios jsdom cannot render in either direction (§206),
+   history-panel parity (§207), options-bar rehydration, the browser authority
+   seam (§203), and the pinned `args.enabled` divergence.
+   Do not read the landed operation as a closed requirement; the
+   operator's ruling was that the operation and its visible consumer land as one
+   slice, and the consumer is still legacy-sourced.
+4. Preserve the explicit bedrock conversion UX and its history operation while
+   keeping merge/flatten explicit and separate from a tool gesture.
+5. Measure replay and build the cooperative, manually accepted slow-replay path
+   only after the empty-history and transactional-baseline invariants are safe.
+6. Transfer RENDER AUTHORITY, which render already reads, and keep EXPORT
+   legacy-authoritative until its own differential is green for every layer kind
+   (§206). Stage successfully before publication and delete the old authority only
+   after the differential and failure-contract gates pass. This is no longer a
+   mounting question: durable pixels already reach both surfaces through
+   `getLayerBitmap()`, and what is unmounted is durable STATE authority.
+
+## Operator rulings
+
+Recorded 2026-10-03 from the operator's direct answers. These are architecture
+decisions, not Photoshop overrides, and are intentionally not encoded in
+`OVERRIDES.md`:
+
+- **Source edit:** authorized one typed durable source-edit operation for
+  lossless text and shape post-editing. Its legacy consumer, durable replay,
+  and options-bar rehydration must land as one behavior slice.
+- **Authority gate:** durable materialization is the eventual single production
+  authority. Legacy replay remains the logical authority during differential
+  parity; navigation presentation is the first mounted surface, while retired
+  coordination modules stay fail-closed.
+- **Bedrock UX:** use an explicit Photoshop-faithful Layer-from-Background or
+  equivalent conversion action. Keep the bedrock refusal, do not auto-flatten,
+  and do not silently relax the gate.
+- **Replay budget:** make the budget configurable, measure replay cooperatively,
+  and require explicit user acceptance before any raster baseline is created.
+  No automatic rasterization is permitted.
+
+## Provenance
+
+The five-requirement decomposition comes from the latest architect synthesis
+(`ses_f01bd6881ffeOsE9q6awvQNKZP`, 2026-10-03) and its cited operator history
+requirements. The bedrock/tool finding comes from the burn and Sponge analysis
+(`ses_efe746247ffenRtikzH1fKtUF0`, 2026-10-03), which verified the same
+reachability gate across the tonal and raster family. Earlier Sponge planning
+(`ses_f042cf2f8ffekDCIE3I4bf4tOk`, 2026-10-02) established that the kernels and
+existing generic replay shape work on editable layers; later review corrected
+its proposed panel scope and rejected an agent-authored override.
+
+The chronological audit also records the original action-log intent
+(`ses_f36a81896ffe3iD9IjJoVnPlS4`, 2026-09-22), the migration gate map and its
+later corrections (`ses_f0e4972affferCVQgMzXvsM3bq`, 2026-09-30, and
+`ses_f08dac9d0ffecDCBGi4vT4mOre`, 2026-10-01), and the explicit replay-budget
+correction (`ses_f0242cc9bffeG7iokG7agnCnMY`, 2026-10-02). Those earlier records
+are historical provenance; the operator rulings above are the active contract.

@@ -1,78 +1,39 @@
 import type { Page } from '@playwright/test';
 import { CANVAS_REDRAW_POLL_INTERVAL_MS, CANVAS_REDRAW_TIMEOUT_MS } from './canvas-helpers';
-import type { CssBox } from './screenshot-scale';
+import type { CssBounds, CssBox } from './screenshot-scale';
 
 /**
- * Reading the selection border out of the live canvases.
+ * Where a committed selection's border is on the page, read off the marching-ants canvas.
  *
- * ## The border is on its own canvas, and always was
+ * The result is `CssBounds`, the shape `screenshot-scale.ts` owns: these four edges in CSS page
+ * space are the same rectangle the rest of the suite describes, so a second local declaration here
+ * would be the structural-typing drift `screenshot-scale.unit.test.ts` exists to catch.
  *
- * `useSelectionMarchingAnts` (`src/hooks/useSelectionAnts.ts`) paints every committed selection's
- * border — black and white dashes, animated — onto `selectionAntsOverlayRef`, which is
- * `[data-testid="selection-ants-canvas"]`. It is a canvas of its own rather than the tool overlay
- * because the polygon tool areas full-clear the tool overlay before every repaint. Since the ants
- * became the border for EVERY selection tool, this canvas is now the only place a committed
- * selection's outline exists: `drawSelectionOutline` is gone, and the rectangular marquee's own
- * `useRect` stroke is gated behind `borderMode: 'while-dragging'`, so it paints only the marquee
- * being dragged and never a committed selection at rest.
+ * A committed polygon's border no longer lives on the tool overlay: it is the animated
+ * black/white ants on their own canvas, which the polygon selection tools never clear. So the
+ * blue detection in `canvas-helpers` cannot see it — it still sees the DRAFT, which
+ * `drawPolygonOverlay` strokes in the same blue, and asserting on that after a commit would
+ * prove the draft rather than the selection.
  *
- * The consequence for a spec is that "where is the committed selection drawn" has ONE answer for
- * all nine selection tools, and any spec still reaching for `tool-overlay-canvas` blue is reading
- * a draft preview or nothing at all.
+ * This matters most for the FREEHAND lasso, which has no blue outline of its own at all:
+ * `drawSelectionOutline` skips `sourceTool` 'freehand-lasso' and 'magic-wand'
+ * (`src/util/selection.ts:198`), so a freehand selection is only ever observable here.
  *
- * ## Both reads come out of `getImageData`, never a screenshot
+ * The read is `getImageData` on the canvas's own context rather than a screenshot, for the same
+ * reason `e2e/selection-marching-ants.spec.ts` does it that way: this canvas's backing store is
+ * already in document pixels, so a screenshot would need a page-coordinate clip and a
+ * device-pixel-ratio correction to describe the same pixels, and it would composite whatever the
+ * document painted underneath.
  *
- * `Main.tsx` sizes these canvases to the DOCUMENT, so one backing-store pixel is one document
- * pixel and every number is already in the space the selection geometry works in. A screenshot
- * would have to be re-scaled back through the contain fit to say the same thing, and would
- * composite whatever the document painted underneath. `getWorkspaceCanvas` and friends in
- * `canvas-helpers` document the rest.
- *
- * ## The colour test is deliberate, and narrow
- *
- * Both ant colours are opaque, so alpha alone would accept any future overlay painted on this
- * canvas. Requiring one of the two the loop actually paints — `ANT_STROKE_COLOR`/`ANT_GAP_COLOR`
- * in `src/hooks/useSelectionAnts.ts` — is what keeps this a test of the ants rather than of
- * whatever else might share the surface. It is duplicated inside the `evaluate` callbacks below
- * on purpose: a browser-side closure cannot see a module import.
+ * The element's own bounding rect is what maps the two spaces, and it is read here rather than
+ * derived from `workspaceBox()`: the element is the thing being measured, so the mapping cannot
+ * drift from it. The canvas is `object-contain`, so that mapping is a scale plus a centring
+ * offset in both axes, not a scale alone.
  */
-
-/** An inclusive `[from, to]` run of painted ant pixels in DOCUMENT pixels along one scan line. */
-export type AntRun = readonly [number, number];
-
-/**
- * A scan window, in DOCUMENT pixels.
- *
- * `CssBox` is the canonical declaration of this shape (`screenshot-scale.ts:62`, enforced
- * unique by `screenshot-scale.unit.test.ts`), so it is that type and not a local copy — but
- * read the space note there: `CssBox` names CSS page pixels, and here the same four numbers are
- * DOCUMENT pixels, because the window indexes the ants canvas's backing store and that store is
- * sized to the document. Same shape, different space, stated at the call site — the same
- * asymmetry `cdp-helpers.ts` documents for `ClipOptions`, and the reason a local alias here
- * would have been a second declaration the uniqueness guard exists to forbid.
- */
-export type AntWindow = CssBox;
-
-const ANTS_CANVAS = 'selection-ants-canvas';
-
-const antsCanvas = (page: Page) => page.getByTestId(ANTS_CANVAS);
-
-/**
- * The bounding box of the committed selection's border, in PAGE coordinates, or `null` when the
- * canvas holds no ants.
- *
- * Page coordinates because that is what a drag's endpoints and a clip rectangle are written in;
- * the mapping out of the backing store is `object-contain` letterboxing in BOTH axes, applied
- * here rather than in each caller so two specs cannot drift on it. The element's own bounding rect
- * is the input to that mapping, not `workspaceBox()`, because the element being measured is the
- * element being mapped.
- */
-export const committedAntsOutline = async (
-  page: Page
-): Promise<{ left: number; top: number; right: number; bottom: number } | null> =>
-  antsCanvas(page).evaluate((element) => {
+export const committedAntsOutline = async (page: Page): Promise<CssBounds | null> =>
+  page.getByTestId('selection-ants-canvas').evaluate((element) => {
     if (!(element instanceof window.HTMLCanvasElement)) {
-      throw new Error(`committedAntsOutline: no [data-testid="${element.getAttribute('data-testid')}"]`);
+      throw new Error('committedAntsOutline: no [data-testid="selection-ants-canvas"] on the page');
     }
     const ctx = element.getContext('2d');
     if (!ctx) throw new Error('the selection ants canvas has no 2d context');
@@ -88,6 +49,8 @@ export const committedAntsOutline = async (
       for (let x = 0; x < element.width; x += 1) {
         const index = (y * element.width + x) * 4;
         if (data[index + 3] === 0) continue;
+        // Both ant colours are opaque, so alpha alone would accept any future overlay. Requiring
+        // one of the two the loop actually paints keeps this a test of the ants.
         const isAnt =
           (data[index] < 64 && data[index + 1] < 64 && data[index + 2] < 64) ||
           (data[index] > 192 && data[index + 1] > 192 && data[index + 2] > 192);
@@ -103,6 +66,12 @@ export const committedAntsOutline = async (
     if (antPixels === 0) return null;
 
     const rect = element.getBoundingClientRect();
+    // The canvas is `object-contain` inside a box that is not its aspect ratio, so the backing
+    // store is letterboxed in both axes and document pixels map to page pixels through a scale AND
+    // a centring offset. The scale-plus-offset arithmetic is `containFit`'s rule
+    // (`e2e/helpers/canvas-helpers.ts:148`), written out here so the whole read stays one round trip.
+    // It is applied to this element's own rect rather than to `workspaceBox()` because the element
+    // being measured is the one being mapped, so the two cannot drift apart.
     const scale = Math.min(rect.width / element.width, rect.height / element.height);
     const offsetX = (rect.width - element.width * scale) / 2;
     const offsetY = (rect.height - element.height * scale) / 2;
@@ -116,14 +85,11 @@ export const committedAntsOutline = async (
   });
 
 /**
- * Resolves once the ants canvas holds a border, and throws with the last reading in the message.
+ * Resolves once the ants canvas holds a border.
  *
  * This polls `committedAntsOutline` directly rather than going through `waitForCanvasPixels`,
  * because that loop takes its reading from a screenshot and the point of this read is that a
  * screenshot is the wrong instrument here.
- *
- * The error is kept and reported at the end because a read that throws every tick and a read that
- * returns null forever are different failures, and the timeout message must say which.
  */
 export const waitForCommittedAnts = async (page: Page, description: string): Promise<void> => {
   const deadline = Date.now() + CANVAS_REDRAW_TIMEOUT_MS;
@@ -135,6 +101,8 @@ export const waitForCommittedAnts = async (page: Page, description: string): Pro
       lastError = null;
       if (last !== null) return;
     } catch (error) {
+      // Kept, and reported at the end, because a read that throws every tick and a read that
+      // returns null forever are different failures and the timeout message must say which.
       lastError = error;
     }
     await page.waitForTimeout(CANVAS_REDRAW_POLL_INTERVAL_MS);
@@ -144,6 +112,32 @@ export const waitForCommittedAnts = async (page: Page, description: string): Pro
       `last error: ${lastError instanceof Error ? lastError.message : String(lastError)})`
   );
 };
+
+/**
+ * Whether the ants canvas holds NO border at all.
+ *
+ * The negative counterpart to `committedAntsOutline`, for the case where a selection must be
+ * GONE — a cancelled draft, or a tool that stops the animation. Reading absence rather than
+ * asserting an outline moved somewhere else is the difference between "the selection went away"
+ * and "the selection is somewhere I did not look".
+ */
+export const hasNoCommittedAnts = async (page: Page): Promise<boolean> => (await committedAntsOutline(page)) === null;
+
+/** An inclusive `[from, to]` run of painted ant pixels in DOCUMENT pixels along one scan line. */
+export type AntRun = readonly [number, number];
+
+/**
+ * A scan window, in DOCUMENT pixels.
+ *
+ * `CssBox` is the canonical declaration of this shape (`screenshot-scale.ts` — `CssBox`,
+ * enforced unique by `screenshot-scale.unit.test.ts`), so it is that type and not a local copy —
+ * but read the space note there: `CssBox` names CSS page pixels, and here the same four numbers
+ * are DOCUMENT pixels, because the window indexes the ants canvas's backing store and that store
+ * is sized to the document. Same shape, different space, stated at the call site — the same
+ * asymmetry `cdp-helpers.ts` documents for `ClipOptions`, and the reason a local alias here would
+ * have been a second declaration the uniqueness guard exists to forbid.
+ */
+export type AntWindow = CssBox;
 
 /**
  * The painted ant runs along each scan line of a window, in DOCUMENT pixels.
