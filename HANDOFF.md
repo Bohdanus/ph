@@ -2695,20 +2695,32 @@ compared shortcuts across the rail; that was true of the figure-flyout assertion
 (`it('keeps Triangle, Polygon, Line and Custom Shape in the flyout')` and
 `it('only declares U as the shape shortcut')`) but not of the rail-wide contract since.
 
-**What remains live is a gap, and closing it is a decision rather than a repair.** Photoshop binds
-the Draw tool to `Shift+W`, and that chord is not free here: `w` and `shift+w` both go to
-`selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
-`useKeyDownShortcut({ key: 'w' … })` registrations, the Magic Wand tile's `objectSelectionGroup`).
-`toolbar-mapping.ts`'s own comment declines to decide it — "binding a key for fidelity is a product
-decision about which tool wins the chord, and it is not one this comment should make silently" — and
-`docs/DOCUMENTATION.md`'s ladder makes Adobe's documentation the authority, so this entry does not
-answer it and no change may be made on this paragraph alone.
+**What remains live is a gap, and closing it is a decision rather than a repair.** An earlier version
+of this paragraph claimed Adobe binds the Draw tool to `Shift+W`. Adobe’s published
+default-keyboard-shortcut reference gives no letter for a Draw tool, so that provenance was
+fabricated, it is withdrawn here, and `src/tools/descriptions/eyedropper-draw.ts` carried the same
+sentence and no longer does. The chords are occupied by this app’s own keymap instead: `w` and
+`shift+w` both go to `selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
+`useKeyDownShortcut({ key: 'w' … })` registrations, the Magic Wand tile’s `objectSelectionGroup`),
+and `b` and `shift+b` both go to `selectBrushTool()`. `docs/DOCUMENTATION.md`’s ladder makes Adobe’s
+documentation the authority, so this entry does not answer whether the tile should carry a key
+anyway and no change may be made on this paragraph alone.
 
-**Fix.** Take the ruling — does the Draw tile get `Shift+W`, and does Object Selection lose it — and
-write it into `docs/OVERRIDES.md` if it departs from the current "no key". If the tile is to carry a
-key, add the `useKeyDownShortcut` registration and the `shortcut` in the same change, since
+**Fix.** Take the ruling — does the Draw tile get a key of its own, and which chord if so — and
+write it into `docs/OVERRIDES.md` if it departs from the current "no key". There is no published
+Adobe letter to reproduce, so the ruling is about this app’s keymap: `w` and `shift+w` are the
+Object Selection chord, `b` and `shift+b` the brush group. If the tile is to carry a key, add the
+`useKeyDownShortcut` registration and the `shortcut` in the same change, since
 `it('never declares the same shortcut on two entries')` will refuse a declaration that collides. If
 the tile is to keep none, nothing needs changing and the live half of this entry closes.
+
+One claim beside this one is still unverified and is left as it stands rather than restated here:
+the comment above the Draw entry in `toolbar-mapping.ts` says "Adobe publishes none" on the premise
+that "Photoshop has no Draw tool", and `docs/OVERRIDES.md` titles OVR-2 "Photoshop’s Tools panel has
+no Draw tool". Whether Adobe’s Tools panel carries a tool by that name is a separate question from
+whether its shortcut reference gives that tool a letter, and only the second is settled. Re-derive
+that premise from Adobe before either is quoted as authority, and correct both together — OVR-2 is
+what keeps the tile, so its heading is not a comment that can drift alone.
 
 **Files.** `toolbar-mapping.ts` — `toolbarMap`'s `brush` entry, its Draw flyout entry and the
 comment above it; `src/components/Common/AppKeyboardShortcuts.tsx` — `brushGroup`,
@@ -3060,39 +3072,24 @@ rider survives.
 `src/tools/settings.ts` — the five figure entries in `defaultSettings`;
 `src/components/Main/ShapeToolArea.tsx`
 
-## 129. The worktree-inventory suite's per-test timeout is I/O-bound on the shared session database, so it fails under concurrent readers and is indistinguishable from a real break
+## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
 
 **Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
-to protect a worktree whose protection is derived` runs the inventory generator over every worktree.
-Measured on `main` with 56 worktrees:
+to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
+and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
+with 56 worktrees:
 
 ```
 full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
 the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
-the same test under branch load   : 147s wall, user 8.78s / sys 16.07s
 ```
 
-**This entry's stated cause was wrong and is corrected here.** It used to say the cost grows with
-the fleet because the generator runs git per worktree. The third measurement refutes that:
-**147 seconds of wall clock against 24.85 seconds of CPU is about 17% utilisation**, and a
-CPU- or process-bound workload cannot look like that. It is **blocked on I/O**, not spending
-anything — three generator modules open the same file independently (`chats.mjs`'s `openDb()`,
-`board.mjs`'s `openBoard()`, `writes.mjs`'s `openDb()`), and that store is the operator's 14 GB
-session database, not repository content. So the cost scales with **concurrent readers of one
-shared store**, which is worse exactly when the swarm is busiest, and a measurement taken on a
-quiet machine is not evidence. `chats.mjs`'s own module docstring already says the dominant cost
-is two unindexed `LIKE` scans over `part`.
-
-The 53s figure is also not the worst case: the 76957ms above is already over budget, and 147s is
-the real headroom. Both are observations with their dates, on a store that has since grown — quote
-them as measurements, not as constants.
-
-The knife edge and the indistinguishability are unchanged and are the reason this is an entry rather
-than a re-run: the failure it produces is a bare `Test timed out` with no assertion, which is the
-same output a genuine break produces.
+So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
+bare `Test timed out` with no assertion — the same output a genuine break produces.
 
 **Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
-started with makes this test cross the line, and CI cannot tell the difference.
+started with makes this test cross the line, and CI cannot tell the difference. A green local run at
+99 worktrees and a red CI run at 56 would be the same defect with a different cause.
 
 **Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
 worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
@@ -6056,6 +6053,7 @@ no independent derivation, an arithmetic restatement of a sibling assertion, and
 above, which is the only one of them that was a merge artefact rather than a defect present from the
 start. The dangling reference and the fixture divergence were left unfixed because the mandate was
 test files only.
+
 ## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
 
 **The problem.** Two agents independently write `## 79.`, and a merge resolves the collision
@@ -6220,3 +6218,35 @@ way it already refuses a missing or unreadable file, and the refusal should be t
 `inventory-missing` shape rather than a new code. Then the liveness keys may be read as an
 invariant instead of as a hope. This should land with the `generatedAt` half of §224, which is the
 same schema and the same file.
+
+## 227. Two selection-history baselines record the store's live `selections` array instead of a copy
+
+**Problem.** `src/contexts/useSelectionHistory.ts` builds both of its `SelectionSnapshot` baselines by
+hand — `{ selections: existing, activeSelectionId }` in `clearSelections()` and again in
+`commitSelection()` — where `existing` is the store's live `selections` array, not a copy of it. The
+same object is then stored in the legacy entry's `args.previousSelectionState` and passed as
+`currentSelections` to `planHistoryAppend()`, so one aliased array reaches both the legacy timeline
+and the durable `before` baseline.
+
+This contradicts the rule the shared helper already states. `selectionSnapshot()` in
+`src/contexts/selection-baseline.ts` is documented as "the clone both replay paths use to keep a
+selection snapshot off the legacy history args", and it deep-copies `points`, `pos` and `metadata`
+and freezes the wrapper, yet neither writer calls it.
+
+Nothing writes through the alias today, so this is latent rather than a live wrong answer:
+`COMMIT_DOCUMENT_EDIT` replaces `selections` with a fresh array instead of mutating the old one,
+`history-replay.ts` copies each selection when it replays `nextSelectionState`, and
+`history-adapter.ts` copies `currentSelections` and leans on the document's later deep freeze. The
+hazard is that the invariant is currently enforced by those three call sites' restraint rather than
+by the snapshot itself, and the recorded `before` is the one value a future in-place write would
+silently rewrite.
+
+**Affected.** `src/contexts/useSelectionHistory.ts` — the `previousSelectionState` construction in
+`clearSelections()` and in `commitSelection()`; `src/contexts/selection-baseline.ts` —
+`selectionSnapshot()`, which already owns the rule.
+
+**What would close it.** Route both baselines through `selectionSnapshot(existing, activeSelectionId)`.
+Leave `nextSelectionState` alone: its own comment records that `next` is deliberately the object this
+dispatch publishes, so freezing it would freeze live store state. A test asserting the recorded
+`previousSelectionState.selections` is not the same array reference as the store's would fail before
+the change and pass after it, which is the only shape of proof this needs.
