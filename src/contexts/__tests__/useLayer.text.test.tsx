@@ -127,6 +127,22 @@ describe('useLayers text commit idempotency boundary', () => {
     mockLayerId.counter = 0;
   });
 
+  it('discards only an untouched placeholder, not user text with the same words', () => {
+    const result = setupTextTool();
+    const placeholder = makeTextArgs({ text: 'Lorem ipsum', placeholderUntouched: true }) as TextToolArgs;
+    act(() => {
+      result.current.store.currentArgs.current = placeholder;
+      result.current.layers.commitDirtyTool();
+    });
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.store.currentArgs.current = { ...placeholder, placeholderUntouched: false };
+      result.current.layers.commitDirtyTool();
+    });
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
+  });
+
   it('creates only one layer when Apply fires after commitDirtyTool on the same args', () => {
     const result = setupTextTool();
     const args = makeTextArgs();
