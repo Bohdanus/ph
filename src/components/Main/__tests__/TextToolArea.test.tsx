@@ -87,6 +87,8 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
     get commitDirtyTool() {
       return h.commitDirtyTool;
     },
+    setActiveLayer: vi.fn(),
+    beginTextLayerEdit: vi.fn(),
   }),
 }));
 

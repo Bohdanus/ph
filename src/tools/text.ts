@@ -3,6 +3,7 @@ import { resetOverlayAlpha } from '../util/canvas.ts';
 import { graphemes } from '../util/string.ts';
 import type { CreatorToolParams } from './toolProcessors.ts';
 import type { Ctx2D, RectXYSorted } from '../contexts/general-types.ts';
+import type { LayerId } from '../contexts/layer-types.ts';
 
 /**
  * Adobe's `CharacterStyle.size` is `0.01..1296` "in pixels for a 72ppi document"
@@ -155,6 +156,8 @@ export type TextToolArgs = {
   rect?: RectXYSorted | null;
   /** True only for a newly placed placeholder that has not received user input yet. */
   placeholderUntouched?: boolean;
+  /** Present only while re-entering this committed layer; never persisted in source settings. */
+  editingLayerId?: LayerId;
 
   /**
    * Adobe's character attributes that arrived after the first version of this tool. Every one is

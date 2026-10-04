@@ -356,7 +356,19 @@ export const useLayers = () => {
   const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
+    delete previewLayersRef.current[id];
     const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
+    const currentArgs = layer.source?.kind === 'tool' ? layer.source.args : null;
+    const nextArgs = nextSource.args as ToolArgs & { editingLayerId?: unknown };
+    if (
+      currentArgs &&
+      JSON.stringify({ ...currentArgs, editingLayerId: undefined }) ===
+        JSON.stringify({ ...nextArgs, editingLayerId: undefined }) &&
+      layer.pos.x === nextSource.pos.x &&
+      layer.pos.y === nextSource.pos.y
+    ) {
+      return layer;
+    }
     // The replacement is RENDERED, not merely recorded. `getLayerBitmap` re-runs a creator only for
     // the vector tools — a `text` source is excluded — so a tool layer with neither `tmpCanvas` nor
     // `bitmap` draws nothing at all: `drawLayerSource` declines it, `drawLayersToCanvas` reports
@@ -515,7 +527,9 @@ export const useLayers = () => {
       // returning early, which used to leave a box on the canvas that a tool switch reopened and that
       // no key could end: Escape, Ctrl+Enter and Commit were all no-ops and only Cancel escaped.
       if (!args.text && args.rect) {
-        const closed = { ...args, text: '', rect: null };
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const closed = { ...persistedArgs, text: '', rect: null };
+        if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(closed);
         else currentArgsRef.current = closed;
         clearOverlay();
@@ -530,20 +544,28 @@ export const useLayers = () => {
       // The flag is the whole of the test: a string comparison would discard real content that
       // happens to be those words, which is the defect the flag replaced.
       if (args.placeholderUntouched === true) {
-        const discarded = { ...args, text: '', rect: null };
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const discarded = { ...persistedArgs, text: '', rect: null };
+        if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(discarded);
         else currentArgsRef.current = discarded;
         clearOverlay();
         return layers;
       }
 
-      const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+      const requestedLayerId = (args as TextToolArgs).editingLayerId;
+      const activeLayer = requestedLayerId
+        ? layers[requestedLayerId]
+        : activeLayerId
+          ? layers[activeLayerId]
+          : undefined;
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
         const measuredRect = calculateNewRect(args, canvasRef, totalSize) ?? args.rect;
         const pos = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
         // A new drag on a different origin creates a new text layer. Selection hydration
         // preserves the active layer's origin, which is the explicit in-place-edit signal.
-        if (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y) {
+        if (requestedLayerId || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y)) {
+          const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
           const source: ToolLayerSource = {
             kind: 'tool',
             // Layer-LOCAL, because that is what the create arm stores and what `createLayerSource`
@@ -552,12 +574,17 @@ export const useLayers = () => {
             // the document frame is not the origin — MEASURED on a crop with `documentFrame.x` at
             // -100, a replace armed rendered an EMPTY layer at the right position. The origin
             // comparison above still uses the un-reduced rect, so the guard is unaffected.
-            args: { ...args, rect: reduceRect(sortRect(measuredRect), pos), placeholderUntouched: false },
+            args: {
+              ...persistedArgs,
+              rect: reduceRect(sortRect(measuredRect), pos),
+              placeholderUntouched: false,
+            },
             pos,
           };
           const replaced = replaceLayerSource(activeLayer.id, source);
           if (replaced) {
-            const cleared = { ...args, text: '', rect: null };
+            const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+            const cleared = { ...persistedArgs, text: '', rect: null };
             if (setToolArgs) setToolArgs(cleared);
             else currentArgsRef.current = cleared;
             clearOverlay();
@@ -566,8 +593,9 @@ export const useLayers = () => {
         }
       }
 
-      const layer = createLayerFromTool({ args: { ...args, placeholderUntouched: false } });
-      const cleared = { ...args, text: '', rect: null };
+      const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+      const layer = createLayerFromTool({ args: { ...persistedArgs, placeholderUntouched: false } });
+      const cleared = { ...persistedArgs, text: '', rect: null };
       if (setToolArgs) {
         setToolArgs(cleared);
       } else {
@@ -894,6 +922,22 @@ export const useLayers = () => {
     drawAllLayers();
   }
 
+  const beginTextLayerEdit = (id: LayerId) => {
+    const layer = layers[id];
+    if (!layer) return;
+    previewLayersRef.current[id] = {
+      // Remove only the runtime raster from this preview. The contenteditable overlay is the sole
+      // visible representation while the source is being edited; the marker is never persisted.
+      layer: {
+        ...layer,
+        bitmap: null,
+        tmpCanvas: null,
+      },
+      toolArgs: undefined,
+    };
+    drawAllLayers();
+  };
+
   const drawAllLayers = useCallback(() => {
     if (!canvasRef.current) return;
 
@@ -905,7 +949,9 @@ export const useLayers = () => {
       : layers;
     const sorted = getSortedLayersArray(renderLayers);
     try {
-      if (!drawLayersToCanvas(canvasRef.current, sorted, documentFrame)) {
+      if (
+        !drawLayersToCanvas(canvasRef.current, sorted, documentFrame, new Set(Object.keys(previewLayersRef.current)))
+      ) {
         console.error('Unable to publish runtime layer presentation');
       }
     } catch (error) {
@@ -1093,6 +1139,7 @@ export const useLayers = () => {
     updateLayerByTool,
     commitDirtyTool,
     cancelLayerPreview,
+    beginTextLayerEdit,
 
     removeLayer,
 
