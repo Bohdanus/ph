@@ -66,6 +66,13 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
      * 255 with none. 255 × (1 − 0.7) = 76.5, which is the arithmetic of that fill and nothing else.
      */
     hideBlend: true,
+    /**
+     * The one consumer `handlesOutside` exists for: the contenteditable overlay below occupies the
+     * whole box, so a handle straddling a corner puts its inner half under the editor and a press
+     * there places a caret instead of resizing. The crop, the marquee and the Move tool have no
+     * overlay over their box and keep the straddling grip this repository documents for them.
+     */
+    handlesOutside: true,
     onRepaint: redrawDraftChrome,
     onChangeEnd: (rect: RectXYSorted) => {
       // Whether this press PLACED a box or merely acted on one that was already there. A press that
