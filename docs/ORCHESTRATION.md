@@ -370,6 +370,73 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     deliberately NOT isolated: the report-viewer npm script resolves `playwright-report`, and a
     per-run folder would leave it with nothing to open.
 
+## What git is doing right now
+
+A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
+git directory — `.git/worktrees/<name>/` for a linked worktree, `.git/` for the
+primary. **No commit records it, no branch name carries it, and `git status` in the
+main checkout cannot see it.** `MERGE-INTEGRITY-AUDIT.md` calls this the whole
+hazard class in one place, and it is right: on 2026-10-04 a worktree in this
+repository held an eight-path unresolved merge for hours, and the only reason
+anybody knew was that a person ran the audit's `find` by hand.
+
+`npm run repo:state` reports it. It is `scripts/repo-state-gate.mjs`, and it reads
+git's own markers — `MERGE_HEAD`, `SQUASH_MSG`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
+`BISECT_LOG`, `rebase-merge/`, `rebase-apply/` — plus
+`git diff --name-only --diff-filter=U`, which is what separates an unmerged index
+entry from an ordinary edit. `git ls-files -u` separates them too and returns the same
+paths; `-U` was chosen because its output is already one path per record.
+`--json` prints the same findings for a caller that wants them as data.
+
+**It exits non-zero when it could not look, not only when it found something.** A
+roster it could not read, or a worktree it could not describe, is reported as
+unreadable rather than as clean. `npm run dispose` refuses on exactly those inputs, and
+a report that answered them with exit 0 would be the surface a person trusts more.
+
+**Run it before you believe the repository is quiet.** It exits non-zero when
+anything is in progress, and it is the check to run before a sweep, before a landing,
+and before you conclude that a worktree is finished.
+
+**It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
+worktree, so it scales with the fleet — measured in seconds on a fleet of this
+repository's size. That is right for a command a person runs and wrong for a hook, and the
+decisive reason is behavioural: a hook would block every push in the repository
+because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
+for one session's state gets `--no-verify`'d, after which it protects nothing.
+
+**It reports WHAT is in progress and never WHOSE it is.** git does not record that
+either, so `WORKTREES.json` carries a chat-recency signal for it. Establish the owner
+before you intervene: the worktree measured above was live, and an abort would have
+destroyed a session's in-flight work.
+
+**`MERGE_HEAD` with an index that no longer has unmerged paths is the dangerous
+shape, and the report warns about it by name.** Every conflict resolved, nothing
+committed. `git commit` lands an unattended resolution; `git merge --abort` throws the
+resolution away. Both are one command away, and neither is distinguishable from the
+index alone. Decide in that worktree, from inside it — never from the main checkout.
+
+**`npm run dispose` refuses a worktree with an operation in progress**, because
+removing the worktree deletes the state files and there is no reflog entry and
+nothing for `git fsck` to recover. It also refuses when it could not read that state,
+and when no state was supplied for it at all: an absent signal is not a clear
+worktree. The refusal names the command that would discard the work, and it carries
+the board claims, locks, agents and sessions `preflight` already holds — because the
+operator's first question about a discard command is whether anybody is standing
+there.
+
+**A worktree whose directory is gone still counts.** Its git directory usually
+survives, and that is where a mid-merge `MERGE_HEAD` lives; `git worktree prune`
+deletes it. Both `repo:state` and `dispose` find that directory by matching the
+administrative directories' own `gitdir` files rather than by deriving a name from the
+worktree path, because git sanitises the name it uses — a leading `.` becomes `-`. So
+when `dispose` refuses with `prunable`, **run `npm run repo:state` before pruning.**
+The refusal used to say there was "nothing to salvage and no state to verify" and then
+recommend the command that destroys it.
+
+**Where there is no command to run, the report says so instead of naming one.**
+`git merge --squash` writes no `MERGE_HEAD` and git cannot abandon a squash at all, so
+its remedy is nothing rather than a plausible-looking command that fatals.
+
 ## The list of worktrees: `WORKTREES.json`
 
 `WORKTREES.json` at the repository root is a generated inventory of every
