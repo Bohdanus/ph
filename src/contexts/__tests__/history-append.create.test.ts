@@ -246,7 +246,7 @@ describe('history append raster asset liveness', () => {
           activeLayerId: null,
         },
         history: [],
-        cursor: 0,
+        cursor: -1,
       } as unknown as DurableDocument;
       const input: DurableAppendInput = {
         documentId,

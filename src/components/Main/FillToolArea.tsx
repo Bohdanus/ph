@@ -179,10 +179,12 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     // fill colour into a history entry describing an erase — a value the pixels could never honour.
     // `FillToolArgs.color` is carried for both names only so the pair shares one type, and it
     // travels unchanged for the eraser.
+    //
+    // No `size` beside `pos`: both processors learn the geometry from the curried
+    // `ProcessorToolParams`, so an args-level `size` was a second, unread source of it that the
+    // durable replay path could not honour. `FillToolArgs` no longer declares the field.
     const commitArgs =
-      args.toolName === 'paint-bucket'
-        ? { ...args, color: store.color, pos: layerSeed, size }
-        : { ...args, pos: layerSeed, size };
+      args.toolName === 'paint-bucket' ? { ...args, color: store.color, pos: layerSeed } : { ...args, pos: layerSeed };
 
     updateLayerByTool({ toolArgs: commitArgs });
   };

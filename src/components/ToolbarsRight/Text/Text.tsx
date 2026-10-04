@@ -1,4 +1,4 @@
-import React, { type ChangeEvent, useRef } from 'react';
+import React, { type ChangeEvent, type KeyboardEvent, useRef, useState } from 'react';
 import { calculateNewRect, sortRect, sortedRectToPos } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
@@ -29,6 +29,16 @@ const Text: React.FC<{}> = () => {
   const { createLayerFromTool, replaceLayerSource } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
   const appliedArgsRef = useRef<typeof toolArgs | null>(null);
+  /**
+   * The size the user is part-way through typing, or `null` when they are not editing.
+   *
+   * `null` is load-bearing rather than a convenience, and it is the same seam the polygon tool's
+   * `sides` field uses. It is how the input knows to show the PUBLISHED size instead of a draft, so
+   * every external change to `toolArgs.fontSize` — a tool switch, a settings reload, another control
+   * publishing the style — still repaints the field correctly, and how a blur with nothing typed is
+   * skipped instead of republishing the size the bar already had.
+   */
+  const [fontSizeDraft, setFontSizeDraft] = useState<string | null>(null);
 
   if (!isTextToolArgs(toolArgs)) {
     return null;
@@ -55,30 +65,62 @@ const Text: React.FC<{}> = () => {
     publishStyle({ text: event.target.value });
   };
 
-  const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const requested = Number(event.target.value);
-    // An EMPTY field is not `NaN`. `Number('')` is `0`, which is finite, so the old
-    // `Number.isFinite` guard let it straight through and the clamp below turned it into
-    // `FONT_SIZE_MIN` — publishing `fontSize: 0.01` the instant the user selected the value to
-    // retype it. The comment here used to claim the opposite ("refusing a non-finite value is what
-    // keeps an empty field from becoming a 0px font"), and `e2e/text-tool.spec.ts` repeated the
-    // false reasoning: `fill` cannot produce a value a number input will not accept, but BACKSPACE
-    // can, and a two-digit size can no longer be typed from scratch without passing through empty.
+  /**
+   * Publish the draft as a size — once the user is done with it, not on every keystroke.
+   *
+   * **A keystroke is not an edit.** Publishing from `onChange` meant the controlled field repainted
+   * itself mid-word, because every published value came straight back through `style.fontSize`:
+   * typing `64` over a `32` has to pass through `6`, `6` is in range, so `6` was published and the
+   * `4` landed in a field showing `6`. A leading `0` was worse — `0` clamps up to `FONT_SIZE_MIN`, so
+   * the field became `0.01` before the second digit arrived, and that digit landed after it. Nothing
+   * on screen said a keystroke had been rewritten, and the wrong size is what got published, drawn
+   * and committed.
+   *
+   * So the field holds the USER's string while they type and publishes the number only when they
+   * commit, which is how Photoshop's own Size field behaves: the size applies when you commit it,
+   * not as you cross a threshold on the way. `min`/`max` cannot do this job either — they are
+   * constraint-validation metadata, so the browser dispatches the change for an out-of-range value
+   * and marks the field `:invalid` rather than refusing the keystroke.
+   */
+  const handleFontSizeCommit = () => {
+    if (fontSizeDraft === null) return;
+    const draft = fontSizeDraft;
+    setFontSizeDraft(null);
+    // An EMPTY draft publishes NOTHING, and the reason is an operator, not a type: `Number('')` is
+    // `0`, which is finite, so a finiteness guard admits it and the clamp below turns a size the user
+    // was halfway through retyping into `FONT_SIZE_MIN`. `fill` cannot produce an empty value on its
+    // own, but BACKSPACE can, and a two-digit size cannot be typed without passing through one.
     //
-    // So an empty field publishes NOTHING, and the field is CONTROLLED — `value={style.fontSize}` —
-    // which is the whole of how the old value comes back. React re-renders with the last published
-    // size as soon as the change event settles, so an emptied field snaps back to the value the user
-    // had, without any blur handler. There was one here, written to do that restore explicitly, and
-    // it was DEAD: `style` is `resolveTextStyle(toolArgs)`, which already folds `fontSize` into
-    // `[FONT_SIZE_MIN, FONT_SIZE_MAX]`, so its guard was true on every call and its body unreachable.
-    // `e2e/text-tool.spec.ts` asserted the restore "on blur" and passed for exactly the reason the
-    // handler was unnecessary.
-    //
-    // What this does NOT fix, and what a local draft state would: a size typed from scratch passes
-    // through the intermediate values, so typing `0` first publishes `FONT_SIZE_MIN` and the field
-    // rewrites itself before the second digit lands. `HANDOFF.md` carries that.
-    if (event.target.value === '' || !Number.isFinite(requested)) return;
+    // The old size comes back because dropping the draft puts the published one back in the field —
+    // the controlled restore that used to be the whole of the mechanism, and that
+    // `e2e/text-tool.spec.ts` pins. It now happens on the way OUT of the edit rather than on every
+    // keystroke of it.
+    if (draft === '') return;
+    const requested = Number(draft);
+    if (!Number.isFinite(requested)) return;
+    // Clamped at COMMIT, so the store never holds a value `resolveTextStyle` would have to defend
+    // against a second time, and the field's next render shows what was actually published.
     publishStyle({ fontSize: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, requested)) });
+  };
+
+  /**
+   * RAW, unclamped, and the empty string kept as-is — resolving it here is what repaints the field
+   * out from under the cursor mid-edit. See `handleFontSizeCommit`.
+   */
+  const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setFontSizeDraft(event.target.value);
+  };
+
+  const handleFontSizeKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleFontSizeCommit();
+    } else if (event.key === 'Escape') {
+      // Abandon the draft and leave the published size exactly as it was, which is only possible
+      // because nothing was published while the user was typing.
+      event.preventDefault();
+      setFontSizeDraft(null);
+    }
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -228,8 +270,13 @@ const Text: React.FC<{}> = () => {
           // be reached by the spinner or an arrow key at all. `any` is the honest answer for a
           // continuous quantity typed as a number, and it is what the value itself already was.
           step="any"
-          value={style.fontSize}
+          // The published size, unless a draft is in progress — see `handleFontSizeCommit`. Both
+          // halves are the control: `String(style.fontSize)` is what an external change to
+          // `toolArgs.fontSize` repaints through, and the draft is what a typist is looking at.
+          value={fontSizeDraft ?? String(style.fontSize)}
           onChange={handleFontSizeChange}
+          onBlur={handleFontSizeCommit}
+          onKeyDown={handleFontSizeKeyDown}
           className="w-24 h-9 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>
