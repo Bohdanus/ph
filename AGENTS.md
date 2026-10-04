@@ -16,6 +16,10 @@ ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE
 4. `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT. Other free models are useless.
 5. Cost doubles past 200k of context FOR GPT Luna, and doubles above 270k of context for GPT Terra and Sol. Space Bunny does not have such restriction. IMPORTANT THAT GPT MODELS stay below threshold!
 6. `agent_manager`: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
+7. **THE GATEWAY PRICES IN THE NAME, AND A CATALOG ENTRY IS NOT A FREE ENTRY.** `(free)` is free; a bare name may be paid. `'NVIDIA: Nemotron 3 Super'` + `'kilo'` is in the catalog and it demanded credits from a free session; `'NVIDIA: Nemotron 3 Super (free)'` + `'kilo'`, same session 15 seconds later, ran 1,485,176 input tokens. The resolved id carries the same marker as `:free`.
+8. **NEVER ROUTE A GPT THROUGH `'kilo'`.** `'OpenAI: GPT-6 Sol (new)'` + `'kilo'` is a valid pair and it failed on `Add credits to continue, or switch to a free model`. Cost follows the model, never the provider.
+9. **A NAME THE PROVIDER DOES NOT CARRY CAN STILL SUCCEED, ON A MODEL NOBODY NAMED.** `'Space Bunny Alpha'` + `'kilo'` is not in the catalog, and it completed 90 of 90 on `stealth/space-bunny-alpha` — the model behind the `(new)` name. So VERIFY THE RESOLVED ID IN `session.model`; the launch, and the provider, prove nothing. The queries, and the six ways to get them wrong, are in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md#which-provider-did-a-subagent-run-on).
+10. **OMITTING `model` AND `provider` INHERITS THIS TURN'S MODEL, which is free only if this turn is.** The provider is not inherited with it: the same SpaceBunny model came back through `openrouter` for 106 children, which is `subagent_model` in `~/.config/kilo/kilo.jsonc` doing its job.
 
 ```ts
 task({
