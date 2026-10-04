@@ -811,6 +811,20 @@ export const useLayers = () => {
     return true;
   };
 
+  /**
+   * **This flattens, it does not merge.** `canvasRef.current` is the composited canvas and
+   * `layer-renderer.ts` skips every `!layer.visible` layer, so a hidden layer's pixels are already
+   * composited out of what is read here; the result then REPLACES the whole stack with one layer
+   * (`newLayers` below is a single-entry record). Adobe's name for that is `Flatten Image`, and
+   * its `Merge Visible` keeps the invisible layers. The durable operation kind stays
+   * `merge-document` — it is the historical name and renaming it would churn the replay
+   * verifiers and four test files — so the CONTROL is named `Flatten Image` and this is the home
+   * of the distinction.
+   *
+   * The one product it produces is `isBedrock: false`, which is what makes every pixel-editing
+   * tool usable on it: a document a user opens is one `isBedrock` backing image, and each tool
+   * area refuses the gesture on one (`SpongeToolArea.tsx` and its seven siblings).
+   */
   async function mergeAllLayers(): Promise<Layer | null> {
     const currentLayers = commitDirtyTool();
 

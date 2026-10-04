@@ -40,6 +40,7 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
     moveLayerAfter: vi.fn(),
     setActiveLayer: vi.fn(),
     updateLayer: vi.fn(),
+    mergeAllLayers: vi.fn(),
   };
   return {
     useLayers: vi.fn(() => mocks),

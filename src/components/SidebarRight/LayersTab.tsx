@@ -12,12 +12,13 @@ import {
   ICON_TOGGLE_BUTTON_VISIBLE,
   ICON_TOGGLE_BUTTON_HIDDEN,
   DELETE_BUTTON_ICON,
+  SECONDARY_BUTTON,
 } from '../ToolbarsRight/buttonStyles.ts';
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 
 export default function LayersTab() {
   const [{ layers, activeLayerId }] = useStore();
-  const { toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer } = useLayers();
+  const { toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer, mergeAllLayers } = useLayers();
 
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
   const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
@@ -32,6 +33,7 @@ export default function LayersTab() {
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
   const dragImageRef = useRef<HTMLDivElement>(null);
   const dragImageNameRef = useRef<HTMLSpanElement>(null);
+  const flattenPendingRef = useRef(false);
 
   // The shared drag lock, not a direct write to `document.body`. A layer drag that ended while a
   // dock gesture was still running used to remove the grabbing cursor and the selection lock
@@ -62,6 +64,41 @@ export default function LayersTab() {
   /////
 
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
+
+  /**
+   * Enabled on a single backing image, which is the whole point: a document a user opens is one
+   * `isBedrock` layer and every pixel-editing tool refuses it, so this is the only route out of
+   * that state reachable from the panel. Counting layers alone would disable the button on
+   * exactly the document that needs it.
+   *
+   * `mergeAllLayers` ignores the active layer — it composites the canvas — so the predicate asks
+   * about the STACK, not about whatever is selected. Reading `activeLayer` instead left the
+   * button disabled on a lone backing image whenever `activeLayerId` was null or named a layer
+   * that is not there, which is the one state this control exists to leave.
+   */
+  const canFlatten = sortedLayers.length >= 2 || sortedLayers.some((layer) => layer.isBedrock);
+
+  /**
+   * The durable operation behind this is named `merge-document` and the control is not; why the
+   * two differ is documented once on `mergeAllLayers` itself (`src/contexts/useLayer.ts`).
+   *
+   * `mergeAllLayers` is async, commits the dirty tool and dispatches its own
+   * `COMMIT_DOCUMENT_EDIT` per call, so a double click would append two merge entries and a
+   * rejection handed to `onClick` raw would go unhandled. No confirmation, matching this panel's
+   * own non-confirming delete: the flatten is a single undoable history entry either way.
+   */
+  const handleFlattenImage = () => {
+    if (flattenPendingRef.current) return;
+    flattenPendingRef.current = true;
+
+    void Promise.resolve(mergeAllLayers())
+      .catch((error: unknown) => {
+        console.error('Failed to flatten the image', error);
+      })
+      .finally(() => {
+        flattenPendingRef.current = false;
+      });
+  };
 
   function animateMove(layerToMoveId: LayerId, layerToPlaceAfterId?: LayerId) {
     // Start shrinking layerToMove
@@ -298,6 +335,21 @@ export default function LayersTab() {
           animateMove(draggedLayerId);
         }}
       />
+
+      {sortedLayers.length > 0 && (
+        <div className="flex justify-end pt-1">
+          <button
+            type="button"
+            onClick={handleFlattenImage}
+            disabled={!canFlatten}
+            className={`${SECONDARY_BUTTON} disabled:cursor-default disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600 dark:disabled:hover:bg-transparent`}
+            data-testid="layers-flatten-button"
+            title="Merge every layer into one, discarding hidden layers"
+          >
+            Flatten Image
+          </button>
+        </div>
+      )}
 
       {/* Ghost element for custom drag image */}
       <div

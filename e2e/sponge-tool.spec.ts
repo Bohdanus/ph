@@ -940,47 +940,104 @@ test.describe('Sponge tool', () => {
   });
 
   /**
-   * THE TRIPWIRE FOR THE FINDING IN `HANDOFF.md`: on a fresh document the desktop Layers panel
-   * offers NO way to obtain a layer a tonal tool can edit.
+   * 10. THE ROUTE OUT, FROM THE PANEL.
    *
-   * ## The defect this pins
+   * The reported symptom was "the Sponge does not work": a fresh document is one `isBedrock`
+   * layer, `SpongeToolArea.tsx:54` refuses the gesture, and the desktop Layers panel used to
+   * publish nothing that changed that. This is the test that says the route exists, and it
+   * asserts the BEHAVIOUR rather than the presence of a button, so it holds whatever the control
+   * is named and wherever it moves.
    *
-   * `SpongeToolArea.tsx:54` refuses the gesture when the active layer `isBedrock`, and
-   * `useApp.ts:161` marks BOTH the blank document (`App.tsx:25`) and an opened image file as
-   * bedrock. `LayersTab.tsx` therefore cannot be reached for a fix through the UI: it has no
-   * New Layer, no Duplicate Layer and no convert-or-unlock control — while
-   * `MobileLayersDrawer.tsx:172-186` DOES publish one, so the affordance exists in the codebase
-   * and is absent from the desktop panel. A user who opens a photo and picks the Sponge gets a
-   * refused gesture, and no visible way out. That is the whole of "the Sponge does not work".
+   * ## Why the assertion is a history entry and not a pixel change
    *
-   * `LayersTab.test.tsx:312` pins the panel's own bedrock looseness as intended, and
-   * `docs/LAYERS-PANEL.md` [§12] records the same hole with a planned fix, so this test is the
-   * third leg of one agreed finding rather than a new claim.
+   * A fresh document is `DEFAULT_BLANK_IMAGE`'s white, and on a grey pixel `r === g === b`, so
+   * every channel's deviation from the pivot is `0` and `chromaScale` returns the pixel untouched
+   * in BOTH modes (`sponge.ts`) — a white canvas is a NO-OP for this tool by construction, which
+   * is the same fact the header of this spec is built around. A pixel assertion here would pass on
+   * a build whose Sponge still did nothing at all.
    *
-   * **It is a pin, so a fix MUST delete it in the same change** — the moment the panel grows any
-   * of the three controls, one of these three counts turns red. The absence assertions are scoped
-   * to the Layers panel and matched by role rather than by test id, so the fix may name them
-   * anything; the scope matters because the page carries other buttons whose names would collide
-   * with these words.
+   * So the decidable difference is the one the refusal test above already measures from the other
+   * side: `usePaintStroke` no-ops on bedrock, so a refused drag writes no `TOOL_ACTION` and the
+   * undo button stays disabled. On an editable layer the same drag commits, and that entry is
+   * the proof the gate opened.
    */
-  test('the desktop Layers panel publishes no control that yields an editable layer', async ({ page }) => {
+  test('the Layers panel publishes a route that makes a tonal tool reach the document', async ({ page }) => {
     const panel = page.getByTestId('panel-group-layers');
     await expect(panel, 'the Layers panel is mounted on a desktop viewport').toBeVisible();
-
-    // One row: the backing image. A second row would mean the panel can already create one.
     await expect(page.getByTestId('layer-row'), 'a fresh document is exactly one layer deep').toHaveCount(1);
 
-    for (const name of [/new layer/i, /duplicate/i, /unlock|convert/i]) {
-      await expect(
-        panel.getByRole('button', { name }),
-        `the Layers panel must publish no "${name}" control for a tonal tool to be reachable through`
-      ).toHaveCount(0);
-    }
-    // The mobile drawer's own New Layer button, which is the affordance the desktop lacks. It is
-    // named here so the gap is a missing mount rather than a missing action.
+    // BEFORE: the refusal, on its own terms.
+    await selectTonal(page, SPONGE_ITEM);
+    await setMode(page, 'desaturate');
+    const refused = await workspaceGeometry(page);
+    await strokeDocument(page, refused, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
+    await expect
+      .poll(() => page.getByTestId('undo-button').isDisabled(), { message: 'a bedrock drag is refused' })
+      .toBe(true);
+
+    // THE ROUTE. `Flatten Image` is Adobe's name for what `mergeAllLayers` does: it composites
+    // the canvas while `layer-renderer.ts` skips every `!layer.visible` layer, so the stack is
+    // replaced rather than merged — Flatten Image, not Merge Visible.
+    const flatten = page.getByTestId('layers-flatten-button');
+    await expect(flatten, 'a single backing image is flattenable — it is the only route out').toBeEnabled();
+    await flatten.click();
+
+    await expect(page.getByTestId('layer-row'), 'the flatten replaces the stack with one layer').toHaveCount(1);
     await expect(
-      page.getByTestId('mobile-add-layer-button'),
-      'the mobile affordance is not mounted on desktop'
-    ).toHaveCount(0);
+      page.getByTestId('layer-row').first().getByTestId('layer-name'),
+      'the flattened layer is named by the operation, not left as the backing image'
+    ).toHaveText(/^Merged Layer/);
+
+    // AFTER: the same gesture now commits.
+    const armed = await workspaceGeometry(page);
+    await strokeDocument(page, armed, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
+    await expect
+      .poll(() => page.getByTestId('undo-button').isEnabled(), {
+        message: 'the Sponge reached the document once the backing image was flattened',
+      })
+      .toBe(true);
+  });
+
+  /**
+   * THE TRIPWIRE FOR WHAT IS STILL MISSING, and it is a different claim from the one this spec
+   * used to pin.
+   *
+   * `Flatten Image` makes every tonal tool reachable, so the old pin — that the panel published no
+   * control yielding an editable layer — is fixed and is gone. What remains is that the ONLY
+   * route is destructive: flattening replaces the whole stack, so a user who wants to retouch one
+   * layer of a five-layer document cannot, and Photoshop's own answer (`Layer > New > Layer From
+   * Background`, `Duplicate Layer`) is unbuilt.
+   *
+   * ## Why this pin asserts DESTRUCTION and not an absent name
+   *
+   * The pin it replaces matched `/new layer/i`, `/duplicate/i` and `/unlock|convert/i`, which
+   * assert the absence of three STRINGS. Such a test is green before the fix and green after the
+   * correct one, so it could never have failed: it was documentation wearing a test's clothes. A
+   * non-destructive conversion cannot leave this assertion true whatever it is called, because
+   * the backing image would SURVIVE it.
+   *
+   * **So a fix MUST delete this test in the same change**, and must delete `HANDOFF.md` §175 with
+   * it. The only way to keep it green would be to weaken the assertion, which is the move this
+   * repo does not make.
+   */
+  test('the only route to an editable layer destroys the stack around it', async ({ page }) => {
+    await selectTonal(page, SPONGE_ITEM);
+
+    // A second layer, so "the stack" is a stack. The Draw tool is the only tool that creates one.
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, BAND_COLOUR, true);
+    const drawn = await workspaceGeometry(page);
+    await strokeDocument(page, drawn, { x: 200, y: 400 }, { x: 500, y: 400 }, 20);
+    await expect(page.getByTestId('layer-row'), 'the draw gesture added a layer').toHaveCount(2);
+
+    await page.getByTestId('layers-flatten-button').click();
+
+    // One row, and it is not either of the two that were there. That is the whole claim: the
+    // route that opens the tonal tools takes the other layers with it.
+    await expect(page.getByTestId('layer-row'), 'flattening a two-layer document leaves one layer').toHaveCount(1);
+    await expect(
+      page.getByTestId('layer-row').first().getByTestId('layer-name'),
+      'no pre-existing layer survives the only available route to an editable layer'
+    ).toHaveText(/^Merged Layer/);
   });
 });
