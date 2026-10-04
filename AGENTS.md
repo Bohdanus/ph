@@ -20,6 +20,20 @@ git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
   under the rule rather than the rule: it runs after the edit, so a session that writes
   into `main` and never commits is not stopped by it. What stops the write is the process
   above.
+- **Every commit message carries the chat id, and so does every merge to `main`, which
+  also names the branch it came from.** Two trailers, subject untouched:
+
+  ```
+  Add commit metadata rules to AGENTS.md
+
+  Chat: ses_ef97da01fffeKH0EmMw1F6X0b6
+  Branch: docs/commit-attribution
+  ```
+
+  `Chat:` on every commit; `Branch:` on the commit that merges into `main`. The chat id
+  is the provenance link the next session needs, and it is the only place the id is
+  written down. Find yours with `kilo session list --all`, or the `ses_` id in the
+  session URL.
 
 The three traps that follow from having a worktree are in **Worktrees and dev servers**
 below.
