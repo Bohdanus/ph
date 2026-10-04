@@ -3432,6 +3432,39 @@ symlink removed and a real `npm ci` in the worktree, the same two specs on the s
 13 passed (16.7s)
 ```
 
+**The remedy above is available, and it is not this repository's default — which is why
+the trap keeps firing.** Measured 2026-10-05 across every registered worktree:
+
+```bash
+git worktree list --porcelain | grep '^worktree ' | cut -d' ' -f2- \
+  | while read -r w; do [ -d "$w/node_modules/react" ] && echo "own $w" || echo "none $w"; done \
+  | cut -d' ' -f1 | sort | uniq -c
+```
+
+**133 of 160 worktrees have no `node_modules` of their own**, so Node resolution walks up
+into the main checkout's and every one of them serves the AVIF wasm out of Vite's allow
+list. The other 27 hold a real install — measured as `node_modules/react` being present,
+not as how it got there. So the convention this entry states is widely not followed, and the
+failure a non-follower sees is indistinguishable from the one this entry documents — which
+is the whole reason it has been re-derived twice.
+
+**A scope correction to the entry's own recipe, because it is what makes the trap
+reproducible.** Its reproduction assumes a symlinked `node_modules`. **A worktree with no
+`node_modules` directory at all is the same trap**, because that is the majority case and
+no symlink has to be created for it: the packages still resolve up into the main checkout,
+and the wasm URL is still a main-checkout path. Measured the same URL against both roots
+on one machine, same commit, no code change:
+
+| dev server rooted at                     | `@fs/…/node_modules/@jsquash/avif/codec/enc/avif_enc.wasm` |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| `/Users/bkalynovskyi/ph` (main checkout) | **200**                                                    |
+| a worktree with no `node_modules`        | **403 Restricted** — "outside of Vite serving allow list"  |
+
+`vite.config.ts` declares no `server.fs` block, so Vite's default workspace root is the
+boundary, and a worktree's is the worktree. Only AVIF is exposed: `@jsquash/avif` is the
+only wasm-backed codec this app imports, and `src/contexts/tiff-utils.ts` imports `utif`,
+whose published bundle carries no `.wasm` at all.
+
 **Reproduce the trap rather than the defect.**
 
 ```bash
@@ -3442,13 +3475,16 @@ rm -rf /tmp/avif-check/node_modules          # or simply do NOT symlink it
 ```
 
 **Fix / convention.** A measurement taken through a symlinked `node_modules` is not a measurement of
-`main`. When an audit reports that a documented flake reproduces on `main`, the first thing to check is
-whether the reproduction was itself broken — and the run's own `[WebServer]` log usually says so in one
-line. **The AVIF entry in `e2e/OPEN_PROBLEMS.md` stands.** Do not edit it, and do not add a second
+`main`; neither is one taken through a worktree with **no** `node_modules`. When an audit reports
+that a documented flake reproduces on `main`, the first thing to check is whether the reproduction
+was itself broken — and the run's own `[WebServer]` log usually says so in one line. **Run `npm ci`
+in a worktree before trusting any e2e run from it**, which is cheaper than re-deriving this a third
+time. **The AVIF entry in `e2e/OPEN_PROBLEMS.md` stands.** Do not edit it, and do not add a second
 AVIF entry.
 
 **Files.** `e2e/OPEN_PROBLEMS.md` — "P2 — the AVIF export waits on a wasm encoder inside a 30s
 download timeout, and only AVIF exceeds it"; `e2e/export/helpers.ts` — `waitUntil()`;
+`vite.config.ts` — the absent `server.fs` block that sets the boundary;
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
 
 ---
