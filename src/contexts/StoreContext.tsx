@@ -338,6 +338,37 @@ type StoreAction = Action | InternalAction;
 export type PublicAction = Action;
 export type StoreDispatch = Dispatch<PublicAction>;
 
+/**
+ * The action kinds `dispatchAction` handles itself, in the order the chain below
+ * tests them.
+ *
+ * Each one either needs a side effect the reducer cannot perform — asset
+ * transactions, bitmap liveness, closing a superseded cache — or must publish a
+ * committed payload whose durable fields only the dispatcher can compute. A kind
+ * that needs neither belongs in the reducer, and this list is where saying so is
+ * checked: `dispatchAction`'s trailing assertion only compiles while the chain
+ * above covers exactly these names, so deleting a branch or adding one without
+ * adding the name here fails `npm run tsc` rather than quietly changing which
+ * transitions bypass the default.
+ *
+ * The exported name is the list a test pins, not a second place to register a
+ * kind: the assertion at the end of `dispatchAction` is what ties it to the
+ * branches.
+ */
+export const INTERCEPTED_STORE_ACTION_TYPES = [
+  'PROMOTE_LAYER_PRESENTATIONS',
+  'ADOPT_LAYER_BITMAPS',
+  'PUBLISH_RUNTIME_PRESENTATION',
+  'REORDER_LAYERS',
+  'COMMIT_DOCUMENT_EDIT',
+  'APPLY_HISTORY_REPLAY',
+  'REPLACE_DOCUMENT',
+] as const satisfies readonly StoreAction['type'][];
+
+const INTERCEPTED_STORE_ACTIONS: ReadonlySet<StoreAction['type']> = new Set(INTERCEPTED_STORE_ACTION_TYPES);
+
+type UninterceptedActionType = Exclude<StoreAction['type'], (typeof INTERCEPTED_STORE_ACTION_TYPES)[number]>;
+
 const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 
 const initialState: StoreData = {
@@ -615,6 +646,12 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return { ...state, hasUnsavedChanges: action.payload };
     case 'SET_FILE_NAME':
       return { ...state, fileName: action.payload };
+    case 'SET_ORIGINAL_IMAGE':
+      // Typed no-op. No writer dispatches this and `StoreData` carries no
+      // original-image record, so the arm exists to keep the switch exhaustive;
+      // deleting the action kind is the change that removes it (see the arm's
+      // registration sites in `StoreContext.boundary-gates.test.ts`).
+      return state;
     case 'SET_SIZE':
       if (state.totalSize.width === action.payload.width && state.totalSize.height === action.payload.height) {
         return state;
@@ -678,6 +715,12 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       }
       return published === state.layers ? state : { ...state, layers: published };
     }
+    case 'ADOPT_LAYER_BITMAPS':
+      // Ownership bookkeeping, not a transition: the dispatcher registers the
+      // rasters with the presentation scope and deliberately does not forward
+      // this action here. The arm is a no-op that keeps the switch exhaustive,
+      // so a new action kind cannot be added without a transition of its own.
+      return state;
     case 'BATCH_UPDATES':
       // Metadata-only in production (the sole writer passes `fileName` and
       // `hasUnsavedChanges`). The wider legacy payload type still admits
@@ -814,8 +857,16 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         selectionDraft: { status: 'idle' },
         selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
       };
-    default:
+    default: {
+      // Every action kind has an arm above, so a new one is a typecheck error
+      // instead of a silent no-op — `SET_ORIGINAL_IMAGE` and `ADOPT_LAYER_BITMAPS`
+      // were both reached through `default: return state` for that reason. The
+      // guard is compile-time only: the runtime answer for an unknown kind stays
+      // "state unchanged", because `useReducer` must not throw inside a render.
+      const _exhaustive: never = action;
+      void _exhaustive;
       return state;
+    }
   }
 }
 
@@ -1032,6 +1083,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
     const currentState = latestStateRef.current;
+    if (!INTERCEPTED_STORE_ACTIONS.has(action.type)) {
+      // The default transition, stated rather than fallen into. Every kind in
+      // INTERCEPTED_STORE_ACTION_TYPES returns from its own branch below, so this
+      // is what the rest of the union gets: one reducer call outside React, so a
+      // second dispatch in the same batch is decided against the state the first
+      // one produced, then one `rawDispatch`.
+      latestStateRef.current = reducer(currentState, action);
+      rawDispatch(action);
+      return;
+    }
     if (action.type === 'PROMOTE_LAYER_PRESENTATIONS') {
       // A promotion is accepted only while the layer still holds the requesting
       // canvas. A superseded bitmap can never reach a layer, so the dispatcher
@@ -1247,8 +1308,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // operation. Open the document transaction only after the pure decision
       // succeeds, publish the state, then commit and reconcile the exact set the
       // published document names. If any step fails, rollback before rebuilding.
+      //
+      // The `catch` covers the pre-publication work ONLY, and the commit,
+      // reconcile and retirement statements sit after it for that reason. Once
+      // `rawDispatch` has run the entry is in React's queue, so falling out of a
+      // catch that wraps it lands on the rebuild path below — which appends the
+      // SAME history entry a second time and advances `branchRevision` by two, so
+      // one undo appears to do nothing. A failure after publication is reported
+      // to the caller instead of being answered with a second dispatch.
       if (publishPlanned) {
         let transaction: DocumentAssetTransaction | undefined = plannerTransaction;
+        let published: { converted: DurableProjection; nextState: StoreData } | undefined;
         try {
           transaction ??= registry.beginDocumentAssetTransaction(currentState.documentId);
           const converted = appendBoundaryDiagnostics(
@@ -1268,18 +1338,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           latestStateRef.current = nextState;
           rawDispatch(committedAction);
-          transaction.commit();
-          if (converted.document) {
-            registry.reconcileDocumentAssets(currentState.documentId, collectDurableAssetIds(converted.document));
-          }
-          // Retirement runs after the transition is published, and only against
-          // the record that transition actually produced.
-          retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
-          return;
+          published = { converted, nextState };
         } catch (error) {
           publicationFailed = true;
           transaction?.rollback();
           console.error('Unable to publish a planned durable append; rebuilding the durable document', error);
+        }
+        if (published) {
+          transaction?.commit();
+          if (published.converted.document) {
+            registry.reconcileDocumentAssets(
+              currentState.documentId,
+              collectDurableAssetIds(published.converted.document)
+            );
+          }
+          // Retirement runs after the transition is published, and only against
+          // the record that transition actually produced.
+          retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, published.nextState);
+          return;
         }
       }
 
@@ -1417,8 +1493,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
-    latestStateRef.current = reducer(currentState, action);
-    rawDispatch(action);
+    // Unreachable at runtime: the chain above returns for every intercepted
+    // kind, and the default at the top of `dispatchAction` returns for the rest.
+    // It exists to be a compile-time assertion rather than a comment — if a
+    // branch is removed from the chain without removing its name from
+    // INTERCEPTED_STORE_ACTION_TYPES, the narrowed `action.type` no longer fits
+    // `UninterceptedActionType` and `npm run tsc` fails.
+    const _everyInterceptedKindReturns: UninterceptedActionType = action.type;
+    void _everyInterceptedKindReturns;
   };
   const dispatchInternalAction = (action: InternalAction) => dispatchAction(action);
   const dispatch: StoreDispatch = (action) => dispatchAction(action);
