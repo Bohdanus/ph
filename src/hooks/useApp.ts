@@ -3,7 +3,7 @@ import { useStore, type StoreMetadataUpdates } from '../contexts/StoreContext.ts
 import type { Layer, LayersRecord } from '../contexts/layer-types.ts';
 import type { NewDocumentBlankParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
-import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
+import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/file-types.ts';
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
@@ -157,8 +157,14 @@ export const useApp = (): UseAppType => {
     }
     const { image } = data;
     const size = { width: image.width, height: image.height };
-    handleImageCreate(size);
+    // The canvas takes the image's size only AFTER the replacement has been published.
+    // `createLayerFromBitmap` awaits `immutableRaster` before it dispatches, so a decode failure
+    // rejects there with nothing published — and a canvas already resized to the incoming file's
+    // geometry is a document-sized canvas wrapped around the outgoing document, which then renders
+    // at the wrong extent while the tool overlays keep the old one. The PSD arm above already
+    // orders it this way: it resizes all three refs only after every `immutableRaster` has resolved.
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
+    handleImageCreate(size);
     _setFileName(fileName);
   }
 

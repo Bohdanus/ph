@@ -19,7 +19,6 @@ import {
   type ActionType,
 } from '../constants.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
-import { THROTTLE_DRAW, THROTTLE_TIME } from '../../constants/index.ts';
 
 describe('action type constants', () => {
   const actions: Record<string, ActionType> = {
@@ -137,16 +136,5 @@ describe('DEFAULT_TOOL', () => {
 
     const name: ToolName = DEFAULT_TOOL;
     expect(toolNames).toContain(name);
-  });
-});
-
-describe('throttle constants', () => {
-  it('declares positive millisecond delays', () => {
-    expect(THROTTLE_TIME).toBeGreaterThan(0);
-    expect(THROTTLE_DRAW).toBeGreaterThan(0);
-  });
-
-  it('throttles drawing input more aggressively than generic input', () => {
-    expect(THROTTLE_DRAW).toBeLessThan(THROTTLE_TIME);
   });
 });

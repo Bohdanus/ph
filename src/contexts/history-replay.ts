@@ -45,7 +45,7 @@ import {
 export type ReplayDiagnostic = Readonly<{
   historyId?: string;
   actionName?: ActionType;
-  code: 'canvas-filter-unsupported' | 'invalid-affine-transform';
+  code: 'canvas-filter-unsupported' | 'invalid-affine-transform' | 'unhandled-action';
   error: unknown;
 }>;
 
@@ -214,7 +214,27 @@ export function replayHistory(
       layers = Object.fromEntries(Object.entries(layers).filter(([id]) => id !== layerId));
       continue;
     }
-    if (actionName !== TOOL_ACTION) continue;
+    if (actionName !== TOOL_ACTION) {
+      // Every remaining `ActionType` member has been handled above, so reaching here
+      // means the union gained a member this loop does not apply, or the entry carries
+      // nothing the handler for its action needs (`OPEN_DOCUMENT_ACTION` is applied by
+      // the `documentSource` branch at the top of the loop, so an entry without one
+      // arrives here too). Refusing is right; refusing SILENTLY is not — this is the
+      // one skip in the module that used to report nothing, and a user edit vanishing
+      // unnoticed is exactly what `ReplayDiagnostic` exists to prevent. It is
+      // unreachable in production today: `useApp.ts` is the only writer of an
+      // `OPEN_DOCUMENT_ACTION` entry and always attaches a `documentSource`, and
+      // `LAYER_TRANSPARENCY_ACTION` has no production dispatch site at all. Reporting
+      // it costs nothing and makes the union exhaustiveness assertable by
+      // `history-replay.action-census.test.ts`.
+      diagnostics.push({
+        historyId: item.id,
+        actionName,
+        code: 'unhandled-action',
+        error: new Error(`No replay arm applies ${actionName}`),
+      });
+      continue;
+    }
 
     const layer = layers[layerId];
     const toolArgs = args as ToolArgs;

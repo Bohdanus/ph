@@ -87,9 +87,10 @@ function bands(box: BoundingBox): Bands {
  * Selects the transform tool through `Edit ▸ Free Transform`.
  *
  * Two clicks, and both are necessary: the `Edit` host is a button that opens a menu, and
- * `Free Transform` is the only item inside it. `transform` has no rail tile and no
- * `tools-menu-transform-button` — Photoshop has no such tool, and this app's Tools rail and
- * Tools menu now agree with it — so the header menu is the only surface that selects it.
+ * `Free Transform` is the only item inside it. `transform` has no rail tile — Photoshop has
+ * no such tool in its Tools panel, and this app's rail agrees with it — so the header menu is
+ * the only surface that selects it. The header has no `Tools` menu at all, for the same
+ * reason: Adobe reaches the tool set through the Tools panel and the single-key bindings.
  */
 async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
   await page.getByTestId('header-edit-menu-button').click();

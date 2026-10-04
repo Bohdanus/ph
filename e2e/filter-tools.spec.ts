@@ -184,12 +184,14 @@ function besideTheLine(onLine: { x: number; y: number }): { x: number; y: number
  *
  * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
  * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
- * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
- * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
- * hold it is gone from `toolbarMap`. `Desaturate` is the enabled item that selects it, and
- * the slug is `slugifyToolLabel('Desaturate')` (`toolbar-mapping.ts`). It used to be
- * `Photo Filter`, which named a command whose bar this is not: Adobe's Photo Filter is a
- * lens filter with Density and Preserve Luminosity, and the app computes
+ * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile,
+ * and the `[Colors, Levels, Transform]` flyout that used to hold it is gone from `toolbarMap`.
+ * The header has no `Tools` menu either — Photoshop reaches the tool set through its Tools
+ * panel, not a menu — so `Image ▸ Adjustments` is the only surface left, and that is why this
+ * path is a three-click sequence rather than a tile click. `Desaturate` is the enabled item
+ * that selects it, and the slug is `slugifyToolLabel('Desaturate')` (`toolbar-mapping.ts`). It
+ * used to be `Photo Filter`, which named a command whose bar this is not: Adobe's Photo Filter
+ * is a lens filter with Density and Preserve Luminosity, and the app computes
  * `grayscale(%) sepia(%) saturate(%)`.
  *
  * The other twenty items in that submenu render `disabled`, so this is the one path in and a
