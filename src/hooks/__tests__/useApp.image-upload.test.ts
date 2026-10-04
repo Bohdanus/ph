@@ -190,8 +190,9 @@ describe('useApp setImageFromUpload', () => {
     // The layer creation has started and has not resolved, so this IS the in-flight canvas.
     // It must not have taken the image's geometry: `createLayerFromBitmap` can reject, and a
     // canvas resized before the replacement is published is sized for a document that was never
-    // adopted. An event-order assertion alone cannot see this — a resize moved to just after the
-    // call still records the same sequence — so the geometry itself is read here.
+    // adopted. Reading the geometry is what separates a resize placed before the await from one
+    // placed after it — the final event-order assertion below cannot, because both record the
+    // same sequence.
     expect(harness.events).toEqual(['createLayerFromBitmap']);
     expect(harness.canvasSize).toEqual({ width: 640, height: 480 });
 

@@ -271,8 +271,10 @@ async function seedOutgoingDocument(result: Result) {
 
   // The seeded document's own composition. `drawLayersToCanvas` sizes the workspace canvas to
   // the document frame's extent, and this harness never runs it — so without this the canvas
-  // would sit at jsdom's default 300x150 whatever the document is, and an assertion that a failed
-  // import left the canvas alone would pass against any implementation at all.
+  // stays at jsdom's default 300x150 whatever the document is, and every canvas assertion in
+  // `expectOutgoingDocumentIntact` is red for EVERY implementation, correct or defective.
+  // Verified by deleting this line: both cases that call the helper then fail on
+  // `{ width: 300, height: 150 }` against the seeded `{ width: 800, height: 600 }`.
   act(() => {
     resizeCanvas(result.current.store.canvasRef.current!, PREVIOUS_SIZE.width, PREVIOUS_SIZE.height);
   });
