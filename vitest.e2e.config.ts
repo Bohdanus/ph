@@ -40,6 +40,29 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
       // Separate from the app's ./coverage so the two runs cannot clobber each other.
       reportsDirectory: './coverage-e2e',
+      //
+      // NO `include`, NO `all`, AND THAT IS MEASURED RATHER THAN ASSUMED.
+      //
+      // The obvious repair for "an untested module is absent from the report instead of
+      // reported at 0%" is a `coverage.include` over every module under `e2e/`. It does
+      // not work with this provider. Run on this tree, the report lists the SAME nine rows
+      // with `include` set and without it, and `--coverage.all` changes nothing either:
+      // the v8 provider's untested-files query returns an empty list in every
+      // configuration, so the file list is exactly the set of modules the suite happened
+      // to load. `selection-ants.ts` appears in the report only because
+      // `e2e/helpers/__tests__/selection-ants.unit.test.ts` imports it, not because any
+      // glob asked for it.
+      //
+      // So the honest denominator needs a provider that can enumerate files it never
+      // loaded — `@vitest/coverage-istanbul`, which is not a dependency of this
+      // repository. Adding one is an operator decision about a new devDependency and the
+      // `e2e-unit` job's install time, not a line in this file.
+      //
+      // Until then this report is a loaded-files report, and the check that can actually
+      // fail on an untested module is the reachability gate in
+      // `e2e/helpers/__tests__/helper-coverage.unit.test.ts`, which reads the module
+      // graph rather than this artifact. There are deliberately no thresholds either:
+      // see the same file for why a percentage here is not a gate.
     },
   },
 });
