@@ -136,11 +136,33 @@ const finiteDimension = (value: unknown, fallback: number): number => {
 type PixelSourceRaster = { pixels: Uint8ClampedArray; width: number; height: number };
 
 /**
+ * Draws whose source carried no pixel buffer, recorded rather than silently skipped.
+ *
+ * A browser draws nothing for a source it cannot decode, so the skip itself is correct. What is
+ * NOT correct is a differential harness that cannot tell "both authorities painted this" from
+ * "both authorities painted nothing": `src/test/setup.ts` polyfills `createImageBitmap` to
+ * `{ width, height, close }` with no `pixels`, `materialization.ts` — `toOwnedBitmap()` runs it
+ * inside every retained operation, and two blank surfaces compare EQUAL with zero bytes examined.
+ * A test therefore has to be able to assert that nothing was dropped on the way to the canvas.
+ */
+const unresolvableDrawSources: unknown[] = [];
+
+/** Every `drawImage` source this fixture could not resolve, oldest first. */
+export const unresolvableDraws = (): readonly unknown[] => unresolvableDrawSources.slice();
+
+/** Clears the record. Call it before the draws a test means to assert about. */
+export const resetUnresolvableDraws = (): void => {
+  unresolvableDrawSources.length = 0;
+};
+
+/**
  * Resolves any `drawImage` source: a `PixelBitmap` carrier, a `PixelCanvas`, an
  * `HTMLCanvasElement` behind the pixel stub, or a `PixelContext`.
  *
  * A source that resolves to nothing contributes nothing, which is what a browser does with a
- * source it cannot decode. A throw here would instead make the harness the failure.
+ * source it cannot decode — and it is RECORDED, because a silent skip is indistinguishable from a
+ * successful draw to anything comparing the result. A throw here would instead make the harness the
+ * failure.
  */
 const rasterOf = (source: unknown): PixelSourceRaster | null => {
   if (!source || typeof source !== 'object') return null;
@@ -467,7 +489,10 @@ export class PixelContext {
   drawImage(source: unknown, ...args: number[]): void {
     this.syncToHost();
     const raster = rasterOf(source);
-    if (!raster) return;
+    if (!raster) {
+      unresolvableDrawSources.push(source);
+      return;
+    }
 
     const { sx, sy, sw, sh, dx, dy, dw, dh } = this.drawImageRect(args, raster);
     if (!(sw > 0 && sh > 0 && dw > 0 && dh > 0)) return;

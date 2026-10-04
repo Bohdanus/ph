@@ -15,9 +15,12 @@ import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 import {
   installPixelCanvasElement,
   pixelHtmlCanvasContexts,
+  PixelContext as PixelContextClass,
   readPixelSource,
+  resetUnresolvableDraws,
   stubPixelOffscreenCanvas,
   type PixelContext,
+  unresolvableDraws,
 } from '../../__tests__/fixtures/pixelCanvas.ts';
 import {
   parityFrame,
@@ -413,10 +416,23 @@ const declaredDivergenceFor = (cursorCase: CursorCase) =>
 const hardCursorCases = everyCursorCase.filter((cursorCase) => !declaredDivergenceFor(cursorCase));
 
 const assertPixelParity = async (cursorCase: CursorCase, note = ''): Promise<void> => {
+  resetUnresolvableDraws();
   const pair = await renderPair(cursorCase.scenario, cursorCase.cursor);
   const suffix = note ? ` [${note}]` : '';
   const reported = drainRefusals();
   expect(reported, `${pair.label}: console.error refusals`).toEqual([]);
+  // A comparison over two blank surfaces is EQUAL with zero bytes examined, which is the one way this
+  // harness could report success while the product is wrong. The mechanism is a source the fixture
+  // cannot resolve: `src/test/setup.ts`'s `createImageBitmap` polyfill is `{ width, height, close }`
+  // with no pixels, and `materialization.ts` — `toOwnedBitmap()` runs it inside every retained
+  // operation. Assert nothing was dropped.
+  //
+  // Deliberately NOT "a surface painted something": a hidden layer legitimately paints nothing
+  // (`layer properties` at the cursor that hides it), so that assertion would be wrong rather than
+  // strict. The check that would be right needs to know what the document SHOULD paint, which is a
+  // separate derivation.
+  const unresolvable = unresolvableDraws();
+  expect(unresolvable, `${pair.label}: drawImage sources the fixture could not resolve`).toEqual([]);
   assertIdentical(pair.legacyRuntime, pair.durableRuntime, `${pair.label} runtime presentation${suffix}`);
   assertIdentical(pair.legacyExport, pair.durableExport, `${pair.label} export bytes${suffix}`);
 };
@@ -465,6 +481,30 @@ describe('legacy/durable pixel parity', () => {
       120_000
     );
   }
+
+  it('reports a drawImage source it could not resolve, so a blank comparison cannot pass as agreement', () => {
+    // The guard the parity matrix relies on, proved sharp. `src/test/setup.ts` polyfills
+    // `createImageBitmap` to exactly this shape, and `materialization.ts` — `toOwnedBitmap()` feeds
+    // it to `drawImage` inside every retained operation, so a draw that silently contributed
+    // nothing would make both authorities blank and the comparison EQUAL over zero bytes.
+    resetUnresolvableDraws();
+    expect(unresolvableDraws()).toEqual([]);
+
+    const context = new PixelContextClass(4, 4);
+    // A resolvable carrier contributes, and records nothing.
+    context.drawImage({ width: 2, height: 2, pixels: new Uint8ClampedArray(16).fill(255) }, 0, 0, 2, 2);
+    expect(unresolvableDraws()).toEqual([]);
+    expect(context.getImageData(0, 0, 4, 4).data.some((byte) => byte !== 0)).toBe(true);
+
+    // The polyfill's shape resolves to nothing, draws nothing, and is RECORDED.
+    const before = context.getImageData(0, 0, 4, 4).data.join(',');
+    context.drawImage({ width: 2, height: 2, close: () => undefined }, 0, 0, 2, 2);
+    expect(unresolvableDraws()).toHaveLength(1);
+    expect(context.getImageData(0, 0, 4, 4).data.join(',')).toBe(before);
+
+    resetUnresolvableDraws();
+    expect(unresolvableDraws()).toEqual([]);
+  });
 
   it('detects a one-pixel perturbation of a surface it compared', async () => {
     const scenario = rasterProcessorScenarios[0]!;
