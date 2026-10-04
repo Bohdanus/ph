@@ -20,13 +20,21 @@ export type PaintToolName = 'brush' | 'pencil';
  * The blend modes a canvas can actually composite a layer with, in the order
  * Photoshop's `Mode` dropdown lists them.
  *
- * Photoshop offers more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract,
- * Divide, Behind, Clear). Each name above that is missing here is one this
- * renderer cannot express: the canvas `GlobalCompositeOperation` set has no
- * equivalent, and `ctx.globalCompositeOperation = 'dissolve'` is silently ignored
- * by the browser rather than erroring, so offering it would ship a dead option.
- * `src/contexts/layer-utils.ts` also has to read a value back off stored history,
- * which is why the list is a closed literal union rather than a free string.
+ * Photoshop offers twenty-nine for the painting tools — the twenty-seven layer blend
+ * modes, Dissolve among them, plus the two the painting tools add, Behind and Clear —
+ * and this list is the sixteen of them a canvas can express. The thirteen it leaves out
+ * are Dissolve, Linear Burn, Darker Color, Linear Dodge (Add), Lighter Color, Vivid Light,
+ * Linear Light, Pin Light, Hard Mix, Subtract and Divide, plus Behind and Clear. Each of
+ * those is one this renderer cannot express: the canvas `GlobalCompositeOperation` set has
+ * no equivalent, and `ctx.globalCompositeOperation = 'dissolve'` is silently ignored by the
+ * browser rather than erroring, so offering it would ship a dead option.
+ * `src/contexts/layer-utils.ts` also has to read a value back off stored history, which is
+ * why the list is a closed literal union rather than a free string.
+ *
+ * The enumeration is here so a reader can check the count rather than trust it, and
+ * nothing enforces it staying in step with `PAINT_BLEND_MODES` — a mode added to that
+ * array does not have to be one Photoshop lists, and this comment would then be quietly
+ * wrong. `src/tools/__tests__/brush.test.ts` pins the sixteen values themselves.
  */
 export const PAINT_BLEND_MODES = [
   { label: 'Normal', value: 'source-over' },

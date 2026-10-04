@@ -5156,14 +5156,24 @@ not this sentence, so nothing catches the enumeration drifting.
 beside the comment is sound: the canvas compositing set has no equivalent for the rest, and offering one
 would ship a dead option.
 
-**Affected.** `src/tools/descriptions/paint.ts` — the Brush's `Mode` row, whose "offering" sentence is
-the overcount and whose `appNotes` is the correct statement it contradicts;
-`src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, for the five omitted names.
+**Fixed in `src/tools/brush.ts`, owned on the rest.** The doc comment on `PAINT_BLEND_MODES` now
+states the counts (twenty-nine offered, sixteen expressible, thirteen left out) and names all
+thirteen — Dissolve, Linear Burn, Darker Color, Linear Dodge (Add), Lighter Color, Vivid Light,
+Linear Light, Pin Light, Hard Mix, Subtract and Divide, plus Behind and Clear — so the enumeration is
+checkable rather than a partial list. Its "in the order Photoshop's `Mode` dropdown lists them" claim
+holds: filtering Photoshop's twenty-seven layer blend modes down to these sixteen reproduces the
+array's order exactly. Nothing enforces the comment staying in step with the array, and the comment
+says so rather than implying a check that does not exist.
 
-**What would close it.** Correct the row to say the bar offers the sixteen the component actually
-renders, keeping the `appNotes` sentence as the statement of the shortfall. That is the half a reader
-is misled by, and it regenerates into `docs/TOOLS.md`. Adding the five missing names to the source
-comment is the smaller half, and it makes the comment agree with the row rather than the reverse.
+**Owned, so recorded not fixed:** `src/tools/descriptions/paint.ts` — the Brush's `Mode` row, whose
+"offering" sentence is the overcount and whose `appNotes` is the correct statement it contradicts.
+That row is data, it regenerates into `docs/TOOLS.md`, and both files are claimed by work in flight.
+Correcting it to say the bar offers the sixteen the component actually renders keeps the `appNotes`
+sentence as the statement of the shortfall; the other three `Mode` rows in the same file carry the
+same twenty-seven phrasing and need the same pass.
+
+**Affected.** `src/tools/descriptions/paint.ts` — four `Mode` rows, the Brush's being the one that
+also promises Behind; `docs/TOOLS.md`, which regenerates from them.
 
 ## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
 
