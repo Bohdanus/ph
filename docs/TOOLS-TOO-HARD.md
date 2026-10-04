@@ -22,9 +22,9 @@ entry remains the record of the defect, and this file records only that it is to
 ## Revalidate before trusting any citation
 
 Line-number citations into a growing source file go stale, and the prose at a stale line still reads
-plausibly, which is why a `grep` sweep does not catch it. `AGENTS.md` records the measurement: on one
-branch, inserting lines into `StoreContext.tsx` left nearly every citation below the insertion point
-wrong. **Re-derive a citation from the sentence that contains it, never from the old number.**
+plausibly, which is why a `grep` sweep does not catch it. `.skills/hard-merge.md` records the
+measurement: on one branch, inserting lines into a central context file left nearly every citation
+below the insertion point wrong. **Re-derive a citation from the sentence that contains it, never from the old number.**
 
 To check one without moving through the file by eye, print the line and its neighbours and read them
 against the claim the sentence makes:
@@ -83,6 +83,7 @@ export type Selection = {
   id: string;
   points: Point[];
   isActive: boolean;
+  // …pos, lifecycle, geometry, sourceTool, metadata
 ```
 
 Union and intersect are per-pixel operations, and a single point path cannot express them without
@@ -130,8 +131,10 @@ reachable from the same Select menu Select and Mask is.
 **What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
 that exist are File, Tools, Image, Edit and Window (`DesktopHeader.tsx`'s five `menuHostRefs` hosts) —
 and no selection operation implements them: `src/util/selection.ts`
-exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection, though
-it does compute a feathered alpha for the outline it draws.
+exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection. It
+does compute a feathered alpha, but only on the clipboard copy path
+(`copyFeatheredPolygonSelectionToCanvas()` calling `createFeatheredAlphaMask()`); the outline it draws
+on the canvas is not feathered.
 
 **Why it is too hard.** Every one of these is a whole-image operation on a selection the app stores as
 a polygon. Feathering a polygon is not feathering its outline; a correct Feather is a distance
@@ -499,13 +502,11 @@ operation stack that can re-render but not re-edit. It is non-destructive in ret
 narrower thing than the word means and must not be described as smart objects — `docs/FEATURES.md`'s
 Non-destructive editing section is where that distinction is already drawn.
 
-### Dodge, Burn and Smudge build-up while the button is held
+### Dodge, Burn, Sponge and Smudge build-up while the button is held
 
 **Not a handoff item.** The gap is real but it is recorded here as a capability decision, and per
-this file's own policy nobody treats its absence as a defect. The rail entries for the two ids are
+this file's own policy nobody treats its absence as a defect. The rail entries for these ids are
 `HANDOFF.md` §170's, which is a separate decision.
-
-### Dodge, Burn, Sponge and Smudge build-up while the button is held
 
 **What Photoshop does.** Dodge, Burn, Sponge and Smudge accumulate for as long as the button is
 held. The result depends on how long the cursor rested in each place, which is the entire point of
@@ -562,13 +563,14 @@ shows and what the commit can honour.
 interior and strokes the outline, creating a work path instead of pixels, and a Paths panel holds
 those paths so they can be edited, saved, and used as vector masks.
 
-**What this app does.** It clears `hasFill` and stops there (`shape.ts` — `drawShape()`):
+**What this app does.** It drops the interior and stops there (`shape.ts` — `drawShape()`):
 
 ```ts
-const hasFill = args.toolMode !== 'path' && args.hasFill;
+const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor;
 ```
 
-The shape is still rasterised. What the user gets in Path mode is the same filled-or-not polygon,
+That third term is a separate, later fix — a figure with no background colour is not filled, so a
+Path-mode selection is not the only way to get an unfilled polygon. The shape is still rasterised. What the user gets in Path mode is the same filled-or-not polygon,
 drawn as pixels.
 
 **Why it is too hard.** It is the same missing work-path object the Pen family needs, plus the Panels

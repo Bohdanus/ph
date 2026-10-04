@@ -24,7 +24,7 @@ e2e/
 │   │                    #   __tests__/ and a Playwright spec beside the
 │   │                    #   browser-facing ones
 │   └── __tests__/       # Node-environment unit tests for the helper modules
-└── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
+└── global-setup.ts      # refuses --headed / --debug before a window exists
 ```
 
 Counts are deliberately absent, and an earlier version of this block carried them
@@ -110,8 +110,10 @@ and keyboard alone.
 `--headed`, `--ui` and `--debug` override the config's `headless` setting after the
 config has been read, and `show-report` / `show-trace` / `codegen` never read it at
 all. So the headless default alone is a convention with several ways around it.
-`e2e/global-setup.ts` closes the first three: it runs before any browser is created
-and throws, naming the flag that asked for a window. `kilo.jsonc` denies them at
+`e2e/global-setup.ts` closes the two it can see — `--headed` and `--debug`: it runs before any
+browser is created and throws, naming the flag that asked for a window. It deliberately does not
+carry `--ui`, because Playwright opens that window before a global setup can run; `kilo.jsonc` denies
+it on the flag alone instead. `kilo.jsonc` denies all three at
 the agent permission layer, including the npm script spellings, with one deliberate
 exception: `--debug` and `test:e2e:debug` are `ask`, not `deny`, so a wrong guess
 reaches a prompt instead of a silent block. The escape hatch for all of it is
@@ -294,12 +296,12 @@ coverage thresholds in `vitest.e2e.config.ts`.
 These run under a **second, independent Vitest project** (`vitest.e2e.config.ts`),
 not the root `vitest.config.ts`. The split is not cosmetic:
 
-|                 | root `vitest.config.ts` | `vitest.e2e.config.ts`               |
-| --------------- | ----------------------- | ------------------------------------ |
-| environment     | `jsdom`                 | `node`                               |
-| setup file      | `src/test/setup.ts`     | none                                 |
-| `globals: true` | yes                     | no                                   |
-| tests           | `src/**`                | `e2e/**/__tests__/**/*.unit.test.ts` |
+|                 | root `vitest.config.ts`                         | `vitest.e2e.config.ts`               |
+| --------------- | ----------------------------------------------- | ------------------------------------ |
+| environment     | `jsdom`                                         | `node`                               |
+| setup file      | `src/test/setup.ts`                             | none                                 |
+| `globals: true` | yes                                             | no                                   |
+| tests           | Vitest default, less `e2e/**` and `**/.kilo/**` | `e2e/**/__tests__/**/*.unit.test.ts` |
 
 The helpers exercise `node:fs/promises`, `sharp` and `pixelmatch`, none of which
 exist under jsdom, and `src/test/setup.ts` imports `@testing-library/jest-dom`,
@@ -412,7 +414,7 @@ e2e/export/visual-regression.spec.ts-snapshots/
 ```
 
 The remaining committed files are orphans — the raw `drawing.<ext>` exports
-(including `drawing.bmp`, the bulk of the 2.1 MB), plus `drawing-icon.ico.png` and
+(including `drawing.bmp`, the bulk of the directory's 2.05 MB), plus `drawing-icon.ico.png` and
 `source-baseline.png`. Nothing reads them; the ICO spec compares in-browser against
 the source canvas instead. They are still tracked, pending authorisation to delete
 committed baselines. See the entry in `OPEN_PROBLEMS.md`.
@@ -461,8 +463,9 @@ So the two failure shapes to know about:
   both sidebar states, and compares the
   **exported PNG bytes** with `Buffer.equals`. PNG rather than a comparison of
   `sourceDataUrl`, because the property is about the export and PNG is the only lossless
-  format that never leaves the browser — TIFF, GIF and AVIF lazily `import()` `utif`,
-  `gifenc` and `@jsquash/avif`.
+  format that never leaves the browser — the TIFF, GIF and AVIF wrappers (`tiff-utils.ts`,
+  `gif-utils.ts`, `avif-utils.ts`) are the app's own modules, and each statically imports its
+  codec (`utif`, `gifenc`, `@jsquash/avif`) at the top level.
 
 ## Current status
 
