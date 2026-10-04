@@ -52,18 +52,19 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## Working practice
 
-| Document                                               | Its one job                                                             |
-| ------------------------------------------------------ | ----------------------------------------------------------------------- |
-| [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                           |
-| [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery             |
-| [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds |
-| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent              |
-| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under               |
-| [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails              |
-| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)             | The dependency licence policy, and the fact that nothing enforces it    |
-| [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                   |
-| [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec       |
-| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words    |
+| Document                                               | Its one job                                                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                                               |
+| [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery                                 |
+| [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds                     |
+| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent                                  |
+| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under                                   |
+| [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails                                  |
+| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)             | The dependency licence policy, and the fact that nothing enforces it                        |
+| [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                                       |
+| [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec                           |
+| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words                        |
+| [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
 
 The agent procedures live outside this directory, under `.skills/`:
 `.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,

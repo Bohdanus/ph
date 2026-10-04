@@ -16,6 +16,34 @@ export async function captureCanvasScreenshot(
   if (typeof outputDir !== 'string' || outputDir === '') {
     throw new Error('captureCanvasScreenshot: testInfo.outputDir is required to capture and attach a screenshot');
   }
+  // `name` is caller data interpolated into a path, so `path.join` alone decided where the
+  // artifact landed, and neither answer was a file in the directory Playwright owns:
+  //
+  //   - a name with a SEPARATOR (`nested/thing`) reached the filesystem as a path and
+  //     failed with `ENOENT` on a parent directory nothing had created, naming a file
+  //     the caller never asked for;
+  //   - a name that TRAVERSES (`../escaped`) resolved one level ABOVE `outputDir`, and
+  //     that path was written and then ATTACHED, so the artifact the report carried was
+  //     outside the directory any cleanup of the output dir would reach.
+  //
+  // So `name` has to be a single path component, and this is a REJECTION rather than a
+  // rewrite for the reason the `outputDir` guard above throws: the caller passed
+  // something impossible, and silently rewriting it would attach the report under a name
+  // the test never asked for. Sanitising would also let two distinct names collide into
+  // one artifact, so the second write would overwrite the first without a word.
+  //
+  // `\` is rejected on every host even though it is a legal character in a POSIX filename:
+  // the artifact path has to mean one thing everywhere, or a name that is a filename on
+  // Linux is a path on Windows. `.` and `..` are directory references rather than filenames
+  // even though the appended `.png` would have made them ordinary-looking ones, and an
+  // EMPTY name is deliberately still allowed -- it writes `outputDir/.png`, which is inside
+  // the directory. Guarded BEFORE the `mkdir` and before the CDP session is opened, so a
+  // rejected name creates nothing and leaves no session behind to detach.
+  if (name === '.' || name === '..' || /[/\\]/.test(name)) {
+    throw new Error(
+      `captureCanvasScreenshot: the artifact name must be a single path component inside testInfo.outputDir, but got ${JSON.stringify(name)}`
+    );
+  }
   const screenshotPath = path.join(outputDir, `${name}.png`);
   await fs.mkdir(outputDir, { recursive: true });
   const cdp = await page.context().newCDPSession(page);

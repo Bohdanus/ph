@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 200, 204 — deleted
+### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 191-192, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5070,58 +5070,73 @@ ref of this repository; `.skills/photoshop-tool-creation.md` records that the un
 has since landed and that these claims are mainline. The finding outlived the branch, and the
 branch's own entry died with it, which is how it came to have no entry at all.
 
-## 184. A selection's anti-aliased edge is computed and then thrown away, so the app cannot reproduce its own soft edge
+## 184. The feathered selection path thresholds its own anti-aliased edge to fully-in or fully-out
 
 **Problem.** `rasterizePolygonMask()` in `src/util/selection.ts` fills a polygon path into a canvas,
 reads the pixels back, and reduces the alpha channel with a presence test rather than a scale. The
 threshold is "greater than zero", not a midpoint, so a pixel the canvas covered at five per cent is
-recorded as **fully** selected rather than as a fifth of a pixel. The CPU fallback is equally
-binary: `isPointInPolygon()` samples at pixel centres and returns a boolean, so this is not an
-artefact of the canvas arm — both paths produce a 1-bit mask.
+recorded as **fully** selected. The CPU fallback is binary for the same reason rather than by
+accident: `isPointInPolygon()` samples at pixel centres and returns a boolean.
 
-The consequence is downstream of the mask, not in it. `createFeatheredAlphaMask()` re-derives a
-smooth alpha from that already-binary mask by way of a chamfer distance transform, so by the time
-feathering runs the anti-aliasing the canvas had computed is gone. Every copy-out path in
-`copySelectionToCanvas()` goes through `rasterizePolygonMask()`, so the app cannot reproduce a
-feathered selection edge at full precision from the selection it stored.
+The loss is then compounded downstream. `createFeatheredAlphaMask()` re-derives a smooth alpha from
+that already-binary mask by way of `chamferDistanceFromSeeds()`, so the coverage the canvas computed
+is gone before feathering begins. What the user gets is a distance-transform ramp across a
+one-pixel-wide boundary rather than the antialiased ramp the renderer had.
+
+**Scope, which is narrower than it first appears.** `rasterizePolygonMask()` has exactly one caller,
+inside `copyFeatheredPolygonSelectionToCanvas()`, so this reaches production only for a selection
+whose `sourceTool` is `'feather-magnetic-lasso'`. The other arms of `copySelectionToCanvas()` do not
+touch it: the rectangle arm is a bare `drawImage`, and the default polygon arm masks with `ctx.clip()`
+and blits, which keeps the canvas's own antialiasing.
 
 **How this sits against what is already recorded.** `docs/FEATURES.md` — Selection records the
 representation decision: a selection is a polygon point list rather than a pixel channel, which is
-why marching ants read points and why holes are impossible. That document owns the _choice_. It
-does not say that the code computes coverage and then discards it, and the choice does not require
-discarding it — a mask is exactly where that coverage would live. The combination-modes decision in
-`docs/TOOLS-TOO-HARD.md` is the other half: it names "a single point path cannot express" boolean
-operations, and this is the same missing structure seen from the rasteriser.
+why marching ants read points. That document owns the _choice_, and the choice does not require
+discarding coverage — a mask is exactly where it would live. `docs/TOOLS-TOO-HARD.md` — Selection
+combination modes is the same missing structure seen from the model side: it names "a single point
+path cannot express" boolean operations.
 
 **Affected.** `src/util/selection.ts` — `rasterizePolygonMask()`, `isPointInPolygon()`,
-`createFeatheredAlphaMask()`, and `copySelectionToCanvas()` as the caller that makes it reachable
-in production.
+`chamferDistanceFromSeeds()`, `createFeatheredAlphaMask()`, and `copyFeatheredPolygonSelectionToCanvas()`
+as the only production caller.
 
-**What would close it.** Return the alpha channel instead of the thresholded mask, and let
-`alphaFromSignedDistance()` consume coverage directly. On its own that changes nothing the user
-can see, because the mask is still recomputed from the point list on every use — so it is worth
-doing together with making the mask authoritative rather than derived, not before.
+**What would close it.** Return the alpha channel from `rasterizePolygonMask()` instead of the
+thresholded mask, and build the feathered alpha from that coverage rather than from a
+`chamferDistanceFromSeeds()` pass over a binary mask. `alphaFromSignedDistance()` is not where the
+change lands — it takes a signed distance, a feather radius and an anti-alias flag, and coverage is
+none of those — so this is a change to how the seeds are chosen. On its own it changes little the user
+can see, because the mask is still recomputed from the point list on every use, so it belongs with
+making the mask authoritative rather than derived, not before.
 
 ## 185. The Magic Wand discards every matched region except the largest, on every click
 
 **Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
 loops, classifies them into outer contours and holes, and then keeps exactly one outer contour:
 `selectLargestBoundaryLoop()` returns the single loop with the largest absolute area. Every other
-matched region is dropped. There is no warning, no log line, and no note in any tracked document.
+matched region is dropped, and nothing in `magicWand.ts` warns or logs it.
 
-It is not gated on an option. The bar renders `Contiguous`, and this reduction runs unconditionally
-on every click — the earlier claim that it is a discontinuous-mode behaviour is wrong, and there is
-no Discontinuous control on this tool at all.
+It is not gated on an option. The bar renders `Contiguous`, the checkbox writes `contiguous`, and this
+reduction runs unconditionally on every click — unchecking Contiguous feeds the same call, so the loss
+bites hardest exactly when the user has asked for the whole image rather than one region. No control
+on this bar offers that mode by name.
 
-**Distinct from the recorded hole refusal.** The same function refuses the whole selection when any
-hole is present, and that refusal _is_ already recorded in `src/tools/descriptions/selection.ts` for
-the Magic Wand. Keeping only the largest contour is a different loss on a different condition, and
-it is the one a user hits without any signal at all: a click spanning two separated areas silently
-produces a selection of one of them.
+**Where it is already recorded.** The header comment on `src/util/floodFill.ts` states that the wand
+"keeps only the largest outer loop", for the sibling module's own reasons, and `selectLargestBoundaryLoop()`'s
+own neighbour explains the magnitude comparison that drops the rest. So the behaviour is not undocumented
+in the repository — but it appears only in source comments, with no entry in `docs/` and nothing in the
+wand's own tool record, and the user-visible consequence is stated nowhere. The `floodFill.ts` comment
+also cites the reduction by line range, and those citations have drifted past the end of the file it
+points at.
 
-**Affected.** `src/util/magicWand.ts` — `selectLargestBoundaryLoop()`,
-`createMagicWandSelectionFromImageData()`, and `classifyBoundaryLoops()` as the caller that already
-has every contour in hand before the reduction.
+**Distinct from the recorded hole refusal.** The same function also refuses the whole selection when
+any hole is present. That refusal is recorded, but for a different tool: the sentence lives in the
+**Quick Selection** record in `src/tools/descriptions/selection.ts` — a grown region, not a wand click
+— and `docs/TOOLS-TOO-HARD.md` — Regions with holes quotes the same case. Keeping only the largest
+contour is a different loss on a different condition, and it is the one with no record anywhere.
+
+**Affected.** `src/util/magicWand.ts` — `selectLargestBoundaryLoop()`, and
+`createMagicWandSelectionFromImageData()` as its caller, which already holds every contour before the
+reduction; `classifyBoundaryLoops()` is what separates outer contours from holes for it.
 
 **What would close it.** Keep every outer contour and commit them as subpaths, which needs the
 selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
@@ -5148,74 +5163,86 @@ four-channel Euclidean RGBA distance is not Adobe's — and the default differs 
 `src/tools/descriptions/selection.ts` itself records as a third-party claim with no Adobe citation.
 Neither needs this entry.
 
-**Not already owned elsewhere.** The `fix/audit-falsehoods` branch was checked: the sentence is
-byte-identical there and `getToleranceDistance()` is untouched, so that branch does not own this.
-
 **Affected.** `src/tools/descriptions/selection.ts` — the Magic Wand record's `appNotes`, which
 `npm run docs:tools` then renders into `docs/TOOLS.md` — and `src/util/flood-fill.ts` —
-`getToleranceDistance()` and `MAX_COLOR_DISTANCE`, which are correct as they stand.
+`getToleranceDistance()` and `MAX_COLOR_DISTANCE`, which are correct as they stand. The
+`fix/audit-falsehoods` branch leaves both untouched, so it does not own this.
 
 **What would close it.** Correct the note at source and regenerate. Do not widen the slider to match
 the sentence: the code is right about the range and the sentence is wrong about it, and "fixing"
 the code to agree with a false note would trade a documentation defect for a behavioural one.
 
-## 187. The blend-mode comment names six absent modes, omits five, and ends on two that are not mode values
+## 187. The Brush's `Mode` row promises 29 blend modes and the bar renders 16
 
-**Problem.** The doc comment on `PAINT_BLEND_MODES` in `src/tools/brush.ts` says "Photoshop offers
-more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind, Clear)". Six of the
-modes actually absent from that set are missing from the sentence — Darker Color, Lighter Color,
-Linear Dodge (Add), Linear Light and Hard Mix — and the two it ends on, Behind and Clear, are
-Layers-panel entries rather than values the Mode dropdown can carry. So the comment's own premise,
-that the list is in the order Photoshop's Mode dropdown lists them, does not hold for the two it
-closes with.
+**Problem.** The Brush's `Mode` row in `src/tools/descriptions/paint.ts` describes what the bar offers
+as "the 27 layer blend modes — Dissolve among them — plus the two the painting tools add, Behind and
+Clear". That is twenty-nine. `Paint.tsx` renders `{PAINT_BLEND_MODES.map(...)}`, and
+`PAINT_BLEND_MODES` in `src/tools/brush.ts` holds sixteen. So the row states the app offers thirteen
+values it does not, and the row is data — `npm run docs:tools` renders it into `docs/TOOLS.md`, so the
+generated per-tool specification carries the overcount as the app's own description of its bar.
 
-The list of sixteen is right, and so is the recorded reasoning beside it: the canvas compositing set
-has no equivalent for the rest, and offering one would ship a dead option. `brush.test.ts` pins the
-sixteen values, not this sentence, so nothing catches the enumeration drifting.
+The source comment on `PAINT_BLEND_MODES` makes a smaller version of the same mistake. It says
+"Photoshop offers more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind,
+Clear)" — thirteen absent values, of which it names eight. The five it omits are Darker Color, Lighter
+Color, Linear Dodge (Add), Linear Light and Hard Mix. None appears in the comment, and none is an alias
+of a name that does, so the omission is not a naming choice. `brush.test.ts` pins the sixteen values and
+not this sentence, so nothing catches the enumeration drifting.
 
-**Why it is worth an entry rather than a shrug.** The comment is the nearest thing to a record of
-why the mode set is short, and it is the sentence a reader will consult to learn which modes are
-missing. Being wrong in the direction of undercounting is what makes it survive review — a reader
-checking "is Dissolve in that list" finds it, and stops.
+**What is already right.** The Brush's `appNotes` in the same file state the shortfall correctly —
+"sixteen canvas compositing operations rather than Photoshop's 29 for this tool" — and the reasoning
+beside the comment is sound: the canvas compositing set has no equivalent for the rest, and offering one
+would ship a dead option.
 
-**Affected.** `src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`. The capability itself
-is already recorded in `docs/TOOLS-TOO-HARD.md` and the per-tool data; only this enumeration is
-wrong.
+**Affected.** `src/tools/descriptions/paint.ts` — the Brush's `Mode` row, whose "offering" sentence is
+the overcount and whose `appNotes` is the correct statement it contradicts;
+`src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, for the five omitted names.
 
-**What would close it.** Correct the list and drop Behind and Clear from it, keeping the decision's
-reasoning intact.
+**What would close it.** Correct the row to say the bar offers the sixteen the component actually
+renders, keeping the `appNotes` sentence as the statement of the shortfall. That is the half a reader
+is misled by, and it regenerates into `docs/TOOLS.md`. Adding the five missing names to the source
+comment is the smaller half, and it makes the comment agree with the row rather than the reverse.
 
 ## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
 
 **Problem.** The
 `it('carries no New / Add / Subtract / Intersect, because no selection tool in this app has them')`
 title in `src/components/ToolbarsRight/SingleRowColumnMarquee/__tests__/SingleRowColumnMarquee.test.tsx`
-carries a comment asserting the modes are "absent for EVERY selection tool here". The test queries
-by button role, and `QuickSelection.tsx` renders Add and Subtract in a `Mode` dropdown over
-`QUICK_SELECTION_MODES` — a `select`, not buttons, so the query misses them and the comment's
-universal claim is false.
+carries a comment asserting the modes are "absent for EVERY selection tool here". `QuickSelection.tsx`
+renders Add and Subtract in a `Mode` dropdown over `QUICK_SELECTION_MODES`, so the universal claim is
+false — and the falsehood is in the `it()` title as well as the comment, so it survives a reader who
+skips the body.
 
-**The fact is recorded; the contradiction is not.** `docs/TOOLS-TOO-HARD.md` owns the combination
-modes as an unbuilt capability, and `src/tools/descriptions/selection.ts` separately records that
-Quick Selection's dropdown offers Add and Subtract. So nothing here is new about the app. What is new
-is a test whose stated reason contradicts it, and a pin is the one artefact in this repository that
-gets quoted as evidence — so a false reason in a pin propagates.
+**Why the test does not already fail on it.** The file imports and renders only
+`SingleRowColumnMarquee`, so Quick Selection is never in the tree and no query strategy would surface
+its dropdown. The assertion is true of what it mounts; only its stated reason is wrong.
 
-**Affected.** The single test file above. The pin itself is correct as an assertion of what it
-queries: no selection _bar_ renders the four as buttons.
+**The same falsehood is recorded in prose, twice over.** `docs/TOOLS-TOO-HARD.md` — Selection
+combination modes says "No selection tool's bar renders any of the four". And the per-tool data
+repeats it in two records of its own: the single-row and single-column marquee notes in
+`src/tools/descriptions/selection.ts` each explain their `missing` modes with "they are absent for
+every selection tool in the application", while the Quick Selection record in the same file correctly
+states that its dropdown offers Add and Subtract. So the capability is not new, and the contradiction
+is not confined to a test — it is in the data that generated document is built from, which makes the
+per-tool documentation propagate it too.
 
-**What would close it.** Narrow the comment to what the assertion actually proves. Deleting the pin
-is not the fix and would be a gate being weakened — the combination buttons are still absent.
+**Affected.** The single test file above, for the title and the comment; the two marquee records in
+`src/tools/descriptions/selection.ts` for the prose; and `docs/TOOLS-TOO-HARD.md` — Selection
+combination modes, which owns the capability and states the overreach.
+
+**What would close it.** Narrow the title and the comment to what the assertion proves — that this bar
+renders the four as neither buttons nor a select — and narrow the two per-tool records to the tools
+they actually describe. Deleting the pin is not the fix and would be a gate being weakened: the
+combination buttons are still absent from every selection bar.
 
 ## 189. Three fields on a tool's replay declaration are read by tests and by nothing else
 
 **Problem.** `ToolProcessorDefinition` in `src/tools/toolProcessors.ts` gives every tool a `replay`
 descriptor carrying a kind, a determinism flag, a raster requirement and a version. Across the whole
 repository the first three have **zero production reads**. Every read of them is in
-`src/tools/__tests__/tool-processors.test.ts`, in `color-replacement.test.ts`, or in a fixture
-literal. Production consults only the version, at seven sites across three files, through
-`operationForTool()` in `history-adapter.ts` and the version guards in `history-append.ts` and
-`materialization.ts`.
+`src/tools/__tests__/tool-processors.test.ts`, in `color-replacement.test.ts`, or in the fixture
+literal at `src/contexts/__tests__/durable-replay.layer-operations.test.ts`. Production reads only the
+version, at seven sites across three files, through `operationForTool()` in `history-adapter.ts` and
+the version guards in `history-append.ts` and `materialization.ts`.
 
 The unimplemented kind is a declared member of both the commit-kind and the replay-kind unions, and
 no production branch compares either field against it. An unimplemented tool reaches production only
@@ -5234,83 +5261,66 @@ flag set on a wall-clock tool ships as a silently irreproducible commit with a g
 
 The gap is specific to these three fields, and that is what makes it a defect rather than a
 convention: the sibling declaration fields on the same type _are_ read in production.
-`requiresCanvasFilter` gates five sites, and `creator` is what `materialization.ts` — the refusal in
-`sourceBitmap()` — checks before it will render a vector source. The project enforces two of its
-declaration fields and not three others, with nothing recording the difference.
+`requiresCanvasFilter` gates five production sites, `compositesOntoInput` is read on the raster path in
+`history-append.ts`, `commit` is read at roughly twenty, and `creator` is what `materialization.ts` — the
+refusal in `sourceBitmap()` — checks before it will render a vector source. Four fields enforced,
+three not, with nothing recording the difference.
 
 **Affected.** `src/tools/toolProcessors.ts` — the `replay` descriptor on
 `ToolProcessorDefinition`; `src/contexts/history-adapter.ts` — `operationForTool()`, which is where a
 version is already read and where one assertion would go; `src/contexts/materialization.ts`, which
 already refuses on `creator` and could refuse on the raster requirement the same way.
 
-**What would close it.** One production assertion at the durable write point rejecting an
-unimplemented replay kind, and a guard refusing a layer whose recorded raster requirement is false.
-Neither needs a schema change.
+**What would close it.** One production assertion at the durable write point in `operationForTool()`,
+rejecting an unimplemented replay kind — it needs no schema change, because the commit kind is already
+in scope there. The raster requirement is not fixable this way: it is recorded nowhere, so there is no
+stored value to refuse against. Enforcing it means first deciding that the durable operation should
+carry the flag, which is a schema decision rather than an assertion.
 
-## 190. The triangle's geometry is asserted nowhere, so a fix would break no test
+## 190. The triangle's geometry is recorded but under-pinned, and the one pin that exists will move with any fix
 
-**Problem.** `drawShape()` in `src/tools/shape.ts` renders the triangle by inscribing a regular
-three-sided polygon in the drag box, and `normalizeShapeGeometry()` squares the drag box when Shift
-is held rather than forcing an equilateral result. Both halves are already recorded —
-`src/tools/descriptions/shape.ts` — the `triangle` entry's `appNotes` — and `shape.notes.md`
-explains why the original premise was wrong twice over. None of that is new.
+**Problem.** `drawShape()` in `src/tools/shape.ts` places the triangle's vertices from the drag box's
+two half-extents with an even angular step, so the result is a regular three-sided polygon only when
+the box is square, and `normalizeShapeGeometry()` squares that box when Shift is held rather than
+forcing an equilateral result. Both halves are already recorded — `src/tools/descriptions/shape.ts`,
+the `triangle` entry's `appNotes`, and `src/tools/descriptions/shape.notes.md`. What is not recorded is
+how little stands
+behind them.
 
-What is not recorded is that **no assertion anywhere would fail if this were fixed**. The only test
-touching the rendered triangle, the
-`it('draws the figure each geometry variant is registered for, not a generic shape')` title, counts
-`moveTo` and `lineTo` calls, so it cannot fail when the vertices move. `normalizeShapeGeometry()`'s
-aspect tests are a `describe.each` over rectangle and oval only, so the Shift squaring is unpinned
-for the triangle too. And there is no triangle spec under `e2e/` at all, where every other figure has
-some path through the suite.
+**What is pinned, and what is not.** `shape.test.ts` — the
+`it.each(['triangle', 'polygon'] as const)('keeps %s geometry consistent with the other figures')` case —
+asserts both halves of `normalizeShapeGeometry()` for the triangle: the unconstrained drag passes
+through unchanged, and Shift squares the box. So a fix to the squaring **will** turn that case red and it
+has to move with the behaviour. What is not pinned is anything about _where the vertices land_.
 
-**Why that is an entry.** A fix here will look like it should turn tests red, and it will not. Read
-without this, an unred fix reads as an incomplete one, and the instinct to make it red sends someone
-to write an assertion for the behaviour they just replaced. The pin-removal rule cuts the other way
-here: there is nothing to remove, and inventing an assertion after the fact is how the current state
-would get pinned again.
+Everything that touches what is rendered measures the other three figures and only counts the
+triangle. `paint-tools.test.ts` — the
+`it('draws the figure each geometry variant is registered for, not a generic shape')` title — asserts
+`strokeRect` called with real coordinates for the rectangle, `ellipse` with real coordinates for the
+oval, and `moveTo`/`lineTo` with real coordinates for the line, then asserts only call counts for the
+triangle and the polygon. The asymmetry is inside a single test, so it is not a matter of which file
+someone chose to extend. `shape.test.ts` — the `it.each` pairing triangle with three vertices, and the
+`it('leaves the triangle at three whatever the field says')` case — likewise assert counts.
+
+**And nothing watches from outside.** `e2e/keyboard-shortcuts.spec.ts` cycles the bar's figure readout
+with `Shift+u` and asserts it passes through Triangle and Polygon, so both figures are reachable
+end-to-end. It asserts the figure's _name_; it never draws one, and no other spec under `e2e/` draws a
+polygon or a triangle at all — the polygonal lasso is a different tool. A regression in the inscribed
+placement would reach a user with the whole suite green.
 
 **Affected.** `src/tools/shape.ts` — the `figure === 'triangle' || figure === 'polygon'` branch of
 `drawShape()` and the `shiftKey` arm of `normalizeShapeGeometry()`;
 `src/tools/__tests__/shape.test.ts` — the `it.each` case that pins the squaring for triangle and
-polygon, which asserts the square and would need to change with the behaviour.
+polygon, and the two vertex-count cases; `src/tools/__tests__/paint-tools.test.ts` — the
+figure-dispatch case.
+
+**What would close it.** Fix the placement, move the squaring assertion with it, and give the triangle
+the coordinate assertion its three siblings in that test already have. An e2e path that draws the
+figure is the stronger version of the same coverage and is proportionate to a figure the suite can
+currently only cycle by name.
 
 A branch named `fix/shape-truth` exists and is ahead of `main`; read its diff before starting, since
-it may already carry the change this entry describes.
-
-## 191. Theme is a two-value toggle, and no interface-size control exists anywhere
-
-**Problem.** `ThemeContext.tsx` declares the theme as the two-value union light and dark and one
-button flips between them. Nothing in the application offers an interface size.
-
-`docs/FEATURES.md` — Keyboard records that the corresponding keyboard shortcut is unbound. That is a
-true and different claim: an unbound key and an absent control are two gaps, and binding the key to
-the toggle would produce a shortcut that changes the theme rather than the size — a fix that looks
-like a fix and addresses nothing.
-
-**Affected.** `src/contexts/ThemeContext.tsx`, and the theme ramp the stylesheet would have to
-support.
-
-**What would close it.** Either widen the union to the size ramp the stylesheet already carries, or
-record the absence as a decision. Which of those is the operator's call — the documentation ladder
-puts a deliberate departure in `docs/OVERRIDES.md`, and an agent must not add an entry there.
-
-## 192. Painting shows the default cursor: no brush-tip outline, and no modifier for a precise one
-
-**Problem.** While a paint stroke is in progress the cursor is the default one. `DrawToolArea.tsx`
-draws no outline, and the application has no cursor registry — `src/tools/descriptions/eyedropper-draw.ts`
-says so for its own tool. Sixteen tool areas do set their own cursor, so this is not a general
-absence of per-tool cursors and should not be described as one; what is missing is the cursor for the
-one tool whose cursor carries information, because it tells the user where the tip is and how wide.
-
-`HANDOFF.md` §151 names a brush-tip circle as part of its fix, since the view transform that would
-size it is commented out. The modifier that switches to a precise cursor is recorded nowhere.
-
-**Affected.** `DrawToolArea.tsx`, and the cursor rules in `src/components/Main/Main.scss` for the
-precise variant.
-
-**What would close it.** A screen-space circle sized from the tip during a paint drag, and a
-modifier that swaps the crosshair for the precise crosshair. Both depend on the view transform
-§151 carries, so neither lands usefully before it.
+it may already carry part of this.
 
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 
@@ -5433,6 +5443,29 @@ silently destroy the stack.
 `FillToolArea.tsx`; `src/hooks/usePaintStroke.ts`; `src/components/SidebarRight/LayersTab.tsx`;
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
+
+## 198. The citation gate checks `AGENTS.md` for everything except line numbers, so this file's citations are ungated
+
+**Problem.** `scripts/__tests__/agents-citations.test.mjs` enforces the citation rule, and its coverage
+is narrower than the rule. `LINE_NUMBER_GATED` holds `AGENTS.md`, `docs/DOCUMENTATION.md` and
+`docs/README.md`, so the line-number leg skips every other tracked document — this one included.
+`staleCallForms()` is invoked only against `readAgentsMd()`, and `staleHandoffRefs()` takes this file as
+its _target_ while validating the references in `AGENTS.md` alone. So no backticked call and no `§N` in
+this file is checked by anything.
+
+Two further limits are structural rather than a missing path. `CALL_FORM` requires a trailing `()`, so
+a bare constant, a type, a union member or an `it('...')` title is invisible to the call-form leg by
+construction — and those are the forms most of this file uses. And no leg of the test reads a sentence
+for meaning, so even full coverage could not catch a claim that is confidently false.
+
+**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `LINE_NUMBER_GATED`, and the two
+assertions that pass `readAgentsMd()`.
+
+**What would close it.** Two steps, in order. Run `scripts/resolve-citations.mjs` over this file and
+repair what it reports, then add this file to `LINE_NUMBER_GATED` and invoke `staleCallForms()`
+against it. Widening `CALL_FORM` to accept a
+constant, a type and a test title is a separate change and needs its own migration, because it will
+flag every bare identifier in every gated document.
 
 ## 199. Replay budget runner is dormant until a durable production surface owns it
 
