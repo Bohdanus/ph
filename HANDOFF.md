@@ -5163,11 +5163,22 @@ would ship a dead option.
 
 **Owned, so recorded not fixed: the four blend-mode `Mode` rows.** `src/tools/descriptions/paint.ts`
 carries the twenty-seven phrasing in four rows — the Brush, the Pencil, the Paint Bucket and the Clone
-Stamp — and the Brush's additionally promises Behind, so it is the only one of the four whose
-"offering" sentence is a pure overcount. Each is correct about what Photoshop offers and silent about
-what the bar renders, and the Brush's `appNotes` in the same file already says sixteen correctly, so
-the row contradicts a sentence beside it. Correcting all four means stating the sixteen the component
-actually renders and keeping `appNotes` as the statement of the shortfall.
+Stamp — and each states what Photoshop offers while the two rows beside it in the same file state
+what the bar renders.
+
+**The two halves need different fixes, and only two of the four rows have a control to describe.**
+`PaintBucket.tsx` and `CloneStamp.tsx` contain no `blendMode` reference at all; their rows are
+`status: 'missing'` and their own `appNotes` say the control is absent outright. Writing "the sixteen
+the component renders" into those two would be a new falsehood in a data file. Their rows are already
+right about Photoshop and already say the control is missing, so what they need is the twenty-seven
+sentence marked as Adobe's rather than read as the app's — the same fix as the `status` field, not a
+new count.
+
+The Brush and the Pencil are the two that render a control, because both live in `Paint.tsx`, which
+maps `PAINT_BLEND_MODES`. Each row overcounts — the Brush's says twenty-nine and the Pencil's
+twenty-eight — and each is contradicted by its own `appNotes` in the same file, which already states
+sixteen correctly. Those two are the whole of the correction: state the sixteen the component renders
+and keep `appNotes` as the statement of the shortfall.
 
 **That is filed rather than fixed because the row is data and the generated file is spoken for.**
 `npm run docs:tools` renders these rows into `docs/TOOLS.md`, and both files are claimed by work in
@@ -5179,12 +5190,21 @@ regenerating leaves the two inconsistent, and regenerating rewrites a file anoth
 the list at the UXP constants reference, alongside `PASSTHROUGH` and the 25 others". The enum has
 **twenty-eight** members — the twenty-seven real modes plus `PASSTHROUGH`, which the Layers panel lists
 separately — so "the 25 others" is twenty-six. The same file gets the count right further down, where
-it calls `PASSTHROUGH` "a twenty-eighth entry", so the file contradicts itself. It is the very phrase
-the four rows above are told to propagate, so it is fixed in the same pass. That file is claimed too.
+it calls `PASSTHROUGH` "a twenty-eighth entry", so the file contradicts itself. The four rows above
+are not what propagates it — they are being told to state sixteen and stop citing a Photoshop census —
+so this is a fix to that file alone. `docs/luna-psd-currency` claims it.
 
 **Affected.** `src/tools/descriptions/paint.ts` — the Brush, Pencil, Paint Bucket and Clone Stamp
 `Mode` rows; `src/tools/descriptions/paint.notes.md` — the enum citation; `docs/TOOLS.md`, which
-regenerates from the first.
+regenerates from the first; `src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, whose
+counts and enumeration no gate checks.
+
+**What would close the `brush.ts` half.** A source-reading test that asserts the comment's counts and
+names against `PAINT_BLEND_MODES` — the same technique the three `readFileSync` tests under
+`src/contexts/__tests__/` already use — so a member added to the array that is neither on Photoshop's
+list nor a canvas value fails instead of quietly making the comment wrong. That is a check on prose,
+which is unusual, and it is worth it only because the alternative is a comment whose whole value is
+that a reader can trust its count.
 
 ## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
 
