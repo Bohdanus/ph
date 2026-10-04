@@ -21,28 +21,30 @@ git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
   into `main` and never commits is not stopped by it. What stops the write is the process
   above.
 - **Every commit message carries the chat id, and so does every merge to `main`, which
-  also names the branch it came from.** Two trailers, subject untouched:
+  also names the branch it came from.** Two trailers, subject untouched, and no gate
+  enforces either — resolve the id before the first commit:
 
   ```
   Add commit metadata rules to AGENTS.md
 
-  Chat: ses_ef97da01fffeKH0EmMw1F6X0b6
+  Chat: ses_<chat id>
   Branch: docs/commit-attribution
   ```
 
-  `Chat:` on every commit; `Branch:` on the commit that merges into `main`. Read the id
-  once, up front — it is also a board identity, so `--agent ses_…` on
-  `npm run swarm --` claims and locks as this chat, and `check` exits 1 on somebody
-  else's reservation ([`docs/ORCHESTRATION.md#the-swarm-board`](docs/ORCHESTRATION.md)).
+  `Chat:` on every commit; `Branch:` on the merge into `main`. The id is also a board
+  identity: `--agent ses_…` on `npm run swarm --` claims and locks as this chat
+  ([`docs/ORCHESTRATION.md#the-swarm-board`](docs/ORCHESTRATION.md)).
 
-  **There is no `kilo` CLI here.** The id is in the session store, and a phrase you
-  remember typing is its unique key — `parent_id IS NULL` keeps subagents out:
+  **There is no `kilo` CLI here.** The id is in the session store, keyed by a phrase you
+  typed — `parent_id IS NULL` keeps subagents out, and match it WORD BY WORD with `%`:
+  `instr` is literal, so a phrase you typed across a line break matches nothing and the
+  query returns no row.
 
   ```bash
   sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
     JOIN message m ON m.session_id=s.id JOIN part p ON p.message_id=m.id
     WHERE s.parent_id IS NULL AND json_extract(p.data,'\$.type')='text'
-      AND instr(lower(json_extract(p.data,'\$.text')),'a phrase you typed')>0
+      AND lower(json_extract(p.data,'\$.text')) LIKE '%a%phrase%you%typed%'
     ORDER BY s.time_updated DESC LIMIT 1;"
   ```
 
