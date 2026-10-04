@@ -750,7 +750,7 @@ export const useLayers = () => {
     }
 
     const bitmap = layer.tmpCanvas ?? layer.bitmap;
-    if (!bitmap && !processor.creator) {
+    if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
       console.error('No active layer or bitmap to update preview');
       return false;
     }

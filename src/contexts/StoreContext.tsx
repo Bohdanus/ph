@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
+import { isEqual } from 'lodash-es';
 import {
   DEFAULT_TOOL,
   MERGE_ACTION,
@@ -45,7 +46,7 @@ import {
   durableAppendDiagnostic,
   type SourceBackedEntryContext,
 } from './history-append.ts';
-import { replayDurableAtCursor, replayDurableDocument } from './durable-replay.ts';
+import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
 import { composeDurableDocument } from './durable-compositor.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
@@ -106,6 +107,18 @@ type DurableProjection = {
   diagnostics: readonly MigrationDiagnostic[];
   legacyCursorToDurableCursor?: readonly number[];
 };
+
+export function durablePresentationIsRendererIdentical(
+  replayLayer: DurableReplayLayer,
+  existing: Layer,
+  bounds: Layer['pos']
+): boolean {
+  return (
+    replayLayer.operations.length === 0 &&
+    isEqual(bounds, existing.pos) &&
+    (replayLayer.snapshot.source.kind === 'raster' || replayLayer.snapshot.source.kind === 'blank')
+  );
+}
 
 export type StoreData = {
   // refs
@@ -973,24 +986,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         assetRegistry: registry,
       });
       detached = composite.takeLayers();
-      const nextLayers = { ...state.layers };
-      for (const [layerId, materialized] of Object.entries(detached.layers)) {
-        const existing = nextLayers[layerId];
-        if (!existing) throw new Error(`Durable navigation layer ${layerId} is absent from legacy replay`);
-        nextLayers[layerId] = { ...existing, tmpCanvas: materialized.bitmap };
-      }
-
       const latest = latestStateRef.current;
       if (
         latest.documentId !== state.documentId ||
         latest.historyIndex !== state.historyIndex ||
-        latest.branchRevision !== state.branchRevision ||
-        !layersDifferOnlyByPresentation(latest.layers, nextLayers)
+        latest.branchRevision !== state.branchRevision
       ) {
         throw new Error('Durable navigation presentation became stale before publication');
       }
+      const nextLayers = { ...latest.layers };
+      const declined: Record<string, Awaited<ReturnType<typeof composeDurableDocument>>['layers'][string]> = {};
+      for (const [layerId, materialized] of Object.entries(detached.layers)) {
+        const existing = nextLayers[layerId];
+        if (!existing) throw new Error(`Durable navigation layer ${layerId} is absent from legacy replay`);
+        const replayLayer = replay.layers[layerId];
+        const isRendererIdentical = durablePresentationIsRendererIdentical(replayLayer, existing, materialized.bounds);
+        if (!isRendererIdentical) {
+          declined[layerId] = materialized;
+          continue;
+        }
+        nextLayers[layerId] = { ...existing, tmpCanvas: materialized.bitmap };
+      }
+      if (!layersDifferOnlyByPresentation(latest.layers, nextLayers)) {
+        throw new Error('Durable navigation presentation became stale before publication');
+      }
 
-      for (const materialized of Object.values(detached.layers)) {
+      for (const materialized of Object.values(declined)) materialized.lease.release();
+      for (const [layerId, materialized] of Object.entries(detached.layers)) {
+        if (declined[layerId]) continue;
         presentationScope.trackPublishedLease(state.documentId, materialized.bitmap, materialized.lease.release);
       }
       const action: Extract<InternalAction, { type: 'PUBLISH_RUNTIME_PRESENTATION' }> = {

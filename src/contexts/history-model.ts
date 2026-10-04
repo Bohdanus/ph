@@ -47,6 +47,14 @@ export type DurableLayerSource =
       sourcePos: Readonly<{ x: number; y: number; width: number; height: number }>;
       isBedrock?: boolean;
     }>
+  | Readonly<{
+      kind: 'paint';
+      toolName: string;
+      args: PlainObject;
+      size: Size;
+      sourcePos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      isBedrock?: boolean;
+    }>
   /** Bounded compatibility input. New writers must use a typed source. */
   | Readonly<{
       kind: 'legacy-tool';
@@ -308,6 +316,7 @@ function cloneLayerSource(source: DurableLayerSource): DurableLayerSource {
       return Object.freeze({ ...source });
     case 'vector':
     case 'text':
+    case 'paint':
     case 'legacy-tool':
       return Object.freeze({
         ...source,
